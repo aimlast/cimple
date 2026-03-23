@@ -1,0 +1,1 @@
+export default function Page22() { return <div>Page 22</div>; }
