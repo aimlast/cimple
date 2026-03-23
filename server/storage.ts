@@ -218,14 +218,14 @@ export class MemStorage implements IStorage {
   async getDeal(): Promise<Deal | undefined> { return undefined; }
   async updateDeal(): Promise<Deal | undefined> { return undefined; }
   async getAllDeals(): Promise<Deal[]> { return []; }
-  Acync deleteDeal(): Promise<void> {}
-  Acync createDocument(): Promise<Document> { throw new Error("Use DbStorage"); }
+  async deleteDeal(): Promise<void> {}
+  async createDocument(): Promise<Document> { throw new Error("Use DbStorage"); }
   async getDocument(): Promise<Document | undefined> { return undefined; }
   async getDocumentsByDeal(): Promise<Document[]> { return []; }
-  Acync updateDocument(): Promise<Document | undefined> { return undefined; }
-  Acync deleteDocument(): Promise<void> {}
+  async updateDocument(): Promise<Document | undefined> { return undefined; }
+  async deleteDocument(): Promise<void> {}
   async createTask(): Promise<Task> { throw new Error("Use DbStorage"); }
-  Acync getTask(): Promise<Task | undefined> { return undefined; }
+  async getTask(): Promise<Task | undefined> { return undefined; }
   async getTasksByDeal(): Promise<Task[]> { return []; }
   async updateTask(): Promise<Task | undefined> { return undefined; }
   async deleteTask(): Promise<void> {}
@@ -234,11 +234,11 @@ export class MemStorage implements IStorage {
   async updateSellerInvite(): Promise<SellerInvite | undefined> { return undefined; }
   async createBuyerAccess(): Promise<BuyerAccess> { throw new Error("Use DbStorage"); }
   async getBuyerAccessByToken(): Promise<BuyerAccess | undefined> { return undefined; }
-  Acync getBuyerAccessByDeal(): Promise<BuyerAccess[]> { return []; }
+  async getBuyerAccessByDeal(): Promise<BuyerAccess[]> { return []; }
   async updateBuyerAccess(): Promise<BuyerAccess | undefined> { return undefined; }
   async createCimSection(): Promise<CimSection> { throw new Error("Use DbStorage"); }
-  Acync getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
-  Acync updateCimSection(): Promise<CimSection | undefined> { return undefined; }
+  async getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
+  async updateCimSection(): Promise<CimSection | undefined> { return undefined; }
   async createAnalyticsEvent(): Promise<AnalyticsEvent> { throw new Error("Use DbStorage"); }
   async getAnalyticsByDeal(): Promise<AnalyticsEvent[]> { return []; }
   async getAnalyticsSummary(): Promise<any> { return { totalViews: 0, uniqueBuyers: 0, avgTimeSpent: 0, totalTimeSpent: 0, recentViews: [] }; }
@@ -503,20 +503,20 @@ export class DbStorage implements IStorage {
     if (dealId) {
       viewsQuery = db.select({ count: count() })
         .from(analyticsEvents)
-        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'view' `);
+        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'view'`);
       
       uniqueBuyersQuery = db.select({ 
         count: sql<number>`COUNT(DISTINCT ${analyticsEvents.buyerAccessId})` 
       })
         .from(analyticsEvents)
-        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'view' `);
+        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'view'`);
       
       timeQuery = db.select({
         avg: sql<number>`COALESCE(AVG(${analyticsEvents.timeSpentSeconds}), 0)`,
         total: sql<number>`COALESCE(SUM(${analyticsEvents.timeSpentSeconds}), 0)`
       })
         .from(analyticsEvents)
-        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'time_on_page' `);
+        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'time_on_page'`);
     }
 
     const [viewsResult, buyersResult, timeResult] = await Promise.all([
@@ -534,8 +534,7 @@ export class DbStorage implements IStorage {
         ? sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'view' AND ${analyticsEvents.createdAt} > NOW() - INTERVAL '30 days'`
         : sql`${analyticsEvents.eventType} = 'view' AND ${analyticsEvents.createdAt} > NOW() - INTERVAL '30 days'`
       )
-      .groupBy(sql`DATE(${analyticsEvents.createdAt})`
-
+      .groupBy(sql`DATE(${analyticsEvents.createdAt})`)
       .orderBy(sql`DATE(${analyticsEvents.createdAt})`);
 
     return {

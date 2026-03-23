@@ -234,3 +234,321 @@ export const cimSections = pgTable("cim_sections", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const insertCimSectionSchema = createInsertSchema(cimSections).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertCimSection = z.infer<typeof insertCimSectionSchema>;
+export type CimSection = typeof cimSections.$inferSelect;
+
+// =====================
+// SELLER INVITES - Invite tokens for sellers
+// =====================
+export const sellerInvites = pgTable("seller_invites", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  token: text("token").notNull().unique(),
+  
+  sellerEmail: text("seller_email"),
+  sellerName: text("seller_name"),
+  
+  sentAt: timestamp("sent_at"),
+  acceptedAt: timestamp("accepted_at"),
+  expiresAt: timestamp("expires_at"),
+  
+  status: text("status").notNull().default("pending"), // pending, sent, accepted, expired
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertSellerInviteSchema = createInsertSchema(sellerInvites).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertSellerInvite = z.infer<typeof insertSellerInviteSchema>;
+export type SellerInvite = typeof sellerInvites.$inferSelect;
+
+// =====================
+// BUYER ACCESS - CIM viewing permissions
+// =====================
+export const buyerAccess = pgTable("buyer_access", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  
+  buyerEmail: text("buyer_email").notNull(),
+  buyerName: text("buyer_name"),
+  buyerCompany: text("buyer_company"),
+  
+  accessToken: text("access_token").notNull().unique(),
+  accessLevel: text("access_level").notNull().default("teaser"), // teaser, full, loi, due_diligence
+  
+  // NDA
+  ndaSigned: boolean("nda_signed").default(false),
+  ndaSignedAt: timestamp("nda_signed_at"),
+  
+  // Access controls
+  canDownload: boolean("can_download").default(false),
+  watermarkEnabled: boolean("watermark_enabled").default(true),
+  
+  // Analytics tracking
+  viewCount: integer("view_count").default(0),
+  
+  expiresAt: timestamp("expires_at"),
+  revokedAt: timestamp("revoked_at"),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  lastAccessedAt: timestamp("last_accessed_at"),
+});
+
+export const insertBuyerAccessSchema = createInsertSchema(buyerAccess).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertBuyerAccess = z.infer<typeof insertBuyerAccessSchema>;
+export type BuyerAccess = typeof buyerAccess.$inferSelect;
+
+// =====================
+// ANALYTICS EVENTS - Track buyer engagement
+// =====================
+export const analyticsEvents = pgTable("analytics_events", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id"),
+  
+  eventType: text("event_type").notNull(), // view, page_view, scroll, download_attempt, time_on_page
+  eventData: jsonb("event_data"),
+  
+  // Page/section tracking
+  pageNumber: integer("page_number"),
+  sectionKey: text("section_key"),
+  
+  // Time tracking
+  timeSpentSeconds: integer("time_spent_seconds"),
+  scrollDepthPercent: integer("scroll_depth_percent"),
+  
+  ipAddress: text("ip_address"),
+  userAgent: text("user_agent"),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertAnalyticsEventSchema = createInsertSchema(analyticsEvents).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertAnalyticsEvent = z.infer<typeof insertAnalyticsEventSchema>;
+export type AnalyticsEvent = typeof analyticsEvents.$inferSelect;
+
+// =====================
+// FAQ ITEMS - Live FAQ for buyers
+// =====================
+export const faqItems = pgTable("faq_items", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  
+  question: text("question").notNull(),
+  answer: text("answer").notNull(),
+  
+  order: integer("order").notNull().default(0),
+  isPublished: boolean("is_published").default(true),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFaqItemSchema = createInsertSchema(faqItems).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertFaqItem = z.infer<typeof insertFaqItemSchema>;
+export type FaqItem = typeof faqItems.$inferSelect;
+
+// =====================
+// BRANDING SETTINGS
+// =====================
+export const brandingSettings = pgTable("branding_settings", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id"),
+  
+  companyName: text("company_name"),
+  primaryColor: text("primary_color").notNull().default("218 70% 47%"),
+  accentColor: text("accent_color").notNull().default("25 95% 53%"),
+  backgroundColor: text("background_color").notNull().default("0 0% 100%"),
+  cardColor: text("card_color").notNull().default("0 0% 100%"),
+  textColor: text("text_color").notNull().default("224 71% 4%"),
+  headingFont: text("heading_font").notNull().default("Inter"),
+  bodyFont: text("body_font").notNull().default("Inter"),
+  logoUrl: text("logo_url"),
+  spacing: text("spacing").notNull().default("medium"),
+  borderRadius: text("border_radius").notNull().default("medium"),
+  
+  // Additional branding
+  headerTemplate: text("header_template"),
+  footerTemplate: text("footer_template"),
+  disclaimer: text("disclaimer"),
+  
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertBrandingSettingsSchema = createInsertSchema(brandingSettings).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertBrandingSettings = z.infer<typeof insertBrandingSettingsSchema>;
+export type BrandingSettings = typeof brandingSettings.$inferSelect;
+
+// =====================
+// LEGACY - Keep for backward compatibility during migration
+// =====================
+export const cims = pgTable("cims", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  businessName: text("business_name").notNull(),
+  industry: text("industry").notNull(),
+  description: text("description"),
+  questionnaireData: jsonb("questionnaire_data"),
+  extractedInfo: jsonb("extracted_info"),
+  status: text("status").notNull().default("draft"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertCimSchema = createInsertSchema(cims).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertCim = z.infer<typeof insertCimSchema>;
+export type Cim = typeof cims.$inferSelect;
+
+// =====================
+// ZOD SCHEMAS FOR VALIDATION
+// =====================
+export const conversationMessageSchema = z.object({
+  role: z.enum(["ai", "user"]),
+  content: z.string(),
+  timestamp: z.string(),
+});
+
+export const extractedInfoSchema = z.object({
+  // Overview & Reputation
+  businessName: z.string().optional(),
+  industry: z.string().optional(),
+  naicsCode: z.string().optional(),
+  entityType: z.string().optional(),
+  brandIdentity: z.string().optional(),
+  missionStatement: z.string().optional(),
+  coreValues: z.string().optional(),
+  companyHistory: z.string().optional(),
+  yearsOperating: z.string().optional(),
+  ownershipHistory: z.string().optional(),
+  industryPerception: z.string().optional(),
+  customerPerception: z.string().optional(),
+  accolades: z.string().optional(),
+  
+  // Strengths
+  competitiveAdvantage: z.string().optional(),
+  uniqueSellingProposition: z.string().optional(),
+  strengths: z.string().optional(),
+  
+  // Growth Potential
+  growthOpportunities: z.string().optional(),
+  expansionPlans: z.string().optional(),
+  
+  // Target Market
+  targetMarket: z.string().optional(),
+  primaryMarket: z.string().optional(),
+  secondaryMarket: z.string().optional(),
+  b2bBreakdown: z.string().optional(),
+  customerDemographics: z.string().optional(),
+  
+  // Permits & Licenses
+  permitsLicenses: z.string().optional(),
+  complianceRequirements: z.string().optional(),
+  
+  // Seasonality
+  seasonality: z.string().optional(),
+  peakPeriods: z.string().optional(),
+  slowPeriods: z.string().optional(),
+  
+  // Revenue & Financials
+  revenueStreams: z.string().optional(),
+  keyProducts: z.string().optional(),
+  customerConcentration: z.string().optional(),
+  annualRevenue: z.string().optional(),
+  revenueGrowth: z.string().optional(),
+  operatingMargins: z.string().optional(),
+  
+  // Real Estate
+  leaseDetails: z.string().optional(),
+  propertyInfo: z.string().optional(),
+  realEstateIncluded: z.string().optional(),
+  
+  // Employees
+  employees: z.string().optional(),
+  employeeStructure: z.string().optional(),
+  keyEmployees: z.string().optional(),
+  ownerInvolvement: z.string().optional(),
+  
+  // Operations
+  suppliers: z.string().optional(),
+  supplyChain: z.string().optional(),
+  technologySystems: z.string().optional(),
+  operationalSystems: z.string().optional(),
+  
+  // Buyer Profile & Transition
+  idealBuyer: z.string().optional(),
+  trainingSupport: z.string().optional(),
+  transitionPlan: z.string().optional(),
+  
+  // Sale Details
+  reasonForSale: z.string().optional(),
+  askingPrice: z.string().optional(),
+  saleType: z.string().optional(),
+  assetsIncluded: z.string().optional(),
+  inventory: z.string().optional(),
+  workingCapital: z.string().optional(),
+  debt: z.string().optional(),
+  
+  // Additional
+  website: z.string().optional(),
+  locations: z.string().optional(),
+  customerBase: z.string().optional(),
+  marketingChannels: z.string().optional(),
+  assets: z.string().optional(),
+  managementTeam: z.string().optional(),
+});
+
+export type ConversationMessage = z.infer<typeof conversationMessageSchema>;
+export type ExtractedInfo = z.infer<typeof extractedInfoSchema>;
+
+// CIM Section keys for content generation
+export const CIM_SECTIONS = [
+  { key: "overview", title: "Overview & Reputation", order: 1 },
+  { key: "strengths", title: "Strengths", order: 2 },
+  { key: "growth_potential", title: "Growth Potential & Opportunities", order: 3 },
+  { key: "target_market", title: "Target Market", order: 4 },
+  { key: "permits_licenses", title: "Permits & Licenses", order: 5 },
+  { key: "seasonality", title: "Seasonality", order: 6 },
+  { key: "revenue_sources", title: "Major Business Lines & Sources of Revenue", order: 7 },
+  { key: "real_estate", title: "Real Estate & Property", order: 8 },
+  { key: "employees", title: "Employee Overview", order: 9 },
+  { key: "operations", title: "Operations & Systems", order: 10 },
+  { key: "buyer_profile", title: "Buyer Profile", order: 11 },
+  { key: "training_support", title: "Training & Support", order: 12 },
+  { key: "reason_for_sale", title: "Reason for Sale", order: 13 },
+  { key: "financials", title: "Financial Summary", order: 14 },
+  { key: "asking_price", title: "Asking Price & Deal Terms", order: 15 },
+] as const;
+
+export type CimSectionKey = typeof CIM_SECTIONS[number]["key"];
