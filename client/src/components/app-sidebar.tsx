@@ -1,6 +1,5 @@
 import { FileText, Home, Settings, BarChart3, HelpCircle, Building2 } from "lucide-react";
 import { Link, useLocation } from "wouter";
-import cimpleLogo from "@assets/CIMPLE_Logo_full_stacked_1773847868992.png";
 import {
   Sidebar,
   SidebarContent,
@@ -76,11 +75,9 @@ export function AppSidebar({ userType = "broker" }: { userType?: "broker" | "sel
     <Sidebar>
       <SidebarHeader className="p-5 border-b border-sidebar-border">
         <Link href="/" className="flex items-center gap-3 hover:opacity-80 transition-opacity">
-          <img
-            src={cimpleLogo}
-            alt="Cimple"
-            className="h-8 w-8 object-contain"
-          />
+          <div className="h-8 w-8 rounded-md bg-primary flex items-center justify-center">
+            <span className="text-primary-foreground font-bold text-sm">C</span>
+          </div>
           <div>
             <p className="text-xs text-muted-foreground uppercase tracking-widest font-medium">
               {userType === "broker" ? "Broker Portal" : "Seller Portal"}
@@ -120,7 +117,9 @@ export function AppSidebar({ userType = "broker" }: { userType?: "broker" | "sel
 
       <SidebarFooter className="p-4 border-t border-sidebar-border">
         <div className="flex items-center gap-2">
-          <img src={cimpleLogo} alt="Cimple" className="h-5 w-5 object-contain opacity-40" />
+          <div className="h-5 w-5 rounded bg-muted-foreground/20 flex items-center justify-center">
+            <span className="text-muted-foreground font-bold text-xs">C</span>
+          </div>
           <p className="text-xs text-muted-foreground">cimple &copy; {new Date().getFullYear()}</p>
         </div>
       </SidebarFooter>
