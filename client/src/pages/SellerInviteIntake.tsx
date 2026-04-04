@@ -517,8 +517,8 @@ export default function SellerInviteIntake() {
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back
                   </Button>
-                  <Button 
-                    className="flex-1" 
+                  <Button
+                    className="flex-1 bg-teal text-teal-foreground hover:bg-teal/90"
                     onClick={goNext}
                     disabled={saveQuestionnaireMutation.isPending}
                     data-testid="button-next"

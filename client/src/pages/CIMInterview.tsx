@@ -112,7 +112,7 @@ export default function CIMInterview() {
             Back
           </button>
           <span className="text-muted-foreground/30">·</span>
-          <span className="text-sm font-medium truncate">{deal?.businessName ?? "AI Interview"}</span>
+          <span className="text-sm font-semibold truncate">{deal?.businessName ?? "AI Interview"}</span>
           {industryContext.identified && (
             <>
               <span className="text-muted-foreground/30">·</span>

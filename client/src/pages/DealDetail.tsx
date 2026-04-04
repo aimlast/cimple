@@ -10,11 +10,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deal, Task, Document as DocType } from "@shared/schema";
+import { CIM_SECTIONS } from "@shared/schema";
 import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
   Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe,
-  Pencil, RefreshCw, X, Check
+  Pencil, RefreshCw, X, Check, Wand2
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════
@@ -77,14 +78,7 @@ const DOC_CATEGORIES = [
   { value: "other",      label: "Other" },
 ];
 
-const CIM_SECTIONS = [
-  { key: "executiveSummary",         title: "Executive Summary" },
-  { key: "businessDescription",      title: "Business Description" },
-  { key: "marketAnalysis",           title: "Market Analysis" },
-  { key: "financialOverview",        title: "Financial Overview" },
-  { key: "operations",               title: "Operations" },
-  { key: "growthOpportunities",      title: "Growth Opportunities" },
-];
+// CIM_SECTIONS imported from @shared/schema — authoritative 15-section list with correct snake_case keys
 
 /* ══════════════════════════════════════════════
    LEFT RAIL — Phase timeline nav
@@ -114,10 +108,12 @@ function PhaseNav({
     <div className="flex flex-col h-full overflow-y-auto scrollbar-thin">
       {/* Deal identity */}
       <div className="px-4 py-4 border-b border-border">
-        <p className="text-xs font-semibold text-foreground truncate">{deal.businessName}</p>
-        <p className="text-2xs text-muted-foreground mt-0.5 truncate">{deal.industry || "No industry set"}</p>
+        <p className="text-sm font-semibold text-foreground truncate leading-snug">{deal.businessName}</p>
+        {deal.industry && (
+          <p className="text-2xs text-muted-foreground mt-1 truncate">{deal.industry}</p>
+        )}
         {deal.isLive && (
-          <span className="inline-flex items-center gap-1 mt-2 text-2xs font-medium text-success px-1.5 py-0.5 bg-success-muted rounded">
+          <span className="inline-flex items-center gap-1 mt-2 text-2xs font-medium text-success px-1.5 py-0.5 bg-success/10 rounded-full">
             <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
           </span>
         )}
@@ -316,7 +312,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-base font-semibold">Phase 1 — Info Collection</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Phase 1 — Info Collection</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
           Complete these steps before beginning the AI-powered intake.
         </p>
@@ -440,7 +436,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-base font-semibold">Phase 2 — Platform Intake</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Phase 2 — Platform Intake</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
           The seller completes onboarding, then the AI conducts the interview.
         </p>
@@ -640,7 +636,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     return (
       <div className="space-y-4">
         <div>
-          <h2 className="text-base font-semibold">Phase 3 — Content Creation</h2>
+          <h2 className="text-lg font-semibold tracking-tight">Phase 3 — Content Creation</h2>
           <p className="text-sm text-muted-foreground mt-0.5">The AI drafts all CIM sections from the collected data.</p>
         </div>
 
@@ -693,7 +689,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold">CIM Content</h2>
+          <h2 className="text-lg font-semibold tracking-tight">CIM Content</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             {populatedCount}/{CIM_SECTIONS.length} sections drafted · Edit any section inline
           </p>
@@ -801,6 +797,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 }
 
 function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
+  const [, navigate] = useLocation();
   const publish = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("PATCH", `/api/deals/${dealId}`, { isLive: true });
@@ -814,9 +811,19 @@ function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base font-semibold">Phase 4 — Design & Finalization</h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Final design pass and publication.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Phase 4 — Design & Finalization</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Final design pass and publication.</p>
+        </div>
+        <Button
+          size="sm"
+          className="shrink-0 bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+          onClick={() => navigate(`/deal/${dealId}/design`)}
+        >
+          <Wand2 className="h-3.5 w-3.5" />
+          Open CIM Designer
+        </Button>
       </div>
       <div className="grid gap-3">
         {[
@@ -1140,8 +1147,8 @@ export default function DealDetail() {
   return (
     <div className="flex h-full overflow-hidden">
 
-      {/* ── Left rail — 200px ── */}
-      <div className="w-[200px] shrink-0 border-r border-border bg-card overflow-hidden flex flex-col">
+      {/* ── Left rail — 220px ── */}
+      <div className="w-[220px] shrink-0 border-r border-border bg-card overflow-hidden flex flex-col">
         {/* Back */}
         <button
           onClick={() => setLocation("/")}
@@ -1165,19 +1172,26 @@ export default function DealDetail() {
       {/* ── Center — main work area ── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Mini header */}
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-border shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium truncate">{deal.businessName}</span>
-            <span className="text-2xs text-muted-foreground shrink-0">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-sm font-semibold truncate">{deal.businessName}</span>
+            <span className="shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-teal/10 text-teal">
               {PHASES.find(p => p.key === deal.phase)?.short ?? "—"}
             </span>
+            {deal.isLive && (
+              <span className="shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
+                Live
+              </span>
+            )}
           </div>
           <button
             onClick={() => setRightOpen(!rightOpen)}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            className={`flex items-center gap-1.5 text-xs transition-colors shrink-0 ${
+              rightOpen ? "text-teal" : "text-muted-foreground hover:text-foreground"
+            }`}
           >
             {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-            <span className="hidden sm:inline">{rightOpen ? "Hide" : "Show"} Panel</span>
+            <span className="hidden sm:inline text-xs">{rightOpen ? "Hide" : "Panel"}</span>
           </button>
         </div>
 

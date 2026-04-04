@@ -1,39 +1,45 @@
-import { useState, useEffect, useRef } from "react";
+/**
+ * BuyerViewRoom
+ *
+ * Buyer-facing CIM viewer. Renders all CimSections in sequence via
+ * CimSectionRenderer. Tracks analytics: section enter/exit, heat map,
+ * scroll depth — batched and flushed every 8 seconds.
+ *
+ * Falls back to legacy cimContent text if no AI sections exist yet.
+ */
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useParams } from "wouter";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Skeleton } from "@/components/ui/skeleton";
+import { Textarea } from "@/components/ui/textarea";
 import {
-  Building,
-  FileText,
-  Clock,
-  Lock,
-  AlertCircle,
-  ChevronRight,
-  ChevronDown,
-  Download,
-  Eye,
-  HelpCircle
+  Building, Clock, Lock, AlertCircle, FileText,
+  HelpCircle, ChevronDown, Send, CheckCircle2,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import type { Deal, BuyerAccess } from "@shared/schema";
+import { useQuery, useMutation } from "@tanstack/react-query";
+import type { Deal, BuyerAccess, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
+import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
+import { buildBranding } from "@/components/cim/CimBrandingContext";
 
 interface ViewData {
   access: BuyerAccess;
   deal: Deal;
+  sections: CimSection[];
+  publishedQuestions: BuyerQuestion[];
+  branding: BrandingSettings | null;
 }
 
+// ── Watermark ──────────────────────────────────────────────────────────────
 function Watermark({ email }: { email: string }) {
   return (
-    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-5">
+    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-[0.04]">
       <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-24 -rotate-45">
-        {Array.from({ length: 20 }).map((_, i) => (
-          <span key={i} className="text-2xl font-bold text-foreground whitespace-nowrap">
+        {Array.from({ length: 24 }).map((_, i) => (
+          <span key={i} className="text-xl font-bold text-foreground whitespace-nowrap select-none">
             {email}
           </span>
         ))}
@@ -42,15 +48,161 @@ function Watermark({ email }: { email: string }) {
   );
 }
 
+// ── NDA Gate ───────────────────────────────────────────────────────────────
+function NdaGate({ deal, token, onAccepted }: { deal: Deal; token: string; onAccepted: () => void }) {
+  const [signing, setSigning] = useState(false);
+
+  const sign = async () => {
+    setSigning(true);
+    try {
+      await fetch(`/api/view/${token}/sign-nda`, { method: "POST" });
+    } finally {
+      setSigning(false);
+      onAccepted();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 bg-background flex items-center justify-center p-6">
+      <div className="max-w-lg w-full border border-border rounded-xl p-8 shadow-lg space-y-5 bg-card">
+        <div className="flex items-center gap-3">
+          <div className="h-10 w-10 rounded-lg bg-teal/10 flex items-center justify-center">
+            <Lock className="h-5 w-5 text-teal" />
+          </div>
+          <div>
+            <h2 className="font-semibold text-base">Non-Disclosure Agreement</h2>
+            <p className="text-xs text-muted-foreground">{deal.businessName} — Confidential Information Memorandum</p>
+          </div>
+        </div>
+        <Separator />
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          By proceeding, you agree to keep all information contained in this Confidential
+          Information Memorandum strictly confidential. You agree not to disclose, reproduce, or
+          use this information except for the purpose of evaluating this business opportunity.
+          This agreement is legally binding.
+        </p>
+        <Button
+          className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
+          onClick={sign}
+          disabled={signing}
+        >
+          {signing ? "Signing…" : "I agree — View the CIM"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ── Analytics hook ─────────────────────────────────────────────────────────
+function useAnalytics(dealId: string | undefined, accessId: string | undefined) {
+  const queueRef = useRef<object[]>([]);
+  const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const enqueue = useCallback((event: object) => {
+    queueRef.current.push(event);
+  }, []);
+
+  const flush = useCallback(async () => {
+    if (!dealId || queueRef.current.length === 0) return;
+    const batch = queueRef.current.splice(0);
+    try {
+      await fetch(`/api/deals/${dealId}/analytics/batch`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          events: batch.map(e => ({ ...e, buyerAccessId: accessId })),
+        }),
+      });
+    } catch {
+      // Non-blocking — analytics failure should never interrupt the viewer
+    }
+  }, [dealId, accessId]);
+
+  // Flush every 8 seconds + on unmount
+  useEffect(() => {
+    if (!dealId) return;
+    flushTimerRef.current = setInterval(flush, 8000);
+    return () => {
+      if (flushTimerRef.current) clearInterval(flushTimerRef.current);
+      flush();
+    };
+  }, [dealId, flush]);
+
+  // Section enter/exit via IntersectionObserver
+  const attachObserver = useCallback(() => {
+    const sectionEls = document.querySelectorAll("[data-track-section]");
+    if (!sectionEls.length) return;
+
+    const enterTimes: Record<string, number> = {};
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          const key = (entry.target as HTMLElement).dataset.trackSection!;
+          if (entry.isIntersecting) {
+            enterTimes[key] = Date.now();
+            enqueue({ eventType: "section_enter", sectionKey: key });
+          } else if (enterTimes[key]) {
+            const timeSpentSeconds = Math.round((Date.now() - enterTimes[key]) / 1000);
+            enqueue({ eventType: "section_exit", sectionKey: key, timeSpentSeconds });
+            delete enterTimes[key];
+          }
+        });
+      },
+      { threshold: 0.3 }
+    );
+
+    sectionEls.forEach(el => observer.observe(el));
+    return () => observer.disconnect();
+  }, [enqueue]);
+
+  // Heat map sampling — throttled to 200ms
+  const heatMapThrottle = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (heatMapThrottle.current) return;
+      heatMapThrottle.current = setTimeout(() => {
+        heatMapThrottle.current = null;
+      }, 200);
+      enqueue({
+        eventType: "heat_map_sample",
+        heatMapX: Math.round((e.clientX / window.innerWidth) * 100),
+        heatMapY: Math.round((e.clientY / window.innerHeight) * 100),
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+      });
+    };
+    window.addEventListener("mousemove", handler, { passive: true });
+    return () => window.removeEventListener("mousemove", handler);
+  }, [enqueue]);
+
+  // Scroll depth
+  const lastDepth = useRef(0);
+  useEffect(() => {
+    const handler = () => {
+      const doc = document.documentElement;
+      const depth = Math.round((window.scrollY / (doc.scrollHeight - doc.clientHeight)) * 100);
+      if (depth > lastDepth.current + 5) {
+        lastDepth.current = depth;
+        enqueue({ eventType: "scroll_depth", scrollDepthPercent: depth });
+      }
+    };
+    window.addEventListener("scroll", handler, { passive: true });
+    return () => window.removeEventListener("scroll", handler);
+  }, [enqueue]);
+
+  return { attachObserver, enqueue };
+}
+
+// ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
-  const [activeSection, setActiveSection] = useState<string>(CIM_SECTIONS[0].key);
-  const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
+  const [ndaAccepted, setNdaAccepted] = useState(false);
   const [timeOnPage, setTimeOnPage] = useState(0);
-  const startTimeRef = useRef<number>(Date.now());
-  const sectionStartRef = useRef<number>(Date.now());
-  const activeSectionRef = useRef<string>(CIM_SECTIONS[0].key);
-  const hasTrackedInitialView = useRef(false);
+  const startTimeRef = useRef(Date.now());
+  const [question, setQuestion] = useState("");
+  const [questionSubmitted, setQuestionSubmitted] = useState(false);
+  const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<ViewData>({
     queryKey: ["/api/view", token],
@@ -58,111 +210,61 @@ export default function BuyerViewRoom() {
     queryFn: async () => {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
-        const data = await res.json();
-        throw new Error(data.error || "Access denied");
+        const body = await res.json();
+        throw new Error(body.error || "Access denied");
       }
       return res.json();
     },
   });
 
-  const dealId = data?.deal?.id;
-  const { data: faqs = [] } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "faq"],
-    enabled: !!dealId,
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/faq`);
-      if (!res.ok) return [];
-      return res.json();
-    },
-  });
+  const { attachObserver, enqueue } = useAnalytics(data?.deal?.id, data?.access?.id);
 
-  useEffect(() => {
-    if (!token || hasTrackedInitialView.current) return;
-    hasTrackedInitialView.current = true;
-
-    fetch(`/api/buyer-access/${token}/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType: "view" }),
-    }).catch(console.error);
-
-    fetch(`/api/buyer-access/${token}/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType: "page_view", sectionKey: CIM_SECTIONS[0].key }),
-    }).catch(console.error);
-  }, [token]);
-
+  // Timer
   useEffect(() => {
     const interval = setInterval(() => {
       setTimeOnPage(Math.floor((Date.now() - startTimeRef.current) / 1000));
     }, 1000);
-
     return () => clearInterval(interval);
   }, []);
 
+  // Attach section observer once sections load
   useEffect(() => {
-    if (!token) return;
+    if (!data?.sections?.length) return;
+    // Small delay for DOM to settle after render
+    const timer = setTimeout(attachObserver, 500);
+    return () => clearTimeout(timer);
+  }, [data?.sections, attachObserver]);
 
-    const trackTimeInterval = setInterval(() => {
-      const elapsed = Math.floor((Date.now() - sectionStartRef.current) / 1000);
-      if (elapsed >= 30) {
-        fetch(`/api/buyer-access/${token}/events`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ 
-            eventType: "time_on_page",
-            sectionKey: activeSectionRef.current,
-            timeSpentSeconds: 30
-          }),
-        }).catch(console.error);
-        sectionStartRef.current = Date.now();
-      }
-    }, 30000);
+  // Track initial view
+  useEffect(() => {
+    if (!data?.deal?.id || !data?.access?.id) return;
+    enqueue({ eventType: "view" });
+  }, [data?.deal?.id, data?.access?.id, enqueue]);
 
-    return () => clearInterval(trackTimeInterval);
-  }, [token]);
-
-  const handleSectionChange = (sectionKey: string) => {
-    if (!token || sectionKey === activeSection) return;
-    
-    const elapsed = Math.floor((Date.now() - sectionStartRef.current) / 1000);
-    if (elapsed > 0) {
-      fetch(`/api/buyer-access/${token}/events`, {
+  const submitQuestion = useMutation({
+    mutationFn: async (q: string) => {
+      const res = await fetch(`/api/deals/${data!.deal.id}/buyer-questions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          eventType: "time_on_page",
-          sectionKey: activeSectionRef.current,
-          timeSpentSeconds: elapsed
-        }),
-      }).catch(console.error);
-    }
-    
-    sectionStartRef.current = Date.now();
-    activeSectionRef.current = sectionKey;
-    setActiveSection(sectionKey);
-    
-    fetch(`/api/buyer-access/${token}/events`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType: "page_view", sectionKey }),
-    }).catch(console.error);
-  };
+        body: JSON.stringify({ question: q, buyerAccessId: data!.access.id }),
+      });
+      if (!res.ok) throw new Error("Failed to submit");
+      return res.json();
+    },
+    onSuccess: () => {
+      setQuestion("");
+      setQuestionSubmitted(true);
+    },
+  });
 
-  const formatTime = (seconds: number): string => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins}:${secs.toString().padStart(2, "0")}`;
-  };
+  const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
+  // ── Loading / error states ────────────────────────────────────────────────
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-background p-6">
-        <div className="max-w-5xl mx-auto space-y-6">
-          <Skeleton className="h-12 w-64" />
-          <Skeleton className="h-[600px] w-full" />
-        </div>
+      <div className="min-h-screen bg-background p-8 space-y-4 max-w-4xl mx-auto">
+        <Skeleton className="h-12 w-48" />
+        <Skeleton className="h-[500px] w-full" />
       </div>
     );
   }
@@ -170,7 +272,7 @@ export default function BuyerViewRoom() {
   if (error || !data) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <div className="max-w-sm w-full text-center space-y-3">
+        <div className="max-w-sm text-center space-y-3">
           <AlertCircle className="h-8 w-8 mx-auto text-destructive/60" />
           <h2 className="text-lg font-semibold">Access denied</h2>
           <p className="text-sm text-muted-foreground">
@@ -182,19 +284,33 @@ export default function BuyerViewRoom() {
     );
   }
 
-  const { access, deal } = data;
-  const cimContent = deal.cimContent as Record<string, string> | null;
+  const { access, deal, sections = [], publishedQuestions = [], branding: brandingSettings } = data;
 
-  const availableSections = CIM_SECTIONS.filter(s => cimContent?.[s.key]);
+  // NDA gate
+  const needsNda = (access as any).ndaRequired && !(access as any).ndaSigned && !ndaAccepted;
+  if (needsNda) {
+    return <NdaGate deal={deal} token={token!} onAccepted={() => setNdaAccepted(true)} />;
+  }
+
+  const brandingCtx = buildBranding(brandingSettings, deal);
+
+  // Decide what to render: AI sections or legacy text fallback
+  const visibleSections = sections.filter(s => s.isVisible);
+  const hasAiSections = visibleSections.length > 0;
+
+  // Legacy fallback
+  const cimContent = deal.cimContent as Record<string, string> | null;
+  const legacySections = CIM_SECTIONS.filter(s => cimContent?.[s.key]);
 
   return (
     <div className="min-h-screen bg-background">
       {access.watermarkEnabled && <Watermark email={access.buyerEmail} />}
 
-      <header className="border-b border-border sticky top-0 bg-background/95 backdrop-blur-sm z-40">
-        <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+      {/* ── Sticky header ──────────────────────────────────────────────────── */}
+      <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-sm">
+        <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-md bg-teal flex items-center justify-center">
+            <div className="h-8 w-8 rounded-md bg-teal flex items-center justify-center shrink-0">
               <Building className="h-4 w-4 text-teal-foreground" />
             </div>
             <div>
@@ -205,11 +321,8 @@ export default function BuyerViewRoom() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            <div className="text-right">
-              <p className="text-[10px] text-muted-foreground">Viewing as</p>
-              <p className="text-xs font-medium">{access.buyerEmail}</p>
-            </div>
-            <span className="flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
+            <p className="text-xs text-muted-foreground hidden sm:block">{access.buyerEmail}</p>
+            <span className="flex items-center gap-1.5 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
               <Clock className="h-3 w-3" />
               {formatTime(timeOnPage)}
             </span>
@@ -217,180 +330,168 @@ export default function BuyerViewRoom() {
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-12 gap-8">
-          <div className="col-span-3">
-            <Card className="sticky top-24">
-              <CardHeader className="pb-2">
-                <CardTitle className="text-sm flex items-center gap-2">
-                  <FileText className="h-4 w-4" />
-                  Contents
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="p-0">
-                <ScrollArea className="h-[400px]">
-                  <div className="p-2 space-y-1">
-                    {availableSections.map((section, idx) => (
-                      <button
-                        key={section.key}
-                        onClick={() => handleSectionChange(section.key)}
-                        className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors flex items-center gap-2 ${
-                          activeSection === section.key
-                            ? "bg-teal/10 text-teal font-medium"
-                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
-                        }`}
-                        data-testid={`nav-section-${section.key}`}
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+        <div className="flex gap-8">
+
+          {/* ── Left TOC ────────────────────────────────────────────────────── */}
+          <aside className="hidden lg:block w-[200px] shrink-0">
+            <div className="sticky top-20">
+              <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground mb-2 px-1">Contents</p>
+              <nav className="space-y-0.5">
+                {hasAiSections
+                  ? visibleSections.map((s, idx) => (
+                      <a
+                        key={s.id}
+                        href={`#section-${s.id}`}
+                        className="flex items-start gap-1.5 px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors leading-snug"
                       >
-                        <span className="text-xs opacity-60">{idx + 1}.</span>
-                        {section.title}
+                        <span className="opacity-40 shrink-0 pt-px">{idx + 1}.</span>
+                        <span>{s.sectionTitle}</span>
+                      </a>
+                    ))
+                  : legacySections.map((s, idx) => (
+                      <a
+                        key={s.key}
+                        href={`#legacy-${s.key}`}
+                        className="flex items-start gap-1.5 px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors"
+                      >
+                        <span className="opacity-40 shrink-0">{idx + 1}.</span>
+                        <span>{s.title}</span>
+                      </a>
+                    ))
+                }
+              </nav>
+              <Separator className="my-3" />
+              <div className="px-1 space-y-1.5 text-xs">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Access</span>
+                  <Badge variant="outline" className="text-[9px] h-4 capitalize">{access.accessLevel}</Badge>
+                </div>
+                {access.canDownload === false && (
+                  <div className="flex items-center gap-1 text-muted-foreground/60">
+                    <Lock className="h-3 w-3" /> No downloads
+                  </div>
+                )}
+              </div>
+            </div>
+          </aside>
+
+          {/* ── Main CIM content ─────────────────────────────────────────────── */}
+          <main className="flex-1 min-w-0">
+            {hasAiSections ? (
+              <div className="space-y-8">
+                {visibleSections.map(section => (
+                  <div key={section.id} id={`section-${section.id}`}>
+                    <CimSectionRenderer
+                      section={section}
+                      branding={brandingCtx}
+                      brokerMode={false}
+                    />
+                  </div>
+                ))}
+              </div>
+            ) : legacySections.length > 0 ? (
+              // Legacy text fallback
+              <div className="space-y-10">
+                {legacySections.map(section => (
+                  <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key}>
+                    <h2 className="text-xl font-bold tracking-tight mb-4" style={{ color: brandingCtx.headingColor }}>
+                      {section.title}
+                    </h2>
+                    <div className="prose prose-sm max-w-none">
+                      <div dangerouslySetInnerHTML={{
+                        __html: (cimContent?.[section.key] || "").replace(/\n/g, "<br />"),
+                      }} />
+                    </div>
+                    <Separator className="mt-8" />
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="flex flex-col items-center justify-center py-24 text-center">
+                <FileText className="h-10 w-10 mb-4 opacity-20" />
+                <p className="text-sm font-medium">CIM not yet available</p>
+                <p className="text-xs text-muted-foreground mt-1">Check back soon — the broker is finalizing the document.</p>
+              </div>
+            )}
+
+            {/* ── Q&A Section ────────────────────────────────────────────── */}
+            <div className="mt-16 border-t border-border pt-10 space-y-6">
+              <div className="flex items-center gap-2">
+                <HelpCircle className="h-4 w-4 text-muted-foreground" />
+                <h3 className="font-semibold text-sm">Questions & Answers</h3>
+              </div>
+
+              {/* Published Q&As */}
+              {publishedQuestions.length > 0 && (
+                <div className="space-y-2">
+                  {publishedQuestions.map((q: any) => (
+                    <div key={q.id} className="border border-border rounded-lg overflow-hidden">
+                      <button
+                        className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors"
+                        onClick={() => setExpandedFaq(expandedFaq === q.id ? null : q.id)}
+                      >
+                        <span className="text-sm font-medium">{q.question}</span>
+                        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${expandedFaq === q.id ? "rotate-180" : ""}`} />
                       </button>
-                    ))}
+                      {expandedFaq === q.id && (
+                        <div className="px-4 pb-4 text-sm text-muted-foreground border-t border-border pt-3">
+                          {q.publishedAnswer || q.sellerApproved}
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+
+              {/* Ask a question */}
+              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
+                <p className="text-sm font-medium">Ask a question</p>
+                <p className="text-xs text-muted-foreground">
+                  Questions are reviewed by the broker and seller before being answered.
+                </p>
+                {questionSubmitted ? (
+                  <div className="flex items-center gap-2 text-sm text-teal">
+                    <CheckCircle2 className="h-4 w-4" />
+                    Question submitted — you'll be notified when it's answered.
                   </div>
-                </ScrollArea>
-              </CardContent>
-            </Card>
-
-            <Card className="mt-4">
-              <CardContent className="pt-4 space-y-2">
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Access Level</span>
-                  <Badge variant="outline" className="capitalize">{access.accessLevel}</Badge>
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">Downloads</span>
-                  {access.canDownload ? (
-                    <Badge variant="default">Allowed</Badge>
-                  ) : (
-                    <Badge variant="secondary" className="flex items-center gap-1">
-                      <Lock className="h-3 w-3" />
-                      Restricted
-                    </Badge>
-                  )}
-                </div>
-                <Separator />
-                <div className="flex items-center justify-between text-sm">
-                  <span className="text-muted-foreground">NDA Status</span>
-                  {access.ndaSigned ? (
-                    <Badge variant="default">Signed</Badge>
-                  ) : (
-                    <Badge variant="outline">Pending</Badge>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
-
-          <div className="col-span-9">
-            <Card>
-              <CardHeader>
-                <div className="flex items-center justify-between">
-                  <div>
-                    <CardTitle className="text-xl">
-                      {availableSections.find(s => s.key === activeSection)?.title || "Section"}
-                    </CardTitle>
-                    <CardDescription>
-                      {deal.industry} • {deal.businessName}
-                    </CardDescription>
+                ) : (
+                  <div className="flex gap-2">
+                    <Textarea
+                      placeholder="What would you like to know about this business?"
+                      value={question}
+                      onChange={e => setQuestion(e.target.value)}
+                      className="text-sm min-h-[80px] resize-none flex-1"
+                    />
+                    <Button
+                      size="sm"
+                      className="shrink-0 bg-teal text-teal-foreground hover:bg-teal/90 self-end"
+                      disabled={!question.trim() || submitQuestion.isPending}
+                      onClick={() => submitQuestion.mutate(question.trim())}
+                    >
+                      <Send className="h-3.5 w-3.5" />
+                    </Button>
                   </div>
-                  {access.canDownload && (
-                    <Button variant="outline" size="sm" data-testid="button-download-section">
-                      <Download className="h-4 w-4 mr-2" />
-                      Download
-                    </Button>
-                  )}
-                </div>
-              </CardHeader>
-              <CardContent>
-                <div 
-                  className="prose prose-sm max-w-none dark:prose-invert"
-                  data-testid={`content-${activeSection}`}
-                >
-                  {cimContent?.[activeSection] ? (
-                    <div dangerouslySetInnerHTML={{ 
-                      __html: cimContent[activeSection].replace(/\n/g, "<br />") 
-                    }} />
-                  ) : (
-                    <p className="text-muted-foreground italic">
-                      This section is not yet available.
-                    </p>
-                  )}
-                </div>
-
-                <div className="flex justify-between items-center mt-8 pt-6 border-t">
-                  {availableSections.findIndex(s => s.key === activeSection) > 0 && (
-                    <Button
-                      variant="outline"
-                      onClick={() => {
-                        const idx = availableSections.findIndex(s => s.key === activeSection);
-                        if (idx > 0) handleSectionChange(availableSections[idx - 1].key);
-                      }}
-                      data-testid="button-prev-section"
-                    >
-                      Previous Section
-                    </Button>
-                  )}
-                  <div className="flex-1" />
-                  {availableSections.findIndex(s => s.key === activeSection) < availableSections.length - 1 && (
-                    <Button
-                      onClick={() => {
-                        const idx = availableSections.findIndex(s => s.key === activeSection);
-                        if (idx < availableSections.length - 1) handleSectionChange(availableSections[idx + 1].key);
-                      }}
-                      className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
-                      data-testid="button-next-section"
-                    >
-                      Next Section
-                      <ChevronRight className="h-4 w-4" />
-                    </Button>
-                  )}
-                </div>
-              </CardContent>
-            </Card>
-          </div>
+                )}
+              </div>
+            </div>
+          </main>
         </div>
       </div>
 
-      {faqs.length > 0 && (
-        <div className="max-w-6xl mx-auto px-6 mt-8">
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <HelpCircle className="h-5 w-5" />
-                Frequently Asked Questions
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {faqs.map((faq: any) => (
-                <div key={faq.id} className="border rounded-lg">
-                  <button
-                    className="w-full text-left px-4 py-3 flex items-center justify-between gap-2"
-                    onClick={() => setExpandedFaq(expandedFaq === faq.id ? null : faq.id)}
-                    data-testid={`faq-toggle-${faq.id}`}
-                  >
-                    <span className="font-medium text-sm">{faq.question}</span>
-                    <ChevronDown className={`h-4 w-4 transition-transform flex-shrink-0 ${expandedFaq === faq.id ? 'rotate-180' : ''}`} />
-                  </button>
-                  {expandedFaq === faq.id && (
-                    <div className="px-4 pb-3 text-sm text-muted-foreground">
-                      {faq.answer}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      <footer className="border-t mt-12 py-6">
-        <div className="max-w-6xl mx-auto px-6 text-center text-sm text-muted-foreground">
-          <p>
+      {/* ── Footer ──────────────────────────────────────────────────────────── */}
+      <footer className="border-t border-border mt-16 py-8">
+        <div className="max-w-6xl mx-auto px-6 text-center space-y-1">
+          {brandingCtx.disclaimer && (
+            <p className="text-xs text-muted-foreground/70">{brandingCtx.disclaimer}</p>
+          )}
+          <p className="text-xs text-muted-foreground/50">
             This document is confidential and intended solely for the named recipient.
-          </p>
-          <p className="mt-1">
             Unauthorized distribution or reproduction is strictly prohibited.
           </p>
+          {brandingCtx.firmName && (
+            <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {brandingCtx.firmName}</p>
+          )}
         </div>
       </footer>
     </div>

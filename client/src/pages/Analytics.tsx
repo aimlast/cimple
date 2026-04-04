@@ -1,5 +1,15 @@
+/**
+ * Analytics — broker-facing engagement dashboard
+ *
+ * Tabs: Overview · Buyer Activity · Section Engagement · Heat Map · Drop-off
+ *
+ * All heavy aggregation is done server-side via /analytics/computed.
+ * recharts used for section bar chart and scroll-depth funnel.
+ */
 import { useState } from "react";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import {
+  Card, CardContent, CardHeader, CardTitle, CardDescription,
+} from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -7,21 +17,47 @@ import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Progress } from "@/components/ui/progress";
-import { 
-  Download, 
-  BarChart3, 
-  Eye, 
-  Clock, 
-  TrendingUp, 
-  Users,
-  FileText,
-  MousePointer,
-  Scroll,
-  Calendar,
-  Building
+import {
+  BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip,
+  ResponsiveContainer, Cell,
+} from "recharts";
+import {
+  Eye, Clock, TrendingUp, Users, FileText, MousePointer,
+  BarChart3, Calendar, Scroll, Building,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { Deal, BuyerAccess, AnalyticsEvent } from "@shared/schema";
+import type { Deal, BuyerAccess } from "@shared/schema";
+
+// ── Types ──────────────────────────────────────────────────────────────────
+interface SectionEngagement {
+  sectionKey: string;
+  avgSeconds: number;
+  totalSeconds: number;
+  viewerCount: number;
+}
+
+interface BuyerBreakdown extends BuyerAccess {
+  totalTimeSeconds: number;
+  sectionsViewedCount: number;
+  maxScrollDepth: number;
+  questionCount: number;
+}
+
+interface HeatGrid {
+  grid: number[][];
+  cols: number;
+  rows: number;
+  total: number;
+}
+
+interface ComputedAnalytics {
+  sectionEngagement: SectionEngagement[];
+  buyerBreakdown: BuyerBreakdown[];
+  heatGrid: HeatGrid;
+  scrollDistribution: { pct: number; count: number }[];
+  viewsByDay: Record<string, number>;
+  totalEvents: number;
+}
 
 interface AnalyticsSummary {
   totalViews: number;
@@ -31,18 +67,87 @@ interface AnalyticsSummary {
   recentViews: { date: string; count: number }[];
 }
 
-function formatTime(seconds: number): string {
-  if (!seconds || seconds === 0) return "0s";
-  if (seconds < 60) return `${Math.round(seconds)}s`;
-  if (seconds < 3600) return `${Math.round(seconds / 60)}m`;
-  return `${Math.round(seconds / 3600)}h ${Math.round((seconds % 3600) / 60)}m`;
+// ── Helpers ────────────────────────────────────────────────────────────────
+function fmt(s: number): string {
+  if (!s) return "0s";
+  if (s < 60) return `${Math.round(s)}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
-function formatDate(date: string | Date | null): string {
-  if (!date) return "Never";
-  return new Date(date).toLocaleDateString();
+function fmtDate(d: string | Date | null): string {
+  if (!d) return "Never";
+  return new Date(d).toLocaleDateString();
 }
 
+const TEAL = "hsl(162 65% 38%)";
+
+// ── Heat map cell ──────────────────────────────────────────────────────────
+function HeatMapViz({ heatGrid }: { heatGrid: HeatGrid }) {
+  const { grid, cols, rows, total } = heatGrid;
+  const maxCell = Math.max(...grid.flat(), 1);
+
+  if (total === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center text-muted-foreground">
+        <MousePointer className="h-8 w-8 mb-3 opacity-30" />
+        <p className="text-sm">No heat map data yet</p>
+        <p className="text-xs mt-1">Mouse tracking will appear here after buyers view the CIM</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-xs text-muted-foreground">{total.toLocaleString()} mouse events recorded</p>
+      <div
+        className="w-full rounded-lg overflow-hidden border border-border"
+        style={{ aspectRatio: `${cols / rows}` }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: `repeat(${cols}, 1fr)`,
+            gridTemplateRows: `repeat(${rows}, 1fr)`,
+            height: "100%",
+          }}
+        >
+          {grid.map((row, ri) =>
+            row.map((count, ci) => {
+              const intensity = count / maxCell;
+              return (
+                <div
+                  key={`${ri}-${ci}`}
+                  title={`${count} events`}
+                  style={{
+                    backgroundColor:
+                      intensity === 0
+                        ? "transparent"
+                        : `hsla(162, 65%, 38%, ${0.08 + intensity * 0.92})`,
+                  }}
+                />
+              );
+            })
+          )}
+        </div>
+      </div>
+      <div className="flex items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex gap-0.5 items-center">
+          {[0.1, 0.3, 0.5, 0.7, 0.9].map(v => (
+            <div
+              key={v}
+              className="h-3 w-5 rounded-sm"
+              style={{ backgroundColor: `hsla(162, 65%, 38%, ${v})` }}
+            />
+          ))}
+        </div>
+        <span>Low → High engagement</span>
+      </div>
+    </div>
+  );
+}
+
+// ── Main ───────────────────────────────────────────────────────────────────
 export default function Analytics() {
   const [selectedDealId, setSelectedDealId] = useState<string>("all");
 
@@ -53,31 +158,21 @@ export default function Analytics() {
   const { data: summary, isLoading: summaryLoading } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary", selectedDealId],
     queryFn: async () => {
-      const url = selectedDealId === "all" 
-        ? "/api/analytics/summary" 
+      const url = selectedDealId === "all"
+        ? "/api/analytics/summary"
         : `/api/analytics/summary?dealId=${selectedDealId}`;
       const res = await fetch(url);
-      if (!res.ok) throw new Error("Failed to fetch analytics");
+      if (!res.ok) throw new Error();
       return res.json();
     },
   });
 
-  const { data: buyers } = useQuery<BuyerAccess[]>({
-    queryKey: ["/api/deals", selectedDealId, "buyers"],
+  const { data: computed, isLoading: computedLoading } = useQuery<ComputedAnalytics>({
+    queryKey: ["/api/deals", selectedDealId, "analytics/computed"],
     enabled: selectedDealId !== "all",
     queryFn: async () => {
-      const res = await fetch(`/api/deals/${selectedDealId}/buyers`);
-      if (!res.ok) throw new Error("Failed to fetch buyers");
-      return res.json();
-    },
-  });
-
-  const { data: events } = useQuery<AnalyticsEvent[]>({
-    queryKey: ["/api/deals", selectedDealId, "analytics"],
-    enabled: selectedDealId !== "all",
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${selectedDealId}/analytics`);
-      if (!res.ok) throw new Error("Failed to fetch events");
+      const res = await fetch(`/api/deals/${selectedDealId}/analytics/computed`);
+      if (!res.ok) throw new Error();
       return res.json();
     },
   });
@@ -85,407 +180,345 @@ export default function Analytics() {
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
   const isLoading = dealsLoading || summaryLoading;
 
-  const pageViewsBySection = events?.reduce((acc, e) => {
-    if (e.eventType === "page_view" && e.sectionKey) {
-      acc[e.sectionKey] = (acc[e.sectionKey] || 0) + 1;
-    }
-    return acc;
-  }, {} as Record<string, number>) || {};
-
-  const totalPageViews = Object.values(pageViewsBySection).reduce((a, b) => a + b, 0);
+  // Recent views chart data from summary
+  const recentViews = summary?.recentViews ?? [];
+  const maxViews = Math.max(...recentViews.map(d => d.count), 1);
 
   return (
-    <div className="p-6 max-w-7xl mx-auto space-y-6">
-      <div className="flex items-center justify-between flex-wrap gap-4">
+    <div className="px-6 pt-6 pb-12 max-w-7xl mx-auto space-y-6">
+
+      {/* ── Header ────────────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
-          <h1 className="text-2xl font-semibold">Analytics</h1>
-          <p className="text-sm text-muted-foreground mt-1">
-            Track engagement and performance across shared CIMs
+          <h1 className="text-xl font-semibold tracking-tight">Analytics</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Buyer engagement across shared CIMs
           </p>
         </div>
         <div className="flex items-center gap-3">
           <Select value={selectedDealId} onValueChange={setSelectedDealId}>
-            <SelectTrigger className="w-[250px]" data-testid="select-cim">
+            <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Select a CIM" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All CIMs</SelectItem>
-              {deals?.map((deal) => (
-                <SelectItem key={deal.id} value={deal.id}>
-                  {deal.businessName || `Deal ${deal.id.slice(0, 8)}`}
+              {deals?.map(d => (
+                <SelectItem key={d.id} value={d.id}>
+                  {d.businessName || `Deal ${d.id.slice(0, 8)}`}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
-          <Button variant="outline" data-testid="button-export-analytics">
-            <Download className="h-4 w-4 mr-2" />
-            Export CSV
-          </Button>
         </div>
       </div>
 
-      {selectedDealId !== "all" && selectedDeal && (
-        <Card className="bg-muted/30">
-          <CardContent className="py-4">
-            <div className="flex items-center gap-4">
-              <Building className="h-8 w-8 text-muted-foreground" />
-              <div>
-                <h2 className="font-semibold">{selectedDeal.businessName || "Untitled Deal"}</h2>
-                <p className="text-sm text-muted-foreground">
-                  {selectedDeal.industry || "Industry not specified"} • Phase: {selectedDeal.phase || "Unknown"}
-                </p>
-              </div>
-              <Badge variant="outline" className="ml-auto">
-                {buyers?.length || 0} Buyers Invited
-              </Badge>
+      {/* Deal banner */}
+      {selectedDeal && (
+        <Card className="bg-muted/20">
+          <CardContent className="py-3 flex items-center gap-3">
+            <Building className="h-7 w-7 text-muted-foreground/40 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="font-semibold text-sm truncate">{selectedDeal.businessName}</p>
+              <p className="text-xs text-muted-foreground">
+                {selectedDeal.industry || "Unknown industry"} · {selectedDeal.phase?.replace(/_/g, " ")}
+              </p>
             </div>
+            <Badge variant="outline" className="shrink-0 text-xs">
+              {computed?.buyerBreakdown.length ?? 0} buyers
+            </Badge>
           </CardContent>
         </Card>
       )}
 
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Views</CardTitle>
-            <Eye className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-bold" data-testid="stat-total-views">
-                {summary?.totalViews || 0}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">
-              {selectedDealId === "all" ? "Across all CIMs" : "For this CIM"}
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Unique Buyers</CardTitle>
-            <Users className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-bold" data-testid="stat-unique-buyers">
-                {summary?.uniqueBuyers || 0}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">Who viewed documents</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg. Time Spent</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-bold" data-testid="stat-avg-time">
-                {formatTime(summary?.avgTimeSpent || 0)}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">Per buyer session</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Total Time</CardTitle>
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            {isLoading ? (
-              <Skeleton className="h-8 w-16" />
-            ) : (
-              <div className="text-2xl font-bold" data-testid="stat-total-time">
-                {formatTime(summary?.totalTimeSpent || 0)}
-              </div>
-            )}
-            <p className="text-xs text-muted-foreground">All sessions combined</p>
-          </CardContent>
-        </Card>
+      {/* ── Stat cards ────────────────────────────────────────────────────── */}
+      <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+        {(
+          [
+            { label: "Total Views", value: summary?.totalViews ?? 0, icon: Eye, sub: "Document opens" },
+            { label: "Unique Buyers", value: summary?.uniqueBuyers ?? 0, icon: Users, sub: "Who viewed the CIM" },
+            { label: "Avg. Time", value: fmt(summary?.avgTimeSpent ?? 0), icon: Clock, sub: "Per session" },
+            { label: "Total Time", value: fmt(summary?.totalTimeSpent ?? 0), icon: TrendingUp, sub: "All sessions" },
+          ] as const
+        ).map(({ label, value, icon: Icon, sub }) => (
+          <Card key={label}>
+            <CardHeader className="flex flex-row items-center justify-between pb-1 pt-4 px-4">
+              <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
+              <Icon className="h-4 w-4 text-muted-foreground/40" />
+            </CardHeader>
+            <CardContent className="px-4 pb-4">
+              {isLoading
+                ? <Skeleton className="h-8 w-20" />
+                : <div className="text-3xl font-bold tabular-nums leading-none">{value}</div>
+              }
+              <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+            </CardContent>
+          </Card>
+        ))}
       </div>
 
+      {/* ── Tabs ─────────────────────────────────────────────────────────── */}
       <Tabs defaultValue="overview" className="w-full">
-        <TabsList>
-          <TabsTrigger value="overview" data-testid="tab-overview">Overview</TabsTrigger>
-          <TabsTrigger value="buyers" data-testid="tab-buyers">Buyer Activity</TabsTrigger>
-          <TabsTrigger value="sections" data-testid="tab-sections">Section Engagement</TabsTrigger>
-          <TabsTrigger value="timeline" data-testid="tab-timeline">Timeline</TabsTrigger>
+        <TabsList className="flex-wrap h-auto gap-1">
+          <TabsTrigger value="overview">Overview</TabsTrigger>
+          <TabsTrigger value="buyers" disabled={selectedDealId === "all"}>
+            Buyer Activity
+          </TabsTrigger>
+          <TabsTrigger value="sections" disabled={selectedDealId === "all"}>
+            Section Engagement
+          </TabsTrigger>
+          <TabsTrigger value="heatmap" disabled={selectedDealId === "all"}>
+            Heat Map
+          </TabsTrigger>
+          <TabsTrigger value="dropoff" disabled={selectedDealId === "all"}>
+            Drop-off
+          </TabsTrigger>
         </TabsList>
 
+        {/* ── Overview ──────────────────────────────────────────────────────── */}
         <TabsContent value="overview" className="mt-6 space-y-6">
-          {summary?.recentViews && summary.recentViews.length > 0 ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>Recent Activity</CardTitle>
-                <CardDescription>Views in the last 30 days</CardDescription>
-              </CardHeader>
-              <CardContent>
-                <div className="flex items-end gap-1 h-32">
-                  {summary.recentViews.map((day, i) => {
-                    const maxCount = Math.max(...summary.recentViews.map(d => d.count));
-                    const height = maxCount > 0 ? (day.count / maxCount) * 100 : 0;
-                    return (
-                      <div
-                        key={i}
-                        className="flex-1 bg-primary/20 hover:bg-primary/40 transition-colors rounded-t"
-                        style={{ height: `${Math.max(height, 4)}%` }}
-                        title={`${day.date}: ${day.count} views`}
-                        data-testid={`chart-bar-${i}`}
-                      />
-                    );
-                  })}
+          <Card>
+            <CardHeader className="pb-2">
+              <CardTitle className="text-sm">Views — Last 30 days</CardTitle>
+            </CardHeader>
+            <CardContent>
+              {recentViews.length > 0 ? (
+                <>
+                  <div className="flex items-end gap-0.5 h-28">
+                    {recentViews.map((day, i) => {
+                      const h = (day.count / maxViews) * 100;
+                      return (
+                        <div
+                          key={i}
+                          className="flex-1 bg-teal/20 hover:bg-teal/40 transition-colors rounded-t cursor-default"
+                          style={{ height: `${Math.max(h, 3)}%` }}
+                          title={`${day.date}: ${day.count} views`}
+                        />
+                      );
+                    })}
+                  </div>
+                  <div className="flex justify-between mt-1.5 text-[10px] text-muted-foreground">
+                    <span>{recentViews[0]?.date}</span>
+                    <span>{recentViews[recentViews.length - 1]?.date}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="h-28 flex items-center justify-center text-center">
+                  <div>
+                    <BarChart3 className="h-7 w-7 mx-auto mb-2 opacity-20" />
+                    <p className="text-xs text-muted-foreground">No views yet</p>
+                  </div>
                 </div>
-                <div className="flex justify-between mt-2 text-xs text-muted-foreground">
-                  <span>{summary.recentViews[0]?.date}</span>
-                  <span>{summary.recentViews[summary.recentViews.length - 1]?.date}</span>
-                </div>
-              </CardContent>
-            </Card>
-          ) : (
-            <Card>
-              <CardContent className="py-12 text-center">
-                <BarChart3 className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <p className="text-muted-foreground">No activity data yet</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Share CIMs with buyers to start tracking engagement
-                </p>
-              </CardContent>
-            </Card>
+              )}
+            </CardContent>
+          </Card>
+
+          {selectedDealId === "all" && (
+            <p className="text-xs text-muted-foreground text-center">
+              Select a specific deal to see section engagement, heat map, and per-buyer breakdown.
+            </p>
           )}
-
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <MousePointer className="h-4 w-4" />
-                  Engagement Metrics
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Document Opens</span>
-                  <span className="font-medium">{summary?.totalViews || 0}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Avg. Session Duration</span>
-                  <span className="font-medium">{formatTime(summary?.avgTimeSpent || 0)}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Active Buyers</span>
-                  <span className="font-medium">{summary?.uniqueBuyers || 0}</span>
-                </div>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Scroll className="h-4 w-4" />
-                  Content Engagement
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Sections Viewed</span>
-                  <span className="font-medium">{Object.keys(pageViewsBySection).length}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Total Page Views</span>
-                  <span className="font-medium">{totalPageViews}</span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="text-sm">Download Attempts</span>
-                  <span className="font-medium">
-                    {events?.filter(e => e.eventType === "download_attempt").length || 0}
-                  </span>
-                </div>
-              </CardContent>
-            </Card>
-          </div>
         </TabsContent>
 
+        {/* ── Buyer Activity ────────────────────────────────────────────────── */}
         <TabsContent value="buyers" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Buyer Activity</CardTitle>
-              <CardDescription>
-                {selectedDealId === "all" 
-                  ? "Select a specific CIM to view buyer details" 
-                  : "Track individual buyer engagement"}
-              </CardDescription>
+              <CardTitle className="text-sm">Per-buyer breakdown</CardTitle>
+              <CardDescription>Time spent, sections reached, scroll depth, questions asked</CardDescription>
             </CardHeader>
-            <CardContent>
-              {selectedDealId === "all" ? (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>Select a specific CIM to view buyer activity</p>
+            <CardContent className="p-0">
+              {computedLoading ? (
+                <div className="p-6 space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+              ) : (computed?.buyerBreakdown.length ?? 0) === 0 ? (
+                <div className="py-12 text-center">
+                  <Users className="h-8 w-8 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm text-muted-foreground">No buyers have viewed this CIM yet</p>
                 </div>
-              ) : buyers && buyers.length > 0 ? (
+              ) : (
                 <Table>
                   <TableHeader>
                     <TableRow>
                       <TableHead>Buyer</TableHead>
-                      <TableHead>Company</TableHead>
-                      <TableHead>Views</TableHead>
-                      <TableHead>Last Viewed</TableHead>
+                      <TableHead className="text-right">Time</TableHead>
+                      <TableHead className="text-right">Sections</TableHead>
+                      <TableHead className="text-right">Scroll</TableHead>
+                      <TableHead className="text-right">Questions</TableHead>
+                      <TableHead>Last Seen</TableHead>
                       <TableHead>Status</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {buyers.map((buyer) => (
-                      <TableRow key={buyer.id} data-testid={`buyer-row-${buyer.id}`}>
+                    {computed?.buyerBreakdown.map(b => (
+                      <TableRow key={b.id}>
                         <TableCell>
-                          <div>
-                            <p className="font-medium">{buyer.buyerName || "Unknown"}</p>
-                            <p className="text-xs text-muted-foreground">{buyer.buyerEmail}</p>
-                          </div>
+                          <p className="text-sm font-medium">{b.buyerName || "Unknown"}</p>
+                          <p className="text-xs text-muted-foreground">{b.buyerEmail}</p>
                         </TableCell>
-                        <TableCell>{buyer.buyerCompany || "-"}</TableCell>
-                        <TableCell>{buyer.viewCount || 0}</TableCell>
-                        <TableCell>{formatDate(buyer.lastAccessedAt)}</TableCell>
+                        <TableCell className="text-right tabular-nums text-sm">
+                          {fmt(b.totalTimeSeconds)}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {b.sectionsViewedCount}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {b.maxScrollDepth > 0 ? `${b.maxScrollDepth}%` : "—"}
+                        </TableCell>
+                        <TableCell className="text-right text-sm">
+                          {b.questionCount > 0 ? b.questionCount : "—"}
+                        </TableCell>
+                        <TableCell className="text-sm text-muted-foreground">
+                          {fmtDate(b.lastAccessedAt)}
+                        </TableCell>
                         <TableCell>
-                          {buyer.revokedAt ? (
-                            <Badge variant="destructive">Revoked</Badge>
-                          ) : buyer.expiresAt && new Date(buyer.expiresAt) < new Date() ? (
-                            <Badge variant="secondary">Expired</Badge>
+                          {b.revokedAt ? (
+                            <Badge variant="destructive" className="text-[10px]">Revoked</Badge>
+                          ) : b.expiresAt && new Date(b.expiresAt) < new Date() ? (
+                            <Badge variant="secondary" className="text-[10px]">Expired</Badge>
                           ) : (
-                            <Badge variant="default">Active</Badge>
+                            <Badge variant="outline" className="text-[10px]">Active</Badge>
                           )}
                         </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
-              ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Users className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No buyers have been invited yet</p>
-                </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
+        {/* ── Section Engagement ────────────────────────────────────────────── */}
         <TabsContent value="sections" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Section Engagement</CardTitle>
-              <CardDescription>See which sections buyers spend the most time on</CardDescription>
+              <CardTitle className="text-sm">Section engagement — avg time spent</CardTitle>
+              <CardDescription>Based on section_exit events. Longer bars = buyers read more carefully.</CardDescription>
             </CardHeader>
             <CardContent>
-              {Object.keys(pageViewsBySection).length > 0 ? (
-                <div className="space-y-4">
-                  {Object.entries(pageViewsBySection)
-                    .sort(([, a], [, b]) => b - a)
-                    .map(([section, count]) => (
-                      <div key={section} className="space-y-2">
-                        <div className="flex items-center justify-between text-sm">
-                          <span className="capitalize">{section.replace(/_/g, " ")}</span>
-                          <span className="text-muted-foreground">{count} views</span>
-                        </div>
-                        <Progress 
-                          value={totalPageViews > 0 ? (count / totalPageViews) * 100 : 0} 
-                          data-testid={`progress-${section}`}
-                        />
-                      </div>
-                    ))}
+              {computedLoading ? (
+                <div className="space-y-3">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
+              ) : (computed?.sectionEngagement.length ?? 0) === 0 ? (
+                <div className="py-12 text-center">
+                  <FileText className="h-8 w-8 mx-auto mb-3 opacity-20" />
+                  <p className="text-sm text-muted-foreground">No section data yet</p>
+                  <p className="text-xs text-muted-foreground mt-1">Section times appear after buyers view the CIM</p>
                 </div>
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <FileText className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No section data available yet</p>
-                  <p className="text-xs mt-1">Section tracking requires buyer document views</p>
+                <div className="space-y-3">
+                  {computed?.sectionEngagement.map((s, i) => {
+                    const max = computed.sectionEngagement[0]?.avgSeconds ?? 1;
+                    const pct = (s.avgSeconds / max) * 100;
+                    return (
+                      <div key={s.sectionKey}>
+                        <div className="flex items-center justify-between text-xs mb-1">
+                          <span className="font-medium truncate max-w-[60%]">
+                            {s.sectionKey.replace(/([A-Z])/g, " $1").replace(/_/g, " ")}
+                          </span>
+                          <span className="text-muted-foreground tabular-nums">
+                            {fmt(s.avgSeconds)} avg · {s.viewerCount} viewers
+                          </span>
+                        </div>
+                        <div className="h-2 bg-muted rounded-full overflow-hidden">
+                          <div
+                            className="h-full rounded-full transition-all"
+                            style={{ width: `${pct}%`, backgroundColor: TEAL, opacity: 0.7 + 0.3 * (1 - i / computed.sectionEngagement.length) }}
+                          />
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="timeline" className="mt-6">
+        {/* ── Heat Map ──────────────────────────────────────────────────────── */}
+        <TabsContent value="heatmap" className="mt-6">
           <Card>
             <CardHeader>
-              <CardTitle>Activity Timeline</CardTitle>
-              <CardDescription>Recent events and interactions</CardDescription>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <MousePointer className="h-4 w-4" />
+                Mouse heat map
+              </CardTitle>
+              <CardDescription>
+                Aggregate of where buyers move their cursor. Bright areas = high attention.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              {events && events.length > 0 ? (
-                <div className="space-y-4">
-                  {events.slice(0, 20).map((event, i) => (
-                    <div key={event.id || i} className="flex items-start gap-4 pb-4 border-b last:border-0">
-                      <div className="p-2 rounded-full bg-muted">
-                        {event.eventType === "view" && <Eye className="h-4 w-4" />}
-                        {event.eventType === "page_view" && <FileText className="h-4 w-4" />}
-                        {event.eventType === "scroll" && <Scroll className="h-4 w-4" />}
-                        {event.eventType === "time_on_page" && <Clock className="h-4 w-4" />}
-                        {event.eventType === "download_attempt" && <Download className="h-4 w-4" />}
-                      </div>
-                      <div className="flex-1">
-                        <p className="text-sm font-medium capitalize">
-                          {event.eventType.replace(/_/g, " ")}
-                        </p>
-                        <p className="text-xs text-muted-foreground">
-                          {event.sectionKey && `Section: ${event.sectionKey}`}
-                          {event.timeSpentSeconds && ` • ${formatTime(event.timeSpentSeconds)}`}
-                          {event.scrollDepthPercent && ` • ${event.scrollDepthPercent}% scrolled`}
-                        </p>
-                      </div>
-                      <div className="text-xs text-muted-foreground">
-                        <Calendar className="h-3 w-3 inline mr-1" />
-                        {formatDate(event.createdAt)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
+              {computedLoading
+                ? <Skeleton className="w-full h-48" />
+                : <HeatMapViz heatGrid={computed?.heatGrid ?? { grid: [], cols: 20, rows: 10, total: 0 }} />
+              }
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Drop-off ──────────────────────────────────────────────────────── */}
+        <TabsContent value="dropoff" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Scroll className="h-4 w-4" />
+                Scroll depth distribution
+              </CardTitle>
+              <CardDescription>
+                How far into the CIM buyers scroll. Drop-off is where bars get shorter.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {computedLoading ? (
+                <Skeleton className="w-full h-48" />
+              ) : (computed?.scrollDistribution.some(d => d.count > 0)) ? (
+                <ResponsiveContainer width="100%" height={200}>
+                  <BarChart data={computed!.scrollDistribution} barSize={20}>
+                    <XAxis
+                      dataKey="pct"
+                      tickFormatter={v => `${v}%`}
+                      tick={{ fontSize: 11 }}
+                      axisLine={false}
+                      tickLine={false}
+                    />
+                    <YAxis hide />
+                    <RTooltip
+                      formatter={(v: number) => [v, "sessions"]}
+                      labelFormatter={l => `At ${l}% scroll`}
+                      contentStyle={{ fontSize: 12, borderRadius: 6 }}
+                    />
+                    <Bar dataKey="count" radius={[3, 3, 0, 0]}>
+                      {computed!.scrollDistribution.map((entry, i) => (
+                        <Cell
+                          key={i}
+                          fill={TEAL}
+                          opacity={0.3 + 0.7 * (1 - i / computed!.scrollDistribution.length)}
+                        />
+                      ))}
+                    </Bar>
+                  </BarChart>
+                </ResponsiveContainer>
               ) : (
-                <div className="text-center py-8 text-muted-foreground">
-                  <Calendar className="h-12 w-12 mx-auto mb-4 opacity-50" />
-                  <p>No events recorded yet</p>
-                  <p className="text-xs mt-1">Activity will appear here when buyers view CIMs</p>
+                <div className="h-48 flex flex-col items-center justify-center text-center">
+                  <Scroll className="h-8 w-8 mb-3 opacity-20" />
+                  <p className="text-sm text-muted-foreground">No scroll data yet</p>
                 </div>
               )}
+              {computed && computed.scrollDistribution.some(d => d.count > 0) && (() => {
+                const total = computed.scrollDistribution.reduce((s, d) => s + d.count, 0);
+                const reached75 = computed.scrollDistribution
+                  .filter(d => d.pct >= 75)
+                  .reduce((s, d) => s + d.count, 0);
+                return (
+                  <p className="text-xs text-muted-foreground mt-3">
+                    {total > 0
+                      ? `${Math.round((reached75 / total) * 100)}% of sessions reached 75% scroll depth`
+                      : ""}
+                  </p>
+                );
+              })()}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>CRM Integrations</CardTitle>
-          <CardDescription>
-            Connect your CRM to automatically sync engagement data
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid gap-4 md:grid-cols-3">
-            <Button variant="outline" disabled className="justify-start" data-testid="button-hubspot">
-              <BarChart3 className="h-4 w-4 mr-2" />
-              HubSpot
-            </Button>
-            <Button variant="outline" disabled className="justify-start" data-testid="button-salesforce">
-              <BarChart3 className="h-4 w-4 mr-2" />
-              Salesforce
-            </Button>
-            <Button variant="outline" disabled className="justify-start" data-testid="button-pipedrive">
-              <BarChart3 className="h-4 w-4 mr-2" />
-              Pipedrive
-            </Button>
-          </div>
-          <p className="text-xs text-muted-foreground mt-4">
-            Integration setup coming soon
-          </p>
-        </CardContent>
-      </Card>
     </div>
   );
 }

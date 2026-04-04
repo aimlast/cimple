@@ -7,6 +7,8 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory } from "./interview";
+import { generateCimLayout } from "./cim/layout-engine.js";
+import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -652,8 +654,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       await storage.updateBuyerAccess(access.id, {
         lastAccessedAt: new Date(),
       });
-      
-      res.json({ access, deal });
+
+      // Enrich with sections, branding, published Q&A
+      const [sections, publishedQuestions, branding] = await Promise.all([
+        storage.getCimSectionsByDeal(deal.id),
+        storage.getPublishedQuestions(deal.id),
+        deal.brokerId ? storage.getBrandingByBroker(deal.brokerId) : Promise.resolve(undefined),
+      ]);
+
+      res.json({ access, deal, sections, publishedQuestions, branding: branding ?? null });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -1061,7 +1070,373 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to get analytics" });
     }
   });
+
+  // Computed analytics — aggregated server-side so we don't ship raw events to client
+  app.get("/api/deals/:dealId/analytics/computed", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const [events, buyers, questions] = await Promise.all([
+        storage.getAnalyticsByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+        storage.getQuestionsByDeal(dealId),
+      ]);
+
+      // ── Section engagement ──────────────────────────────────────────────
+      // Sum timeSpentSeconds from section_exit events, grouped by sectionKey
+      const sectionTime: Record<string, { totalSeconds: number; count: number; title: string }> = {};
+      for (const e of events) {
+        if (e.eventType === "section_exit" && e.sectionKey && e.timeSpentSeconds) {
+          if (!sectionTime[e.sectionKey]) sectionTime[e.sectionKey] = { totalSeconds: 0, count: 0, title: e.sectionKey };
+          sectionTime[e.sectionKey].totalSeconds += e.timeSpentSeconds;
+          sectionTime[e.sectionKey].count += 1;
+        }
+      }
+      const sectionEngagement = Object.entries(sectionTime)
+        .map(([key, v]) => ({
+          sectionKey: key,
+          avgSeconds: Math.round(v.totalSeconds / v.count),
+          totalSeconds: v.totalSeconds,
+          viewerCount: v.count,
+        }))
+        .sort((a, b) => b.avgSeconds - a.avgSeconds);
+
+      // ── Per-buyer stats ─────────────────────────────────────────────────
+      const buyerStats: Record<string, { totalSeconds: number; sectionsEntered: Set<string>; maxScrollDepth: number; questionCount: number }> = {};
+      for (const e of events) {
+        const bid = e.buyerAccessId;
+        if (!bid) continue;
+        if (!buyerStats[bid]) buyerStats[bid] = { totalSeconds: 0, sectionsEntered: new Set(), maxScrollDepth: 0, questionCount: 0 };
+        if (e.eventType === "section_exit" && e.timeSpentSeconds) buyerStats[bid].totalSeconds += e.timeSpentSeconds;
+        if (e.eventType === "section_enter" && e.sectionKey) buyerStats[bid].sectionsEntered.add(e.sectionKey);
+        if (e.eventType === "scroll_depth" && (e.scrollDepthPercent ?? 0) > buyerStats[bid].maxScrollDepth) {
+          buyerStats[bid].maxScrollDepth = e.scrollDepthPercent ?? 0;
+        }
+      }
+      for (const q of questions) {
+        const bid = q.buyerAccessId;
+        if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
+      }
+      const buyerBreakdown = buyers.map(b => ({
+        ...b,
+        totalTimeSeconds: buyerStats[b.id]?.totalSeconds ?? 0,
+        sectionsViewedCount: buyerStats[b.id]?.sectionsEntered.size ?? 0,
+        maxScrollDepth: buyerStats[b.id]?.maxScrollDepth ?? 0,
+        questionCount: buyerStats[b.id]?.questionCount ?? 0,
+      }));
+
+      // ── Heat map grid (20×10) ───────────────────────────────────────────
+      const COLS = 20; const ROWS = 10;
+      const grid: number[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      let heatTotal = 0;
+      for (const e of events) {
+        if (e.eventType === "heat_map_sample" && e.heatMapX != null && e.heatMapY != null) {
+          const col = Math.min(Math.floor((e.heatMapX / 100) * COLS), COLS - 1);
+          const row = Math.min(Math.floor((e.heatMapY / 100) * ROWS), ROWS - 1);
+          grid[row][col]++;
+          heatTotal++;
+        }
+      }
+
+      // ── Scroll depth distribution (buckets of 10%) ──────────────────────
+      const scrollBuckets: Record<number, number> = {};
+      for (let i = 0; i <= 100; i += 10) scrollBuckets[i] = 0;
+      for (const e of events) {
+        if (e.eventType === "scroll_depth" && e.scrollDepthPercent != null) {
+          const bucket = Math.floor(e.scrollDepthPercent / 10) * 10;
+          scrollBuckets[bucket] = (scrollBuckets[bucket] ?? 0) + 1;
+        }
+      }
+      const scrollDistribution = Object.entries(scrollBuckets)
+        .map(([pct, count]) => ({ pct: Number(pct), count }))
+        .sort((a, b) => a.pct - b.pct);
+
+      // ── Recent activity (last 30 days) ──────────────────────────────────
+      const viewsByDay: Record<string, number> = {};
+      for (const e of events) {
+        if (e.eventType === "view" && e.createdAt) {
+          const day = new Date(e.createdAt).toISOString().slice(0, 10);
+          viewsByDay[day] = (viewsByDay[day] ?? 0) + 1;
+        }
+      }
+
+      res.json({
+        sectionEngagement,
+        buyerBreakdown,
+        heatGrid: { grid, cols: COLS, rows: ROWS, total: heatTotal },
+        scrollDistribution,
+        viewsByDay,
+        totalEvents: events.length,
+      });
+    } catch (error: any) {
+      console.error("Error computing analytics:", error);
+      res.status(500).json({ error: "Failed to compute analytics" });
+    }
+  });
   
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — CIM LAYOUT ENGINE
+  // ════════════════════════════════════════════════════════════
+
+  // Generate bespoke CIM layout for a deal
+  app.post("/api/deals/:dealId/generate-layout", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const [branding, insights] = await Promise.all([
+        storage.getBrandingByBroker(deal.brokerId),
+        deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
+      ]);
+
+      const document = await generateCimLayout({
+        dealId,
+        businessName: deal.businessName,
+        industry: deal.industry,
+        askingPrice: deal.askingPrice,
+        extractedInfo: (deal.extractedInfo as Record<string, unknown>) || {},
+        scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
+        questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
+        operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
+        employeeChart: (deal.employeeChart as unknown[]) || null,
+        cimContent: (deal.cimContent as Record<string, string>) || null,
+        brokerBranding: branding ? {
+          companyName: branding.companyName || undefined,
+          primaryColor: branding.primaryColor,
+        } : null,
+        engagementInsights: insights.length > 0 ? insights.map(i => ({
+          sectionType: i.sectionType,
+          layoutType: i.layoutType,
+          avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
+          sampleCount: i.sampleCount ?? 0,
+        })) : null,
+      });
+
+      // Persist sections to DB — delete old layout sections first, then insert new ones
+      await storage.deleteCimSectionsForDeal(dealId);
+      for (const section of document.sections) {
+        await storage.createCimSection({
+          dealId,
+          sectionKey: section.sectionKey,
+          sectionTitle: section.sectionTitle,
+          order: section.order,
+          layoutType: section.layoutType,
+          layoutData: section.layoutData as any,
+          aiLayoutReasoning: section.aiLayoutReasoning,
+          tags: section.tags as any,
+          aiDraftContent: section.aiDraftContent || null,
+          isVisible: section.isVisible,
+          brokerApproved: false,
+        });
+      }
+
+      // Mark layout as generated on the deal
+      await storage.updateDeal(dealId, {
+        cimLayoutGeneratedAt: new Date(),
+        cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
+      } as any);
+
+      res.json({ sectionCount: document.sections.length, generatedAt: document.generatedAt });
+    } catch (error: any) {
+      console.error("Layout generation error:", error);
+      res.status(500).json({ error: error.message || "Layout generation failed" });
+    }
+  });
+
+  // Get all CIM layout sections for a deal
+  app.get("/api/deals/:dealId/layout", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      res.json(sections);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get layout" });
+    }
+  });
+
+  // Update a single CIM section (broker edit, format override, approve)
+  app.patch("/api/cim-sections/:sectionId", async (req, res) => {
+    try {
+      const { sectionId } = req.params;
+      const { brokerEditedContent, layoutOverride, layoutData, isVisible, brokerApproved, sectionTitle } = req.body;
+
+      const updated = await storage.updateCimSection(sectionId, {
+        ...(brokerEditedContent !== undefined && { brokerEditedContent }),
+        ...(layoutOverride !== undefined && { layoutOverride }),
+        ...(layoutData !== undefined && { layoutData }),
+        ...(isVisible !== undefined && { isVisible }),
+        ...(brokerApproved !== undefined && { brokerApproved }),
+        ...(sectionTitle !== undefined && { sectionTitle }),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update section" });
+    }
+  });
+
+  // Reorder sections
+  app.post("/api/deals/:dealId/layout/reorder", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { order }: { order: Array<{ id: string; order: number }> } = req.body;
+      for (const item of order) {
+        await storage.updateCimSection(item.id, { order: item.order } as any);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to reorder sections" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — BUYER Q&A
+  // ════════════════════════════════════════════════════════════
+
+  // Buyer submits a question
+  app.post("/api/deals/:dealId/questions", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { question, buyerAccessId } = req.body;
+      if (!question?.trim()) return res.status(400).json({ error: "Question required" });
+
+      // Check if AI can answer from existing CIM sections
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      const cimText = sections.map(s => `${s.sectionTitle}: ${s.brokerEditedContent || s.aiDraftContent || ""}`).join("\n\n");
+
+      const aiResponse = await anthropic.messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 500,
+        system: `You are answering buyer questions about a business for sale based strictly on the CIM document provided.
+If the answer is clearly in the CIM, answer concisely and professionally.
+If the answer is NOT in the CIM, respond with exactly: ESCALATE
+Do not speculate or add information not in the CIM.`,
+        messages: [{ role: "user", content: `CIM CONTENT:\n${cimText}\n\nBUYER QUESTION: ${question}` }],
+      });
+
+      const aiAnswer = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null;
+      const needsEscalation = !aiAnswer || aiAnswer.trim() === "ESCALATE";
+
+      const saved = await storage.createBuyerQuestion({
+        dealId,
+        buyerAccessId: buyerAccessId || null,
+        question,
+        aiAnswer: needsEscalation ? null : aiAnswer,
+        status: needsEscalation ? "pending_broker" : "published",
+        isPublished: !needsEscalation,
+        publishedAnswer: needsEscalation ? null : aiAnswer,
+        addedToKnowledgeBase: false,
+      } as any);
+
+      res.json({
+        id: saved.id,
+        answer: needsEscalation ? null : aiAnswer,
+        status: needsEscalation ? "pending_broker" : "published",
+        message: needsEscalation
+          ? "Great question — your broker will respond shortly."
+          : aiAnswer,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to process question" });
+    }
+  });
+
+  // Get published Q&A for a deal (buyer-facing)
+  app.get("/api/deals/:dealId/questions/published", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const questions = await storage.getPublishedQuestions(dealId);
+      res.json(questions);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get questions" });
+    }
+  });
+
+  // Get all questions for broker dashboard
+  app.get("/api/deals/:dealId/questions", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const questions = await storage.getQuestionsByDeal(dealId);
+      res.json(questions);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get questions" });
+    }
+  });
+
+  // Broker drafts/updates answer
+  app.patch("/api/questions/:questionId", async (req, res) => {
+    try {
+      const { questionId } = req.params;
+      const { brokerDraft, status, publishedAnswer, isPublished } = req.body;
+
+      const updated = await storage.updateBuyerQuestion(questionId, {
+        ...(brokerDraft !== undefined && { brokerDraft }),
+        ...(status !== undefined && { status }),
+        ...(publishedAnswer !== undefined && { publishedAnswer }),
+        ...(isPublished !== undefined && { isPublished }),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update question" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — ANALYTICS (heat map + section events)
+  // ════════════════════════════════════════════════════════════
+
+  // Batch analytics events (client sends batches every 5s)
+  app.post("/api/deals/:dealId/analytics/batch", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { events } = req.body as {
+        events: Array<{
+          eventType: string;
+          sectionKey?: string;
+          timeSpentSeconds?: number;
+          scrollDepthPercent?: number;
+          heatMapX?: number;
+          heatMapY?: number;
+          viewportWidth?: number;
+          viewportHeight?: number;
+          elementId?: string;
+          buyerAccessId?: string;
+          eventData?: Record<string, unknown>;
+        }>;
+      };
+
+      const ip = req.ip || req.socket.remoteAddress || null;
+      const ua = req.headers["user-agent"] || null;
+
+      for (const event of events) {
+        await storage.createAnalyticsEvent({
+          dealId,
+          buyerAccessId: event.buyerAccessId || null,
+          eventType: event.eventType,
+          sectionKey: event.sectionKey || null,
+          timeSpentSeconds: event.timeSpentSeconds || null,
+          scrollDepthPercent: event.scrollDepthPercent || null,
+          heatMapX: event.heatMapX ?? null,
+          heatMapY: event.heatMapY ?? null,
+          viewportWidth: event.viewportWidth ?? null,
+          viewportHeight: event.viewportHeight ?? null,
+          elementId: event.elementId || null,
+          eventData: event.eventData || null,
+          ipAddress: ip,
+          userAgent: ua,
+        } as any);
+      }
+
+      res.json({ received: events.length });
+
+      // Fire-and-forget: aggregate section_exit events into engagementInsights
+      aggregateEngagementInsights(dealId, events, storage).catch(err =>
+        console.warn("[learning-loop] aggregation error:", err)
+      );
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to record events" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

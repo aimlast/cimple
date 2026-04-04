@@ -78,7 +78,15 @@ export const deals = pgTable("deals", {
   cimDesignData: jsonb("cim_design_data"),
   designApprovedByBroker: boolean("design_approved_broker").default(false),
   designApprovedBySeller: boolean("design_approved_seller").default(false),
-  
+
+  // CIM layout manifest (bespoke, AI-generated)
+  cimLayoutGeneratedAt: timestamp("cim_layout_generated_at"),
+  cimLayoutVersion: integer("cim_layout_version").default(0),
+
+  // Buyer access settings
+  ndaRequired: boolean("nda_required").default(true),
+  watermarkText: text("watermark_text"), // custom watermark; defaults to buyer name
+
   // Final CIM
   finalCimUrl: text("final_cim_url"),
   teaserUrl: text("teaser_url"),
@@ -218,25 +226,85 @@ export type InterviewSession = typeof interviewSessions.$inferSelect;
 export const cimSections = pgTable("cim_sections", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
-  
-  sectionKey: text("section_key").notNull(), // overview, strengths, growth_potential, target_market, etc.
+
+  sectionKey: text("section_key").notNull(), // AI-generated, bespoke per deal
   sectionTitle: text("section_title").notNull(),
   order: integer("order").notNull(),
-  
+
+  // Layout engine output
+  layoutType: text("layout_type").notNull().default("prose_highlight"),
+  layoutData: jsonb("layout_data"),           // structured data for the renderer
+  aiLayoutReasoning: text("ai_layout_reasoning"), // why this layout was chosen
+  tags: jsonb("tags").default(sql`'[]'::jsonb`),
+
   // Content
   aiDraftContent: text("ai_draft_content"),
   brokerEditedContent: text("broker_edited_content"),
   sellerEditedContent: text("seller_edited_content"),
   finalContent: text("final_content"),
-  
-  // Approval workflow
+
+  // Approval & visibility
   brokerApproved: boolean("broker_approved").default(false),
   sellerApproved: boolean("seller_approved").default(false),
-  
-  // Visual elements
+  isVisible: boolean("is_visible").default(true),
+  layoutOverride: text("layout_override"), // set if broker changed AI's layout choice
+
+  // Legacy visual elements
   charts: jsonb("charts"),
   images: jsonb("images"),
-  
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// =====================
+// ENGAGEMENT INSIGHTS - Aggregated learning data (learning loop)
+// =====================
+export const engagementInsights = pgTable("engagement_insights", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Dimensions
+  industry: text("industry").notNull(),
+  sectionType: text("section_type").notNull(),   // generic label, e.g. "revenue_breakdown"
+  layoutType: text("layout_type").notNull(),
+
+  // Aggregate metrics
+  avgTimeSpentSeconds: integer("avg_time_spent_seconds").default(0),
+  avgScrollDepthPercent: integer("avg_scroll_depth_percent").default(0),
+  completionRate: integer("completion_rate").default(0),   // % (0–100)
+  returnVisitRate: integer("return_visit_rate").default(0), // % (0–100)
+  sampleCount: integer("sample_count").default(0),
+
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+// =====================
+// BUYER QUESTIONS - Q&A chatbot per deal
+// =====================
+export const buyerQuestions = pgTable("buyer_questions", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id"),
+
+  question: text("question").notNull(),
+
+  // Answer chain: AI → broker → seller approval
+  aiAnswer: text("ai_answer"),
+  brokerDraft: text("broker_draft"),
+  sellerApproved: boolean("seller_approved").default(false),
+  sellerApprovedAt: timestamp("seller_approved_at"),
+  publishedAnswer: text("published_answer"), // final answer shown to buyer
+
+  // Workflow status
+  status: text("status").notNull().default("pending_ai"),
+  // pending_ai | pending_broker | pending_seller | published | declined
+
+  // Knowledge base
+  addedToKnowledgeBase: boolean("added_to_knowledge_base").default(false),
+  similarQuestionIds: jsonb("similar_question_ids").default(sql`'[]'::jsonb`),
+
+  isPublished: boolean("is_published").default(false),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -249,6 +317,23 @@ export const insertCimSectionSchema = createInsertSchema(cimSections).omit({
 
 export type InsertCimSection = z.infer<typeof insertCimSectionSchema>;
 export type CimSection = typeof cimSections.$inferSelect;
+
+export const insertEngagementInsightSchema = createInsertSchema(engagementInsights).omit({
+  id: true,
+  updatedAt: true,
+});
+
+export type InsertEngagementInsight = z.infer<typeof insertEngagementInsightSchema>;
+export type EngagementInsight = typeof engagementInsights.$inferSelect;
+
+export const insertBuyerQuestionSchema = createInsertSchema(buyerQuestions).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertBuyerQuestion = z.infer<typeof insertBuyerQuestionSchema>;
+export type BuyerQuestion = typeof buyerQuestions.$inferSelect;
 
 // =====================
 // SELLER INVITES - Invite tokens for sellers
@@ -301,10 +386,15 @@ export const buyerAccess = pgTable("buyer_access", {
   
   // Analytics tracking
   viewCount: integer("view_count").default(0),
-  
+  totalTimeSeconds: integer("total_time_seconds").default(0),
+
+  // NDA tracking
+  ndaVersion: text("nda_version"),
+  ndaSignedIp: text("nda_signed_ip"),
+
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
-  
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
   lastAccessedAt: timestamp("last_accessed_at"),
 });
@@ -325,17 +415,28 @@ export const analyticsEvents = pgTable("analytics_events", {
   dealId: varchar("deal_id").notNull(),
   buyerAccessId: varchar("buyer_access_id"),
   
-  eventType: text("event_type").notNull(), // view, page_view, scroll, download_attempt, time_on_page
+  eventType: text("event_type").notNull(),
+  // view, page_view, section_enter, section_exit, scroll, heat_map_sample,
+  // element_hover, download_attempt, time_on_page, nda_signed, question_asked
   eventData: jsonb("event_data"),
-  
+
   // Page/section tracking
   pageNumber: integer("page_number"),
   sectionKey: text("section_key"),
-  
+
   // Time tracking
   timeSpentSeconds: integer("time_spent_seconds"),
   scrollDepthPercent: integer("scroll_depth_percent"),
-  
+
+  // Heat map (normalised 0–100 within viewport)
+  heatMapX: integer("heat_map_x"),
+  heatMapY: integer("heat_map_y"),
+  viewportWidth: integer("viewport_width"),
+  viewportHeight: integer("viewport_height"),
+
+  // Element-level tracking
+  elementId: text("element_id"), // data-track-id on CIM elements
+
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
   
