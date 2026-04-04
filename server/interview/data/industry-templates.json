@@ -1,0 +1,290 @@
+{
+  "_comment": "Structured industry taxonomy mirroring server/interview/prompts/industry-intelligence.md. Each industry key maps to the corresponding section in that file. Used by the knowledge base assembler to identify which industry section to load once the business type is known. The agent uses this taxonomy for matching — the detailed questions and context live in the .md file.",
+  "industries": {
+    "construction": {
+      "label": "Building, Construction & Property Management",
+      "mdSection": "1",
+      "subIndustries": [
+        "General Contracting",
+        "Specialty Trades (Electrical, Plumbing, HVAC, Roofing, Painting, Flooring, Concrete, Masonry)",
+        "Civil / Municipal / Infrastructure",
+        "Property Management",
+        "Restoration and Remediation",
+        "Landscaping and Snow Management",
+        "Engineering Consultancy (Building / Structural / Mechanical)"
+      ],
+      "subSections": {
+        "general_contracting": "1A",
+        "civil_infrastructure": "1B",
+        "property_management": "1C",
+        "landscaping_snow": "1D",
+        "restoration_remediation": "1E"
+      }
+    },
+    "healthcare": {
+      "label": "Healthcare",
+      "mdSection": "2",
+      "subIndustries": [
+        "Medical Clinics (Family Practice, Walk-In, Specialist)",
+        "Dental Practices",
+        "Mental Health and Therapy Clinics",
+        "Allied Health (Physiotherapy, Chiropractic, Optometry, Audiology)",
+        "Med Spa and Aesthetics Clinics",
+        "Specialty Clinics (Cosmetic Surgery, Men's Health, Women's Health, Weight Loss)",
+        "Diagnostic Labs and Imaging",
+        "Home Care and Personal Support Services",
+        "Pharmacy"
+      ],
+      "subSections": {
+        "medical_clinic": "2A",
+        "dental": "2B",
+        "mental_health": "2C",
+        "allied_health": "2D",
+        "med_spa": "2E",
+        "diagnostic_labs": "2F",
+        "home_care": "2G",
+        "pharmacy": "2H"
+      }
+    },
+    "restaurant_food_service": {
+      "label": "Restaurants & Food Service",
+      "mdSection": "3",
+      "subIndustries": [
+        "Full-Service Restaurants (Independent)",
+        "Quick Service / Fast Casual",
+        "Bars and Nightclubs",
+        "Franchise Restaurants",
+        "Catering",
+        "Food Manufacturing / CPG",
+        "Ghost Kitchens / Delivery-Only",
+        "Bakeries and Specialty Food Retail"
+      ],
+      "subSections": {
+        "restaurant_qsr": "3A",
+        "bar_nightclub": "3B",
+        "franchise_restaurant": "3C",
+        "food_manufacturing_cpg": "3D",
+        "catering": "3E"
+      }
+    },
+    "manufacturing": {
+      "label": "Manufacturing",
+      "mdSection": "4",
+      "subIndustries": [
+        "General Manufacturing",
+        "Metal Fabrication",
+        "Plastics and Composites",
+        "Food and Beverage Manufacturing",
+        "Industrial / B2B Manufacturing",
+        "Custom / Job Shop Manufacturing",
+        "Woodworking and Millwork",
+        "Printing and Packaging"
+      ],
+      "subSections": {
+        "general_manufacturing": "4A",
+        "metal_fabrication": "4B",
+        "woodworking_millwork": "4C",
+        "printing_packaging": "4D"
+      }
+    },
+    "professional_services": {
+      "label": "Professional Services Firms",
+      "mdSection": "5",
+      "subIndustries": [
+        "Accounting and Bookkeeping Firms",
+        "Legal Practices",
+        "Engineering Firms",
+        "Architecture Firms",
+        "IT / Managed Services Providers (MSP)",
+        "Marketing and Advertising Agencies",
+        "HR and Staffing Firms",
+        "Financial Advisory / Wealth Management"
+      ],
+      "subSections": {
+        "accounting_bookkeeping": "5A",
+        "legal": "5B",
+        "it_msp": "5C",
+        "engineering": "5D",
+        "architecture": "5E",
+        "marketing_advertising": "5F",
+        "hr_staffing": "5G",
+        "financial_advisory": "5H"
+      }
+    },
+    "automotive": {
+      "label": "Automotive",
+      "mdSection": "6",
+      "subIndustries": [
+        "Auto Dealerships (New and Used)",
+        "Auto Repair and Service Shops",
+        "Auto Body and Collision Repair",
+        "Tire and Wheel Shops",
+        "Car Washes",
+        "Auto Detailing",
+        "Specialty Automotive (Performance, Restoration, Fleet Services)"
+      ],
+      "subSections": {
+        "auto_repair": "6A",
+        "auto_body_collision": "6B",
+        "car_wash": "6C",
+        "used_car_dealership": "6D",
+        "auto_detailing": "6E"
+      }
+    },
+    "retail": {
+      "label": "Retail",
+      "mdSection": "7",
+      "subIndustries": [
+        "Independent and Specialty Retail",
+        "Franchise Retail",
+        "Grocery and Convenience Stores",
+        "Liquor Stores",
+        "Vape and Cannabis Retail",
+        "E-commerce / Online Retail"
+      ],
+      "subSections": {
+        "independent_specialty_retail": "7A",
+        "grocery_convenience": "7B",
+        "liquor_store": "7C",
+        "vape_cannabis": "7D"
+      }
+    },
+    "wholesale_distribution": {
+      "label": "Wholesale and Distribution",
+      "mdSection": "8",
+      "subIndustries": [
+        "General Wholesale / Distribution",
+        "Food and Beverage Distribution",
+        "Industrial / B2B Distribution",
+        "Consumer Products Distribution",
+        "Specialty Distribution (Medical, Pharmaceutical, Controlled Goods)"
+      ],
+      "subSections": {
+        "general_wholesale": "8A",
+        "food_beverage_distribution": "8B",
+        "specialty_distribution": "8C"
+      }
+    },
+    "transportation_logistics": {
+      "label": "Transportation and Logistics",
+      "mdSection": "9",
+      "subIndustries": [
+        "Trucking (Long-Haul, Regional, Local)",
+        "Courier and Last-Mile Delivery",
+        "Freight Brokerage",
+        "Moving Companies",
+        "Charter Bus and Passenger Transportation",
+        "Specialized Transport (Hazmat, Oversized, Refrigerated, Medical)",
+        "Warehousing and 3PL (Third-Party Logistics)"
+      ],
+      "subSections": {
+        "trucking": "9A",
+        "courier_last_mile": "9B",
+        "freight_brokerage": "9C",
+        "moving_companies": "9D",
+        "warehousing_3pl": "9E"
+      }
+    },
+    "wellness_fitness_lifestyle": {
+      "label": "Wellness, Fitness, and Lifestyle",
+      "mdSection": "10",
+      "subIndustries": [
+        "Gyms and Fitness Centres",
+        "Yoga and Pilates Studios",
+        "Personal Training Studios",
+        "Spas and Day Spas",
+        "Hair Salons and Barbershops",
+        "Nail Salons",
+        "Tattoo and Body Art Studios",
+        "Tanning Salons",
+        "Weight Loss and Nutrition Clinics",
+        "Holistic Health and Alternative Medicine (Naturopathy, Acupuncture, TCM)"
+      ],
+      "subSections": {
+        "gym_fitness": "10A",
+        "yoga_pilates": "10B",
+        "spa_day_spa": "10C",
+        "hair_salon_barbershop": "10D",
+        "nail_salon": "10E",
+        "tattoo_body_art": "10F",
+        "tanning_salon": "10G",
+        "holistic_health": "10H"
+      }
+    },
+    "education": {
+      "label": "Education",
+      "mdSection": "11",
+      "subIndustries": [
+        "Private Schools (K-12)",
+        "Tutoring and Learning Centres",
+        "Language Schools and ESL",
+        "Vocational and Trade Schools",
+        "Test Preparation and Exam Centres",
+        "Music, Art, and Performing Arts Schools",
+        "Driving Schools",
+        "Online / E-Learning Businesses",
+        "Corporate Training"
+      ],
+      "subSections": {
+        "private_school": "11A",
+        "tutoring_learning": "11B",
+        "language_esl": "11C",
+        "vocational_trade": "11D",
+        "driving_school": "11E",
+        "music_art_performing": "11F",
+        "elearning_online": "11G",
+        "corporate_training": "11H",
+        "test_prep": "11I"
+      }
+    },
+    "childcare_entertainment": {
+      "label": "Childcare and Entertainment",
+      "mdSection": "12",
+      "subIndustries": [
+        "Licensed Childcare Centres / Daycares",
+        "Home Daycares (Licensed)",
+        "After-School and Camp Programs",
+        "Children's Entertainment (Party Venues, Play Centres, Activity Centres)",
+        "Family Entertainment Centres (FECs)",
+        "Trampoline Parks",
+        "Escape Rooms",
+        "Bowling Alleys, Arcades, and Amusement Venues"
+      ],
+      "subSections": {
+        "licensed_childcare": "12A",
+        "childrens_entertainment": "12B",
+        "escape_rooms": "12C",
+        "bowling_arcades_amusement": "12D"
+      }
+    },
+    "advertising_media_events": {
+      "label": "Advertising, Media, and Events",
+      "mdSection": "13",
+      "subIndustries": [
+        "Advertising Agencies",
+        "Print and Digital Media Companies",
+        "Photography and Videography Studios",
+        "Event Planning and Management Companies",
+        "Event Venues",
+        "Public Relations Firms",
+        "Out-of-Home Advertising (Billboards, Signage)"
+      ],
+      "subSections": {}
+    },
+    "technology_online": {
+      "label": "Technology and Online Business",
+      "mdSection": "14",
+      "subIndustries": [
+        "SaaS (Software as a Service)",
+        "E-commerce",
+        "Mobile Apps",
+        "Digital Agencies and Dev Shops",
+        "Marketplace Businesses",
+        "Content and Media Websites",
+        "Domain and Hosting Businesses",
+        "Technology Products and Hardware"
+      ],
+      "subSections": {}
+    }
+  }
+}

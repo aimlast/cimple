@@ -1,0 +1,17 @@
+{
+  "_comment": "Interview agent configuration. Model names and parameters are the only adapter-specific settings here. All intelligence lives in prompts/ and data/.",
+  "models": {
+    "interviewAgent": "claude-opus-4-5",
+    "supportingAgents": "claude-sonnet-4-5"
+  },
+  "api": {
+    "maxTokens": 4096,
+    "temperature": 1,
+    "_note": "Claude claude-opus-4-5 performs best at temperature 1 for conversational tasks. Do not lower unless the model becomes unpredictably verbose."
+  },
+  "interview": {
+    "maxTurnsBeforeEndCheck": 30,
+    "minTurnsBeforeEnd": 10,
+    "_note": "The agent checks shouldEnd on every turn but won't end before minTurnsBeforeEnd unless the seller explicitly stops."
+  }
+}
