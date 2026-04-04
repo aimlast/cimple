@@ -3,10 +3,9 @@ import { queryClient } from "./lib/queryClient";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { SidebarProvider, SidebarTrigger } from "@/components/ui/sidebar";
+import { SidebarProvider } from "@/components/ui/sidebar";
 import { AppSidebar } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/ThemeProvider";
-import { ThemeToggle } from "@/components/ThemeToggle";
 import NotFound from "@/pages/not-found";
 import BrokerDashboard from "@/pages/BrokerDashboard";
 import ActiveCIMs from "@/pages/ActiveCIMs";
@@ -32,7 +31,8 @@ import BuyerViewRoom from "@/pages/BuyerViewRoom";
 function Routes() {
   return (
     <Switch>
-      <Route path="/" component={BrokerDashboard} />
+      {/* / → deals board (dashboard is the deals board) */}
+      <Route path="/" component={ActiveCIMs} />
       <Route path="/deals" component={ActiveCIMs} />
       <Route path="/cims" component={ActiveCIMs} />
       <Route path="/analytics" component={Analytics} />
@@ -42,7 +42,6 @@ function Routes() {
       <Route path="/new-cim" component={NewCIM} />
       <Route path="/new-deal" component={NewDeal} />
       <Route path="/deal/:id" component={DealDetail} />
-      <Route path="/deal/:id/interview" component={CIMInterview} />
       <Route path="/cim/new-questionnaire" component={CIMQuestionnaire} />
       <Route path="/cim/new-documents" component={CIMDocuments} />
       <Route path="/cim/new-interview" component={CIMInterview} />
@@ -51,60 +50,62 @@ function Routes() {
       <Route path="/cim/:id/preview" component={CIMPreview} />
       <Route path="/cim/:dealId/design" component={CIMDesigner} />
       <Route path="/deal/:dealId/design" component={CIMDesigner} />
-      <Route path="/view/:token" component={BuyerViewRoom} />
-      <Route path="/invite/:token" component={SellerInviteIntake} />
-      <Route path="/seller/progress" component={SellerProgress} />
-      <Route path="/seller/chat" component={SellerChat} />
-      <Route path="/seller/documents" component={SellerDocuments} />
       <Route component={NotFound} />
     </Switch>
   );
 }
 
-function BrokerLayout() {
-  const style = {
-    "--sidebar-width": "15rem",
-    "--sidebar-width-icon": "3rem",
-  };
+// Full-screen routes that bypass the broker layout entirely
+const FULLSCREEN_ROUTES = ["/invite/", "/seller/", "/view/", "/deal/", "/cim/"];
 
+function isFullscreen(path: string) {
+  // Interview pages are fullscreen — no sidebar chrome
+  if (path.includes("/interview")) return true;
+  // External-facing pages
+  if (path.startsWith("/invite/")) return true;
+  if (path.startsWith("/seller/")) return true;
+  if (path.startsWith("/view/")) return true;
+  return false;
+}
+
+function BrokerLayout() {
   return (
-    <SidebarProvider style={style as React.CSSProperties}>
-      <div className="flex h-screen w-full">
-        <AppSidebar userType="broker" />
-        <div className="flex flex-col flex-1 min-w-0">
-          <header className="flex items-center gap-3 px-4 py-3 border-b bg-background/95 backdrop-blur-sm sticky top-0 z-50">
-            <SidebarTrigger data-testid="button-sidebar-toggle" />
-            <div className="flex-1" />
-            <ThemeToggle />
-          </header>
-          <main className="flex-1 overflow-auto">
-            <Routes />
-          </main>
-        </div>
+    <SidebarProvider style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
+      <div className="flex h-screen w-full overflow-hidden bg-background">
+        <AppSidebar />
+        <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
+          <Routes />
+        </main>
       </div>
     </SidebarProvider>
   );
 }
 
-function SellerInviteLayout() {
+function FullscreenLayout() {
   return (
-    <div className="h-screen w-full overflow-auto">
-      <Routes />
+    <div className="h-screen w-full overflow-auto bg-background">
+      <Switch>
+        <Route path="/deal/:id/interview" component={CIMInterview} />
+        <Route path="/invite/:token" component={SellerInviteIntake} />
+        <Route path="/seller/progress" component={SellerProgress} />
+        <Route path="/seller/chat" component={SellerChat} />
+        <Route path="/seller/documents" component={SellerDocuments} />
+        <Route path="/view/:token" component={BuyerViewRoom} />
+        <Route component={NotFound} />
+      </Switch>
     </div>
   );
 }
 
 function AppContent() {
   const [location] = useLocation();
-  const isFullscreenRoute = location.startsWith("/invite/") || location.startsWith("/seller/") || location.startsWith("/view/");
-
-  return isFullscreenRoute ? <SellerInviteLayout /> : <BrokerLayout />;
+  return isFullscreen(location) ? <FullscreenLayout /> : <BrokerLayout />;
 }
 
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider defaultTheme="dark">
+      <ThemeProvider defaultTheme="light">
         <TooltipProvider>
           <WouterRouter>
             <AppContent />
