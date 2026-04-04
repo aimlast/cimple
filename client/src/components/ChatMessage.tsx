@@ -1,5 +1,6 @@
 import { cn } from "@/lib/utils";
 import { Bot, User } from "lucide-react";
+import { format } from "date-fns";
 
 interface ChatMessageProps {
   role: "ai" | "user";
@@ -8,38 +9,38 @@ interface ChatMessageProps {
 }
 
 export function ChatMessage({ role, content, timestamp }: ChatMessageProps) {
+  const isAI = role === "ai";
+
+  const formattedTime = timestamp
+    ? (() => { try { return format(new Date(timestamp), "h:mm a"); } catch { return ""; } })()
+    : "";
+
   return (
-    <div
-      className={cn(
-        "flex gap-3 max-w-3xl mx-auto",
-        role === "user" && "flex-row-reverse"
-      )}
-    >
-      <div
-        className={cn(
-          "h-8 w-8 rounded-full flex items-center justify-center flex-shrink-0",
-          role === "ai" ? "bg-primary text-primary-foreground" : "bg-muted"
-        )}
-      >
-        {role === "ai" ? (
-          <Bot className="h-4 w-4" />
-        ) : (
-          <User className="h-4 w-4" />
-        )}
+    <div className={cn("flex gap-3 max-w-3xl mx-auto", !isAI && "flex-row-reverse")}>
+      {/* Avatar */}
+      <div className={cn(
+        "h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5",
+        isAI ? "bg-amber text-amber-foreground" : "bg-muted"
+      )}>
+        {isAI
+          ? <Bot className="h-3.5 w-3.5" />
+          : <User className="h-3.5 w-3.5 text-muted-foreground" />}
       </div>
-      <div className={cn("flex-1", role === "user" && "flex flex-col items-end")}>
-        <div
-          className={cn(
-            "rounded-lg px-4 py-3",
-            role === "ai"
-              ? "bg-card border border-card-border"
-              : "bg-primary/10 border border-primary/20"
-          )}
-        >
-          <p className="text-sm">{content}</p>
+
+      {/* Bubble */}
+      <div className={cn("flex-1 min-w-0", !isAI && "flex flex-col items-end")}>
+        <div className={cn(
+          "rounded-xl px-4 py-3 text-sm leading-relaxed",
+          isAI
+            ? "bg-card border border-border text-foreground"
+            : "bg-amber/10 border border-amber/15 text-foreground"
+        )}>
+          {content.split("\n").map((line, i) => (
+            <p key={i} className={cn(i > 0 && "mt-2")}>{line}</p>
+          ))}
         </div>
-        {timestamp && (
-          <p className="text-xs text-muted-foreground mt-1">{timestamp}</p>
+        {formattedTime && (
+          <p className="text-[10px] text-muted-foreground/50 mt-1 px-1">{formattedTime}</p>
         )}
       </div>
     </div>

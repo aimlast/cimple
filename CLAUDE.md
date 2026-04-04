@@ -191,6 +191,7 @@ Heatmaps, time-per-page, buyer scoring, CRM integration.
 - **Design is a product feature**, not a skin. The CIM design agent must make intelligent layout decisions per section.
 - **The AI model for the interview agent is `claude-opus-4-5`.** Do not downgrade this for the interview. Use `claude-sonnet-4-5` for supporting tasks.
 - **Export strategy is TBD.** Do not build PDF export until this decision is made. Default to link-based viewing (preserves analytics).
+- **Industry-specific interview intelligence (non-negotiable).** The interview agent must identify the business type, industry, and location early in every interview and use that to dynamically load industry-specific question areas on top of the standard CIM sections. Generic questions alone are not acceptable. The agent must know what information is uniquely important for each industry — for example: construction (bonding and surety, bid pipeline, current backlog, holdbacks, subcontractor relationships, licensing by trade), restaurants (lease terms, liquor licensing, health inspection history, food and labour costs), medical practices (insurance contracts, patient concentration, regulatory compliance), and so on across all industries a broker might encounter. The agent should also account for location-specific regulatory requirements (permits, licensing, compliance) that vary by province, state, or municipality. This is a core differentiator — brokers routinely miss industry-specific questions using standard templates. Cimple must not.
 
 ---
 
@@ -226,6 +227,29 @@ Heatmaps, time-per-page, buyer scoring, CRM integration.
 - The Railway deployment config (Nixpacks settings)
 - The session-based auth system — do not replace without explicit approval
 - The buyer tokenized access system — security-sensitive
+
+---
+
+## Upcoming Features — Approved for Development
+
+These are approved product decisions. Build them when their priority in the build order is reached.
+
+### Feature 1: Guided answer selection in the seller interview
+The interview must not be a blank-page typing experience. For every question asked, the AI should offer pre-populated answer options based on its industry knowledge and what it already knows about the business — sellers click the ones that apply, then are asked to expand only where needed. The AI should still prompt for answers outside the suggestions if applicable. This applies to all structured information gathering. The goal is to make information collection feel guided and low-effort, not like filling out a form from scratch.
+
+### Feature 2: Subtle gamification in the seller interview
+The interview interface must include progress indicators by CIM section (e.g. 'Company Overview — 72% complete'), checkmarks as sections are completed, and a running coverage score. No animations or badges — keep it professional. The seller should feel a sense of progress and completion as they move through the interview.
+
+### Feature 3: Buyer Q&A chatbot on the CIM viewing room
+Buyers viewing the CIM can ask questions via a chat interface. The AI answers immediately if the answer is in the CIM. If the AI cannot answer, the question escalates to the broker via email notification and mobile app. The broker answers or flags questions they cannot answer. Every answer the broker provides — whether full or partial — goes to the seller for approval before it is shown to the buyer. Questions the broker cannot answer escalate directly to the seller. The seller is the final approval step for every answer in the chain regardless of who drafted it. No buyer-facing answer is published without seller sign-off. All questions asked by buyers are logged and visible to the broker as an analytics layer showing what buyers are confused about or interested in.
+
+The AI must maintain a persistent Q&A knowledge base per deal — every question that was escalated and answered gets added back to the AI's knowledge for that deal. When future buyers ask the same or similar question, the AI answers it directly without escalating again. The platform gets smarter with every buyer interaction. By the tenth buyer, most questions are answered instantly because earlier buyers already surfaced them. The broker and seller only ever have to answer each unique question once.
+
+### Feature 4: DD (Due Diligence) version of the CIM
+When a buyer enters due diligence, the platform generates a DD CIM — the same format as the original CIM, but with previously withheld sensitive information now revealed and visually highlighted so the buyer can quickly see what is new or expanded. Examples: customer concentration chart now shows actual customer names (highlighted); financials now show comparison against T2s and bank statements with AI-generated commentary on any discrepancies; addback analysis and revenue verification shown inline. The goal is to give buyers due diligence information in a familiar format rather than dumping raw documents on them.
+
+### Feature 5: Two-stage information collection with discrepancy resolution
+Information collection from the seller happens in at least two stages. Stage 1 collects information through the interview. Stage 2 is an AI-driven verification pass — the AI cross-references what the seller said against uploaded documents and financial statements, identifies inconsistencies, and goes back to the seller specifically on those discrepancies before the CIM is drafted. Example: 'You mentioned revenue of $X but your income statement shows $Y — can you help me understand the difference?' This must be resolved before content generation begins.
 
 ---
 

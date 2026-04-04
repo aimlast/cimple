@@ -185,18 +185,14 @@ export default function BuyerViewRoom() {
   if (error || !data) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <Card className="max-w-md w-full">
-          <CardContent className="pt-6 text-center space-y-4">
-            <AlertCircle className="h-12 w-12 mx-auto text-destructive" />
-            <h2 className="text-xl font-semibold">Access Denied</h2>
-            <p className="text-muted-foreground">
-              {error instanceof Error ? error.message : "This link is invalid or has expired."}
-            </p>
-            <p className="text-sm text-muted-foreground">
-              Please contact your broker for a new access link.
-            </p>
-          </CardContent>
-        </Card>
+        <div className="max-w-sm w-full text-center space-y-3">
+          <AlertCircle className="h-8 w-8 mx-auto text-destructive/60" />
+          <h2 className="text-lg font-semibold">Access denied</h2>
+          <p className="text-sm text-muted-foreground">
+            {error instanceof Error ? error.message : "This link is invalid or has expired."}
+          </p>
+          <p className="text-xs text-muted-foreground/60">Contact your broker for a new access link.</p>
+        </div>
       </div>
     );
   }
@@ -210,26 +206,28 @@ export default function BuyerViewRoom() {
     <div className="min-h-screen bg-background">
       {access.watermarkEnabled && <Watermark email={access.buyerEmail} />}
 
-      <header className="border-b sticky top-0 bg-background/95 backdrop-blur z-40">
-        <div className="max-w-6xl mx-auto px-6 py-4 flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <Building className="h-8 w-8 text-primary" />
+      <header className="border-b border-border sticky top-0 bg-background/95 backdrop-blur-sm z-40">
+        <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-md bg-amber flex items-center justify-center">
+              <Building className="h-4 w-4 text-amber-foreground" />
+            </div>
             <div>
-              <h1 className="font-semibold text-lg">{deal.businessName}</h1>
-              <p className="text-sm text-muted-foreground">
+              <h1 className="font-semibold text-sm leading-tight">{deal.businessName}</h1>
+              <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
                 Confidential Information Memorandum
               </p>
             </div>
           </div>
-          <div className="flex items-center gap-4">
-            <div className="text-right text-sm">
-              <p className="text-muted-foreground">Viewing as</p>
-              <p className="font-medium">{access.buyerEmail}</p>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-[10px] text-muted-foreground">Viewing as</p>
+              <p className="text-xs font-medium">{access.buyerEmail}</p>
             </div>
-            <Badge variant="outline" className="flex items-center gap-1">
+            <span className="flex items-center gap-1 text-xs text-muted-foreground border border-border rounded-full px-2.5 py-1">
               <Clock className="h-3 w-3" />
               {formatTime(timeOnPage)}
-            </Badge>
+            </span>
           </div>
         </div>
       </header>
@@ -253,8 +251,8 @@ export default function BuyerViewRoom() {
                         onClick={() => handleSectionChange(section.key)}
                         className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors flex items-center gap-2 ${
                           activeSection === section.key
-                            ? "bg-primary text-primary-foreground"
-                            : "hover:bg-muted"
+                            ? "bg-amber/10 text-amber font-medium"
+                            : "text-muted-foreground hover:text-foreground hover:bg-accent"
                         }`}
                         data-testid={`nav-section-${section.key}`}
                       >
@@ -354,10 +352,11 @@ export default function BuyerViewRoom() {
                         const idx = availableSections.findIndex(s => s.key === activeSection);
                         if (idx < availableSections.length - 1) handleSectionChange(availableSections[idx + 1].key);
                       }}
+                      className="bg-amber text-amber-foreground hover:bg-amber/90 gap-1.5"
                       data-testid="button-next-section"
                     >
                       Next Section
-                      <ChevronRight className="h-4 w-4 ml-2" />
+                      <ChevronRight className="h-4 w-4" />
                     </Button>
                   )}
                 </div>

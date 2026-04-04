@@ -1,69 +1,137 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, StopCircle, SkipForward, HelpCircle, AlertTriangle, CheckCircle, LogOut, Mic, MicOff } from "lucide-react";
+import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
-import type { ConversationMessage, ExtractedInfo } from "@shared/schema";
+import type { ConversationMessage } from "@shared/schema";
 
-interface AIConversationInterfaceProps {
-  dealId?: string;
-  businessName?: string;
-  industry?: string;
-  existingInfo?: ExtractedInfo;
-  onInfoUpdate?: (info: ExtractedInfo) => void;
-  onComplete?: () => void;
-  preliminaryData?: Record<string, string>;
+interface TurnResult {
+  message: string;
+  sessionId: string;
+  captured: {
+    total: number;
+    newFields: string[];
+    updatedFields: string[];
+  };
+  sectionCoverage: Array<{
+    key: string;
+    title: string;
+    status: "well_covered" | "partial" | "missing";
+  }>;
+  industryContext: {
+    identified: boolean;
+    industry: string;
+    activeTopics: string[];
+    coveredTopics: string[];
+  };
+  deferredTopics: string[];
+  shouldEnd: boolean;
+  endReason?: string;
 }
 
-const QUICK_ACTIONS = [
-  { label: "Skip this question", value: "I don't have this information right now. Please ask me a different question.", icon: SkipForward },
-  { label: "Need clarification", value: "Can you explain what you mean by that? I want to make sure I give you the right information.", icon: HelpCircle },
-  { label: "Need to verify", value: "I'm not 100% sure about this - I'll need to verify with my records or team before answering.", icon: AlertTriangle },
-];
+interface AIConversationInterfaceProps {
+  dealId: string;
+  businessName?: string;
+  onTurnResult?: (result: TurnResult) => void;
+  onComplete?: () => void;
+}
 
-export function AIConversationInterface({ 
+export function AIConversationInterface({
   dealId,
   businessName,
-  industry,
-  existingInfo,
-  onInfoUpdate, 
+  onTurnResult,
   onComplete,
-  preliminaryData = {} 
 }: AIConversationInterfaceProps) {
-  
-  const greeting = businessName 
-    ? `Hi! I'm going to walk you through some straightforward questions about ${businessName} so we can put together a strong profile for buyers. I'll go one at a time — just answer what you know.\n\nFirst up: what does ${businessName} sell or offer? List out your main products or services.`
-    : "Hi! I'm going to walk you through some straightforward questions about your business so we can put together a strong profile for buyers. I'll go one at a time — just answer what you know.\n\nFirst up: what does your business sell or offer? List out your main products or services.";
-
-  const [messages, setMessages] = useState<ConversationMessage[]>([
-    {
-      role: "ai",
-      content: greeting,
-      timestamp: new Date().toLocaleTimeString(),
-    },
-  ]);
+  const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
-  const [extractedInfo, setExtractedInfo] = useState<ExtractedInfo>({});
-  const [messageQueue, setMessageQueue] = useState<string[]>([]);
-  const [abortController, setAbortController] = useState<AbortController | null>(null);
+  const [isStarting, setIsStarting] = useState(true);
   const [isFinished, setIsFinished] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
+  const [abortController, setAbortController] = useState<AbortController | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const processingRef = useRef(false);
   const recognitionRef = useRef<any>(null);
   const preRecordingInputRef = useRef("");
   const inputRef = useRef("");
   const { toast } = useToast();
 
+  // Start or resume the interview session on mount
+  useEffect(() => {
+    let cancelled = false;
+
+    async function initSession() {
+      try {
+        const res = await fetch(`/api/interview/${dealId}/start`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          throw new Error(err.error || "Failed to start interview");
+        }
+
+        const result: TurnResult = await res.json();
+        if (cancelled) return;
+
+        setSessionId(result.sessionId);
+
+        // If resuming, load full history
+        if (result.message) {
+          const historyRes = await fetch(`/api/interview/session/${result.sessionId}/history`);
+          if (historyRes.ok) {
+            const history = await historyRes.json();
+            if (history.messages && history.messages.length > 0) {
+              setMessages(history.messages);
+            } else {
+              // New session — just the opening message
+              setMessages([{
+                role: "ai",
+                content: result.message,
+                timestamp: new Date().toISOString(),
+              }]);
+            }
+
+            if (history.status === "completed") {
+              setIsFinished(true);
+            }
+          }
+        }
+
+        onTurnResult?.(result);
+      } catch (error: any) {
+        console.error("Failed to start interview:", error);
+        if (!cancelled) {
+          toast({
+            title: "Failed to start interview",
+            description: error.message,
+            variant: "destructive",
+          });
+        }
+      } finally {
+        if (!cancelled) {
+          setIsStarting(false);
+        }
+      }
+    }
+
+    initSession();
+    return () => { cancelled = true; };
+  }, [dealId]);
+
+  // Auto-scroll to bottom
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages, isLoading]);
+
+  // Speech recognition
   const getSpeechRecognition = useCallback(() => {
     const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SpeechRecognition) {
-      return null;
-    }
+    if (!SpeechRecognition) return null;
     return new SpeechRecognition();
   }, []);
 
@@ -89,12 +157,9 @@ export function AIConversationInterface({
     recognition.continuous = true;
     recognition.interimResults = true;
     recognition.lang = "en-US";
-
     preRecordingInputRef.current = inputRef.current.trim();
 
-    recognition.onstart = () => {
-      setIsRecording(true);
-    };
+    recognition.onstart = () => setIsRecording(true);
 
     recognition.onresult = (event: any) => {
       let fullFinal = "";
@@ -117,7 +182,7 @@ export function AIConversationInterface({
       if (event.error === "not-allowed") {
         toast({
           title: "Microphone access denied",
-          description: "Please allow microphone access in your browser settings to use voice input.",
+          description: "Please allow microphone access in your browser settings.",
           variant: "destructive",
         });
       } else if (event.error !== "aborted") {
@@ -141,218 +206,133 @@ export function AIConversationInterface({
   }, [getSpeechRecognition, stopRecording, toast]);
 
   const toggleRecording = useCallback(() => {
-    if (isRecording) {
-      stopRecording();
-    } else {
-      startRecording();
-    }
+    if (isRecording) stopRecording();
+    else startRecording();
   }, [isRecording, stopRecording, startRecording]);
 
+  // Cleanup speech recognition on unmount
   useEffect(() => {
     return () => {
-      if (recognitionRef.current) {
-        recognitionRef.current.stop();
-      }
+      if (recognitionRef.current) recognitionRef.current.stop();
     };
   }, []);
 
-  const handleEndInterview = () => {
+  // Send a message
+  const handleSend = useCallback(async () => {
+    if (isFinished || isLoading || !sessionId) return;
     stopRecording();
-    if (abortController) {
-      abortController.abort();
-      setAbortController(null);
-    }
-    setIsLoading(false);
-    setIsFinished(true);
-    setMessageQueue([]);
-    
-    const finishMessage: ConversationMessage = {
-      role: "ai",
-      content: "Thank you for completing this interview! I've gathered all the information you've shared. Your broker will review this and may reach out if they need any additional details. You can close this window now.",
-      timestamp: new Date().toLocaleTimeString(),
+
+    const cleanedInput = input.replace(/\u200B/g, "").trim();
+    if (!cleanedInput) return;
+
+    // Add user message to UI immediately
+    const userMessage: ConversationMessage = {
+      role: "user",
+      content: cleanedInput,
+      timestamp: new Date().toISOString(),
     };
-    setMessages((prev) => [...prev, finishMessage]);
-    
-    if (onComplete) {
-      onComplete();
-    }
-  };
+    setMessages((prev) => [...prev, userMessage]);
+    setInput("");
+    inputRef.current = "";
+    setIsLoading(true);
 
-  // Process queued messages when AI finishes responding
-  useEffect(() => {
-    if (isFinished) return; // Don't process queue if interview is finished
-    if (!isLoading && messageQueue.length > 0 && !processingRef.current) {
-      processingRef.current = true;
-      const nextMessage = messageQueue[0];
-      setMessageQueue((prev) => prev.slice(1));
-      
-      const nextUserMessage: ConversationMessage = {
-        role: "user",
-        content: nextMessage,
-        timestamp: new Date().toLocaleTimeString(),
+    const controller = new AbortController();
+    setAbortController(controller);
+
+    try {
+      const res = await fetch(`/api/interview/${dealId}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: cleanedInput, sessionId }),
+        signal: controller.signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || `${res.status}: ${res.statusText}`);
+      }
+
+      const result: TurnResult = await res.json();
+
+      // Add AI response
+      const aiMessage: ConversationMessage = {
+        role: "ai",
+        content: result.message,
+        timestamp: new Date().toISOString(),
       };
-      
-      setMessages((prev) => [...prev, nextUserMessage]);
-      setIsLoading(true);
-      processingRef.current = false;
+      setMessages((prev) => [...prev, aiMessage]);
+
+      // Update parent with turn results
+      onTurnResult?.(result);
+
+      if (result.shouldEnd) {
+        setIsFinished(true);
+      }
+    } catch (error: any) {
+      if (error.name === "AbortError") return;
+
+      console.error("Interview message error:", error);
+      const errorMessage: ConversationMessage = {
+        role: "ai",
+        content: "I'm sorry, something went wrong on my end. Could you try sending that again?",
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setAbortController(null);
+      setIsLoading(false);
     }
-  }, [isLoading, messageQueue, isFinished]);
+  }, [input, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult]);
 
-  const scrollToBottom = () => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  };
-
-  useEffect(() => {
-    scrollToBottom();
-  }, [messages]);
-
-  const handleCancel = () => {
+  const handleCancel = useCallback(() => {
     if (abortController) {
       abortController.abort();
       setAbortController(null);
       setIsLoading(false);
-      
-      const cancelMessage: ConversationMessage = {
-        role: "ai",
-        content: "Response cancelled. Feel free to continue with your next message.",
-        timestamp: new Date().toLocaleTimeString(),
-      };
-      setMessages((prev) => [...prev, cancelMessage]);
     }
-  };
+  }, [abortController]);
 
-  // Process message with current messages from state
-  useEffect(() => {
-    if (isLoading && !abortController) {
-      const controller = new AbortController();
-      setAbortController(controller);
-
-      (async () => {
-        try {
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            body: JSON.stringify({
-              messages,
-              extractedInfo,
-              preliminaryData,
-            }),
-            headers: {
-              "Content-Type": "application/json",
-            },
-            signal: controller.signal,
-          });
-
-          const response: {
-            message?: string;
-            extractedInfo?: ExtractedInfo;
-            error?: string;
-            userMessage?: string;
-            shouldFinish?: boolean;
-          } = await res.json();
-
-          if (!res.ok) {
-            throw new Error(response.userMessage || response.error || `${res.status}: ${res.statusText}`);
-          }
-
-          if (response.message) {
-            const aiMessage: ConversationMessage = {
-              role: "ai",
-              content: response.message,
-              timestamp: new Date().toLocaleTimeString(),
-            };
-
-            setMessages((prev) => [...prev, aiMessage]);
-            
-            if (response.extractedInfo) {
-              setExtractedInfo(response.extractedInfo);
-              
-              if (onInfoUpdate) {
-                onInfoUpdate(response.extractedInfo);
-              }
-            }
-            
-            // If AI suggests finishing, auto-finish the interview
-            if (response.shouldFinish) {
-              setIsFinished(true);
-              setMessageQueue([]);
-              if (onComplete) {
-                onComplete();
-              }
-            }
-          }
-        } catch (error: any) {
-          if (error.name === 'AbortError') {
-            // Request was cancelled, don't show error
-            return;
-          }
-          
-          console.error("Chat error:", error);
-          
-          // Graceful retry: If the error suggests the AI didn't understand or get an answer
-          const shouldRetry = error.message?.includes("error") || error.message?.includes("failed");
-          
-          if (shouldRetry) {
-            const retryMessage: ConversationMessage = {
-              role: "ai",
-              content: "I apologize, but I didn't quite catch that. Could you please rephrase your response or provide more details?",
-              timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev, retryMessage]);
-          } else {
-            const errorMessage: ConversationMessage = {
-              role: "ai",
-              content: error.message || "I apologize, but I encountered an error. Please try again.",
-              timestamp: new Date().toLocaleTimeString(),
-            };
-            setMessages((prev) => [...prev, errorMessage]);
-          }
-        } finally {
-          setAbortController(null);
-          setIsLoading(false);
-        }
-      })();
-    }
-  }, [isLoading, messages, extractedInfo, preliminaryData, abortController, onInfoUpdate]);
-
-  const handleSend = () => {
-    if (isFinished) return;
+  const handleEndInterview = useCallback(() => {
     stopRecording();
-    const cleanedInput = input.replace(/\u200B/g, "").trim();
-    if (!cleanedInput) return;
+    handleCancel();
+    setIsFinished(true);
 
-    const userMessage: ConversationMessage = {
-      role: "user",
-      content: cleanedInput,
-      timestamp: new Date().toLocaleTimeString(),
+    const finishMessage: ConversationMessage = {
+      role: "ai",
+      content: "Thank you for your time. Your broker will review the information you've provided and may reach out if they need anything else.",
+      timestamp: new Date().toISOString(),
     };
-
-    setInput("");
-    inputRef.current = "";
-    const currentInput = cleanedInput;
-
-    // If AI is already responding, queue this message
-    if (isLoading) {
-      setMessageQueue((prev) => [...prev, currentInput]);
-      return;
-    }
-
-    // Add message and trigger AI processing
-    setMessages((prev) => [...prev, userMessage]);
-    setIsLoading(true);
-  };
+    setMessages((prev) => [...prev, finishMessage]);
+    onComplete?.();
+  }, [stopRecording, handleCancel, onComplete]);
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Shift+Enter or Ctrl+Enter sends the message
-    // Plain Enter creates a new line (default behavior)
     if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) {
       e.preventDefault();
       handleSend();
     }
   };
 
+  // Starting state
+  if (isStarting) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center gap-3 text-muted-foreground">
+        <div className="flex gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
+        </div>
+        <span className="text-sm">
+          {businessName ? `Preparing interview for ${businessName}...` : "Preparing interview..."}
+        </span>
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col h-full">
-      <div className="flex-1 overflow-y-auto p-6 space-y-6">
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
         {messages.map((message, idx) => (
           <ChatMessage
             key={`${message.timestamp}-${idx}`}
@@ -362,89 +342,41 @@ export function AIConversationInterface({
           />
         ))}
         {isLoading && (
-          <div className="flex items-center gap-2 text-muted-foreground text-sm">
+          <div className="flex items-center gap-2">
             <div className="flex gap-1">
-              <span className="animate-bounce">●</span>
-              <span className="animate-bounce" style={{ animationDelay: "0.1s" }}>●</span>
-              <span className="animate-bounce" style={{ animationDelay: "0.2s" }}>●</span>
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
             </div>
-            <span>AI is thinking...</span>
+            <span className="text-xs text-muted-foreground">thinking...</span>
           </div>
         )}
         <div ref={messagesEndRef} />
       </div>
 
-      <div className="border-t p-4 bg-card">
+      {/* Input area */}
+      <div className="border-t border-border px-4 py-3 bg-card">
         {isFinished ? (
           <div className="max-w-3xl mx-auto">
-            <Card className="bg-primary/5 border-primary/20">
-              <CardContent className="pt-6 text-center space-y-4">
-                <CheckCircle className="h-12 w-12 mx-auto text-primary" />
-                <div>
-                  <h3 className="font-semibold text-lg">Interview Complete</h3>
-                  <p className="text-muted-foreground text-sm mt-1">
-                    Thank you for your time. Your broker will review the information you've provided.
-                  </p>
-                </div>
-              </CardContent>
-            </Card>
+            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-success/8 border border-success/20">
+              <CheckCircle className="h-4 w-4 text-success shrink-0" />
+              <div>
+                <p className="text-sm font-medium">Interview complete</p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Your broker will review the information you've provided.
+                </p>
+              </div>
+            </div>
           </div>
         ) : (
           <>
-            {messageQueue.length > 0 && (
-              <div className="max-w-3xl mx-auto mb-2 text-sm text-muted-foreground">
-                {messageQueue.length} message{messageQueue.length > 1 ? 's' : ''} queued
-              </div>
-            )}
-            
-            <div className="max-w-3xl mx-auto mb-3 flex flex-wrap gap-2">
-              {QUICK_ACTIONS.map((action) => {
-                const IconComponent = action.icon;
-                return (
-                  <Button
-                    key={action.label}
-                    variant="outline"
-                    size="sm"
-                    onClick={() => {
-                      if (isLoading) {
-                        setMessageQueue((prev) => [...prev, action.value]);
-                      } else {
-                        const userMessage: ConversationMessage = {
-                          role: "user",
-                          content: action.value,
-                          timestamp: new Date().toLocaleTimeString(),
-                        };
-                        setMessages((prev) => [...prev, userMessage]);
-                        setIsLoading(true);
-                      }
-                    }}
-                    disabled={isLoading && messageQueue.length >= 3}
-                    data-testid={`button-quick-${action.label.toLowerCase().replace(/\s+/g, '-')}`}
-                  >
-                    <IconComponent className="h-3 w-3 mr-1" />
-                    {action.label}
-                  </Button>
-                );
-              })}
-              <Button
-                variant="secondary"
-                size="sm"
-                onClick={handleEndInterview}
-                disabled={isLoading}
-                data-testid="button-end-interview"
-              >
-                <LogOut className="h-3 w-3 mr-1" />
-                End Interview
-              </Button>
-            </div>
-
             {isRecording && (
               <div className="max-w-3xl mx-auto mb-2 flex items-center gap-2" data-testid="status-voice-mode">
-                <span className="relative flex h-3 w-3">
+                <span className="relative flex h-2 w-2">
                   <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-destructive opacity-75" />
-                  <span className="relative inline-flex rounded-full h-3 w-3 bg-destructive" />
+                  <span className="relative inline-flex rounded-full h-2 w-2 bg-destructive" />
                 </span>
-                <span className="text-sm font-medium text-destructive">Voice mode active — listening...</span>
+                <span className="text-xs font-medium text-destructive">Listening...</span>
               </div>
             )}
 
@@ -453,43 +385,65 @@ export function AIConversationInterface({
                 value={input}
                 onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
                 onKeyDown={handleKeyDown}
-                placeholder={isRecording ? "Listening... speak now" : isLoading ? "Type your next message... (will be sent after AI responds)" : "Type your response... (Shift+Enter to send)"}
-                className="resize-none min-h-[60px]"
+                placeholder={
+                  isRecording
+                    ? "Listening... speak now"
+                    : isLoading
+                      ? "Waiting..."
+                      : "Your response... (Shift+Enter to send)"
+                }
+                className="resize-none min-h-[56px] text-sm"
+                disabled={isLoading}
                 data-testid="input-message"
               />
-              <div className="flex flex-col gap-1">
+              <div className="flex flex-col gap-1.5">
                 <Button
                   onClick={toggleRecording}
                   size="icon"
                   variant={isRecording ? "destructive" : "outline"}
-                  disabled={isFinished}
+                  disabled={isFinished || isLoading}
+                  className="h-8 w-8"
                   data-testid="button-mic-toggle"
                 >
-                  {isRecording ? <MicOff className="h-5 w-5" /> : <Mic className="h-5 w-5" />}
+                  {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                 </Button>
                 {isLoading ? (
                   <Button
                     onClick={handleCancel}
                     size="icon"
                     variant="destructive"
+                    className="h-8 w-8"
                     data-testid="button-cancel"
                   >
-                    <StopCircle className="h-5 w-5" />
+                    <StopCircle className="h-3.5 w-3.5" />
                   </Button>
                 ) : (
                   <Button
                     onClick={handleSend}
                     size="icon"
                     disabled={!input.replace(/\u200B/g, "").trim()}
+                    className="h-8 w-8 bg-amber text-amber-foreground hover:bg-amber/90"
                     data-testid="button-send"
                   >
-                    <Send className="h-5 w-5" />
+                    <Send className="h-3.5 w-3.5" />
                   </Button>
                 )}
               </div>
             </div>
-            <div className="max-w-3xl mx-auto mt-2 text-xs text-muted-foreground text-center">
-              Not sure about something? Use the quick actions above, or click "End Interview" when you're done.
+
+            <div className="max-w-3xl mx-auto mt-1.5 flex justify-between items-center">
+              <span className="text-[10px] text-muted-foreground/60">Shift+Enter to send</span>
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleEndInterview}
+                disabled={isLoading}
+                className="h-6 text-[10px] text-muted-foreground/60 hover:text-muted-foreground px-2"
+                data-testid="button-end-interview"
+              >
+                <LogOut className="h-3 w-3 mr-1" />
+                End Interview
+              </Button>
             </div>
           </>
         )}

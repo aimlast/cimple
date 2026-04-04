@@ -6,6 +6,7 @@ import fs from "fs";
 import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
+import { startOrResumeSession, processTurn, getSessionHistory } from "./interview";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -154,6 +155,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to upload logo" });
     }
   });
+
+  // =====================
+  // NEW: Adaptive AI Interview endpoints
+  // =====================
+
+  // Start or resume an interview session for a deal
+  app.post("/api/interview/:dealId/start", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const result = await startOrResumeSession(dealId);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Interview start error:", error);
+      res.status(500).json({ error: error.message || "Failed to start interview" });
+    }
+  });
+
+  // Send a message in an interview session
+  app.post("/api/interview/:dealId/message", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { message, sessionId } = req.body;
+
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({ error: "Message string is required" });
+      }
+      if (!sessionId || typeof sessionId !== "string") {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+
+      const result = await processTurn(dealId, sessionId, message);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Interview message error:", error);
+      res.status(500).json({ error: error.message || "Failed to process message" });
+    }
+  });
+
+  // Get conversation history for a session (used when resuming on the frontend)
+  app.get("/api/interview/session/:sessionId/history", async (req, res) => {
+    try {
+      const { sessionId } = req.params;
+      const result = await getSessionHistory(sessionId);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Interview history error:", error);
+      res.status(500).json({ error: error.message || "Failed to get session history" });
+    }
+  });
+
+  // =====================
+  // Legacy chat endpoint (kept for backward compatibility)
+  // =====================
 
   // Chat endpoint for AI interview
   app.post("/api/chat", async (req, res) => {

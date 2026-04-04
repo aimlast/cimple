@@ -157,47 +157,49 @@ export default function SellerInviteIntake() {
 
   if (isLoadingInvite) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+        <div className="flex flex-col items-center gap-3 text-muted-foreground">
+          <Loader2 className="h-5 w-5 animate-spin" />
+          <span className="text-sm">Loading...</span>
+        </div>
       </div>
     );
   }
 
   if (!params?.token || inviteError || !inviteData) {
     return (
-      <div className="min-h-screen flex items-center justify-center p-4">
-        <Card className="max-w-md w-full">
-          <CardContent className="p-6 text-center">
-            <h2 className="text-xl font-semibold mb-2">Invalid Invite Link</h2>
-            <p className="text-muted-foreground">
-              This invite link is not valid or has expired.
-            </p>
-          </CardContent>
-        </Card>
+      <div className="min-h-screen flex items-center justify-center p-4 bg-background">
+        <div className="max-w-sm w-full text-center space-y-3">
+          <h2 className="text-lg font-semibold">Invalid invite link</h2>
+          <p className="text-sm text-muted-foreground">
+            This invite link is not valid or has expired. Contact your broker for a new link.
+          </p>
+        </div>
       </div>
     );
   }
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
+      {/* Progress header */}
       {currentSection !== "welcome" && currentSection !== "complete" && (
-        <div className="border-b bg-card/50 px-4 py-3">
-          <div className="max-w-3xl mx-auto">
+        <div className="border-b border-border bg-card px-5 py-3 sticky top-0 z-10">
+          <div className="max-w-2xl mx-auto">
             <div className="flex items-center justify-between mb-2">
-              <span className="text-sm text-muted-foreground">
-                {inviteData.deal?.businessName} - CIM Intake
+              <span className="text-xs text-muted-foreground font-medium">
+                {inviteData.deal?.businessName}
               </span>
-              <Badge variant="secondary">{Math.round(progress)}% Complete</Badge>
+              <span className="text-xs text-muted-foreground tabular-nums">{Math.round(progress)}%</span>
             </div>
-            <Progress value={progress} className="h-2" />
+            <Progress value={progress} className="h-1" />
             <div className="flex justify-between mt-2">
               {sections.slice(1, -1).map((section, idx) => (
-                <div 
+                <span
                   key={section.id}
-                  className={`text-xs ${currentIndex > idx + 1 ? 'text-primary' : 'text-muted-foreground'}`}
+                  className={`text-[10px] font-medium ${currentIndex > idx + 1 ? "text-amber" : currentIndex === idx + 1 ? "text-foreground" : "text-muted-foreground/50"}`}
                 >
                   {section.label}
-                </div>
+                </span>
               ))}
             </div>
           </div>
@@ -207,69 +209,46 @@ export default function SellerInviteIntake() {
       <div className="flex-1 flex items-center justify-center p-4">
         <div className="w-full max-w-3xl">
           {currentSection === "welcome" && (
-            <Card>
-              <CardContent className="p-8 space-y-6">
+            <Card className="max-w-lg mx-auto">
+              <CardContent className="p-8 space-y-7">
                 <div className="text-center space-y-3">
-                  <div className="h-16 w-16 rounded-full bg-primary/10 flex items-center justify-center mx-auto">
-                    <MessageCircle className="h-8 w-8 text-primary" />
+                  <div className="h-12 w-12 rounded-xl bg-amber flex items-center justify-center mx-auto">
+                    <MessageCircle className="h-5 w-5 text-amber-foreground" />
                   </div>
-                  <h1 className="text-3xl font-bold">Welcome to Your CIM Intake</h1>
-                  <p className="text-muted-foreground text-lg">
-                    You've been invited to provide information about{" "}
-                    <span className="font-medium text-foreground">{inviteData.deal?.businessName}</span>.
+                  <h1 className="text-2xl font-semibold tracking-tight">Welcome</h1>
+                  <p className="text-sm text-muted-foreground leading-relaxed">
+                    You've been invited to share information about{" "}
+                    <span className="font-medium text-foreground">{inviteData.deal?.businessName}</span>{" "}
+                    to help create a professional CIM.
                   </p>
                 </div>
 
-                <div className="bg-muted/50 rounded-lg p-6 space-y-4">
-                  <h3 className="font-semibold">The process includes:</h3>
-                  <div className="grid gap-3">
-                    <div className="flex items-start gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <Building2 className="h-4 w-4 text-primary" />
+                <div className="rounded-lg border border-border divide-y divide-border">
+                  {[
+                    { icon: Building2, title: "Business Basics", desc: "Ownership, location, and fundamentals" },
+                    { icon: Settings, title: "Systems & Tools", desc: "Software and systems you use" },
+                    { icon: Users, title: "Key People", desc: "Key employees and their roles" },
+                    { icon: MessageCircle, title: "AI Interview", desc: "Guided conversation about your business" },
+                  ].map(({ icon: Icon, title, desc }) => (
+                    <div key={title} className="flex items-center gap-3 px-4 py-3">
+                      <div className="h-7 w-7 rounded-md bg-amber/10 flex items-center justify-center shrink-0">
+                        <Icon className="h-3.5 w-3.5 text-amber" />
                       </div>
                       <div>
-                        <div className="font-medium">Business Basics</div>
-                        <div className="text-sm text-muted-foreground">Basic information about your business</div>
+                        <p className="text-sm font-medium">{title}</p>
+                        <p className="text-xs text-muted-foreground">{desc}</p>
                       </div>
                     </div>
-                    <div className="flex items-start gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <Settings className="h-4 w-4 text-primary" />
-                      </div>
-                      <div>
-                        <div className="font-medium">Systems & Tools</div>
-                        <div className="text-sm text-muted-foreground">What software and systems your business uses</div>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <Users className="h-4 w-4 text-primary" />
-                      </div>
-                      <div>
-                        <div className="font-medium">Key People</div>
-                        <div className="text-sm text-muted-foreground">Information about key employees</div>
-                      </div>
-                    </div>
-                    <div className="flex items-start gap-3">
-                      <div className="h-8 w-8 rounded-full bg-primary/10 flex items-center justify-center flex-shrink-0">
-                        <MessageCircle className="h-4 w-4 text-primary" />
-                      </div>
-                      <div>
-                        <div className="font-medium">AI-Guided Interview</div>
-                        <div className="text-sm text-muted-foreground">Answer questions in a natural conversation</div>
-                      </div>
-                    </div>
-                  </div>
+                  ))}
                 </div>
 
-                <Button 
-                  className="w-full" 
-                  size="lg"
+                <Button
+                  className="w-full bg-amber text-amber-foreground hover:bg-amber/90 gap-2"
                   onClick={goNext}
                   data-testid="button-start-intake"
                 >
                   Get Started
-                  <ArrowRight className="h-4 w-4 ml-2" />
+                  <ArrowRight className="h-4 w-4" />
                 </Button>
               </CardContent>
             </Card>
@@ -348,7 +327,7 @@ export default function SellerInviteIntake() {
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back
                   </Button>
-                  <Button className="flex-1" onClick={goNext} data-testid="button-next">
+                  <Button className="flex-1 bg-amber text-amber-foreground hover:bg-amber/90" onClick={goNext} data-testid="button-next">
                     Continue
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
@@ -447,7 +426,7 @@ export default function SellerInviteIntake() {
                     <ArrowLeft className="h-4 w-4 mr-2" />
                     Back
                   </Button>
-                  <Button className="flex-1" onClick={goNext} data-testid="button-next">
+                  <Button className="flex-1 bg-amber text-amber-foreground hover:bg-amber/90" onClick={goNext} data-testid="button-next">
                     Continue
                     <ArrowRight className="h-4 w-4 ml-2" />
                   </Button>
@@ -576,11 +555,9 @@ export default function SellerInviteIntake() {
                 <AIConversationInterface
                   dealId={inviteData.deal.id}
                   businessName={inviteData.deal.businessName}
-                  industry={inviteData.deal.industry}
-                  existingInfo={inviteData.deal.extractedInfo}
-                  onComplete={() => setCurrentSection("complete")}
-                  onInfoUpdate={() => {
+                  onComplete={() => {
                     queryClient.invalidateQueries({ queryKey: ["/api/invites", params?.token] });
+                    setCurrentSection("complete");
                   }}
                 />
               </CardContent>
@@ -588,38 +565,33 @@ export default function SellerInviteIntake() {
           )}
 
           {currentSection === "complete" && (
-            <Card>
+            <Card className="max-w-md mx-auto">
               <CardContent className="p-8 text-center space-y-6">
-                <div className="h-20 w-20 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="h-10 w-10 text-green-600 dark:text-green-400" />
+                <div className="h-12 w-12 rounded-full bg-success/15 flex items-center justify-center mx-auto">
+                  <CheckCircle2 className="h-6 w-6 text-success" />
                 </div>
                 <div className="space-y-2">
-                  <h1 className="text-3xl font-bold">Thank You!</h1>
-                  <p className="text-muted-foreground text-lg">
+                  <h1 className="text-xl font-semibold">All done!</h1>
+                  <p className="text-sm text-muted-foreground">
                     Your information has been submitted successfully.
                   </p>
                 </div>
 
-                <div className="bg-muted/50 rounded-lg p-6 text-left space-y-3">
-                  <h3 className="font-semibold">What happens next?</h3>
-                  <ul className="space-y-2 text-sm text-muted-foreground">
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                      <span>Your broker will review the information you provided</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                      <span>They may reach out for any clarifications needed</span>
-                    </li>
-                    <li className="flex items-start gap-2">
-                      <CheckCircle2 className="h-4 w-4 text-green-500 mt-0.5 flex-shrink-0" />
-                      <span>Your CIM will be drafted and shared with you for approval</span>
-                    </li>
-                  </ul>
+                <div className="rounded-lg border border-border divide-y divide-border text-left">
+                  {[
+                    "Your broker will review the information you provided",
+                    "They may reach out for any clarifications",
+                    "Your CIM will be drafted and shared with you for approval",
+                  ].map((item) => (
+                    <div key={item} className="flex items-start gap-3 px-4 py-3">
+                      <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+                      <span className="text-sm text-muted-foreground">{item}</span>
+                    </div>
+                  ))}
                 </div>
 
-                <p className="text-sm text-muted-foreground">
-                  You can close this window. Your broker will contact you with next steps.
+                <p className="text-xs text-muted-foreground/60">
+                  You can close this window. Your broker will be in touch.
                 </p>
               </CardContent>
             </Card>
