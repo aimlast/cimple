@@ -12,55 +12,105 @@ const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+// Maps CIM_SECTIONS keys to human-readable descriptions used in generation prompts
+const CIM_SECTION_PROMPTS: Record<string, string> = {
+  overview:         "Company Overview & Reputation — what the business does, its history, how it has evolved, brand identity, and how customers and the broader market perceive it",
+  strengths:        "Competitive Strengths & Unique Selling Propositions — the specific, concrete advantages that make this business valuable, defensible, and differentiated from competitors",
+  growth_potential: "Growth Opportunities — specific, realistic strategies a new owner could pursue to grow revenue, expand markets, add product lines, or increase margins",
+  target_market:    "Target Market & Customer Base — who the customers are, B2B vs B2C split, demographics, customer concentration, loyalty and repeat rates, how customers find the business",
+  permits_licenses: "Permits, Licenses & Regulatory Compliance — every operating license, certification, and regulatory requirement the business holds or must maintain, including jurisdiction-specific requirements",
+  seasonality:      "Seasonality & Revenue Patterns — peak and slow periods, how the business manages cash flow through cycles, any meaningful year-over-year trends",
+  revenue_sources:  "Revenue Streams & Major Business Lines — how the business makes money, breakdown of revenue sources, top products or services, pricing model, recurring vs project revenue",
+  real_estate:      "Location, Facilities & Real Estate — physical premises, lease terms and expiry, whether real estate is included, equipment and fixtures included in the sale",
+  employees:        "Team & Employee Overview — team size and structure, key roles, owner dependency and involvement level, key man risk, management team quality and tenure",
+  operations:       "Operations & Systems — day-to-day operations, key processes, supplier and vendor relationships, technology infrastructure, operational efficiency",
+  buyer_profile:    "Ideal Buyer Profile — who the right acquirer is, what background or experience matters, what they would be acquiring and why it suits strategic or individual buyers",
+  training_support: "Training & Transition Support — what the seller will provide during transition, timeline, scope of knowledge transfer, ongoing availability",
+  reason_for_sale:  "Reason for Sale & Transaction Overview — why the seller is exiting, deal structure, what assets are included, any non-compete, preferred timeline",
+  financials:       "Financial Summary — revenue profile, profitability context, SDE or EBITDA framing, growth trend over recent years, what financial documentation is available for due diligence",
+  asking_price:     "Asking Price & Deal Terms — asking price, deal structure options, financing considerations, inventory and working capital position, key terms",
+};
+
 async function generateSectionWithClaude(
   businessName: string,
   industry: string,
   sectionKey: string,
-  extractedInfo: Record<string, any>
+  data: {
+    extractedInfo: Record<string, any>;
+    questionnaireData?: Record<string, any> | null;
+    scrapedData?: Record<string, any> | null;
+    description?: string | null;
+    askingPrice?: string | null;
+  }
 ): Promise<string> {
-  const sectionDescriptions: Record<string, string> = {
-    executiveSummary: "Executive Summary — a compelling 2-3 paragraph overview of the business opportunity, highlighting what makes it attractive to buyers",
-    companyOverview: "Company Overview — what the business does, its products/services, operating structure, technology, and licenses",
-    historyMilestones: "History & Milestones — how the business was founded, how it grew, key achievements and turning points",
-    uniqueSellingPropositions: "Competitive Advantages & USPs — specific differentiators that set this business apart from competitors",
-    sourcesOfRevenue: "Revenue Sources — how the business makes money, revenue streams, customer mix, concentration",
-    growthStrategies: "Growth Opportunities — concrete strategies a new owner could pursue to grow revenue",
-    targetMarket: "Target Market & Customers — who buys from this business, demographics, repeat vs new ratio",
-    permitsLicenses: "Permits, Licenses & Compliance — all required operating licenses and regulatory requirements",
-    seasonality: "Seasonality — busy and slow periods, how the business manages cash flow through cycles",
-    locationSite: "Location & Facilities — physical space, lease terms, equipment included in sale",
-    employeeOverview: "Employee Overview — team structure, key roles, owner's involvement, transition plan",
-    transactionOverview: "Transaction Overview — reason for sale, asking details, training offer, assets included, non-compete",
-    financialOverview: "Financial Overview — revenue profile, SDE/EBITDA context, what financial documents are available",
-  };
+  const desc = CIM_SECTION_PROMPTS[sectionKey] || sectionKey;
 
-  const desc = sectionDescriptions[sectionKey] || sectionKey;
+  // Build a structured context block so the model can find relevant data
+  const contextParts: string[] = [];
+
+  if (data.description) {
+    contextParts.push(`=== BROKER NOTES ===\n${data.description}`);
+  }
+
+  const confirmed = Object.entries(data.extractedInfo).filter(([, v]) => v);
+  if (confirmed.length > 0) {
+    contextParts.push(
+      `=== CONFIRMED (from seller interview) ===\n` +
+      confirmed.map(([k, v]) => `${k}: ${v}`).join("\n")
+    );
+  }
+
+  if (data.questionnaireData && Object.keys(data.questionnaireData).length > 0) {
+    const qEntries = Object.entries(data.questionnaireData).filter(([, v]) => v);
+    if (qEntries.length > 0) {
+      contextParts.push(
+        `=== FROM QUESTIONNAIRE ===\n` +
+        qEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+      );
+    }
+  }
+
+  if (data.scrapedData && Object.keys(data.scrapedData).length > 0) {
+    const sEntries = Object.entries(data.scrapedData).filter(([, v]) => v);
+    if (sEntries.length > 0) {
+      contextParts.push(
+        `=== PUBLICLY FOUND (treat as supporting context only) ===\n` +
+        sEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+      );
+    }
+  }
+
+  if (data.askingPrice) {
+    contextParts.push(`=== ASKING PRICE ===\n${data.askingPrice}`);
+  }
+
+  const context = contextParts.join("\n\n") || "No data collected yet.";
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 600,
+    max_tokens: 1000,
     system: `You are a professional business broker writer specializing in Confidential Business Overviews (CBOs) and Confidential Information Memorandums (CIMs). You write compelling, buyer-focused content that presents businesses in their best light while remaining factually accurate. Your writing is concise, professional, and persuasive — it reads like a premium investment document, not a generic template.
 
 Style guidelines:
-- 2-3 focused paragraphs per section
-- Lead with the strongest point
-- Use specific facts and figures whenever available
-- Speak directly to a sophisticated buyer
-- Use **bold** for key metrics or standout points
-- Never use filler phrases like "proven track record" or "well-established" as openers
-- Never mention that financials are "available upon NDA" in sections other than the Financial Overview`,
+- 2–3 focused paragraphs per section
+- Lead with the strongest, most compelling point
+- Use specific facts, numbers, and names whenever available in the data
+- Write directly to a sophisticated acquirer evaluating this as an investment
+- Use **bold** for key metrics, standout facts, or deal highlights
+- Never open with clichés like "proven track record", "well-established", "thriving", or "exciting opportunity"
+- If a section has very little data, write what you can and note clearly what information is pending — do not fabricate
+- Prioritize "CONFIRMED (from seller interview)" data above all other sources`,
     messages: [
       {
         role: "user",
-        content: `Write the "${desc}" section for this business CBO.
+        content: `Write the "${desc}" section for this business CIM/CBO.
 
-Business: ${businessName}
+Business Name: ${businessName}
 Industry: ${industry}
 
-Collected information:
-${JSON.stringify(extractedInfo, null, 2)}
+${context}
 
-Write only the section content — no section heading, no preamble.`,
+Write only the section body — no section heading, no intro preamble like "Here is the section:". Just the content.`,
       },
     ],
   });
@@ -894,53 +944,56 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
   app.post("/api/deals/:dealId/generate-content", async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
-      if (!deal) {
-        return res.status(404).json({ error: "Deal not found" });
-      }
-      
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
       const { sectionKey } = req.body;
-      const extractedInfo = deal.extractedInfo as Record<string, any> || {};
+
       const businessName = deal.businessName || "The Business";
       const industry = deal.industry || "a specialized industry";
 
-      if (!sectionKey) {
-        const sections = [
-          "executiveSummary",
-          "companyOverview",
-          "historyMilestones",
-          "uniqueSellingPropositions",
-          "sourcesOfRevenue",
-          "growthStrategies",
-          "targetMarket",
-          "permitsLicenses",
-          "seasonality",
-          "locationSite",
-          "employeeOverview",
-          "transactionOverview",
-          "financialOverview",
-        ];
+      // All available data — interview data takes priority, but we pass everything
+      const sectionData = {
+        extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
+        questionnaireData: deal.questionnaireData as Record<string, any> | null,
+        scrapedData: (deal as any).scrapedData as Record<string, any> | null,
+        description: deal.description,
+        askingPrice: deal.askingPrice,
+      };
 
-        // Generate sections sequentially to avoid rate limits
-        const cimContent: Record<string, string> = {};
-        for (const key of sections) {
-          try {
-            cimContent[key] = await generateSectionWithClaude(businessName, industry, key, extractedInfo);
-          } catch (e) {
-            console.error(`Failed to generate ${key}:`, e);
-          }
+      if (sectionKey) {
+        // Single-section regeneration — generate and save back to deal
+        if (!CIM_SECTION_PROMPTS[sectionKey]) {
+          return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
         }
-
-        await storage.updateDeal(deal.id, {
-          cimContent,
-          phase: "phase3_content_creation",
-        });
-
-        res.json({ success: true, cimContent });
+        const content = await generateSectionWithClaude(businessName, industry, sectionKey, sectionData);
+        const existingContent = (deal.cimContent as Record<string, string>) || {};
+        const updated = { ...existingContent, [sectionKey]: content };
+        await storage.updateDeal(deal.id, { cimContent: updated });
+        res.json({ sectionKey, content });
         return;
       }
 
-      const content = await generateSectionWithClaude(businessName, industry, sectionKey, extractedInfo);
-      res.json({ content });
+      // Generate all sections using CIM_SECTIONS keys
+      const { CIM_SECTIONS } = await import("@shared/schema");
+      const cimContent: Record<string, string> = {};
+
+      for (const section of CIM_SECTIONS) {
+        try {
+          cimContent[section.key] = await generateSectionWithClaude(
+            businessName, industry, section.key, sectionData
+          );
+        } catch (e) {
+          console.error(`Failed to generate ${section.key}:`, e);
+          cimContent[section.key] = "";
+        }
+      }
+
+      await storage.updateDeal(deal.id, {
+        cimContent,
+        phase: "phase3_content_creation",
+      });
+
+      res.json({ success: true, cimContent });
     } catch (error: any) {
       console.error("Error generating content:", error);
       res.status(500).json({ error: "Failed to generate content" });

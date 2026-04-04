@@ -13,7 +13,8 @@ import type { Deal, Task, Document as DocType } from "@shared/schema";
 import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
-  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe
+  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe,
+  Pencil, RefreshCw, X, Check
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════
@@ -554,19 +555,63 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
 function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const cimContent = deal.cimContent as Record<string, string> | null;
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
 
+  // Count available data fields as a readiness indicator
+  const extractedCount = Object.keys((deal.extractedInfo as object) || {}).length;
+  const scrapedCount = Object.keys(((deal as any).scrapedData as object) || {}).length;
+  const totalDataFields = extractedCount + scrapedCount;
+
+  // Generate all sections
   const generate = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
       return r.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "CIM content generated" });
+      toast({ title: "CIM content generated", description: "All sections drafted. Review and edit below." });
     },
     onError: (e: Error) => toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
   });
 
+  // Regenerate a single section
+  const regenerateSection = async (sectionKey: string) => {
+    setRegeneratingKey(sectionKey);
+    try {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`, { sectionKey });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Section regenerated" });
+    } catch (e: any) {
+      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRegeneratingKey(null);
+    }
+  };
+
+  // Save broker edit to a section
+  const saveEdit = useMutation({
+    mutationFn: async ({ key, content }: { key: string; content: string }) => {
+      const existing = (deal.cimContent as Record<string, string>) || {};
+      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
+        cimContent: { ...existing, [key]: content },
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      setEditingKey(null);
+      toast({ title: "Section saved" });
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  // Approve all
   const approve = useMutation({
     mutationFn: async (role: "broker" | "seller") => {
       const data = role === "broker" ? { contentApprovedByBroker: true } : { contentApprovedBySeller: true };
@@ -579,6 +624,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     },
   });
 
+  // Require interview completion
   if (!deal.interviewCompleted) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -589,17 +635,39 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     );
   }
 
+  // Pre-generation state
   if (!cimContent) {
     return (
       <div className="space-y-4">
         <div>
           <h2 className="text-base font-semibold">Phase 3 — Content Creation</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Generate the CIM copy from the interview data.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">The AI drafts all CIM sections from the collected data.</p>
         </div>
+
+        {/* Data readiness indicator */}
+        <div className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-amber/30 bg-amber/5"}`}>
+          <div className="flex items-start gap-3">
+            {totalDataFields >= 8
+              ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+              : <AlertCircle className="h-4 w-4 text-amber mt-0.5 shrink-0" />}
+            <div>
+              <p className="text-sm font-medium">
+                {totalDataFields} data fields available
+                {totalDataFields < 5 && " — limited data"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {totalDataFields >= 8
+                  ? `${extractedCount} from interview, ${scrapedCount} from public scrape. Ready to generate.`
+                  : "More interview data will produce better content. You can still generate and edit manually."}
+              </p>
+            </div>
+          </div>
+        </div>
+
         <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-5 text-center">
           <Edit3 className="h-6 w-6 text-amber/60 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground mb-3">
-            The AI will draft all CIM sections based on the interview.
+          <p className="text-sm text-muted-foreground mb-4">
+            Generates all {CIM_SECTIONS.length} CIM sections. Takes ~60 seconds.
           </p>
           <Button
             className="bg-amber text-amber-foreground hover:bg-amber/90"
@@ -607,62 +675,127 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             disabled={generate.isPending}
             data-testid="button-generate-content"
           >
-            {generate.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : "Generate CIM Content"}
+            {generate.isPending
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating sections...</>
+              : "Generate CIM Content"}
           </Button>
         </div>
       </div>
     );
   }
 
+  // Content review state
+  const populatedCount = CIM_SECTIONS.filter(s => cimContent[s.key]).length;
+
   return (
     <div className="space-y-4">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-base font-semibold">CIM Content</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Review and approve each section.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {populatedCount}/{CIM_SECTIONS.length} sections drafted · Edit any section inline
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {!deal.contentApprovedByBroker && (
+          {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
+            <span className="text-xs font-medium text-success flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
+            </span>
+          ) : deal.contentApprovedByBroker ? (
+            <Button size="sm" variant="outline" className="h-8 text-xs"
+              onClick={() => approve.mutate("seller")} disabled={approve.isPending}
+              data-testid="button-approve-seller">
+              Approve as Seller
+            </Button>
+          ) : (
             <Button size="sm" variant="outline" className="h-8 text-xs"
               onClick={() => approve.mutate("broker")} disabled={approve.isPending}
               data-testid="button-approve-broker">
               Approve as Broker
             </Button>
           )}
-          {deal.contentApprovedByBroker && !deal.contentApprovedBySeller && (
-            <Button size="sm" variant="outline" className="h-8 text-xs"
-              onClick={() => approve.mutate("seller")} disabled={approve.isPending}
-              data-testid="button-approve-seller">
-              Approve as Seller
-            </Button>
-          )}
-          {deal.contentApprovedByBroker && deal.contentApprovedBySeller && (
-            <span className="text-xs font-medium text-success flex items-center gap-1">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
-            </span>
-          )}
+          <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground gap-1.5"
+            onClick={() => generate.mutate()} disabled={generate.isPending}
+            data-testid="button-regenerate-content">
+            <RefreshCw className={`h-3 w-3 ${generate.isPending ? "animate-spin" : ""}`} />
+            Regenerate All
+          </Button>
         </div>
       </div>
 
+      {/* Sections */}
       {CIM_SECTIONS.map(section => {
-        const content = cimContent[section.key];
+        const content = cimContent[section.key] || "";
+        const isEditing = editingKey === section.key;
+        const isRegenerating = regeneratingKey === section.key;
+
         return (
-          <div key={section.key} className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2">{section.title}</p>
-            {content ? (
-              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground/50 italic">Not yet generated.</p>
-            )}
+          <div key={section.key} className="rounded-lg border border-border bg-card overflow-hidden">
+            {/* Section header */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                {section.title}
+              </p>
+              {!isEditing && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => regenerateSection(section.key)}
+                    disabled={!!regeneratingKey || generate.isPending}
+                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors disabled:opacity-30"
+                    title="Regenerate this section"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+                  </button>
+                  <button
+                    onClick={() => { setEditingKey(section.key); setEditDraft(content); }}
+                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors"
+                    title="Edit this section"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Section body */}
+            <div className="px-4 py-3">
+              {isEditing ? (
+                <>
+                  <Textarea
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    className="resize-none text-sm min-h-[140px] font-normal"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2 mt-2">
+                    <Button size="sm" className="h-7 text-xs bg-amber text-amber-foreground hover:bg-amber/90 gap-1"
+                      onClick={() => saveEdit.mutate({ key: section.key, content: editDraft })}
+                      disabled={saveEdit.isPending}>
+                      {saveEdit.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                      onClick={() => setEditingKey(null)}>
+                      <X className="h-3 w-3" /> Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : isRegenerating ? (
+                <div className="flex items-center gap-2 py-4 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span className="text-sm">Regenerating...</span>
+                </div>
+              ) : content ? (
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground/40 italic py-2">Not yet generated.</p>
+              )}
+            </div>
           </div>
         );
       })}
-
-      <Button variant="outline" size="sm" className="text-xs"
-        onClick={() => generate.mutate()} disabled={generate.isPending}
-        data-testid="button-regenerate-content">
-        Regenerate All
-      </Button>
     </div>
   );
 }
