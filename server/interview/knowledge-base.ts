@@ -38,6 +38,10 @@ export interface KnowledgeBase {
 
   // Raw extracted info (the flat key-value store from the schema)
   extractedInfo: Partial<ExtractedInfo>;
+
+  // Publicly scraped data — UNVERIFIED, must be confirmed with seller during interview
+  scrapedData: Record<string, string> | null;
+  scrapeSource: "website" | "internet_search" | null;
 }
 
 export interface LocationContext {
@@ -202,6 +206,8 @@ export function assembleKnowledgeBase(
       .map(summarizeTask),
     priorSessionSummary: latestSession ? summarizeSession(latestSession) : null,
     extractedInfo,
+    scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
+    scrapeSource: (deal.scrapeSource as "website" | "internet_search" | null) || null,
   };
 }
 
@@ -211,6 +217,25 @@ export function assembleKnowledgeBase(
 
 export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   const parts: string[] = [];
+
+  // Scraped data — shown first so the agent is primed to verify it
+  if (kb.scrapedData && Object.keys(kb.scrapedData).length > 0) {
+    const sourceLabel = kb.scrapeSource === "website"
+      ? "the business's public website"
+      : "public internet search results (directories, news, review sites)";
+
+    parts.push(`## ⚠️ PUBLICLY FOUND DATA — UNVERIFIED`);
+    parts.push(`The following was found on ${sourceLabel} BEFORE the interview. It has NOT been confirmed by the seller.`);
+    parts.push(``);
+    parts.push(`YOUR JOB: Verify these facts naturally during the interview. Do not list them all at once.`);
+    parts.push(`Weave verification into conversation: "I noticed on your website that you've been in business since 2010 — is that right?" or "I saw online that you have two locations — can you confirm that?"`);
+    parts.push(`When the seller confirms → extract the field as confirmed. When they correct → use their version. When they say it's wrong → note it and use their answer.`);
+    parts.push(``);
+    for (const [key, value] of Object.entries(kb.scrapedData)) {
+      parts.push(`- ${key}: "${value}"  [UNVERIFIED — confirm with seller]`);
+    }
+    parts.push(``);
+  }
 
   // Business identity
   parts.push(`## Business Profile`);

@@ -433,6 +433,8 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
   const isScraped = !!deal.scrapedAt;
   const scrapedDate = deal.scrapedAt ? new Date(deal.scrapedAt).toLocaleDateString() : null;
+  const scrapeSource = (deal as any).scrapeSource as "website" | "internet_search" | null;
+  const scrapedFieldCount = deal.scrapedData ? Object.keys(deal.scrapedData as object).length : 0;
 
   return (
     <div className="space-y-4">
@@ -468,15 +470,15 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isScraped
-                ? `Scraped ${scrapedDate} — pre-populates the AI interview knowledge base`
-                : "Pulls publicly available info from the business website before the interview starts."}
+                ? `${scrapedFieldCount} fields found via ${scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
+                : "Pulls publicly available info from the business website or internet before the interview starts."}
             </p>
             {!isScraped && (
               <div className="mt-3 flex gap-2">
                 <Input
                   value={websiteInput}
                   onChange={(e) => setWebsiteInput(e.target.value)}
-                  placeholder="https://businesswebsite.com"
+                  placeholder="https://businesswebsite.com (leave blank to search internet)"
                   className="h-8 text-xs flex-1"
                 />
                 <Button
@@ -484,13 +486,13 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
                   variant="outline"
                   className="h-8 text-xs shrink-0 gap-1.5"
                   onClick={() => scrapeMutation.mutate()}
-                  disabled={scrapeMutation.isPending || !websiteInput.trim()}
+                  disabled={scrapeMutation.isPending}
                   data-testid="button-scrape"
                 >
                   {scrapeMutation.isPending ? (
-                    <><Loader2 className="h-3 w-3 animate-spin" /> Scraping...</>
+                    <><Loader2 className="h-3 w-3 animate-spin" /> Searching...</>
                   ) : (
-                    <><Globe className="h-3 w-3" /> Scrape</>
+                    <><Globe className="h-3 w-3" /> {websiteInput.trim() ? "Scrape" : "Search"}</>
                   )}
                 </Button>
               </div>

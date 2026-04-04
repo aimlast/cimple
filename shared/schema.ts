@@ -61,6 +61,8 @@ export const deals = pgTable("deals", {
   // Public data scrape
   websiteUrl: text("website_url"),
   scrapedAt: timestamp("scraped_at"),
+  scrapedData: jsonb("scraped_data"),   // Unverified public data — confirmed during AI interview
+  scrapeSource: text("scrape_source"),  // "website" | "internet_search"
 
   // AI Interview extracted info
   extractedInfo: jsonb("extracted_info"),
