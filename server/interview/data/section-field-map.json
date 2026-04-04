@@ -1,0 +1,92 @@
+{
+  "_comment": "Maps each CIM section key to the extractedInfo fields that populate it. Used to calculate section coverage status.",
+  "overview": [
+    "businessName",
+    "industry",
+    "companyHistory",
+    "yearsOperating",
+    "entityType",
+    "brandIdentity",
+    "missionStatement",
+    "coreValues",
+    "ownershipHistory",
+    "industryPerception",
+    "customerPerception",
+    "accolades"
+  ],
+  "strengths": [
+    "competitiveAdvantage",
+    "uniqueSellingProposition",
+    "strengths"
+  ],
+  "growth_potential": [
+    "growthOpportunities",
+    "expansionPlans"
+  ],
+  "target_market": [
+    "targetMarket",
+    "primaryMarket",
+    "secondaryMarket",
+    "b2bBreakdown",
+    "customerDemographics",
+    "customerBase"
+  ],
+  "permits_licenses": [
+    "permitsLicenses",
+    "complianceRequirements"
+  ],
+  "seasonality": [
+    "seasonality",
+    "peakPeriods",
+    "slowPeriods"
+  ],
+  "revenue_sources": [
+    "revenueStreams",
+    "keyProducts",
+    "customerConcentration",
+    "annualRevenue",
+    "revenueGrowth",
+    "operatingMargins"
+  ],
+  "real_estate": [
+    "leaseDetails",
+    "propertyInfo",
+    "realEstateIncluded"
+  ],
+  "employees": [
+    "employees",
+    "employeeStructure",
+    "keyEmployees",
+    "ownerInvolvement",
+    "managementTeam"
+  ],
+  "operations": [
+    "suppliers",
+    "supplyChain",
+    "technologySystems",
+    "operationalSystems"
+  ],
+  "buyer_profile": [
+    "idealBuyer"
+  ],
+  "training_support": [
+    "trainingSupport",
+    "transitionPlan"
+  ],
+  "reason_for_sale": [
+    "reasonForSale"
+  ],
+  "financials": [
+    "annualRevenue",
+    "revenueGrowth",
+    "operatingMargins",
+    "workingCapital",
+    "debt"
+  ],
+  "asking_price": [
+    "askingPrice",
+    "saleType",
+    "assetsIncluded",
+    "inventory"
+  ]
+}
