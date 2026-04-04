@@ -50,10 +50,10 @@
   --destructive-foreground: 0 0% 100%;
 
   /* ── Teal — primary CTA, active states ── */
-  --amber: 162 65% 38%;
-  --amber-foreground: 0 0% 100%;
-  --amber-muted: 162 40% 93%;
-  --amber-muted-foreground: 162 65% 26%;
+  --teal: 162 65% 38%;
+  --teal-foreground: 0 0% 100%;
+  --teal-muted: 162 40% 93%;
+  --teal-muted-foreground: 162 65% 26%;
 
   /* ── Success (completed, verified) ── */
   --success: 145 55% 38%;
@@ -90,74 +90,7 @@
   --tracking-normal: 0em;
 }
 
-/* ─────────────────────────────────────────────
-   DARK MODE — pure black + cream + teal
-   Available but not default.
-───────────────────────────────────────────── */
-.dark {
-  --background: 0 0% 5%;
-  --foreground: 40 28% 91%;
-  --border: 0 0% 13%;
-  --input: 0 0% 15%;
-  --ring: 162 65% 42%;
-
-  --card: 0 0% 8%;
-  --card-foreground: 40 28% 91%;
-  --card-border: 0 0% 12%;
-
-  --sidebar: 0 0% 3%;
-  --sidebar-foreground: 40 15% 60%;
-  --sidebar-border: 0 0% 10%;
-  --sidebar-primary: 162 65% 42%;
-  --sidebar-primary-foreground: 0 0% 5%;
-  --sidebar-accent: 0 0% 10%;
-  --sidebar-accent-foreground: 40 20% 80%;
-  --sidebar-ring: 162 65% 42%;
-
-  --popover: 0 0% 9%;
-  --popover-foreground: 40 28% 91%;
-  --popover-border: 0 0% 14%;
-
-  --primary: 162 65% 42%;
-  --primary-foreground: 0 0% 5%;
-
-  --secondary: 0 0% 11%;
-  --secondary-foreground: 40 20% 78%;
-  --muted: 0 0% 10%;
-  --muted-foreground: 0 0% 42%;
-  --accent: 0 0% 12%;
-  --accent-foreground: 40 28% 91%;
-
-  --destructive: 0 65% 52%;
-  --destructive-foreground: 0 0% 98%;
-
-  --amber: 162 65% 42%;
-  --amber-foreground: 0 0% 5%;
-  --amber-muted: 162 30% 9%;
-  --amber-muted-foreground: 162 55% 58%;
-
-  --success: 145 52% 48%;
-  --success-foreground: 0 0% 5%;
-  --success-muted: 145 28% 10%;
-  --success-muted-foreground: 145 52% 58%;
-
-  --blue: 211 78% 58%;
-  --blue-foreground: 0 0% 100%;
-  --blue-muted: 211 30% 11%;
-  --blue-muted-foreground: 211 65% 68%;
-
-  --chart-1: 162 65% 48%;
-  --chart-2: 145 52% 52%;
-  --chart-3: 211 78% 62%;
-  --chart-4: 260 65% 68%;
-  --chart-5: 15 78% 58%;
-
-  --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.6);
-  --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.65), 0 1px 2px -1px hsl(0 0% 0% / 0.55);
-  --shadow: 0 4px 8px -2px hsl(0 0% 0% / 0.65), 0 2px 4px -2px hsl(0 0% 0% / 0.6);
-  --shadow-md: 0 8px 16px -4px hsl(0 0% 0% / 0.70), 0 3px 6px -3px hsl(0 0% 0% / 0.65);
-  --shadow-lg: 0 16px 32px -8px hsl(0 0% 0% / 0.75), 0 6px 12px -4px hsl(0 0% 0% / 0.65);
-}
+/* Dark mode intentionally removed — cream/light is the only theme. */
 
 /* ─────────────────────────────────────────────
    BASE STYLES
@@ -188,8 +121,8 @@
     background-color: hsl(var(--accent) / 0.6);
   }
 
-  .amber-glow {
-    box-shadow: 0 0 0 1px hsl(var(--amber) / 0.3), 0 0 12px hsl(var(--amber) / 0.12);
+  .teal-glow {
+    box-shadow: 0 0 0 1px hsl(var(--teal) / 0.3), 0 0 12px hsl(var(--teal) / 0.12);
   }
 
   .phase-line::before {
@@ -213,7 +146,7 @@
     border-radius: 2px;
   }
 
-  .dot-amber { background-color: hsl(var(--amber)); }
+  .dot-teal  { background-color: hsl(var(--teal)); }
   .dot-blue  { background-color: hsl(var(--blue)); }
   .dot-green { background-color: hsl(var(--success)); }
   .dot-muted { background-color: hsl(var(--muted-foreground) / 0.35); }

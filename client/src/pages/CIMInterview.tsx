@@ -112,11 +112,11 @@ export default function CIMInterview() {
             Back
           </button>
           <span className="text-muted-foreground/30">·</span>
-          <span className="text-sm font-medium truncate">{deal?.businessName ?? "AI Interview"}</span>
+          <span className="text-sm font-semibold truncate">{deal?.businessName ?? "AI Interview"}</span>
           {industryContext.identified && (
             <>
               <span className="text-muted-foreground/30">·</span>
-              <span className="text-xs text-amber font-medium">{industryContext.industry}</span>
+              <span className="text-xs text-teal font-medium">{industryContext.industry}</span>
             </>
           )}
           <div className="ml-auto flex items-center gap-2">
@@ -127,7 +127,7 @@ export default function CIMInterview() {
               onClick={() => setPanelOpen(p => !p)}
               className={`h-7 w-7 flex items-center justify-center rounded-md transition-colors ${
                 panelOpen
-                  ? "bg-amber/10 text-amber"
+                  ? "bg-teal/10 text-teal"
                   : "text-muted-foreground hover:text-foreground hover:bg-accent"
               }`}
               title="Toggle coverage panel"
@@ -157,7 +157,7 @@ export default function CIMInterview() {
                 onClick={handleComplete}
                 disabled={isCompleting}
                 size="sm"
-                className="h-7 text-xs bg-amber text-amber-foreground hover:bg-amber/90"
+                className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
                 data-testid="button-complete"
               >
                 <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
@@ -186,7 +186,7 @@ export default function CIMInterview() {
                     style={{ width: `${(coveredCount / sectionCoverage.length) * 100}%` }}
                   />
                   <div
-                    className="bg-amber/60 rounded-full transition-all"
+                    className="bg-teal/60 rounded-full transition-all"
                     style={{ width: `${(partialCount / sectionCoverage.length) * 100}%` }}
                   />
                   <div
@@ -195,7 +195,7 @@ export default function CIMInterview() {
                 </div>
                 <div className="flex gap-3 mb-3 text-2xs text-muted-foreground">
                   <span><span className="text-success font-medium">{coveredCount}</span> covered</span>
-                  <span><span className="text-amber font-medium">{partialCount}</span> partial</span>
+                  <span><span className="text-teal font-medium">{partialCount}</span> partial</span>
                   <span><span className="font-medium">{missingCount}</span> missing</span>
                 </div>
                 <div className="space-y-0.5">
@@ -204,7 +204,7 @@ export default function CIMInterview() {
                       {section.status === "well_covered" ? (
                         <CheckCircle className="h-3 w-3 text-success shrink-0" />
                       ) : section.status === "partial" ? (
-                        <Clock className="h-3 w-3 text-amber shrink-0" />
+                        <Clock className="h-3 w-3 text-teal shrink-0" />
                       ) : (
                         <AlertCircle className="h-3 w-3 text-muted-foreground/30 shrink-0" />
                       )}
@@ -234,13 +234,13 @@ export default function CIMInterview() {
               <p className="text-2xs font-semibold uppercase tracking-widest text-muted-foreground mb-2">
                 Industry
               </p>
-              <p className="text-sm font-medium mb-2 text-amber">{industryContext.industry}</p>
+              <p className="text-sm font-medium mb-2 text-teal">{industryContext.industry}</p>
               {industryContext.activeTopics.length > 0 && (
                 <div className="space-y-1.5">
                   <p className="text-2xs text-muted-foreground uppercase tracking-widest">Active topics</p>
                   <div className="flex flex-wrap gap-1 mt-1">
                     {industryContext.activeTopics.map((topic) => (
-                      <span key={topic} className="text-2xs px-1.5 py-0.5 rounded bg-amber/10 text-amber">
+                      <span key={topic} className="text-2xs px-1.5 py-0.5 rounded bg-teal/10 text-teal">
                         {topic.replace(/_/g, " ")}
                       </span>
                     ))}

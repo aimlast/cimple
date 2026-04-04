@@ -56,16 +56,16 @@ export function AppSidebar() {
                       flex items-center gap-3 px-3 py-2 rounded-md text-sm cursor-pointer
                       transition-colors duration-100 select-none
                       ${active
-                        ? "bg-amber/15 text-amber font-medium"
+                        ? "bg-teal/15 text-teal font-medium"
                         : "text-sidebar-foreground/60 hover:text-sidebar-foreground hover:bg-sidebar-accent"
                       }
                     `}
                     data-testid={`link-${label.toLowerCase()}`}
                   >
-                    <Icon className={`h-4 w-4 shrink-0 ${active ? "text-amber" : ""}`} />
+                    <Icon className={`h-4 w-4 shrink-0 ${active ? "text-teal" : ""}`} />
                     <span className="group-data-[collapsible=icon]:hidden">{label}</span>
                     {active && (
-                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-amber shrink-0 group-data-[collapsible=icon]:hidden" />
+                      <span className="ml-auto h-1.5 w-1.5 rounded-full bg-teal shrink-0 group-data-[collapsible=icon]:hidden" />
                     )}
                   </div>
                 </Link>
@@ -78,7 +78,7 @@ export function AppSidebar() {
         <div className="mt-4 px-1 group-data-[collapsible=icon]:px-0">
           <Link href="/new-deal">
             <div
-              className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-amber/70 hover:text-amber hover:bg-amber/8 cursor-pointer transition-colors border border-dashed border-amber/20 hover:border-amber/40"
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-teal/70 hover:text-teal hover:bg-teal/8 cursor-pointer transition-colors border border-dashed border-teal/20 hover:border-teal/40"
               data-testid="link-new-deal"
             >
               <Plus className="h-3.5 w-3.5 shrink-0" />

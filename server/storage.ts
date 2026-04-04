@@ -1,6 +1,6 @@
-import { 
-  type User, type InsertUser, 
-  type Cim, type InsertCim, 
+import {
+  type User, type InsertUser,
+  type Cim, type InsertCim,
   type BrandingSettings, type InsertBrandingSettings,
   type Deal, type InsertDeal,
   type Document, type InsertDocument,
@@ -10,7 +10,9 @@ import {
   type CimSection, type InsertCimSection,
   type AnalyticsEvent, type InsertAnalyticsEvent,
   type FaqItem, type InsertFaqItem,
-  users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems
+  type BuyerQuestion, type InsertBuyerQuestion,
+  type EngagementInsight,
+  users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -64,9 +66,17 @@ export interface IStorage {
   createCimSection(section: InsertCimSection): Promise<CimSection>;
   getCimSectionsByDeal(dealId: string): Promise<CimSection[]>;
   updateCimSection(id: string, updates: Partial<InsertCimSection>): Promise<CimSection | undefined>;
-  
+  deleteCimSectionsForDeal(dealId: string): Promise<void>;
+
+  // Buyer Q&A operations
+  createBuyerQuestion(question: InsertBuyerQuestion): Promise<BuyerQuestion>;
+  getQuestionsByDeal(dealId: string): Promise<BuyerQuestion[]>;
+  getPublishedQuestions(dealId: string): Promise<BuyerQuestion[]>;
+  updateBuyerQuestion(id: string, updates: Partial<BuyerQuestion>): Promise<BuyerQuestion | undefined>;
+
   // Branding operations
   getBrandingSettings(): Promise<BrandingSettings | undefined>;
+  getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined>;
   createBrandingSettings(settings: InsertBrandingSettings): Promise<BrandingSettings>;
   updateBrandingSettings(id: string, updates: Partial<InsertBrandingSettings>): Promise<BrandingSettings | undefined>;
   
@@ -81,7 +91,16 @@ export interface IStorage {
     recentViews: { date: string; count: number }[];
   }>;
   deleteBuyerAccess(id: string): Promise<void>;
-  
+
+  // Engagement insights (learning loop)
+  getEngagementInsightsByIndustry(industry: string): Promise<EngagementInsight[]>;
+  upsertEngagementInsight(
+    industry: string,
+    sectionType: string,
+    layoutType: string,
+    metrics: { timeSeconds: number; scrollDepth?: number }
+  ): Promise<void>;
+
   // FAQ operations
   getFaqsByDeal(dealId: string): Promise<FaqItem[]>;
   createFaq(faq: InsertFaqItem): Promise<FaqItem>;
@@ -239,9 +258,17 @@ export class MemStorage implements IStorage {
   async createCimSection(): Promise<CimSection> { throw new Error("Use DbStorage"); }
   async getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
   async updateCimSection(): Promise<CimSection | undefined> { return undefined; }
+  async deleteCimSectionsForDeal(): Promise<void> {}
+  async createBuyerQuestion(): Promise<BuyerQuestion> { throw new Error("Use DbStorage"); }
+  async getQuestionsByDeal(): Promise<BuyerQuestion[]> { return []; }
+  async getPublishedQuestions(): Promise<BuyerQuestion[]> { return []; }
+  async updateBuyerQuestion(): Promise<BuyerQuestion | undefined> { return undefined; }
+  async getBrandingByBroker(): Promise<BrandingSettings | undefined> { return undefined; }
   async createAnalyticsEvent(): Promise<AnalyticsEvent> { throw new Error("Use DbStorage"); }
   async getAnalyticsByDeal(): Promise<AnalyticsEvent[]> { return []; }
   async getAnalyticsSummary(): Promise<any> { return { totalViews: 0, uniqueBuyers: 0, avgTimeSpent: 0, totalTimeSpent: 0, recentViews: [] }; }
+  async getEngagementInsightsByIndustry(): Promise<EngagementInsight[]> { return []; }
+  async upsertEngagementInsight(): Promise<void> {}
   async deleteBuyerAccess(): Promise<void> {}
   async getFaqsByDeal(): Promise<FaqItem[]> { return []; }
   async createFaq(): Promise<FaqItem> { throw new Error("Use DbStorage"); }
@@ -573,6 +600,94 @@ export class DbStorage implements IStorage {
 
   async deleteFaq(id: string): Promise<void> {
     await db.delete(faqItems).where(eq(faqItems.id, id));
+  }
+
+  async deleteCimSectionsForDeal(dealId: string): Promise<void> {
+    await db.delete(cimSections).where(eq(cimSections.dealId, dealId));
+  }
+
+  async getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined> {
+    const result = await db.select().from(brandingSettings)
+      .where(eq(brandingSettings.brokerId, brokerId))
+      .limit(1);
+    return result[0] ?? undefined;
+  }
+
+  async createBuyerQuestion(question: InsertBuyerQuestion): Promise<BuyerQuestion> {
+    const result = await db.insert(buyerQuestions).values(question).returning();
+    return result[0];
+  }
+
+  async getQuestionsByDeal(dealId: string): Promise<BuyerQuestion[]> {
+    return db.select().from(buyerQuestions)
+      .where(eq(buyerQuestions.dealId, dealId))
+      .orderBy(buyerQuestions.createdAt);
+  }
+
+  async getPublishedQuestions(dealId: string): Promise<BuyerQuestion[]> {
+    return db.select().from(buyerQuestions)
+      .where(eq(buyerQuestions.dealId, dealId))
+      .orderBy(buyerQuestions.createdAt);
+  }
+
+  async updateBuyerQuestion(id: string, updates: Partial<BuyerQuestion>): Promise<BuyerQuestion | undefined> {
+    const result = await db.update(buyerQuestions)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(buyerQuestions.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getEngagementInsightsByIndustry(industry: string): Promise<EngagementInsight[]> {
+    return db.select()
+      .from(engagementInsights)
+      .where(eq(engagementInsights.industry, industry))
+      .orderBy(desc(engagementInsights.avgTimeSpentSeconds));
+  }
+
+  async upsertEngagementInsight(
+    industry: string,
+    sectionType: string,
+    layoutType: string,
+    metrics: { timeSeconds: number; scrollDepth?: number }
+  ): Promise<void> {
+    // Query-then-update: no unique constraint, use rolling weighted average
+    const existing = await db.select()
+      .from(engagementInsights)
+      .where(
+        sql`${engagementInsights.industry} = ${industry}
+          AND ${engagementInsights.sectionType} = ${sectionType}
+          AND ${engagementInsights.layoutType} = ${layoutType}`
+      )
+      .limit(1);
+
+    if (existing.length > 0) {
+      const row = existing[0];
+      const n = (row.sampleCount ?? 0) + 1;
+      const newAvgTime = Math.round(((row.avgTimeSpentSeconds ?? 0) * (n - 1) + metrics.timeSeconds) / n);
+      const newAvgScroll = metrics.scrollDepth != null
+        ? Math.round(((row.avgScrollDepthPercent ?? 0) * (n - 1) + metrics.scrollDepth) / n)
+        : row.avgScrollDepthPercent;
+      await db.update(engagementInsights)
+        .set({
+          avgTimeSpentSeconds: newAvgTime,
+          avgScrollDepthPercent: newAvgScroll ?? 0,
+          sampleCount: n,
+          updatedAt: new Date(),
+        })
+        .where(eq(engagementInsights.id, row.id));
+    } else {
+      await db.insert(engagementInsights).values({
+        industry,
+        sectionType,
+        layoutType,
+        avgTimeSpentSeconds: metrics.timeSeconds,
+        avgScrollDepthPercent: metrics.scrollDepth ?? 0,
+        completionRate: 0,
+        returnVisitRate: 0,
+        sampleCount: 1,
+      });
+    }
   }
 }
 

@@ -7,119 +7,118 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory } from "./interview";
+import { generateCimLayout } from "./cim/layout-engine.js";
+import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
 });
 
+// Maps CIM_SECTIONS keys to human-readable descriptions used in generation prompts
+const CIM_SECTION_PROMPTS: Record<string, string> = {
+  overview:         "Company Overview & Reputation — what the business does, its history, how it has evolved, brand identity, and how customers and the broader market perceive it",
+  strengths:        "Competitive Strengths & Unique Selling Propositions — the specific, concrete advantages that make this business valuable, defensible, and differentiated from competitors",
+  growth_potential: "Growth Opportunities — specific, realistic strategies a new owner could pursue to grow revenue, expand markets, add product lines, or increase margins",
+  target_market:    "Target Market & Customer Base — who the customers are, B2B vs B2C split, demographics, customer concentration, loyalty and repeat rates, how customers find the business",
+  permits_licenses: "Permits, Licenses & Regulatory Compliance — every operating license, certification, and regulatory requirement the business holds or must maintain, including jurisdiction-specific requirements",
+  seasonality:      "Seasonality & Revenue Patterns — peak and slow periods, how the business manages cash flow through cycles, any meaningful year-over-year trends",
+  revenue_sources:  "Revenue Streams & Major Business Lines — how the business makes money, breakdown of revenue sources, top products or services, pricing model, recurring vs project revenue",
+  real_estate:      "Location, Facilities & Real Estate — physical premises, lease terms and expiry, whether real estate is included, equipment and fixtures included in the sale",
+  employees:        "Team & Employee Overview — team size and structure, key roles, owner dependency and involvement level, key man risk, management team quality and tenure",
+  operations:       "Operations & Systems — day-to-day operations, key processes, supplier and vendor relationships, technology infrastructure, operational efficiency",
+  buyer_profile:    "Ideal Buyer Profile — who the right acquirer is, what background or experience matters, what they would be acquiring and why it suits strategic or individual buyers",
+  training_support: "Training & Transition Support — what the seller will provide during transition, timeline, scope of knowledge transfer, ongoing availability",
+  reason_for_sale:  "Reason for Sale & Transaction Overview — why the seller is exiting, deal structure, what assets are included, any non-compete, preferred timeline",
+  financials:       "Financial Summary — revenue profile, profitability context, SDE or EBITDA framing, growth trend over recent years, what financial documentation is available for due diligence",
+  asking_price:     "Asking Price & Deal Terms — asking price, deal structure options, financing considerations, inventory and working capital position, key terms",
+};
+
 async function generateSectionWithClaude(
   businessName: string,
   industry: string,
   sectionKey: string,
-  extractedInfo: Record<string, any>
+  data: {
+    extractedInfo: Record<string, any>;
+    questionnaireData?: Record<string, any> | null;
+    scrapedData?: Record<string, any> | null;
+    description?: string | null;
+    askingPrice?: string | null;
+  }
 ): Promise<string> {
-  const sectionDescriptions: Record<string, string> = {
-    executiveSummary: "Executive Summary — a compelling 2-3 paragraph overview of the business opportunity, highlighting what makes it attractive to buyers",
-    companyOverview: "Company Overview — what the business does, its products/services, operating structure, technology, and licenses",
-    historyMilestones: "History & Milestones — how the business was founded, how it grew, key achievements and turning points",
-    uniqueSellingPropositions: "Competitive Advantages & USPs — specific differentiators that set this business apart from competitors",
-    sourcesOfRevenue: "Revenue Sources — how the business makes money, revenue streams, customer mix, concentration",
-    growthStrategies: "Growth Opportunities — concrete strategies a new owner could pursue to grow revenue",
-    targetMarket: "Target Market & Customers — who buys from this business, demographics, repeat vs new ratio",
-    permitsLicenses: "Permits, Licenses & Compliance — all required operating licenses and regulatory requirements",
-    seasonality: "Seasonality — busy and slow periods, how the business manages cash flow through cycles",
-    locationSite: "Location & Facilities — physical space, lease terms, equipment included in sale",
-    employeeOverview: "Employee Overview — team structure, key roles, owner's involvement, transition plan",
-    transactionOverview: "Transaction Overview — reason for sale, asking details, training offer, assets included, non-compete",
-    financialOverview: "Financial Overview — revenue profile, SDE/EBITDA context, what financial documents are available",
-  };
+  const desc = CIM_SECTION_PROMPTS[sectionKey] || sectionKey;
 
-  const desc = sectionDescriptions[sectionKey] || sectionKey;
+  // Build a structured context block so the model can find relevant data
+  const contextParts: string[] = [];
+
+  if (data.description) {
+    contextParts.push(`=== BROKER NOTES ===\n${data.description}`);
+  }
+
+  const confirmed = Object.entries(data.extractedInfo).filter(([, v]) => v);
+  if (confirmed.length > 0) {
+    contextParts.push(
+      `=== CONFIRMED (from seller interview) ===\n` +
+      confirmed.map(([k, v]) => `${k}: ${v}`).join("\n")
+    );
+  }
+
+  if (data.questionnaireData && Object.keys(data.questionnaireData).length > 0) {
+    const qEntries = Object.entries(data.questionnaireData).filter(([, v]) => v);
+    if (qEntries.length > 0) {
+      contextParts.push(
+        `=== FROM QUESTIONNAIRE ===\n` +
+        qEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+      );
+    }
+  }
+
+  if (data.scrapedData && Object.keys(data.scrapedData).length > 0) {
+    const sEntries = Object.entries(data.scrapedData).filter(([, v]) => v);
+    if (sEntries.length > 0) {
+      contextParts.push(
+        `=== PUBLICLY FOUND (treat as supporting context only) ===\n` +
+        sEntries.map(([k, v]) => `${k}: ${v}`).join("\n")
+      );
+    }
+  }
+
+  if (data.askingPrice) {
+    contextParts.push(`=== ASKING PRICE ===\n${data.askingPrice}`);
+  }
+
+  const context = contextParts.join("\n\n") || "No data collected yet.";
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
-    max_tokens: 600,
+    max_tokens: 1000,
     system: `You are a professional business broker writer specializing in Confidential Business Overviews (CBOs) and Confidential Information Memorandums (CIMs). You write compelling, buyer-focused content that presents businesses in their best light while remaining factually accurate. Your writing is concise, professional, and persuasive — it reads like a premium investment document, not a generic template.
 
 Style guidelines:
-- 2-3 focused paragraphs per section
-- Lead with the strongest point
-- Use specific facts and figures whenever available
-- Speak directly to a sophisticated buyer
-- Use **bold** for key metrics or standout points
-- Never use filler phrases like "proven track record" or "well-established" as openers
-- Never mention that financials are "available upon NDA" in sections other than the Financial Overview`,
+- 2–3 focused paragraphs per section
+- Lead with the strongest, most compelling point
+- Use specific facts, numbers, and names whenever available in the data
+- Write directly to a sophisticated acquirer evaluating this as an investment
+- Use **bold** for key metrics, standout facts, or deal highlights
+- Never open with clichés like "proven track record", "well-established", "thriving", or "exciting opportunity"
+- If a section has very little data, write what you can and note clearly what information is pending — do not fabricate
+- Prioritize "CONFIRMED (from seller interview)" data above all other sources`,
     messages: [
       {
         role: "user",
-        content: `Write the "${desc}" section for this business CBO.
+        content: `Write the "${desc}" section for this business CIM/CBO.
 
-Business: ${businessName}
+Business Name: ${businessName}
 Industry: ${industry}
 
-Collected information:
-${JSON.stringify(extractedInfo, null, 2)}
+${context}
 
-Write only the section content — no section heading, no preamble.`,
+Write only the section body — no section heading, no intro preamble like "Here is the section:". Just the content.`,
       },
     ],
   });
 
   return (response.content[0] as { type: string; text: string }).text;
 }
-
-const SYSTEM_PROMPT = `You are an interviewer collecting specific business information from a seller to create a Confidential Information Memorandum (CIM). Your job is to extract the concrete facts a buyer needs to evaluate this business. Be friendly but direct — every question should target a specific piece of information.
-
-**YOUR APPROACH:**
-- Ask ONE direct question at a time
-- Keep your responses short — brief acknowledgment (1 sentence max), then your next question
-- Ask for SPECIFIC, CONCRETE information — lists, numbers, names, details
-- If they give a vague answer, ask them to be more specific. Don't accept "good" or "great" — ask for the actual details
-- Be warm but efficient — this is a structured information-gathering session, not a casual chat
-- Vary your acknowledgments ("Got it." / "Thanks." / "Perfect." / "Noted.") — don't repeat the same one
-
-**THE INFORMATION YOU MUST COLLECT (in this order):**
-
-1. Products/Services: "List out your main products or services."
-2. Owner's Role: "List ALL of your day-to-day responsibilities in the business."
-3. Employees: "How many employees do you have? Break it down — full-time, part-time, contractors."
-4. Employee Roles: "What does each key employee do? List their roles and responsibilities."
-5. Customers: "Describe your typical customer — age range, location, business or consumer, how they find you."
-6. Customer Mix: "What percentage of revenue comes from repeat customers vs. new ones? Is any single customer more than 10% of revenue?"
-7. What Sets You Apart: "What specifically do you offer that your direct competitors don't? Be specific — not just 'better service.'"
-8. Suppliers: "List your main suppliers or vendors. How long have you worked with each? Are there backup options?"
-9. Lease/Property: "Do you lease or own your space? If leasing, what's the monthly rent and when does the lease expire?"
-10. Equipment/Assets: "List the major equipment and assets included in the sale."
-11. Technology: "What software, systems, or technology does the business run on? (POS, CRM, accounting, etc.)"
-12. Licenses/Permits: "List all licenses, permits, and certifications required to operate the business."
-13. Seasonality: "Does the business have busy and slow periods? Which months are peak and which are slowest?"
-14. Growth Opportunities: "What are the top 2-3 specific things a new owner could do to grow revenue?"
-15. Reason for Sale: "Why are you selling the business?"
-
-You do NOT need to ask every single one if the information was already provided in earlier answers. Skip what's already been covered.
-
-**HANDLING VAGUE ANSWERS:**
-
-If they say something vague, push for specifics:
-- "We have great service" → "What specifically do you do differently? Give me an example."
-- "A few employees" → "How many exactly? And what does each person do?"
-- "Good customer base" → "How many active customers roughly? What's the split between repeat and new?"
-- "Standard equipment" → "Can you list the main pieces? I need specifics for the document."
-
-If they say "I don't know" — accept it and move on. Don't dwell.
-
-**RULES:**
-- NEVER ask about revenue totals, profit, EBITDA, or financial statement figures — those come from documents
-- You CAN ask about operational costs like rent, and about customer concentration percentages — those are operational facts, not financials
-- NEVER ask multiple questions in one message
-- NEVER ask fluff questions (what do you enjoy, what's your favorite part, etc.) — every question must target CIM-relevant data
-- NEVER use bullet points in your questions — just ask directly
-- If they want to stop, respect it immediately and wrap up
-
-**WHEN TO FINISH:**
-After collecting the key information above (or after 15+ questions), say: "I think I've got what I need. Is there anything else about the business you think a buyer should know?"
-
-If they say no, wrap up: "Thanks — you've given me everything I need to put together a strong profile. Your broker will take it from here."`;
 
 export async function registerRoutes(app: Express): Promise<Server> {
   // Serve uploaded files
@@ -202,156 +201,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Interview history error:", error);
       res.status(500).json({ error: error.message || "Failed to get session history" });
-    }
-  });
-
-  // =====================
-  // Legacy chat endpoint (kept for backward compatibility)
-  // =====================
-
-  // Chat endpoint for AI interview
-  app.post("/api/chat", async (req, res) => {
-    try {
-      const { messages, extractedInfo, preliminaryData } = req.body;
-
-      if (!messages || !Array.isArray(messages)) {
-        return res.status(400).json({ error: "Messages array is required" });
-      }
-
-      // Check if user wants to stop the interview
-      const lastUserMessage = messages.filter((m: any) => m.role === "user").slice(-1)[0];
-      const stopPhrases = [
-        "i'm done", "im done", "that's all", "thats all", "no more", 
-        "stop asking", "stop", "enough", "i don't want to", "i dont want to",
-        "finish", "complete", "i'm finished", "im finished", "nothing else",
-        "nothing more", "that's it", "thats it", "end interview", "quit"
-      ];
-      
-      if (lastUserMessage && stopPhrases.some(phrase => 
-        lastUserMessage.content.toLowerCase().includes(phrase)
-      )) {
-        return res.json({
-          message: "Absolutely, let's wrap up here. Thanks so much for sharing all of that — you've painted a really clear picture of the business. Your broker will take it from here!",
-          extractedInfo: extractedInfo || {},
-          shouldFinish: true
-        });
-      }
-
-      // Build system prompt with preliminary data context
-      let systemPrompt = SYSTEM_PROMPT;
-
-      // Add preliminary questionnaire data context
-      if (preliminaryData && Object.keys(preliminaryData).length > 0) {
-        const businessName = preliminaryData["Business Name"] || preliminaryData["businessName"] || "this business";
-        const industry = preliminaryData["Industry Type"] || preliminaryData["industry"] || "";
-
-        const preliminaryInfo = Object.entries(preliminaryData)
-          .filter(([_, value]) => value)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join("\n");
-
-        systemPrompt += `\n\n**CRITICAL - YOU ARE INTERVIEWING: ${businessName.toUpperCase()}**
-${industry ? `This is a ${industry} business.` : ""}
-
-**PRELIMINARY INFORMATION ALREADY COLLECTED:**
-The seller has already answered these preliminary questions. DO NOT ask about these topics again:
-
-${preliminaryInfo}
-
-**IMPORTANT CONTEXT RULES:**
-1. EVERY question you ask MUST be about "${businessName}" specifically
-2. When extracting information, ALWAYS use the business name "${businessName}"
-3. If the seller talks about a different business, politely redirect: "Just to confirm, we're discussing ${businessName}, correct?"
-4. NEVER confuse this with any other business mentioned in conversation
-
-You already know their:
-- Location (city, state/province, country)
-- Years in operation
-- Business structure (incorporation type)
-- Number of employees
-- Real estate situation (owned/leased and details)
-
-START the interview by asking about ${businessName}'s CORE BUSINESS OPERATIONS (what they do, products/services), NOT basic info you already have.`;
-      }
-
-      // Add already-extracted info as context
-      if (extractedInfo && Object.keys(extractedInfo).length > 0) {
-        const infoSummary = Object.entries(extractedInfo)
-          .filter(([_, value]) => value)
-          .map(([key, value]) => `${key}: ${value}`)
-          .join("\n");
-
-        systemPrompt += `\n\n**INFORMATION ALREADY EXTRACTED — DO NOT RE-ASK:**\n${infoSummary}\n\nFocus only on what's still missing.`;
-      }
-
-      // Build conversation messages for Anthropic (no system role in messages array)
-      const conversationMessages = messages.map((msg: any) => ({
-        role: msg.role === "ai" ? "assistant" as const : "user" as const,
-        content: msg.content,
-      }));
-
-      const completion = await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 400,
-        system: systemPrompt,
-        messages: conversationMessages,
-      });
-
-      const aiResponse = (completion.content[0] as { type: string; text: string }).text;
-
-      // Extract structured information from the full conversation
-      const extractionResponse = await anthropic.messages.create({
-        model: "claude-haiku-4-5",
-        max_tokens: 1500,
-        system: `Extract business information from this conversation. Return ONLY a valid JSON object with no markdown, no explanation, no code fences. Use null for any field not explicitly mentioned.
-
-Fields to extract:
-businessName, industry, keyProducts, ownerInvolvement, employees, employeeStructure, keyEmployees, targetMarket, customerConcentration, customerBase, competitiveAdvantage, uniqueSellingProposition, suppliers, supplyChain, leaseDetails, propertyInfo, assets, assetsIncluded, technologySystems, permitsLicenses, complianceRequirements, seasonality, peakPeriods, growthOpportunities, expansionPlans, reasonForSale, locations, yearsOperating, managementTeam`,
-        messages: [
-          {
-            role: "user",
-            content: `Extract business information from this conversation:\n\n${JSON.stringify(messages)}`,
-          },
-        ],
-      });
-
-      let updatedExtractedInfo = extractedInfo || {};
-      try {
-        const rawText = (extractionResponse.content[0] as { type: string; text: string }).text.trim();
-        // Strip any accidental markdown code fences
-        const jsonText = rawText.replace(/^```(?:json)?\n?/, "").replace(/\n?```$/, "");
-        const extracted = JSON.parse(jsonText);
-
-        // Validate business name if we have preliminary data
-        if (preliminaryData && preliminaryData["Business Name"]) {
-          const expectedName = preliminaryData["Business Name"];
-          if (extracted.businessName && extracted.businessName !== expectedName) {
-            console.warn(`Business name mismatch! Expected: ${expectedName}, Got: ${extracted.businessName}`);
-            extracted.businessName = expectedName;
-          }
-        }
-
-        // Merge with existing info, preferring new non-null values
-        updatedExtractedInfo = {
-          ...updatedExtractedInfo,
-          ...Object.fromEntries(
-            Object.entries(extracted).filter(([_, v]) => v !== null)
-          ),
-        };
-      } catch (e) {
-        console.error("Failed to parse extracted info:", e);
-      }
-
-      res.json({
-        message: aiResponse,
-        extractedInfo: updatedExtractedInfo,
-      });
-    } catch (error: any) {
-      console.error("Chat error:", error);
-      res.status(500).json({ 
-        error: "Failed to process chat message",
-        details: error.message 
-      });
     }
   });
 
@@ -516,6 +365,20 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
       }
       console.error("Error creating deal:", error);
       res.status(500).json({ error: "Failed to create deal" });
+    }
+  });
+
+  // ── Public data scrape ──
+  app.post("/api/deals/:dealId/scrape", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { websiteUrl } = req.body as { websiteUrl?: string };
+      const { scrapeDeal } = await import("./scraper/index");
+      const result = await scrapeDeal(dealId, websiteUrl || undefined);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Scrape error:", error);
+      res.status(500).json({ error: error.message || "Failed to scrape website" });
     }
   });
 
@@ -791,8 +654,15 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
       await storage.updateBuyerAccess(access.id, {
         lastAccessedAt: new Date(),
       });
-      
-      res.json({ access, deal });
+
+      // Enrich with sections, branding, published Q&A
+      const [sections, publishedQuestions, branding] = await Promise.all([
+        storage.getCimSectionsByDeal(deal.id),
+        storage.getPublishedQuestions(deal.id),
+        deal.brokerId ? storage.getBrandingByBroker(deal.brokerId) : Promise.resolve(undefined),
+      ]);
+
+      res.json({ access, deal, sections, publishedQuestions, branding: branding ?? null });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -880,53 +750,56 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
   app.post("/api/deals/:dealId/generate-content", async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
-      if (!deal) {
-        return res.status(404).json({ error: "Deal not found" });
-      }
-      
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
       const { sectionKey } = req.body;
-      const extractedInfo = deal.extractedInfo as Record<string, any> || {};
+
       const businessName = deal.businessName || "The Business";
       const industry = deal.industry || "a specialized industry";
 
-      if (!sectionKey) {
-        const sections = [
-          "executiveSummary",
-          "companyOverview",
-          "historyMilestones",
-          "uniqueSellingPropositions",
-          "sourcesOfRevenue",
-          "growthStrategies",
-          "targetMarket",
-          "permitsLicenses",
-          "seasonality",
-          "locationSite",
-          "employeeOverview",
-          "transactionOverview",
-          "financialOverview",
-        ];
+      // All available data — interview data takes priority, but we pass everything
+      const sectionData = {
+        extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
+        questionnaireData: deal.questionnaireData as Record<string, any> | null,
+        scrapedData: (deal as any).scrapedData as Record<string, any> | null,
+        description: deal.description,
+        askingPrice: deal.askingPrice,
+      };
 
-        // Generate sections sequentially to avoid rate limits
-        const cimContent: Record<string, string> = {};
-        for (const key of sections) {
-          try {
-            cimContent[key] = await generateSectionWithClaude(businessName, industry, key, extractedInfo);
-          } catch (e) {
-            console.error(`Failed to generate ${key}:`, e);
-          }
+      if (sectionKey) {
+        // Single-section regeneration — generate and save back to deal
+        if (!CIM_SECTION_PROMPTS[sectionKey]) {
+          return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
         }
-
-        await storage.updateDeal(deal.id, {
-          cimContent,
-          phase: "phase3_content_creation",
-        });
-
-        res.json({ success: true, cimContent });
+        const content = await generateSectionWithClaude(businessName, industry, sectionKey, sectionData);
+        const existingContent = (deal.cimContent as Record<string, string>) || {};
+        const updated = { ...existingContent, [sectionKey]: content };
+        await storage.updateDeal(deal.id, { cimContent: updated });
+        res.json({ sectionKey, content });
         return;
       }
 
-      const content = await generateSectionWithClaude(businessName, industry, sectionKey, extractedInfo);
-      res.json({ content });
+      // Generate all sections using CIM_SECTIONS keys
+      const { CIM_SECTIONS } = await import("@shared/schema");
+      const cimContent: Record<string, string> = {};
+
+      for (const section of CIM_SECTIONS) {
+        try {
+          cimContent[section.key] = await generateSectionWithClaude(
+            businessName, industry, section.key, sectionData
+          );
+        } catch (e) {
+          console.error(`Failed to generate ${section.key}:`, e);
+          cimContent[section.key] = "";
+        }
+      }
+
+      await storage.updateDeal(deal.id, {
+        cimContent,
+        phase: "phase3_content_creation",
+      });
+
+      res.json({ success: true, cimContent });
     } catch (error: any) {
       console.error("Error generating content:", error);
       res.status(500).json({ error: "Failed to generate content" });
@@ -1197,7 +1070,373 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
       res.status(500).json({ error: "Failed to get analytics" });
     }
   });
+
+  // Computed analytics — aggregated server-side so we don't ship raw events to client
+  app.get("/api/deals/:dealId/analytics/computed", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const [events, buyers, questions] = await Promise.all([
+        storage.getAnalyticsByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+        storage.getQuestionsByDeal(dealId),
+      ]);
+
+      // ── Section engagement ──────────────────────────────────────────────
+      // Sum timeSpentSeconds from section_exit events, grouped by sectionKey
+      const sectionTime: Record<string, { totalSeconds: number; count: number; title: string }> = {};
+      for (const e of events) {
+        if (e.eventType === "section_exit" && e.sectionKey && e.timeSpentSeconds) {
+          if (!sectionTime[e.sectionKey]) sectionTime[e.sectionKey] = { totalSeconds: 0, count: 0, title: e.sectionKey };
+          sectionTime[e.sectionKey].totalSeconds += e.timeSpentSeconds;
+          sectionTime[e.sectionKey].count += 1;
+        }
+      }
+      const sectionEngagement = Object.entries(sectionTime)
+        .map(([key, v]) => ({
+          sectionKey: key,
+          avgSeconds: Math.round(v.totalSeconds / v.count),
+          totalSeconds: v.totalSeconds,
+          viewerCount: v.count,
+        }))
+        .sort((a, b) => b.avgSeconds - a.avgSeconds);
+
+      // ── Per-buyer stats ─────────────────────────────────────────────────
+      const buyerStats: Record<string, { totalSeconds: number; sectionsEntered: Set<string>; maxScrollDepth: number; questionCount: number }> = {};
+      for (const e of events) {
+        const bid = e.buyerAccessId;
+        if (!bid) continue;
+        if (!buyerStats[bid]) buyerStats[bid] = { totalSeconds: 0, sectionsEntered: new Set(), maxScrollDepth: 0, questionCount: 0 };
+        if (e.eventType === "section_exit" && e.timeSpentSeconds) buyerStats[bid].totalSeconds += e.timeSpentSeconds;
+        if (e.eventType === "section_enter" && e.sectionKey) buyerStats[bid].sectionsEntered.add(e.sectionKey);
+        if (e.eventType === "scroll_depth" && (e.scrollDepthPercent ?? 0) > buyerStats[bid].maxScrollDepth) {
+          buyerStats[bid].maxScrollDepth = e.scrollDepthPercent ?? 0;
+        }
+      }
+      for (const q of questions) {
+        const bid = q.buyerAccessId;
+        if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
+      }
+      const buyerBreakdown = buyers.map(b => ({
+        ...b,
+        totalTimeSeconds: buyerStats[b.id]?.totalSeconds ?? 0,
+        sectionsViewedCount: buyerStats[b.id]?.sectionsEntered.size ?? 0,
+        maxScrollDepth: buyerStats[b.id]?.maxScrollDepth ?? 0,
+        questionCount: buyerStats[b.id]?.questionCount ?? 0,
+      }));
+
+      // ── Heat map grid (20×10) ───────────────────────────────────────────
+      const COLS = 20; const ROWS = 10;
+      const grid: number[][] = Array.from({ length: ROWS }, () => Array(COLS).fill(0));
+      let heatTotal = 0;
+      for (const e of events) {
+        if (e.eventType === "heat_map_sample" && e.heatMapX != null && e.heatMapY != null) {
+          const col = Math.min(Math.floor((e.heatMapX / 100) * COLS), COLS - 1);
+          const row = Math.min(Math.floor((e.heatMapY / 100) * ROWS), ROWS - 1);
+          grid[row][col]++;
+          heatTotal++;
+        }
+      }
+
+      // ── Scroll depth distribution (buckets of 10%) ──────────────────────
+      const scrollBuckets: Record<number, number> = {};
+      for (let i = 0; i <= 100; i += 10) scrollBuckets[i] = 0;
+      for (const e of events) {
+        if (e.eventType === "scroll_depth" && e.scrollDepthPercent != null) {
+          const bucket = Math.floor(e.scrollDepthPercent / 10) * 10;
+          scrollBuckets[bucket] = (scrollBuckets[bucket] ?? 0) + 1;
+        }
+      }
+      const scrollDistribution = Object.entries(scrollBuckets)
+        .map(([pct, count]) => ({ pct: Number(pct), count }))
+        .sort((a, b) => a.pct - b.pct);
+
+      // ── Recent activity (last 30 days) ──────────────────────────────────
+      const viewsByDay: Record<string, number> = {};
+      for (const e of events) {
+        if (e.eventType === "view" && e.createdAt) {
+          const day = new Date(e.createdAt).toISOString().slice(0, 10);
+          viewsByDay[day] = (viewsByDay[day] ?? 0) + 1;
+        }
+      }
+
+      res.json({
+        sectionEngagement,
+        buyerBreakdown,
+        heatGrid: { grid, cols: COLS, rows: ROWS, total: heatTotal },
+        scrollDistribution,
+        viewsByDay,
+        totalEvents: events.length,
+      });
+    } catch (error: any) {
+      console.error("Error computing analytics:", error);
+      res.status(500).json({ error: "Failed to compute analytics" });
+    }
+  });
   
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — CIM LAYOUT ENGINE
+  // ════════════════════════════════════════════════════════════
+
+  // Generate bespoke CIM layout for a deal
+  app.post("/api/deals/:dealId/generate-layout", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const [branding, insights] = await Promise.all([
+        storage.getBrandingByBroker(deal.brokerId),
+        deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
+      ]);
+
+      const document = await generateCimLayout({
+        dealId,
+        businessName: deal.businessName,
+        industry: deal.industry,
+        askingPrice: deal.askingPrice,
+        extractedInfo: (deal.extractedInfo as Record<string, unknown>) || {},
+        scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
+        questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
+        operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
+        employeeChart: (deal.employeeChart as unknown[]) || null,
+        cimContent: (deal.cimContent as Record<string, string>) || null,
+        brokerBranding: branding ? {
+          companyName: branding.companyName || undefined,
+          primaryColor: branding.primaryColor,
+        } : null,
+        engagementInsights: insights.length > 0 ? insights.map(i => ({
+          sectionType: i.sectionType,
+          layoutType: i.layoutType,
+          avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
+          sampleCount: i.sampleCount ?? 0,
+        })) : null,
+      });
+
+      // Persist sections to DB — delete old layout sections first, then insert new ones
+      await storage.deleteCimSectionsForDeal(dealId);
+      for (const section of document.sections) {
+        await storage.createCimSection({
+          dealId,
+          sectionKey: section.sectionKey,
+          sectionTitle: section.sectionTitle,
+          order: section.order,
+          layoutType: section.layoutType,
+          layoutData: section.layoutData as any,
+          aiLayoutReasoning: section.aiLayoutReasoning,
+          tags: section.tags as any,
+          aiDraftContent: section.aiDraftContent || null,
+          isVisible: section.isVisible,
+          brokerApproved: false,
+        });
+      }
+
+      // Mark layout as generated on the deal
+      await storage.updateDeal(dealId, {
+        cimLayoutGeneratedAt: new Date(),
+        cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
+      } as any);
+
+      res.json({ sectionCount: document.sections.length, generatedAt: document.generatedAt });
+    } catch (error: any) {
+      console.error("Layout generation error:", error);
+      res.status(500).json({ error: error.message || "Layout generation failed" });
+    }
+  });
+
+  // Get all CIM layout sections for a deal
+  app.get("/api/deals/:dealId/layout", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      res.json(sections);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get layout" });
+    }
+  });
+
+  // Update a single CIM section (broker edit, format override, approve)
+  app.patch("/api/cim-sections/:sectionId", async (req, res) => {
+    try {
+      const { sectionId } = req.params;
+      const { brokerEditedContent, layoutOverride, layoutData, isVisible, brokerApproved, sectionTitle } = req.body;
+
+      const updated = await storage.updateCimSection(sectionId, {
+        ...(brokerEditedContent !== undefined && { brokerEditedContent }),
+        ...(layoutOverride !== undefined && { layoutOverride }),
+        ...(layoutData !== undefined && { layoutData }),
+        ...(isVisible !== undefined && { isVisible }),
+        ...(brokerApproved !== undefined && { brokerApproved }),
+        ...(sectionTitle !== undefined && { sectionTitle }),
+      });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update section" });
+    }
+  });
+
+  // Reorder sections
+  app.post("/api/deals/:dealId/layout/reorder", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { order }: { order: Array<{ id: string; order: number }> } = req.body;
+      for (const item of order) {
+        await storage.updateCimSection(item.id, { order: item.order } as any);
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to reorder sections" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — BUYER Q&A
+  // ════════════════════════════════════════════════════════════
+
+  // Buyer submits a question
+  app.post("/api/deals/:dealId/questions", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { question, buyerAccessId } = req.body;
+      if (!question?.trim()) return res.status(400).json({ error: "Question required" });
+
+      // Check if AI can answer from existing CIM sections
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      const cimText = sections.map(s => `${s.sectionTitle}: ${s.brokerEditedContent || s.aiDraftContent || ""}`).join("\n\n");
+
+      const aiResponse = await anthropic.messages.create({
+        model: "claude-sonnet-4-5",
+        max_tokens: 500,
+        system: `You are answering buyer questions about a business for sale based strictly on the CIM document provided.
+If the answer is clearly in the CIM, answer concisely and professionally.
+If the answer is NOT in the CIM, respond with exactly: ESCALATE
+Do not speculate or add information not in the CIM.`,
+        messages: [{ role: "user", content: `CIM CONTENT:\n${cimText}\n\nBUYER QUESTION: ${question}` }],
+      });
+
+      const aiAnswer = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null;
+      const needsEscalation = !aiAnswer || aiAnswer.trim() === "ESCALATE";
+
+      const saved = await storage.createBuyerQuestion({
+        dealId,
+        buyerAccessId: buyerAccessId || null,
+        question,
+        aiAnswer: needsEscalation ? null : aiAnswer,
+        status: needsEscalation ? "pending_broker" : "published",
+        isPublished: !needsEscalation,
+        publishedAnswer: needsEscalation ? null : aiAnswer,
+        addedToKnowledgeBase: false,
+      } as any);
+
+      res.json({
+        id: saved.id,
+        answer: needsEscalation ? null : aiAnswer,
+        status: needsEscalation ? "pending_broker" : "published",
+        message: needsEscalation
+          ? "Great question — your broker will respond shortly."
+          : aiAnswer,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to process question" });
+    }
+  });
+
+  // Get published Q&A for a deal (buyer-facing)
+  app.get("/api/deals/:dealId/questions/published", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const questions = await storage.getPublishedQuestions(dealId);
+      res.json(questions);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get questions" });
+    }
+  });
+
+  // Get all questions for broker dashboard
+  app.get("/api/deals/:dealId/questions", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const questions = await storage.getQuestionsByDeal(dealId);
+      res.json(questions);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get questions" });
+    }
+  });
+
+  // Broker drafts/updates answer
+  app.patch("/api/questions/:questionId", async (req, res) => {
+    try {
+      const { questionId } = req.params;
+      const { brokerDraft, status, publishedAnswer, isPublished } = req.body;
+
+      const updated = await storage.updateBuyerQuestion(questionId, {
+        ...(brokerDraft !== undefined && { brokerDraft }),
+        ...(status !== undefined && { status }),
+        ...(publishedAnswer !== undefined && { publishedAnswer }),
+        ...(isPublished !== undefined && { isPublished }),
+      } as any);
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update question" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // PHASE 4 — ANALYTICS (heat map + section events)
+  // ════════════════════════════════════════════════════════════
+
+  // Batch analytics events (client sends batches every 5s)
+  app.post("/api/deals/:dealId/analytics/batch", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { events } = req.body as {
+        events: Array<{
+          eventType: string;
+          sectionKey?: string;
+          timeSpentSeconds?: number;
+          scrollDepthPercent?: number;
+          heatMapX?: number;
+          heatMapY?: number;
+          viewportWidth?: number;
+          viewportHeight?: number;
+          elementId?: string;
+          buyerAccessId?: string;
+          eventData?: Record<string, unknown>;
+        }>;
+      };
+
+      const ip = req.ip || req.socket.remoteAddress || null;
+      const ua = req.headers["user-agent"] || null;
+
+      for (const event of events) {
+        await storage.createAnalyticsEvent({
+          dealId,
+          buyerAccessId: event.buyerAccessId || null,
+          eventType: event.eventType,
+          sectionKey: event.sectionKey || null,
+          timeSpentSeconds: event.timeSpentSeconds || null,
+          scrollDepthPercent: event.scrollDepthPercent || null,
+          heatMapX: event.heatMapX ?? null,
+          heatMapY: event.heatMapY ?? null,
+          viewportWidth: event.viewportWidth ?? null,
+          viewportHeight: event.viewportHeight ?? null,
+          elementId: event.elementId || null,
+          eventData: event.eventData || null,
+          ipAddress: ip,
+          userAgent: ua,
+        } as any);
+      }
+
+      res.json({ received: events.length });
+
+      // Fire-and-forget: aggregate section_exit events into engagementInsights
+      aggregateEngagementInsights(dealId, events, storage).catch(err =>
+        console.warn("[learning-loop] aggregation error:", err)
+      );
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to record events" });
+    }
+  });
+
   const httpServer = createServer(app);
   return httpServer;
 }

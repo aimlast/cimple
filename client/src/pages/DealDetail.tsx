@@ -10,10 +10,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } f
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deal, Task, Document as DocType } from "@shared/schema";
+import { CIM_SECTIONS } from "@shared/schema";
 import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
-  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap
+  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe,
+  Pencil, RefreshCw, X, Check, Wand2
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════
@@ -76,14 +78,7 @@ const DOC_CATEGORIES = [
   { value: "other",      label: "Other" },
 ];
 
-const CIM_SECTIONS = [
-  { key: "executiveSummary",         title: "Executive Summary" },
-  { key: "businessDescription",      title: "Business Description" },
-  { key: "marketAnalysis",           title: "Market Analysis" },
-  { key: "financialOverview",        title: "Financial Overview" },
-  { key: "operations",               title: "Operations" },
-  { key: "growthOpportunities",      title: "Growth Opportunities" },
-];
+// CIM_SECTIONS imported from @shared/schema — authoritative 15-section list with correct snake_case keys
 
 /* ══════════════════════════════════════════════
    LEFT RAIL — Phase timeline nav
@@ -113,10 +108,12 @@ function PhaseNav({
     <div className="flex flex-col h-full overflow-y-auto scrollbar-thin">
       {/* Deal identity */}
       <div className="px-4 py-4 border-b border-border">
-        <p className="text-xs font-semibold text-foreground truncate">{deal.businessName}</p>
-        <p className="text-2xs text-muted-foreground mt-0.5 truncate">{deal.industry || "No industry set"}</p>
+        <p className="text-sm font-semibold text-foreground truncate leading-snug">{deal.businessName}</p>
+        {deal.industry && (
+          <p className="text-2xs text-muted-foreground mt-1 truncate">{deal.industry}</p>
+        )}
         {deal.isLive && (
-          <span className="inline-flex items-center gap-1 mt-2 text-2xs font-medium text-success px-1.5 py-0.5 bg-success-muted rounded">
+          <span className="inline-flex items-center gap-1 mt-2 text-2xs font-medium text-success px-1.5 py-0.5 bg-success/10 rounded-full">
             <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live
           </span>
         )}
@@ -143,7 +140,7 @@ function PhaseNav({
                 onClick={() => onSelectPhase(phase.key)}
                 className={`w-full flex items-start gap-3 px-2 py-2.5 rounded-md text-left transition-colors
                   ${isSelected || isActive
-                    ? "bg-amber/8 text-foreground"
+                    ? "bg-teal/8 text-foreground"
                     : isLocked
                       ? "text-muted-foreground/40 cursor-default"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -154,8 +151,8 @@ function PhaseNav({
                   {isComplete ? (
                     <CheckCircle2 className="h-4.5 w-4.5 text-success" style={{ width: "1.125rem", height: "1.125rem" }} />
                   ) : isActive ? (
-                    <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-amber bg-amber/10 flex items-center justify-center">
-                      <div className="h-1.5 w-1.5 rounded-full bg-amber" />
+                    <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-teal bg-teal/10 flex items-center justify-center">
+                      <div className="h-1.5 w-1.5 rounded-full bg-teal" />
                     </div>
                   ) : (
                     <Circle className="text-border" style={{ width: "1.125rem", height: "1.125rem" }} />
@@ -163,9 +160,9 @@ function PhaseNav({
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <p className={`text-xs font-medium leading-tight ${isActive ? "text-amber" : ""}`}>
+                  <p className={`text-xs font-medium leading-tight ${isActive ? "text-teal" : ""}`}>
                     {phase.short}
-                    {isActive && <span className="ml-1 text-2xs text-amber/70">← here</span>}
+                    {isActive && <span className="ml-1 text-2xs text-teal/70">← here</span>}
                   </p>
                   <p className="text-2xs text-muted-foreground/70 mt-0.5">{phase.label}</p>
 
@@ -315,7 +312,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
   return (
     <div className="space-y-3">
       <div>
-        <h2 className="text-base font-semibold">Phase 1 — Info Collection</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Phase 1 — Info Collection</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
           Complete these steps before beginning the AI-powered intake.
         </p>
@@ -338,7 +335,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
                     <Button
                       size="sm"
                       variant={step.secondaryAction ? "outline" : "default"}
-                      className={`h-7 text-xs ${!step.secondaryAction ? "bg-amber text-amber-foreground hover:bg-amber/90" : ""}`}
+                      className={`h-7 text-xs ${!step.secondaryAction ? "bg-teal text-teal-foreground hover:bg-teal/90" : ""}`}
                       onClick={step.action}
                       disabled={update.isPending}
                       data-testid={step.testId}
@@ -361,12 +358,12 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
       ))}
 
       {allDone && (
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-4 flex items-center justify-between gap-4">
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-amber">Phase 1 complete</p>
+            <p className="text-sm font-medium text-teal">Phase 1 complete</p>
             <p className="text-xs text-muted-foreground mt-0.5">Ready to advance to Platform Intake.</p>
           </div>
-          <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90 shrink-0" data-testid="button-advance-phase-2">
+          <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90 shrink-0" data-testid="button-advance-phase-2">
             Advance to Phase 2 <ChevronRight className="h-3.5 w-3.5 ml-1" />
           </Button>
         </div>
@@ -390,7 +387,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => invite.mutate({ sellerEmail, sellerName })}
               disabled={!sellerName.trim() || !sellerEmail.trim() || invite.isPending}
               data-testid="button-generate-invite"
@@ -406,10 +403,40 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
 function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const [, setLocation] = useLocation();
+  const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
+
+  const scrapeMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/scrape`, {
+        websiteUrl: websiteInput.trim() || undefined,
+      });
+      if (!r.ok) {
+        const err = await r.json();
+        throw new Error(err.error || "Scrape failed");
+      }
+      return r.json() as Promise<{ fieldsExtracted: string[]; fieldCount: number; websiteUrl: string }>;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({
+        title: "Scrape complete",
+        description: `${result.fieldCount} fields extracted from ${result.websiteUrl}`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Scrape failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const isScraped = !!deal.scrapedAt;
+  const scrapedDate = deal.scrapedAt ? new Date(deal.scrapedAt).toLocaleDateString() : null;
+  const scrapeSource = (deal as any).scrapeSource as "website" | "internet_search" | null;
+  const scrapedFieldCount = deal.scrapedData ? Object.keys(deal.scrapedData as object).length : 0;
+
   return (
     <div className="space-y-4">
       <div>
-        <h2 className="text-base font-semibold">Phase 2 — Platform Intake</h2>
+        <h2 className="text-lg font-semibold tracking-tight">Phase 2 — Platform Intake</h2>
         <p className="text-sm text-muted-foreground mt-0.5">
           The seller completes onboarding, then the AI conducts the interview.
         </p>
@@ -428,17 +455,75 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         </div>
       </div>
 
+      {/* Public data scrape */}
+      <div className={`rounded-lg border p-5 ${isScraped ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}>
+        <div className="flex items-start gap-3">
+          {isScraped
+            ? <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success mt-0.5 shrink-0" />
+            : <Globe className="h-[1.125rem] w-[1.125rem] text-muted-foreground/40 mt-0.5 shrink-0" />}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">
+              {isScraped ? "Public data scraped" : "Public data scrape"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {isScraped
+                ? `${scrapedFieldCount} fields found via ${scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
+                : "Pulls publicly available info from the business website or internet before the interview starts."}
+            </p>
+            {!isScraped && (
+              <div className="mt-3 flex gap-2">
+                <Input
+                  value={websiteInput}
+                  onChange={(e) => setWebsiteInput(e.target.value)}
+                  placeholder="https://businesswebsite.com (leave blank to search internet)"
+                  className="h-8 text-xs flex-1"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs shrink-0 gap-1.5"
+                  onClick={() => scrapeMutation.mutate()}
+                  disabled={scrapeMutation.isPending}
+                  data-testid="button-scrape"
+                >
+                  {scrapeMutation.isPending ? (
+                    <><Loader2 className="h-3 w-3 animate-spin" /> Searching...</>
+                  ) : (
+                    <><Globe className="h-3 w-3" /> {websiteInput.trim() ? "Scrape" : "Search"}</>
+                  )}
+                </Button>
+              </div>
+            )}
+            {isScraped && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-2 h-7 text-xs text-muted-foreground/60 hover:text-muted-foreground px-0 gap-1.5"
+                onClick={() => scrapeMutation.mutate()}
+                disabled={scrapeMutation.isPending}
+              >
+                {scrapeMutation.isPending ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> Re-scraping...</>
+                ) : (
+                  "Re-scrape"
+                )}
+              </Button>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* AI Interview — primary action */}
-      <div className={`rounded-lg border p-5 ${deal.interviewCompleted ? "border-success/30 bg-success-muted/40" : "border-amber/30 bg-amber-muted/40"}`}>
+      <div className={`rounded-lg border p-5 ${deal.interviewCompleted ? "border-success/30 bg-success-muted/40" : "border-teal/30 bg-teal-muted/40"}`}>
         <div className="flex items-start gap-3">
           {deal.interviewCompleted
             ? <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success mt-0.5 shrink-0" />
-            : <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-amber bg-amber/10 flex items-center justify-center mt-0.5 shrink-0">
-                <div className="h-1.5 w-1.5 rounded-full bg-amber" />
+            : <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-teal bg-teal/10 flex items-center justify-center mt-0.5 shrink-0">
+                <div className="h-1.5 w-1.5 rounded-full bg-teal" />
               </div>
           }
           <div className="flex-1">
-            <p className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-amber"}`}>
+            <p className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-teal"}`}>
               AI interview
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -449,7 +534,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             {!deal.interviewCompleted && (
               <Button
                 size="sm"
-                className="mt-3 bg-amber text-amber-foreground hover:bg-amber/90 gap-1.5"
+                className="mt-3 bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
                 onClick={() => setLocation(`/deal/${dealId}/interview`)}
                 data-testid="button-start-interview"
               >
@@ -466,19 +551,63 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
 function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const cimContent = deal.cimContent as Record<string, string> | null;
+  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editDraft, setEditDraft] = useState("");
+  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
 
+  // Count available data fields as a readiness indicator
+  const extractedCount = Object.keys((deal.extractedInfo as object) || {}).length;
+  const scrapedCount = Object.keys(((deal as any).scrapedData as object) || {}).length;
+  const totalDataFields = extractedCount + scrapedCount;
+
+  // Generate all sections
   const generate = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`);
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
       return r.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "CIM content generated" });
+      toast({ title: "CIM content generated", description: "All sections drafted. Review and edit below." });
     },
     onError: (e: Error) => toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
   });
 
+  // Regenerate a single section
+  const regenerateSection = async (sectionKey: string) => {
+    setRegeneratingKey(sectionKey);
+    try {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`, { sectionKey });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Section regenerated" });
+    } catch (e: any) {
+      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
+    } finally {
+      setRegeneratingKey(null);
+    }
+  };
+
+  // Save broker edit to a section
+  const saveEdit = useMutation({
+    mutationFn: async ({ key, content }: { key: string; content: string }) => {
+      const existing = (deal.cimContent as Record<string, string>) || {};
+      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
+        cimContent: { ...existing, [key]: content },
+      });
+      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      setEditingKey(null);
+      toast({ title: "Section saved" });
+    },
+    onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
+  });
+
+  // Approve all
   const approve = useMutation({
     mutationFn: async (role: "broker" | "seller") => {
       const data = role === "broker" ? { contentApprovedByBroker: true } : { contentApprovedBySeller: true };
@@ -491,6 +620,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     },
   });
 
+  // Require interview completion
   if (!deal.interviewCompleted) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -501,85 +631,173 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     );
   }
 
+  // Pre-generation state
   if (!cimContent) {
     return (
       <div className="space-y-4">
         <div>
-          <h2 className="text-base font-semibold">Phase 3 — Content Creation</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Generate the CIM copy from the interview data.</p>
+          <h2 className="text-lg font-semibold tracking-tight">Phase 3 — Content Creation</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">The AI drafts all CIM sections from the collected data.</p>
         </div>
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-5 text-center">
-          <Edit3 className="h-6 w-6 text-amber/60 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground mb-3">
-            The AI will draft all CIM sections based on the interview.
+
+        {/* Data readiness indicator */}
+        <div className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-teal/30 bg-teal/5"}`}>
+          <div className="flex items-start gap-3">
+            {totalDataFields >= 8
+              ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+              : <AlertCircle className="h-4 w-4 text-teal mt-0.5 shrink-0" />}
+            <div>
+              <p className="text-sm font-medium">
+                {totalDataFields} data fields available
+                {totalDataFields < 5 && " — limited data"}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {totalDataFields >= 8
+                  ? `${extractedCount} from interview, ${scrapedCount} from public scrape. Ready to generate.`
+                  : "More interview data will produce better content. You can still generate and edit manually."}
+              </p>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
+          <Edit3 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
+          <p className="text-sm text-muted-foreground mb-4">
+            Generates all {CIM_SECTIONS.length} CIM sections. Takes ~60 seconds.
           </p>
           <Button
-            className="bg-amber text-amber-foreground hover:bg-amber/90"
+            className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => generate.mutate()}
             disabled={generate.isPending}
             data-testid="button-generate-content"
           >
-            {generate.isPending ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating...</> : "Generate CIM Content"}
+            {generate.isPending
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating sections...</>
+              : "Generate CIM Content"}
           </Button>
         </div>
       </div>
     );
   }
 
+  // Content review state
+  const populatedCount = CIM_SECTIONS.filter(s => cimContent[s.key]).length;
+
   return (
     <div className="space-y-4">
+
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-base font-semibold">CIM Content</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">Review and approve each section.</p>
+          <h2 className="text-lg font-semibold tracking-tight">CIM Content</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            {populatedCount}/{CIM_SECTIONS.length} sections drafted · Edit any section inline
+          </p>
         </div>
         <div className="flex items-center gap-2">
-          {!deal.contentApprovedByBroker && (
+          {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
+            <span className="text-xs font-medium text-success flex items-center gap-1">
+              <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
+            </span>
+          ) : deal.contentApprovedByBroker ? (
+            <Button size="sm" variant="outline" className="h-8 text-xs"
+              onClick={() => approve.mutate("seller")} disabled={approve.isPending}
+              data-testid="button-approve-seller">
+              Approve as Seller
+            </Button>
+          ) : (
             <Button size="sm" variant="outline" className="h-8 text-xs"
               onClick={() => approve.mutate("broker")} disabled={approve.isPending}
               data-testid="button-approve-broker">
               Approve as Broker
             </Button>
           )}
-          {deal.contentApprovedByBroker && !deal.contentApprovedBySeller && (
-            <Button size="sm" variant="outline" className="h-8 text-xs"
-              onClick={() => approve.mutate("seller")} disabled={approve.isPending}
-              data-testid="button-approve-seller">
-              Approve as Seller
-            </Button>
-          )}
-          {deal.contentApprovedByBroker && deal.contentApprovedBySeller && (
-            <span className="text-xs font-medium text-success flex items-center gap-1">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
-            </span>
-          )}
+          <Button variant="ghost" size="sm" className="h-8 text-xs text-muted-foreground gap-1.5"
+            onClick={() => generate.mutate()} disabled={generate.isPending}
+            data-testid="button-regenerate-content">
+            <RefreshCw className={`h-3 w-3 ${generate.isPending ? "animate-spin" : ""}`} />
+            Regenerate All
+          </Button>
         </div>
       </div>
 
+      {/* Sections */}
       {CIM_SECTIONS.map(section => {
-        const content = cimContent[section.key];
+        const content = cimContent[section.key] || "";
+        const isEditing = editingKey === section.key;
+        const isRegenerating = regeneratingKey === section.key;
+
         return (
-          <div key={section.key} className="rounded-lg border border-border bg-card p-4">
-            <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest mb-2">{section.title}</p>
-            {content ? (
-              <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
-            ) : (
-              <p className="text-sm text-muted-foreground/50 italic">Not yet generated.</p>
-            )}
+          <div key={section.key} className="rounded-lg border border-border bg-card overflow-hidden">
+            {/* Section header */}
+            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
+              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                {section.title}
+              </p>
+              {!isEditing && (
+                <div className="flex items-center gap-1">
+                  <button
+                    onClick={() => regenerateSection(section.key)}
+                    disabled={!!regeneratingKey || generate.isPending}
+                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors disabled:opacity-30"
+                    title="Regenerate this section"
+                  >
+                    <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+                  </button>
+                  <button
+                    onClick={() => { setEditingKey(section.key); setEditDraft(content); }}
+                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors"
+                    title="Edit this section"
+                  >
+                    <Pencil className="h-3 w-3" />
+                  </button>
+                </div>
+              )}
+            </div>
+
+            {/* Section body */}
+            <div className="px-4 py-3">
+              {isEditing ? (
+                <>
+                  <Textarea
+                    value={editDraft}
+                    onChange={(e) => setEditDraft(e.target.value)}
+                    className="resize-none text-sm min-h-[140px] font-normal"
+                    autoFocus
+                  />
+                  <div className="flex items-center gap-2 mt-2">
+                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
+                      onClick={() => saveEdit.mutate({ key: section.key, content: editDraft })}
+                      disabled={saveEdit.isPending}>
+                      {saveEdit.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                      Save
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                      onClick={() => setEditingKey(null)}>
+                      <X className="h-3 w-3" /> Cancel
+                    </Button>
+                  </div>
+                </>
+              ) : isRegenerating ? (
+                <div className="flex items-center gap-2 py-4 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  <span className="text-sm">Regenerating...</span>
+                </div>
+              ) : content ? (
+                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
+              ) : (
+                <p className="text-sm text-muted-foreground/40 italic py-2">Not yet generated.</p>
+              )}
+            </div>
           </div>
         );
       })}
-
-      <Button variant="outline" size="sm" className="text-xs"
-        onClick={() => generate.mutate()} disabled={generate.isPending}
-        data-testid="button-regenerate-content">
-        Regenerate All
-      </Button>
     </div>
   );
 }
 
 function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
+  const [, navigate] = useLocation();
   const publish = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("PATCH", `/api/deals/${dealId}`, { isLive: true });
@@ -593,9 +811,19 @@ function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
   return (
     <div className="space-y-4">
-      <div>
-        <h2 className="text-base font-semibold">Phase 4 — Design & Finalization</h2>
-        <p className="text-sm text-muted-foreground mt-0.5">Final design pass and publication.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">Phase 4 — Design & Finalization</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">Final design pass and publication.</p>
+        </div>
+        <Button
+          size="sm"
+          className="shrink-0 bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+          onClick={() => navigate(`/deal/${dealId}/design`)}
+        >
+          <Wand2 className="h-3.5 w-3.5" />
+          Open CIM Designer
+        </Button>
       </div>
       <div className="grid gap-3">
         {[
@@ -612,12 +840,12 @@ function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         ))}
       </div>
       {deal.designApprovedByBroker && deal.designApprovedBySeller && !deal.isLive && (
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-4 flex items-center justify-between">
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-amber">Ready to publish</p>
+            <p className="text-sm font-medium text-teal">Ready to publish</p>
             <p className="text-xs text-muted-foreground mt-0.5">All approvals received.</p>
           </div>
-          <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+          <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => publish.mutate()} disabled={publish.isPending}>
             Publish CIM
           </Button>
@@ -707,7 +935,7 @@ function RightPanel({
             onClick={() => onTabChange(t.id)}
             className={`flex-1 text-2xs font-medium py-2.5 border-b-2 transition-colors ${
               tab === t.id
-                ? "border-amber text-amber"
+                ? "border-teal text-teal"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -754,7 +982,7 @@ function RightPanel({
             ) : (
               tasks.map(task => (
                 <div key={task.id} className="flex items-start gap-2 p-2 rounded-md bg-card border border-border">
-                  <div className={`h-1.5 w-1.5 rounded-full mt-1.5 shrink-0 ${task.status === "completed" ? "bg-success" : task.status === "in_progress" ? "bg-amber" : "bg-muted-foreground/30"}`} />
+                  <div className={`h-1.5 w-1.5 rounded-full mt-1.5 shrink-0 ${task.status === "completed" ? "bg-success" : task.status === "in_progress" ? "bg-teal" : "bg-muted-foreground/30"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs">{task.description || task.title}</p>
                     <p className="text-2xs text-muted-foreground capitalize">{task.status}</p>
@@ -832,7 +1060,7 @@ function RightPanel({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setUploadOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => uploadDoc.mutate()} disabled={!docName.trim() || uploadDoc.isPending}
               data-testid="button-add-document">
               Add
@@ -856,7 +1084,7 @@ function RightPanel({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setAddBuyerOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => addBuyer.mutate()} disabled={!buyerName.trim() || !buyerEmail.trim() || addBuyer.isPending}
               data-testid="button-confirm-add-buyer">
               {addBuyer.isPending ? "Adding..." : "Add & Copy Link"}
@@ -919,8 +1147,8 @@ export default function DealDetail() {
   return (
     <div className="flex h-full overflow-hidden">
 
-      {/* ── Left rail — 200px ── */}
-      <div className="w-[200px] shrink-0 border-r border-border bg-card overflow-hidden flex flex-col">
+      {/* ── Left rail — 220px ── */}
+      <div className="w-[220px] shrink-0 border-r border-border bg-card overflow-hidden flex flex-col">
         {/* Back */}
         <button
           onClick={() => setLocation("/")}
@@ -944,19 +1172,26 @@ export default function DealDetail() {
       {/* ── Center — main work area ── */}
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden">
         {/* Mini header */}
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-border shrink-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <span className="text-sm font-medium truncate">{deal.businessName}</span>
-            <span className="text-2xs text-muted-foreground shrink-0">
+        <div className="flex items-center justify-between gap-3 px-5 py-3 border-b border-border shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0">
+            <span className="text-sm font-semibold truncate">{deal.businessName}</span>
+            <span className="shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-teal/10 text-teal">
               {PHASES.find(p => p.key === deal.phase)?.short ?? "—"}
             </span>
+            {deal.isLive && (
+              <span className="shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
+                Live
+              </span>
+            )}
           </div>
           <button
             onClick={() => setRightOpen(!rightOpen)}
-            className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+            className={`flex items-center gap-1.5 text-xs transition-colors shrink-0 ${
+              rightOpen ? "text-teal" : "text-muted-foreground hover:text-foreground"
+            }`}
           >
             {rightOpen ? <PanelRightClose className="h-4 w-4" /> : <PanelRightOpen className="h-4 w-4" />}
-            <span className="hidden sm:inline">{rightOpen ? "Hide" : "Show"} Panel</span>
+            <span className="hidden sm:inline text-xs">{rightOpen ? "Hide" : "Panel"}</span>
           </button>
         </div>
 

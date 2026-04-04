@@ -279,7 +279,7 @@ export default function Settings() {
     return (
       <div className="flex items-center justify-center h-screen">
         <div className="text-center space-y-2">
-          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto"></div>
+          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal mx-auto"></div>
           <p className="text-sm text-muted-foreground">Loading settings...</p>
         </div>
       </div>
@@ -287,10 +287,10 @@ export default function Settings() {
   }
 
   return (
-    <div className="p-6 max-w-5xl mx-auto space-y-6">
+    <div className="px-6 pt-6 pb-12 max-w-5xl mx-auto space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold">Settings</h1>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
           Manage your account, preferences, and platform settings
         </p>
       </div>
@@ -397,7 +397,7 @@ export default function Settings() {
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveAccount} data-testid="button-save-account">
+            <Button onClick={handleSaveAccount} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-account">
               <Save className="h-4 w-4 mr-2" />
               Save Account Settings
             </Button>
@@ -465,7 +465,7 @@ export default function Settings() {
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveNotifications} data-testid="button-save-notifications">
+            <Button onClick={handleSaveNotifications} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-notifications">
               <Save className="h-4 w-4 mr-2" />
               Save Notification Settings
             </Button>
@@ -646,7 +646,7 @@ export default function Settings() {
                 >
                   {uploadingLogo ? (
                     <div className="text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-2" />
+                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal mx-auto mb-2" />
                       <p className="text-sm text-muted-foreground">Uploading...</p>
                     </div>
                   ) : (
@@ -727,9 +727,10 @@ export default function Settings() {
           </Card>
 
           <div className="flex justify-end">
-            <Button 
-              onClick={handleSaveBranding} 
+            <Button
+              onClick={handleSaveBranding}
               disabled={saveBrandingMutation.isPending}
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
               data-testid="button-save-branding"
             >
               <Save className="h-4 w-4 mr-2" />
@@ -798,7 +799,7 @@ export default function Settings() {
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveDefaults} data-testid="button-save-defaults">
+            <Button onClick={handleSaveDefaults} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-defaults">
               <Save className="h-4 w-4 mr-2" />
               Save Default Settings
             </Button>

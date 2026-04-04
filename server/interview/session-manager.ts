@@ -20,6 +20,8 @@ import { agentConfig } from "./config/load-config";
 export interface TurnResult {
   /** The message to display to the seller */
   message: string;
+  /** Pre-populated answer options the seller can click to respond */
+  suggestedAnswers: string[];
   /** Session ID (for subsequent turns) */
   sessionId: string;
   /** Summary of what was captured this turn */
@@ -106,6 +108,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
       return {
         message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
+        suggestedAnswers: [],
         sessionId: session.id,
         captured: { total: countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
         sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
@@ -167,6 +170,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
   return {
     message: openingResult.message,
+    suggestedAnswers: openingResult.suggestedAnswers,
     sessionId: session.id,
     captured: { total: countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
     sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
@@ -319,6 +323,7 @@ export async function processTurn(
 
   return {
     message: aiResponse.message,
+    suggestedAnswers: aiResponse.suggestedAnswers || [],
     sessionId,
     captured: {
       total: countExtractedFields(updatedDeal!),
@@ -365,7 +370,7 @@ async function getSession(sessionId: string): Promise<InterviewSession | null> {
 async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
-): Promise<{ message: string; industryContext: IndustryContext | null }> {
+): Promise<{ message: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
   const systemPrompt = buildInterviewSystemPrompt(kb);
 
   // The opening prompt varies based on what we already know
@@ -407,6 +412,7 @@ async function generateOpeningMessage(
       message: textBlock && textBlock.type === "text"
         ? textBlock.text
         : `Hi! I'm here to learn about ${businessName} so we can put together a great CIM for your buyers. Let's start — can you tell me a bit about the business?`,
+      suggestedAnswers: [],
       industryContext: null,
     };
   }
@@ -427,6 +433,7 @@ async function generateOpeningMessage(
 
   return {
     message: aiResponse.message,
+    suggestedAnswers: aiResponse.suggestedAnswers || [],
     industryContext,
   };
 }
