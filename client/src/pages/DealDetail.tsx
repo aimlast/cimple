@@ -13,7 +13,7 @@ import type { Deal, Task, Document as DocType } from "@shared/schema";
 import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
-  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap
+  Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════
@@ -406,6 +406,34 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
 function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const [, setLocation] = useLocation();
+  const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
+
+  const scrapeMutation = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/scrape`, {
+        websiteUrl: websiteInput.trim() || undefined,
+      });
+      if (!r.ok) {
+        const err = await r.json();
+        throw new Error(err.error || "Scrape failed");
+      }
+      return r.json() as Promise<{ fieldsExtracted: string[]; fieldCount: number; websiteUrl: string }>;
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({
+        title: "Scrape complete",
+        description: `${result.fieldCount} fields extracted from ${result.websiteUrl}`,
+      });
+    },
+    onError: (err: Error) => {
+      toast({ title: "Scrape failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const isScraped = !!deal.scrapedAt;
+  const scrapedDate = deal.scrapedAt ? new Date(deal.scrapedAt).toLocaleDateString() : null;
+
   return (
     <div className="space-y-4">
       <div>
@@ -424,6 +452,64 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           <div>
             <p className={`text-sm font-medium ${deal.questionnaireData ? "line-through text-muted-foreground" : ""}`}>Seller onboarding</p>
             <p className="text-xs text-muted-foreground">Systems, key people, business basics</p>
+          </div>
+        </div>
+      </div>
+
+      {/* Public data scrape */}
+      <div className={`rounded-lg border p-5 ${isScraped ? "border-success/30 bg-success-muted/40" : "border-border bg-card"}`}>
+        <div className="flex items-start gap-3">
+          {isScraped
+            ? <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success mt-0.5 shrink-0" />
+            : <Globe className="h-[1.125rem] w-[1.125rem] text-muted-foreground/40 mt-0.5 shrink-0" />}
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">
+              {isScraped ? "Public data scraped" : "Public data scrape"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {isScraped
+                ? `Scraped ${scrapedDate} — pre-populates the AI interview knowledge base`
+                : "Pulls publicly available info from the business website before the interview starts."}
+            </p>
+            {!isScraped && (
+              <div className="mt-3 flex gap-2">
+                <Input
+                  value={websiteInput}
+                  onChange={(e) => setWebsiteInput(e.target.value)}
+                  placeholder="https://businesswebsite.com"
+                  className="h-8 text-xs flex-1"
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 text-xs shrink-0 gap-1.5"
+                  onClick={() => scrapeMutation.mutate()}
+                  disabled={scrapeMutation.isPending || !websiteInput.trim()}
+                  data-testid="button-scrape"
+                >
+                  {scrapeMutation.isPending ? (
+                    <><Loader2 className="h-3 w-3 animate-spin" /> Scraping...</>
+                  ) : (
+                    <><Globe className="h-3 w-3" /> Scrape</>
+                  )}
+                </Button>
+              </div>
+            )}
+            {isScraped && (
+              <Button
+                size="sm"
+                variant="ghost"
+                className="mt-2 h-7 text-xs text-muted-foreground/60 hover:text-muted-foreground px-0 gap-1.5"
+                onClick={() => scrapeMutation.mutate()}
+                disabled={scrapeMutation.isPending}
+              >
+                {scrapeMutation.isPending ? (
+                  <><Loader2 className="h-3 w-3 animate-spin" /> Re-scraping...</>
+                ) : (
+                  "Re-scrape"
+                )}
+              </Button>
+            )}
           </div>
         </div>
       </div>

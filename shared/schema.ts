@@ -58,6 +58,10 @@ export const deals = pgTable("deals", {
   operationalSystems: jsonb("operational_systems"), // accounting, CRM, ERP, POS systems
   employeeChart: jsonb("employee_chart"), // employee list with roles
   
+  // Public data scrape
+  websiteUrl: text("website_url"),
+  scrapedAt: timestamp("scraped_at"),
+
   // AI Interview extracted info
   extractedInfo: jsonb("extracted_info"),
   interviewCompleted: boolean("interview_completed").default(false),

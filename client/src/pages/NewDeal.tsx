@@ -33,6 +33,7 @@ export default function NewDeal() {
 
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState("");
+  const [websiteUrl, setWebsiteUrl] = useState("");
   const [description, setDescription] = useState("");
 
   const createDealMutation = useMutation({
@@ -75,6 +76,7 @@ export default function NewDeal() {
     createDealMutation.mutate({
       businessName: businessName.trim(),
       industry,
+      websiteUrl: websiteUrl.trim() || undefined,
       description: description.trim() || undefined,
     });
   };
@@ -130,6 +132,21 @@ export default function NewDeal() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="websiteUrl" className="text-sm">
+                Website <span className="text-muted-foreground font-normal">(optional — used for public data scrape)</span>
+              </Label>
+              <Input
+                id="websiteUrl"
+                placeholder="e.g., https://joes-restaurant.com"
+                value={websiteUrl}
+                onChange={(e) => setWebsiteUrl(e.target.value)}
+                className="h-9"
+                type="url"
+                data-testid="input-website-url"
+              />
             </div>
 
             <div className="space-y-1.5">

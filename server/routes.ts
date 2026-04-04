@@ -519,6 +519,20 @@ businessName, industry, keyProducts, ownerInvolvement, employees, employeeStruct
     }
   });
 
+  // ── Public data scrape ──
+  app.post("/api/deals/:dealId/scrape", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { websiteUrl } = req.body as { websiteUrl?: string };
+      const { scrapeDeal } = await import("./scraper/index");
+      const result = await scrapeDeal(dealId, websiteUrl || undefined);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Scrape error:", error);
+      res.status(500).json({ error: error.message || "Failed to scrape website" });
+    }
+  });
+
   app.patch("/api/deals/:id", async (req, res) => {
     try {
       const { insertDealSchema } = await import("@shared/schema");
