@@ -144,7 +144,7 @@ function PhaseNav({
                 onClick={() => onSelectPhase(phase.key)}
                 className={`w-full flex items-start gap-3 px-2 py-2.5 rounded-md text-left transition-colors
                   ${isSelected || isActive
-                    ? "bg-amber/8 text-foreground"
+                    ? "bg-teal/8 text-foreground"
                     : isLocked
                       ? "text-muted-foreground/40 cursor-default"
                       : "text-muted-foreground hover:text-foreground hover:bg-accent"
@@ -155,8 +155,8 @@ function PhaseNav({
                   {isComplete ? (
                     <CheckCircle2 className="h-4.5 w-4.5 text-success" style={{ width: "1.125rem", height: "1.125rem" }} />
                   ) : isActive ? (
-                    <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-amber bg-amber/10 flex items-center justify-center">
-                      <div className="h-1.5 w-1.5 rounded-full bg-amber" />
+                    <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-teal bg-teal/10 flex items-center justify-center">
+                      <div className="h-1.5 w-1.5 rounded-full bg-teal" />
                     </div>
                   ) : (
                     <Circle className="text-border" style={{ width: "1.125rem", height: "1.125rem" }} />
@@ -164,9 +164,9 @@ function PhaseNav({
                 </div>
 
                 <div className="flex-1 min-w-0">
-                  <p className={`text-xs font-medium leading-tight ${isActive ? "text-amber" : ""}`}>
+                  <p className={`text-xs font-medium leading-tight ${isActive ? "text-teal" : ""}`}>
                     {phase.short}
-                    {isActive && <span className="ml-1 text-2xs text-amber/70">← here</span>}
+                    {isActive && <span className="ml-1 text-2xs text-teal/70">← here</span>}
                   </p>
                   <p className="text-2xs text-muted-foreground/70 mt-0.5">{phase.label}</p>
 
@@ -339,7 +339,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
                     <Button
                       size="sm"
                       variant={step.secondaryAction ? "outline" : "default"}
-                      className={`h-7 text-xs ${!step.secondaryAction ? "bg-amber text-amber-foreground hover:bg-amber/90" : ""}`}
+                      className={`h-7 text-xs ${!step.secondaryAction ? "bg-teal text-teal-foreground hover:bg-teal/90" : ""}`}
                       onClick={step.action}
                       disabled={update.isPending}
                       data-testid={step.testId}
@@ -362,12 +362,12 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
       ))}
 
       {allDone && (
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-4 flex items-center justify-between gap-4">
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
-            <p className="text-sm font-medium text-amber">Phase 1 complete</p>
+            <p className="text-sm font-medium text-teal">Phase 1 complete</p>
             <p className="text-xs text-muted-foreground mt-0.5">Ready to advance to Platform Intake.</p>
           </div>
-          <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90 shrink-0" data-testid="button-advance-phase-2">
+          <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90 shrink-0" data-testid="button-advance-phase-2">
             Advance to Phase 2 <ChevronRight className="h-3.5 w-3.5 ml-1" />
           </Button>
         </div>
@@ -391,7 +391,7 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => invite.mutate({ sellerEmail, sellerName })}
               disabled={!sellerName.trim() || !sellerEmail.trim() || invite.isPending}
               data-testid="button-generate-invite"
@@ -518,16 +518,16 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
       </div>
 
       {/* AI Interview — primary action */}
-      <div className={`rounded-lg border p-5 ${deal.interviewCompleted ? "border-success/30 bg-success-muted/40" : "border-amber/30 bg-amber-muted/40"}`}>
+      <div className={`rounded-lg border p-5 ${deal.interviewCompleted ? "border-success/30 bg-success-muted/40" : "border-teal/30 bg-teal-muted/40"}`}>
         <div className="flex items-start gap-3">
           {deal.interviewCompleted
             ? <CheckCircle2 className="h-[1.125rem] w-[1.125rem] text-success mt-0.5 shrink-0" />
-            : <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-amber bg-amber/10 flex items-center justify-center mt-0.5 shrink-0">
-                <div className="h-1.5 w-1.5 rounded-full bg-amber" />
+            : <div className="h-[1.125rem] w-[1.125rem] rounded-full border-2 border-teal bg-teal/10 flex items-center justify-center mt-0.5 shrink-0">
+                <div className="h-1.5 w-1.5 rounded-full bg-teal" />
               </div>
           }
           <div className="flex-1">
-            <p className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-amber"}`}>
+            <p className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-teal"}`}>
               AI interview
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
@@ -538,7 +538,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             {!deal.interviewCompleted && (
               <Button
                 size="sm"
-                className="mt-3 bg-amber text-amber-foreground hover:bg-amber/90 gap-1.5"
+                className="mt-3 bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
                 onClick={() => setLocation(`/deal/${dealId}/interview`)}
                 data-testid="button-start-interview"
               >
@@ -645,11 +645,11 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         </div>
 
         {/* Data readiness indicator */}
-        <div className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-amber/30 bg-amber/5"}`}>
+        <div className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-teal/30 bg-teal/5"}`}>
           <div className="flex items-start gap-3">
             {totalDataFields >= 8
               ? <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
-              : <AlertCircle className="h-4 w-4 text-amber mt-0.5 shrink-0" />}
+              : <AlertCircle className="h-4 w-4 text-teal mt-0.5 shrink-0" />}
             <div>
               <p className="text-sm font-medium">
                 {totalDataFields} data fields available
@@ -664,13 +664,13 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           </div>
         </div>
 
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-5 text-center">
-          <Edit3 className="h-6 w-6 text-amber/60 mx-auto mb-3" />
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
+          <Edit3 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
           <p className="text-sm text-muted-foreground mb-4">
             Generates all {CIM_SECTIONS.length} CIM sections. Takes ~60 seconds.
           </p>
           <Button
-            className="bg-amber text-amber-foreground hover:bg-amber/90"
+            className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => generate.mutate()}
             disabled={generate.isPending}
             data-testid="button-generate-content"
@@ -770,7 +770,7 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
                     autoFocus
                   />
                   <div className="flex items-center gap-2 mt-2">
-                    <Button size="sm" className="h-7 text-xs bg-amber text-amber-foreground hover:bg-amber/90 gap-1"
+                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
                       onClick={() => saveEdit.mutate({ key: section.key, content: editDraft })}
                       disabled={saveEdit.isPending}>
                       {saveEdit.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
@@ -833,12 +833,12 @@ function Phase4Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         ))}
       </div>
       {deal.designApprovedByBroker && deal.designApprovedBySeller && !deal.isLive && (
-        <div className="rounded-lg border border-amber/30 bg-amber-muted/40 p-4 flex items-center justify-between">
+        <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between">
           <div>
-            <p className="text-sm font-medium text-amber">Ready to publish</p>
+            <p className="text-sm font-medium text-teal">Ready to publish</p>
             <p className="text-xs text-muted-foreground mt-0.5">All approvals received.</p>
           </div>
-          <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+          <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => publish.mutate()} disabled={publish.isPending}>
             Publish CIM
           </Button>
@@ -928,7 +928,7 @@ function RightPanel({
             onClick={() => onTabChange(t.id)}
             className={`flex-1 text-2xs font-medium py-2.5 border-b-2 transition-colors ${
               tab === t.id
-                ? "border-amber text-amber"
+                ? "border-teal text-teal"
                 : "border-transparent text-muted-foreground hover:text-foreground"
             }`}
           >
@@ -975,7 +975,7 @@ function RightPanel({
             ) : (
               tasks.map(task => (
                 <div key={task.id} className="flex items-start gap-2 p-2 rounded-md bg-card border border-border">
-                  <div className={`h-1.5 w-1.5 rounded-full mt-1.5 shrink-0 ${task.status === "completed" ? "bg-success" : task.status === "in_progress" ? "bg-amber" : "bg-muted-foreground/30"}`} />
+                  <div className={`h-1.5 w-1.5 rounded-full mt-1.5 shrink-0 ${task.status === "completed" ? "bg-success" : task.status === "in_progress" ? "bg-teal" : "bg-muted-foreground/30"}`} />
                   <div className="flex-1 min-w-0">
                     <p className="text-xs">{task.description || task.title}</p>
                     <p className="text-2xs text-muted-foreground capitalize">{task.status}</p>
@@ -1053,7 +1053,7 @@ function RightPanel({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setUploadOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => uploadDoc.mutate()} disabled={!docName.trim() || uploadDoc.isPending}
               data-testid="button-add-document">
               Add
@@ -1077,7 +1077,7 @@ function RightPanel({
           </div>
           <div className="flex justify-end gap-2">
             <Button variant="outline" size="sm" onClick={() => setAddBuyerOpen(false)}>Cancel</Button>
-            <Button size="sm" className="bg-amber text-amber-foreground hover:bg-amber/90"
+            <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => addBuyer.mutate()} disabled={!buyerName.trim() || !buyerEmail.trim() || addBuyer.isPending}
               data-testid="button-confirm-add-buyer">
               {addBuyer.isPending ? "Adding..." : "Add & Copy Link"}

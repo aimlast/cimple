@@ -49,11 +49,11 @@ export default {
         },
 
         /* ── Brand accent colors ── */
-        amber: {
-          DEFAULT:    "hsl(var(--amber) / <alpha-value>)",
-          foreground: "hsl(var(--amber-foreground) / <alpha-value>)",
-          muted:      "hsl(var(--amber-muted) / <alpha-value>)",
-          "muted-foreground": "hsl(var(--amber-muted-foreground) / <alpha-value>)",
+        teal: {
+          DEFAULT:    "hsl(var(--teal) / <alpha-value>)",
+          foreground: "hsl(var(--teal-foreground) / <alpha-value>)",
+          muted:      "hsl(var(--teal-muted) / <alpha-value>)",
+          "muted-foreground": "hsl(var(--teal-muted-foreground) / <alpha-value>)",
         },
         success: {
           DEFAULT:    "hsl(var(--success) / <alpha-value>)",

@@ -50,10 +50,10 @@
   --destructive-foreground: 0 0% 100%;
 
   /* ── Teal — primary CTA, active states ── */
-  --amber: 162 65% 38%;
-  --amber-foreground: 0 0% 100%;
-  --amber-muted: 162 40% 93%;
-  --amber-muted-foreground: 162 65% 26%;
+  --teal: 162 65% 38%;
+  --teal-foreground: 0 0% 100%;
+  --teal-muted: 162 40% 93%;
+  --teal-muted-foreground: 162 65% 26%;
 
   /* ── Success (completed, verified) ── */
   --success: 145 55% 38%;
@@ -121,8 +121,8 @@
     background-color: hsl(var(--accent) / 0.6);
   }
 
-  .amber-glow {
-    box-shadow: 0 0 0 1px hsl(var(--amber) / 0.3), 0 0 12px hsl(var(--amber) / 0.12);
+  .teal-glow {
+    box-shadow: 0 0 0 1px hsl(var(--teal) / 0.3), 0 0 12px hsl(var(--teal) / 0.12);
   }
 
   .phase-line::before {
@@ -146,7 +146,7 @@
     border-radius: 2px;
   }
 
-  .dot-amber { background-color: hsl(var(--amber)); }
+  .dot-teal  { background-color: hsl(var(--teal)); }
   .dot-blue  { background-color: hsl(var(--blue)); }
   .dot-green { background-color: hsl(var(--success)); }
   .dot-muted { background-color: hsl(var(--muted-foreground) / 0.35); }

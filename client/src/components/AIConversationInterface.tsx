@@ -401,8 +401,8 @@ export function AIConversationInterface({
                       inputRef.current = answer;
                     }}
                     className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium
-                      bg-amber/8 text-amber border border-amber/20
-                      hover:bg-amber/15 hover:border-amber/35
+                      bg-teal/8 text-teal border border-teal/20
+                      hover:bg-teal/15 hover:border-teal/35
                       transition-colors duration-100 cursor-pointer select-none"
                   >
                     {answer}
@@ -455,7 +455,7 @@ export function AIConversationInterface({
                     onClick={handleSend}
                     size="icon"
                     disabled={!input.replace(/\u200B/g, "").trim()}
-                    className="h-8 w-8 bg-amber text-amber-foreground hover:bg-amber/90"
+                    className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
                     data-testid="button-send"
                   >
                     <Send className="h-3.5 w-3.5" />

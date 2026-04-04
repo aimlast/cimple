@@ -166,7 +166,7 @@ export default function NewDeal() {
 
             <Button
               type="submit"
-              className="w-full bg-amber text-amber-foreground hover:bg-amber/90"
+              className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
               disabled={createDealMutation.isPending}
               data-testid="button-create-deal"
             >

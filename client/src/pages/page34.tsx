@@ -1,1 +1,0 @@
-export default function Page34() { return <div>Page 34</div>; }

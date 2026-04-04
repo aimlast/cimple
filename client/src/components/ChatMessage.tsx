@@ -20,7 +20,7 @@ export function ChatMessage({ role, content, timestamp }: ChatMessageProps) {
       {/* Avatar */}
       <div className={cn(
         "h-7 w-7 rounded-full flex items-center justify-center shrink-0 mt-0.5",
-        isAI ? "bg-amber text-amber-foreground" : "bg-muted"
+        isAI ? "bg-teal text-teal-foreground" : "bg-muted"
       )}>
         {isAI
           ? <Bot className="h-3.5 w-3.5" />
@@ -33,7 +33,7 @@ export function ChatMessage({ role, content, timestamp }: ChatMessageProps) {
           "rounded-xl px-4 py-3 text-sm leading-relaxed",
           isAI
             ? "bg-card border border-border text-foreground"
-            : "bg-amber/10 border border-amber/15 text-foreground"
+            : "bg-teal/10 border border-teal/15 text-foreground"
         )}>
           {content.split("\n").map((line, i) => (
             <p key={i} className={cn(i > 0 && "mt-2")}>{line}</p>

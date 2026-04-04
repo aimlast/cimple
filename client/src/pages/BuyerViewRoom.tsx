@@ -21,27 +21,12 @@ import {
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { Deal, BuyerAccess } from "@shared/schema";
+import { CIM_SECTIONS } from "@shared/schema";
 
 interface ViewData {
   access: BuyerAccess;
   deal: Deal;
 }
-
-const CIM_SECTIONS = [
-  { key: "executiveSummary", title: "Executive Summary" },
-  { key: "companyOverview", title: "Company Overview" },
-  { key: "historyMilestones", title: "History & Milestones" },
-  { key: "uniqueSellingPropositions", title: "Unique Selling Propositions" },
-  { key: "sourcesOfRevenue", title: "Sources of Revenue" },
-  { key: "growthStrategies", title: "Growth Strategies" },
-  { key: "targetMarket", title: "Target Market" },
-  { key: "permitsLicenses", title: "Permits & Licenses" },
-  { key: "seasonality", title: "Seasonality" },
-  { key: "locationSite", title: "Location & Site" },
-  { key: "employeeOverview", title: "Employee Overview" },
-  { key: "transactionOverview", title: "Transaction Overview" },
-  { key: "financialOverview", title: "Financial Overview" },
-];
 
 function Watermark({ email }: { email: string }) {
   return (
@@ -59,12 +44,12 @@ function Watermark({ email }: { email: string }) {
 
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
-  const [activeSection, setActiveSection] = useState<string>("executiveSummary");
+  const [activeSection, setActiveSection] = useState<string>(CIM_SECTIONS[0].key);
   const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
   const [timeOnPage, setTimeOnPage] = useState(0);
   const startTimeRef = useRef<number>(Date.now());
   const sectionStartRef = useRef<number>(Date.now());
-  const activeSectionRef = useRef<string>(activeSection);
+  const activeSectionRef = useRef<string>(CIM_SECTIONS[0].key);
   const hasTrackedInitialView = useRef(false);
 
   const { data, isLoading, error } = useQuery<ViewData>({
@@ -104,7 +89,7 @@ export default function BuyerViewRoom() {
     fetch(`/api/buyer-access/${token}/events`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType: "page_view", sectionKey: "executiveSummary" }),
+      body: JSON.stringify({ eventType: "page_view", sectionKey: CIM_SECTIONS[0].key }),
     }).catch(console.error);
   }, [token]);
 
@@ -209,8 +194,8 @@ export default function BuyerViewRoom() {
       <header className="border-b border-border sticky top-0 bg-background/95 backdrop-blur-sm z-40">
         <div className="max-w-6xl mx-auto px-6 py-3.5 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-md bg-amber flex items-center justify-center">
-              <Building className="h-4 w-4 text-amber-foreground" />
+            <div className="h-8 w-8 rounded-md bg-teal flex items-center justify-center">
+              <Building className="h-4 w-4 text-teal-foreground" />
             </div>
             <div>
               <h1 className="font-semibold text-sm leading-tight">{deal.businessName}</h1>
@@ -251,7 +236,7 @@ export default function BuyerViewRoom() {
                         onClick={() => handleSectionChange(section.key)}
                         className={`w-full text-left px-3 py-2 rounded-md text-sm transition-colors flex items-center gap-2 ${
                           activeSection === section.key
-                            ? "bg-amber/10 text-amber font-medium"
+                            ? "bg-teal/10 text-teal font-medium"
                             : "text-muted-foreground hover:text-foreground hover:bg-accent"
                         }`}
                         data-testid={`nav-section-${section.key}`}
@@ -352,7 +337,7 @@ export default function BuyerViewRoom() {
                         const idx = availableSections.findIndex(s => s.key === activeSection);
                         if (idx < availableSections.length - 1) handleSectionChange(availableSections[idx + 1].key);
                       }}
-                      className="bg-amber text-amber-foreground hover:bg-amber/90 gap-1.5"
+                      className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
                       data-testid="button-next-section"
                     >
                       Next Section

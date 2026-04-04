@@ -59,7 +59,7 @@ function getDealMeta(deal: Deal): { urgency: DealUrgency; statusLine: string; ct
 
 function urgencyDot(urgency: DealUrgency) {
   switch (urgency) {
-    case "action":   return "dot-amber";
+    case "action":   return "dot-teal";
     case "progress": return "dot-blue";
     case "live":     return "dot-green";
     default:         return "dot-muted";
@@ -114,7 +114,7 @@ function DealCard({ deal }: { deal: Deal }) {
             shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md
             opacity-0 group-hover:opacity-100 transition-opacity
             ${urgency === "action" || urgency === "live"
-              ? "bg-amber/10 text-amber hover:bg-amber/15"
+              ? "bg-teal/10 text-teal hover:bg-teal/15"
               : "bg-accent text-muted-foreground hover:text-foreground"
             }
           `}
@@ -188,7 +188,7 @@ export default function ActiveCIMs() {
             <Button
               size="sm"
               onClick={() => setLocation("/new-deal")}
-              className="h-8 text-xs bg-amber text-amber-foreground hover:bg-amber/90 gap-1.5"
+              className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
               data-testid="button-new-deal"
             >
               <Plus className="h-3.5 w-3.5" />
@@ -223,7 +223,7 @@ export default function ActiveCIMs() {
             placeholder="Search deals..."
             value={search}
             onChange={e => setSearch(e.target.value)}
-            className="pl-8 h-8 text-sm bg-muted border-0 focus-visible:ring-1 focus-visible:ring-amber/50"
+            className="pl-8 h-8 text-sm bg-muted border-0 focus-visible:ring-1 focus-visible:ring-teal/50"
             data-testid="input-search"
           />
         </div>
@@ -239,8 +239,8 @@ export default function ActiveCIMs() {
           </div>
         ) : filteredDeals.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-20 text-center px-6">
-            <div className="h-12 w-12 rounded-xl bg-amber/8 flex items-center justify-center mb-4">
-              <Building2 className="h-5 w-5 text-amber/60" />
+            <div className="h-12 w-12 rounded-xl bg-teal/8 flex items-center justify-center mb-4">
+              <Building2 className="h-5 w-5 text-teal/60" />
             </div>
             <p className="text-sm font-medium text-muted-foreground">
               {search ? "No deals match your search" : "No deals yet"}
@@ -252,7 +252,7 @@ export default function ActiveCIMs() {
               <Button
                 size="sm"
                 onClick={() => setLocation("/new-deal")}
-                className="mt-4 bg-amber text-amber-foreground hover:bg-amber/90"
+                className="mt-4 bg-teal text-teal-foreground hover:bg-teal/90"
               >
                 <Plus className="h-3.5 w-3.5 mr-1.5" />
                 New Deal
@@ -265,7 +265,7 @@ export default function ActiveCIMs() {
             {actionDeals.length > 0 && (
               <DealGroup
                 label="Needs action"
-                icon={<Zap className="h-3 w-3 text-amber" />}
+                icon={<Zap className="h-3 w-3 text-teal" />}
                 deals={actionDeals}
               />
             )}
@@ -322,7 +322,7 @@ export default function ActiveCIMs() {
             <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>Cancel</Button>
             <Button
               size="sm"
-              className="bg-amber text-amber-foreground hover:bg-amber/90"
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={handleGenerateInvite}
             >
               Copy Invite Link
