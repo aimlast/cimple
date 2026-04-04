@@ -12,6 +12,9 @@ export interface InterviewResponse {
   /** The conversational message shown to the seller */
   message: string;
 
+  /** Pre-populated answer options the seller can click to respond */
+  suggestedAnswers: string[];
+
   /** New or updated extracted fields from this turn */
   extractedFields: Record<string, ExtractedField>;
 
@@ -86,11 +89,16 @@ export const INTERVIEW_RESPONSE_TOOL = {
   description: "Structure your response to the seller, including the conversational message, extracted information, reasoning about next steps, and any tasks to create.",
   input_schema: {
     type: "object" as const,
-    required: ["message", "extractedFields", "reasoning", "newTasks", "shouldEnd"],
+    required: ["message", "suggestedAnswers", "extractedFields", "reasoning", "newTasks", "shouldEnd"],
     properties: {
       message: {
         type: "string",
         description: "Your conversational message to the seller. This is what they see. Keep it warm, professional, and concise. One brief acknowledgment of their answer, then your next question.",
+      },
+      suggestedAnswers: {
+        type: "array",
+        items: { type: "string" },
+        description: "3–5 short, clickable answer options for the question you just asked. The seller can tap one to pre-fill their reply, then edit it before sending. Rules: (1) Keep each option brief — 2 to 8 words. (2) Base them on your industry knowledge and what you already know about this specific business. (3) Cover the most common realistic answers for this type of question in this industry. (4) For yes/no questions include both options. (5) If the question is open-ended and numerical (e.g. exact revenue figures), return an empty array — do not guess numbers. (6) Always make the options feel specific to this business and industry, not generic placeholders.",
       },
       extractedFields: {
         type: "object",

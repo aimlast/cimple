@@ -9,6 +9,7 @@ import type { ConversationMessage } from "@shared/schema";
 
 interface TurnResult {
   message: string;
+  suggestedAnswers: string[];
   sessionId: string;
   captured: {
     total: number;
@@ -47,6 +48,7 @@ export function AIConversationInterface({
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
+  const [suggestedAnswers, setSuggestedAnswers] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isStarting, setIsStarting] = useState(true);
   const [isFinished, setIsFinished] = useState(false);
@@ -87,6 +89,7 @@ export function AIConversationInterface({
             const history = await historyRes.json();
             if (history.messages && history.messages.length > 0) {
               setMessages(history.messages);
+              // Don't show suggestions when resuming — context is already established
             } else {
               // New session — just the opening message
               setMessages([{
@@ -94,6 +97,7 @@ export function AIConversationInterface({
                 content: result.message,
                 timestamp: new Date().toISOString(),
               }]);
+              setSuggestedAnswers(result.suggestedAnswers || []);
             }
 
             if (history.status === "completed") {
@@ -234,6 +238,7 @@ export function AIConversationInterface({
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     inputRef.current = "";
+    setSuggestedAnswers([]); // Clear chips while waiting for AI response
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -261,6 +266,11 @@ export function AIConversationInterface({
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, aiMessage]);
+
+      // Show new suggested answers for this question
+      if (!result.shouldEnd) {
+        setSuggestedAnswers(result.suggestedAnswers || []);
+      }
 
       // Update parent with turn results
       onTurnResult?.(result);
@@ -380,6 +390,27 @@ export function AIConversationInterface({
               </div>
             )}
 
+            {/* Suggested answer chips */}
+            {suggestedAnswers.length > 0 && !isLoading && (
+              <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
+                {suggestedAnswers.map((answer, idx) => (
+                  <button
+                    key={idx}
+                    onClick={() => {
+                      setInput(answer);
+                      inputRef.current = answer;
+                    }}
+                    className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium
+                      bg-amber/8 text-amber border border-amber/20
+                      hover:bg-amber/15 hover:border-amber/35
+                      transition-colors duration-100 cursor-pointer select-none"
+                  >
+                    {answer}
+                  </button>
+                ))}
+              </div>
+            )}
+
             <div className="max-w-3xl mx-auto flex gap-2">
               <Textarea
                 value={input}
@@ -390,7 +421,9 @@ export function AIConversationInterface({
                     ? "Listening... speak now"
                     : isLoading
                       ? "Waiting..."
-                      : "Your response... (Shift+Enter to send)"
+                      : suggestedAnswers.length > 0
+                        ? "Select an option above or type your own response..."
+                        : "Your response... (Shift+Enter to send)"
                 }
                 className="resize-none min-h-[56px] text-sm"
                 disabled={isLoading}
