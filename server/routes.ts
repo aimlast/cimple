@@ -561,9 +561,98 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // =============================
+  // INTEGRATION ROUTES
+  // =============================
+
+  app.get("/api/integrations", async (req, res) => {
+    try {
+      const all = await storage.getAllIntegrations();
+      res.json(all);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch integrations" });
+    }
+  });
+
+  app.post("/api/integrations", async (req, res) => {
+    try {
+      const integration = await storage.createIntegration(req.body);
+      res.json(integration);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to create integration" });
+    }
+  });
+
+  app.patch("/api/integrations/:id", async (req, res) => {
+    try {
+      const integration = await storage.updateIntegration(req.params.id, req.body);
+      if (!integration) return res.status(404).json({ error: "Integration not found" });
+      res.json(integration);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update integration" });
+    }
+  });
+
+  app.delete("/api/integrations/:id", async (req, res) => {
+    try {
+      await storage.deleteIntegration(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to delete integration" });
+    }
+  });
+
+  app.get("/api/integrations/:id/emails", async (req, res) => {
+    try {
+      const integration = await storage.getIntegration(req.params.id);
+      if (!integration) return res.status(404).json({ error: "Integration not found" });
+      const emails = await storage.getIntegrationEmailsByDeal(req.params.id);
+      res.json(emails);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch integration emails" });
+    }
+  });
+
+  app.post("/api/integrations/:id/emails", async (req, res) => {
+    try {
+      const email = await storage.createIntegrationEmail({
+        ...req.body,
+        integrationId: req.params.id,
+      });
+      res.json(email);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to add email" });
+    }
+  });
+
+  app.delete("/api/integration-emails/:id", async (req, res) => {
+    try {
+      await storage.deleteIntegrationEmail(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to delete email" });
+    }
+  });
+
+  // OAuth callback placeholder — real flows require Google/Microsoft app registration
+  app.get("/api/auth/:provider", async (req, res) => {
+    const { provider } = req.params;
+    if (!["gmail", "outlook"].includes(provider)) {
+      return res.status(400).json({ error: "Unsupported provider" });
+    }
+    // TODO: Replace with real OAuth redirect when credentials are configured
+    res.status(501).json({
+      error: "OAuth not yet configured",
+      message: `To connect ${provider}, set up OAuth credentials in your environment variables. See the Integrations page for details.`,
+      requiredEnvVars: provider === "gmail"
+        ? ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
+        : ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+    });
+  });
+
+  // =============================
   // TASK ROUTES
   // =============================
-  
+
   app.get("/api/deals/:dealId/tasks", async (req, res) => {
     try {
       const tasks = await storage.getTasksByDeal(req.params.dealId);

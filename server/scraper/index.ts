@@ -20,7 +20,7 @@ const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 export interface ScrapeResult {
   fieldsExtracted: string[];
   fieldCount: number;
-  source: "website" | "internet_search";
+  source: "website" | "internet_search" | "website_and_internet";
   sourceUrls: string[];
 }
 
@@ -175,12 +175,14 @@ async function extractBusinessInfo(
   sourceText: string,
   businessName: string,
   industry: string,
-  source: "website" | "internet_search",
+  source: "website" | "internet_search" | "website_and_internet",
 ): Promise<Record<string, string>> {
   const sourceNote =
     source === "website"
       ? "the business's official website"
-      : "public internet search results (may include directory listings, news, review sites)";
+      : source === "website_and_internet"
+        ? "the business's official website combined with public internet search results (reviews, directories, news, social media)"
+        : "public internet search results (may include directory listings, news, review sites)";
 
   const prompt = `You are extracting structured business information from ${sourceNote} to pre-populate a business sale document (CIM). This data will be shown to the AI interviewer as UNVERIFIED — the seller will confirm or correct it during their interview.
 
@@ -254,26 +256,44 @@ export async function scrapeDeal(dealId: string, overrideUrl?: string): Promise<
     (deal.extractedInfo as Record<string, string> | null)?.website ||
     (deal.questionnaireData as Record<string, string> | null)?.website;
 
+  const location =
+    (deal.questionnaireData as Record<string, string> | null)?.location ||
+    (deal.extractedInfo as Record<string, string> | null)?.locationSite ||
+    null;
+
   let rawText: string;
   let sourceUrls: string[];
-  let source: "website" | "internet_search";
+  let source: "website" | "internet_search" | "website_and_internet";
 
-  if (websiteUrl) {
-    // Path 1: fetch the business website
+  // Always search the internet for broader info (reviews, social media, news, etc.)
+  let internetResult: { text: string; urls: string[] } | null = null;
+  try {
+    internetResult = await searchInternet(deal.businessName, location);
+  } catch {
+    // Internet search may fail — continue with website only if available
+  }
+
+  if (websiteUrl && internetResult) {
+    // Both website and internet search available — merge them
+    source = "website_and_internet";
+    const websiteResult = await fetchWebsite(websiteUrl);
+    rawText = (websiteResult.text + "\n\n" + internetResult.text).slice(0, 24000);
+    sourceUrls = [...websiteResult.urls, ...internetResult.urls];
+  } else if (websiteUrl) {
+    // Website only (internet search failed)
     source = "website";
-    const result = await fetchWebsite(websiteUrl);
-    rawText = result.text;
-    sourceUrls = result.urls;
-  } else {
-    // Path 2: no website — search the internet
+    const websiteResult = await fetchWebsite(websiteUrl);
+    rawText = websiteResult.text;
+    sourceUrls = websiteResult.urls;
+  } else if (internetResult) {
+    // Internet search only (no website URL)
     source = "internet_search";
-    const location =
-      (deal.questionnaireData as Record<string, string> | null)?.location ||
-      (deal.extractedInfo as Record<string, string> | null)?.locationSite ||
-      null;
-    const result = await searchInternet(deal.businessName, location);
-    rawText = result.text;
-    sourceUrls = result.urls;
+    rawText = internetResult.text;
+    sourceUrls = internetResult.urls;
+  } else {
+    throw new Error(
+      `No public information found for "${deal.businessName}". Try adding their website URL manually.`,
+    );
   }
 
   // Extract structured info using Claude Sonnet

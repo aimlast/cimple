@@ -62,7 +62,7 @@ export const deals = pgTable("deals", {
   websiteUrl: text("website_url"),
   scrapedAt: timestamp("scraped_at"),
   scrapedData: jsonb("scraped_data"),   // Unverified public data — confirmed during AI interview
-  scrapeSource: text("scrape_source"),  // "website" | "internet_search"
+  scrapeSource: text("scrape_source"),  // "website" | "internet_search" | "website_and_internet"
 
   // AI Interview extracted info
   extractedInfo: jsonb("extracted_info"),
@@ -513,6 +513,83 @@ export const insertBrandingSettingsSchema = createInsertSchema(brandingSettings)
 
 export type InsertBrandingSettings = z.infer<typeof insertBrandingSettingsSchema>;
 export type BrandingSettings = typeof brandingSettings.$inferSelect;
+
+// =====================
+// INTEGRATIONS - OAuth connections to external services
+// =====================
+export const integrations = pgTable("integrations", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+
+  provider: text("provider").notNull(), // gmail, outlook, salesforce, hubspot, zoom, otter, fireflies
+  status: text("status").notNull().default("disconnected"), // connected, disconnected, error
+
+  accessToken: text("access_token"),
+  refreshToken: text("refresh_token"),
+  tokenExpiresAt: timestamp("token_expires_at"),
+
+  config: jsonb("config"), // provider-specific config, e.g. { monitoredEmails: [...] }
+
+  connectedAt: timestamp("connected_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertIntegrationSchema = createInsertSchema(integrations).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertIntegration = z.infer<typeof insertIntegrationSchema>;
+export type Integration = typeof integrations.$inferSelect;
+
+// =====================
+// INTEGRATION EMAILS - Email addresses monitored per deal
+// =====================
+export const integrationEmails = pgTable("integration_emails", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  integrationId: varchar("integration_id").notNull(),
+  dealId: varchar("deal_id").notNull(),
+
+  emailAddress: text("email_address").notNull(),
+  label: text("label"), // e.g. "Seller", "Accountant"
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertIntegrationEmailSchema = createInsertSchema(integrationEmails).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertIntegrationEmail = z.infer<typeof insertIntegrationEmailSchema>;
+export type IntegrationEmail = typeof integrationEmails.$inferSelect;
+
+// =====================
+// DEAL KNOWLEDGE SOURCES - Ingested data from external sources
+// =====================
+export const dealKnowledgeSources = pgTable("deal_knowledge_sources", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+
+  sourceType: text("source_type").notNull(), // email, crm, call_recording, document, scrape
+  sourceProvider: text("source_provider"), // gmail, outlook, salesforce, etc.
+  sourceRef: text("source_ref"), // email message ID, CRM record ID, etc.
+
+  extractedText: text("extracted_text"),
+  extractedData: jsonb("extracted_data"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertDealKnowledgeSourceSchema = createInsertSchema(dealKnowledgeSources).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertDealKnowledgeSource = z.infer<typeof insertDealKnowledgeSourceSchema>;
+export type DealKnowledgeSource = typeof dealKnowledgeSources.$inferSelect;
 
 // =====================
 // LEGACY - Keep for backward compatibility during migration

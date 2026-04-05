@@ -15,7 +15,7 @@ import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
   Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe,
-  Pencil, RefreshCw, X, Check, Wand2
+  Pencil, RefreshCw, X, Check, Wand2, Mail, Phone, Database, Plug
 } from "lucide-react";
 
 /* ══════════════════════════════════════════════
@@ -236,6 +236,192 @@ function PhaseNav({
    CENTER — Phase-adaptive content areas
 ══════════════════════════════════════════════ */
 
+/* ── Reusable: Document Upload Card ── */
+function DocumentUploadCard({ dealId, toast }: { dealId: string; toast: any }) {
+  const [uploadOpen, setUploadOpen] = useState(false);
+  const [docFile, setDocFile] = useState<File | null>(null);
+  const [docCategory, setDocCategory] = useState("financials");
+
+  const { data: docs = [] } = useQuery<DocType[]>({
+    queryKey: ["/api/deals", dealId, "documents"],
+    queryFn: async () => { const r = await fetch(`/api/deals/${dealId}/documents`); return r.ok ? r.json() : []; },
+  });
+
+  const uploadDoc = useMutation({
+    mutationFn: async () => {
+      if (!docFile) throw new Error("No file selected");
+      const formData = new FormData();
+      formData.append("file", docFile);
+      formData.append("category", docCategory);
+      const r = await fetch(`/api/deals/${dealId}/documents/upload`, { method: "POST", body: formData });
+      if (!r.ok) throw new Error("Upload failed");
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "documents"] });
+      toast({ title: "Document uploaded", description: "Parsing will begin automatically." });
+      setDocFile(null);
+      setUploadOpen(false);
+    },
+    onError: (err: Error) => {
+      toast({ title: "Upload failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  const parsedCount = docs.filter((d: any) => (d.status as string) === "extracted").length;
+
+  return (
+    <>
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="flex items-start gap-3">
+          <Upload className="h-[1.125rem] w-[1.125rem] text-teal mt-0.5 shrink-0" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium">Upload Documents</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Upload financials, P&L, tax returns, leases, and other key documents.
+              The AI will extract structured data automatically.
+            </p>
+            {docs.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {docs.slice(0, 5).map((d: any) => (
+                  <span key={d.id} className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${
+                    (d.status as string) === "extracted" ? "bg-emerald-50 text-emerald-600" :
+                    (d.status as string) === "parsing" ? "bg-amber-50 text-amber-600" :
+                    "bg-neutral-100 text-neutral-500"
+                  }`}>
+                    <FileText className="h-2.5 w-2.5" />
+                    {d.name?.split(".")[0]?.slice(0, 15) || "doc"}
+                  </span>
+                ))}
+                {docs.length > 5 && <span className="text-2xs text-muted-foreground">+{docs.length - 5} more</span>}
+              </div>
+            )}
+            <div className="mt-3 flex items-center gap-2">
+              <Button
+                size="sm"
+                className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+                onClick={() => setUploadOpen(true)}
+              >
+                <Upload className="h-3 w-3" /> Upload File
+              </Button>
+              {docs.length > 0 && (
+                <span className="text-2xs text-muted-foreground">
+                  {docs.length} uploaded{parsedCount > 0 && ` · ${parsedCount} parsed`}
+                </span>
+              )}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Upload Document</DialogTitle>
+            <DialogDescription>
+              Supported: PDF, Excel (.xlsx/.xls), Word (.docx), PowerPoint (.pptx), text files
+            </DialogDescription>
+          </DialogHeader>
+          <div className="py-3 space-y-3">
+            <div className="space-y-1.5">
+              <Label className="text-xs">File</Label>
+              <Input
+                type="file"
+                accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
+                onChange={(e) => setDocFile(e.target.files?.[0] || null)}
+                className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Category</Label>
+              <Select value={docCategory} onValueChange={setDocCategory}>
+                <SelectTrigger className="h-9"><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  {DOC_CATEGORIES.map(c => (
+                    <SelectItem key={c.value} value={c.value}>{c.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+          <div className="flex justify-end gap-2">
+            <Button variant="outline" size="sm" onClick={() => setUploadOpen(false)}>Cancel</Button>
+            <Button
+              size="sm"
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              onClick={() => uploadDoc.mutate()}
+              disabled={!docFile || uploadDoc.isPending}
+            >
+              {uploadDoc.isPending ? "Uploading..." : "Upload & Parse"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+    </>
+  );
+}
+
+/* ── Reusable: Integration Prompt Card ── */
+function IntegrationPromptCard({ context }: { context: "phase1" | "phase2" }) {
+  const [dismissed, setDismissed] = useState(() =>
+    localStorage.getItem(`cimple_integration_prompt_${context}`) === "dismissed"
+  );
+  const [, setLocation] = useLocation();
+
+  if (dismissed) return null;
+
+  const dismiss = () => {
+    localStorage.setItem(`cimple_integration_prompt_${context}`, "dismissed");
+    setDismissed(true);
+  };
+
+  const integrations = [
+    { icon: Mail, label: "Email", desc: "Read seller communications" },
+    { icon: Database, label: "CRM", desc: "Import deal notes & contacts" },
+    { icon: Phone, label: "Calls", desc: "Transcripts from seller calls" },
+  ];
+
+  return (
+    <div className="rounded-lg border border-dashed border-teal/30 bg-teal-muted/20 p-5">
+      <div className="flex items-start justify-between mb-3">
+        <div className="flex items-center gap-2">
+          <Plug className="h-4 w-4 text-teal" />
+          <p className="text-sm font-medium text-teal">Connect your data sources</p>
+        </div>
+        <button onClick={dismiss} className="text-muted-foreground/40 hover:text-muted-foreground p-1">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground mb-3">
+        The more context the AI has before the interview, the less the seller needs to repeat.
+        Connect email, CRM, or call recordings so the AI starts smarter.
+      </p>
+      <div className="grid grid-cols-3 gap-2 mb-3">
+        {integrations.map(({ icon: Icon, label, desc }) => (
+          <div key={label} className="rounded-md border border-border bg-card p-2.5 text-center">
+            <Icon className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
+            <p className="text-2xs font-medium">{label}</p>
+            <p className="text-[10px] text-muted-foreground">{desc}</p>
+          </div>
+        ))}
+      </div>
+      <div className="flex items-center gap-2">
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1 border-teal/30 text-teal hover:bg-teal/10"
+          onClick={() => setLocation("/integrations")}
+        >
+          <Plug className="h-3 w-3" /> Set up integrations
+        </Button>
+        <button onClick={dismiss} className="text-2xs text-muted-foreground/50 hover:text-muted-foreground">
+          Skip for now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [sellerEmail, setSellerEmail] = useState("");
@@ -357,6 +543,12 @@ function Phase1Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         </div>
       ))}
 
+      {/* Document upload — always visible */}
+      <DocumentUploadCard dealId={dealId} toast={toast} />
+
+      {/* Integration prompt */}
+      <IntegrationPromptCard context="phase1" />
+
       {allDone && (
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
@@ -430,7 +622,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
   const isScraped = !!deal.scrapedAt;
   const scrapedDate = deal.scrapedAt ? new Date(deal.scrapedAt).toLocaleDateString() : null;
-  const scrapeSource = (deal as any).scrapeSource as "website" | "internet_search" | null;
+  const scrapeSource = (deal as any).scrapeSource as "website" | "internet_search" | "website_and_internet" | null;
   const scrapedFieldCount = deal.scrapedData ? Object.keys(deal.scrapedData as object).length : 0;
 
   return (
@@ -467,7 +659,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isScraped
-                ? `${scrapedFieldCount} fields found via ${scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
+                ? `${scrapedFieldCount} fields found via ${scrapeSource === "website_and_internet" ? "website + internet search" : scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
                 : "Pulls publicly available info from the business website or internet before the interview starts."}
             </p>
             {!isScraped && (
@@ -475,7 +667,7 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
                 <Input
                   value={websiteInput}
                   onChange={(e) => setWebsiteInput(e.target.value)}
-                  placeholder="https://businesswebsite.com (leave blank to search internet)"
+                  placeholder="https://businesswebsite.com (optional — we also search the internet)"
                   className="h-8 text-xs flex-1"
                 />
                 <Button
@@ -512,6 +704,12 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           </div>
         </div>
       </div>
+
+      {/* Document upload */}
+      <DocumentUploadCard dealId={dealId} toast={toast} />
+
+      {/* Integration prompt */}
+      <IntegrationPromptCard context="phase2" />
 
       {/* AI Interview — primary action */}
       <div className={`rounded-lg border p-5 ${deal.interviewCompleted ? "border-success/30 bg-success-muted/40" : "border-teal/30 bg-teal-muted/40"}`}>

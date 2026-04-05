@@ -12,7 +12,10 @@ import {
   type FaqItem, type InsertFaqItem,
   type BuyerQuestion, type InsertBuyerQuestion,
   type EngagementInsight,
-  users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights
+  type Integration, type InsertIntegration,
+  type IntegrationEmail, type InsertIntegrationEmail,
+  users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
+  integrations, integrationEmails
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -106,6 +109,19 @@ export interface IStorage {
   createFaq(faq: InsertFaqItem): Promise<FaqItem>;
   updateFaq(id: string, updates: Partial<InsertFaqItem>): Promise<FaqItem | undefined>;
   deleteFaq(id: string): Promise<void>;
+
+  // Integration operations
+  getIntegrationsByBroker(brokerId: string): Promise<Integration[]>;
+  getAllIntegrations(): Promise<Integration[]>;
+  getIntegration(id: string): Promise<Integration | undefined>;
+  createIntegration(data: InsertIntegration): Promise<Integration>;
+  updateIntegration(id: string, updates: Partial<InsertIntegration>): Promise<Integration | undefined>;
+  deleteIntegration(id: string): Promise<void>;
+
+  // Integration email operations
+  getIntegrationEmailsByDeal(dealId: string): Promise<IntegrationEmail[]>;
+  createIntegrationEmail(data: InsertIntegrationEmail): Promise<IntegrationEmail>;
+  deleteIntegrationEmail(id: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -274,6 +290,15 @@ export class MemStorage implements IStorage {
   async createFaq(): Promise<FaqItem> { throw new Error("Use DbStorage"); }
   async updateFaq(): Promise<FaqItem | undefined> { return undefined; }
   async deleteFaq(): Promise<void> {}
+  async getIntegrationsByBroker(): Promise<Integration[]> { return []; }
+  async getAllIntegrations(): Promise<Integration[]> { return []; }
+  async getIntegration(): Promise<Integration | undefined> { return undefined; }
+  async createIntegration(): Promise<Integration> { throw new Error("Use DbStorage"); }
+  async updateIntegration(): Promise<Integration | undefined> { return undefined; }
+  async deleteIntegration(): Promise<void> {}
+  async getIntegrationEmailsByDeal(): Promise<IntegrationEmail[]> { return []; }
+  async createIntegrationEmail(): Promise<IntegrationEmail> { throw new Error("Use DbStorage"); }
+  async deleteIntegrationEmail(): Promise<void> {}
 }
 
 export class DbStorage implements IStorage {
@@ -688,6 +713,56 @@ export class DbStorage implements IStorage {
         sampleCount: 1,
       });
     }
+  }
+
+  // ── Integration operations ──
+
+  async getIntegrationsByBroker(brokerId: string): Promise<Integration[]> {
+    return db.select().from(integrations)
+      .where(eq(integrations.brokerId, brokerId))
+      .orderBy(desc(integrations.createdAt));
+  }
+
+  async getAllIntegrations(): Promise<Integration[]> {
+    return db.select().from(integrations).orderBy(desc(integrations.createdAt));
+  }
+
+  async getIntegration(id: string): Promise<Integration | undefined> {
+    const result = await db.select().from(integrations).where(eq(integrations.id, id));
+    return result[0];
+  }
+
+  async createIntegration(data: InsertIntegration): Promise<Integration> {
+    const result = await db.insert(integrations).values(data).returning();
+    return result[0];
+  }
+
+  async updateIntegration(id: string, updates: Partial<InsertIntegration>): Promise<Integration | undefined> {
+    const result = await db.update(integrations)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(integrations.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteIntegration(id: string): Promise<void> {
+    await db.delete(integrationEmails).where(eq(integrationEmails.integrationId, id));
+    await db.delete(integrations).where(eq(integrations.id, id));
+  }
+
+  async getIntegrationEmailsByDeal(dealId: string): Promise<IntegrationEmail[]> {
+    return db.select().from(integrationEmails)
+      .where(eq(integrationEmails.dealId, dealId))
+      .orderBy(integrationEmails.createdAt);
+  }
+
+  async createIntegrationEmail(data: InsertIntegrationEmail): Promise<IntegrationEmail> {
+    const result = await db.insert(integrationEmails).values(data).returning();
+    return result[0];
+  }
+
+  async deleteIntegrationEmail(id: string): Promise<void> {
+    await db.delete(integrationEmails).where(eq(integrationEmails.id, id));
   }
 }
 
