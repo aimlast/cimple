@@ -27,6 +27,7 @@ import SellerDocuments from "@/pages/SellerDocuments";
 import SellerInviteIntake from "@/pages/SellerInviteIntake";
 import CIMDesigner from "@/pages/CIMDesigner";
 import BuyerViewRoom from "@/pages/BuyerViewRoom";
+import Integrations from "@/pages/Integrations";
 
 function Routes() {
   return (
@@ -36,6 +37,7 @@ function Routes() {
       <Route path="/deals" component={ActiveCIMs} />
       <Route path="/cims" component={ActiveCIMs} />
       <Route path="/analytics" component={Analytics} />
+      <Route path="/integrations" component={Integrations} />
       <Route path="/templates" component={Templates} />
       <Route path="/settings" component={Settings} />
       <Route path="/support" component={Support} />

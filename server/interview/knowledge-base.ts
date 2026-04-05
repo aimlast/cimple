@@ -41,7 +41,7 @@ export interface KnowledgeBase {
 
   // Publicly scraped data — UNVERIFIED, must be confirmed with seller during interview
   scrapedData: Record<string, string> | null;
-  scrapeSource: "website" | "internet_search" | null;
+  scrapeSource: "website" | "internet_search" | "website_and_internet" | null;
 }
 
 export interface LocationContext {
@@ -207,7 +207,7 @@ export function assembleKnowledgeBase(
     priorSessionSummary: latestSession ? summarizeSession(latestSession) : null,
     extractedInfo,
     scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
-    scrapeSource: (deal.scrapeSource as "website" | "internet_search" | null) || null,
+    scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
   };
 }
 
@@ -222,7 +222,9 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   if (kb.scrapedData && Object.keys(kb.scrapedData).length > 0) {
     const sourceLabel = kb.scrapeSource === "website"
       ? "the business's public website"
-      : "public internet search results (directories, news, review sites)";
+      : kb.scrapeSource === "website_and_internet"
+        ? "the business's public website and public internet search results (reviews, directories, news, social media)"
+        : "public internet search results (directories, news, review sites)";
 
     parts.push(`## ⚠️ PUBLICLY FOUND DATA — UNVERIFIED`);
     parts.push(`The following was found on ${sourceLabel} BEFORE the interview. It has NOT been confirmed by the seller.`);

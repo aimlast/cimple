@@ -9,6 +9,9 @@ import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory } from "./interview";
 import { generateCimLayout } from "./cim/layout-engine.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
+import multer from "multer";
+import { extractTextFromFile } from "./documents/parser.js";
+import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -468,9 +471,188 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // =============================
+  // DOCUMENT UPLOAD + PARSING
+  // =============================
+
+  const docUpload = multer({
+    storage: multer.diskStorage({
+      destination: (req, file, cb) => {
+        const dir = path.join(process.cwd(), "public", "uploads", "docs");
+        fs.mkdirSync(dir, { recursive: true });
+        cb(null, dir);
+      },
+      filename: (req, file, cb) => {
+        const ext = path.extname(file.originalname);
+        cb(null, `doc_${Date.now()}${ext}`);
+      },
+    }),
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
+    fileFilter: (req, file, cb) => {
+      const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls", ".pptx", ".ppt", ".docx", ".doc"];
+      const ext = path.extname(file.originalname).toLowerCase();
+      cb(null, allowed.includes(ext));
+    },
+  });
+
+  async function parseDocumentAsync(
+    docId: string,
+    filePath: string,
+    mimeType: string | null,
+    category: string,
+    subcategory: string | null,
+    dealId: string
+  ) {
+    try {
+      await storage.updateDocument(docId, { status: "parsing" } as any);
+      const text = await extractTextFromFile(filePath, mimeType);
+      const extracted = await extractDocumentData(text, category, subcategory);
+      await storage.updateDocument(docId, { status: "extracted", extractedData: extracted } as any);
+      const deal = await storage.getDeal(dealId);
+      if (deal) {
+        const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted);
+        await storage.updateDeal(dealId, { extractedInfo: merged } as any);
+      }
+    } catch (err) {
+      console.error(`[parser] failed for doc ${docId}:`, err);
+      await storage.updateDocument(docId, { status: "failed" } as any).catch(() => {});
+    }
+  }
+
+  app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
+    try {
+      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+      const { category = "other", subcategory } = req.body;
+      const doc = await storage.createDocument({
+        dealId: req.params.dealId,
+        name: req.file.originalname,
+        category,
+        subcategory: subcategory || null,
+        fileUrl: `/uploads/docs/${req.file.filename}`,
+        status: "pending",
+      } as any);
+      parseDocumentAsync(doc.id, req.file.path, req.file.mimetype, category, subcategory || null, req.params.dealId);
+      res.json(doc);
+    } catch (error: any) {
+      console.error("Upload error:", error);
+      res.status(500).json({ error: "Upload failed" });
+    }
+  });
+
+  app.post("/api/documents/:id/parse", async (req, res) => {
+    try {
+      const doc = await storage.getDocument(req.params.id);
+      if (!doc) return res.status(404).json({ error: "Document not found" });
+      const filePath = path.join(process.cwd(), "public", doc.fileUrl || "");
+      parseDocumentAsync(doc.id, filePath, null, doc.category || "other", doc.subcategory || null, doc.dealId);
+      res.json({ status: "parsing" });
+    } catch (error: any) {
+      res.status(500).json({ error: "Parse failed" });
+    }
+  });
+
+  app.get("/api/deals/:dealId/extracted-info", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      res.json(deal.extractedInfo || {});
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch extracted info" });
+    }
+  });
+
+  // =============================
+  // INTEGRATION ROUTES
+  // =============================
+
+  app.get("/api/integrations", async (req, res) => {
+    try {
+      const all = await storage.getAllIntegrations();
+      res.json(all);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch integrations" });
+    }
+  });
+
+  app.post("/api/integrations", async (req, res) => {
+    try {
+      const integration = await storage.createIntegration(req.body);
+      res.json(integration);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to create integration" });
+    }
+  });
+
+  app.patch("/api/integrations/:id", async (req, res) => {
+    try {
+      const integration = await storage.updateIntegration(req.params.id, req.body);
+      if (!integration) return res.status(404).json({ error: "Integration not found" });
+      res.json(integration);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update integration" });
+    }
+  });
+
+  app.delete("/api/integrations/:id", async (req, res) => {
+    try {
+      await storage.deleteIntegration(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to delete integration" });
+    }
+  });
+
+  app.get("/api/integrations/:id/emails", async (req, res) => {
+    try {
+      const integration = await storage.getIntegration(req.params.id);
+      if (!integration) return res.status(404).json({ error: "Integration not found" });
+      const emails = await storage.getIntegrationEmailsByDeal(req.params.id);
+      res.json(emails);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch integration emails" });
+    }
+  });
+
+  app.post("/api/integrations/:id/emails", async (req, res) => {
+    try {
+      const email = await storage.createIntegrationEmail({
+        ...req.body,
+        integrationId: req.params.id,
+      });
+      res.json(email);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to add email" });
+    }
+  });
+
+  app.delete("/api/integration-emails/:id", async (req, res) => {
+    try {
+      await storage.deleteIntegrationEmail(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to delete email" });
+    }
+  });
+
+  // OAuth callback placeholder — real flows require Google/Microsoft app registration
+  app.get("/api/auth/:provider", async (req, res) => {
+    const { provider } = req.params;
+    if (!["gmail", "outlook"].includes(provider)) {
+      return res.status(400).json({ error: "Unsupported provider" });
+    }
+    // TODO: Replace with real OAuth redirect when credentials are configured
+    res.status(501).json({
+      error: "OAuth not yet configured",
+      message: `To connect ${provider}, set up OAuth credentials in your environment variables. See the Integrations page for details.`,
+      requiredEnvVars: provider === "gmail"
+        ? ["GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET"]
+        : ["MICROSOFT_CLIENT_ID", "MICROSOFT_CLIENT_SECRET"],
+    });
+  });
+
+  // =============================
   // TASK ROUTES
   // =============================
-  
+
   app.get("/api/deals/:dealId/tasks", async (req, res) => {
     try {
       const tasks = await storage.getTasksByDeal(req.params.dealId);
