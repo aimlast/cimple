@@ -488,7 +488,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
     fileFilter: (req, file, cb) => {
-      const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls"];
+      const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls", ".pptx", ".ppt", ".docx", ".doc"];
       const ext = path.extname(file.originalname).toLowerCase();
       cb(null, allowed.includes(ext));
     },

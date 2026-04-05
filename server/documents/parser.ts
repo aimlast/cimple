@@ -38,6 +38,14 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
     return lines.join("\n");
   }
 
+  // PowerPoint (.pptx / .ppt) and Word (.docx / .doc)
+  if ([".pptx", ".ppt", ".docx", ".doc"].includes(ext)) {
+    const officeparser = await import("officeparser");
+    const parse: (file: string) => Promise<string> =
+      (officeparser as any).parseOfficeAsync ?? (officeparser as any).default?.parseOfficeAsync;
+    return await parse(filePath);
+  }
+
   // Plain text / CSV / markdown
   if ([".txt", ".csv", ".md"].includes(ext) || mimeType?.startsWith("text/")) {
     return fs.readFileSync(filePath, "utf-8");
