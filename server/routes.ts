@@ -753,6 +753,255 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // =============================
+  // ADDBACK VERIFICATION ROUTES
+  // =============================
+
+  // Start addback verification for a deal
+  app.post("/api/deals/:dealId/addback-verification", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { workflow, financialAnalysisId } = req.body;
+
+      if (!workflow || !["provided", "from_scratch"].includes(workflow)) {
+        return res.status(400).json({ error: "workflow must be 'provided' or 'from_scratch'" });
+      }
+
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // If workflow is "provided", pull addbacks from financial analysis
+      let initialAddbacks: any[] = [];
+      if (workflow === "provided" && financialAnalysisId) {
+        const fa = await storage.getFinancialAnalysis(financialAnalysisId);
+        if (fa?.normalization) {
+          const norm = fa.normalization as any;
+          initialAddbacks = (norm.addbacks || []).map((a: any) => ({
+            id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
+            label: a.label || "",
+            description: a.description || "",
+            category: a.category || "other",
+            annualAmount: Object.values(a.amounts || {}).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) / Math.max(Object.keys(a.amounts || {}).length, 1),
+            yearAmounts: a.amounts || {},
+            verificationStatus: "unverified",
+            matchedTransactions: [],
+            sellerNotes: null,
+            aiNotes: null,
+          }));
+        }
+      }
+
+      const verification = await storage.createAddbackVerification({
+        dealId,
+        financialAnalysisId: financialAnalysisId || null,
+        workflow,
+        status: "pending_documents",
+        addbacks: initialAddbacks,
+        uploadedTransactionData: null,
+        sellerQuestions: [],
+        sourceDocumentIds: [],
+      });
+
+      res.json(verification);
+    } catch (error: any) {
+      console.error("Error creating addback verification:", error);
+      res.status(500).json({ error: "Failed to create addback verification" });
+    }
+  });
+
+  // Get latest addback verification for a deal
+  app.get("/api/deals/:dealId/addback-verification", async (req, res) => {
+    try {
+      const verification = await storage.getAddbackVerificationByDeal(req.params.dealId);
+      if (!verification) return res.status(404).json({ error: "No addback verification found" });
+      res.json(verification);
+    } catch (error: any) {
+      console.error("Error fetching addback verification:", error);
+      res.status(500).json({ error: "Failed to fetch addback verification" });
+    }
+  });
+
+  // Update addback verification (seller answers, manual edits, status)
+  app.patch("/api/deals/:dealId/addback-verification/:id", async (req, res) => {
+    try {
+      const existing = await storage.getAddbackVerification(req.params.id);
+      if (!existing || existing.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Addback verification not found" });
+      }
+
+      const updates: any = {};
+      if (req.body.addbacks !== undefined) updates.addbacks = req.body.addbacks;
+      if (req.body.sellerQuestions !== undefined) updates.sellerQuestions = req.body.sellerQuestions;
+      if (req.body.status !== undefined) updates.status = req.body.status;
+      if (req.body.sourceDocumentIds !== undefined) updates.sourceDocumentIds = req.body.sourceDocumentIds;
+
+      const updated = await storage.updateAddbackVerification(req.params.id, updates);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating addback verification:", error);
+      res.status(500).json({ error: "Failed to update addback verification" });
+    }
+  });
+
+  // Trigger AI analysis after documents uploaded
+  app.post("/api/deals/:dealId/addback-verification/:id/analyze", async (req, res) => {
+    try {
+      const verification = await storage.getAddbackVerification(req.params.id);
+      if (!verification || verification.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Addback verification not found" });
+      }
+
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // Mark as analyzing
+      await storage.updateAddbackVerification(req.params.id, { status: "analyzing" });
+
+      // Run analysis in background
+      (async () => {
+        try {
+          const { parseTransactionData, matchAddbacksToTransactions, identifyAddbacksFromTransactions, generateSellerQuestions } = await import("./financial/addback-verifier");
+
+          // Gather source documents — look for GL, bank statements, QB exports
+          const allDocs = await storage.getDocumentsByDeal(req.params.dealId);
+          const sourceDocIds = (verification.sourceDocumentIds as string[]) || [];
+          const sourceDocs = sourceDocIds.length > 0
+            ? allDocs.filter((d) => sourceDocIds.includes(d.id))
+            : allDocs.filter((d) =>
+                d.isProcessed &&
+                d.extractedText &&
+                (d.subcategory === "general_ledger" ||
+                 d.subcategory === "bank_statement" ||
+                 d.subcategory === "quickbooks_export" ||
+                 d.subcategory === "pnl_detail" ||
+                 d.category === "financials"),
+              );
+
+          if (sourceDocs.length === 0) {
+            await storage.updateAddbackVerification(req.params.id, {
+              status: "failed",
+              addbacks: verification.addbacks as any,
+            });
+            return;
+          }
+
+          // Parse all transaction data
+          let allTransactions: any[] = [];
+          for (const doc of sourceDocs) {
+            if (!doc.extractedText) continue;
+            const sourceType = doc.subcategory === "bank_statement"
+              ? "bank"
+              : doc.subcategory === "quickbooks_export" || doc.subcategory === "pnl_detail"
+              ? "quickbooks"
+              : "gl";
+            const parsed = await parseTransactionData(doc.extractedText, sourceType as any, doc.id);
+            allTransactions = allTransactions.concat(parsed);
+          }
+
+          let updatedAddbacks: any[];
+          let questions: any[];
+
+          if (verification.workflow === "provided") {
+            // Workflow A — match existing addbacks
+            const currentAddbacks = (verification.addbacks as any[]) || [];
+            const matchResults = await matchAddbacksToTransactions(
+              currentAddbacks,
+              allTransactions,
+              deal.industry,
+              sourceDocs[0]?.id || "",
+            );
+
+            updatedAddbacks = currentAddbacks.map((ab) => {
+              const match = matchResults.find((m) => m.addbackId === ab.id);
+              if (!match) return ab;
+              return {
+                ...ab,
+                verificationStatus: match.verificationStatus === "matched" ? "matched" : match.verificationStatus === "partial_match" ? "matched" : "no_match",
+                matchedTransactions: match.matchedTransactions,
+                aiNotes: match.aiNotes,
+              };
+            });
+
+            questions = await generateSellerQuestions(
+              updatedAddbacks.map((ab) => ({
+                ...ab,
+                verificationStatus: ab.verificationStatus,
+                matchedTransactions: ab.matchedTransactions,
+              })),
+              allTransactions,
+              [],
+            );
+          } else {
+            // Workflow B — discover addbacks from scratch
+            const identified = await identifyAddbacksFromTransactions(
+              allTransactions,
+              deal.industry,
+              {
+                businessName: deal.businessName,
+                askingPrice: deal.askingPrice || undefined,
+              },
+            );
+
+            updatedAddbacks = identified.map((ab) => ({
+              ...ab,
+              verificationStatus: "matched",
+              sellerNotes: null,
+            }));
+
+            questions = await generateSellerQuestions(
+              updatedAddbacks as any,
+              allTransactions,
+              [],
+            );
+          }
+
+          await storage.updateAddbackVerification(req.params.id, {
+            status: "pending_seller_review",
+            addbacks: updatedAddbacks,
+            uploadedTransactionData: allTransactions.slice(0, 5000), // cap stored transactions
+            sellerQuestions: questions,
+            sourceDocumentIds: sourceDocs.map((d) => d.id),
+          });
+        } catch (err: any) {
+          console.error("Addback verification analysis failed:", err);
+          await storage.updateAddbackVerification(req.params.id, {
+            status: "failed",
+          });
+        }
+      })();
+
+      res.json({ message: "Analysis started", id: req.params.id });
+    } catch (error: any) {
+      console.error("Error starting addback analysis:", error);
+      res.status(500).json({ error: "Failed to start analysis" });
+    }
+  });
+
+  // Seller confirms matches
+  app.post("/api/deals/:dealId/addback-verification/:id/confirm", async (req, res) => {
+    try {
+      const verification = await storage.getAddbackVerification(req.params.id);
+      if (!verification || verification.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Addback verification not found" });
+      }
+
+      const addbacks = (verification.addbacks as any[]) || [];
+      const allConfirmed = addbacks.every(
+        (ab) => ab.verificationStatus === "seller_confirmed" || ab.verificationStatus === "disputed",
+      );
+
+      const updated = await storage.updateAddbackVerification(req.params.id, {
+        status: allConfirmed ? "verified" : "pending_seller_review",
+        addbacks: addbacks,
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error confirming addbacks:", error);
+      res.status(500).json({ error: "Failed to confirm addbacks" });
+    }
+  });
+
+  // =============================
   // TASK ROUTES
   // =============================
 
