@@ -15,8 +15,9 @@ import {
   type Integration, type InsertIntegration,
   type IntegrationEmail, type InsertIntegrationEmail,
   type FinancialAnalysis, type InsertFinancialAnalysis,
+  type AddbackVerification, type InsertAddbackVerification,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
-  integrations, integrationEmails, financialAnalyses
+  integrations, integrationEmails, financialAnalyses, addbackVerifications
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -130,6 +131,12 @@ export interface IStorage {
   getFinancialAnalysesByDeal(dealId: string): Promise<FinancialAnalysis[]>;
   getLatestFinancialAnalysis(dealId: string): Promise<FinancialAnalysis | undefined>;
   updateFinancialAnalysis(id: string, updates: Partial<InsertFinancialAnalysis>): Promise<FinancialAnalysis | undefined>;
+
+  // Addback verification operations
+  createAddbackVerification(data: InsertAddbackVerification): Promise<AddbackVerification>;
+  getAddbackVerification(id: string): Promise<AddbackVerification | undefined>;
+  getAddbackVerificationByDeal(dealId: string): Promise<AddbackVerification | undefined>;
+  updateAddbackVerification(id: string, updates: Partial<InsertAddbackVerification>): Promise<AddbackVerification | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -312,6 +319,10 @@ export class MemStorage implements IStorage {
   async getFinancialAnalysesByDeal(): Promise<FinancialAnalysis[]> { return []; }
   async getLatestFinancialAnalysis(): Promise<FinancialAnalysis | undefined> { return undefined; }
   async updateFinancialAnalysis(): Promise<FinancialAnalysis | undefined> { return undefined; }
+  async createAddbackVerification(): Promise<AddbackVerification> { throw new Error("Use DbStorage"); }
+  async getAddbackVerification(): Promise<AddbackVerification | undefined> { return undefined; }
+  async getAddbackVerificationByDeal(): Promise<AddbackVerification | undefined> { return undefined; }
+  async updateAddbackVerification(): Promise<AddbackVerification | undefined> { return undefined; }
 }
 
 export class DbStorage implements IStorage {
@@ -808,6 +819,34 @@ export class DbStorage implements IStorage {
     const result = await db.update(financialAnalyses)
       .set({ ...updates, updatedAt: new Date() })
       .where(eq(financialAnalyses.id, id))
+      .returning();
+    return result[0];
+  }
+
+  // ── Addback verification operations ──
+
+  async createAddbackVerification(data: InsertAddbackVerification): Promise<AddbackVerification> {
+    const result = await db.insert(addbackVerifications).values(data).returning();
+    return result[0];
+  }
+
+  async getAddbackVerification(id: string): Promise<AddbackVerification | undefined> {
+    const result = await db.select().from(addbackVerifications).where(eq(addbackVerifications.id, id));
+    return result[0];
+  }
+
+  async getAddbackVerificationByDeal(dealId: string): Promise<AddbackVerification | undefined> {
+    const result = await db.select().from(addbackVerifications)
+      .where(eq(addbackVerifications.dealId, dealId))
+      .orderBy(desc(addbackVerifications.updatedAt))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateAddbackVerification(id: string, updates: Partial<InsertAddbackVerification>): Promise<AddbackVerification | undefined> {
+    const result = await db.update(addbackVerifications)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(addbackVerifications.id, id))
       .returning();
     return result[0];
   }

@@ -636,6 +636,35 @@ export type InsertFinancialAnalysis = z.infer<typeof insertFinancialAnalysisSche
 export type FinancialAnalysis = typeof financialAnalyses.$inferSelect;
 
 // =====================
+// ADDBACK VERIFICATIONS - Transaction-level addback corroboration
+// =====================
+export const addbackVerifications = pgTable("addback_verifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  financialAnalysisId: varchar("financial_analysis_id"), // nullable — may not exist in Workflow B
+  workflow: text("workflow").notNull(), // 'provided' | 'from_scratch'
+  status: text("status").notNull().default("pending_documents"),
+  // pending_documents | analyzing | pending_seller_review | verified | failed
+
+  addbacks: jsonb("addbacks").default(sql`'[]'::jsonb`), // array of addback verification objects
+  uploadedTransactionData: jsonb("uploaded_transaction_data"), // parsed transaction data from GL/bank/QB
+  sellerQuestions: jsonb("seller_questions").default(sql`'[]'::jsonb`), // AI questions with answers
+  sourceDocumentIds: jsonb("source_document_ids").default(sql`'[]'::jsonb`), // string array of document IDs
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertAddbackVerificationSchema = createInsertSchema(addbackVerifications).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertAddbackVerification = z.infer<typeof insertAddbackVerificationSchema>;
+export type AddbackVerification = typeof addbackVerifications.$inferSelect;
+
+// =====================
 // LEGACY - Keep for backward compatibility during migration
 // =====================
 export const cims = pgTable("cims", {

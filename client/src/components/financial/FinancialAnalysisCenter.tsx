@@ -18,10 +18,11 @@ import { ClarifyingQuestions } from "@/components/financial/ClarifyingQuestions"
 import type { ClarifyingQuestion } from "@/components/financial/ClarifyingQuestions";
 import { InsightsPanel } from "@/components/financial/InsightsPanel";
 import type { InsightsData } from "@/components/financial/InsightsPanel";
+import { AddbackVerification } from "@/components/financial/AddbackVerification";
 
 import {
   DollarSign, Loader2, RefreshCw, Zap, BarChart3,
-  Scale, Calculator, HelpCircle, Lightbulb, ArrowLeft
+  Scale, Calculator, HelpCircle, Lightbulb, ArrowLeft, ShieldCheck
 } from "lucide-react";
 
 /* ──────────────────────────────────────────────
@@ -235,6 +236,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <TabsTrigger value="insights" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <Lightbulb className="h-3 w-3" /> Insights
           </TabsTrigger>
+          <TabsTrigger value="verify-addbacks" className="text-xs gap-1.5 data-[state=active]:bg-background">
+            <ShieldCheck className="h-3 w-3" /> Verify Addbacks
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="overview">
@@ -277,6 +281,13 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
 
         <TabsContent value="insights">
           <InsightsPanel data={insightsData} />
+        </TabsContent>
+
+        <TabsContent value="verify-addbacks">
+          <AddbackVerification
+            dealId={dealId}
+            financialAnalysisId={analysis?.id}
+          />
         </TabsContent>
       </Tabs>
     </div>
