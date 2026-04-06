@@ -23,6 +23,7 @@ import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { BuyerQAPanel } from "@/components/deal/BuyerQAPanel";
+import { TeamPanel } from "@/components/deal/TeamPanel";
 import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
@@ -1171,7 +1172,7 @@ function RightPanel({
   const TABS = [
     { id: "documents", label: `Docs${documents.length > 0 ? ` (${documents.length})` : ""}` },
     { id: "tasks",     label: `Tasks${tasks.length > 0 ? ` (${tasks.length})` : ""}` },
-    { id: "buyers",    label: `Buyers${buyers.length > 0 ? ` (${buyers.length})` : ""}` },
+    { id: "buyers",    label: "Team" },
     { id: "faq",       label: `FAQ${faqs.length > 0 ? ` (${faqs.length})` : ""}` },
   ];
 
@@ -1243,35 +1244,13 @@ function RightPanel({
           </div>
         )}
 
-        {/* Buyers */}
+        {/* Team & Buyers */}
         {tab === "buyers" && (
-          <div className="space-y-2">
-            <Button size="sm" variant="outline" className="w-full h-8 text-xs gap-1.5 justify-start"
-              onClick={() => setAddBuyerOpen(true)}>
-              <Users className="h-3.5 w-3.5" /> Add Buyer
-            </Button>
-            {buyers.length === 0 ? (
-              <p className="text-2xs text-muted-foreground/60 text-center py-4">No buyers yet</p>
-            ) : (
-              buyers.map((b: any) => (
-                <div key={b.id} className="flex items-center gap-2 p-2 rounded-md bg-card border border-border group">
-                  <Users className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs font-medium truncate">{b.buyerName}</p>
-                    <p className="text-2xs text-muted-foreground truncate">{b.buyerEmail}</p>
-                  </div>
-                  <button
-                    onClick={() => { navigator.clipboard.writeText(`${window.location.origin}/view/${b.accessToken}`); toast({ title: "Link copied" }); }}
-                    className="text-muted-foreground hover:text-foreground"
-                  >
-                    <Copy className="h-3.5 w-3.5" />
-                  </button>
-                </div>
-              ))
-            )}
+          <div className="space-y-4">
+            <TeamPanel dealId={dealId} />
 
             {/* Buyer Q&A Management */}
-            <div className="mt-4 pt-4 border-t border-border">
+            <div className="pt-4 border-t border-border">
               <BuyerQAPanel dealId={dealId} />
             </div>
           </div>

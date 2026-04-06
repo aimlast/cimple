@@ -12,6 +12,8 @@ import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
+import { notify } from "./notifications/service.js";
+import { TEAM_ROLES } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -2131,6 +2133,131 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ════════════════════════════════════════════════════════════
+  // DEAL TEAMS — Members, roles, notifications
+  // ════════════════════════════════════════════════════════════
+
+  // Get all members for a deal (grouped by team)
+  app.get("/api/deals/:dealId/members", async (req, res) => {
+    try {
+      const members = await storage.getDealMembers(req.params.dealId);
+      res.json(members);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get members" });
+    }
+  });
+
+  // Get members by team type
+  app.get("/api/deals/:dealId/members/:teamType", async (req, res) => {
+    try {
+      const members = await storage.getDealMembersByTeam(req.params.dealId, req.params.teamType);
+      res.json(members);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get team members" });
+    }
+  });
+
+  // Add a member to a deal
+  app.post("/api/deals/:dealId/members", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { email, name, phone, teamType, role, accessLevel } = req.body;
+
+      if (!email?.trim() || !teamType || !role) {
+        return res.status(400).json({ error: "Email, team type, and role are required" });
+      }
+
+      // Check if member already exists
+      const existing = await storage.getDealMemberByEmail(dealId, email.trim().toLowerCase());
+      if (existing) {
+        return res.status(409).json({ error: "This person is already on the deal" });
+      }
+
+      // Validate role for team type
+      const teamRoles = (TEAM_ROLES as any)[teamType];
+      if (!teamRoles) return res.status(400).json({ error: "Invalid team type" });
+      const roleConfig = teamRoles[role];
+      if (!roleConfig) return res.status(400).json({ error: "Invalid role for this team" });
+
+      const inviteToken = crypto.randomUUID();
+      const deal = await storage.getDeal(dealId);
+
+      const member = await storage.createDealMember({
+        dealId,
+        email: email.trim().toLowerCase(),
+        name: name || null,
+        phone: phone || null,
+        teamType,
+        role,
+        permissions: roleConfig.permissions as any,
+        inviteToken,
+        inviteStatus: "sent",
+        invitedAt: new Date(),
+        accessLevel: accessLevel || (teamType === "buyer" ? "full" : null),
+        emailNotifications: true,
+        smsNotifications: !!phone,
+      } as any);
+
+      // Send invite notification
+      const teamLabel = teamType.charAt(0).toUpperCase() + teamType.slice(1);
+      await notify(dealId, "invite", {
+        title: `You've been added to a deal`,
+        body: `You've been added as ${roleConfig.label} (${teamLabel} team) for ${deal?.businessName || "a business"}. Click below to get started.`,
+        actionUrl: teamType === "buyer"
+          ? `/view/${inviteToken}`
+          : `/invite/${inviteToken}`,
+        businessName: deal?.businessName,
+        specificMemberIds: [member.id],
+      });
+
+      res.json(member);
+    } catch (error: any) {
+      console.error("Error adding member:", error);
+      res.status(500).json({ error: "Failed to add member" });
+    }
+  });
+
+  // Update a member (role, permissions, notification prefs)
+  app.patch("/api/members/:memberId", async (req, res) => {
+    try {
+      const updated = await storage.updateDealMember(req.params.memberId, req.body);
+      if (!updated) return res.status(404).json({ error: "Member not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update member" });
+    }
+  });
+
+  // Remove a member
+  app.delete("/api/members/:memberId", async (req, res) => {
+    try {
+      await storage.deleteDealMember(req.params.memberId);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to remove member" });
+    }
+  });
+
+  // Get notifications for a deal
+  app.get("/api/deals/:dealId/notifications", async (req, res) => {
+    try {
+      const notifs = await storage.getNotificationsByDeal(req.params.dealId);
+      res.json(notifs);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get notifications" });
+    }
+  });
+
+  // Mark notification as read
+  app.patch("/api/notifications/:id/read", async (req, res) => {
+    try {
+      await storage.markNotificationRead(req.params.id);
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to mark as read" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
   // PHASE 4 — BUYER Q&A
   // ════════════════════════════════════════════════════════════
 
@@ -2221,6 +2348,17 @@ Do not speculate or add information not in the CIM.`,
         addedToKnowledgeBase: !needsEscalation,
       } as any);
 
+      // Notify broker when question needs manual response
+      if (needsEscalation) {
+        const deal = await storage.getDeal(dealId);
+        notify(dealId, "buyer_question", {
+          title: "New buyer question needs your response",
+          body: `A buyer asked: "${question.slice(0, 100)}${question.length > 100 ? "..." : ""}"`,
+          actionUrl: `/deal/${dealId}`,
+          businessName: deal?.businessName,
+        }).catch(() => {});
+      }
+
       res.json({
         id: saved.id,
         answer: needsEscalation ? null : aiAnswer,
@@ -2274,9 +2412,20 @@ Do not speculate or add information not in the CIM.`,
       }
 
       const updated = await storage.updateBuyerQuestion(questionId, updates as any);
+
+      // Auto-notify seller team when question needs approval
+      if (status === "pending_seller" && updated) {
+        const deal = await storage.getDeal(updated.dealId);
+        notify(updated.dealId, "qa_needs_approval", {
+          title: "A buyer question needs your approval",
+          body: `Question: "${updated.question.slice(0, 100)}${updated.question.length > 100 ? "..." : ""}"`,
+          actionUrl: `/approve/${updated.sellerApprovalToken}`,
+          businessName: deal?.businessName,
+        }).catch(() => {}); // fire-and-forget
+      }
+
       res.json({
         ...updated,
-        // Return the approval link so broker can share it
         approvalLink: updated?.sellerApprovalToken
           ? `/approve/${updated.sellerApprovalToken}`
           : undefined,
