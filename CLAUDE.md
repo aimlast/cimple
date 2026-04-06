@@ -29,8 +29,9 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 | Backend | Express.js (ESM, compiled via esbuild) |
 | Database | PostgreSQL via Railway + Drizzle ORM |
 | AI | Anthropic Claude API — use `claude-opus-4-5` for the interview agent, `claude-sonnet-4-5` for supporting agents |
+| Notifications | Resend (email) + Twilio (SMS) — graceful console fallback when credentials absent |
 | Deployment | Railway.app (Nixpacks, NIXPACKS_NODE_VERSION=20) |
-| Auth | Session-based |
+| Auth | Session-based (brokers), token-based (sellers, buyers) |
 
 **Live URL:** https://cimple-production.up.railway.app
 
@@ -40,38 +41,120 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 
 ## What is already built
 
+### Core Platform
 - Broker layout: sidebar with Dashboard, Deals, Analytics, Templates, Settings, Support
 - Seller routes: Progress, Chat, Documents
-- Buyer View Room (tokenized access)
-- 4-phase deal workflow in DB schema: `phase1_info_collection` → `phase4_design_finalization`
-- AI interview system (15-question sequence — **needs full rebuild**)
-- CIM section generation via Claude API (**text-only, needs design rebuild**)
-- Branding settings: logo upload, company name, disclaimer, footer
-- Seller invite system
-- Analytics event tracking
-- Drizzle schema: `users`, `deals`, `documents`, `tasks`, `interviewSessions`, `cimSections`, `sellerInvites`, `buyerAccess`, `analyticsEvents`, `faqItems`, `brandingSettings`
+- Buyer View Room (tokenized access with NDA signing, analytics tracking, heat maps)
+- 4-phase deal workflow: `phase1_info_collection` → `phase4_design_finalization`
+- Branding settings: logo upload, company name, disclaimer, footer, white-label support
+- Seller invite system (token-based onboarding)
+- Analytics event tracking (page views, scroll depth, heat maps, time-on-page)
+
+### AI Interview System (fully rebuilt — adaptive, not a fixed sequence)
+- Multi-turn conversational interview via Claude Opus 4.5
+- Dynamic question generation based on knowledge base gaps (no fixed script)
+- Industry-specific intelligence: 8,000+ lines covering 40+ industries with jurisdiction-specific fields
+- Guided answer selection: 3-5 suggested answers per question, industry-tailored
+- Coverage dashboard with section-by-section progress tracking (gamification)
+- Confidence-based field merging (confirmed > inferred > approximate)
+- Intelligent deferral with 6-step process for difficult questions
+- Session resume across multiple interactions
+- Deferred topics panel and real-time coverage metrics
+- **Files:** `server/interview/` (session-manager, knowledge-base, system-prompt, response-schema, info-merger, prompts/, data/, config/)
+
+### CIM Design & Generation (visual output — not text-only)
+- AI-powered layout engine that produces bespoke visual sections per deal
+- 21 layout types: cover page, metric grid, bar/line/pie/donut charts, financial tables, comparison tables, timelines, org charts, scorecards, stat callouts, prose highlights, two-column layouts, location cards, callout/numbered lists, dividers
+- Recharts-based chart rendering in the frontend
+- Three CIM versions: Normal, Blind (AI-redacted), DD (due diligence enriched)
+- CIM Designer page for manual section arrangement and customization
+- Learning loop: aggregates buyer engagement data to optimize future layout choices
+- **Files:** `server/cim/` (layout-engine, layout-types, redaction-engine, dd-enrichment, discrepancy-engine, learning-loop)
+
+### Document Parsing & Extraction
+- PDF (pdf-parse), Excel .xlsx/.xls (xlsx), Word .docx/.doc (officeparser), PowerPoint .pptx/.ppt (officeparser), text/CSV/markdown (direct read)
+- Claude-powered structured extraction: maps document text to M&A-relevant fields (financials, lease/legal, employees, operations)
+- Extracted data merged additively onto deal's `extractedInfo`
+- **Files:** `server/documents/` (parser, extractor)
+
+### Internet Scraping
+- Public data scraper with fallback chain: provided URL → DuckDuckGo search → homepage + /about page
+- Extracts: business description, year founded, locations, products, revenue streams, target market, competitive advantage, management team
+- Scraped data stored separately as UNVERIFIED — interview agent confirms with seller before trusting
+- **Files:** `server/scraper/index.ts`
+
+### Financial Analysis
+- Full pipeline: extract line items → reclassify into M&A categories → identify SDE/EBITDA addbacks → calculate working capital → generate clarifying questions → produce insights
+- Addback verification workflow: seller confirms/rejects/modifies each line item
+- Statement types: income statement, balance sheet, cash flow, AR aging
+- Versioned analysis runs
+- Comps integration stubbed (ready for BizBuySell/DealStats API)
+- **Files:** `server/financial/` (analyzer, extractor, addback-verifier, comps)
+
+### Discrepancy Resolution
+- AI cross-references interview answers vs. document data
+- Flags inconsistencies with severity (critical/significant/minor) and category (financial/operational/legal/factual)
+- Resolution workflow: accept interview value, document value, or enter corrected value
+- Critical discrepancies block CIM generation until resolved
+- Resolved values feed back into knowledge base
+- **Files:** `server/cim/discrepancy-engine.ts`, `client/src/components/deal/DiscrepancyPanel.tsx`
+
+### Buyer Q&A Chatbot
+- Floating chat widget on Buyer View Room
+- 2-step AI knowledge base check: (1) similarity match against published Q&A, (2) CIM content answer, (3) escalation to broker
+- Escalation chain: AI → broker drafts answer → seller approves → published to buyer
+- Persistent knowledge base per deal — learns from every answered question
+- Token-based seller approval pages (no login required)
+- **Files:** `client/src/components/buyer/BuyerChatbot.tsx`, `client/src/components/deal/BuyerQAPanel.tsx`, `client/src/pages/SellerApprovalPage.tsx`
+
+### Deal Team Management (Firmex-style)
+- Three team types: Broker, Seller, Buyer — each with role-based permissions
+- Broker roles: Lead Broker, Associate, Analyst, Admin
+- Seller roles: Owner, Representative, Accountant, Attorney
+- Buyer roles: Principal, Analyst, Advisor, Attorney
+- Each role has specific permissions (e.g., can_approve_content, can_view_financials, can_manage_team)
+- Email + SMS notification preferences per member
+- Invite status tracking: pending → sent → accepted
+- **Files:** `client/src/components/deal/TeamPanel.tsx`, `server/notifications/service.ts`
+
+### Notification System
+- Event-driven notifications via Resend (email) and Twilio (SMS)
+- Graceful degradation: logs to console when credentials not configured
+- Smart routing via `NOTIFICATION_ROUTING` — maps event types to team/role recipients
+- Dark-themed HTML email templates with Cimple branding
+- Events: qa_needs_approval, buyer_question, discrepancy_found, phase_advanced, document_processed, interview_complete
+- **Files:** `server/notifications/service.ts`
+
+### Buyer Analytics (partial)
+- Event tracking: view, page_view, section_enter/exit, scroll, heat_map_sample, element_hover, download_attempt, time_on_page, nda_signed, question_asked
+- Heat map data collection (normalized x/y coordinates)
+- Engagement insights aggregation (avg time, scroll depth, completion rate by industry/section/layout)
+- Learning loop feeds insights back into CIM layout engine
+- Analytics dashboard UI exists but is a stub
 
 **Design system:**
 - Dark mode primary (near-black background, cream/light text)
 - Linear/Notion-inspired aesthetic
-- Shadcn/ui + Radix UI components
+- Shadcn/ui + Radix UI components (45+ primitives)
 - Tailwind CSS with custom HSL design tokens
 - Fonts: Inter (UI), JetBrains Mono (technical content)
-- Primary brand color: professional blue
+- Primary brand color: teal
+- Framer Motion for animations
+
+**Database schema (23 tables):**
+`users`, `deals`, `documents`, `tasks`, `interviewSessions`, `cimSections`, `cimSectionOverrides`, `cims`, `engagementInsights`, `buyerQuestions`, `sellerInvites`, `buyerAccess`, `analyticsEvents`, `faqItems`, `brandingSettings`, `integrations`, `integrationEmails`, `dealKnowledgeSources`, `financialAnalyses`, `addbackVerifications`, `discrepancies`, `dealMembers`, `notifications`
 
 ---
 
 ## What is NOT built yet (known gaps)
 
-- [ ] AI interview intelligence — current version is not adaptive, needs full rebuild
-- [ ] Call recording and transcription
-- [ ] Email sync
-- [ ] Document parsing / OCR
-- [ ] Financial analysis module
-- [ ] Internet scraping (public business data)
-- [ ] Buyer analytics / heatmaps
-- [ ] Buyer matching
-- [ ] CIM design output — currently text-only, no charts, infographics, or dynamic layout
+- [ ] Call recording and transcription (mobile app or third-party integration)
+- [ ] Email sync (OAuth infrastructure exists but no provider secrets configured)
+- [ ] CRM integration (Salesforce, HubSpot — schema ready, implementation pending)
+- [ ] Buyer analytics dashboard UI (backend tracking exists, frontend is a stub)
+- [ ] Buyer matching / scoring
+- [ ] Comps API integration (stub exists, needs BizBuySell/DealStats API keys)
+- [ ] UX iteration pass across all flows
 
 ---
 
@@ -79,50 +162,52 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 
 Cimple uses a multi-agent system. Each agent has a distinct role and system prompt. A manager layer in the interview system orchestrates between them.
 
-### Agent 1 — Interview agent (most important)
+### Agent 1 — Interview agent (live)
 **Role:** Conducts the seller interview. Adaptive, context-aware, probing.
+**Model:** `claude-opus-4-5` (4096 max tokens, temperature 1.0)
 
 **Behavior:**
 - Starts with full knowledge of everything already collected (docs, emails, SQ, calls, internet data)
 - Confirms known information rather than re-asking for it
 - Identifies gaps and probes them conversationally
-- If seller can't answer: rephrases, revisits later, explains why the information matters to buyers/banks/DD
+- If seller can't answer: uses 6-step process (explain why it matters, locate the info source, give retrieval instructions, rephrase, defer with context, circle back)
 - Uses the seller's operational baseline (accounting system, CRM, employee list) to give specific retrieval instructions
 - Knows which documents are uploaded, outstanding, or promised — never asks for already-provided materials
 - Flags unresolvable gaps to the broker with full context
 - After interview: generates a dynamic to-do list for the seller
+- Offers 3-5 guided answer suggestions per question, industry-tailored
+- Tracks coverage by CIM section with real-time progress indicators
 
 **Voice/tone:** Feels like a skilled business advisor helping the seller articulate their business — not a form, not a rigid chatbot.
 
-**Do not ship** any version of this agent that feels like filling in text boxes.
-
-### Agent 2 — Knowledge base agent
+### Agent 2 — Knowledge base agent (live)
 **Role:** Ingests all inputs and builds the structured business profile used by all other agents.
 
 **Inputs:** Call transcripts, emails, seller questionnaire, uploaded documents, internet scrape data
 **Output:** Structured JSON knowledge base mapped to CIM sections
-**Behavior:** Continuously updates as new documents are added. Identifies conflicts and flags them. Categorizes uncategorized documents (identify → verify with uploader → categorize).
+**Behavior:** Continuously updates as new documents are added. Identifies conflicts and flags them via discrepancy engine. Merges fields with confidence tracking (confirmed > inferred > approximate).
 
-### Agent 3 — Financial analysis agent
+### Agent 3 — Financial analysis agent (live)
 **Role:** Handles all financial processing.
 
 **Tasks:**
-- Reclassifies P&L, Balance Sheet, Cash Flow, AR Aging
-- Runs normalization exercise (SDE/EBITDA)
+- Reclassifies P&L, Balance Sheet, Cash Flow, AR Aging into standard M&A categories
+- Runs normalization exercise (SDE/EBITDA) with addback verification workflow
 - Generates clarifying questions for red flags and anomalies
 - Calculates working capital
-- Pulls comps via API for preliminary Opinion of Value
+- Comps pull via API for preliminary Opinion of Value (stubbed — needs API keys)
 - Produces financial insights (positive and negative) for CIM sections
 
-### Agent 4 — CIM design agent
+### Agent 4 — CIM design agent (live)
 **Role:** Transforms approved content into a visually compelling CIM.
 
 **Behavior:**
+- AI selects optimal layout type per section from 21 options (charts, tables, grids, timelines, etc.)
 - Applies broker brand guidelines and selected aesthetic templates
-- Makes section-level decisions: when to use charts vs tables vs paragraphs vs infographics
 - White-label capable (applies other companies' brand identity)
-- Output must be modern and dynamic — not walls of paragraph text
-- Backend logic guides which content types should be visual and what format to use
+- Generates three versions: Normal, Blind (redacted), DD (enriched)
+- Considers buyer engagement data (learning loop) to optimize layout choices
+- Output rendered via Recharts and custom React components
 
 ---
 
@@ -131,7 +216,7 @@ Cimple uses a multi-agent system. Each agent has a distinct role and system prom
 **Section keys (camelCase):**
 `executiveSummary`, `companyOverview`, `historyMilestones`, `uniqueSellingPropositions`, `sourcesOfRevenue`, `growthStrategies`, `targetMarket`, `permitsLicenses`, `seasonality`, `locationSite`, `employeeOverview`, `transactionOverview`, `financialOverview`
 
-**Note:** The AI should be intelligent enough to add or remove sections based on the specific business. These keys are defaults, not a rigid template.
+**Note:** The AI is intelligent enough to add or remove sections based on the specific business. These keys are defaults, not a rigid template.
 
 **Standard CIM sections:**
 1. Cover page — logo, "CONFIDENTIAL BUSINESS OVERVIEW", business name, broker name
@@ -144,42 +229,47 @@ Cimple uses a multi-agent system. Each agent has a distinct role and system prom
 8. Data visualizations (charts, graphs)
 9. Contact page
 
+**CIM versions:**
+- **Blind** — AI-redacted: all identifying info (business name, location, employee names, customer names) replaced with fictitious placeholders. Financials preserved. Random project codename assigned.
+- **Normal** — Standard CIM with all business information.
+- **DD (Due Diligence)** — Enriched version: customer names revealed in charts, T2/bank comparison commentary, addback verification details inline, previously withheld info highlighted.
+
 ---
 
 ## User roles and flows
 
-**Broker** — creates deals, invites sellers, reviews content, approves CIM, manages buyers
-**Seller** — invited to platform, completes questionnaire, participates in AI interview, reviews draft
-**Buyer** — receives tokenized CIM link with NDA, views in secure room, analytics tracked
+**Broker** — creates deals, invites sellers, manages deal teams, reviews content, approves CIM, manages buyers
+**Seller** — invited to platform (token-based), completes questionnaire, participates in AI interview, reviews draft, approves Q&A answers
+**Buyer** — receives tokenized CIM link, signs NDA, views in secure room, asks questions via chatbot, analytics tracked
 
 **5-phase deal workflow:**
 1. Info collection (pre-platform): calls, NDA, SQ, docs, valuation
-2. Info collection (platform-driven): internet scrape, seller onboarding, AI interview
+2. Info collection (platform-driven): internet scrape, seller onboarding, AI interview, discrepancy resolution
 3. Copy/data: AI writes, broker reviews, seller reviews
-4. Design: AI designs, broker reviews
-5. Buyer analytics & matching: CIM goes live, buyers tracked, matching runs
+4. Design: AI designs with visual layouts, broker reviews
+5. Buyer analytics & matching: CIM goes live, buyers tracked, Q&A chatbot active
 
 ---
 
-## Build priority order
+## Build priority order (updated)
 
-**1 — Rebuild the AI interview (most important)**
-The current 15-question sequence is not intelligent enough. It needs to be replaced with a fully adaptive, context-aware system. This is the entire product.
-
-**2 — Document parsing and knowledge base**
-Nothing else works well without structured input. OCR, PDF parsing, email extraction all feed the knowledge base agent.
-
-**3 — CIM design output**
-Must produce visually dynamic output: charts, infographics, dynamic section layouts. Text-only output is not acceptable as a final state.
-
-**4 — Call recording / transcription**
+**1 — Call recording / transcription** (not started)
 Mobile app or third-party integration. Transcripts feed directly into the knowledge base.
 
-**5 — Financial analysis module**
-Reclassification, normalization, comps pull, working capital calculation.
+**2 — Email sync** (infrastructure ready, needs OAuth secrets)
+Gmail and Outlook OAuth infrastructure exists. Needs provider credentials to activate. Parsed emails feed knowledge base.
 
-**6 — Buyer analytics and matching**
-Heatmaps, time-per-page, buyer scoring, CRM integration.
+**3 — Buyer analytics dashboard UI** (backend done, frontend stub)
+Backend tracks heat maps, time-per-page, scroll depth, element hover. Frontend dashboard needs to be built to surface this data to brokers.
+
+**4 — Buyer matching / scoring** (not started)
+Buyer scoring based on engagement data, CRM integration for deal management.
+
+**5 — CRM integration** (schema ready)
+Salesforce, HubSpot — schema and token storage exist, implementation pending.
+
+**6 — UX iteration** (ongoing)
+Polish all flows, responsive design, error states, loading states.
 
 ---
 
@@ -203,6 +293,7 @@ Heatmaps, time-per-page, buyer scoring, CRM integration.
 - CIM links auto-expire after 30 days unless extended by broker
 - Firmex-style confidentiality: electronic NDA, role/permission controls, stage-based access (initial review → LOI → due diligence)
 - Blind/sanitized CIM auto-generated on finalization (all identifying info replaced with fictitious placeholders)
+- Deal team management with role-based permissions per team type (broker/seller/buyer)
 
 ---
 
@@ -213,11 +304,30 @@ Heatmaps, time-per-page, buyer scoring, CRM integration.
 | Anthropic Claude API | All AI functionality | Live |
 | Railway.app | Hosting + PostgreSQL | Live |
 | GitHub | Version control | Live |
-| Email platforms | Seller communication sync | Planned |
-| CRM platforms | Buyer matching, deal management | Planned |
+| Resend | Email notifications | Ready (needs RESEND_API_KEY) |
+| Twilio | SMS notifications | Ready (needs TWILIO_ACCOUNT_SID, AUTH_TOKEN, PHONE_NUMBER) |
+| Gmail | Seller communication sync | Infrastructure ready (needs OAuth secrets) |
+| Outlook | Seller communication sync | Infrastructure ready (needs OAuth secrets) |
+| CRM platforms (Salesforce, HubSpot) | Buyer matching, deal management | Schema ready, not implemented |
 | Accounting systems | Financial data extraction | Planned |
-| Valuation software / comps API | Opinion of Value | Planned |
+| Valuation software / comps API | Opinion of Value | Stubbed (needs API keys) |
 | Call recording (mobile/3rd party) | Transcript generation | Planned |
+
+---
+
+## Environment variables
+
+| Variable | Purpose | Required |
+|---|---|---|
+| `DATABASE_URL` | PostgreSQL connection string | Yes |
+| `ANTHROPIC_API_KEY` | Claude API access | Yes |
+| `SESSION_SECRET` | Express session encryption | Yes |
+| `RESEND_API_KEY` | Email delivery via Resend | No (falls back to console) |
+| `RESEND_FROM_EMAIL` | Sender address | No (defaults to notifications@cimple.app) |
+| `TWILIO_ACCOUNT_SID` | SMS delivery via Twilio | No (falls back to console) |
+| `TWILIO_AUTH_TOKEN` | Twilio auth | No |
+| `TWILIO_PHONE_NUMBER` | SMS sender number | No |
+| `APP_URL` | Base URL for notification links | No (defaults to Railway URL) |
 
 ---
 
@@ -227,29 +337,7 @@ Heatmaps, time-per-page, buyer scoring, CRM integration.
 - The Railway deployment config (Nixpacks settings)
 - The session-based auth system — do not replace without explicit approval
 - The buyer tokenized access system — security-sensitive
-
----
-
-## Upcoming Features — Approved for Development
-
-These are approved product decisions. Build them when their priority in the build order is reached.
-
-### Feature 1: Guided answer selection in the seller interview
-The interview must not be a blank-page typing experience. For every question asked, the AI should offer pre-populated answer options based on its industry knowledge and what it already knows about the business — sellers click the ones that apply, then are asked to expand only where needed. The AI should still prompt for answers outside the suggestions if applicable. This applies to all structured information gathering. The goal is to make information collection feel guided and low-effort, not like filling out a form from scratch.
-
-### Feature 2: Subtle gamification in the seller interview
-The interview interface must include progress indicators by CIM section (e.g. 'Company Overview — 72% complete'), checkmarks as sections are completed, and a running coverage score. No animations or badges — keep it professional. The seller should feel a sense of progress and completion as they move through the interview.
-
-### Feature 3: Buyer Q&A chatbot on the CIM viewing room
-Buyers viewing the CIM can ask questions via a chat interface. The AI answers immediately if the answer is in the CIM. If the AI cannot answer, the question escalates to the broker via email notification and mobile app. The broker answers or flags questions they cannot answer. Every answer the broker provides — whether full or partial — goes to the seller for approval before it is shown to the buyer. Questions the broker cannot answer escalate directly to the seller. The seller is the final approval step for every answer in the chain regardless of who drafted it. No buyer-facing answer is published without seller sign-off. All questions asked by buyers are logged and visible to the broker as an analytics layer showing what buyers are confused about or interested in.
-
-The AI must maintain a persistent Q&A knowledge base per deal — every question that was escalated and answered gets added back to the AI's knowledge for that deal. When future buyers ask the same or similar question, the AI answers it directly without escalating again. The platform gets smarter with every buyer interaction. By the tenth buyer, most questions are answered instantly because earlier buyers already surfaced them. The broker and seller only ever have to answer each unique question once.
-
-### Feature 4: DD (Due Diligence) version of the CIM
-When a buyer enters due diligence, the platform generates a DD CIM — the same format as the original CIM, but with previously withheld sensitive information now revealed and visually highlighted so the buyer can quickly see what is new or expanded. Examples: customer concentration chart now shows actual customer names (highlighted); financials now show comparison against T2s and bank statements with AI-generated commentary on any discrepancies; addback analysis and revenue verification shown inline. The goal is to give buyers due diligence information in a familiar format rather than dumping raw documents on them.
-
-### Feature 5: Two-stage information collection with discrepancy resolution
-Information collection from the seller happens in at least two stages. Stage 1 collects information through the interview. Stage 2 is an AI-driven verification pass — the AI cross-references what the seller said against uploaded documents and financial statements, identifies inconsistencies, and goes back to the seller specifically on those discrepancies before the CIM is drafted. Example: 'You mentioned revenue of $X but your income statement shows $Y — can you help me understand the difference?' This must be resolved before content generation begins.
+- The notification routing config (`NOTIFICATION_ROUTING` in shared/schema.ts) — changes affect who gets notified
 
 ---
 
