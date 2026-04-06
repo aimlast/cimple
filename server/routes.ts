@@ -1243,6 +1243,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Buyer signs NDA
+  app.post("/api/view/:token/sign-nda", async (req, res) => {
+    try {
+      const access = await storage.getBuyerAccessByToken(req.params.token);
+      if (!access) return res.status(404).json({ error: "Invalid token" });
+
+      await storage.updateBuyerAccess(access.id, {
+        ndaSigned: true,
+        ndaSignedAt: new Date(),
+        ndaSignedIp: req.ip || req.socket.remoteAddress || null,
+      } as any);
+
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to sign NDA" });
+    }
+  });
+
   app.patch("/api/buyers/:id", async (req, res) => {
     try {
       const access = await storage.updateBuyerAccess(req.params.id, req.body);
@@ -2123,7 +2141,59 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { question, buyerAccessId } = req.body;
       if (!question?.trim()) return res.status(400).json({ error: "Question required" });
 
-      // Check if AI can answer from existing CIM sections
+      // ── Step 1: Check knowledge base — has a similar question been answered before? ──
+      const publishedQs = await storage.getPublishedQuestions(dealId);
+      if (publishedQs.length > 0) {
+        const kbContext = publishedQs
+          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer}`)
+          .join("\n\n");
+
+        const similarityCheck = await anthropic.messages.create({
+          model: "claude-sonnet-4-5",
+          max_tokens: 600,
+          system: `You are a Q&A similarity matcher for a business CIM. Given a buyer's question and a knowledge base of previously answered questions, determine if any existing answer adequately addresses the new question.
+
+If an existing answer covers the question (even if worded differently), respond with:
+MATCH: <the existing answer, optionally rephrased to directly address the new question>
+
+If no existing answer covers it, respond with exactly: NO_MATCH`,
+          messages: [{
+            role: "user",
+            content: `KNOWLEDGE BASE:\n${kbContext}\n\nNEW QUESTION: ${question}`,
+          }],
+        });
+
+        const matchText = similarityCheck.content[0].type === "text" ? similarityCheck.content[0].text : "";
+        if (matchText.startsWith("MATCH:")) {
+          const matchedAnswer = matchText.slice(6).trim();
+          // Find the matched Q ID for linking
+          const matchedQ = publishedQs.find(q =>
+            matchedAnswer.includes(q.publishedAnswer?.slice(0, 50) || "___none___")
+          );
+
+          const saved = await storage.createBuyerQuestion({
+            dealId,
+            buyerAccessId: buyerAccessId || null,
+            question,
+            aiAnswer: matchedAnswer,
+            status: "published",
+            isPublished: true,
+            publishedAnswer: matchedAnswer,
+            addedToKnowledgeBase: true,
+            similarQuestionIds: matchedQ ? [matchedQ.id] : [],
+          } as any);
+
+          return res.json({
+            id: saved.id,
+            answer: matchedAnswer,
+            status: "published",
+            message: matchedAnswer,
+            fromKnowledgeBase: true,
+          });
+        }
+      }
+
+      // ── Step 2: Try to answer from CIM content ──
       const sections = await storage.getCimSectionsByDeal(dealId);
       const cimText = sections.map(s => `${s.sectionTitle}: ${s.brokerEditedContent || s.aiDraftContent || ""}`).join("\n\n");
 
@@ -2148,7 +2218,7 @@ Do not speculate or add information not in the CIM.`,
         status: needsEscalation ? "pending_broker" : "published",
         isPublished: !needsEscalation,
         publishedAnswer: needsEscalation ? null : aiAnswer,
-        addedToKnowledgeBase: false,
+        addedToKnowledgeBase: !needsEscalation,
       } as any);
 
       res.json({
@@ -2201,6 +2271,58 @@ Do not speculate or add information not in the CIM.`,
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update question" });
+    }
+  });
+
+  // Seller approves or rejects an answer
+  app.post("/api/questions/:questionId/seller-approve", async (req, res) => {
+    try {
+      const { questionId } = req.params;
+      const { approved, revision } = req.body;
+
+      if (approved) {
+        // Get the question to use broker draft as published answer
+        const questions = await storage.getQuestionsByDeal(""); // Need to get the specific question
+        const question = await storage.updateBuyerQuestion(questionId, {
+          sellerApproved: true,
+          sellerApprovedAt: new Date(),
+          status: "published",
+          isPublished: true,
+          publishedAnswer: revision || undefined, // seller can revise
+          addedToKnowledgeBase: true,
+        } as any);
+
+        if (!question) return res.status(404).json({ error: "Question not found" });
+
+        // If no revision was provided, publish the broker draft
+        if (!revision && question.brokerDraft && !question.publishedAnswer) {
+          await storage.updateBuyerQuestion(questionId, {
+            publishedAnswer: question.brokerDraft,
+          } as any);
+        }
+
+        res.json({ success: true, question });
+      } else {
+        // Seller rejects — send back to broker with feedback
+        const updated = await storage.updateBuyerQuestion(questionId, {
+          sellerApproved: false,
+          status: "pending_broker",
+        } as any);
+        res.json({ success: true, question: updated });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to process seller approval" });
+    }
+  });
+
+  // Get pending seller approval questions for a deal
+  app.get("/api/deals/:dealId/questions/pending-seller", async (req, res) => {
+    try {
+      const questions = await storage.getQuestionsByDeal(req.params.dealId);
+      const pending = questions.filter(q => q.status === "pending_seller");
+      res.json(pending);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get pending questions" });
     }
   });
 

@@ -14,16 +14,15 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
-import { Textarea } from "@/components/ui/textarea";
 import {
   Building, Clock, Lock, AlertCircle, FileText,
-  HelpCircle, ChevronDown, Send, CheckCircle2,
 } from "lucide-react";
-import { useQuery, useMutation } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import type { Deal, BuyerAccess, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
+import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 
 interface ViewData {
   access: BuyerAccess;
@@ -200,9 +199,6 @@ export default function BuyerViewRoom() {
   const [ndaAccepted, setNdaAccepted] = useState(false);
   const [timeOnPage, setTimeOnPage] = useState(0);
   const startTimeRef = useRef(Date.now());
-  const [question, setQuestion] = useState("");
-  const [questionSubmitted, setQuestionSubmitted] = useState(false);
-  const [expandedFaq, setExpandedFaq] = useState<string | null>(null);
 
   const { data, isLoading, error } = useQuery<ViewData>({
     queryKey: ["/api/view", token],
@@ -240,22 +236,6 @@ export default function BuyerViewRoom() {
     if (!data?.deal?.id || !data?.access?.id) return;
     enqueue({ eventType: "view" });
   }, [data?.deal?.id, data?.access?.id, enqueue]);
-
-  const submitQuestion = useMutation({
-    mutationFn: async (q: string) => {
-      const res = await fetch(`/api/deals/${data!.deal.id}/buyer-questions`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question: q, buyerAccessId: data!.access.id }),
-      });
-      if (!res.ok) throw new Error("Failed to submit");
-      return res.json();
-    },
-    onSuccess: () => {
-      setQuestion("");
-      setQuestionSubmitted(true);
-    },
-  });
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -415,69 +395,17 @@ export default function BuyerViewRoom() {
               </div>
             )}
 
-            {/* ── Q&A Section ────────────────────────────────────────────── */}
-            <div className="mt-16 border-t border-border pt-10 space-y-6">
-              <div className="flex items-center gap-2">
-                <HelpCircle className="h-4 w-4 text-muted-foreground" />
-                <h3 className="font-semibold text-sm">Questions & Answers</h3>
-              </div>
-
-              {/* Published Q&As */}
-              {publishedQuestions.length > 0 && (
-                <div className="space-y-2">
-                  {publishedQuestions.map((q: any) => (
-                    <div key={q.id} className="border border-border rounded-lg overflow-hidden">
-                      <button
-                        className="w-full text-left px-4 py-3 flex items-center justify-between gap-3 hover:bg-muted/40 transition-colors"
-                        onClick={() => setExpandedFaq(expandedFaq === q.id ? null : q.id)}
-                      >
-                        <span className="text-sm font-medium">{q.question}</span>
-                        <ChevronDown className={`h-4 w-4 shrink-0 transition-transform ${expandedFaq === q.id ? "rotate-180" : ""}`} />
-                      </button>
-                      {expandedFaq === q.id && (
-                        <div className="px-4 pb-4 text-sm text-muted-foreground border-t border-border pt-3">
-                          {q.publishedAnswer || q.sellerApproved}
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Ask a question */}
-              <div className="rounded-lg border border-border bg-card p-4 space-y-3">
-                <p className="text-sm font-medium">Ask a question</p>
-                <p className="text-xs text-muted-foreground">
-                  Questions are reviewed by the broker and seller before being answered.
-                </p>
-                {questionSubmitted ? (
-                  <div className="flex items-center gap-2 text-sm text-teal">
-                    <CheckCircle2 className="h-4 w-4" />
-                    Question submitted — you'll be notified when it's answered.
-                  </div>
-                ) : (
-                  <div className="flex gap-2">
-                    <Textarea
-                      placeholder="What would you like to know about this business?"
-                      value={question}
-                      onChange={e => setQuestion(e.target.value)}
-                      className="text-sm min-h-[80px] resize-none flex-1"
-                    />
-                    <Button
-                      size="sm"
-                      className="shrink-0 bg-teal text-teal-foreground hover:bg-teal/90 self-end"
-                      disabled={!question.trim() || submitQuestion.isPending}
-                      onClick={() => submitQuestion.mutate(question.trim())}
-                    >
-                      <Send className="h-3.5 w-3.5" />
-                    </Button>
-                  </div>
-                )}
-              </div>
-            </div>
           </main>
         </div>
       </div>
+
+      {/* ── Floating Q&A Chatbot ─────────────────────────────────────── */}
+      <BuyerChatbot
+        dealId={deal.id}
+        buyerAccessId={access.id}
+        businessName={deal.businessName}
+        publishedQuestions={publishedQuestions}
+      />
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <footer className="border-t border-border mt-16 py-8">

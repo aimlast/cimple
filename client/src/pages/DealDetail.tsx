@@ -22,6 +22,7 @@ import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysi
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
+import { BuyerQAPanel } from "@/components/deal/BuyerQAPanel";
 import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
@@ -1268,6 +1269,11 @@ function RightPanel({
                 </div>
               ))
             )}
+
+            {/* Buyer Q&A Management */}
+            <div className="mt-4 pt-4 border-t border-border">
+              <BuyerQAPanel dealId={dealId} />
+            </div>
           </div>
         )}
 
