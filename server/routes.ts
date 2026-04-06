@@ -1387,6 +1387,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       // ── Full CIM generation — use the visual layout engine ──
+
+      // Apply resolved discrepancy values to extractedInfo
+      const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
+      const extractedInfo = { ...(deal.extractedInfo as Record<string, unknown> || {}) };
+      for (const d of resolvedDiscrepancies) {
+        if (d.resolvedValue && d.field) {
+          extractedInfo[d.field] = d.resolvedValue;
+        }
+      }
+
       const [branding, insights] = await Promise.all([
         storage.getBrandingByBroker(deal.brokerId),
         deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
@@ -1397,7 +1407,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         businessName: deal.businessName,
         industry: deal.industry,
         askingPrice: deal.askingPrice,
-        extractedInfo: (deal.extractedInfo as Record<string, unknown>) || {},
+        extractedInfo,
         scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
         questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
         operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
@@ -2005,6 +2015,100 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to reorder sections" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // DISCREPANCY RESOLUTION
+  // ════════════════════════════════════════════════════════════
+
+  // Run discrepancy check
+  app.post("/api/deals/:dealId/run-discrepancy-check", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const allDocs = await storage.getDocumentsByDeal(dealId);
+      const processedDocs = allDocs.filter(d => d.isProcessed && (d.extractedText || d.extractedData));
+
+      if (processedDocs.length === 0) {
+        return res.status(400).json({ error: "No processed documents to cross-reference. Upload and process documents first." });
+      }
+
+      const { runDiscrepancyCheck } = await import("./cim/discrepancy-engine");
+      const items = await runDiscrepancyCheck(
+        {
+          id: dealId,
+          businessName: deal.businessName,
+          industry: deal.industry,
+          extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
+          questionnaireData: deal.questionnaireData as Record<string, any> | null,
+        },
+        processedDocs.map(d => ({
+          id: d.id,
+          name: d.name,
+          category: d.category,
+          extractedText: d.extractedText,
+          extractedData: d.extractedData,
+        })),
+      );
+
+      // Store discrepancies
+      const created = [];
+      for (const item of items) {
+        const disc = await storage.createDiscrepancy({
+          dealId,
+          field: item.field,
+          interviewValue: item.interviewValue,
+          documentValue: item.documentValue,
+          documentId: item.documentId,
+          documentName: item.documentName,
+          severity: item.severity,
+          category: item.category,
+          aiExplanation: item.aiExplanation,
+          suggestedResolution: item.suggestedResolution,
+          status: "open",
+        });
+        created.push(disc);
+      }
+
+      res.json({ success: true, count: created.length, discrepancies: created });
+    } catch (error: any) {
+      console.error("Error running discrepancy check:", error);
+      res.status(500).json({ error: error.message || "Discrepancy check failed" });
+    }
+  });
+
+  // Get discrepancies for a deal
+  app.get("/api/deals/:dealId/discrepancies", async (req, res) => {
+    try {
+      const discrepancies = await storage.getDiscrepanciesByDeal(req.params.dealId);
+      res.json(discrepancies);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch discrepancies" });
+    }
+  });
+
+  // Update a discrepancy (resolve, respond, etc.)
+  app.patch("/api/discrepancies/:id", async (req, res) => {
+    try {
+      const { sellerResponse, brokerNotes, resolvedValue, status } = req.body;
+      const updates: any = {};
+      if (sellerResponse !== undefined) updates.sellerResponse = sellerResponse;
+      if (brokerNotes !== undefined) updates.brokerNotes = brokerNotes;
+      if (resolvedValue !== undefined) updates.resolvedValue = resolvedValue;
+      if (status !== undefined) {
+        updates.status = status;
+        if (status === "resolved") {
+          updates.resolvedAt = new Date();
+        }
+      }
+      const updated = await storage.updateDiscrepancy(req.params.id, updates);
+      if (!updated) return res.status(404).json({ error: "Discrepancy not found" });
+      res.json(updated);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to update discrepancy" });
     }
   });
 

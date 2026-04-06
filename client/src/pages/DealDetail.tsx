@@ -21,7 +21,8 @@ import {
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
-import type { CimSection, BrandingSettings } from "@shared/schema";
+import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
+import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
    PHASE CONFIGURATION
@@ -792,6 +793,18 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
   const branding = buildBranding(brandingSettings, deal);
   const hasVisualSections = cimSections.length > 0;
 
+  // Fetch discrepancies for verification gate
+  const { data: discrepancyList = [] } = useQuery<Discrepancy[]>({
+    queryKey: ["/api/deals", dealId, "discrepancies"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+  const criticalUnresolved = discrepancyList.filter(d => d.severity === "critical" && d.status === "open");
+  const hasDiscrepancies = discrepancyList.length > 0;
+
   // Count available data fields as a readiness indicator
   const extractedCount = Object.keys((deal.extractedInfo as object) || {}).length;
   const scrapedCount = Object.keys(((deal as any).scrapedData as object) || {}).length;
@@ -882,16 +895,25 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
           </div>
         </div>
 
+        {/* Discrepancy verification */}
+        <DiscrepancyPanel dealId={dealId} />
+
+        {/* Generate CIM button */}
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
           <Wand2 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
           <p className="text-sm font-medium mb-1">AI-Designed CIM</p>
           <p className="text-xs text-muted-foreground mb-4 max-w-md mx-auto">
             The AI will analyze your data and design a bespoke CIM with charts, infographics, financial tables, and dynamic layouts — not just text.
           </p>
+          {criticalUnresolved.length > 0 && (
+            <p className="text-xs text-red-400 mb-3">
+              Resolve {criticalUnresolved.length} critical discrepanc{criticalUnresolved.length === 1 ? "y" : "ies"} above before generating.
+            </p>
+          )}
           <Button
             className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => generate.mutate()}
-            disabled={generate.isPending}
+            disabled={generate.isPending || criticalUnresolved.length > 0}
             data-testid="button-generate-content"
           >
             {generate.isPending
