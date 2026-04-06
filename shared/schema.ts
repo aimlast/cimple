@@ -865,3 +865,166 @@ export const CIM_SECTIONS = [
 ] as const;
 
 export type CimSectionKey = typeof CIM_SECTIONS[number]["key"];
+
+// =====================
+// DEAL MEMBERS — Unified team model (broker, seller, buyer teams)
+// =====================
+export const dealMembers = pgTable("deal_members", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+
+  // Identity
+  email: text("email").notNull(),
+  name: text("name"),
+  phone: text("phone"),
+
+  // Team & role
+  teamType: text("team_type").notNull(), // "broker" | "seller" | "buyer"
+  role: text("role").notNull(),
+  // Broker roles: "lead" | "associate" | "analyst" | "admin"
+  // Seller roles: "owner" | "representative" | "accountant" | "attorney"
+  // Buyer roles: "principal" | "analyst" | "advisor" | "attorney"
+
+  // Permissions (computed from role but overridable)
+  permissions: jsonb("permissions").default(sql`'[]'::jsonb`),
+  // e.g. ["view_cim", "approve_qa", "upload_docs", "edit_deal", "manage_buyers"]
+
+  // Invite & access
+  inviteToken: text("invite_token").unique(),
+  inviteStatus: text("invite_status").notNull().default("pending"),
+  // "pending" | "sent" | "accepted" | "expired" | "revoked"
+  invitedAt: timestamp("invited_at"),
+  acceptedAt: timestamp("accepted_at"),
+  lastActiveAt: timestamp("last_active_at"),
+
+  // Buyer-specific fields (replaces buyerAccess)
+  accessLevel: text("access_level"), // "teaser" | "full" | "loi" | "due_diligence"
+  ndaSigned: boolean("nda_signed").default(false),
+  ndaSignedAt: timestamp("nda_signed_at"),
+  canDownload: boolean("can_download").default(false),
+  watermarkEnabled: boolean("watermark_enabled").default(true),
+
+  // Notification preferences
+  emailNotifications: boolean("email_notifications").default(true),
+  smsNotifications: boolean("sms_notifications").default(false),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertDealMemberSchema = createInsertSchema(dealMembers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertDealMember = z.infer<typeof insertDealMemberSchema>;
+export type DealMember = typeof dealMembers.$inferSelect;
+
+// =====================
+// NOTIFICATIONS — Event-driven alerts
+// =====================
+export const notifications = pgTable("notifications", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  recipientId: varchar("recipient_id").notNull(), // dealMember.id
+  recipientEmail: text("recipient_email").notNull(),
+  recipientPhone: text("recipient_phone"),
+
+  // Content
+  type: text("type").notNull(),
+  // "qa_needs_approval" | "qa_published" | "cim_ready" | "document_uploaded"
+  // | "nda_signed" | "buyer_question" | "deal_update" | "invite" | "reminder"
+  title: text("title").notNull(),
+  body: text("body").notNull(),
+  actionUrl: text("action_url"), // deep link to relevant page
+  metadata: jsonb("metadata").default(sql`'{}'::jsonb`),
+
+  // Delivery status
+  emailSent: boolean("email_sent").default(false),
+  emailSentAt: timestamp("email_sent_at"),
+  smsSent: boolean("sms_sent").default(false),
+  smsSentAt: timestamp("sms_sent_at"),
+  readAt: timestamp("read_at"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertNotificationSchema = createInsertSchema(notifications).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertNotification = z.infer<typeof insertNotificationSchema>;
+export type Notification = typeof notifications.$inferSelect;
+
+// Role permission mappings
+export const TEAM_ROLES = {
+  broker: {
+    lead: {
+      label: "Lead Broker",
+      permissions: ["edit_deal", "manage_team", "manage_buyers", "approve_cim", "view_financials", "view_analytics", "approve_qa"],
+    },
+    associate: {
+      label: "Associate",
+      permissions: ["edit_deal", "manage_buyers", "view_financials", "view_analytics", "approve_qa"],
+    },
+    analyst: {
+      label: "Analyst",
+      permissions: ["view_financials", "view_analytics"],
+    },
+    admin: {
+      label: "Admin",
+      permissions: ["edit_deal", "manage_team", "manage_buyers", "approve_cim", "view_financials", "view_analytics", "approve_qa"],
+    },
+  },
+  seller: {
+    owner: {
+      label: "Owner",
+      permissions: ["approve_qa", "approve_cim", "upload_docs", "view_financials", "participate_interview"],
+    },
+    representative: {
+      label: "Authorized Representative",
+      permissions: ["approve_qa", "upload_docs", "participate_interview"],
+    },
+    accountant: {
+      label: "Accountant",
+      permissions: ["upload_docs", "view_financials"],
+    },
+    attorney: {
+      label: "Attorney",
+      permissions: ["approve_qa", "view_financials", "upload_docs"],
+    },
+  },
+  buyer: {
+    principal: {
+      label: "Principal / Decision Maker",
+      permissions: ["view_cim", "ask_questions", "submit_loi"],
+    },
+    analyst: {
+      label: "Analyst",
+      permissions: ["view_cim", "ask_questions"],
+    },
+    advisor: {
+      label: "Advisor",
+      permissions: ["view_cim", "ask_questions"],
+    },
+    attorney: {
+      label: "Attorney",
+      permissions: ["view_cim", "ask_questions"],
+    },
+  },
+} as const;
+
+// Notification event → which roles should receive it
+export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: string[] }> = {
+  qa_needs_approval: { teams: ["seller"], roles: ["owner", "representative"] },
+  qa_published: { teams: ["buyer"] },
+  buyer_question: { teams: ["broker"], roles: ["lead", "associate"] },
+  cim_ready: { teams: ["seller"], roles: ["owner", "representative"] },
+  document_uploaded: { teams: ["broker"], roles: ["lead", "associate", "analyst"] },
+  nda_signed: { teams: ["broker"], roles: ["lead", "associate"] },
+  deal_update: { teams: ["broker", "seller"] },
+  invite: { teams: ["broker", "seller", "buyer"] },
+  loi_submitted: { teams: ["broker"], roles: ["lead"] },
+};

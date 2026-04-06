@@ -18,9 +18,12 @@ import {
   type AddbackVerification, type InsertAddbackVerification,
   type CimSectionOverride, type InsertCimSectionOverride,
   type Discrepancy, type InsertDiscrepancy,
+  type DealMember, type InsertDealMember,
+  type Notification, type InsertNotification,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
-  cimSectionOverrides, discrepancies
+  cimSectionOverrides, discrepancies,
+  dealMembers, notifications
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -152,6 +155,21 @@ export interface IStorage {
   getDiscrepanciesByDeal(dealId: string): Promise<Discrepancy[]>;
   updateDiscrepancy(id: string, updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
   getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]>;
+
+  // Deal members (team management)
+  createDealMember(data: InsertDealMember): Promise<DealMember>;
+  getDealMembers(dealId: string): Promise<DealMember[]>;
+  getDealMembersByTeam(dealId: string, teamType: string): Promise<DealMember[]>;
+  getDealMemberByToken(token: string): Promise<DealMember | undefined>;
+  getDealMemberByEmail(dealId: string, email: string): Promise<DealMember | undefined>;
+  updateDealMember(id: string, updates: Partial<DealMember>): Promise<DealMember | undefined>;
+  deleteDealMember(id: string): Promise<void>;
+
+  // Notifications
+  createNotification(data: InsertNotification): Promise<Notification>;
+  getNotificationsByRecipient(recipientId: string): Promise<Notification[]>;
+  getNotificationsByDeal(dealId: string): Promise<Notification[]>;
+  markNotificationRead(id: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -346,6 +364,21 @@ export class MemStorage implements IStorage {
   async getDiscrepanciesByDeal(): Promise<Discrepancy[]> { return []; }
   async updateDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
   async getResolvedDiscrepancies(): Promise<Discrepancy[]> { return []; }
+
+  // Deal members stubs
+  async createDealMember(): Promise<DealMember> { throw new Error("Not implemented"); }
+  async getDealMembers(): Promise<DealMember[]> { return []; }
+  async getDealMembersByTeam(): Promise<DealMember[]> { return []; }
+  async getDealMemberByToken(): Promise<DealMember | undefined> { return undefined; }
+  async getDealMemberByEmail(): Promise<DealMember | undefined> { return undefined; }
+  async updateDealMember(): Promise<DealMember | undefined> { return undefined; }
+  async deleteDealMember(): Promise<void> {}
+
+  // Notification stubs
+  async createNotification(): Promise<Notification> { throw new Error("Not implemented"); }
+  async getNotificationsByRecipient(): Promise<Notification[]> { return []; }
+  async getNotificationsByDeal(): Promise<Notification[]> { return []; }
+  async markNotificationRead(): Promise<void> {}
 }
 
 export class DbStorage implements IStorage {
@@ -934,6 +967,84 @@ export class DbStorage implements IStorage {
         eq(discrepancies.dealId, dealId),
         eq(discrepancies.status, "resolved"),
       ));
+  }
+
+  // ── Deal Members ─────────────────────────────────────────────────────
+
+  async createDealMember(data: InsertDealMember): Promise<DealMember> {
+    const result = await db.insert(dealMembers).values(data).returning();
+    return result[0];
+  }
+
+  async getDealMembers(dealId: string): Promise<DealMember[]> {
+    return db.select().from(dealMembers)
+      .where(eq(dealMembers.dealId, dealId))
+      .orderBy(dealMembers.createdAt);
+  }
+
+  async getDealMembersByTeam(dealId: string, teamType: string): Promise<DealMember[]> {
+    const { and } = await import("drizzle-orm");
+    return db.select().from(dealMembers)
+      .where(and(
+        eq(dealMembers.dealId, dealId),
+        eq(dealMembers.teamType, teamType),
+      ))
+      .orderBy(dealMembers.createdAt);
+  }
+
+  async getDealMemberByToken(token: string): Promise<DealMember | undefined> {
+    const result = await db.select().from(dealMembers)
+      .where(eq(dealMembers.inviteToken, token))
+      .limit(1);
+    return result[0];
+  }
+
+  async getDealMemberByEmail(dealId: string, email: string): Promise<DealMember | undefined> {
+    const { and } = await import("drizzle-orm");
+    const result = await db.select().from(dealMembers)
+      .where(and(
+        eq(dealMembers.dealId, dealId),
+        eq(dealMembers.email, email),
+      ))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateDealMember(id: string, updates: Partial<DealMember>): Promise<DealMember | undefined> {
+    const result = await db.update(dealMembers)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dealMembers.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteDealMember(id: string): Promise<void> {
+    await db.delete(dealMembers).where(eq(dealMembers.id, id));
+  }
+
+  // ── Notifications ────────────────────────────────────────────────────
+
+  async createNotification(data: InsertNotification): Promise<Notification> {
+    const result = await db.insert(notifications).values(data).returning();
+    return result[0];
+  }
+
+  async getNotificationsByRecipient(recipientId: string): Promise<Notification[]> {
+    return db.select().from(notifications)
+      .where(eq(notifications.recipientId, recipientId))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async getNotificationsByDeal(dealId: string): Promise<Notification[]> {
+    return db.select().from(notifications)
+      .where(eq(notifications.dealId, dealId))
+      .orderBy(desc(notifications.createdAt));
+  }
+
+  async markNotificationRead(id: string): Promise<void> {
+    await db.update(notifications)
+      .set({ readAt: new Date() })
+      .where(eq(notifications.id, id));
   }
 }
 
