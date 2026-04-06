@@ -1289,31 +1289,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // ── CIM-SECTIONS ALIASES (used by CIMDesigner) ──
+
+  app.get("/api/deals/:dealId/cim-sections", async (req, res) => {
+    try {
+      const sections = await storage.getCimSectionsByDeal(req.params.dealId);
+      res.json(sections);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch sections" });
+    }
+  });
+
+  app.post("/api/deals/:dealId/cim-sections/reorder", async (req, res) => {
+    try {
+      const { orderedIds } = req.body;
+      if (Array.isArray(orderedIds)) {
+        for (let i = 0; i < orderedIds.length; i++) {
+          await storage.updateCimSection(String(orderedIds[i]), { order: i } as any);
+        }
+      }
+      res.json({ success: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to reorder sections" });
+    }
+  });
+
   // =============================
   // AI CONTENT GENERATION ROUTES
   // =============================
   
   app.post("/api/deals/:dealId/generate-content", async (req, res) => {
     try {
-      const deal = await storage.getDeal(req.params.dealId);
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
       const { sectionKey } = req.body;
 
-      const businessName = deal.businessName || "The Business";
-      const industry = deal.industry || "a specialized industry";
-
-      // All available data — interview data takes priority, but we pass everything
-      const sectionData = {
-        extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
-        questionnaireData: deal.questionnaireData as Record<string, any> | null,
-        scrapedData: (deal as any).scrapedData as Record<string, any> | null,
-        description: deal.description,
-        askingPrice: deal.askingPrice,
-      };
-
+      // ── Single-section regeneration ──
       if (sectionKey) {
-        // Single-section regeneration — generate and save back to deal
+        const businessName = deal.businessName || "The Business";
+        const industry = deal.industry || "a specialized industry";
+        const sectionData = {
+          extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
+          questionnaireData: deal.questionnaireData as Record<string, any> | null,
+          scrapedData: (deal as any).scrapedData as Record<string, any> | null,
+          description: deal.description,
+          askingPrice: deal.askingPrice,
+        };
         if (!CIM_SECTION_PROMPTS[sectionKey]) {
           return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
         }
@@ -1321,34 +1344,89 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const existingContent = (deal.cimContent as Record<string, string>) || {};
         const updated = { ...existingContent, [sectionKey]: content };
         await storage.updateDeal(deal.id, { cimContent: updated });
+
+        // Also update the matching CIM section if one exists
+        const existingSections = await storage.getCimSectionsByDeal(dealId);
+        const matchingSection = existingSections.find(s => s.sectionKey === sectionKey);
+        if (matchingSection) {
+          await storage.updateCimSection(String(matchingSection.id), {
+            aiDraftContent: content,
+          });
+        }
+
         res.json({ sectionKey, content });
         return;
       }
 
-      // Generate all sections using CIM_SECTIONS keys
-      const { CIM_SECTIONS } = await import("@shared/schema");
+      // ── Full CIM generation — use the visual layout engine ──
+      const [branding, insights] = await Promise.all([
+        storage.getBrandingByBroker(deal.brokerId),
+        deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
+      ]);
+
+      const document = await generateCimLayout({
+        dealId,
+        businessName: deal.businessName,
+        industry: deal.industry,
+        askingPrice: deal.askingPrice,
+        extractedInfo: (deal.extractedInfo as Record<string, unknown>) || {},
+        scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
+        questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
+        operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
+        employeeChart: (deal.employeeChart as unknown[]) || null,
+        cimContent: (deal.cimContent as Record<string, string>) || null,
+        brokerBranding: branding ? {
+          companyName: branding.companyName || undefined,
+          primaryColor: branding.primaryColor,
+        } : null,
+        engagementInsights: insights.length > 0 ? insights.map(i => ({
+          sectionType: i.sectionType,
+          layoutType: i.layoutType,
+          avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
+          sampleCount: i.sampleCount ?? 0,
+        })) : null,
+      });
+
+      // Persist visual sections to DB
+      await storage.deleteCimSectionsForDeal(dealId);
       const cimContent: Record<string, string> = {};
 
-      for (const section of CIM_SECTIONS) {
-        try {
-          cimContent[section.key] = await generateSectionWithClaude(
-            businessName, industry, section.key, sectionData
-          );
-        } catch (e) {
-          console.error(`Failed to generate ${section.key}:`, e);
-          cimContent[section.key] = "";
+      for (const section of document.sections) {
+        await storage.createCimSection({
+          dealId,
+          sectionKey: section.sectionKey,
+          sectionTitle: section.sectionTitle,
+          order: section.order,
+          layoutType: section.layoutType,
+          layoutData: section.layoutData as any,
+          aiLayoutReasoning: section.aiLayoutReasoning,
+          tags: section.tags as any,
+          aiDraftContent: section.aiDraftContent || null,
+          isVisible: section.isVisible,
+          brokerApproved: false,
+        });
+        // Also store text fallback for backward compat
+        if (section.aiDraftContent) {
+          cimContent[section.sectionKey] = section.aiDraftContent;
         }
       }
 
-      await storage.updateDeal(deal.id, {
+      await storage.updateDeal(dealId, {
         cimContent,
         phase: "phase3_content_creation",
-      });
+        cimLayoutGeneratedAt: new Date(),
+        cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
+      } as any);
 
-      res.json({ success: true, cimContent });
+      res.json({
+        success: true,
+        sectionCount: document.sections.length,
+        generatedAt: document.generatedAt,
+        cimContent,
+      });
     } catch (error: any) {
       console.error("Error generating content:", error);
-      res.status(500).json({ error: "Failed to generate content" });
+      res.status(500).json({ error: error.message || "Failed to generate content" });
     }
   });
 

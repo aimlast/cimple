@@ -19,6 +19,9 @@ import {
   DollarSign
 } from "lucide-react";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
+import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
+import { buildBranding } from "@/components/cim/CimBrandingContext";
+import type { CimSection, BrandingSettings } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
    PHASE CONFIGURATION
@@ -762,16 +765,39 @@ function Phase2Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
 
 function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toast: any }) {
   const cimContent = deal.cimContent as Record<string, string> | null;
-  const [editingKey, setEditingKey] = useState<string | null>(null);
+  const [editingSection, setEditingSection] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
-  const [regeneratingKey, setRegeneratingKey] = useState<string | null>(null);
+
+  // Fetch visual CIM sections
+  const { data: cimSections = [] } = useQuery<CimSection[]>({
+    queryKey: ["/api/deals", dealId, "cim-sections"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/cim-sections`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+
+  // Fetch branding for renderer
+  const { data: brandingSettings } = useQuery<BrandingSettings | null>({
+    queryKey: ["/api/branding"],
+    queryFn: async () => {
+      const r = await fetch("/api/branding");
+      if (!r.ok) return null;
+      const arr = await r.json();
+      return Array.isArray(arr) ? arr[0] || null : arr;
+    },
+  });
+
+  const branding = buildBranding(brandingSettings, deal);
+  const hasVisualSections = cimSections.length > 0;
 
   // Count available data fields as a readiness indicator
   const extractedCount = Object.keys((deal.extractedInfo as object) || {}).length;
   const scrapedCount = Object.keys(((deal as any).scrapedData as object) || {}).length;
   const totalDataFields = extractedCount + scrapedCount;
 
-  // Generate all sections
+  // Generate all sections (now uses layout engine)
   const generate = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`);
@@ -780,39 +806,24 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "CIM content generated", description: "All sections drafted. Review and edit below." });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
+      toast({ title: "CIM generated", description: "Visual sections created. Review and edit below." });
     },
     onError: (e: Error) => toast({ title: "Generation failed", description: e.message, variant: "destructive" }),
   });
 
-  // Regenerate a single section
-  const regenerateSection = async (sectionKey: string) => {
-    setRegeneratingKey(sectionKey);
-    try {
-      const r = await apiRequest("POST", `/api/deals/${dealId}/generate-content`, { sectionKey });
-      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "Section regenerated" });
-    } catch (e: any) {
-      toast({ title: "Regeneration failed", description: e.message, variant: "destructive" });
-    } finally {
-      setRegeneratingKey(null);
-    }
-  };
-
-  // Save broker edit to a section
+  // Save broker edit to a visual section
   const saveEdit = useMutation({
-    mutationFn: async ({ key, content }: { key: string; content: string }) => {
-      const existing = (deal.cimContent as Record<string, string>) || {};
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
-        cimContent: { ...existing, [key]: content },
+    mutationFn: async ({ sectionId, content }: { sectionId: string; content: string }) => {
+      const r = await apiRequest("PATCH", `/api/cim-sections/${sectionId}`, {
+        brokerEditedContent: content,
       });
       if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
       return r.json();
     },
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      setEditingKey(null);
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
+      setEditingSection(null);
       toast({ title: "Section saved" });
     },
     onError: (e: Error) => toast({ title: "Save failed", description: e.message, variant: "destructive" }),
@@ -843,12 +854,12 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
   }
 
   // Pre-generation state
-  if (!cimContent) {
+  if (!cimContent && !hasVisualSections) {
     return (
       <div className="space-y-4">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">Phase 3 — Content Creation</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">The AI drafts all CIM sections from the collected data.</p>
+          <p className="text-sm text-muted-foreground mt-0.5">The AI designs a complete visual CIM from your collected data.</p>
         </div>
 
         {/* Data readiness indicator */}
@@ -872,9 +883,10 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         </div>
 
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
-          <Edit3 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
-          <p className="text-sm text-muted-foreground mb-4">
-            Generates all {CIM_SECTIONS.length} CIM sections. Takes ~60 seconds.
+          <Wand2 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
+          <p className="text-sm font-medium mb-1">AI-Designed CIM</p>
+          <p className="text-xs text-muted-foreground mb-4 max-w-md mx-auto">
+            The AI will analyze your data and design a bespoke CIM with charts, infographics, financial tables, and dynamic layouts — not just text.
           </p>
           <Button
             className="bg-teal text-teal-foreground hover:bg-teal/90"
@@ -883,26 +895,23 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             data-testid="button-generate-content"
           >
             {generate.isPending
-              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Generating sections...</>
-              : "Generate CIM Content"}
+              ? <><Loader2 className="h-4 w-4 mr-2 animate-spin" />Designing CIM...</>
+              : "Generate CIM"}
           </Button>
         </div>
       </div>
     );
   }
 
-  // Content review state
-  const populatedCount = CIM_SECTIONS.filter(s => cimContent[s.key]).length;
-
+  // ── Content review state — visual sections ──
   return (
     <div className="space-y-4">
-
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight">CIM Content</h2>
+          <h2 className="text-lg font-semibold tracking-tight">CIM Preview</h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {populatedCount}/{CIM_SECTIONS.length} sections drafted · Edit any section inline
+            {cimSections.length} sections · Click any section to edit
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -912,14 +921,12 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
             </span>
           ) : deal.contentApprovedByBroker ? (
             <Button size="sm" variant="outline" className="h-8 text-xs"
-              onClick={() => approve.mutate("seller")} disabled={approve.isPending}
-              data-testid="button-approve-seller">
+              onClick={() => approve.mutate("seller")} disabled={approve.isPending}>
               Approve as Seller
             </Button>
           ) : (
             <Button size="sm" variant="outline" className="h-8 text-xs"
-              onClick={() => approve.mutate("broker")} disabled={approve.isPending}
-              data-testid="button-approve-broker">
+              onClick={() => approve.mutate("broker")} disabled={approve.isPending}>
               Approve as Broker
             </Button>
           )}
@@ -932,77 +939,86 @@ function Phase3Center({ deal, dealId, toast }: { deal: Deal; dealId: string; toa
         </div>
       </div>
 
-      {/* Sections */}
-      {CIM_SECTIONS.map(section => {
-        const content = cimContent[section.key] || "";
-        const isEditing = editingKey === section.key;
-        const isRegenerating = regeneratingKey === section.key;
-
-        return (
-          <div key={section.key} className="rounded-lg border border-border bg-card overflow-hidden">
-            {/* Section header */}
-            <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
-              <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-                {section.title}
-              </p>
-              {!isEditing && (
-                <div className="flex items-center gap-1">
-                  <button
-                    onClick={() => regenerateSection(section.key)}
-                    disabled={!!regeneratingKey || generate.isPending}
-                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors disabled:opacity-30"
-                    title="Regenerate this section"
-                  >
-                    <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
-                  </button>
-                  <button
-                    onClick={() => { setEditingKey(section.key); setEditDraft(content); }}
-                    className="h-6 w-6 flex items-center justify-center rounded text-muted-foreground/40 hover:text-muted-foreground hover:bg-accent transition-colors"
-                    title="Edit this section"
-                  >
-                    <Pencil className="h-3 w-3" />
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* Section body */}
-            <div className="px-4 py-3">
-              {isEditing ? (
-                <>
-                  <Textarea
-                    value={editDraft}
-                    onChange={(e) => setEditDraft(e.target.value)}
-                    className="resize-none text-sm min-h-[140px] font-normal"
-                    autoFocus
-                  />
-                  <div className="flex items-center gap-2 mt-2">
-                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
-                      onClick={() => saveEdit.mutate({ key: section.key, content: editDraft })}
-                      disabled={saveEdit.isPending}>
-                      {saveEdit.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
-                      Save
-                    </Button>
-                    <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
-                      onClick={() => setEditingKey(null)}>
-                      <X className="h-3 w-3" /> Cancel
-                    </Button>
+      {/* Visual sections */}
+      {hasVisualSections ? (
+        <div className="space-y-6 rounded-lg border border-border bg-card/50 p-6">
+          {cimSections.map((section) => {
+            const isEditing = editingSection === String(section.id);
+            return (
+              <div key={section.id} className="group relative">
+                {/* Edit overlay on hover */}
+                {!isEditing && (
+                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
+                    <button
+                      onClick={() => {
+                        setEditingSection(String(section.id));
+                        setEditDraft(section.brokerEditedContent || section.aiDraftContent || "");
+                      }}
+                      className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm"
+                    >
+                      <Pencil className="h-3 w-3" /> Edit text
+                    </button>
                   </div>
-                </>
-              ) : isRegenerating ? (
-                <div className="flex items-center gap-2 py-4 text-muted-foreground">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  <span className="text-sm">Regenerating...</span>
+                )}
+
+                {isEditing ? (
+                  <div className="rounded-lg border-2 border-teal/40 bg-card p-4 space-y-3">
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
+                        {section.sectionTitle}
+                      </p>
+                      <span className="text-2xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
+                        {section.layoutType}
+                      </span>
+                    </div>
+                    <Textarea
+                      value={editDraft}
+                      onChange={(e) => setEditDraft(e.target.value)}
+                      className="resize-none text-sm min-h-[140px] font-normal"
+                      autoFocus
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
+                        onClick={() => saveEdit.mutate({ sectionId: String(section.id), content: editDraft })}
+                        disabled={saveEdit.isPending}>
+                        {saveEdit.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+                        Save
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-7 text-xs gap-1"
+                        onClick={() => setEditingSection(null)}>
+                        <X className="h-3 w-3" /> Cancel
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <CimSectionRenderer section={section} branding={branding} brokerMode />
+                )}
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        /* Legacy text fallback when cimContent exists but no visual sections */
+        <div className="space-y-3">
+          {CIM_SECTIONS.map(section => {
+            const content = cimContent?.[section.key] || "";
+            return (
+              <div key={section.key} className="rounded-lg border border-border bg-card overflow-hidden">
+                <div className="flex items-center justify-between px-4 py-2.5 border-b border-border bg-muted/30">
+                  <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">{section.title}</p>
                 </div>
-              ) : content ? (
-                <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
-              ) : (
-                <p className="text-sm text-muted-foreground/40 italic py-2">Not yet generated.</p>
-              )}
-            </div>
-          </div>
-        );
-      })}
+                <div className="px-4 py-3">
+                  {content ? (
+                    <p className="text-sm text-foreground leading-relaxed whitespace-pre-wrap">{content}</p>
+                  ) : (
+                    <p className="text-sm text-muted-foreground/40 italic py-2">Not yet generated.</p>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
