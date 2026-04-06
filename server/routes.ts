@@ -1202,13 +1202,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       });
 
       // Enrich with sections, branding, published Q&A
-      const [sections, publishedQuestions, branding] = await Promise.all([
+      const [baseSections, publishedQuestions, branding] = await Promise.all([
         storage.getCimSectionsByDeal(deal.id),
         storage.getPublishedQuestions(deal.id),
         deal.brokerId ? storage.getBrandingByBroker(deal.brokerId) : Promise.resolve(undefined),
       ]);
 
-      res.json({ access, deal, sections, publishedQuestions, branding: branding ?? null });
+      // Determine CIM mode from buyer's access level
+      const cimMode = (() => {
+        switch (access.accessLevel) {
+          case "due_diligence": return "dd";
+          case "loi": return "normal";
+          default: return "blind"; // teaser, full → blind by default
+        }
+      })();
+
+      // Apply overrides if not normal mode
+      let sections = baseSections;
+      if (cimMode !== "normal" && baseSections.length > 0) {
+        const overrides = await storage.getCimSectionOverrides(deal.id, cimMode);
+        if (overrides.length > 0) {
+          const overrideMap = new Map(overrides.map(o => [o.cimSectionId, o]));
+          sections = baseSections.map(s => {
+            const override = overrideMap.get(String(s.id));
+            if (!override) return s;
+            return {
+              ...s,
+              layoutData: override.layoutData || s.layoutData,
+              aiDraftContent: override.contentOverride || s.aiDraftContent,
+              brokerEditedContent: override.contentOverride || s.brokerEditedContent,
+            };
+          });
+        }
+      }
+
+      res.json({ access, deal, sections, publishedQuestions, branding: branding ?? null, cimMode });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -1430,36 +1458,104 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
-  // Generate blind CIM (sanitized version)
+  // Generate blind CIM (AI-powered redaction of all identifying info)
   app.post("/api/deals/:dealId/generate-blind", async (req, res) => {
     try {
-      const deal = await storage.getDeal(req.params.dealId);
-      if (!deal) {
-        return res.status(404).json({ error: "Deal not found" });
-      }
-      
-      const cimContent = deal.cimContent as Record<string, string> | null;
-      if (!cimContent) {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      if (sections.length === 0) {
         return res.status(400).json({ error: "Generate CIM content first" });
       }
-      
-      const businessName = deal.businessName || "The Business";
-      const blindContent: Record<string, string> = {};
-      
-      for (const [key, content] of Object.entries(cimContent)) {
-        let sanitized = content;
-        sanitized = sanitized.replace(new RegExp(businessName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[Company Name]');
-        const extractedInfo = deal.extractedInfo as Record<string, any> || {};
-        if (extractedInfo.locations) {
-          sanitized = sanitized.replace(new RegExp(extractedInfo.locations.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi'), '[Location]');
-        }
-        blindContent[key] = sanitized;
+
+      const { generateBlindOverrides } = await import("./cim/redaction-engine");
+      const overrides = await generateBlindOverrides(sections, {
+        businessName: deal.businessName,
+        industry: deal.industry,
+        extractedInfo: deal.extractedInfo as Record<string, any> | null,
+      });
+
+      // Delete old blind overrides and insert new ones
+      await storage.deleteCimSectionOverrides(dealId, "blind");
+      for (const override of overrides) {
+        await storage.createCimSectionOverride({
+          dealId,
+          cimSectionId: override.cimSectionId,
+          mode: "blind",
+          layoutData: override.layoutData,
+          contentOverride: override.contentOverride,
+        });
       }
-      
-      res.json({ blindContent, blindBusinessName: "[Confidential Business]" });
+
+      res.json({ success: true, overrideCount: overrides.length });
     } catch (error: any) {
       console.error("Error generating blind CIM:", error);
-      res.status(500).json({ error: "Failed to generate blind CIM" });
+      res.status(500).json({ error: error.message || "Failed to generate blind CIM" });
+    }
+  });
+
+  // Generate DD (Due Diligence) enriched CIM
+  app.post("/api/deals/:dealId/generate-dd", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const sections = await storage.getCimSectionsByDeal(dealId);
+      if (sections.length === 0) {
+        return res.status(400).json({ error: "Generate CIM content first" });
+      }
+
+      // Gather DD context
+      const [addbackVerification, financialAnalyses, allDocs] = await Promise.all([
+        storage.getAddbackVerificationByDeal(dealId),
+        storage.getFinancialAnalysesByDeal(dealId),
+        storage.getDocumentsByDeal(dealId),
+      ]);
+
+      const { generateDdOverrides } = await import("./cim/dd-enrichment");
+      const overrides = await generateDdOverrides(sections, {
+        businessName: deal.businessName,
+        industry: deal.industry,
+        extractedInfo: deal.extractedInfo as Record<string, any> | null,
+      }, {
+        addbackVerification,
+        financialAnalysis: financialAnalyses[0] || null,
+        documents: allDocs.map(d => ({
+          name: d.name,
+          category: d.category || "other",
+          extractedText: d.extractedText,
+        })),
+      });
+
+      // Delete old DD overrides and insert new ones
+      await storage.deleteCimSectionOverrides(dealId, "dd");
+      for (const override of overrides) {
+        await storage.createCimSectionOverride({
+          dealId,
+          cimSectionId: override.cimSectionId,
+          mode: "dd",
+          layoutData: override.layoutData,
+          contentOverride: override.contentOverride,
+        });
+      }
+
+      res.json({ success: true, overrideCount: overrides.length });
+    } catch (error: any) {
+      console.error("Error generating DD CIM:", error);
+      res.status(500).json({ error: error.message || "Failed to generate DD CIM" });
+    }
+  });
+
+  // Get CIM section overrides for a specific mode
+  app.get("/api/deals/:dealId/cim-overrides/:mode", async (req, res) => {
+    try {
+      const overrides = await storage.getCimSectionOverrides(req.params.dealId, req.params.mode);
+      res.json(overrides);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch overrides" });
     }
   });
 
