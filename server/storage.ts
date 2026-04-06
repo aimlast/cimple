@@ -80,6 +80,7 @@ export interface IStorage {
   createBuyerQuestion(question: InsertBuyerQuestion): Promise<BuyerQuestion>;
   getQuestionsByDeal(dealId: string): Promise<BuyerQuestion[]>;
   getPublishedQuestions(dealId: string): Promise<BuyerQuestion[]>;
+  getQuestionsByApprovalToken(token: string): Promise<BuyerQuestion | undefined>;
   updateBuyerQuestion(id: string, updates: Partial<BuyerQuestion>): Promise<BuyerQuestion | undefined>;
 
   // Branding operations
@@ -307,6 +308,7 @@ export class MemStorage implements IStorage {
   async createBuyerQuestion(): Promise<BuyerQuestion> { throw new Error("Use DbStorage"); }
   async getQuestionsByDeal(): Promise<BuyerQuestion[]> { return []; }
   async getPublishedQuestions(): Promise<BuyerQuestion[]> { return []; }
+  async getQuestionsByApprovalToken(): Promise<BuyerQuestion | undefined> { return undefined; }
   async updateBuyerQuestion(): Promise<BuyerQuestion | undefined> { return undefined; }
   async getBrandingByBroker(): Promise<BrandingSettings | undefined> { return undefined; }
   async createAnalyticsEvent(): Promise<AnalyticsEvent> { throw new Error("Use DbStorage"); }
@@ -698,6 +700,13 @@ export class DbStorage implements IStorage {
     return db.select().from(buyerQuestions)
       .where(eq(buyerQuestions.dealId, dealId))
       .orderBy(buyerQuestions.createdAt);
+  }
+
+  async getQuestionsByApprovalToken(token: string): Promise<BuyerQuestion | undefined> {
+    const result = await db.select().from(buyerQuestions)
+      .where(eq(buyerQuestions.sellerApprovalToken, token))
+      .limit(1);
+    return result[0];
   }
 
   async updateBuyerQuestion(id: string, updates: Partial<BuyerQuestion>): Promise<BuyerQuestion | undefined> {

@@ -17,7 +17,7 @@ import type { BuyerQuestion } from "@shared/schema";
 import {
   MessageCircle, Clock, CheckCircle2, AlertCircle,
   Send, ChevronDown, ChevronRight, Bot, User,
-  XCircle, Loader2,
+  XCircle, Loader2, Copy, Link2,
 } from "lucide-react";
 
 interface BuyerQAPanelProps {
@@ -152,13 +152,20 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                     <Button
                       size="sm"
                       className="h-7 text-xs gap-1 bg-teal text-teal-foreground hover:bg-teal/90"
-                      onClick={() => updateQuestion.mutate({
-                        id: q.id,
-                        updates: {
-                          brokerDraft: drafts[q.id] || q.aiAnswer,
-                          status: "pending_seller",
-                        },
-                      })}
+                      onClick={async () => {
+                        const result = await updateQuestion.mutateAsync({
+                          id: q.id,
+                          updates: {
+                            brokerDraft: drafts[q.id] || q.aiAnswer,
+                            status: "pending_seller",
+                          },
+                        });
+                        if (result?.approvalLink) {
+                          const link = `${window.location.origin}${result.approvalLink}`;
+                          navigator.clipboard.writeText(link);
+                          toast({ title: "Sent to seller", description: "Approval link copied to clipboard — share it with the seller." });
+                        }
+                      }}
                       disabled={updateQuestion.isPending || !(drafts[q.id] || q.aiAnswer)?.trim()}
                     >
                       <Send className="h-3 w-3" /> Send to seller for approval
@@ -179,7 +186,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                 </div>
               )}
 
-              {/* Pending seller - show what was sent + approve option */}
+              {/* Pending seller - show what was sent + approval link */}
               {q.status === "pending_seller" && (
                 <div className="space-y-2">
                   {q.brokerDraft && (
@@ -190,6 +197,27 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                       <p className="text-xs">{q.brokerDraft}</p>
                     </div>
                   )}
+
+                  {/* Approval link for seller */}
+                  {(q as any).sellerApprovalToken && (
+                    <div className="flex items-center gap-2 rounded bg-muted/30 px-2.5 py-2">
+                      <Link2 className="h-3 w-3 text-muted-foreground shrink-0" />
+                      <span className="text-[10px] text-muted-foreground flex-1">Seller approval link ready</span>
+                      <Button
+                        size="sm"
+                        variant="outline"
+                        className="h-6 text-[10px] gap-1 px-2"
+                        onClick={() => {
+                          const link = `${window.location.origin}/approve/${(q as any).sellerApprovalToken}`;
+                          navigator.clipboard.writeText(link);
+                          toast({ title: "Link copied", description: "Share this with the seller to get their approval." });
+                        }}
+                      >
+                        <Copy className="h-2.5 w-2.5" /> Copy link
+                      </Button>
+                    </div>
+                  )}
+
                   <div className="flex gap-2">
                     <Button
                       size="sm"

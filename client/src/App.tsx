@@ -27,6 +27,7 @@ import SellerDocuments from "@/pages/SellerDocuments";
 import SellerInviteIntake from "@/pages/SellerInviteIntake";
 import CIMDesigner from "@/pages/CIMDesigner";
 import BuyerViewRoom from "@/pages/BuyerViewRoom";
+import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import Integrations from "@/pages/Integrations";
 
 function Routes() {
@@ -67,6 +68,7 @@ function isFullscreen(path: string) {
   if (path.startsWith("/invite/")) return true;
   if (path.startsWith("/seller/")) return true;
   if (path.startsWith("/view/")) return true;
+  if (path.startsWith("/approve/")) return true;
   return false;
 }
 
@@ -93,6 +95,7 @@ function FullscreenLayout() {
         <Route path="/seller/chat" component={SellerChat} />
         <Route path="/seller/documents" component={SellerDocuments} />
         <Route path="/view/:token" component={BuyerViewRoom} />
+        <Route path="/approve/:token" component={SellerApprovalPage} />
         <Route component={NotFound} />
       </Switch>
     </div>

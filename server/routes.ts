@@ -2256,54 +2256,113 @@ Do not speculate or add information not in the CIM.`,
     }
   });
 
-  // Broker drafts/updates answer
+  // Broker drafts/updates answer — generates approval token when sending to seller
   app.patch("/api/questions/:questionId", async (req, res) => {
     try {
       const { questionId } = req.params;
       const { brokerDraft, status, publishedAnswer, isPublished } = req.body;
 
-      const updated = await storage.updateBuyerQuestion(questionId, {
-        ...(brokerDraft !== undefined && { brokerDraft }),
-        ...(status !== undefined && { status }),
-        ...(publishedAnswer !== undefined && { publishedAnswer }),
-        ...(isPublished !== undefined && { isPublished }),
-      } as any);
-      res.json(updated);
+      const updates: Record<string, any> = {};
+      if (brokerDraft !== undefined) updates.brokerDraft = brokerDraft;
+      if (status !== undefined) updates.status = status;
+      if (publishedAnswer !== undefined) updates.publishedAnswer = publishedAnswer;
+      if (isPublished !== undefined) updates.isPublished = isPublished;
+
+      // Generate approval token when sending to seller
+      if (status === "pending_seller") {
+        updates.sellerApprovalToken = crypto.randomUUID();
+      }
+
+      const updated = await storage.updateBuyerQuestion(questionId, updates as any);
+      res.json({
+        ...updated,
+        // Return the approval link so broker can share it
+        approvalLink: updated?.sellerApprovalToken
+          ? `/approve/${updated.sellerApprovalToken}`
+          : undefined,
+      });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update question" });
     }
   });
 
-  // Seller approves or rejects an answer
+  // ── Seller approval via token (no login required) ──
+
+  // Get question details by approval token
+  app.get("/api/approve/:token", async (req, res) => {
+    try {
+      const questions = await storage.getQuestionsByApprovalToken(req.params.token);
+      if (!questions) return res.status(404).json({ error: "Invalid or expired approval link" });
+
+      const deal = await storage.getDeal(questions.dealId);
+      res.json({
+        question: questions,
+        businessName: deal?.businessName || "Unknown",
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to load approval" });
+    }
+  });
+
+  // Seller approves or rejects via token
+  app.post("/api/approve/:token", async (req, res) => {
+    try {
+      const question = await storage.getQuestionsByApprovalToken(req.params.token);
+      if (!question) return res.status(404).json({ error: "Invalid or expired approval link" });
+      if (question.status !== "pending_seller") {
+        return res.status(400).json({ error: "This question has already been processed" });
+      }
+
+      const { approved, revision } = req.body;
+
+      if (approved) {
+        const publishedAnswer = revision || question.brokerDraft || question.aiAnswer || "";
+        await storage.updateBuyerQuestion(question.id, {
+          sellerApproved: true,
+          sellerApprovedAt: new Date(),
+          status: "published",
+          isPublished: true,
+          publishedAnswer,
+          addedToKnowledgeBase: true,
+        } as any);
+        res.json({ success: true, status: "published" });
+      } else {
+        await storage.updateBuyerQuestion(question.id, {
+          sellerApproved: false,
+          status: "pending_broker",
+        } as any);
+        res.json({ success: true, status: "sent_back" });
+      }
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to process approval" });
+    }
+  });
+
+  // Legacy ID-based seller approve (for in-app use)
   app.post("/api/questions/:questionId/seller-approve", async (req, res) => {
     try {
       const { questionId } = req.params;
       const { approved, revision } = req.body;
 
       if (approved) {
-        // Get the question to use broker draft as published answer
-        const questions = await storage.getQuestionsByDeal(""); // Need to get the specific question
         const question = await storage.updateBuyerQuestion(questionId, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
           isPublished: true,
-          publishedAnswer: revision || undefined, // seller can revise
+          publishedAnswer: revision || undefined,
           addedToKnowledgeBase: true,
         } as any);
 
         if (!question) return res.status(404).json({ error: "Question not found" });
 
-        // If no revision was provided, publish the broker draft
         if (!revision && question.brokerDraft && !question.publishedAnswer) {
           await storage.updateBuyerQuestion(questionId, {
             publishedAnswer: question.brokerDraft,
           } as any);
         }
-
         res.json({ success: true, question });
       } else {
-        // Seller rejects — send back to broker with feedback
         const updated = await storage.updateBuyerQuestion(questionId, {
           sellerApproved: false,
           status: "pending_broker",
