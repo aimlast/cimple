@@ -592,6 +592,50 @@ export type InsertDealKnowledgeSource = z.infer<typeof insertDealKnowledgeSource
 export type DealKnowledgeSource = typeof dealKnowledgeSources.$inferSelect;
 
 // =====================
+// FINANCIAL ANALYSES - Financial analysis results per deal
+// =====================
+export const financialAnalyses = pgTable("financial_analyses", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  version: integer("version").notNull().default(1),
+  status: text("status").notNull().default("draft"), // draft, running, completed, failed, reviewed
+
+  // Reclassified financial statements
+  reclassifiedPnl: jsonb("reclassified_pnl"),
+  reclassifiedBalanceSheet: jsonb("reclassified_balance_sheet"),
+  reclassifiedCashFlow: jsonb("reclassified_cash_flow"),
+  arAging: jsonb("ar_aging"),
+
+  // Analysis outputs
+  normalization: jsonb("normalization"), // SDE/EBITDA addback analysis
+  workingCapital: jsonb("working_capital"),
+  comps: jsonb("comps"), // comparable transactions
+
+  // AI-generated content
+  insights: jsonb("insights"), // positive and negative financial insights
+  clarifyingQuestions: jsonb("clarifying_questions"), // red flag questions for seller/broker
+
+  // Provenance
+  sourceDocumentIds: jsonb("source_document_ids"), // array of document IDs used
+  aiReasoning: text("ai_reasoning"), // AI explanation of its analysis approach
+  brokerNotes: text("broker_notes"),
+
+  // Review
+  brokerReviewedAt: timestamp("broker_reviewed_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertFinancialAnalysisSchema = createInsertSchema(financialAnalyses).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+
+export type InsertFinancialAnalysis = z.infer<typeof insertFinancialAnalysisSchema>;
+export type FinancialAnalysis = typeof financialAnalyses.$inferSelect;
+
+// =====================
 // LEGACY - Keep for backward compatibility during migration
 // =====================
 export const cims = pgTable("cims", {

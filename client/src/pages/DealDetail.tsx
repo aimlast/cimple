@@ -15,8 +15,10 @@ import {
   ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
   Upload, Users, Send, Trash2, Eye, PanelRightOpen, PanelRightClose,
   Edit3, Plus, AlertCircle, Loader2, ExternalLink, Copy, Zap, Globe,
-  Pencil, RefreshCw, X, Check, Wand2, Mail, Phone, Database, Plug
+  Pencil, RefreshCw, X, Check, Wand2, Mail, Phone, Database, Plug,
+  DollarSign
 } from "lucide-react";
+import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 
 /* ══════════════════════════════════════════════
    PHASE CONFIGURATION
@@ -210,6 +212,17 @@ function PhaseNav({
 
       {/* Supporting links */}
       <div className="px-3 pb-3 border-t border-border pt-3 space-y-0.5">
+        {/* Financials quick link */}
+        <button
+          onClick={() => onOpenRight("financials")}
+          className="w-full flex items-center justify-between px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+        >
+          <span className="flex items-center gap-1.5">
+            <DollarSign className="h-3 w-3" />
+            Financials
+          </span>
+        </button>
+
         {[
           { label: "Documents", count: docCount,  tab: "documents" },
           { label: "Tasks",     count: taskCount, tab: "tasks" },
@@ -1311,8 +1324,16 @@ export default function DealDetail() {
   const [selectedPhase, setSelectedPhase] = useState<string | null>(null);
   const [rightOpen, setRightOpen] = useState(false);
   const [rightTab, setRightTab] = useState("documents");
+  const [showFinancials, setShowFinancials] = useState(false);
 
-  const openRight = (tab: string) => { setRightTab(tab); setRightOpen(true); };
+  const openRight = (tab: string) => {
+    if (tab === "financials") {
+      setShowFinancials(true);
+      return;
+    }
+    setRightTab(tab);
+    setRightOpen(true);
+  };
 
   if (isLoading || !deal) {
     return (
@@ -1333,6 +1354,15 @@ export default function DealDetail() {
   const viewPhase = selectedPhase ?? deal.phase;
 
   const centerContent = () => {
+    if (showFinancials) {
+      return (
+        <FinancialAnalysisCenter
+          dealId={dealId!}
+          onBack={() => setShowFinancials(false)}
+        />
+      );
+    }
+
     switch (viewPhase) {
       case "phase1_info_collection":   return <Phase1Center deal={deal} dealId={dealId!} toast={toast} />;
       case "phase2_platform_intake":   return <Phase2Center deal={deal} dealId={dealId!} toast={toast} />;
@@ -1358,7 +1388,7 @@ export default function DealDetail() {
         <PhaseNav
           deal={deal}
           selectedPhase={selectedPhase}
-          onSelectPhase={key => setSelectedPhase(key === selectedPhase ? null : key)}
+          onSelectPhase={key => { setSelectedPhase(key === selectedPhase ? null : key); setShowFinancials(false); }}
           onOpenRight={openRight}
           docCount={documents.length}
           taskCount={tasks.filter(t => t.status !== "completed").length}

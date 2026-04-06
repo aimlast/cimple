@@ -650,6 +650,109 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // =============================
+  // FINANCIAL ANALYSIS ROUTES
+  // =============================
+
+  // Trigger a new financial analysis run (fire-and-forget)
+  app.post("/api/deals/:dealId/financial-analysis", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // Fire-and-forget: start analysis in background
+      const { runFinancialAnalysis } = await import("./financial/analyzer");
+      runFinancialAnalysis(req.params.dealId, storage).catch((err: any) => {
+        console.error("Background financial analysis failed:", err);
+      });
+
+      // Return immediately — client can poll GET for status
+      res.json({ message: "Financial analysis started", dealId: req.params.dealId });
+    } catch (error: any) {
+      console.error("Error starting financial analysis:", error);
+      res.status(500).json({ error: "Failed to start financial analysis" });
+    }
+  });
+
+  // Get the latest financial analysis for a deal
+  app.get("/api/deals/:dealId/financial-analysis", async (req, res) => {
+    try {
+      const analysis = await storage.getLatestFinancialAnalysis(req.params.dealId);
+      if (!analysis) return res.status(404).json({ error: "No financial analysis found" });
+      res.json(analysis);
+    } catch (error: any) {
+      console.error("Error fetching financial analysis:", error);
+      res.status(500).json({ error: "Failed to fetch financial analysis" });
+    }
+  });
+
+  // Get a specific financial analysis version
+  app.get("/api/deals/:dealId/financial-analysis/:id", async (req, res) => {
+    try {
+      const analysis = await storage.getFinancialAnalysis(req.params.id);
+      if (!analysis || analysis.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Financial analysis not found" });
+      }
+      res.json(analysis);
+    } catch (error: any) {
+      console.error("Error fetching financial analysis:", error);
+      res.status(500).json({ error: "Failed to fetch financial analysis" });
+    }
+  });
+
+  // Broker edits (notes, manual comps, addback adjustments, etc.)
+  app.patch("/api/deals/:dealId/financial-analysis/:id", async (req, res) => {
+    try {
+      const existing = await storage.getFinancialAnalysis(req.params.id);
+      if (!existing || existing.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Financial analysis not found" });
+      }
+
+      const allowedFields = [
+        "brokerNotes", "normalization", "comps", "insights",
+        "clarifyingQuestions", "reclassifiedPnl", "reclassifiedBalanceSheet",
+        "reclassifiedCashFlow", "workingCapital",
+      ];
+      const updates: Record<string, any> = {};
+      for (const field of allowedFields) {
+        if (req.body[field] !== undefined) {
+          updates[field] = req.body[field];
+        }
+      }
+
+      if (req.body.brokerReviewed) {
+        updates.brokerReviewedAt = new Date();
+        updates.status = "reviewed";
+      }
+
+      const updated = await storage.updateFinancialAnalysis(req.params.id, updates);
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating financial analysis:", error);
+      res.status(500).json({ error: "Failed to update financial analysis" });
+    }
+  });
+
+  // Re-run analysis (creates a new version)
+  app.post("/api/deals/:dealId/financial-analysis/:id/rerun", async (req, res) => {
+    try {
+      const existing = await storage.getFinancialAnalysis(req.params.id);
+      if (!existing || existing.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Financial analysis not found" });
+      }
+
+      const { runFinancialAnalysis } = await import("./financial/analyzer");
+      runFinancialAnalysis(req.params.dealId, storage).catch((err: any) => {
+        console.error("Background financial re-analysis failed:", err);
+      });
+
+      res.json({ message: "Financial re-analysis started", dealId: req.params.dealId });
+    } catch (error: any) {
+      console.error("Error re-running financial analysis:", error);
+      res.status(500).json({ error: "Failed to re-run financial analysis" });
+    }
+  });
+
+  // =============================
   // TASK ROUTES
   // =============================
 
