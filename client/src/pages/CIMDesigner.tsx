@@ -24,7 +24,7 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
-import type { Deal, CimSection, BrandingSettings } from "@shared/schema";
+import type { Deal, CimSection, CimSectionOverride, BrandingSettings } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { useLocation } from "wouter";
@@ -48,6 +48,7 @@ export default function CIMDesigner() {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [contentDirty, setContentDirty] = useState(false);
+  const [previewMode, setPreviewMode] = useState<"normal" | "blind" | "dd">("normal");
 
   // ── Data queries ──────────────────────────────────────────────────────────
   const { data: deal, isLoading: dealLoading } = useQuery<Deal>({
@@ -65,11 +66,30 @@ export default function CIMDesigner() {
     queryFn: () => apiRequest("GET", "/api/branding").then(r => r.json()),
   });
 
+  // ── CIM version overrides ──────────────────────────────────────────────────
+  const { data: overrides = [] } = useQuery<CimSectionOverride[]>({
+    queryKey: ["/api/deals", dealId, "cim-overrides", previewMode],
+    queryFn: () => apiRequest("GET", `/api/deals/${dealId}/cim-overrides/${previewMode}`).then(r => r.json()),
+    enabled: previewMode !== "normal",
+  });
+
   // ── Derived ───────────────────────────────────────────────────────────────
   const selectedSection = sections.find(s => s.id === selectedSectionId) ?? null;
   const brandingCtx = buildBranding(branding, deal ?? null);
   const approvedCount = sections.filter(s => (s as any).isApproved).length;
   const visibleCount = sections.filter(s => s.isVisible).length;
+
+  // Apply overrides for preview mode
+  const previewSections = previewMode === "normal" ? sections : sections.map(s => {
+    const override = overrides.find(o => o.cimSectionId === String(s.id));
+    if (!override) return s;
+    return {
+      ...s,
+      layoutData: override.layoutData || s.layoutData,
+      aiDraftContent: override.contentOverride || s.aiDraftContent,
+      brokerEditedContent: override.contentOverride || s.brokerEditedContent,
+    };
+  });
 
   // ── Mutations ─────────────────────────────────────────────────────────────
   const generateLayout = useMutation({
@@ -79,6 +99,26 @@ export default function CIMDesigner() {
       toast({ title: "Layout generated", description: "AI has created a bespoke section layout for this deal." });
     },
     onError: () => toast({ title: "Generation failed", variant: "destructive" }),
+  });
+
+  const generateBlind = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-blind`).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides", "blind"] });
+      toast({ title: "Blind CIM generated", description: "All identifying info redacted." });
+      setPreviewMode("blind");
+    },
+    onError: (e: Error) => toast({ title: "Failed to generate blind CIM", description: e.message, variant: "destructive" }),
+  });
+
+  const generateDd = useMutation({
+    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-dd`).then(r => r.json()),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides", "dd"] });
+      toast({ title: "DD CIM generated", description: "Due diligence details added." });
+      setPreviewMode("dd");
+    },
+    onError: (e: Error) => toast({ title: "Failed to generate DD CIM", description: e.message, variant: "destructive" }),
   });
 
   const updateSection = useMutation({
@@ -148,9 +188,45 @@ export default function CIMDesigner() {
             <span>{visibleCount} sections</span>
             <span className="text-border">·</span>
             <span>{approvedCount}/{sections.length} approved</span>
+
+            {/* CIM version toggle */}
+            {sections.length > 0 && (
+              <div className="flex items-center gap-0.5 ml-2 rounded-md border border-border bg-muted/30 p-0.5">
+                {(["normal", "blind", "dd"] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
+                      previewMode === mode
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground"
+                    }`}
+                    onClick={() => setPreviewMode(mode)}
+                  >
+                    {mode === "normal" ? "Normal" : mode === "blind" ? "Blind" : "DD"}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Generate version buttons */}
+            {previewMode === "blind" && (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                onClick={() => generateBlind.mutate()} disabled={generateBlind.isPending}>
+                {generateBlind.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+                Generate Blind
+              </Button>
+            )}
+            {previewMode === "dd" && (
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                onClick={() => generateDd.mutate()} disabled={generateDd.isPending}>
+                {generateDd.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlock className="h-3 w-3" />}
+                Generate DD
+              </Button>
+            )}
+
             <Button
               size="sm"
-              className="ml-3 h-7 bg-teal text-teal-foreground hover:bg-teal/90 text-xs gap-1.5"
+              className="ml-1 h-7 bg-teal text-teal-foreground hover:bg-teal/90 text-xs gap-1.5"
               onClick={() => generateLayout.mutate()}
               disabled={generateLayout.isPending}
             >
@@ -217,7 +293,7 @@ export default function CIMDesigner() {
           {/* CENTER: CIM preview ───────────────────────────────────────────── */}
           <div className="flex-1 overflow-hidden bg-muted/20">
             <ScrollArea className="h-full">
-              {sections.length === 0 ? (
+              {previewSections.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
                   <Wand2 className="h-10 w-10 mb-4 opacity-20" />
                   <p className="text-sm font-medium mb-1">No CIM layout yet</p>
@@ -227,7 +303,25 @@ export default function CIMDesigner() {
                 </div>
               ) : (
                 <div className="max-w-[860px] mx-auto py-8 px-6 space-y-8">
-                  {sections.map(section => (
+                  {/* Mode indicator banner */}
+                  {previewMode !== "normal" && (
+                    <div className={`rounded-lg border px-4 py-2 text-xs flex items-center gap-2 ${
+                      previewMode === "blind"
+                        ? "bg-amber-500/5 border-amber-500/20 text-amber-400"
+                        : "bg-blue-500/5 border-blue-500/20 text-blue-400"
+                    }`}>
+                      {previewMode === "blind" ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                      <span className="font-medium">
+                        {previewMode === "blind" ? "Blind CIM Preview" : "Due Diligence CIM Preview"}
+                      </span>
+                      <span className="text-muted-foreground">
+                        {previewMode === "blind"
+                          ? "— All identifying information redacted"
+                          : "— Sensitive data revealed and highlighted"}
+                      </span>
+                    </div>
+                  )}
+                  {previewSections.map(section => (
                     <div
                       key={section.id}
                       className={`rounded-xl transition-all cursor-pointer ${

@@ -16,8 +16,11 @@ import {
   type IntegrationEmail, type InsertIntegrationEmail,
   type FinancialAnalysis, type InsertFinancialAnalysis,
   type AddbackVerification, type InsertAddbackVerification,
+  type CimSectionOverride, type InsertCimSectionOverride,
+  type Discrepancy, type InsertDiscrepancy,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
-  integrations, integrationEmails, financialAnalyses, addbackVerifications
+  integrations, integrationEmails, financialAnalyses, addbackVerifications,
+  cimSectionOverrides, discrepancies
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -137,6 +140,17 @@ export interface IStorage {
   getAddbackVerification(id: string): Promise<AddbackVerification | undefined>;
   getAddbackVerificationByDeal(dealId: string): Promise<AddbackVerification | undefined>;
   updateAddbackVerification(id: string, updates: Partial<InsertAddbackVerification>): Promise<AddbackVerification | undefined>;
+
+  // CIM section overrides (blind/DD versions)
+  createCimSectionOverride(data: InsertCimSectionOverride): Promise<CimSectionOverride>;
+  getCimSectionOverrides(dealId: string, mode: string): Promise<CimSectionOverride[]>;
+  deleteCimSectionOverrides(dealId: string, mode: string): Promise<void>;
+
+  // Discrepancies
+  createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy>;
+  getDiscrepanciesByDeal(dealId: string): Promise<Discrepancy[]>;
+  updateDiscrepancy(id: string, updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined>;
+  getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -323,6 +337,13 @@ export class MemStorage implements IStorage {
   async getAddbackVerification(): Promise<AddbackVerification | undefined> { return undefined; }
   async getAddbackVerificationByDeal(): Promise<AddbackVerification | undefined> { return undefined; }
   async updateAddbackVerification(): Promise<AddbackVerification | undefined> { return undefined; }
+  async createCimSectionOverride(): Promise<CimSectionOverride> { throw new Error("Use DbStorage"); }
+  async getCimSectionOverrides(): Promise<CimSectionOverride[]> { return []; }
+  async deleteCimSectionOverrides(): Promise<void> {}
+  async createDiscrepancy(): Promise<Discrepancy> { throw new Error("Use DbStorage"); }
+  async getDiscrepanciesByDeal(): Promise<Discrepancy[]> { return []; }
+  async updateDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
+  async getResolvedDiscrepancies(): Promise<Discrepancy[]> { return []; }
 }
 
 export class DbStorage implements IStorage {
@@ -849,6 +870,61 @@ export class DbStorage implements IStorage {
       .where(eq(addbackVerifications.id, id))
       .returning();
     return result[0];
+  }
+
+  // ── CIM Section Overrides ──
+
+  async createCimSectionOverride(data: InsertCimSectionOverride): Promise<CimSectionOverride> {
+    const result = await db.insert(cimSectionOverrides).values(data).returning();
+    return result[0];
+  }
+
+  async getCimSectionOverrides(dealId: string, mode: string): Promise<CimSectionOverride[]> {
+    const { and } = await import("drizzle-orm");
+    return db.select().from(cimSectionOverrides)
+      .where(and(
+        eq(cimSectionOverrides.dealId, dealId),
+        eq(cimSectionOverrides.mode, mode),
+      ));
+  }
+
+  async deleteCimSectionOverrides(dealId: string, mode: string): Promise<void> {
+    const { and } = await import("drizzle-orm");
+    await db.delete(cimSectionOverrides)
+      .where(and(
+        eq(cimSectionOverrides.dealId, dealId),
+        eq(cimSectionOverrides.mode, mode),
+      ));
+  }
+
+  // ── Discrepancies ──
+
+  async createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy> {
+    const result = await db.insert(discrepancies).values(data).returning();
+    return result[0];
+  }
+
+  async getDiscrepanciesByDeal(dealId: string): Promise<Discrepancy[]> {
+    return db.select().from(discrepancies)
+      .where(eq(discrepancies.dealId, dealId))
+      .orderBy(desc(discrepancies.createdAt));
+  }
+
+  async updateDiscrepancy(id: string, updates: Partial<InsertDiscrepancy>): Promise<Discrepancy | undefined> {
+    const result = await db.update(discrepancies)
+      .set(updates)
+      .where(eq(discrepancies.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]> {
+    const { and } = await import("drizzle-orm");
+    return db.select().from(discrepancies)
+      .where(and(
+        eq(discrepancies.dealId, dealId),
+        eq(discrepancies.status, "resolved"),
+      ));
   }
 }
 

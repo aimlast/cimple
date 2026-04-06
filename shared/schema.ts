@@ -665,6 +665,59 @@ export type InsertAddbackVerification = z.infer<typeof insertAddbackVerification
 export type AddbackVerification = typeof addbackVerifications.$inferSelect;
 
 // =====================
+// CIM SECTION OVERRIDES (blind/DD versions)
+// =====================
+export const cimSectionOverrides = pgTable("cim_section_overrides", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  cimSectionId: varchar("cim_section_id").notNull(),
+  mode: text("mode").notNull(), // "blind" | "dd"
+  layoutData: jsonb("layout_data"),
+  contentOverride: text("content_override"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertCimSectionOverrideSchema = createInsertSchema(cimSectionOverrides).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertCimSectionOverride = z.infer<typeof insertCimSectionOverrideSchema>;
+export type CimSectionOverride = typeof cimSectionOverrides.$inferSelect;
+
+// =====================
+// DISCREPANCIES (verification pass)
+// =====================
+export const discrepancies = pgTable("discrepancies", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  field: text("field").notNull(),
+  interviewValue: text("interview_value"),
+  documentValue: text("document_value"),
+  documentId: varchar("document_id"),
+  documentName: text("document_name"),
+  severity: text("severity").notNull(), // "critical" | "significant" | "minor"
+  category: text("category").notNull(), // "financial" | "operational" | "legal" | "factual"
+  aiExplanation: text("ai_explanation"),
+  suggestedResolution: text("suggested_resolution"),
+  status: text("status").notNull().default("open"), // "open" | "seller_responded" | "resolved" | "accepted"
+  sellerResponse: text("seller_response"),
+  brokerNotes: text("broker_notes"),
+  resolvedValue: text("resolved_value"),
+  resolvedAt: timestamp("resolved_at"),
+  resolvedBy: varchar("resolved_by"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
+export const insertDiscrepancySchema = createInsertSchema(discrepancies).omit({
+  id: true,
+  createdAt: true,
+});
+
+export type InsertDiscrepancy = z.infer<typeof insertDiscrepancySchema>;
+export type Discrepancy = typeof discrepancies.$inferSelect;
+
+// =====================
 // LEGACY - Keep for backward compatibility during migration
 // =====================
 export const cims = pgTable("cims", {
