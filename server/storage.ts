@@ -14,8 +14,9 @@ import {
   type EngagementInsight,
   type Integration, type InsertIntegration,
   type IntegrationEmail, type InsertIntegrationEmail,
+  type FinancialAnalysis, type InsertFinancialAnalysis,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
-  integrations, integrationEmails
+  integrations, integrationEmails, financialAnalyses
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -122,6 +123,13 @@ export interface IStorage {
   getIntegrationEmailsByDeal(dealId: string): Promise<IntegrationEmail[]>;
   createIntegrationEmail(data: InsertIntegrationEmail): Promise<IntegrationEmail>;
   deleteIntegrationEmail(id: string): Promise<void>;
+
+  // Financial analysis operations
+  createFinancialAnalysis(data: InsertFinancialAnalysis): Promise<FinancialAnalysis>;
+  getFinancialAnalysis(id: string): Promise<FinancialAnalysis | undefined>;
+  getFinancialAnalysesByDeal(dealId: string): Promise<FinancialAnalysis[]>;
+  getLatestFinancialAnalysis(dealId: string): Promise<FinancialAnalysis | undefined>;
+  updateFinancialAnalysis(id: string, updates: Partial<InsertFinancialAnalysis>): Promise<FinancialAnalysis | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -299,6 +307,11 @@ export class MemStorage implements IStorage {
   async getIntegrationEmailsByDeal(): Promise<IntegrationEmail[]> { return []; }
   async createIntegrationEmail(): Promise<IntegrationEmail> { throw new Error("Use DbStorage"); }
   async deleteIntegrationEmail(): Promise<void> {}
+  async createFinancialAnalysis(): Promise<FinancialAnalysis> { throw new Error("Use DbStorage"); }
+  async getFinancialAnalysis(): Promise<FinancialAnalysis | undefined> { return undefined; }
+  async getFinancialAnalysesByDeal(): Promise<FinancialAnalysis[]> { return []; }
+  async getLatestFinancialAnalysis(): Promise<FinancialAnalysis | undefined> { return undefined; }
+  async updateFinancialAnalysis(): Promise<FinancialAnalysis | undefined> { return undefined; }
 }
 
 export class DbStorage implements IStorage {
@@ -763,6 +776,40 @@ export class DbStorage implements IStorage {
 
   async deleteIntegrationEmail(id: string): Promise<void> {
     await db.delete(integrationEmails).where(eq(integrationEmails.id, id));
+  }
+
+  // ── Financial analysis operations ──
+
+  async createFinancialAnalysis(data: InsertFinancialAnalysis): Promise<FinancialAnalysis> {
+    const result = await db.insert(financialAnalyses).values(data).returning();
+    return result[0];
+  }
+
+  async getFinancialAnalysis(id: string): Promise<FinancialAnalysis | undefined> {
+    const result = await db.select().from(financialAnalyses).where(eq(financialAnalyses.id, id));
+    return result[0];
+  }
+
+  async getFinancialAnalysesByDeal(dealId: string): Promise<FinancialAnalysis[]> {
+    return db.select().from(financialAnalyses)
+      .where(eq(financialAnalyses.dealId, dealId))
+      .orderBy(desc(financialAnalyses.version));
+  }
+
+  async getLatestFinancialAnalysis(dealId: string): Promise<FinancialAnalysis | undefined> {
+    const result = await db.select().from(financialAnalyses)
+      .where(eq(financialAnalyses.dealId, dealId))
+      .orderBy(desc(financialAnalyses.version))
+      .limit(1);
+    return result[0];
+  }
+
+  async updateFinancialAnalysis(id: string, updates: Partial<InsertFinancialAnalysis>): Promise<FinancialAnalysis | undefined> {
+    const result = await db.update(financialAnalyses)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(financialAnalyses.id, id))
+      .returning();
+    return result[0];
   }
 }
 
