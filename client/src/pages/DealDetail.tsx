@@ -24,6 +24,9 @@ import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { BuyerQAPanel } from "@/components/deal/BuyerQAPanel";
 import { TeamPanel } from "@/components/deal/TeamPanel";
+import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
+import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
+import { BuyerComparison } from "@/components/deal/BuyerComparison";
 import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
@@ -1173,6 +1176,7 @@ function RightPanel({
     { id: "documents", label: `Docs${documents.length > 0 ? ` (${documents.length})` : ""}` },
     { id: "tasks",     label: `Tasks${tasks.length > 0 ? ` (${tasks.length})` : ""}` },
     { id: "buyers",    label: "Team" },
+    { id: "analytics", label: "Analytics" },
     { id: "faq",       label: `FAQ${faqs.length > 0 ? ` (${faqs.length})` : ""}` },
   ];
 
@@ -1269,6 +1273,19 @@ function RightPanel({
                 </div>
               ))
             )}
+          </div>
+        )}
+
+        {/* Analytics */}
+        {tab === "analytics" && (
+          <div className="space-y-4">
+            <DealAnalyticsWidget dealId={dealId} />
+            <div className="pt-3 border-t border-border">
+              <BuyerComparison dealId={dealId} />
+            </div>
+            <div className="pt-3 border-t border-border">
+              <ActivityTimeline dealId={dealId} />
+            </div>
           </div>
         )}
       </div>

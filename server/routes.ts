@@ -1922,7 +1922,210 @@ export async function registerRoutes(app: Express): Promise<Server> {
       res.status(500).json({ error: "Failed to compute analytics" });
     }
   });
-  
+
+  // Activity timeline — chronological feed of buyer events
+  app.get("/api/deals/:dealId/analytics/timeline", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const limit = Math.min(Number(req.query.limit) || 50, 200);
+      const offset = Number(req.query.offset) || 0;
+
+      const [events, buyers] = await Promise.all([
+        storage.getAnalyticsByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+      ]);
+
+      const buyerMap = new Map(buyers.map(b => [b.id, b]));
+
+      // Filter to meaningful events only (not heat_map_sample which is noise)
+      const meaningful = events
+        .filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt"].includes(e.eventType))
+        .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
+        .slice(offset, offset + limit);
+
+      const timeline = meaningful.map(e => {
+        const buyer = e.buyerAccessId ? buyerMap.get(e.buyerAccessId) : null;
+        return {
+          id: e.id,
+          eventType: e.eventType,
+          buyerName: buyer?.buyerName || "Unknown buyer",
+          buyerEmail: buyer?.buyerEmail || null,
+          sectionKey: e.sectionKey,
+          scrollDepthPercent: e.scrollDepthPercent,
+          timeSpentSeconds: e.timeSpentSeconds,
+          createdAt: e.createdAt,
+        };
+      });
+
+      res.json({ timeline, total: events.filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt"].includes(e.eventType)).length });
+    } catch (error: any) {
+      console.error("Error getting timeline:", error);
+      res.status(500).json({ error: "Failed to get timeline" });
+    }
+  });
+
+  // Per-deal analytics summary (lightweight — for embedding in deal detail page)
+  app.get("/api/deals/:dealId/analytics/summary", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const [events, buyers, questions] = await Promise.all([
+        storage.getAnalyticsByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+        storage.getQuestionsByDeal(dealId),
+      ]);
+
+      const views = events.filter(e => e.eventType === "view").length;
+      const uniqueBuyerIds = new Set(events.filter(e => e.buyerAccessId).map(e => e.buyerAccessId));
+      const sectionExits = events.filter(e => e.eventType === "section_exit" && e.timeSpentSeconds);
+      const totalTime = sectionExits.reduce((s, e) => s + (e.timeSpentSeconds ?? 0), 0);
+      const avgTime = sectionExits.length > 0 ? Math.round(totalTime / uniqueBuyerIds.size) : 0;
+
+      // Most engaged section
+      const sectionTime: Record<string, number> = {};
+      for (const e of sectionExits) {
+        if (e.sectionKey) sectionTime[e.sectionKey] = (sectionTime[e.sectionKey] ?? 0) + (e.timeSpentSeconds ?? 0);
+      }
+      const topSection = Object.entries(sectionTime).sort((a, b) => b[1] - a[1])[0];
+
+      // Scroll completion rate — % of buyers who reached 75%+
+      const buyerMaxScroll: Record<string, number> = {};
+      for (const e of events) {
+        if (e.eventType === "scroll_depth" && e.buyerAccessId && e.scrollDepthPercent) {
+          buyerMaxScroll[e.buyerAccessId] = Math.max(buyerMaxScroll[e.buyerAccessId] ?? 0, e.scrollDepthPercent);
+        }
+      }
+      const completedCount = Object.values(buyerMaxScroll).filter(v => v >= 75).length;
+      const completionRate = uniqueBuyerIds.size > 0 ? Math.round((completedCount / uniqueBuyerIds.size) * 100) : 0;
+
+      // NDA signed count
+      const ndaSigned = buyers.filter(b => b.ndaSignedAt).length;
+
+      res.json({
+        totalViews: views,
+        uniqueBuyers: uniqueBuyerIds.size,
+        avgTimePerBuyer: avgTime,
+        totalTime,
+        totalQuestions: questions.length,
+        ndaSigned,
+        completionRate,
+        topSection: topSection ? { key: topSection[0], seconds: topSection[1] } : null,
+        activeBuyers: buyers.filter(b => !b.revokedAt && (!b.expiresAt || new Date(b.expiresAt) > new Date())).length,
+      });
+    } catch (error: any) {
+      console.error("Error getting deal analytics summary:", error);
+      res.status(500).json({ error: "Failed to get analytics summary" });
+    }
+  });
+
+  // All-deals analytics comparison (for dashboard)
+  app.get("/api/analytics/deals-comparison", async (req, res) => {
+    try {
+      const deals = await storage.getAllDeals();
+      const comparison = await Promise.all(deals.map(async (deal: any) => {
+        const [events, buyers, questions] = await Promise.all([
+          storage.getAnalyticsByDeal(deal.id),
+          storage.getBuyerAccessByDeal(deal.id),
+          storage.getQuestionsByDeal(deal.id),
+        ]);
+
+        const views = events.filter(e => e.eventType === "view").length;
+        const uniqueBuyerIds = new Set(events.filter(e => e.buyerAccessId).map(e => e.buyerAccessId));
+        const sectionExits = events.filter(e => e.eventType === "section_exit" && e.timeSpentSeconds);
+        const totalTime = sectionExits.reduce((s, e) => s + (e.timeSpentSeconds ?? 0), 0);
+        const avgTime = uniqueBuyerIds.size > 0 ? Math.round(totalTime / uniqueBuyerIds.size) : 0;
+
+        // Last activity
+        const lastEvent = events.length > 0
+          ? events.sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())[0]
+          : null;
+
+        return {
+          dealId: deal.id,
+          businessName: deal.businessName,
+          industry: deal.industry,
+          phase: deal.phase,
+          isLive: deal.isLive,
+          totalViews: views,
+          uniqueBuyers: uniqueBuyerIds.size,
+          avgTimePerBuyer: avgTime,
+          totalQuestions: questions.length,
+          ndaSigned: buyers.filter(b => b.ndaSignedAt).length,
+          activeBuyers: buyers.filter(b => !b.revokedAt && (!b.expiresAt || new Date(b.expiresAt) > new Date())).length,
+          lastActivity: lastEvent?.createdAt ?? null,
+        };
+      }));
+
+      // Only include deals that are live or have any analytics events
+      const relevant = comparison.filter((d: any) => d.isLive || d.totalViews > 0);
+      res.json(relevant.sort((a: any, b: any) => b.totalViews - a.totalViews));
+    } catch (error: any) {
+      console.error("Error getting deals comparison:", error);
+      res.status(500).json({ error: "Failed to get deals comparison" });
+    }
+  });
+
+  // Buyer engagement scoring (for buyer comparison)
+  app.get("/api/deals/:dealId/analytics/buyer-scores", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const [events, buyers, questions] = await Promise.all([
+        storage.getAnalyticsByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+        storage.getQuestionsByDeal(dealId),
+      ]);
+
+      const scores = buyers.map(buyer => {
+        const buyerEvents = events.filter(e => e.buyerAccessId === buyer.id);
+        const sectionExits = buyerEvents.filter(e => e.eventType === "section_exit" && e.timeSpentSeconds);
+        const totalTime = sectionExits.reduce((s, e) => s + (e.timeSpentSeconds ?? 0), 0);
+        const sectionsViewed = new Set(buyerEvents.filter(e => e.eventType === "section_enter" && e.sectionKey).map(e => e.sectionKey)).size;
+        const maxScroll = Math.max(0, ...buyerEvents.filter(e => e.eventType === "scroll_depth").map(e => e.scrollDepthPercent ?? 0));
+        const questionCount = questions.filter(q => q.buyerAccessId === buyer.id).length;
+        const viewCount = buyerEvents.filter(e => e.eventType === "view").length;
+        const ndaSigned = !!buyer.ndaSignedAt;
+
+        // Engagement score (0-100): weighted composite
+        // Time weight: 30, Scroll: 20, Sections: 20, Questions: 15, Return visits: 10, NDA: 5
+        const timeScore = Math.min(totalTime / 300, 1) * 30;        // 5 min = full score
+        const scrollScore = (maxScroll / 100) * 20;
+        const sectionScore = Math.min(sectionsViewed / 10, 1) * 20;  // 10 sections = full
+        const questionScore = Math.min(questionCount / 3, 1) * 15;   // 3 questions = full
+        const returnScore = Math.min(Math.max((viewCount - 1) / 2, 0), 1) * 10; // 3 visits = full
+        const ndaScore = ndaSigned ? 5 : 0;
+        const engagementScore = Math.round(timeScore + scrollScore + sectionScore + questionScore + returnScore + ndaScore);
+
+        // Intent signal
+        let intent: "high" | "medium" | "low" | "minimal" = "minimal";
+        if (engagementScore >= 65) intent = "high";
+        else if (engagementScore >= 40) intent = "medium";
+        else if (engagementScore >= 15) intent = "low";
+
+        return {
+          buyerId: buyer.id,
+          buyerName: buyer.buyerName || "Unknown",
+          buyerEmail: buyer.buyerEmail,
+          status: buyer.revokedAt ? "revoked" : buyer.expiresAt && new Date(buyer.expiresAt) < new Date() ? "expired" : "active",
+          ndaSigned,
+          totalTimeSeconds: totalTime,
+          sectionsViewed,
+          maxScrollDepth: maxScroll,
+          questionCount,
+          viewCount,
+          engagementScore,
+          intent,
+          lastSeen: buyer.lastAccessedAt,
+          firstSeen: buyer.createdAt,
+        };
+      });
+
+      scores.sort((a, b) => b.engagementScore - a.engagementScore);
+      res.json(scores);
+    } catch (error: any) {
+      console.error("Error computing buyer scores:", error);
+      res.status(500).json({ error: "Failed to compute buyer scores" });
+    }
+  });
+
   // ════════════════════════════════════════════════════════════
   // PHASE 4 — CIM LAYOUT ENGINE
   // ════════════════════════════════════════════════════════════

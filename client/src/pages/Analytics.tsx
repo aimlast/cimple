@@ -23,10 +23,14 @@ import {
 } from "recharts";
 import {
   Eye, Clock, TrendingUp, Users, FileText, MousePointer,
-  BarChart3, Calendar, Scroll, Building,
+  BarChart3, Calendar, Scroll, Building, Flame, Activity,
+  FileSignature, MessageSquare, ExternalLink,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import type { Deal, BuyerAccess } from "@shared/schema";
+import { BuyerComparison } from "@/components/deal/BuyerComparison";
+import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 interface SectionEngagement {
@@ -272,6 +276,12 @@ export default function Analytics() {
           <TabsTrigger value="dropoff" disabled={selectedDealId === "all"}>
             Drop-off
           </TabsTrigger>
+          <TabsTrigger value="scores" disabled={selectedDealId === "all"}>
+            Buyer Scores
+          </TabsTrigger>
+          <TabsTrigger value="activity" disabled={selectedDealId === "all"}>
+            Activity
+          </TabsTrigger>
         </TabsList>
 
         {/* ── Overview ──────────────────────────────────────────────────────── */}
@@ -312,9 +322,11 @@ export default function Analytics() {
             </CardContent>
           </Card>
 
-          {selectedDealId === "all" && (
+          {selectedDealId === "all" && <DealsComparisonTable />}
+
+          {selectedDealId !== "all" && (
             <p className="text-xs text-muted-foreground text-center">
-              Select a specific deal to see section engagement, heat map, and per-buyer breakdown.
+              Switch to a specific tab above for section engagement, heat map, and per-buyer breakdown.
             </p>
           )}
         </TabsContent>
@@ -518,7 +530,158 @@ export default function Analytics() {
             </CardContent>
           </Card>
         </TabsContent>
+
+        {/* ── Buyer Scores ─────────────────────────────────────────────────── */}
+        <TabsContent value="scores" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Flame className="h-4 w-4" />
+                Buyer engagement ranking
+              </CardTitle>
+              <CardDescription>
+                Composite score based on time, scroll depth, sections viewed, questions, return visits, and NDA status.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {selectedDealId !== "all" && <BuyerComparison dealId={selectedDealId} />}
+            </CardContent>
+          </Card>
+        </TabsContent>
+
+        {/* ── Activity ─────────────────────────────────────────────────────── */}
+        <TabsContent value="activity" className="mt-6">
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Activity className="h-4 w-4" />
+                Activity timeline
+              </CardTitle>
+              <CardDescription>
+                Chronological feed of buyer actions — who viewed what, when.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {selectedDealId !== "all" && <ActivityTimeline dealId={selectedDealId} />}
+            </CardContent>
+          </Card>
+        </TabsContent>
       </Tabs>
     </div>
+  );
+}
+
+// ── Deals Comparison Table (All CIMs view) ────────────────────────────────
+interface DealComparison {
+  dealId: string;
+  businessName: string;
+  industry: string | null;
+  phase: string | null;
+  isLive: boolean;
+  totalViews: number;
+  uniqueBuyers: number;
+  avgTimePerBuyer: number;
+  totalQuestions: number;
+  ndaSigned: number;
+  activeBuyers: number;
+  lastActivity: string | null;
+}
+
+function DealsComparisonTable() {
+  const [, setLocation] = useLocation();
+  const { data: deals, isLoading } = useQuery<DealComparison[]>({
+    queryKey: ["/api/analytics/deals-comparison"],
+    queryFn: async () => {
+      const res = await fetch("/api/analytics/deals-comparison");
+      if (!res.ok) throw new Error();
+      return res.json();
+    },
+  });
+
+  if (isLoading) {
+    return (
+      <Card>
+        <CardContent className="p-6 space-y-3">
+          {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12" />)}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  if (!deals || deals.length === 0) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center">
+          <Building className="h-8 w-8 mx-auto mb-3 opacity-20" />
+          <p className="text-sm text-muted-foreground">No deals with buyer activity yet</p>
+          <p className="text-xs text-muted-foreground mt-1">
+            Analytics will appear here once CIMs are shared and viewed by buyers.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader className="pb-2">
+        <CardTitle className="text-sm">Deal-by-deal comparison</CardTitle>
+        <CardDescription>All CIMs with buyer engagement, sorted by total views</CardDescription>
+      </CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableHeader>
+            <TableRow>
+              <TableHead>Deal</TableHead>
+              <TableHead className="text-right">Views</TableHead>
+              <TableHead className="text-right">Buyers</TableHead>
+              <TableHead className="text-right">Avg Time</TableHead>
+              <TableHead className="text-right">NDAs</TableHead>
+              <TableHead className="text-right">Questions</TableHead>
+              <TableHead>Last Activity</TableHead>
+              <TableHead className="w-8" />
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {deals.map(d => (
+              <TableRow key={d.dealId} className="cursor-pointer hover:bg-muted/30" onClick={() => setLocation(`/deal/${d.dealId}`)}>
+                <TableCell>
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium truncate max-w-[200px]">{d.businessName || "Untitled deal"}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {d.industry || "Unknown"} · {d.phase?.replace(/_/g, " ")}
+                    </p>
+                  </div>
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm font-medium">{d.totalViews}</TableCell>
+                <TableCell className="text-right text-sm">
+                  <span className="tabular-nums">{d.uniqueBuyers}</span>
+                  {d.activeBuyers > 0 && (
+                    <span className="text-xs text-muted-foreground ml-1">({d.activeBuyers} active)</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">{fmt(d.avgTimePerBuyer)}</TableCell>
+                <TableCell className="text-right text-sm">
+                  {d.ndaSigned > 0 ? (
+                    <Badge variant="outline" className="text-2xs bg-emerald-500/10 text-emerald-400 border-emerald-500/30">{d.ndaSigned}</Badge>
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
+                </TableCell>
+                <TableCell className="text-right tabular-nums text-sm">
+                  {d.totalQuestions > 0 ? d.totalQuestions : "—"}
+                </TableCell>
+                <TableCell className="text-sm text-muted-foreground">
+                  {d.lastActivity ? fmtDate(d.lastActivity) : "—"}
+                </TableCell>
+                <TableCell>
+                  <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/40" />
+                </TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+        </Table>
+      </CardContent>
+    </Card>
   );
 }
