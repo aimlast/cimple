@@ -853,6 +853,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
+      // Optional: targeted re-analysis for a single addback with a seller hint
+      const { hint, targetAddbackId } = req.body || {};
+
       // Mark as analyzing
       await storage.updateAddbackVerification(req.params.id, { status: "analyzing" });
 
@@ -903,8 +906,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
           if (verification.workflow === "provided") {
             // Workflow A — match existing addbacks
             const currentAddbacks = (verification.addbacks as any[]) || [];
+
+            // If hint + targetAddbackId provided, only re-match that specific addback
+            const addbacksToMatch = targetAddbackId && hint
+              ? currentAddbacks.filter((ab) => ab.id === targetAddbackId).map((ab) => ({
+                  ...ab,
+                  description: `${ab.description || ""}\n\nSeller hint: ${hint}`,
+                }))
+              : currentAddbacks;
+
             const matchResults = await matchAddbacksToTransactions(
-              currentAddbacks,
+              addbacksToMatch,
               allTransactions,
               deal.industry,
               sourceDocs[0]?.id || "",

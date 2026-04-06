@@ -1,8 +1,9 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
@@ -10,7 +11,8 @@ import type { AddbackVerification as AddbackVerificationType } from "@shared/sch
 import {
   Upload, Loader2, CheckCircle2, XCircle, AlertTriangle,
   HelpCircle, ChevronDown, ChevronRight, FileText, Search,
-  ShieldCheck, MessageSquare, ArrowLeft,
+  ShieldCheck, MessageSquare, ArrowLeft, Plus, X, Lightbulb,
+  ListFilter, Check,
 } from "lucide-react";
 
 /* ──────────────────────────────────────────────
@@ -88,11 +90,254 @@ function confidenceLabel(c: number): { label: string; color: string } {
 }
 
 /* ──────────────────────────────────────────────
+   Transaction Browser — seller searches & selects
+─────────────────────────────────────────────── */
+interface ParsedTransaction {
+  date: string;
+  description: string;
+  amount: number;
+  account: string;
+  source: string;
+  documentId?: string;
+}
+
+function TransactionBrowser({
+  transactions,
+  onSelect,
+  onClose,
+  addbackLabel,
+}: {
+  transactions: ParsedTransaction[];
+  onSelect: (txs: ParsedTransaction[]) => void;
+  onClose: () => void;
+  addbackLabel: string;
+}) {
+  const [searchQuery, setSearchQuery] = useState("");
+  const [minAmount, setMinAmount] = useState("");
+  const [maxAmount, setMaxAmount] = useState("");
+  const [selectedTxs, setSelectedTxs] = useState<Set<number>>(new Set());
+
+  const filtered = useMemo(() => {
+    let results = transactions;
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      results = results.filter(
+        (tx) =>
+          tx.description.toLowerCase().includes(q) ||
+          tx.account?.toLowerCase().includes(q) ||
+          tx.date.includes(q)
+      );
+    }
+    if (minAmount) {
+      const min = parseFloat(minAmount);
+      if (!isNaN(min)) results = results.filter((tx) => Math.abs(tx.amount) >= min);
+    }
+    if (maxAmount) {
+      const max = parseFloat(maxAmount);
+      if (!isNaN(max)) results = results.filter((tx) => Math.abs(tx.amount) <= max);
+    }
+    return results;
+  }, [transactions, searchQuery, minAmount, maxAmount]);
+
+  const toggleTx = (index: number) => {
+    setSelectedTxs((prev) => {
+      const next = new Set(prev);
+      if (next.has(index)) next.delete(index);
+      else next.add(index);
+      return next;
+    });
+  };
+
+  const handleConfirmSelection = () => {
+    const selected = filtered.filter((_, i) => selectedTxs.has(i));
+    onSelect(selected);
+    onClose();
+  };
+
+  return (
+    <div className="rounded-lg border border-teal/30 bg-card p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <ListFilter className="h-4 w-4 text-teal" />
+          <p className="text-sm font-medium">Find transactions for: <span className="text-teal">{addbackLabel}</span></p>
+        </div>
+        <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
+          <X className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {/* Search + filters */}
+      <div className="flex gap-2">
+        <div className="relative flex-1">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search by description, account, or date..."
+            className="h-8 text-xs pl-8"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+          />
+        </div>
+        <Input
+          placeholder="Min $"
+          className="h-8 text-xs w-20"
+          value={minAmount}
+          onChange={(e) => setMinAmount(e.target.value)}
+        />
+        <Input
+          placeholder="Max $"
+          className="h-8 text-xs w-20"
+          value={maxAmount}
+          onChange={(e) => setMaxAmount(e.target.value)}
+        />
+      </div>
+
+      {/* Transaction list */}
+      <div className="max-h-60 overflow-y-auto space-y-0.5 rounded border border-border/50 bg-muted/10 p-1">
+        {filtered.length === 0 ? (
+          <p className="text-xs text-muted-foreground text-center py-4">No transactions match your search</p>
+        ) : (
+          filtered.map((tx, i) => {
+            const isSelected = selectedTxs.has(i);
+            return (
+              <div
+                key={i}
+                className={`flex items-center gap-2 py-1.5 px-2 rounded text-xs cursor-pointer transition-colors ${
+                  isSelected ? "bg-teal/10 border border-teal/30" : "hover:bg-muted/30"
+                }`}
+                onClick={() => toggleTx(i)}
+              >
+                <div className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
+                  isSelected ? "bg-teal border-teal" : "border-muted-foreground/30"
+                }`}>
+                  {isSelected && <Check className="h-2.5 w-2.5 text-white" />}
+                </div>
+                <span className="text-muted-foreground w-20 shrink-0">{tx.date}</span>
+                <span className="truncate flex-1">{tx.description}</span>
+                <span className="text-muted-foreground shrink-0">{tx.account}</span>
+                <Badge variant="outline" className="text-2xs h-4 px-1.5 shrink-0">{tx.source?.toUpperCase()}</Badge>
+                <span className={`font-mono w-24 text-right shrink-0 ${tx.amount < 0 ? "text-red-400" : ""}`}>
+                  {fmtCurrency(Math.abs(tx.amount))}
+                </span>
+              </div>
+            );
+          })
+        )}
+      </div>
+
+      <div className="flex items-center justify-between">
+        <p className="text-2xs text-muted-foreground">
+          {filtered.length} transaction{filtered.length !== 1 ? "s" : ""} found
+          {selectedTxs.size > 0 && ` · ${selectedTxs.size} selected`}
+        </p>
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1 bg-teal text-teal-foreground hover:bg-teal/90"
+          disabled={selectedTxs.size === 0}
+          onClick={handleConfirmSelection}
+        >
+          <Plus className="h-3 w-3" /> Link {selectedTxs.size} transaction{selectedTxs.size !== 1 ? "s" : ""}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────
+   AI Hint Input — seller gives context to improve matching
+─────────────────────────────────────────────── */
+function AiHintInput({
+  addbackId,
+  addbackLabel,
+  dealId,
+  verificationId,
+  onHintSent,
+}: {
+  addbackId: string;
+  addbackLabel: string;
+  dealId: string;
+  verificationId: string;
+  onHintSent: () => void;
+}) {
+  const [hint, setHint] = useState("");
+  const [isOpen, setIsOpen] = useState(false);
+  const { toast } = useToast();
+
+  const sendHint = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/addback-verification/${verificationId}/analyze`, {
+        hint: hint.trim(),
+        targetAddbackId: addbackId,
+      });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
+      toast({ title: "AI is re-searching", description: "Using your hint to find matching transactions." });
+      setHint("");
+      setIsOpen(false);
+      onHintSent();
+    },
+    onError: (err: Error) => {
+      toast({ title: "Failed", description: err.message, variant: "destructive" });
+    },
+  });
+
+  if (!isOpen) {
+    return (
+      <button
+        onClick={() => setIsOpen(true)}
+        className="flex items-center gap-1.5 text-2xs text-teal/70 hover:text-teal transition-colors"
+      >
+        <Lightbulb className="h-3 w-3" /> Give AI a hint to find this
+      </button>
+    );
+  }
+
+  return (
+    <div className="rounded bg-teal/5 border border-teal/20 p-3 space-y-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5">
+          <Lightbulb className="h-3.5 w-3.5 text-teal" />
+          <p className="text-xs font-medium">Help the AI find "{addbackLabel}"</p>
+        </div>
+        <button onClick={() => setIsOpen(false)} className="text-muted-foreground hover:text-foreground p-0.5">
+          <X className="h-3 w-3" />
+        </button>
+      </div>
+      <p className="text-2xs text-muted-foreground">
+        Describe what to look for — payee names, approximate dates, how it might appear in the GL or bank statement.
+      </p>
+      <Textarea
+        placeholder={"e.g. \"Look for payments to my wife's company, ABC Consulting, around $3K/month\""}
+        className="text-xs h-16 resize-none bg-background"
+        value={hint}
+        onChange={(e) => setHint(e.target.value)}
+      />
+      <div className="flex gap-2">
+        <Button
+          size="sm"
+          className="h-7 text-xs gap-1 bg-teal text-teal-foreground hover:bg-teal/90"
+          onClick={() => sendHint.mutate()}
+          disabled={!hint.trim() || sendHint.isPending}
+        >
+          {sendHint.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+          Re-search with hint
+        </Button>
+        <Button size="sm" variant="ghost" className="h-7 text-xs" onClick={() => setIsOpen(false)}>
+          Cancel
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
 export function AddbackVerification({ dealId, financialAnalysisId, onBack }: AddbackVerificationProps) {
   const { toast } = useToast();
   const [expandedAddback, setExpandedAddback] = useState<string | null>(null);
+  const [browsingForAddback, setBrowsingForAddback] = useState<string | null>(null);
   const [sellerNotes, setSellerNotes] = useState<Record<string, string>>({});
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
 
@@ -184,6 +429,39 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       .reduce((s, a) => s + (a.annualAmount || 0), 0);
     return { total, confirmed, matched, unmatched, totalAmount, verifiedAmount };
   }, [addbacks]);
+
+  // Parse uploaded transactions for the browser
+  const allTransactions: ParsedTransaction[] = useMemo(() => {
+    const raw = (verification?.uploadedTransactionData as ParsedTransaction[] | null) || [];
+    return raw;
+  }, [verification?.uploadedTransactionData]);
+
+  // Link seller-selected transactions to an addback
+  const handleLinkTransactions = useCallback(
+    (addbackId: string, selectedTxs: ParsedTransaction[]) => {
+      const updated = addbacks.map((ab) => {
+        if (ab.id !== addbackId) return ab;
+        const existing = ab.matchedTransactions || [];
+        const merged = [
+          ...existing,
+          ...selectedTxs.map((tx) => ({
+            ...tx,
+            confidence: 1.0, // seller-selected = full confidence
+            source: tx.source || "manual",
+            documentId: tx.documentId || "",
+          })),
+        ];
+        return {
+          ...ab,
+          matchedTransactions: merged,
+          verificationStatus: "matched" as const,
+        };
+      });
+      updateVerification.mutate({ addbacks: updated as any });
+      setBrowsingForAddback(null);
+    },
+    [addbacks, updateVerification],
+  );
 
   // Confirm single addback
   const handleConfirm = (addbackId: string) => {
@@ -644,8 +922,40 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                         <p className="font-medium text-amber-400 mb-1">No matching transactions found</p>
                         <p className="text-muted-foreground">
                           If this addback is valid, add a note explaining where the supporting documentation can be found,
-                          or upload additional transaction records.
+                          or upload additional transaction records. You can also search transactions manually or give the AI a hint below.
                         </p>
+                      </div>
+                    )}
+
+                    {/* Transaction browser + AI hint — for actionable addbacks */}
+                    {isActionable && allTransactions.length > 0 && (
+                      <div className="space-y-2">
+                        {browsingForAddback === ab.id ? (
+                          <TransactionBrowser
+                            transactions={allTransactions}
+                            onSelect={(txs) => handleLinkTransactions(ab.id, txs)}
+                            onClose={() => setBrowsingForAddback(null)}
+                            addbackLabel={ab.label}
+                          />
+                        ) : (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1.5 border-teal/30 text-teal hover:bg-teal/10"
+                            onClick={() => setBrowsingForAddback(ab.id)}
+                          >
+                            <ListFilter className="h-3 w-3" /> Find transactions manually
+                          </Button>
+                        )}
+                        {verification && (ab.verificationStatus === "no_match" || ab.verificationStatus === "unverified") && (
+                          <AiHintInput
+                            addbackId={ab.id}
+                            addbackLabel={ab.label}
+                            dealId={dealId}
+                            verificationId={String(verification.id)}
+                            onHintSent={() => {}}
+                          />
+                        )}
                       </div>
                     )}
 
