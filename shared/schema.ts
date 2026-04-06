@@ -299,6 +299,9 @@ export const buyerQuestions = pgTable("buyer_questions", {
   status: text("status").notNull().default("pending_ai"),
   // pending_ai | pending_broker | pending_seller | published | declined
 
+  // Seller approval token — unique link for seller to approve/reject
+  sellerApprovalToken: text("seller_approval_token").unique(),
+
   // Knowledge base
   addedToKnowledgeBase: boolean("added_to_knowledge_base").default(false),
   similarQuestionIds: jsonb("similar_question_ids").default(sql`'[]'::jsonb`),
