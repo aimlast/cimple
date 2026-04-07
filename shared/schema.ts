@@ -388,15 +388,18 @@ export const buyerAccess = pgTable("buyer_access", {
   watermarkEnabled: boolean("watermark_enabled").default(true),
   
   // Buyer profile (for matching)
-  buyerType: text("buyer_type"), // individual, strategic, financial, search_fund, family_office
-  budgetMin: text("budget_min"),
-  budgetMax: text("budget_max"),
-  targetIndustries: jsonb("target_industries").default(sql`'[]'::jsonb`), // string[]
-  targetLocations: jsonb("target_locations").default(sql`'[]'::jsonb`),  // string[]
-  acquisitionCriteria: text("acquisition_criteria"), // free text — what buyer is looking for
+  buyerType: text("buyer_type"), // individual, strategic, financial, search_fund, family_office, private_equity
+  budgetMin: text("budget_min"),    // deprecated — use buyerCriteria
+  budgetMax: text("budget_max"),    // deprecated — use buyerCriteria
+  targetIndustries: jsonb("target_industries").default(sql`'[]'::jsonb`),  // deprecated
+  targetLocations: jsonb("target_locations").default(sql`'[]'::jsonb`),   // deprecated
+  acquisitionCriteria: text("acquisition_criteria"), // deprecated
   prequalified: boolean("prequalified").default(false),
   proofOfFunds: boolean("proof_of_funds").default(false),
-  buyerNotes: text("buyer_notes"), // broker's notes about this buyer
+  buyerNotes: text("buyer_notes"), // broker's internal notes
+
+  // Deep buyer criteria (JSONB — see BUYER_CRITERIA_SECTIONS for structure)
+  buyerCriteria: jsonb("buyer_criteria").default(sql`'{}'::jsonb`),
 
   // Analytics tracking
   viewCount: integer("view_count").default(0),
@@ -972,6 +975,88 @@ export const insertNotificationSchema = createInsertSchema(notifications).omit({
 
 export type InsertNotification = z.infer<typeof insertNotificationSchema>;
 export type Notification = typeof notifications.$inferSelect;
+
+// =====================
+// BUYER CRITERIA — deep M&A matching fields
+// =====================
+// Stored as JSONB on buyerAccess.buyerCriteria
+// Each field is optional. Ranges use { min, max }. Arrays for multi-select.
+export const BUYER_CRITERIA_SECTIONS = {
+  financial: {
+    label: "Financial Criteria",
+    fields: {
+      revenueMin:            { label: "Revenue minimum",               type: "currency" },
+      revenueMax:            { label: "Revenue maximum",               type: "currency" },
+      ebitdaMin:             { label: "EBITDA minimum",                type: "currency" },
+      ebitdaMax:             { label: "EBITDA maximum",                type: "currency" },
+      sdeMin:                { label: "SDE minimum",                   type: "currency" },
+      sdeMax:                { label: "SDE maximum",                   type: "currency" },
+      askingPriceMin:        { label: "Asking price minimum",          type: "currency" },
+      askingPriceMax:        { label: "Asking price maximum",          type: "currency" },
+      grossMarginMin:        { label: "Gross margin minimum (%)",      type: "percent" },
+      ebitdaMarginMin:       { label: "EBITDA margin minimum (%)",     type: "percent" },
+      revenueGrowthMin:      { label: "Revenue growth minimum (%)",    type: "percent" },
+      recurringRevenueMin:   { label: "Recurring revenue minimum (%)", type: "percent" },
+      maxCustomerConcentration: { label: "Max customer concentration (%)", type: "percent" },
+      multipleMax:           { label: "Max asking multiple (x EBITDA)", type: "number" },
+      workingCapitalPref:    { label: "Working capital preference",    type: "select", options: ["included", "excluded", "flexible"] },
+      debtTolerance:         { label: "Debt tolerance",                type: "select", options: ["debt_free_only", "minimal_debt", "reasonable_debt", "any"] },
+    },
+  },
+  operational: {
+    label: "Operational Criteria",
+    fields: {
+      ownerInvolvementMax:   { label: "Max owner involvement (hrs/wk)", type: "number" },
+      minEmployees:          { label: "Minimum employees",              type: "number" },
+      maxEmployees:          { label: "Maximum employees",              type: "number" },
+      managementTeamRequired: { label: "Management team in place",     type: "boolean" },
+      employeeRetentionImportance: { label: "Employee retention importance", type: "select", options: ["critical", "important", "nice_to_have", "not_important"] },
+      systemsMaturity:       { label: "Minimum systems/processes maturity", type: "select", options: ["advanced", "moderate", "basic", "any"] },
+      realEstatePreference:  { label: "Real estate preference",        type: "select", options: ["owned_preferred", "leased_ok", "no_preference"] },
+      leaseLengthMin:        { label: "Min lease remaining (years)",   type: "number" },
+    },
+  },
+  business: {
+    label: "Business Quality",
+    fields: {
+      targetIndustries:      { label: "Target industries",             type: "tags" },
+      excludedIndustries:    { label: "Excluded industries",           type: "tags" },
+      targetLocations:       { label: "Target locations",              type: "tags" },
+      yearsInBusinessMin:    { label: "Min years in business",         type: "number" },
+      customerDiversification: { label: "Customer diversification",   type: "select", options: ["highly_diversified", "moderately_diversified", "concentrated_ok", "any"] },
+      supplierDiversification: { label: "Supplier diversification",   type: "select", options: ["highly_diversified", "moderately_diversified", "single_source_ok", "any"] },
+      ipRequired:            { label: "IP / proprietary assets required", type: "boolean" },
+      brandStrengthMin:      { label: "Min brand strength",            type: "select", options: ["market_leader", "well_known", "established", "any"] },
+      competitiveMoat:       { label: "Competitive moat required",     type: "select", options: ["strong_moat", "moderate_moat", "any"] },
+      licensingRequired:     { label: "Licenses/permits transferable", type: "boolean" },
+    },
+  },
+  dealStructure: {
+    label: "Deal Structure",
+    fields: {
+      acceptableReasons:     { label: "Acceptable reasons for sale",   type: "multiselect", options: ["retirement", "relocation", "health", "new_venture", "partner_dispute", "burnout", "estate_planning", "strategic_exit", "any"] },
+      sellerFinancingRequired: { label: "Seller financing required",   type: "boolean" },
+      sellerFinancingMin:    { label: "Min seller financing (%)",      type: "percent" },
+      transitionPeriodMax:   { label: "Max transition period (months)", type: "number" },
+      earnoutAcceptable:     { label: "Earnout acceptable",            type: "boolean" },
+      assetVsSharePref:      { label: "Deal type preference",         type: "select", options: ["asset_only", "share_only", "either"] },
+      nonCompeteRequired:    { label: "Non-compete required",          type: "boolean" },
+    },
+  },
+  growth: {
+    label: "Growth & Strategic",
+    fields: {
+      growthPotentialMin:    { label: "Min growth potential",           type: "select", options: ["high", "moderate", "stable", "any"] },
+      scalabilityRequired:  { label: "Scalability required",           type: "boolean" },
+      geographicExpansion:  { label: "Geographic expansion potential",  type: "boolean" },
+      productExpansion:     { label: "Product/service expansion potential", type: "boolean" },
+      addOnAcquisition:     { label: "Suitable as add-on acquisition", type: "boolean" },
+      platformAcquisition:  { label: "Suitable as platform acquisition", type: "boolean" },
+      industryTailwinds:    { label: "Industry tailwinds required",    type: "boolean" },
+      techEnabled:          { label: "Technology-enabled preferred",   type: "boolean" },
+    },
+  },
+} as const;
 
 // Role permission mappings
 export const TEAM_ROLES = {
