@@ -2127,6 +2127,157 @@ export async function registerRoutes(app: Express): Promise<Server> {
   });
 
   // ════════════════════════════════════════════════════════════
+  // BUYER MATCHING — auto-score buyers against deal criteria
+  // ════════════════════════════════════════════════════════════
+
+  // Recalculate match scores for all buyers on a deal
+  app.post("/api/deals/:dealId/match-buyers", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const buyers = await storage.getBuyerAccessByDeal(dealId);
+      const extractedInfo = (deal.extractedInfo || {}) as Record<string, any>;
+
+      const dealIndustry = (deal.industry || "").toLowerCase();
+      const dealSubIndustry = (deal.subIndustry || "").toLowerCase();
+      const askingPrice = parseFloat(String(deal.askingPrice || "0").replace(/[^0-9.]/g, "")) || 0;
+      const dealLocation = (extractedInfo.locationSite || extractedInfo.location || "").toLowerCase();
+
+      const results = await Promise.all(buyers.map(async (buyer: any) => {
+        const breakdown: Record<string, number> = {};
+        let total = 0;
+        let maxPossible = 0;
+
+        // 1. Budget fit (25 points)
+        maxPossible += 25;
+        if (askingPrice > 0 && (buyer.budgetMin || buyer.budgetMax)) {
+          const min = parseFloat(String(buyer.budgetMin || "0").replace(/[^0-9.]/g, "")) || 0;
+          const max = parseFloat(String(buyer.budgetMax || "999999999").replace(/[^0-9.]/g, "")) || 999999999;
+          if (askingPrice >= min && askingPrice <= max) {
+            breakdown.budgetFit = 25;
+            total += 25;
+          } else if (askingPrice < min * 0.8 || askingPrice > max * 1.2) {
+            breakdown.budgetFit = 0;
+          } else {
+            breakdown.budgetFit = 12;
+            total += 12;
+          }
+        } else {
+          breakdown.budgetFit = -1; // unknown
+        }
+
+        // 2. Industry match (25 points)
+        maxPossible += 25;
+        const targetIndustries = (buyer.targetIndustries as string[] || []).map((s: string) => s.toLowerCase());
+        if (targetIndustries.length > 0) {
+          if (targetIndustries.some((ti: string) => dealIndustry.includes(ti) || ti.includes(dealIndustry))) {
+            breakdown.industryMatch = 25;
+            total += 25;
+          } else if (dealSubIndustry && targetIndustries.some((ti: string) => dealSubIndustry.includes(ti) || ti.includes(dealSubIndustry))) {
+            breakdown.industryMatch = 18;
+            total += 18;
+          } else {
+            breakdown.industryMatch = 0;
+          }
+        } else {
+          breakdown.industryMatch = -1; // unknown
+        }
+
+        // 3. Location match (15 points)
+        maxPossible += 15;
+        const targetLocations = (buyer.targetLocations as string[] || []).map((s: string) => s.toLowerCase());
+        if (targetLocations.length > 0 && dealLocation) {
+          if (targetLocations.some((tl: string) => dealLocation.includes(tl) || tl.includes(dealLocation))) {
+            breakdown.locationMatch = 15;
+            total += 15;
+          } else {
+            breakdown.locationMatch = 0;
+          }
+        } else {
+          breakdown.locationMatch = -1; // unknown
+        }
+
+        // 4. Qualification signals (20 points)
+        maxPossible += 20;
+        let qualScore = 0;
+        if (buyer.prequalified) qualScore += 10;
+        if (buyer.proofOfFunds) qualScore += 10;
+        breakdown.qualification = qualScore;
+        total += qualScore;
+
+        // 5. Engagement bonus (15 points) — from analytics
+        maxPossible += 15;
+        const events = await storage.getAnalyticsByDeal(dealId);
+        const buyerEvents = events.filter((e: any) => e.buyerAccessId === buyer.id);
+        const sectionExits = buyerEvents.filter((e: any) => e.eventType === "section_exit" && e.timeSpentSeconds);
+        const totalTime = sectionExits.reduce((s: number, e: any) => s + (e.timeSpentSeconds ?? 0), 0);
+        const ndaSigned = !!buyer.ndaSignedAt;
+        const engagementBonus = Math.round(
+          Math.min(totalTime / 300, 1) * 8 + // time: up to 8
+          (ndaSigned ? 4 : 0) +                // NDA: 4
+          Math.min(buyerEvents.filter((e: any) => e.eventType === "view").length / 3, 1) * 3 // visits: up to 3
+        );
+        breakdown.engagement = Math.min(engagementBonus, 15);
+        total += breakdown.engagement;
+
+        // Calculate final score (0-100 scale, adjusted for unknowns)
+        const knownFactors = Object.values(breakdown).filter(v => v >= 0);
+        const knownMax = Object.entries(breakdown)
+          .filter(([, v]) => v >= 0)
+          .reduce((s, [k]) => {
+            if (k === "budgetFit" || k === "industryMatch") return s + 25;
+            if (k === "locationMatch") return s + 15;
+            if (k === "qualification") return s + 20;
+            if (k === "engagement") return s + 15;
+            return s;
+          }, 0);
+        const matchScore = knownMax > 0 ? Math.round((total / knownMax) * 100) : 0;
+
+        // Persist
+        await storage.updateBuyerAccess(buyer.id, {
+          matchScore,
+          matchBreakdown: breakdown,
+        });
+
+        return {
+          buyerId: buyer.id,
+          buyerName: buyer.buyerName,
+          buyerEmail: buyer.buyerEmail,
+          buyerCompany: buyer.buyerCompany,
+          buyerType: buyer.buyerType,
+          matchScore,
+          breakdown,
+        };
+      }));
+
+      results.sort((a, b) => b.matchScore - a.matchScore);
+      res.json(results);
+    } catch (error: any) {
+      console.error("Error matching buyers:", error);
+      res.status(500).json({ error: "Failed to match buyers" });
+    }
+  });
+
+  // Update buyer profile
+  app.patch("/api/buyers/:id/profile", async (req, res) => {
+    try {
+      const { id } = req.params;
+      const { buyerType, budgetMin, budgetMax, targetIndustries, targetLocations, acquisitionCriteria, prequalified, proofOfFunds, buyerNotes } = req.body;
+      const updated = await storage.updateBuyerAccess(id, {
+        buyerType, budgetMin, budgetMax, targetIndustries, targetLocations,
+        acquisitionCriteria, prequalified, proofOfFunds, buyerNotes,
+      });
+      if (!updated) return res.status(404).json({ error: "Buyer not found" });
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error updating buyer profile:", error);
+      res.status(500).json({ error: "Failed to update buyer profile" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
   // PHASE 4 — CIM LAYOUT ENGINE
   // ════════════════════════════════════════════════════════════
 

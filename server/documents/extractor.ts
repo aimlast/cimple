@@ -57,6 +57,17 @@ export interface ExtractedDocumentData {
   equipment?: string;
   operationsNotes?: string;
 
+  // Call transcript
+  callDate?: string;
+  callDuration?: string;
+  callParticipants?: string;
+  keyTopics?: string;
+  actionItems?: string;
+  sellerConcerns?: string;
+  buyerInterests?: string;
+  followUpNeeded?: string;
+  callNotes?: string;
+
   // General
   summary?: string;
   keyFacts?: string;
@@ -95,6 +106,8 @@ For FINANCIAL documents, extract: revenue, grossProfit, ebitda, sde, addbacks, n
 For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, licenses, permits, contracts, legalNotes
 
 For OPERATIONS / HR documents, extract: totalEmployees, fullTimeCount, partTimeCount, keyPersonnel, ownerHoursPerWeek, suppliers, inventory, equipment, operationsNotes
+
+For CALL TRANSCRIPT documents, extract: callDate, callDuration, callParticipants (who was on the call), keyTopics (main subjects discussed), actionItems (tasks assigned or promised), sellerConcerns (worries or hesitations expressed by seller), buyerInterests (what buyers were interested in), followUpNeeded (outstanding items), callNotes (additional context). Also extract any business facts mentioned (revenue, employees, lease, etc.) into the standard fields above.
 
 For ANY document, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
