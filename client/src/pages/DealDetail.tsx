@@ -27,6 +27,7 @@ import { TeamPanel } from "@/components/deal/TeamPanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 import { BuyerComparison } from "@/components/deal/BuyerComparison";
+import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
@@ -82,11 +83,12 @@ function getPhaseIndex(key: string) {
    DOCUMENT CATEGORIES
 ══════════════════════════════════════════════ */
 const DOC_CATEGORIES = [
-  { value: "financials", label: "Financials" },
-  { value: "legal",      label: "Legal" },
-  { value: "marketing",  label: "Marketing" },
-  { value: "operations", label: "Operations" },
-  { value: "other",      label: "Other" },
+  { value: "financials",  label: "Financials" },
+  { value: "legal",       label: "Legal" },
+  { value: "marketing",   label: "Marketing" },
+  { value: "operations",  label: "Operations" },
+  { value: "transcripts", label: "Call Transcripts" },
+  { value: "other",       label: "Other" },
 ];
 
 // CIM_SECTIONS imported from @shared/schema — authoritative 15-section list with correct snake_case keys
@@ -1280,6 +1282,9 @@ function RightPanel({
         {tab === "analytics" && (
           <div className="space-y-4">
             <DealAnalyticsWidget dealId={dealId} />
+            <div className="pt-3 border-t border-border">
+              <BuyerMatchingPanel dealId={dealId} />
+            </div>
             <div className="pt-3 border-t border-border">
               <BuyerComparison dealId={dealId} />
             </div>

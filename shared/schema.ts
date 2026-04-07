@@ -387,6 +387,17 @@ export const buyerAccess = pgTable("buyer_access", {
   canDownload: boolean("can_download").default(false),
   watermarkEnabled: boolean("watermark_enabled").default(true),
   
+  // Buyer profile (for matching)
+  buyerType: text("buyer_type"), // individual, strategic, financial, search_fund, family_office
+  budgetMin: text("budget_min"),
+  budgetMax: text("budget_max"),
+  targetIndustries: jsonb("target_industries").default(sql`'[]'::jsonb`), // string[]
+  targetLocations: jsonb("target_locations").default(sql`'[]'::jsonb`),  // string[]
+  acquisitionCriteria: text("acquisition_criteria"), // free text — what buyer is looking for
+  prequalified: boolean("prequalified").default(false),
+  proofOfFunds: boolean("proof_of_funds").default(false),
+  buyerNotes: text("buyer_notes"), // broker's notes about this buyer
+
   // Analytics tracking
   viewCount: integer("view_count").default(0),
   totalTimeSeconds: integer("total_time_seconds").default(0),
@@ -394,6 +405,10 @@ export const buyerAccess = pgTable("buyer_access", {
   // NDA tracking
   ndaVersion: text("nda_version"),
   ndaSignedIp: text("nda_signed_ip"),
+
+  // Matching score (auto-calculated)
+  matchScore: integer("match_score"), // 0-100
+  matchBreakdown: jsonb("match_breakdown"), // { criteria: score } detail
 
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
