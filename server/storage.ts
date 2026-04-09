@@ -21,10 +21,11 @@ import {
   type DealMember, type InsertDealMember,
   type Notification, type InsertNotification,
   type BuyerApprovalRequest, type InsertBuyerApprovalRequest,
+  type BuyerUser, type InsertBuyerUser,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
-  dealMembers, notifications, buyerApprovalRequests
+  dealMembers, notifications, buyerApprovalRequests, buyerUsers
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -179,6 +180,15 @@ export interface IStorage {
   getBuyerApprovalRequestByToken(token: string): Promise<BuyerApprovalRequest | undefined>;
   getBuyerApprovalRequestsByDeal(dealId: string): Promise<BuyerApprovalRequest[]>;
   updateBuyerApprovalRequest(id: string, updates: Partial<InsertBuyerApprovalRequest>): Promise<BuyerApprovalRequest | undefined>;
+
+  // Buyer users (accounts)
+  createBuyerUser(data: InsertBuyerUser): Promise<BuyerUser>;
+  getBuyerUser(id: string): Promise<BuyerUser | undefined>;
+  getBuyerUserByEmail(email: string): Promise<BuyerUser | undefined>;
+  getBuyerUserByResetToken(token: string): Promise<BuyerUser | undefined>;
+  updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined>;
+  searchBuyerUsers(query: string): Promise<BuyerUser[]>;
+  getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]>;
 }
 
 export class MemStorage implements IStorage {
@@ -396,6 +406,13 @@ export class MemStorage implements IStorage {
   async getBuyerApprovalRequestByToken(): Promise<BuyerApprovalRequest | undefined> { return undefined; }
   async getBuyerApprovalRequestsByDeal(): Promise<BuyerApprovalRequest[]> { return []; }
   async updateBuyerApprovalRequest(): Promise<BuyerApprovalRequest | undefined> { return undefined; }
+  async createBuyerUser(): Promise<BuyerUser> { throw new Error("Not implemented"); }
+  async getBuyerUser(): Promise<BuyerUser | undefined> { return undefined; }
+  async getBuyerUserByEmail(): Promise<BuyerUser | undefined> { return undefined; }
+  async getBuyerUserByResetToken(): Promise<BuyerUser | undefined> { return undefined; }
+  async updateBuyerUser(): Promise<BuyerUser | undefined> { return undefined; }
+  async searchBuyerUsers(): Promise<BuyerUser[]> { return []; }
+  async getBuyerAccessByBuyerUser(): Promise<any[]> { return []; }
 }
 
 export class DbStorage implements IStorage {
@@ -1099,6 +1116,51 @@ export class DbStorage implements IStorage {
       .where(eq(buyerApprovalRequests.id, id))
       .returning();
     return result[0];
+  }
+
+  // ── Buyer users (accounts) ─────────────────────────────────────────
+  async createBuyerUser(data: InsertBuyerUser): Promise<BuyerUser> {
+    const result = await db.insert(buyerUsers).values(data as any).returning();
+    return result[0];
+  }
+
+  async getBuyerUser(id: string): Promise<BuyerUser | undefined> {
+    const result = await db.select().from(buyerUsers).where(eq(buyerUsers.id, id));
+    return result[0];
+  }
+
+  async getBuyerUserByEmail(email: string): Promise<BuyerUser | undefined> {
+    const result = await db.select().from(buyerUsers).where(eq(buyerUsers.email, email));
+    return result[0];
+  }
+
+  async getBuyerUserByResetToken(token: string): Promise<BuyerUser | undefined> {
+    const result = await db.select().from(buyerUsers).where(eq(buyerUsers.resetToken, token));
+    return result[0];
+  }
+
+  async updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined> {
+    const result = await db.update(buyerUsers)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(buyerUsers.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async searchBuyerUsers(query: string): Promise<BuyerUser[]> {
+    const q = query.trim().toLowerCase();
+    if (q.length < 2) return [];
+    // Case-insensitive partial match on email OR name
+    const result = await db.select().from(buyerUsers).where(
+      sql`LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`}`
+    ).limit(10);
+    return result;
+  }
+
+  async getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]> {
+    return db.select().from(buyerAccess)
+      .where(eq(buyerAccess.buyerUserId, buyerUserId))
+      .orderBy(desc(buyerAccess.lastAccessedAt));
   }
 }
 

@@ -31,6 +31,15 @@ import {
 
 interface BuyerCategory { value: string; label: string; description: string; riskLevel: string }
 interface BuyerSearchResult { id: string; name: string; email?: string; phone?: string; company?: string; source: string }
+// Existing buyer accounts on the platform — returned by /api/buyer-users/search
+interface ExistingBuyerAccount {
+  id: string;
+  name: string;
+  email: string;
+  company: string | null;
+  title: string | null;
+  profileCompletionPct: number;
+}
 
 interface ApprovalRequest {
   id: string;
@@ -256,6 +265,7 @@ function SubmitDialog({
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<BuyerSearchResult[]>([]);
+  const [existingAccounts, setExistingAccounts] = useState<ExistingBuyerAccount[]>([]);
   const [searching, setSearching] = useState(false);
   const [prefilling, setPrefilling] = useState(false);
   const [crmFiles, setCrmFiles] = useState<any[]>([]);
@@ -265,26 +275,51 @@ function SubmitDialog({
     queryFn: async () => (await fetch("/api/buyer-categories")).json(),
   });
 
-  // Debounced CRM search
+  // Debounced search — searches BOTH existing buyer accounts on the platform
+  // and the broker's CRM in parallel. Existing accounts are surfaced first so
+  // brokers can instantly link a known buyer without re-collecting their info.
   useEffect(() => {
     if (!searchQuery || searchQuery.length < 2) {
       setSearchResults([]);
+      setExistingAccounts([]);
       return;
     }
     const t = setTimeout(async () => {
       setSearching(true);
       try {
-        const res = await fetch(`/api/deals/${dealId}/buyer-search?q=${encodeURIComponent(searchQuery)}`);
-        const data = await res.json();
-        setSearchResults(data.results || []);
-      } catch (e) {
-        setSearchResults([]);
+        const [accountsRes, crmRes] = await Promise.all([
+          fetch(`/api/buyer-users/search?q=${encodeURIComponent(searchQuery)}`)
+            .then(r => r.ok ? r.json() : { users: [] })
+            .catch(() => ({ users: [] })),
+          fetch(`/api/deals/${dealId}/buyer-search?q=${encodeURIComponent(searchQuery)}`)
+            .then(r => r.ok ? r.json() : { results: [] })
+            .catch(() => ({ results: [] })),
+        ]);
+        setExistingAccounts(accountsRes.users || []);
+        setSearchResults(crmRes.results || []);
       } finally {
         setSearching(false);
       }
     }, 350);
     return () => clearTimeout(t);
   }, [searchQuery, dealId]);
+
+  // Selecting an existing buyer account skips the CRM prefill entirely — we
+  // already trust what's on the platform. The broker just picks a category.
+  const handleSelectExistingAccount = (acct: ExistingBuyerAccount) => {
+    setSearchResults([]);
+    setExistingAccounts([]);
+    setSearchQuery(acct.name);
+    setForm(prev => ({
+      ...prev,
+      buyerName: acct.name,
+      buyerEmail: acct.email,
+      buyerCompany: acct.company ?? "",
+      buyerTitle: acct.title ?? "",
+      crmSource: "cimple_account",
+      crmRecordId: acct.id,
+    }));
+  };
 
   const handleSelectResult = async (result: BuyerSearchResult) => {
     setPrefilling(true);
@@ -388,20 +423,56 @@ function SubmitDialog({
                 <Loader2 className="absolute right-2 top-2.5 h-3.5 w-3.5 animate-spin text-muted-foreground" />
               )}
             </div>
-            {searchResults.length > 0 && (
-              <div className="border border-border rounded-md bg-card divide-y divide-border">
-                {searchResults.map((r) => (
-                  <button
-                    key={r.id}
-                    onClick={() => handleSelectResult(r)}
-                    className="w-full text-left p-2 hover:bg-accent transition-colors"
-                  >
-                    <div className="text-sm font-medium">{r.name}</div>
-                    <div className="text-xs text-muted-foreground">
-                      {r.email}{r.company ? ` · ${r.company}` : ""}
+            {(existingAccounts.length > 0 || searchResults.length > 0) && (
+              <div className="border border-border rounded-md bg-card overflow-hidden">
+                {existingAccounts.length > 0 && (
+                  <div>
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/50 flex items-center gap-1">
+                      <Sparkles className="h-2.5 w-2.5" />
+                      Existing Cimple buyers
                     </div>
-                  </button>
-                ))}
+                    <div className="divide-y divide-border">
+                      {existingAccounts.map((a) => (
+                        <button
+                          key={a.id}
+                          onClick={() => handleSelectExistingAccount(a)}
+                          className="w-full text-left p-2 hover:bg-accent transition-colors"
+                        >
+                          <div className="text-sm font-medium flex items-center gap-2">
+                            {a.name}
+                            <Badge variant="outline" className="text-[9px] h-4 px-1">
+                              {a.profileCompletionPct}% profile
+                            </Badge>
+                          </div>
+                          <div className="text-xs text-muted-foreground">
+                            {a.email}{a.company ? ` · ${a.company}` : ""}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
+                {searchResults.length > 0 && (
+                  <div>
+                    <div className="px-2 py-1 text-[10px] uppercase tracking-wide text-muted-foreground bg-muted/50">
+                      From your CRM
+                    </div>
+                    <div className="divide-y divide-border">
+                      {searchResults.map((r) => (
+                        <button
+                          key={r.id}
+                          onClick={() => handleSelectResult(r)}
+                          className="w-full text-left p-2 hover:bg-accent transition-colors"
+                        >
+                          <div className="text-sm font-medium">{r.name}</div>
+                          <div className="text-xs text-muted-foreground">
+                            {r.email}{r.company ? ` · ${r.company}` : ""}
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             )}
             {prefilling && (
