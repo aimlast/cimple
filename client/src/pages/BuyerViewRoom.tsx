@@ -23,6 +23,7 @@ import { CIM_SECTIONS } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
+import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 
 interface ViewData {
   access: BuyerAccess;
@@ -198,6 +199,7 @@ export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
   const [ndaAccepted, setNdaAccepted] = useState(false);
   const [timeOnPage, setTimeOnPage] = useState(0);
+  const [localDecision, setLocalDecision] = useState<"under_review" | "interested" | "not_interested" | null>(null);
   const startTimeRef = useRef(Date.now());
 
   const { data, isLoading, error } = useQuery<ViewData>({
@@ -265,6 +267,8 @@ export default function BuyerViewRoom() {
   }
 
   const { access, deal, sections = [], publishedQuestions = [], branding: brandingSettings } = data;
+  const currentDecision = (localDecision || (access as any).decision || "under_review") as
+    "under_review" | "interested" | "not_interested";
 
   // NDA gate
   const needsNda = (access as any).ndaRequired && !(access as any).ndaSigned && !ndaAccepted;
@@ -393,6 +397,16 @@ export default function BuyerViewRoom() {
                 <p className="text-sm font-medium">CIM not yet available</p>
                 <p className="text-xs text-muted-foreground mt-1">Check back soon — the broker is finalizing the document.</p>
               </div>
+            )}
+
+            {/* ── Buyer decision panel — visible once CIM content exists ─── */}
+            {(hasAiSections || legacySections.length > 0) && (
+              <BuyerDecisionPanel
+                token={token!}
+                currentDecision={currentDecision}
+                businessName={deal.businessName}
+                onUpdated={(d) => setLocalDecision(d)}
+              />
             )}
 
           </main>
