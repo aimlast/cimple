@@ -371,7 +371,12 @@ export type SellerInvite = typeof sellerInvites.$inferSelect;
 export const buyerAccess = pgTable("buyer_access", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   dealId: varchar("deal_id").notNull(),
-  
+
+  // Optional link to a buyer_users account. When set, the buyer can log in
+  // and see this deal on their dashboard. When null, the buyer only has the
+  // tokenized email link (backwards-compatible with pre-account flow).
+  buyerUserId: varchar("buyer_user_id"),
+
   buyerEmail: text("buyer_email").notNull(),
   buyerName: text("buyer_name"),
   buyerCompany: text("buyer_company"),
@@ -1322,4 +1327,87 @@ export type BuyerApprovalRequest = typeof buyerApprovalRequests.$inferSelect;
 export function riskLevelForCategory(category: string): "high" | "medium" | "low" {
   const match = BUYER_CATEGORIES.find((c) => c.value === category);
   return (match?.riskLevel as "high" | "medium" | "low") || "medium";
+}
+
+// =====================================================================
+// BUYER USERS — buyer-side accounts for the self-serve buyer platform
+// =====================================================================
+// Buyers either sign up themselves (marketing-driven) or are created
+// on-the-fly when a broker adds them to a deal (Firmex-style invite).
+// Both paths end at the same account: email+password login, dashboard
+// of CIMs they have access to, and an investment profile that drives
+// match scoring.
+export const buyerUsers = pgTable("buyer_users", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  email: text("email").notNull().unique(),
+  passwordHash: text("password_hash"),                 // null until set-password completed
+  name: text("name").notNull(),
+  phone: text("phone"),
+  company: text("company"),
+  title: text("title"),
+  linkedinUrl: text("linkedin_url"),
+
+  // Investment profile (drives match scoring — same shape as buyerAccess.buyerCriteria)
+  buyerCriteria: jsonb("buyer_criteria").default(sql`'{}'::jsonb`),
+  targetIndustries: jsonb("target_industries").default(sql`'[]'::jsonb`),  // string[]
+  targetLocations: jsonb("target_locations").default(sql`'[]'::jsonb`),    // string[]
+  buyerType: text("buyer_type"),                       // individual | strategic | financial | search_fund | family_office | private_equity
+  background: text("background"),
+  liquidFunds: text("liquid_funds"),
+  hasProofOfFunds: boolean("has_proof_of_funds").default(false),
+
+  // Profile completion tracking (drives "complete your profile" nudges)
+  profileCompletionPct: integer("profile_completion_pct").default(0),
+
+  // Account state
+  emailVerified: boolean("email_verified").default(false),
+  source: text("source").default("self_signup"),       // self_signup | broker_invited | crm_imported
+  invitedByBroker: varchar("invited_by_broker"),       // user id of inviting broker
+  invitedByDeal: varchar("invited_by_deal"),           // deal they were first invited to
+
+  // Password reset / set-password tokens
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
+
+  lastLoginAt: timestamp("last_login_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertBuyerUserSchema = createInsertSchema(buyerUsers).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+  lastLoginAt: true,
+});
+export type InsertBuyerUser = z.infer<typeof insertBuyerUserSchema>;
+export type BuyerUser = typeof buyerUsers.$inferSelect;
+
+// Public view of a buyer user (never expose passwordHash or resetToken)
+export type PublicBuyerUser = Omit<BuyerUser, "passwordHash" | "resetToken" | "resetTokenExpiresAt">;
+
+export function toPublicBuyerUser(user: BuyerUser): PublicBuyerUser {
+  const { passwordHash, resetToken, resetTokenExpiresAt, ...rest } = user;
+  return rest;
+}
+
+/**
+ * Calculate buyer profile completion percentage (0-100) based on
+ * which profile fields are populated. Drives the "complete your
+ * profile" nudge on the buyer dashboard.
+ */
+export function calculateBuyerProfileCompletion(user: Partial<BuyerUser>): number {
+  const checks: Array<[boolean, number]> = [
+    [!!user.name, 10],
+    [!!user.phone, 5],
+    [!!user.company, 5],
+    [!!user.title, 5],
+    [!!user.buyerType, 10],
+    [!!user.background && user.background.length > 20, 15],
+    [!!user.liquidFunds, 10],
+    [Array.isArray(user.targetIndustries) && user.targetIndustries.length > 0, 15],
+    [Array.isArray(user.targetLocations) && user.targetLocations.length > 0, 10],
+    [!!user.buyerCriteria && Object.keys(user.buyerCriteria as any).length >= 3, 15],
+  ];
+  return checks.reduce((sum, [ok, pts]) => sum + (ok ? pts : 0), 0);
 }

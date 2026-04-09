@@ -14,6 +14,8 @@ import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 import { notify, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
+import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
+import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema } from "@shared/schema";
@@ -135,6 +137,35 @@ export async function registerRoutes(app: Express): Promise<Server> {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
   app.use("/uploads", (await import("express")).default.static(uploadsDir));
+
+  // ── Buyer authentication + dashboard ─────────────────────────────────
+  registerBuyerAuthRoutes(app);
+  registerBuyerDashboardRoutes(app);
+
+  // Broker-side: search existing buyer accounts by email/name (for the
+  // "add buyer" autocomplete — hits before falling through to CRM)
+  app.get("/api/buyer-users/search", async (req, res) => {
+    try {
+      const q = String(req.query.q || "");
+      if (q.length < 2) return res.json({ results: [] });
+      const users = await storage.searchBuyerUsers(q);
+      res.json({
+        results: users.map(u => ({
+          id: u.id,
+          email: u.email,
+          name: u.name,
+          company: u.company,
+          phone: u.phone,
+          buyerType: u.buyerType,
+          profileCompletionPct: u.profileCompletionPct,
+          source: "existing_account",
+        })),
+      });
+    } catch (err: any) {
+      console.error("Buyer user search error:", err);
+      res.status(500).json({ error: "Search failed" });
+    }
+  });
 
   // Logo upload endpoint (base64 from frontend)
   app.post("/api/upload-logo", async (req, res) => {
@@ -1674,10 +1705,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         return res.json(updated);
       }
 
-      // Approve → create buyer access + send invite email with CCs
+      // Approve → either link to existing buyer account or create one
+      //          + create buyerAccess + send invite email (Firmex-style)
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+
+      // Check if a buyer account already exists for this email
+      const existingAccount = await storage.getBuyerUserByEmail(request.buyerEmail.toLowerCase().trim());
+      let buyerUserId: string;
+      let isNewAccount = false;
+
+      if (existingAccount) {
+        buyerUserId = existingAccount.id;
+      } else {
+        // Create new account + send set-password email
+        const invited = await inviteBuyerUser({
+          email: request.buyerEmail,
+          name: request.buyerName,
+          phone: request.buyerPhone,
+          company: request.buyerCompany,
+          title: request.buyerTitle,
+          linkedinUrl: request.linkedinUrl,
+          invitedByBroker: deal.brokerId,
+          invitedByDeal: deal.id,
+          businessName: deal.businessName,
+          baseUrl,
+        });
+        buyerUserId = invited.user.id;
+        isNewAccount = invited.isNew;
+      }
+
       const accessToken = crypto.randomUUID();
       const buyerAccess = await storage.createBuyerAccess({
         dealId: deal.id,
+        buyerUserId,
         accessToken,
         buyerEmail: request.buyerEmail,
         buyerName: request.buyerName || null,
@@ -1695,10 +1755,6 @@ export async function registerRoutes(app: Express): Promise<Server> {
         grantedAt: new Date(),
       } as any);
 
-      // Build invite email with CCs to both brokers
-      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-      const viewUrl = `${baseUrl}/view/${accessToken}`;
-
       // Gather broker emails for CC (lead + submitter)
       const members = await storage.getDealMembers(deal.id);
       const brokerEmails = members
@@ -1706,22 +1762,39 @@ export async function registerRoutes(app: Express): Promise<Server> {
         .map(m => m.email as string);
       const ccList = Array.from(new Set(brokerEmails));
 
-      const inviteHtml = `
+      // For existing accounts: send "added to deal" email pointing to dashboard.
+      // For brand-new accounts: inviteBuyerUser already sent a set-password email,
+      //   but we still want to CC brokers and mention this specific deal.
+      const dashboardUrl = `${baseUrl}/buyer/dashboard`;
+      const viewUrl = `${baseUrl}/view/${accessToken}`;
+      const inviteHtml = isNewAccount
+        ? `
         <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
-          <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been granted access to a confidential business overview</h2>
+          <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to view a confidential business overview</h2>
           <p>Hello${request.buyerName ? ` ${request.buyerName}` : ""},</p>
           <p>You've been approved to view the confidential information memorandum for <strong>${deal.businessName}</strong>.</p>
-          <p>Click the secure link below to review the opportunity. You'll be asked to sign an NDA before gaining access.</p>
-          <p style="margin: 32px 0;">
-            <a href="${viewUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">View CIM</a>
-          </p>
-          <p style="color: #888; font-size: 12px;">This link is confidential and should not be forwarded. Access is tied to your email address.</p>
+          <p>You should have received a separate email asking you to set your password and create your Cimple account. Once you're signed in, this deal will appear on your dashboard along with any other deals matched to your profile.</p>
+          <p style="color: #888; font-size: 12px; margin-top: 32px;">If you'd prefer to skip creating an account for now, you can view this single CIM via the secure link below (NDA required):</p>
+          <p><a href="${viewUrl}" style="color: #14b8a6;">${viewUrl}</a></p>
         </div>
-      `;
+        `
+        : `
+        <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+          <h2 style="color: #14b8a6; margin-bottom: 16px;">A new CIM has been added to your Cimple dashboard</h2>
+          <p>Hello ${existingAccount?.name || request.buyerName},</p>
+          <p>You've been granted access to <strong>${deal.businessName}</strong>. Sign in to your Cimple account to view it.</p>
+          <p style="margin: 32px 0;">
+            <a href="${dashboardUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Go to dashboard</a>
+          </p>
+          <p style="color: #888; font-size: 12px;">You'll be asked to sign an NDA before accessing the full document.</p>
+        </div>
+        `;
 
       await sendDirectEmail(
         request.buyerEmail,
-        `Access granted: ${deal.businessName} — Confidential Business Overview`,
+        isNewAccount
+          ? `You've been invited to ${deal.businessName} on Cimple`
+          : `New CIM added to your Cimple dashboard: ${deal.businessName}`,
         inviteHtml,
         ccList,
       );

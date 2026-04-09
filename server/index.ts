@@ -1,4 +1,6 @@
 import express, { type Request, Response, NextFunction } from "express";
+import session from "express-session";
+import createMemoryStore from "memorystore";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
@@ -6,6 +8,33 @@ import { startReminderScheduler } from "./reminders/decision-reminders";
 const app = express();
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
+
+// ── Session middleware (used by buyer auth system) ────────────────────
+// Buyer accounts log in with email + password, session stored in an
+// httpOnly cookie. Brokers don't use this yet (tokenless). The shape is
+// `req.session.buyerId` when a buyer is logged in.
+const MemoryStore = createMemoryStore(session);
+app.use(
+  session({
+    secret: process.env.SESSION_SECRET || "dev-session-secret-change-me",
+    resave: false,
+    saveUninitialized: false,
+    store: new MemoryStore({ checkPeriod: 86400000 }), // prune every 24h
+    cookie: {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === "production",
+      sameSite: "lax",
+      maxAge: 30 * 24 * 60 * 60 * 1000, // 30 days
+    },
+  }),
+);
+
+// Session type augmentation
+declare module "express-session" {
+  interface SessionData {
+    buyerId?: string;
+  }
+}
 
 app.use((req, res, next) => {
   const start = Date.now();

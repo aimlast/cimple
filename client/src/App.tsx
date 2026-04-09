@@ -29,6 +29,11 @@ import CIMDesigner from "@/pages/CIMDesigner";
 import BuyerViewRoom from "@/pages/BuyerViewRoom";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import BuyerApprovalReviewPage from "@/pages/BuyerApprovalReviewPage";
+import BuyerLogin from "@/pages/buyer/BuyerLogin";
+import BuyerSignup from "@/pages/buyer/BuyerSignup";
+import BuyerSetPassword from "@/pages/buyer/BuyerSetPassword";
+import BuyerDashboard from "@/pages/buyer/BuyerDashboard";
+import BuyerProfile from "@/pages/buyer/BuyerProfile";
 import Integrations from "@/pages/Integrations";
 
 function Routes() {
@@ -70,6 +75,8 @@ function isFullscreen(path: string) {
   if (path.startsWith("/seller/")) return true;
   if (path.startsWith("/view/")) return true;
   if (path.startsWith("/approve/")) return true;
+  if (path.startsWith("/buyer-approval/")) return true;
+  if (path.startsWith("/buyer/")) return true;
   return false;
 }
 
@@ -98,6 +105,11 @@ function FullscreenLayout() {
         <Route path="/view/:token" component={BuyerViewRoom} />
         <Route path="/approve/:token" component={SellerApprovalPage} />
         <Route path="/buyer-approval/:token" component={BuyerApprovalReviewPage} />
+        <Route path="/buyer/login" component={BuyerLogin} />
+        <Route path="/buyer/signup" component={BuyerSignup} />
+        <Route path="/buyer/set-password/:token" component={BuyerSetPassword} />
+        <Route path="/buyer/dashboard" component={BuyerDashboard} />
+        <Route path="/buyer/profile" component={BuyerProfile} />
         <Route component={NotFound} />
       </Switch>
     </div>
