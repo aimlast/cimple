@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
+import { startReminderScheduler } from "./reminders/decision-reminders";
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -64,5 +65,7 @@ app.use((req, res, next) => {
   const host = process.env.HOST || "0.0.0.0";
   server.listen(port, host, () => {
     log(`serving on port ${port}`);
+    // Start the buyer-decision reminder scheduler (runs every 6 hours)
+    startReminderScheduler();
   });
 })();

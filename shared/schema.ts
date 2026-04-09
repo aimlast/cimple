@@ -415,13 +415,20 @@ export const buyerAccess = pgTable("buyer_access", {
 
   // Buyer decision — captured from the view room
   // Defaults to "under_review" automatically. Buyer explicitly chooses interested / not_interested.
-  decision: text("decision").default("under_review"), // under_review | interested | not_interested
+  // "lapsed" = auto-assigned after extended inactivity with no explicit response.
+  decision: text("decision").default("under_review"), // under_review | interested | not_interested | lapsed
   decisionNextStep: text("decision_next_step"), // seller_call | site_visit | loi | management_meeting | other | null
   decisionReason: text("decision_reason"), // text — reason if not_interested, notes if interested
   decisionAt: timestamp("decision_at"),
   crmSyncStatus: text("crm_sync_status"), // pending | synced | failed | not_configured | null
   crmSyncError: text("crm_sync_error"),
   crmSyncedAt: timestamp("crm_synced_at"),
+
+  // Decision prompt pacing — first visit is a breathing period (no prompt),
+  // subsequent visits show the decision panel, reminder emails escalate.
+  firstViewedAt: timestamp("first_viewed_at"),
+  reminderStage: text("reminder_stage").default("none"), // none | reminder_sent | warning_sent
+  lastReminderAt: timestamp("last_reminder_at"),
 
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
@@ -1139,6 +1146,7 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   loi_submitted: { teams: ["broker"], roles: ["lead"] },
   buyer_decision_interested: { teams: ["broker"], roles: ["lead", "associate"] },
   buyer_decision_not_interested: { teams: ["broker"], roles: ["lead", "associate"] },
+  buyer_decision_lapsed: { teams: ["broker", "seller"], roles: ["lead", "associate", "owner", "representative"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")

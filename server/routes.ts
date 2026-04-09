@@ -14,6 +14,7 @@ import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 import { notify } from "./notifications/service.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
+import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS } from "@shared/schema";
 
 const anthropic = new Anthropic({
@@ -1393,6 +1394,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
     }
   });
 
+  // Admin endpoint — manually run the reminder pipeline. Also safe to hit
+  // from an external cron (Railway scheduled jobs) once per day.
+  // Protect with REMINDER_CRON_SECRET env var if set.
+  app.post("/api/admin/run-decision-reminders", async (req, res) => {
+    try {
+      const secret = process.env.REMINDER_CRON_SECRET;
+      if (secret) {
+        const provided = req.headers["x-cron-secret"] || req.query.secret;
+        if (provided !== secret) return res.status(401).json({ error: "Unauthorized" });
+      }
+      const stats = await runDecisionReminders();
+      res.json({ success: true, stats });
+    } catch (error: any) {
+      console.error("Error running reminder pipeline:", error);
+      res.status(500).json({ error: error.message || "Failed to run reminders" });
+    }
+  });
+
   app.delete("/api/buyer-access/:id", async (req, res) => {
     try {
       // Revoke access instead of hard delete
@@ -1901,10 +1920,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Increment view count if it's a view event
       if (eventData.eventType === "view") {
         const currentViewCount = buyerAccess.viewCount || 0;
-        await storage.updateBuyerAccess(buyerAccess.id, {
+        const updates: any = {
           viewCount: currentViewCount + 1,
           lastAccessedAt: new Date(),
-        });
+        };
+        // Stamp firstViewedAt on the very first view — anchors the reminder schedule
+        if (!buyerAccess.firstViewedAt) {
+          updates.firstViewedAt = new Date();
+        }
+        await storage.updateBuyerAccess(buyerAccess.id, updates);
       }
       
       res.json({ success: true, eventId: event.id });
