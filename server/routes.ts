@@ -13,7 +13,8 @@ import multer from "multer";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 import { notify } from "./notifications/service.js";
-import { TEAM_ROLES } from "@shared/schema";
+import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
+import { TEAM_ROLES, BUYER_NEXT_STEPS } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -1273,6 +1274,122 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error updating buyer access:", error);
       res.status(500).json({ error: "Failed to update buyer access" });
+    }
+  });
+
+  // =====================
+  // Buyer decision — "Interested / Not interested / Under review"
+  // =====================
+  // Called from the Buyer View Room. Records the decision, notifies the
+  // broker via email/SMS, and (when a CRM is connected) automatically
+  // updates the deal's pipeline stage in Pipedrive / HubSpot / Salesforce.
+  app.post("/api/view/:token/decision", async (req, res) => {
+    try {
+      const access = await storage.getBuyerAccessByToken(req.params.token);
+      if (!access) return res.status(404).json({ error: "Invalid token" });
+      if (access.revokedAt) return res.status(403).json({ error: "Access revoked" });
+
+      const decisionSchema = z.object({
+        decision: z.enum(["interested", "not_interested"]),
+        nextStep: z.enum(["seller_call", "management_meeting", "site_visit", "loi", "more_info", "other"]).optional().nullable(),
+        reason: z.string().max(2000).optional().nullable(),
+      });
+      const { decision, nextStep, reason } = decisionSchema.parse(req.body);
+
+      const deal = await storage.getDeal(access.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // Record the decision
+      await storage.updateBuyerAccess(access.id, {
+        decision,
+        decisionNextStep: nextStep || null,
+        decisionReason: reason || null,
+        decisionAt: new Date(),
+        crmSyncStatus: "pending",
+      } as any);
+
+      // Try CRM sync (gracefully handles not_configured)
+      let syncResult = await syncDealToCrm(deal, decision);
+
+      await storage.updateBuyerAccess(access.id, {
+        crmSyncStatus: syncResult.status,
+        crmSyncError: syncResult.status === "failed" ? syncResult.error : null,
+        crmSyncedAt: syncResult.status === "synced" ? new Date() : null,
+      } as any);
+
+      // Build broker-facing notification
+      const buyerLabel = access.buyerName
+        ? `${access.buyerName}${access.buyerCompany ? ` (${access.buyerCompany})` : ""}`
+        : access.buyerEmail;
+
+      const decisionTitle = decision === "interested"
+        ? `${buyerLabel} is interested in moving forward`
+        : `${buyerLabel} has declined to move forward`;
+
+      const nextStepLabel = nextStep
+        ? (BUYER_NEXT_STEPS.find(s => s.value === nextStep)?.label || nextStep)
+        : null;
+
+      const crmProvider = await getConnectedCrmProvider(deal.brokerId);
+      const crmMessage = syncResult.status === "synced"
+        ? describeCrmAction(syncResult.provider, decision)
+        : syncResult.status === "failed"
+        ? `CRM auto-update failed (${crmProviderLabel(syncResult.provider)}): ${syncResult.error}. Please update your pipeline manually.`
+        : crmProvider
+        ? describeCrmAction(crmProvider, decision)
+        : "No CRM is connected — connect Pipedrive, HubSpot or Salesforce in Settings to enable automatic pipeline updates.";
+
+      // Compose email body
+      const bodyParts: string[] = [];
+      bodyParts.push(
+        `<strong>${buyerLabel}</strong> has finished reviewing the ${deal.businessName} CIM and has shared their decision.`,
+      );
+      if (decision === "interested") {
+        bodyParts.push(
+          `<br/><br/><strong>Decision:</strong> Interested in moving forward.`,
+        );
+        if (nextStepLabel) {
+          bodyParts.push(`<br/><strong>Requested next step:</strong> ${nextStepLabel}`);
+        }
+      } else {
+        bodyParts.push(
+          `<br/><br/><strong>Decision:</strong> Not interested in moving forward.`,
+        );
+      }
+      if (reason) {
+        const safeReason = reason.replace(/</g, "&lt;").replace(/>/g, "&gt;");
+        bodyParts.push(`<br/><br/><em>Buyer comment:</em> &ldquo;${safeReason}&rdquo;`);
+      }
+      bodyParts.push(`<br/><br/><strong>CRM update:</strong> ${crmMessage}`);
+
+      const eventType = decision === "interested"
+        ? "buyer_decision_interested"
+        : "buyer_decision_not_interested";
+
+      await notify(deal.id, eventType, {
+        title: decisionTitle,
+        body: bodyParts.join(""),
+        actionUrl: `/deal/${deal.id}`,
+        businessName: deal.businessName,
+        metadata: {
+          buyerAccessId: access.id,
+          decision,
+          nextStep,
+          crmSyncStatus: syncResult.status,
+          crmProvider: syncResult.status !== "not_configured" ? (syncResult as any).provider : null,
+        },
+      });
+
+      res.json({
+        success: true,
+        decision,
+        nextStep,
+        crmSync: syncResult,
+        crmMessage,
+      });
+    } catch (error: any) {
+      console.error("Error recording buyer decision:", error);
+      res.status(400).json({ error: error.message || "Failed to record decision" });
     }
   });
 

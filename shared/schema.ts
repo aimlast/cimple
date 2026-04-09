@@ -413,6 +413,16 @@ export const buyerAccess = pgTable("buyer_access", {
   matchScore: integer("match_score"), // 0-100
   matchBreakdown: jsonb("match_breakdown"), // { criteria: score } detail
 
+  // Buyer decision — captured from the view room
+  // Defaults to "under_review" automatically. Buyer explicitly chooses interested / not_interested.
+  decision: text("decision").default("under_review"), // under_review | interested | not_interested
+  decisionNextStep: text("decision_next_step"), // seller_call | site_visit | loi | management_meeting | other | null
+  decisionReason: text("decision_reason"), // text — reason if not_interested, notes if interested
+  decisionAt: timestamp("decision_at"),
+  crmSyncStatus: text("crm_sync_status"), // pending | synced | failed | not_configured | null
+  crmSyncError: text("crm_sync_error"),
+  crmSyncedAt: timestamp("crm_synced_at"),
+
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
 
@@ -1127,4 +1137,26 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   deal_update: { teams: ["broker", "seller"] },
   invite: { teams: ["broker", "seller", "buyer"] },
   loi_submitted: { teams: ["broker"], roles: ["lead"] },
+  buyer_decision_interested: { teams: ["broker"], roles: ["lead", "associate"] },
+  buyer_decision_not_interested: { teams: ["broker"], roles: ["lead", "associate"] },
 };
+
+// Buyer decision next-step options (shown after "interested in moving forward")
+export const BUYER_NEXT_STEPS = [
+  { value: "seller_call", label: "Introductory call with the seller" },
+  { value: "management_meeting", label: "Management meeting" },
+  { value: "site_visit", label: "On-site visit / tour" },
+  { value: "loi", label: "Submit a Letter of Intent (LOI)" },
+  { value: "more_info", label: "Request additional information" },
+  { value: "other", label: "Other — I'll describe below" },
+] as const;
+
+// CRM stage mapping config — stored on integrations.config
+// e.g. { pipedrive: { pipelineId: 1, stageInterested: 5, stageLost: 99 } }
+export interface CrmStageMapping {
+  pipelineId?: number | string;
+  stageInterested?: number | string;  // e.g. "Buyer/Seller Meeting"
+  stageNotInterested?: number | string; // e.g. "Lost"
+  stageLoi?: number | string;
+  dealFieldMapping?: Record<string, string>;
+}

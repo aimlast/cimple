@@ -24,6 +24,7 @@ import {
   TrendingUp, ChevronDown, ChevronUp, Edit3, Save,
   BarChart3, Users, Briefcase, Rocket, AlertTriangle,
   CheckCircle2, XCircle, MinusCircle, Brain, Loader2,
+  ThumbsUp, ThumbsDown, Clock,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { BUYER_CRITERIA_SECTIONS } from "@shared/schema";
@@ -71,6 +72,11 @@ interface MatchResult {
   matchScore: number | null;
   breakdown: MatchBreakdown | null;
   noCriteria?: boolean;
+  decision?: "under_review" | "interested" | "not_interested" | null;
+  decisionNextStep?: string | null;
+  decisionReason?: string | null;
+  decisionAt?: string | null;
+  crmSyncStatus?: string | null;
 }
 
 const BUYER_TYPES = [
@@ -99,6 +105,21 @@ const CAT_LABELS: Record<string, string> = {
 };
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+function decisionBadge(decision?: string | null): { label: string; color: string; Icon: typeof ThumbsUp } | null {
+  switch (decision) {
+    case "interested":
+      return { label: "Interested", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", Icon: ThumbsUp };
+    case "not_interested":
+      return { label: "Declined", color: "bg-rose-500/15 text-rose-400 border-rose-500/30", Icon: ThumbsDown };
+    case "under_review":
+    case null:
+    case undefined:
+      return { label: "Under Review", color: "bg-amber-500/10 text-amber-400/80 border-amber-500/20", Icon: Clock };
+    default:
+      return null;
+  }
+}
+
 function scoreColor(score: number): string {
   if (score >= 70) return "text-emerald-400";
   if (score >= 45) return "text-amber-400";
@@ -146,7 +167,10 @@ export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
   const activeBuyers = (buyers || []).filter((b: any) => !b.revokedAt);
 
   // Use either fresh match results or existing stored scores
-  const displayData: MatchResult[] = results || activeBuyers.map((b: any) => ({
+  // Enrich match results with decision data from buyers list (even when
+  // using fresh match results from /match-buyers).
+  const buyerById = new Map<string, any>(activeBuyers.map((b: any) => [b.id, b]));
+  const baseDisplay: MatchResult[] = results || activeBuyers.map((b: any) => ({
     buyerId: b.id,
     buyerName: b.buyerName || "Unknown",
     buyerEmail: b.buyerEmail,
@@ -158,6 +182,17 @@ export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
     breakdown: b.matchBreakdown as MatchBreakdown | null,
     noCriteria: !b.buyerCriteria || Object.keys(b.buyerCriteria || {}).length === 0,
   }));
+  const displayData: MatchResult[] = baseDisplay.map((m) => {
+    const b = buyerById.get(m.buyerId);
+    return {
+      ...m,
+      decision: b?.decision || "under_review",
+      decisionNextStep: b?.decisionNextStep || null,
+      decisionReason: b?.decisionReason || null,
+      decisionAt: b?.decisionAt || null,
+      crmSyncStatus: b?.crmSyncStatus || null,
+    };
+  });
 
   const sorted = [...displayData].sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
@@ -218,6 +253,17 @@ export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
                 <div className="flex items-center gap-1.5 shrink-0">
                   {buyer.prequalified && <Shield className="h-3 w-3 text-emerald-400" aria-label="Prequalified" />}
                   {buyer.proofOfFunds && <DollarSign className="h-3 w-3 text-emerald-400" aria-label="Proof of funds" />}
+                  {(() => {
+                    const db = decisionBadge(buyer.decision);
+                    if (!db) return null;
+                    const DIcon = db.Icon;
+                    return (
+                      <Badge variant="outline" className={`text-2xs gap-1 ${db.color}`}>
+                        <DIcon className="h-2.5 w-2.5" />
+                        {db.label}
+                      </Badge>
+                    );
+                  })()}
                   <Badge variant="outline" className={`text-2xs ${badge.color}`}>
                     {badge.label}
                   </Badge>
@@ -228,6 +274,41 @@ export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
               {/* Expanded breakdown */}
               {isExpanded && (
                 <div className="border-t border-border p-2.5 space-y-3">
+                  {/* Buyer decision block */}
+                  {buyer.decision && buyer.decision !== "under_review" && (
+                    <div className="rounded-md bg-muted/20 border border-border p-2 space-y-1">
+                      <div className="flex items-center justify-between">
+                        <p className="text-2xs font-medium text-muted-foreground uppercase tracking-wide">Buyer decision</p>
+                        {buyer.crmSyncStatus === "synced" && (
+                          <span className="text-2xs text-emerald-400 flex items-center gap-1">
+                            <CheckCircle2 className="h-2.5 w-2.5" /> CRM synced
+                          </span>
+                        )}
+                        {buyer.crmSyncStatus === "failed" && (
+                          <span className="text-2xs text-rose-400 flex items-center gap-1" title="Update your CRM manually">
+                            <AlertTriangle className="h-2.5 w-2.5" /> CRM sync failed
+                          </span>
+                        )}
+                        {buyer.crmSyncStatus === "not_configured" && (
+                          <span className="text-2xs text-muted-foreground/60">No CRM connected</span>
+                        )}
+                      </div>
+                      {buyer.decisionNextStep && (
+                        <p className="text-2xs">
+                          <span className="text-muted-foreground">Next step: </span>
+                          <span className="text-foreground">{buyer.decisionNextStep.replace(/_/g, " ")}</span>
+                        </p>
+                      )}
+                      {buyer.decisionReason && (
+                        <p className="text-2xs text-muted-foreground italic">&ldquo;{buyer.decisionReason}&rdquo;</p>
+                      )}
+                      {buyer.decisionAt && (
+                        <p className="text-2xs text-muted-foreground/60">
+                          {new Date(buyer.decisionAt).toLocaleDateString()} · {new Date(buyer.decisionAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                        </p>
+                      )}
+                    </div>
+                  )}
                   {bd && bd.criteriaTested > 0 ? (
                     <>
                       {/* Score summary */}
