@@ -71,6 +71,7 @@ export interface IStorage {
   createBuyerAccess(access: InsertBuyerAccess): Promise<BuyerAccess>;
   getBuyerAccessByToken(token: string): Promise<BuyerAccess | undefined>;
   getBuyerAccessByDeal(dealId: string): Promise<BuyerAccess[]>;
+  getBuyerAccessUnderReview(): Promise<BuyerAccess[]>;
   updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined>;
   
   // CIM section operations
@@ -318,6 +319,7 @@ export class MemStorage implements IStorage {
   async createBuyerAccess(): Promise<BuyerAccess> { throw new Error("Use DbStorage"); }
   async getBuyerAccessByToken(): Promise<BuyerAccess | undefined> { return undefined; }
   async getBuyerAccessByDeal(): Promise<BuyerAccess[]> { return []; }
+  async getBuyerAccessUnderReview(): Promise<BuyerAccess[]> { return []; }
   async updateBuyerAccess(): Promise<BuyerAccess | undefined> { return undefined; }
   async createCimSection(): Promise<CimSection> { throw new Error("Use DbStorage"); }
   async getCimSectionsByDeal(): Promise<CimSection[]> { return []; }
@@ -546,6 +548,13 @@ export class DbStorage implements IStorage {
   async getBuyerAccessByDeal(dealId: string): Promise<BuyerAccess[]> {
     const result = await db.select().from(buyerAccess).where(eq(buyerAccess.dealId, dealId));
     return result;
+  }
+
+  async getBuyerAccessUnderReview(): Promise<BuyerAccess[]> {
+    // Active buyers who have viewed the CIM but not yet made a decision.
+    // Used by the decision-reminder pipeline to escalate outreach.
+    const result = await db.select().from(buyerAccess).where(eq(buyerAccess.decision, "under_review"));
+    return result.filter(b => !b.revokedAt && b.firstViewedAt);
   }
 
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {

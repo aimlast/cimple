@@ -32,17 +32,31 @@ const NEXT_STEPS = [
   { value: "other", label: "Other — I'll describe below" },
 ] as const;
 
-type Decision = "under_review" | "interested" | "not_interested";
+type Decision = "under_review" | "interested" | "not_interested" | "lapsed";
 type Mode = "interested" | "not_interested" | null;
 
 interface Props {
   token: string;
   currentDecision: Decision;
   businessName: string;
+  viewCount: number;
+  firstViewedAt: string | null;
   onUpdated: (decision: Decision) => void;
 }
 
-export function BuyerDecisionPanel({ token, currentDecision, businessName, onUpdated }: Props) {
+// The buyer needs room to breathe on their very first session — no prompt
+// shown immediately. The panel appears on the second visit or after the
+// buyer has spent meaningful time with the CIM on the first session.
+const BREATHING_MS = 2 * 60 * 60 * 1000; // 2 hours
+
+function shouldShowActivePanel(viewCount: number, firstViewedAt: string | null): boolean {
+  if (viewCount >= 2) return true;
+  if (!firstViewedAt) return false;
+  const elapsed = Date.now() - new Date(firstViewedAt).getTime();
+  return elapsed >= BREATHING_MS;
+}
+
+export function BuyerDecisionPanel({ token, currentDecision, businessName, viewCount, firstViewedAt, onUpdated }: Props) {
   const [mode, setMode] = useState<Mode>(null);
   const [nextStep, setNextStep] = useState<string>("seller_call");
   const [comment, setComment] = useState("");
@@ -50,7 +64,8 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, onUpd
   const [error, setError] = useState<string | null>(null);
 
   const status = currentDecision || "under_review";
-  const isFinal = status === "interested" || status === "not_interested";
+  const isFinal = status === "interested" || status === "not_interested" || status === "lapsed";
+  const showActive = status === "under_review" && shouldShowActivePanel(viewCount, firstViewedAt);
 
   async function submit() {
     if (!mode) return;
@@ -82,33 +97,38 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, onUpd
 
   // ── Final state display ──────────────────────────────────────────────
   if (isFinal) {
+    const iconBg = status === "interested" ? "bg-emerald-500/10" : status === "lapsed" ? "bg-muted/40" : "bg-rose-500/10";
+    const iconColor = status === "interested" ? "text-emerald-500" : status === "lapsed" ? "text-muted-foreground" : "text-rose-500";
+    const Icon = status === "interested" ? CheckCircle2 : status === "lapsed" ? Clock : XCircle;
+    const title = status === "interested"
+      ? "Thank you — the broker has been notified"
+      : status === "lapsed"
+      ? "This opportunity has lapsed"
+      : "Thank you for letting us know";
+    const body = status === "interested"
+      ? `You have indicated that you are interested in moving forward with ${businessName}. The broker has been notified and will reach out shortly to coordinate next steps.`
+      : status === "lapsed"
+      ? `Because no decision was recorded within the review window, this opportunity has been marked as lapsed. If you'd still like to explore ${businessName}, please reach out to the broker directly.`
+      : `You have indicated that ${businessName} is not a fit at this time. We appreciate your time and consideration.`;
+
     return (
       <div className="max-w-3xl mx-auto my-12 p-8 rounded-xl border border-border bg-card">
         <div className="flex items-start gap-4">
-          {status === "interested" ? (
-            <div className="h-12 w-12 rounded-full bg-emerald-500/10 flex items-center justify-center shrink-0">
-              <CheckCircle2 className="h-6 w-6 text-emerald-500" />
-            </div>
-          ) : (
-            <div className="h-12 w-12 rounded-full bg-rose-500/10 flex items-center justify-center shrink-0">
-              <XCircle className="h-6 w-6 text-rose-500" />
-            </div>
-          )}
+          <div className={`h-12 w-12 rounded-full ${iconBg} flex items-center justify-center shrink-0`}>
+            <Icon className={`h-6 w-6 ${iconColor}`} />
+          </div>
           <div>
-            <h3 className="text-lg font-semibold text-foreground">
-              {status === "interested"
-                ? "Thank you — the broker has been notified"
-                : "Thank you for letting us know"}
-            </h3>
-            <p className="text-sm text-muted-foreground mt-1 leading-relaxed">
-              {status === "interested"
-                ? `You have indicated that you are interested in moving forward with ${businessName}. The broker has been notified and will reach out shortly to coordinate next steps.`
-                : `You have indicated that ${businessName} is not a fit at this time. We appreciate your time and consideration.`}
-            </p>
+            <h3 className="text-lg font-semibold text-foreground">{title}</h3>
+            <p className="text-sm text-muted-foreground mt-1 leading-relaxed">{body}</p>
           </div>
         </div>
       </div>
     );
+  }
+
+  // ── Breathing room on first visit — no prompt shown ───────────────────
+  if (!showActive) {
+    return null;
   }
 
   // ── Default "under review" state ──────────────────────────────────────

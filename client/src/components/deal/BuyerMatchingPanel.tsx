@@ -111,6 +111,8 @@ function decisionBadge(decision?: string | null): { label: string; color: string
       return { label: "Interested", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30", Icon: ThumbsUp };
     case "not_interested":
       return { label: "Declined", color: "bg-rose-500/15 text-rose-400 border-rose-500/30", Icon: ThumbsDown };
+    case "lapsed":
+      return { label: "Lapsed", color: "bg-muted/40 text-muted-foreground border-border", Icon: Clock };
     case "under_review":
     case null:
     case undefined:
