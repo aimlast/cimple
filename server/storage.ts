@@ -20,10 +20,11 @@ import {
   type Discrepancy, type InsertDiscrepancy,
   type DealMember, type InsertDealMember,
   type Notification, type InsertNotification,
+  type BuyerApprovalRequest, type InsertBuyerApprovalRequest,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
-  dealMembers, notifications
+  dealMembers, notifications, buyerApprovalRequests
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -171,6 +172,13 @@ export interface IStorage {
   getNotificationsByRecipient(recipientId: string): Promise<Notification[]>;
   getNotificationsByDeal(dealId: string): Promise<Notification[]>;
   markNotificationRead(id: string): Promise<void>;
+
+  // Buyer approval workflow
+  createBuyerApprovalRequest(data: InsertBuyerApprovalRequest): Promise<BuyerApprovalRequest>;
+  getBuyerApprovalRequest(id: string): Promise<BuyerApprovalRequest | undefined>;
+  getBuyerApprovalRequestByToken(token: string): Promise<BuyerApprovalRequest | undefined>;
+  getBuyerApprovalRequestsByDeal(dealId: string): Promise<BuyerApprovalRequest[]>;
+  updateBuyerApprovalRequest(id: string, updates: Partial<InsertBuyerApprovalRequest>): Promise<BuyerApprovalRequest | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -381,6 +389,13 @@ export class MemStorage implements IStorage {
   async getNotificationsByRecipient(): Promise<Notification[]> { return []; }
   async getNotificationsByDeal(): Promise<Notification[]> { return []; }
   async markNotificationRead(): Promise<void> {}
+
+  // Buyer approval stubs
+  async createBuyerApprovalRequest(): Promise<BuyerApprovalRequest> { throw new Error("Not implemented"); }
+  async getBuyerApprovalRequest(): Promise<BuyerApprovalRequest | undefined> { return undefined; }
+  async getBuyerApprovalRequestByToken(): Promise<BuyerApprovalRequest | undefined> { return undefined; }
+  async getBuyerApprovalRequestsByDeal(): Promise<BuyerApprovalRequest[]> { return []; }
+  async updateBuyerApprovalRequest(): Promise<BuyerApprovalRequest | undefined> { return undefined; }
 }
 
 export class DbStorage implements IStorage {
@@ -1054,6 +1069,36 @@ export class DbStorage implements IStorage {
     await db.update(notifications)
       .set({ readAt: new Date() })
       .where(eq(notifications.id, id));
+  }
+
+  // ── Buyer approval workflow ────────────────────────────────────────
+  async createBuyerApprovalRequest(data: InsertBuyerApprovalRequest): Promise<BuyerApprovalRequest> {
+    const result = await db.insert(buyerApprovalRequests).values(data).returning();
+    return result[0];
+  }
+
+  async getBuyerApprovalRequest(id: string): Promise<BuyerApprovalRequest | undefined> {
+    const result = await db.select().from(buyerApprovalRequests).where(eq(buyerApprovalRequests.id, id));
+    return result[0];
+  }
+
+  async getBuyerApprovalRequestByToken(token: string): Promise<BuyerApprovalRequest | undefined> {
+    const result = await db.select().from(buyerApprovalRequests).where(eq(buyerApprovalRequests.sellerReviewToken, token));
+    return result[0];
+  }
+
+  async getBuyerApprovalRequestsByDeal(dealId: string): Promise<BuyerApprovalRequest[]> {
+    return db.select().from(buyerApprovalRequests)
+      .where(eq(buyerApprovalRequests.dealId, dealId))
+      .orderBy(desc(buyerApprovalRequests.createdAt));
+  }
+
+  async updateBuyerApprovalRequest(id: string, updates: Partial<InsertBuyerApprovalRequest>): Promise<BuyerApprovalRequest | undefined> {
+    const result = await db.update(buyerApprovalRequests)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(buyerApprovalRequests.id, id))
+      .returning();
+    return result[0];
   }
 }
 

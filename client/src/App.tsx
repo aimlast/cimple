@@ -28,6 +28,7 @@ import SellerInviteIntake from "@/pages/SellerInviteIntake";
 import CIMDesigner from "@/pages/CIMDesigner";
 import BuyerViewRoom from "@/pages/BuyerViewRoom";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
+import BuyerApprovalReviewPage from "@/pages/BuyerApprovalReviewPage";
 import Integrations from "@/pages/Integrations";
 
 function Routes() {
@@ -96,6 +97,7 @@ function FullscreenLayout() {
         <Route path="/seller/documents" component={SellerDocuments} />
         <Route path="/view/:token" component={BuyerViewRoom} />
         <Route path="/approve/:token" component={SellerApprovalPage} />
+        <Route path="/buyer-approval/:token" component={BuyerApprovalReviewPage} />
         <Route component={NotFound} />
       </Switch>
     </div>

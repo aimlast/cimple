@@ -23,6 +23,44 @@ import type { DealMember } from "@shared/schema";
 
 // ── Email provider (Resend) ──────────────────────────────────────────────
 
+export async function sendDirectEmail(
+  to: string,
+  subject: string,
+  html: string,
+  cc?: string[],
+): Promise<boolean> {
+  const apiKey = process.env.RESEND_API_KEY;
+  if (!apiKey) {
+    console.log(`[notify:email] (no RESEND_API_KEY) → ${to}${cc?.length ? ` (cc: ${cc.join(", ")})` : ""}: ${subject}`);
+    return false;
+  }
+  try {
+    const res = await fetch("https://api.resend.com/emails", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify({
+        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.app>",
+        to: [to],
+        cc: cc && cc.length > 0 ? cc : undefined,
+        subject,
+        html,
+      }),
+    });
+    if (!res.ok) {
+      console.error(`[notify:email] Failed to send to ${to}:`, await res.text());
+      return false;
+    }
+    console.log(`[notify:email] Sent to ${to}${cc?.length ? ` cc ${cc.join(",")}` : ""}: ${subject}`);
+    return true;
+  } catch (err) {
+    console.error(`[notify:email] Error:`, err);
+    return false;
+  }
+}
+
 async function sendEmail(to: string, subject: string, html: string): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {

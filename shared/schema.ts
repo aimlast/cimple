@@ -1147,6 +1147,11 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_decision_interested: { teams: ["broker"], roles: ["lead", "associate"] },
   buyer_decision_not_interested: { teams: ["broker"], roles: ["lead", "associate"] },
   buyer_decision_lapsed: { teams: ["broker", "seller"], roles: ["lead", "associate", "owner", "representative"] },
+  // Buyer approval workflow
+  buyer_approval_requested: { teams: ["broker"], roles: ["lead"] },
+  buyer_approval_broker_approved: { teams: ["seller"], roles: ["owner", "representative"] },
+  buyer_approval_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
+  buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -1167,4 +1172,154 @@ export interface CrmStageMapping {
   stageNotInterested?: number | string; // e.g. "Lost"
   stageLoi?: number | string;
   dealFieldMapping?: Record<string, string>;
+}
+
+// =====================
+// BUYER APPROVAL WORKFLOW
+// =====================
+// Two-stage approval workflow: broker (any deal member) submits a prospective
+// buyer → lead broker reviews → seller reviews → buyer is auto-granted CIM
+// access. The sell-side broker, buy-side broker, and buyer are all CC'd on
+// the final invite so everyone stays in sync.
+
+export const BUYER_CATEGORIES = [
+  // High risk — confidentiality-sensitive
+  { value: "direct_competitor", label: "Direct Competitor", riskLevel: "high",
+    description: "Competes directly on product/service in the same geography." },
+  { value: "indirect_competitor", label: "Indirect Competitor", riskLevel: "high",
+    description: "Serves the same customers with a different product, or competes in an adjacent segment." },
+
+  // Medium risk — industry insiders, potentially strategic
+  { value: "strategic_acquirer", label: "Strategic Acquirer (Adjacent)", riskLevel: "medium",
+    description: "Operates in an adjacent or similar industry with clear synergy rationale." },
+  { value: "pe_with_portfolio", label: "Private Equity — Portfolio in Space", riskLevel: "medium",
+    description: "PE firm that already owns or previously owned businesses in this industry." },
+  { value: "corporate_development", label: "Corporate Development (Non-Direct)", riskLevel: "medium",
+    description: "Corp dev team from a large company exploring tangential M&A." },
+  { value: "international", label: "International Acquirer", riskLevel: "medium",
+    description: "Foreign buyer entering the domestic market." },
+
+  // Lower risk — financial / unrelated
+  { value: "pe_generalist", label: "Private Equity — Generalist", riskLevel: "low",
+    description: "Generalist PE firm with no direct industry overlap." },
+  { value: "family_office", label: "Family Office", riskLevel: "low",
+    description: "Family office investing directly." },
+  { value: "search_fund", label: "Search Fund / ETA Buyer", riskLevel: "low",
+    description: "Individual or small team pursuing Entrepreneurship Through Acquisition." },
+  { value: "individual_strategic", label: "Individual — Industry Operator", riskLevel: "low",
+    description: "Individual buyer with operating experience in this or a related industry." },
+  { value: "individual_financial", label: "Individual — Financial Buyer", riskLevel: "low",
+    description: "Individual buyer with no industry operating background." },
+  { value: "independent_sponsor", label: "Independent Sponsor", riskLevel: "low",
+    description: "Independent sponsor / fundless sponsor raising capital deal-by-deal." },
+  { value: "holdco", label: "Holding Company", riskLevel: "low",
+    description: "Long-hold holdco or permanent capital vehicle." },
+  { value: "other", label: "Other", riskLevel: "medium",
+    description: "Doesn't fit the standard categories." },
+] as const;
+
+export type BuyerCategory = typeof BUYER_CATEGORIES[number]["value"];
+
+// Financial capability structure stored as JSONB
+export interface BuyerFinancialCapability {
+  liquidFunds?: string;             // e.g. "$2M–$5M"
+  annualIncome?: string;
+  investmentSizeTarget?: string;    // e.g. "$5M–$20M"
+  hasProofOfFunds?: boolean;
+  sourceOfFunds?: string;           // e.g. "Personal savings + SBA loan"
+  prequalifiedForFinancing?: boolean;
+  notes?: string;
+}
+
+// A business partner (co-buyer) attached to a buyer approval request
+export interface BuyerPartner {
+  name: string;
+  role?: string;                    // e.g. "Co-investor", "Operating partner"
+  email?: string;
+  phone?: string;
+  company?: string;
+  companyUrl?: string;
+  linkedinUrl?: string;
+  background?: string;
+}
+
+export const buyerApprovalRequests = pgTable("buyer_approval_requests", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+
+  // Who submitted it (any broker team member on the deal)
+  submittedBy: varchar("submitted_by").notNull(),       // dealMembers.id
+  submittedByName: text("submitted_by_name"),
+  submittedByRole: text("submitted_by_role"),           // lead | associate | analyst | admin
+
+  // ── Buyer contact info ────────────────────────────────────────────
+  buyerName: text("buyer_name").notNull(),
+  buyerTitle: text("buyer_title"),
+  buyerEmail: text("buyer_email").notNull(),
+  buyerPhone: text("buyer_phone"),
+  buyerCompany: text("buyer_company"),
+  buyerCompanyUrl: text("buyer_company_url"),
+  linkedinUrl: text("linkedin_url"),
+  otherProfileUrls: jsonb("other_profile_urls").default(sql`'[]'::jsonb`), // string[]
+
+  // ── Classification ────────────────────────────────────────────────
+  category: text("category").notNull(),   // BuyerCategory
+  riskLevel: text("risk_level").notNull(),// high | medium | low (auto-derived from category)
+
+  // ── Background & diligence ────────────────────────────────────────
+  background: text("background"),                       // free-form broker description
+  financialCapability: jsonb("financial_capability"),   // BuyerFinancialCapability
+  partners: jsonb("partners").default(sql`'[]'::jsonb`),// BuyerPartner[]
+  isCompetitor: boolean("is_competitor").default(false),
+  competitorDetails: text("competitor_details"),
+
+  // ── NDA tracking ──────────────────────────────────────────────────
+  ndaSigned: boolean("nda_signed").default(false),
+  ndaDocumentId: varchar("nda_document_id"),            // optional link to documents table
+  ndaNotes: text("nda_notes"),
+
+  // ── CRM source ────────────────────────────────────────────────────
+  crmSource: text("crm_source"),                        // pipedrive | hubspot | salesforce | manual
+  crmRecordId: text("crm_record_id"),                   // original CRM record id
+  crmRawData: jsonb("crm_raw_data"),                    // audit trail of what was imported
+
+  // ── Workflow state ────────────────────────────────────────────────
+  // pending_broker_review → approved_by_broker → pending_seller_review
+  //  → approved_by_seller → access_granted
+  //  (or: rejected_by_broker | rejected_by_seller at any point)
+  status: text("status").notNull().default("pending_broker_review"),
+
+  // Broker review (lead broker)
+  brokerReviewedBy: varchar("broker_reviewed_by"),      // dealMembers.id
+  brokerReviewedAt: timestamp("broker_reviewed_at"),
+  brokerReviewNotes: text("broker_review_notes"),
+
+  // Seller review (tokenized — no login)
+  sellerReviewToken: text("seller_review_token").unique(),
+  sellerReviewedBy: text("seller_reviewed_by"),         // email or member id
+  sellerReviewedAt: timestamp("seller_reviewed_at"),
+  sellerReviewNotes: text("seller_review_notes"),
+
+  rejectionReason: text("rejection_reason"),
+
+  // Once approved, this links to the granted buyerAccess row
+  grantedBuyerAccessId: varchar("granted_buyer_access_id"),
+  grantedAt: timestamp("granted_at"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertBuyerApprovalRequestSchema = createInsertSchema(buyerApprovalRequests).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertBuyerApprovalRequest = z.infer<typeof insertBuyerApprovalRequestSchema>;
+export type BuyerApprovalRequest = typeof buyerApprovalRequests.$inferSelect;
+
+// Helper to look up risk level for a category
+export function riskLevelForCategory(category: string): "high" | "medium" | "low" {
+  const match = BUYER_CATEGORIES.find((c) => c.value === category);
+  return (match?.riskLevel as "high" | "medium" | "low") || "medium";
 }
