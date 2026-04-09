@@ -12,10 +12,11 @@ import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
-import { notify } from "./notifications/service.js";
+import { notify, sendDirectEmail } from "./notifications/service.js";
+import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -1409,6 +1410,338 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (error: any) {
       console.error("Error running reminder pipeline:", error);
       res.status(500).json({ error: error.message || "Failed to run reminders" });
+    }
+  });
+
+  // =====================================================================
+  // BUYER APPROVAL WORKFLOW
+  // =====================================================================
+  // Any broker with deal access can submit a prospective buyer profile.
+  // Flow: submit → lead broker review → seller review (tokenized) →
+  //       buyerAccess auto-created + invite emailed (CC both brokers).
+  // CRM search/prefill feeds into the submit dialog UI.
+
+  // Category list (for UI dropdowns)
+  app.get("/api/buyer-categories", async (_req, res) => {
+    res.json(BUYER_CATEGORIES);
+  });
+
+  // CRM autocomplete search — returns multiple lightweight results
+  app.get("/api/deals/:dealId/buyer-search", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const q = String(req.query.q || "");
+      const results = await searchBuyersInCrm(deal.brokerId, q);
+      res.json({ results });
+    } catch (error: any) {
+      console.error("Error searching CRM buyers:", error);
+      res.status(500).json({ error: "Failed to search CRM" });
+    }
+  });
+
+  // CRM deep prefill — single record, full Claude-parsed profile + files
+  app.post("/api/deals/:dealId/buyer-prefill", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const query = String(req.body?.query || req.body?.recordId || "");
+      if (!query) return res.status(400).json({ error: "query or recordId required" });
+      const result = await prefillBuyerFromCrm(deal.brokerId, query);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error prefilling buyer:", error);
+      res.status(500).json({ error: "Failed to prefill buyer" });
+    }
+  });
+
+  // List approval requests for a deal
+  app.get("/api/deals/:dealId/buyer-approvals", async (req, res) => {
+    try {
+      const requests = await storage.getBuyerApprovalRequestsByDeal(req.params.dealId);
+      res.json(requests);
+    } catch (error: any) {
+      console.error("Error listing buyer approvals:", error);
+      res.status(500).json({ error: "Failed to list buyer approvals" });
+    }
+  });
+
+  // Get one approval request
+  app.get("/api/buyer-approvals/:id", async (req, res) => {
+    try {
+      const request = await storage.getBuyerApprovalRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Not found" });
+      res.json(request);
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to fetch buyer approval" });
+    }
+  });
+
+  // Submit a new buyer approval request
+  app.post("/api/deals/:dealId/buyer-approvals", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const body = req.body || {};
+      const category = body.category || "other";
+      const riskLevel = body.riskLevel || riskLevelForCategory(category);
+      const isCompetitor = body.isCompetitor ?? (category === "direct_competitor" || category === "indirect_competitor");
+      const sellerReviewToken = crypto.randomUUID();
+
+      const validated = insertBuyerApprovalRequestSchema.parse({
+        dealId: req.params.dealId,
+        submittedBy: body.submittedBy || "manual",
+        submittedByName: body.submittedByName || null,
+        submittedByRole: body.submittedByRole || null,
+        buyerName: body.buyerName,
+        buyerTitle: body.buyerTitle || null,
+        buyerEmail: body.buyerEmail,
+        buyerPhone: body.buyerPhone || null,
+        buyerCompany: body.buyerCompany || null,
+        buyerCompanyUrl: body.buyerCompanyUrl || null,
+        linkedinUrl: body.linkedinUrl || null,
+        otherProfileUrls: body.otherProfileUrls || [],
+        category,
+        riskLevel,
+        background: body.background || null,
+        financialCapability: body.financialCapability || null,
+        partners: body.partners || [],
+        isCompetitor,
+        competitorDetails: body.competitorDetails || null,
+        ndaSigned: !!body.ndaSigned,
+        ndaDocumentId: body.ndaDocumentId || null,
+        ndaNotes: body.ndaNotes || null,
+        crmSource: body.crmSource || null,
+        crmRecordId: body.crmRecordId || null,
+        crmRawData: body.crmRawData || null,
+        status: "pending_broker_review",
+        sellerReviewToken,
+      });
+
+      const request = await storage.createBuyerApprovalRequest(validated);
+
+      // Notify lead broker
+      const categoryLabel = BUYER_CATEGORIES.find(c => c.value === category)?.label || category;
+      await notify(deal.id, "buyer_approval_requested", {
+        title: `Buyer approval requested — ${categoryLabel}`,
+        body:
+          `<strong>${request.buyerName}</strong>` +
+          (request.buyerCompany ? ` of <strong>${request.buyerCompany}</strong>` : "") +
+          ` has been submitted for approval on the ${deal.businessName} deal.` +
+          `<br/><br/><strong>Category:</strong> ${categoryLabel}` +
+          `<br/><strong>Risk level:</strong> ${riskLevel}` +
+          (request.submittedByName ? `<br/><strong>Submitted by:</strong> ${request.submittedByName}` : "") +
+          (request.background ? `<br/><br/>${request.background}` : ""),
+        actionUrl: `/deal/${deal.id}?approval=${request.id}`,
+        businessName: deal.businessName,
+        metadata: { approvalRequestId: request.id, category, riskLevel },
+      });
+
+      res.json(request);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid approval request", details: error.errors });
+      }
+      console.error("Error creating buyer approval:", error);
+      res.status(500).json({ error: "Failed to create buyer approval" });
+    }
+  });
+
+  // Lead broker review — approve or reject
+  app.post("/api/buyer-approvals/:id/broker-review", async (req, res) => {
+    try {
+      const request = await storage.getBuyerApprovalRequest(req.params.id);
+      if (!request) return res.status(404).json({ error: "Not found" });
+
+      const { action, reviewerName, reviewerId, notes } = req.body || {};
+      if (!["approve", "reject"].includes(action)) {
+        return res.status(400).json({ error: "action must be approve or reject" });
+      }
+
+      const deal = await storage.getDeal(request.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      if (action === "reject") {
+        const updated = await storage.updateBuyerApprovalRequest(request.id, {
+          status: "rejected",
+          brokerReviewedBy: reviewerId || null,
+          brokerReviewedAt: new Date(),
+          brokerReviewNotes: notes || null,
+          rejectionReason: notes || "Rejected by broker",
+        } as any);
+
+        await notify(deal.id, "buyer_approval_rejected", {
+          title: `Buyer approval rejected — ${request.buyerName}`,
+          body: `The buyer approval request for <strong>${request.buyerName}</strong> was rejected by the lead broker.` +
+            (notes ? `<br/><br/><em>Reason:</em> ${notes}` : ""),
+          actionUrl: `/deal/${deal.id}`,
+          businessName: deal.businessName,
+          metadata: { approvalRequestId: request.id },
+        });
+
+        return res.json(updated);
+      }
+
+      // Approve → send to seller
+      const updated = await storage.updateBuyerApprovalRequest(request.id, {
+        status: "pending_seller_review",
+        brokerReviewedBy: reviewerId || null,
+        brokerReviewedAt: new Date(),
+        brokerReviewNotes: notes || null,
+      } as any);
+
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+      const sellerReviewUrl = `${baseUrl}/buyer-approval/${request.sellerReviewToken}`;
+      const categoryLabel = BUYER_CATEGORIES.find(c => c.value === request.category)?.label || request.category;
+
+      await notify(deal.id, "buyer_approval_broker_approved", {
+        title: `Action needed: approve buyer for ${deal.businessName}`,
+        body:
+          `A new buyer has been approved by your broker and needs your final review before gaining access to the CIM.` +
+          `<br/><br/><strong>Buyer:</strong> ${request.buyerName}` +
+          (request.buyerCompany ? ` (${request.buyerCompany})` : "") +
+          `<br/><strong>Type:</strong> ${categoryLabel}` +
+          `<br/><strong>Risk level:</strong> ${request.riskLevel}` +
+          `<br/><br/>Click the link below to review the full profile and approve or decline.`,
+        actionUrl: sellerReviewUrl,
+        businessName: deal.businessName,
+        metadata: { approvalRequestId: request.id, reviewToken: request.sellerReviewToken },
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error in broker review:", error);
+      res.status(500).json({ error: "Failed to process broker review" });
+    }
+  });
+
+  // Public tokenized endpoint — seller fetches request for review (no login)
+  app.get("/api/buyer-approval-review/:token", async (req, res) => {
+    try {
+      const request = await storage.getBuyerApprovalRequestByToken(req.params.token);
+      if (!request) return res.status(404).json({ error: "Invalid or expired link" });
+      if (request.status !== "pending_seller_review" && request.status !== "approved_by_seller" && request.status !== "access_granted") {
+        return res.status(403).json({ error: "This approval link is no longer active" });
+      }
+      const deal = await storage.getDeal(request.dealId);
+      const branding = deal?.brokerId ? await storage.getBrandingByBroker(deal.brokerId) : null;
+      res.json({
+        request,
+        deal: deal ? { id: deal.id, businessName: deal.businessName } : null,
+        branding: branding ?? null,
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to load review" });
+    }
+  });
+
+  // Seller review — approve or reject (tokenized, public)
+  app.post("/api/buyer-approval-review/:token", async (req, res) => {
+    try {
+      const request = await storage.getBuyerApprovalRequestByToken(req.params.token);
+      if (!request) return res.status(404).json({ error: "Invalid token" });
+      if (request.status !== "pending_seller_review") {
+        return res.status(403).json({ error: "This request is no longer pending review" });
+      }
+
+      const { action, reviewerName, notes } = req.body || {};
+      if (!["approve", "reject"].includes(action)) {
+        return res.status(400).json({ error: "action must be approve or reject" });
+      }
+
+      const deal = await storage.getDeal(request.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      if (action === "reject") {
+        const updated = await storage.updateBuyerApprovalRequest(request.id, {
+          status: "rejected",
+          sellerReviewedBy: reviewerName || null,
+          sellerReviewedAt: new Date(),
+          sellerReviewNotes: notes || null,
+          rejectionReason: notes || "Declined by seller",
+        } as any);
+
+        await notify(deal.id, "buyer_approval_rejected", {
+          title: `Seller declined buyer — ${request.buyerName}`,
+          body: `The seller has declined the buyer approval for <strong>${request.buyerName}</strong>.` +
+            (notes ? `<br/><br/><em>Reason:</em> ${notes}` : ""),
+          actionUrl: `/deal/${deal.id}`,
+          businessName: deal.businessName,
+          metadata: { approvalRequestId: request.id },
+        });
+
+        return res.json(updated);
+      }
+
+      // Approve → create buyer access + send invite email with CCs
+      const accessToken = crypto.randomUUID();
+      const buyerAccess = await storage.createBuyerAccess({
+        dealId: deal.id,
+        accessToken,
+        buyerEmail: request.buyerEmail,
+        buyerName: request.buyerName || null,
+        buyerCompany: request.buyerCompany || null,
+        accessLevel: "full",
+        expiresAt: null,
+      } as any);
+
+      const updated = await storage.updateBuyerApprovalRequest(request.id, {
+        status: "access_granted",
+        sellerReviewedBy: reviewerName || null,
+        sellerReviewedAt: new Date(),
+        sellerReviewNotes: notes || null,
+        grantedBuyerAccessId: buyerAccess.id,
+        grantedAt: new Date(),
+      } as any);
+
+      // Build invite email with CCs to both brokers
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+      const viewUrl = `${baseUrl}/view/${accessToken}`;
+
+      // Gather broker emails for CC (lead + submitter)
+      const members = await storage.getDealMembers(deal.id);
+      const brokerEmails = members
+        .filter(m => m.teamType === "broker" && m.email)
+        .map(m => m.email as string);
+      const ccList = Array.from(new Set(brokerEmails));
+
+      const inviteHtml = `
+        <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+          <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been granted access to a confidential business overview</h2>
+          <p>Hello${request.buyerName ? ` ${request.buyerName}` : ""},</p>
+          <p>You've been approved to view the confidential information memorandum for <strong>${deal.businessName}</strong>.</p>
+          <p>Click the secure link below to review the opportunity. You'll be asked to sign an NDA before gaining access.</p>
+          <p style="margin: 32px 0;">
+            <a href="${viewUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">View CIM</a>
+          </p>
+          <p style="color: #888; font-size: 12px;">This link is confidential and should not be forwarded. Access is tied to your email address.</p>
+        </div>
+      `;
+
+      await sendDirectEmail(
+        request.buyerEmail,
+        `Access granted: ${deal.businessName} — Confidential Business Overview`,
+        inviteHtml,
+        ccList,
+      );
+
+      // Also notify broker team that access was granted
+      await notify(deal.id, "buyer_approval_seller_approved", {
+        title: `Buyer approved & granted access — ${request.buyerName}`,
+        body:
+          `The seller has approved <strong>${request.buyerName}</strong>` +
+          (request.buyerCompany ? ` of <strong>${request.buyerCompany}</strong>` : "") +
+          `. An invite email has been sent to ${request.buyerEmail} with both brokers CC'd.`,
+        actionUrl: `/deal/${deal.id}`,
+        businessName: deal.businessName,
+        metadata: { approvalRequestId: request.id, buyerAccessId: buyerAccess.id },
+      });
+
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error in seller review:", error);
+      res.status(500).json({ error: "Failed to process seller review" });
     }
   });
 
