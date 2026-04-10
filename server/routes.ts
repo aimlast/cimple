@@ -18,7 +18,7 @@ import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -42,6 +42,47 @@ const CIM_SECTION_PROMPTS: Record<string, string> = {
   financials:       "Financial Summary — revenue profile, profitability context, SDE or EBITDA framing, growth trend over recent years, what financial documentation is available for due diligence",
   asking_price:     "Asking Price & Deal Terms — asking price, deal structure options, financing considerations, inventory and working capital position, key terms",
 };
+
+// Simple CSV parser — handles quoted fields, commas inside quotes, escaped
+// double quotes ("" → "), and Windows/Unix line endings. Not RFC-perfect
+// but good enough for broker contact imports.
+function parseCsv(text: string): string[][] {
+  const rows: string[][] = [];
+  let row: string[] = [];
+  let field = "";
+  let inQuotes = false;
+  const src = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+  for (let i = 0; i < src.length; i++) {
+    const c = src[i];
+    if (inQuotes) {
+      if (c === '"') {
+        if (src[i + 1] === '"') { field += '"'; i++; }
+        else { inQuotes = false; }
+      } else {
+        field += c;
+      }
+    } else {
+      if (c === '"') {
+        inQuotes = true;
+      } else if (c === ",") {
+        row.push(field);
+        field = "";
+      } else if (c === "\n") {
+        row.push(field);
+        rows.push(row);
+        row = [];
+        field = "";
+      } else {
+        field += c;
+      }
+    }
+  }
+  if (field.length > 0 || row.length > 0) {
+    row.push(field);
+    rows.push(row);
+  }
+  return rows.filter(r => r.length > 0);
+}
 
 async function generateSectionWithClaude(
   businessName: string,
@@ -164,6 +205,801 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err: any) {
       console.error("Buyer user search error:", err);
       res.status(500).json({ error: "Search failed" });
+    }
+  });
+
+  // ────────────────────────────────────────────────────────────────────
+  // Broker Buyer Contacts — the broker's personal contact list
+  // ────────────────────────────────────────────────────────────────────
+
+  // List all buyer contacts for a broker
+  app.get("/api/broker/buyers", async (req, res) => {
+    try {
+      const brokerId = String(req.query.brokerId || "default-broker");
+      const list = await storage.getBrokerBuyerContactList(brokerId);
+      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
+
+      res.json({
+        buyers: list.map(({ buyerUser, contact, dealCount, lastActivityAt }) => {
+          // Profile-only composite score (no deal context — match-fit weight
+          // is redistributed across profile/engagement/proofOfFunds).
+          const score = calculateQualifiedLeadScore({ buyer: buyerUser });
+          return {
+            id: buyerUser.id,
+            email: buyerUser.email,
+            name: buyerUser.name,
+            phone: buyerUser.phone,
+            company: buyerUser.company,
+            title: buyerUser.title,
+            linkedinUrl: buyerUser.linkedinUrl,
+            buyerType: buyerUser.buyerType,
+            background: buyerUser.background,
+            liquidFunds: buyerUser.liquidFunds,
+            hasProofOfFunds: buyerUser.hasProofOfFunds,
+            targetIndustries: buyerUser.targetIndustries,
+            targetLocations: buyerUser.targetLocations,
+            profileCompletionPct: buyerUser.profileCompletionPct,
+            source: contact?.source ?? buyerUser.source ?? "deal",
+            tags: contact?.tags ?? [],
+            notes: contact?.notes ?? null,
+            contactId: contact?.id ?? null,
+            addedAt: contact?.addedAt ?? buyerUser.createdAt,
+            dealCount,
+            lastActivityAt,
+            qualifiedScore: {
+              total: score.total,
+              tier: score.tier,
+              reasons: score.reasons,
+            },
+          };
+        }),
+      });
+    } catch (err: any) {
+      console.error("Error fetching broker buyer list:", err);
+      res.status(500).json({ error: "Failed to fetch buyer list" });
+    }
+  });
+
+  // Get details for a single buyer (for detail drawer)
+  app.get("/api/broker/buyers/:buyerId", async (req, res) => {
+    try {
+      const brokerId = String(req.query.brokerId || "default-broker");
+      const buyer = await storage.getBuyerUser(req.params.buyerId);
+      if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+
+      const contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
+
+      // List all buyerAccess rows for this buyer, then filter to those
+      // on the broker's deals.
+      const allAccesses = await storage.getBuyerAccessByBuyerUser(buyer.id);
+      const dealsWithAccess: Array<{ dealId: string; businessName: string; lastAccessedAt: Date | null; viewCount: number | null; decision: string | null; }> = [];
+      for (const a of allAccesses) {
+        const deal = await storage.getDeal(a.dealId);
+        if (!deal || deal.brokerId !== brokerId) continue;
+        dealsWithAccess.push({
+          dealId: deal.id,
+          businessName: deal.businessName,
+          lastAccessedAt: a.lastAccessedAt,
+          viewCount: a.viewCount ?? 0,
+          decision: a.decision ?? null,
+        });
+      }
+
+      res.json({
+        buyer: {
+          id: buyer.id,
+          email: buyer.email,
+          name: buyer.name,
+          phone: buyer.phone,
+          company: buyer.company,
+          title: buyer.title,
+          linkedinUrl: buyer.linkedinUrl,
+          buyerType: buyer.buyerType,
+          background: buyer.background,
+          liquidFunds: buyer.liquidFunds,
+          hasProofOfFunds: buyer.hasProofOfFunds,
+          targetIndustries: buyer.targetIndustries,
+          targetLocations: buyer.targetLocations,
+          buyerCriteria: buyer.buyerCriteria,
+          profileCompletionPct: buyer.profileCompletionPct,
+          source: contact?.source ?? buyer.source,
+          createdAt: buyer.createdAt,
+          lastLoginAt: buyer.lastLoginAt,
+        },
+        contact: contact ? {
+          id: contact.id,
+          tags: contact.tags,
+          notes: contact.notes,
+          source: contact.source,
+          addedAt: contact.addedAt,
+        } : null,
+        deals: dealsWithAccess,
+      });
+    } catch (err: any) {
+      console.error("Error fetching buyer detail:", err);
+      res.status(500).json({ error: "Failed to fetch buyer detail" });
+    }
+  });
+
+  // Manually add a single buyer (form flow)
+  app.post("/api/broker/buyers", async (req, res) => {
+    try {
+      const schema = z.object({
+        brokerId: z.string().default("default-broker"),
+        email: z.string().email(),
+        name: z.string().min(1),
+        phone: z.string().optional().nullable(),
+        company: z.string().optional().nullable(),
+        title: z.string().optional().nullable(),
+        linkedinUrl: z.string().optional().nullable(),
+        buyerType: z.string().optional().nullable(),
+        targetIndustries: z.array(z.string()).optional(),
+        targetLocations: z.array(z.string()).optional(),
+        liquidFunds: z.string().optional().nullable(),
+        hasProofOfFunds: z.boolean().optional(),
+        notes: z.string().optional().nullable(),
+        tags: z.array(z.string()).optional(),
+        sendInvite: z.boolean().default(false),
+      });
+      const body = schema.parse(req.body);
+
+      const normalizedEmail = body.email.toLowerCase().trim();
+      let buyerUser = await storage.getBuyerUserByEmail(normalizedEmail);
+
+      if (buyerUser) {
+        // Existing buyer — update profile fields only if they're empty (don't overwrite)
+        const updates: Partial<BuyerUser> = {};
+        if (!buyerUser.phone && body.phone) updates.phone = body.phone;
+        if (!buyerUser.company && body.company) updates.company = body.company;
+        if (!buyerUser.title && body.title) updates.title = body.title;
+        if (!buyerUser.linkedinUrl && body.linkedinUrl) updates.linkedinUrl = body.linkedinUrl;
+        if (!buyerUser.buyerType && body.buyerType) updates.buyerType = body.buyerType;
+        if (!buyerUser.liquidFunds && body.liquidFunds) updates.liquidFunds = body.liquidFunds;
+        if (body.targetIndustries && body.targetIndustries.length > 0 && (!buyerUser.targetIndustries || (buyerUser.targetIndustries as string[]).length === 0)) {
+          updates.targetIndustries = body.targetIndustries as any;
+        }
+        if (body.targetLocations && body.targetLocations.length > 0 && (!buyerUser.targetLocations || (buyerUser.targetLocations as string[]).length === 0)) {
+          updates.targetLocations = body.targetLocations as any;
+        }
+        if (Object.keys(updates).length > 0) {
+          buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+        }
+      } else if (body.sendInvite) {
+        // Create via invite flow (sends set-password email)
+        const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+        const host = (req.headers["x-forwarded-host"] as string) || req.get("host");
+        const baseUrl = process.env.APP_URL || `${proto}://${host}`;
+        const invited = await inviteBuyerUser({
+          email: normalizedEmail,
+          name: body.name,
+          phone: body.phone ?? null,
+          company: body.company ?? null,
+          title: body.title ?? null,
+          linkedinUrl: body.linkedinUrl ?? null,
+          invitedByBroker: body.brokerId,
+          baseUrl,
+        });
+        buyerUser = invited.user;
+        // Backfill any extra fields the invite path doesn't set
+        const extraUpdates: Partial<BuyerUser> = {};
+        if (body.buyerType) extraUpdates.buyerType = body.buyerType;
+        if (body.liquidFunds) extraUpdates.liquidFunds = body.liquidFunds;
+        if (body.hasProofOfFunds !== undefined) extraUpdates.hasProofOfFunds = body.hasProofOfFunds;
+        if (body.targetIndustries && body.targetIndustries.length > 0) extraUpdates.targetIndustries = body.targetIndustries as any;
+        if (body.targetLocations && body.targetLocations.length > 0) extraUpdates.targetLocations = body.targetLocations as any;
+        if (Object.keys(extraUpdates).length > 0) {
+          buyerUser = await storage.updateBuyerUser(buyerUser.id, extraUpdates);
+        }
+      } else {
+        // Create a buyer row without sending an invite email
+        buyerUser = await storage.createBuyerUser({
+          email: normalizedEmail,
+          passwordHash: null,
+          name: body.name,
+          phone: body.phone ?? null,
+          company: body.company ?? null,
+          title: body.title ?? null,
+          linkedinUrl: body.linkedinUrl ?? null,
+          buyerCriteria: {},
+          targetIndustries: (body.targetIndustries ?? []) as any,
+          targetLocations: (body.targetLocations ?? []) as any,
+          buyerType: body.buyerType ?? null,
+          background: null,
+          liquidFunds: body.liquidFunds ?? null,
+          hasProofOfFunds: body.hasProofOfFunds ?? false,
+          profileCompletionPct: 0,
+          emailVerified: false,
+          source: "broker_invited",
+          invitedByBroker: body.brokerId,
+          invitedByDeal: null,
+          resetToken: null,
+          resetTokenExpiresAt: null,
+        } as any);
+      }
+
+      if (!buyerUser) {
+        return res.status(500).json({ error: "Failed to create or find buyer" });
+      }
+
+      const contact = await storage.upsertBrokerBuyerContact({
+        brokerId: body.brokerId,
+        buyerUserId: buyerUser.id,
+        source: "manual",
+        tags: (body.tags ?? []) as any,
+        notes: body.notes ?? null,
+      });
+
+      res.json({ buyerUser, contact });
+    } catch (err: any) {
+      if (err.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid buyer data", details: err.errors });
+      }
+      console.error("Error creating broker buyer contact:", err);
+      res.status(500).json({ error: "Failed to create buyer" });
+    }
+  });
+
+  // Bulk import via CSV
+  app.post("/api/broker/buyers/import-csv", async (req, res) => {
+    try {
+      const schema = z.object({
+        brokerId: z.string().default("default-broker"),
+        csv: z.string().min(1),
+        sendInvites: z.boolean().default(false),
+      });
+      const body = schema.parse(req.body);
+
+      // Parse CSV — naive but handles quoted fields
+      const rows = parseCsv(body.csv);
+      if (rows.length === 0) {
+        return res.status(400).json({ error: "CSV is empty" });
+      }
+      const header = rows[0].map(h => h.trim().toLowerCase().replace(/[\s_-]/g, ""));
+      const emailIdx = header.findIndex(h => h === "email" || h === "emailaddress");
+      if (emailIdx === -1) {
+        return res.status(400).json({ error: "CSV must include an 'email' column" });
+      }
+      const col = (name: string) => header.findIndex(h => h === name);
+      const idx = {
+        email: emailIdx,
+        name: col("name") !== -1 ? col("name") : col("fullname"),
+        phone: col("phone"),
+        company: col("company"),
+        title: col("title"),
+        linkedinUrl: col("linkedinurl") !== -1 ? col("linkedinurl") : col("linkedin"),
+        buyerType: col("buyertype") !== -1 ? col("buyertype") : col("type"),
+        targetIndustries: col("targetindustries") !== -1 ? col("targetindustries") : col("industries"),
+        targetLocations: col("targetlocations") !== -1 ? col("targetlocations") : col("locations"),
+        liquidFunds: col("liquidfunds"),
+        hasProofOfFunds: col("hasproofoffunds") !== -1 ? col("hasproofoffunds") : col("proofoffunds"),
+        notes: col("notes"),
+        tags: col("tags"),
+      };
+
+      const accepted: Array<{ email: string; name: string; status: "created" | "updated"; buyerUserId: string }> = [];
+      const rejected: Array<{ row: number; reason: string; raw: string[] }> = [];
+
+      const proto = (req.headers["x-forwarded-proto"] as string) || req.protocol || "https";
+      const host = (req.headers["x-forwarded-host"] as string) || req.get("host");
+      const baseUrl = process.env.APP_URL || `${proto}://${host}`;
+
+      for (let i = 1; i < rows.length; i++) {
+        const row = rows[i];
+        if (row.length === 0 || row.every(c => !c.trim())) continue;
+
+        const rawEmail = (row[idx.email] || "").trim().toLowerCase();
+        if (!rawEmail || !rawEmail.includes("@")) {
+          rejected.push({ row: i + 1, reason: "Missing or invalid email", raw: row });
+          continue;
+        }
+
+        const name = (idx.name !== -1 && row[idx.name]?.trim()) || rawEmail.split("@")[0];
+        const phone = idx.phone !== -1 ? (row[idx.phone]?.trim() || null) : null;
+        const company = idx.company !== -1 ? (row[idx.company]?.trim() || null) : null;
+        const title = idx.title !== -1 ? (row[idx.title]?.trim() || null) : null;
+        const linkedinUrl = idx.linkedinUrl !== -1 ? (row[idx.linkedinUrl]?.trim() || null) : null;
+        const buyerType = idx.buyerType !== -1 ? (row[idx.buyerType]?.trim().toLowerCase() || null) : null;
+        const liquidFunds = idx.liquidFunds !== -1 ? (row[idx.liquidFunds]?.trim() || null) : null;
+        const notes = idx.notes !== -1 ? (row[idx.notes]?.trim() || null) : null;
+
+        const splitList = (s: string | undefined) => s
+          ? s.split(/[;|]/).map(x => x.trim()).filter(Boolean)
+          : [];
+        const targetIndustries = splitList(idx.targetIndustries !== -1 ? row[idx.targetIndustries] : "");
+        const targetLocations = splitList(idx.targetLocations !== -1 ? row[idx.targetLocations] : "");
+        const tagsList = splitList(idx.tags !== -1 ? row[idx.tags] : "");
+
+        const parseBool = (v: string | undefined) => {
+          if (!v) return false;
+          const s = v.trim().toLowerCase();
+          return s === "yes" || s === "y" || s === "true" || s === "1";
+        };
+        const hasProofOfFunds = idx.hasProofOfFunds !== -1 ? parseBool(row[idx.hasProofOfFunds]) : false;
+
+        try {
+          let buyerUser = await storage.getBuyerUserByEmail(rawEmail);
+          let status: "created" | "updated" = "updated";
+
+          if (buyerUser) {
+            // Fill in any missing fields without overwriting
+            const updates: Partial<BuyerUser> = {};
+            if (!buyerUser.phone && phone) updates.phone = phone;
+            if (!buyerUser.company && company) updates.company = company;
+            if (!buyerUser.title && title) updates.title = title;
+            if (!buyerUser.linkedinUrl && linkedinUrl) updates.linkedinUrl = linkedinUrl;
+            if (!buyerUser.buyerType && buyerType) updates.buyerType = buyerType;
+            if (!buyerUser.liquidFunds && liquidFunds) updates.liquidFunds = liquidFunds;
+            if (Object.keys(updates).length > 0) {
+              buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+            }
+          } else if (body.sendInvites) {
+            const invited = await inviteBuyerUser({
+              email: rawEmail,
+              name,
+              phone,
+              company,
+              title,
+              linkedinUrl,
+              invitedByBroker: body.brokerId,
+              baseUrl,
+            });
+            buyerUser = invited.user;
+            const extra: Partial<BuyerUser> = {};
+            if (buyerType) extra.buyerType = buyerType;
+            if (liquidFunds) extra.liquidFunds = liquidFunds;
+            if (hasProofOfFunds) extra.hasProofOfFunds = hasProofOfFunds;
+            if (targetIndustries.length > 0) extra.targetIndustries = targetIndustries as any;
+            if (targetLocations.length > 0) extra.targetLocations = targetLocations as any;
+            if (Object.keys(extra).length > 0) {
+              buyerUser = await storage.updateBuyerUser(buyerUser.id, extra);
+            }
+            status = "created";
+          } else {
+            buyerUser = await storage.createBuyerUser({
+              email: rawEmail,
+              passwordHash: null,
+              name,
+              phone,
+              company,
+              title,
+              linkedinUrl,
+              buyerCriteria: {},
+              targetIndustries: targetIndustries as any,
+              targetLocations: targetLocations as any,
+              buyerType,
+              background: null,
+              liquidFunds,
+              hasProofOfFunds,
+              profileCompletionPct: 0,
+              emailVerified: false,
+              source: "broker_invited",
+              invitedByBroker: body.brokerId,
+              invitedByDeal: null,
+              resetToken: null,
+              resetTokenExpiresAt: null,
+            } as any);
+            status = "created";
+          }
+
+          if (!buyerUser) {
+            rejected.push({ row: i + 1, reason: "Failed to create buyer record", raw: row });
+            continue;
+          }
+
+          await storage.upsertBrokerBuyerContact({
+            brokerId: body.brokerId,
+            buyerUserId: buyerUser.id,
+            source: "csv",
+            tags: tagsList as any,
+            notes,
+          });
+
+          accepted.push({ email: rawEmail, name, status, buyerUserId: buyerUser.id });
+        } catch (rowErr: any) {
+          rejected.push({ row: i + 1, reason: rowErr.message || "Unknown error", raw: row });
+        }
+      }
+
+      res.json({
+        accepted,
+        rejected,
+        totalRows: rows.length - 1,
+      });
+    } catch (err: any) {
+      if (err.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid import data", details: err.errors });
+      }
+      console.error("CSV import error:", err);
+      res.status(500).json({ error: err.message || "Failed to import CSV" });
+    }
+  });
+
+  // Update a contact (tags, notes)
+  app.patch("/api/broker/buyers/:buyerId", async (req, res) => {
+    try {
+      const brokerId = String(req.query.brokerId || "default-broker");
+      const schema = z.object({
+        tags: z.array(z.string()).optional(),
+        notes: z.string().nullable().optional(),
+      });
+      const updates = schema.parse(req.body);
+
+      let contact = await storage.getBrokerBuyerContact(brokerId, req.params.buyerId);
+      if (!contact) {
+        // Auto-upsert so tags/notes can be set on buyers first seen via deal access
+        contact = await storage.upsertBrokerBuyerContact({
+          brokerId,
+          buyerUserId: req.params.buyerId,
+          source: "deal",
+          tags: [],
+          notes: null,
+        });
+      }
+
+      const updated = await storage.updateBrokerBuyerContact(contact.id, {
+        ...(updates.tags !== undefined ? { tags: updates.tags as any } : {}),
+        ...(updates.notes !== undefined ? { notes: updates.notes } : {}),
+      });
+      res.json(updated);
+    } catch (err: any) {
+      if (err.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid update", details: err.errors });
+      }
+      console.error("Error updating buyer contact:", err);
+      res.status(500).json({ error: "Failed to update contact" });
+    }
+  });
+
+  // ════════════════════════════════════════════════════════════
+  // SUGGESTED BUYERS + BROKER-CONTROLLED OUTREACH
+  // ════════════════════════════════════════════════════════════
+  // Product rule: Cimple NEVER auto-sends outreach. The broker reviews
+  // suggested buyers, picks who to contact, edits the AI-drafted message,
+  // and clicks send. The broker is always the one who initiates contact.
+
+  // Suggested buyers for a deal — runs match engine + composite scoring
+  // against the broker's full buyer contact list, ranked.
+  app.get("/api/deals/:dealId/suggested-buyers", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const { matchBuyerToDeal } = await import("./matching/engine.js");
+      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
+
+      // Pull the broker's full buyer contact list (deal-access + manual + invited)
+      const list = await storage.getBrokerBuyerContactList(deal.brokerId);
+
+      // For "exclude already contacted" filter
+      const existingOutreach = await storage.getDealOutreachByDeal(dealId);
+      const contactedBuyerIds = new Set(existingOutreach.map(o => o.buyerUserId));
+
+      // Already-granted access (don't suggest re-contacting)
+      const existingAccess = await storage.getBuyerAccessByDeal(dealId);
+      const accessBuyerIds = new Set(
+        existingAccess.filter(a => a.buyerUserId).map(a => a.buyerUserId as string),
+      );
+
+      const ANALYTICS_DIMENSION_LABELS: Record<string, string> = {
+        financialFit: "Financials",
+        industryFit: "Industry",
+        locationFit: "Location",
+        operationalFit: "Operations",
+        dealStructureFit: "Deal structure",
+        qualificationFit: "Qualification",
+      };
+      const topDimsFromBreakdown = (bd: any): string[] => {
+        if (!bd) return [];
+        const entries: Array<[string, number]> = [];
+        for (const key of Object.keys(ANALYTICS_DIMENSION_LABELS)) {
+          const cat = bd[key];
+          if (cat && cat.max > 0) {
+            const pct = (cat.score / cat.max) * 100;
+            if (pct >= 60) entries.push([ANALYTICS_DIMENSION_LABELS[key], pct]);
+          }
+        }
+        entries.sort((a, b) => b[1] - a[1]);
+        return entries.slice(0, 3).map((e) => e[0]);
+      };
+
+      // Score every buyer in parallel (skipAI for speed; broker can request
+      // a deeper rescore for the top N later if desired)
+      const scored = await Promise.all(list.map(async ({ buyerUser, contact, lastActivityAt }) => {
+        const criteria: any = {
+          ...(buyerUser.buyerCriteria as any || {}),
+          targetIndustries: buyerUser.targetIndustries || [],
+          targetLocations: buyerUser.targetLocations || [],
+        };
+
+        let breakdown: any = null;
+        try {
+          breakdown = await matchBuyerToDeal(
+            criteria,
+            {
+              industry: deal.industry || "",
+              subIndustry: (deal as any).subIndustry,
+              askingPrice: (deal as any).askingPrice,
+              extractedInfo: (deal as any).extractedInfo || {},
+            },
+            { skipAI: true },
+          );
+        } catch {}
+
+        const score = calculateQualifiedLeadScore({
+          buyer: buyerUser,
+          match: breakdown,
+        });
+
+        return {
+          buyerUserId: buyerUser.id,
+          name: buyerUser.name,
+          email: buyerUser.email,
+          company: buyerUser.company,
+          title: buyerUser.title,
+          buyerType: buyerUser.buyerType,
+          hasProofOfFunds: buyerUser.hasProofOfFunds,
+          profileCompletionPct: buyerUser.profileCompletionPct,
+          targetIndustries: buyerUser.targetIndustries,
+          source: contact?.source ?? "deal",
+          tags: contact?.tags ?? [],
+          alreadyHasAccess: accessBuyerIds.has(buyerUser.id),
+          alreadyContacted: contactedBuyerIds.has(buyerUser.id),
+          match: breakdown ? {
+            criteriaMatched: breakdown.criteriaMatched,
+            criteriaTested: breakdown.criteriaTested,
+            deterministicScore: breakdown.deterministicScore,
+            topDimensions: topDimsFromBreakdown(breakdown),
+          } : null,
+          qualifiedScore: {
+            total: score.total,
+            tier: score.tier,
+            reasons: score.reasons,
+            breakdown: score.breakdown,
+          },
+          lastActivityAt,
+        };
+      }));
+
+      // Sort: highest qualifiedScore first; ties broken by criteriaMatched
+      scored.sort((a, b) => {
+        if (b.qualifiedScore.total !== a.qualifiedScore.total) {
+          return b.qualifiedScore.total - a.qualifiedScore.total;
+        }
+        return (b.match?.criteriaMatched ?? 0) - (a.match?.criteriaMatched ?? 0);
+      });
+
+      res.json({
+        dealId,
+        businessName: deal.businessName,
+        industry: deal.industry,
+        suggested: scored,
+        totalCandidates: scored.length,
+      });
+    } catch (err: any) {
+      console.error("Error fetching suggested buyers:", err);
+      res.status(500).json({ error: "Failed to fetch suggested buyers" });
+    }
+  });
+
+  // Draft outreach emails for selected buyers (AI-generated, never sent automatically).
+  // Returns drafts in-memory; the broker reviews and edits before calling /send-outreach.
+  app.post("/api/deals/:dealId/draft-outreach", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const schema = z.object({
+        buyerUserIds: z.array(z.string()).min(1),
+        template: z.string().optional(),  // optional broker template / instructions
+      });
+      const { buyerUserIds, template } = schema.parse(req.body);
+
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const branding = await storage.getBrandingByBroker(deal.brokerId);
+      const brokerCompany = (branding as any)?.companyName || "your broker";
+
+      const extracted: any = (deal as any).extractedInfo || {};
+      const dealSummary = {
+        businessName: deal.businessName,
+        industry: deal.industry,
+        subIndustry: (deal as any).subIndustry,
+        askingPrice: (deal as any).askingPrice,
+        revenue: extracted.annualRevenue,
+        ebitda: extracted.ebitda || extracted.adjustedEbitda,
+        sde: extracted.sde,
+        location: extracted.locationSite || extracted.location,
+        description: extracted.executiveSummary || (deal as any).description,
+        yearsOperating: extracted.yearsOperating,
+      };
+
+      // Draft each email in parallel
+      const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
+        const buyer = await storage.getBuyerUser(buyerUserId);
+        if (!buyer) return null;
+
+        const buyerProfile = {
+          name: buyer.name,
+          company: buyer.company,
+          buyerType: buyer.buyerType,
+          targetIndustries: buyer.targetIndustries,
+          targetLocations: buyer.targetLocations,
+        };
+
+        // Try to use Claude Sonnet to personalise; fall back to a deterministic
+        // template if the API is unavailable.
+        let subject = `New opportunity: ${deal.businessName} (${deal.industry})`;
+        let body = "";
+
+        try {
+          const aiResp = await anthropic.messages.create({
+            model: "claude-sonnet-4-5",
+            max_tokens: 600,
+            system: `You are an M&A broker drafting a personalised, low-pressure outreach email to a qualified buyer about a new business-for-sale opportunity. The tone is professional, warm, and concise — not salesy. Always include a clear, no-pressure invitation to learn more. The broker reviews and sends, so you're drafting on their behalf, but they will edit. Return ONLY a JSON object: {"subject": "...", "body": "..."}.`,
+            messages: [{
+              role: "user",
+              content: `Draft an outreach email for this buyer about this deal.
+
+DEAL:
+${JSON.stringify(dealSummary, null, 2)}
+
+BUYER PROFILE:
+${JSON.stringify(buyerProfile, null, 2)}
+
+BROKER FIRM: ${brokerCompany}
+
+${template ? `BROKER NOTES / TEMPLATE GUIDANCE:\n${template}` : ""}
+
+Requirements:
+- Subject line: under 70 chars, mentions the industry and a key signal (size, location, or growth)
+- Body: 4–6 short paragraphs max, ~150 words
+- Reference 1–2 specific things from the buyer's profile (their target industry/location/buyer type)
+- Mention 2–3 deal highlights (revenue, growth, location, size)
+- Include a clear next-step invitation: "If you'd like a closer look, just reply and I'll set up secure access to the full overview"
+- DO NOT include the asking price unless it's clearly listed
+- DO NOT make up financial figures
+- DO NOT promise exclusivity or discounts
+- Sign off as the broker (use placeholder "[Broker name]")
+
+Return JSON only.`,
+            }],
+          });
+
+          const raw = aiResp.content[0].type === "text" ? aiResp.content[0].text : "";
+          const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
+          if (parsed.subject) subject = parsed.subject;
+          if (parsed.body) body = parsed.body;
+        } catch (aiErr) {
+          console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
+          // Deterministic fallback
+          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because ${deal.businessName} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenue ? `• Revenue: ${dealSummary.revenue}\n` : ""}${dealSummary.location ? `• Location: ${dealSummary.location}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n[Broker name]\n${brokerCompany}`;
+        }
+
+        return {
+          buyerUserId: buyer.id,
+          buyerName: buyer.name,
+          buyerEmail: buyer.email,
+          subject,
+          body,
+        };
+      }));
+
+      const validDrafts = drafts.filter((d): d is NonNullable<typeof d> => !!d);
+      res.json({ drafts: validDrafts });
+    } catch (err: any) {
+      if (err.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid request", details: err.errors });
+      }
+      console.error("Error drafting outreach:", err);
+      res.status(500).json({ error: "Failed to draft outreach" });
+    }
+  });
+
+  // Send approved outreach — broker has reviewed and edited; now actually
+  // dispatch via Resend and record in dealOutreach.
+  app.post("/api/deals/:dealId/send-outreach", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const schema = z.object({
+        outreach: z.array(z.object({
+          buyerUserId: z.string(),
+          subject: z.string().min(1),
+          body: z.string().min(1),
+          // Optional snapshot data captured at suggestion time
+          qualifiedScore: z.number().optional(),
+          matchScore: z.number().optional(),
+          topDimensions: z.array(z.string()).optional(),
+        })).min(1),
+      });
+      const { outreach } = schema.parse(req.body);
+
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const branding = await storage.getBrandingByBroker(deal.brokerId);
+      const brokerCompany = (branding as any)?.companyName || "Cimple";
+
+      const results = await Promise.all(outreach.map(async (item) => {
+        const buyer = await storage.getBuyerUser(item.buyerUserId);
+        if (!buyer) {
+          return { buyerUserId: item.buyerUserId, status: "failed", error: "Buyer not found" };
+        }
+
+        // Render plain-text body into a simple HTML wrapper
+        const htmlBody = item.body
+          .split("\n\n")
+          .map(p => `<p style="margin:0 0 16px 0;color:#333;font-size:14px;line-height:1.6;">${p.replace(/\n/g, "<br/>")}</p>`)
+          .join("");
+        const html = `
+<!DOCTYPE html>
+<html>
+<head><meta charset="utf-8"></head>
+<body style="margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,BlinkMacSystemFont,sans-serif;">
+  <div style="max-width:560px;margin:0 auto;background:#fff;padding:32px 28px;border-radius:8px;border:1px solid #e5e5e5;">
+    ${htmlBody}
+  </div>
+  <p style="text-align:center;color:#999;font-size:11px;margin-top:16px;">
+    Sent via Cimple on behalf of ${brokerCompany}
+  </p>
+</body>
+</html>`;
+
+        const sent = await sendDirectEmail(buyer.email, item.subject, html);
+
+        // Record the outreach regardless of email success — we want full audit
+        const record = await storage.createDealOutreach({
+          dealId,
+          brokerId: deal.brokerId,
+          buyerUserId: buyer.id,
+          buyerEmail: buyer.email,
+          buyerName: buyer.name,
+          qualifiedScore: item.qualifiedScore ?? null,
+          matchScore: item.matchScore ?? null,
+          topDimensions: (item.topDimensions ?? []) as any,
+          channel: "email",
+          subject: item.subject,
+          body: item.body,
+          status: sent ? "sent" : "failed",
+          sentAt: sent ? new Date() : null,
+          openedAt: null,
+          clickedAt: null,
+          repliedAt: null,
+          errorMessage: sent ? null : "Email delivery failed (check Resend configuration)",
+        });
+
+        return {
+          outreachId: record.id,
+          buyerUserId: buyer.id,
+          buyerName: buyer.name,
+          buyerEmail: buyer.email,
+          status: record.status,
+        };
+      }));
+
+      const sent = results.filter(r => r.status === "sent").length;
+      res.json({
+        sent,
+        total: results.length,
+        results,
+      });
+    } catch (err: any) {
+      if (err.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid request", details: err.errors });
+      }
+      console.error("Error sending outreach:", err);
+      res.status(500).json({ error: "Failed to send outreach" });
+    }
+  });
+
+  // Outreach history for a deal — every email the broker has sent
+  app.get("/api/deals/:dealId/outreach-history", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const history = await storage.getDealOutreachByDeal(dealId);
+      res.json({ history });
+    } catch (err: any) {
+      console.error("Error fetching outreach history:", err);
+      res.status(500).json({ error: "Failed to fetch outreach history" });
     }
   });
 
@@ -2373,6 +3209,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { dealId } = req.params;
       const { matchBuyerToDeal } = await import("./matching/engine.js");
+      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
       const [events, buyers, questions] = await Promise.all([
         storage.getAnalyticsByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
@@ -2445,15 +3282,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const buyerBreakdown = await Promise.all(buyers.map(async (b) => {
         // Pull profile if buyer has a Cimple account
         let profile: any = null;
+        let buyerUser: any = null;
         if (b.buyerUserId) {
           try {
-            const user = await storage.getBuyerUser(b.buyerUserId);
-            if (user) {
+            buyerUser = await storage.getBuyerUser(b.buyerUserId);
+            if (buyerUser) {
               profile = {
-                buyerType: user.buyerType,
-                profileCompletionPct: user.profileCompletionPct,
-                hasProofOfFunds: user.hasProofOfFunds,
-                company: user.company,
+                buyerType: buyerUser.buyerType,
+                profileCompletionPct: buyerUser.profileCompletionPct,
+                hasProofOfFunds: buyerUser.hasProofOfFunds,
+                company: buyerUser.company,
               };
             }
           } catch {}
@@ -2461,43 +3299,62 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Compute match fit if we have a profile + deal data
         let match: { criteriaMatched: number; criteriaTested: number; topDimensions: string[] } | null = null;
-        if (b.buyerUserId && deal) {
+        let fullBreakdown: any = null;
+        if (buyerUser && deal) {
           try {
-            const user = await storage.getBuyerUser(b.buyerUserId);
-            if (user) {
-              const criteria: any = {
-                ...(user.buyerCriteria as any || {}),
-                targetIndustries: user.targetIndustries || [],
-                targetLocations: user.targetLocations || [],
-              };
-              const result = await matchBuyerToDeal(
-                criteria,
-                {
-                  industry: deal.industry || "",
-                  subIndustry: (deal as any).subIndustry,
-                  askingPrice: (deal as any).askingPrice,
-                  extractedInfo: (deal as any).extractedInfo || {},
-                },
-                { skipAI: true },
-              );
-              match = {
-                criteriaMatched: result.criteriaMatched,
-                criteriaTested: result.criteriaTested,
-                topDimensions: topDimsFromBreakdown(result),
-              };
-            }
+            const criteria: any = {
+              ...(buyerUser.buyerCriteria as any || {}),
+              targetIndustries: buyerUser.targetIndustries || [],
+              targetLocations: buyerUser.targetLocations || [],
+            };
+            fullBreakdown = await matchBuyerToDeal(
+              criteria,
+              {
+                industry: deal.industry || "",
+                subIndustry: (deal as any).subIndustry,
+                askingPrice: (deal as any).askingPrice,
+                extractedInfo: (deal as any).extractedInfo || {},
+              },
+              { skipAI: true },
+            );
+            match = {
+              criteriaMatched: fullBreakdown.criteriaMatched,
+              criteriaTested: fullBreakdown.criteriaTested,
+              topDimensions: topDimsFromBreakdown(fullBreakdown),
+            };
           } catch {}
         }
 
+        // ── Composite qualified-lead score ─────────────────────────────────
+        // Combines match-fit + profile completeness + engagement + proof of
+        // funds into one broker-facing 0-100 score with hot/warm/cool/cold tier.
+        const stats = buyerStats[b.id];
+        const qualifiedScore = buyerUser ? calculateQualifiedLeadScore({
+          buyer: buyerUser,
+          match: fullBreakdown,
+          engagement: stats ? {
+            viewCount: b.viewCount ?? 0,
+            sectionsViewed: stats.sectionsEntered.size,
+            totalTimeSeconds: stats.totalSeconds,
+            questionCount: stats.questionCount,
+            ndaSigned: !!b.ndaSignedAt,
+          } : null,
+        }) : null;
+
         return {
           ...b,
-          totalTimeSeconds: buyerStats[b.id]?.totalSeconds ?? 0,
-          sectionsViewedCount: buyerStats[b.id]?.sectionsEntered.size ?? 0,
-          maxScrollDepth: buyerStats[b.id]?.maxScrollDepth ?? 0,
-          questionCount: buyerStats[b.id]?.questionCount ?? 0,
+          totalTimeSeconds: stats?.totalSeconds ?? 0,
+          sectionsViewedCount: stats?.sectionsEntered.size ?? 0,
+          maxScrollDepth: stats?.maxScrollDepth ?? 0,
+          questionCount: stats?.questionCount ?? 0,
           hasAccount: !!b.buyerUserId,
           profile,
           match,
+          qualifiedScore: qualifiedScore ? {
+            total: qualifiedScore.total,
+            tier: qualifiedScore.tier,
+            reasons: qualifiedScore.reasons,
+          } : null,
         };
       }));
 

@@ -31,7 +31,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 | AI | Anthropic Claude API — use `claude-opus-4-5` for the interview agent, `claude-sonnet-4-5` for supporting agents |
 | Notifications | Resend (email) + Twilio (SMS) — graceful console fallback when credentials absent |
 | Deployment | Railway.app (Nixpacks, NIXPACKS_NODE_VERSION=20) |
-| Auth | Session-based (brokers), token-based (sellers, buyers) |
+| Auth | Session-based (brokers + buyers via express-session/memorystore + bcryptjs), token-based (sellers, tokenized buyer view rooms) |
 
 **Live URL:** https://cimple-production.up.railway.app
 
@@ -74,6 +74,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ### Document Parsing & Extraction
 - PDF (pdf-parse), Excel .xlsx/.xls (xlsx), Word .docx/.doc (officeparser), PowerPoint .pptx/.ppt (officeparser), text/CSV/markdown (direct read)
 - Claude-powered structured extraction: maps document text to M&A-relevant fields (financials, lease/legal, employees, operations)
+- Call transcript extraction pipeline: ingests transcripts (paste/upload) and extracts to knowledge base
 - Extracted data merged additively onto deal's `extractedInfo`
 - **Files:** `server/documents/` (parser, extractor)
 
@@ -98,6 +99,52 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - Critical discrepancies block CIM generation until resolved
 - Resolved values feed back into knowledge base
 - **Files:** `server/cim/discrepancy-engine.ts`, `client/src/components/deal/DiscrepancyPanel.tsx`
+
+### Buyer Matching Engine (deep M&A criteria)
+- 49 criteria across 5 categories: financial, operational, business quality, deal structure, growth/strategic
+- Two-phase scoring: deterministic rule-based (60%) + AI qualitative via Claude Sonnet (40%)
+- Deterministic: ranges (revenue, EBITDA, SDE, asking price), margins, growth, customer concentration, employees, lease length, industry/location fit
+- AI qualitative: growth potential, competitive moat, management depth, brand strength, reason-for-sale alignment, ideal-buyer-profile fit
+- Returns `criteriaMatched` count + per-dimension breakdown for positive framing on dashboards (never letter grades)
+- `skipAI: true` option for fast batch matching (used by buyer dashboard + analytics)
+- **Files:** `server/matching/engine.ts`
+
+### Buyer Approval Workflow (Firmex-style two-stage review)
+- Submit buyer dialog with CRM autocomplete (Pipedrive primary; HubSpot/Salesforce stubs) + existing-account search
+- Pre-fill from CRM record + attached files via Claude extraction
+- Lead broker review stage (approve/reject with notes)
+- Tokenized seller review page (no login) — seller signs off before buyer gets access
+- Auto-creates buyer access + invites buyer to set password if no Cimple account
+- Risk levels (high/medium/low) based on competitor flags + financial verification
+- **Files:** `client/src/components/deal/BuyerApprovalsPanel.tsx`, `client/src/pages/SellerBuyerApprovalPage.tsx`, `server/crm/buyer-prefill.ts`
+
+### Buyer Self-Serve Accounts + Dashboard
+- Two onboarding pathways: self-signup (marketed to buyers) and broker-invited (set-password email)
+- Idempotent invite flow — `inviteBuyerUser` returns existing or creates new with reset token
+- Profile editor with sections: basic info, targets (industries/locations), financial capability, deep M&A criteria
+- Live profile completion bar with weighted scoring (`calculateBuyerProfileCompletion`)
+- Buyer dashboard shows all accessible CIMs with industry/firm/sort filters
+- **Positive match framing (non-negotiable):** raw criteria-matched count + top dimension chips, never letter grades or percentages
+- Backwards compatible — `buyerUserId` is an optional FK on `buyerAccess`, tokenless email links still work
+- **Files:** `server/buyer-auth/routes.ts`, `server/buyer-auth/dashboard.ts`, `client/src/pages/buyer/` (BuyerLogin, BuyerSignup, BuyerSetPassword, BuyerDashboard, BuyerProfile)
+
+### Buyer Decision Capture + CRM Sync
+- Buyers submit "Interested" / "Not interested" / "Need more time" decisions from the View Room
+- Decision auto-syncs to broker's connected CRM (moves deal to next stage)
+- Pipedrive: full implementation; HubSpot + Salesforce: stubs ready for credentials
+- Configurable stage mapping per provider via `integrations.config` → `CrmStageMapping`
+- Graceful degradation when no CRM connected (logs `not_configured`)
+- **Files:** `server/crm/sync.ts`
+
+### Delayed Decision Reminder Pipeline
+- Anchored to `buyerAccess.firstViewedAt`
+- Day 0 → no prompt (breathing room)
+- Day 3 → polite reminder email
+- Day 6 → warning email ("we will mark this as lapsed in 48 hours")
+- Day 8 → auto-lapse: mark `decision=lapsed`, notify broker + seller team
+- Idempotent via `reminderStage` field on `buyerAccess` — each email sent exactly once
+- Direct buyer email (bypasses team notification routing)
+- **Files:** `server/reminders/decision-reminders.ts`
 
 ### Buyer Q&A Chatbot
 - Floating chat widget on Buyer View Room
@@ -143,8 +190,8 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - Primary brand color: teal
 - Framer Motion for animations
 
-**Database schema (23 tables):**
-`users`, `deals`, `documents`, `tasks`, `interviewSessions`, `cimSections`, `cimSectionOverrides`, `cims`, `engagementInsights`, `buyerQuestions`, `sellerInvites`, `buyerAccess`, `analyticsEvents`, `faqItems`, `brandingSettings`, `integrations`, `integrationEmails`, `dealKnowledgeSources`, `financialAnalyses`, `addbackVerifications`, `discrepancies`, `dealMembers`, `notifications`
+**Database schema (25 tables):**
+`users`, `deals`, `documents`, `tasks`, `interviewSessions`, `cimSections`, `cimSectionOverrides`, `cims`, `engagementInsights`, `buyerQuestions`, `sellerInvites`, `buyerAccess`, `analyticsEvents`, `faqItems`, `brandingSettings`, `integrations`, `integrationEmails`, `dealKnowledgeSources`, `financialAnalyses`, `addbackVerifications`, `discrepancies`, `dealMembers`, `notifications`, `buyerApprovalRequests`, `buyerUsers`
 
 ---
 
@@ -260,8 +307,8 @@ Mobile app or third-party integration. Transcripts feed directly into the knowle
 **2 — Email sync** (infrastructure ready, needs OAuth secrets)
 Gmail and Outlook OAuth infrastructure exists. Needs provider credentials to activate. Parsed emails feed knowledge base.
 
-**3 — Proactive buyer matching + new-deal notifications** (engine + dashboards live)
-Matching engine and buyer-side dashboard exist. Brokers see profile-aware analytics with `match-fit × engagement` ranking. Remaining: when a broker publishes a new deal, auto-match against all buyer profiles and email buyers whose criteria hit, with positive framing ("X criteria matched").
+**3 — Proactive buyer matching + broker-approved new-deal notifications** (engine + dashboards live)
+Matching engine and buyer-side dashboard exist. Brokers see profile-aware analytics with `match-fit × engagement` ranking. Remaining: when a broker publishes a new deal, auto-match against all buyer profiles and **suggest** an email batch to qualifying buyers — broker reviews the suggested list, picks who to contact, edits the message if needed, and clicks send. **Never auto-send.** Positive framing ("X criteria matched"). Broker stays in control.
 
 **4 — Buyer scoring composites** (foundation in place)
 Composite engagement scoring exists in `BuyerComparison`. Next: incorporate match-fit + profile completeness + proof-of-funds into a single qualified-lead score per buyer.
@@ -283,6 +330,8 @@ Polish all flows, responsive design, error states, loading states.
 - **The AI model for the interview agent is `claude-opus-4-5`.** Do not downgrade this for the interview. Use `claude-sonnet-4-5` for supporting tasks.
 - **Export strategy is TBD.** Do not build PDF export until this decision is made. Default to link-based viewing (preserves analytics).
 - **Industry-specific interview intelligence (non-negotiable).** The interview agent must identify the business type, industry, and location early in every interview and use that to dynamically load industry-specific question areas on top of the standard CIM sections. Generic questions alone are not acceptable. The agent must know what information is uniquely important for each industry — for example: construction (bonding and surety, bid pipeline, current backlog, holdbacks, subcontractor relationships, licensing by trade), restaurants (lease terms, liquor licensing, health inspection history, food and labour costs), medical practices (insurance contracts, patient concentration, regulatory compliance), and so on across all industries a broker might encounter. The agent should also account for location-specific regulatory requirements (permits, licensing, compliance) that vary by province, state, or municipality. This is a core differentiator — brokers routinely miss industry-specific questions using standard templates. Cimple must not.
+- **Broker stays in control of buyer outreach.** Cimple may suggest matched buyers, draft emails, and surface qualified leads, but the broker is always the one who reviews and clicks send. Never auto-send messages to buyers on the broker's behalf. The reminder pipeline (which emails buyers from Cimple directly) is the explicit exception — those are buyer-facing platform emails, not broker outreach.
+- **Positive match framing for buyers (non-negotiable).** Matches shown to buyers must use raw criteria-matched counts and dimension chips ("3 criteria matched · Industry · Financials"). Never letter grades, never percentages, never ranks. A buyer with one match should not feel discouraged — they should see the strength they have, not the gap they don't.
 
 ---
 

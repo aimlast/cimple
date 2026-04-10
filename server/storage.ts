@@ -22,10 +22,12 @@ import {
   type Notification, type InsertNotification,
   type BuyerApprovalRequest, type InsertBuyerApprovalRequest,
   type BuyerUser, type InsertBuyerUser,
+  type BrokerBuyerContact, type InsertBrokerBuyerContact,
+  type DealOutreach, type InsertDealOutreach,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
-  dealMembers, notifications, buyerApprovalRequests, buyerUsers
+  dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -189,6 +191,13 @@ export interface IStorage {
   updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined>;
   searchBuyerUsers(query: string): Promise<BuyerUser[]>;
   getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]>;
+
+  // Deal outreach (broker-controlled buyer notifications)
+  createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach>;
+  getDealOutreach(id: string): Promise<DealOutreach | undefined>;
+  getDealOutreachByDeal(dealId: string): Promise<DealOutreach[]>;
+  getDealOutreachForBuyer(dealId: string, buyerUserId: string): Promise<DealOutreach[]>;
+  updateDealOutreach(id: string, updates: Partial<DealOutreach>): Promise<DealOutreach | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -413,6 +422,13 @@ export class MemStorage implements IStorage {
   async updateBuyerUser(): Promise<BuyerUser | undefined> { return undefined; }
   async searchBuyerUsers(): Promise<BuyerUser[]> { return []; }
   async getBuyerAccessByBuyerUser(): Promise<any[]> { return []; }
+
+  // Deal outreach (stubs — DbStorage is the real implementation)
+  async createDealOutreach(): Promise<DealOutreach> { throw new Error("Not implemented"); }
+  async getDealOutreach(): Promise<DealOutreach | undefined> { return undefined; }
+  async getDealOutreachByDeal(): Promise<DealOutreach[]> { return []; }
+  async getDealOutreachForBuyer(): Promise<DealOutreach[]> { return []; }
+  async updateDealOutreach(): Promise<DealOutreach | undefined> { return undefined; }
 }
 
 export class DbStorage implements IStorage {
@@ -1153,7 +1169,7 @@ export class DbStorage implements IStorage {
     // Case-insensitive partial match on email OR name
     const result = await db.select().from(buyerUsers).where(
       sql`LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`}`
-    ).limit(10);
+    );
     return result;
   }
 
@@ -1161,6 +1177,152 @@ export class DbStorage implements IStorage {
     return db.select().from(buyerAccess)
       .where(eq(buyerAccess.buyerUserId, buyerUserId))
       .orderBy(desc(buyerAccess.lastAccessedAt));
+  }
+
+  // ── Broker buyer contacts (broker's personal contact list) ────────
+  async createBrokerBuyerContact(data: InsertBrokerBuyerContact): Promise<BrokerBuyerContact> {
+    const result = await db.insert(brokerBuyerContacts).values(data as any).returning();
+    return result[0];
+  }
+
+  async getBrokerBuyerContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
+    const result = await db.select().from(brokerBuyerContacts).where(
+      sql`${brokerBuyerContacts.brokerId} = ${brokerId} AND ${brokerBuyerContacts.buyerUserId} = ${buyerUserId}`
+    );
+    return result[0];
+  }
+
+  async upsertBrokerBuyerContact(data: InsertBrokerBuyerContact): Promise<BrokerBuyerContact> {
+    // If a row already exists for this (broker, buyer) pair, return it unchanged.
+    // Otherwise insert a new one. This is how auto-population (via deal access)
+    // stays idempotent with manual additions and CSV imports.
+    const existing = await this.getBrokerBuyerContact(data.brokerId, data.buyerUserId);
+    if (existing) return existing;
+    return this.createBrokerBuyerContact(data);
+  }
+
+  async updateBrokerBuyerContact(
+    id: string,
+    updates: Partial<BrokerBuyerContact>,
+  ): Promise<BrokerBuyerContact | undefined> {
+    const result = await db.update(brokerBuyerContacts)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(brokerBuyerContacts.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteBrokerBuyerContact(id: string): Promise<void> {
+    await db.delete(brokerBuyerContacts).where(eq(brokerBuyerContacts.id, id));
+  }
+
+  /**
+   * Returns the broker's full contact list. Aggregates three sources:
+   *   1. Explicit entries in brokerBuyerContacts (manual, csv, crm)
+   *   2. buyerUsers linked to any buyerAccess row on one of the broker's deals
+   *   3. buyerUsers invited via invitedByBroker = this broker
+   *
+   * Deduplicated by buyerUserId. Returns buyer profile + contact metadata
+   * + quick stats (number of deals with access, last activity).
+   */
+  async getBrokerBuyerContactList(brokerId: string): Promise<Array<{
+    buyerUser: BuyerUser;
+    contact: BrokerBuyerContact | null;
+    dealCount: number;
+    lastActivityAt: Date | null;
+  }>> {
+    // Step 1: broker's deals
+    const brokerDeals = await db.select({ id: deals.id }).from(deals).where(eq(deals.brokerId, brokerId));
+    const brokerDealIds = brokerDeals.map(d => d.id);
+
+    const seen = new Map<string, { lastActivityAt: Date | null; dealCount: number }>();
+
+    // Step 2: buyers who have access to broker's deals
+    if (brokerDealIds.length > 0) {
+      const accesses = await db.select({
+        buyerUserId: buyerAccess.buyerUserId,
+        lastAccessedAt: buyerAccess.lastAccessedAt,
+        dealId: buyerAccess.dealId,
+      })
+        .from(buyerAccess)
+        .where(sql`${buyerAccess.buyerUserId} IS NOT NULL AND ${buyerAccess.dealId} IN (${sql.join(brokerDealIds.map(id => sql`${id}`), sql`, `)})`);
+
+      for (const a of accesses) {
+        if (!a.buyerUserId) continue;
+        const entry = seen.get(a.buyerUserId) ?? { lastActivityAt: null, dealCount: 0 };
+        entry.dealCount += 1;
+        if (a.lastAccessedAt && (!entry.lastActivityAt || a.lastAccessedAt > entry.lastActivityAt)) {
+          entry.lastActivityAt = a.lastAccessedAt;
+        }
+        seen.set(a.buyerUserId, entry);
+      }
+    }
+
+    // Step 3: manually added contacts (may include buyers with zero deal access yet)
+    const contacts = await db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+    const contactMap = new Map<string, BrokerBuyerContact>();
+    for (const c of contacts) {
+      contactMap.set(c.buyerUserId, c);
+      if (!seen.has(c.buyerUserId)) {
+        seen.set(c.buyerUserId, { lastActivityAt: null, dealCount: 0 });
+      }
+    }
+
+    // Step 4: buyers invited by this broker (inviteBuyerUser path)
+    const invitedBuyers = await db.select().from(buyerUsers).where(eq(buyerUsers.invitedByBroker, brokerId));
+    for (const b of invitedBuyers) {
+      if (!seen.has(b.id)) {
+        seen.set(b.id, { lastActivityAt: null, dealCount: 0 });
+      }
+    }
+
+    // Step 5: load all buyer user rows at once
+    const buyerIds = Array.from(seen.keys());
+    if (buyerIds.length === 0) return [];
+    const buyers = await db.select().from(buyerUsers).where(
+      sql`${buyerUsers.id} IN (${sql.join(buyerIds.map(id => sql`${id}`), sql`, `)})`
+    );
+
+    return buyers.map(b => {
+      const stats = seen.get(b.id)!;
+      return {
+        buyerUser: b,
+        contact: contactMap.get(b.id) ?? null,
+        dealCount: stats.dealCount,
+        lastActivityAt: stats.lastActivityAt,
+      };
+    });
+  }
+
+  // ── Deal outreach ────────────────────────────────────────────────────────
+  async createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach> {
+    const result = await db.insert(dealOutreach).values(data).returning();
+    return result[0];
+  }
+
+  async getDealOutreach(id: string): Promise<DealOutreach | undefined> {
+    const result = await db.select().from(dealOutreach).where(eq(dealOutreach.id, id));
+    return result[0];
+  }
+
+  async getDealOutreachByDeal(dealId: string): Promise<DealOutreach[]> {
+    return await db.select().from(dealOutreach)
+      .where(eq(dealOutreach.dealId, dealId))
+      .orderBy(desc(dealOutreach.createdAt));
+  }
+
+  async getDealOutreachForBuyer(dealId: string, buyerUserId: string): Promise<DealOutreach[]> {
+    return await db.select().from(dealOutreach).where(
+      sql`${dealOutreach.dealId} = ${dealId} AND ${dealOutreach.buyerUserId} = ${buyerUserId}`
+    );
+  }
+
+  async updateDealOutreach(id: string, updates: Partial<DealOutreach>): Promise<DealOutreach | undefined> {
+    const result = await db.update(dealOutreach)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dealOutreach.id, id))
+      .returning();
+    return result[0];
   }
 }
 

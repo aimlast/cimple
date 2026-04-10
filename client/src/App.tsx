@@ -35,6 +35,7 @@ import BuyerSetPassword from "@/pages/buyer/BuyerSetPassword";
 import BuyerDashboard from "@/pages/buyer/BuyerDashboard";
 import BuyerProfile from "@/pages/buyer/BuyerProfile";
 import Integrations from "@/pages/Integrations";
+import Buyers from "@/pages/Buyers";
 
 function Routes() {
   return (
@@ -44,6 +45,7 @@ function Routes() {
       <Route path="/deals" component={ActiveCIMs} />
       <Route path="/cims" component={ActiveCIMs} />
       <Route path="/analytics" component={Analytics} />
+      <Route path="/buyers" component={Buyers} />
       <Route path="/integrations" component={Integrations} />
       <Route path="/templates" component={Templates} />
       <Route path="/settings" component={Settings} />
@@ -82,7 +84,7 @@ function isFullscreen(path: string) {
 
 function BrokerLayout() {
   return (
-    <SidebarProvider style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
+    <SidebarProvider defaultOpen={false} style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
       <div className="flex h-screen w-full overflow-hidden bg-background">
         <AppSidebar />
         <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
