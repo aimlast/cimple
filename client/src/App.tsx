@@ -84,7 +84,7 @@ function isFullscreen(path: string) {
 
 function BrokerLayout() {
   return (
-    <SidebarProvider style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
+    <SidebarProvider defaultOpen={false} style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
       <div className="flex h-screen w-full overflow-hidden bg-background">
         <AppSidebar />
         <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
