@@ -12,7 +12,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CimSection } from "@shared/schema";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
 interface DdEnrichmentResult {
   cimSectionId: string;
@@ -115,7 +115,7 @@ async function enrichSection(
   const content = section.brokerEditedContent || section.aiDraftContent || "";
 
   const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 4096,
     messages: [
       {

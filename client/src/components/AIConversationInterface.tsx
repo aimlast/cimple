@@ -49,6 +49,7 @@ export function AIConversationInterface({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [suggestedAnswers, setSuggestedAnswers] = useState<string[]>([]);
+  const [selectedAnswers, setSelectedAnswers] = useState<Set<number>>(new Set());
   const [isLoading, setIsLoading] = useState(false);
   const [isStarting, setIsStarting] = useState(true);
   const [isFinished, setIsFinished] = useState(false);
@@ -239,6 +240,7 @@ export function AIConversationInterface({
     setInput("");
     inputRef.current = "";
     setSuggestedAnswers([]); // Clear chips while waiting for AI response
+    setSelectedAnswers(new Set());
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -390,24 +392,41 @@ export function AIConversationInterface({
               </div>
             )}
 
-            {/* Suggested answer chips */}
+            {/* Suggested answer chips — multi-select */}
             {suggestedAnswers.length > 0 && !isLoading && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
-                {suggestedAnswers.map((answer, idx) => (
-                  <button
-                    key={idx}
-                    onClick={() => {
-                      setInput(answer);
-                      inputRef.current = answer;
-                    }}
-                    className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-medium
-                      bg-teal/8 text-teal border border-teal/20
-                      hover:bg-teal/15 hover:border-teal/35
-                      transition-colors duration-100 cursor-pointer select-none"
-                  >
-                    {answer}
-                  </button>
-                ))}
+                {suggestedAnswers.map((answer, idx) => {
+                  const isSelected = selectedAnswers.has(idx);
+                  return (
+                    <button
+                      key={idx}
+                      onClick={() => {
+                        const next = new Set(selectedAnswers);
+                        if (isSelected) {
+                          next.delete(idx);
+                        } else {
+                          next.add(idx);
+                        }
+                        setSelectedAnswers(next);
+                        // Combine all selected answers into the input
+                        const combined = suggestedAnswers
+                          .filter((_, i) => next.has(i))
+                          .join(". ");
+                        setInput(combined);
+                        inputRef.current = combined;
+                      }}
+                      className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
+                        transition-colors duration-100 cursor-pointer select-none
+                        ${isSelected
+                          ? "bg-teal/20 text-teal border border-teal/50"
+                          : "bg-teal/8 text-teal border border-teal/20 hover:bg-teal/15 hover:border-teal/35"
+                        }`}
+                    >
+                      {isSelected && <span className="text-teal">✓</span>}
+                      {answer}
+                    </button>
+                  );
+                })}
               </div>
             )}
 

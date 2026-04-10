@@ -12,7 +12,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({ timeout: 600_000 });
 
 // ── Types ──
 

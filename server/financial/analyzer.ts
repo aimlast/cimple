@@ -18,7 +18,7 @@ import type { IStorage } from "../storage";
 import { extractFinancialData, type ExtractedStatement } from "./extractor";
 import { getComparables, type CompsResult } from "./comps";
 
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({ timeout: 600_000 });
 
 // ── Public entry point ──
 
@@ -168,7 +168,7 @@ async function runComprehensiveAnalysis(
   arAging: ExtractedStatement[],
 ): Promise<AnalysisOutput> {
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 12000,
     messages: [
       {

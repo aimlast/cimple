@@ -8,7 +8,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
 export interface DiscrepancyItem {
   field: string;
@@ -60,7 +60,7 @@ export async function runDiscrepancyCheck(
   const questionnaireData = deal.questionnaireData || {};
 
   const message = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 4096,
     messages: [
       {

@@ -13,7 +13,7 @@ import { apiRequest, queryClient } from "@/lib/queryClient";
 import type { Deal, Task, Document as DocType } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import {
-  ArrowLeft, CheckCircle2, Circle, ChevronRight, MessageSquare, FileText,
+  ArrowLeft, CheckCircle2, Circle, ChevronRight, ChevronDown, MessageSquare, FileText,
   Upload, Trash2, AlertCircle, Loader2, Globe,
   Pencil, RefreshCw, X, Check, Wand2, Mail, Phone, Database, Plug,
   Eye, Clock, ThumbsUp, ThumbsDown, Timer, ExternalLink,
@@ -1030,6 +1030,7 @@ export default function DealDetail() {
 
   const [activeTab, setActiveTab] = useState("workflow");
   const [viewPhase, setViewPhase] = useState<string | null>(null);
+  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(new Set());
 
   const deleteDoc = useMutation({
     mutationFn: async (id: string) => { await apiRequest("DELETE", `/api/documents/${id}`); },
@@ -1037,8 +1038,17 @@ export default function DealDetail() {
   });
 
   const handlePhaseClick = (key: string) => {
-    setViewPhase(key);
+    // Expand that phase and scroll to it
+    setExpandedPhases(prev => {
+      const next = new Set(prev);
+      next.add(key);
+      return next;
+    });
     setActiveTab("workflow");
+    // Scroll to the phase section after a tick
+    setTimeout(() => {
+      document.getElementById(`phase-section-${key}`)?.scrollIntoView({ behavior: "smooth", block: "start" });
+    }, 100);
   };
 
   if (isLoading || !deal) {
@@ -1056,16 +1066,22 @@ export default function DealDetail() {
     );
   }
 
-  const currentPhase = viewPhase ?? deal.phase;
+  const currentPhaseIdx = getPhaseIndex(deal.phase);
 
-  const workflowContent = () => {
-    switch (currentPhase) {
-      case "phase1_info_collection":    return <Phase1Center deal={deal} dealId={dealId!} toast={toast} />;
-      case "phase2_platform_intake":    return <Phase2Center deal={deal} dealId={dealId!} toast={toast} />;
-      case "phase3_content_creation":   return <Phase3Center deal={deal} dealId={dealId!} toast={toast} />;
-      case "phase4_design_finalization": return <Phase4Center deal={deal} dealId={dealId!} toast={toast} />;
-      default:                          return <Phase1Center deal={deal} dealId={dealId!} toast={toast} />;
-    }
+  const phaseComponents: Record<string, React.ReactNode> = {
+    phase1_info_collection: <Phase1Center deal={deal} dealId={dealId!} toast={toast} />,
+    phase2_platform_intake: <Phase2Center deal={deal} dealId={dealId!} toast={toast} />,
+    phase3_content_creation: <Phase3Center deal={deal} dealId={dealId!} toast={toast} />,
+    phase4_design_finalization: <Phase4Center deal={deal} dealId={dealId!} toast={toast} />,
+  };
+
+  const togglePhase = (key: string) => {
+    setExpandedPhases(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
   };
 
   const tabTriggerClass = "rounded-none border-b-2 border-transparent data-[state=active]:border-teal data-[state=active]:text-teal data-[state=active]:shadow-none data-[state=active]:bg-transparent px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors";
@@ -1114,10 +1130,83 @@ export default function DealDetail() {
 
         <div className="flex-1 overflow-y-auto scrollbar-thin">
 
-          {/* ── Workflow ── */}
+          {/* ── Workflow — all phases visible ── */}
           <TabsContent value="workflow" className="mt-0 outline-none">
-            <div className="max-w-4xl mx-auto px-6 py-6">
-              {workflowContent()}
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-3">
+              {PHASES.map((phase, idx) => {
+                const isCurrentPhase = deal.phase === phase.key;
+                const isComplete = currentPhaseIdx > idx;
+                const isExpanded = isCurrentPhase || expandedPhases.has(phase.key);
+                const items = phase.items(deal);
+                const doneCount = items.filter(i => i.done).length;
+
+                return (
+                  <div
+                    key={phase.key}
+                    id={`phase-section-${phase.key}`}
+                    className={`rounded-lg border transition-colors ${
+                      isCurrentPhase
+                        ? "border-teal/30 bg-card"
+                        : isComplete
+                          ? "border-border bg-card/50"
+                          : "border-border/60 bg-muted/20"
+                    }`}
+                  >
+                    {/* Phase header — always visible, clickable to expand/collapse */}
+                    <button
+                      onClick={() => !isCurrentPhase && togglePhase(phase.key)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-left ${
+                        !isCurrentPhase ? "cursor-pointer hover:bg-muted/30 transition-colors" : ""
+                      } rounded-lg`}
+                    >
+                      {/* Status icon */}
+                      {isComplete ? (
+                        <CheckCircle2 className="h-4.5 w-4.5 text-success shrink-0" />
+                      ) : isCurrentPhase ? (
+                        <div className="h-4.5 w-4.5 rounded-full border-2 border-teal bg-teal/10 flex items-center justify-center shrink-0">
+                          <div className="h-1.5 w-1.5 rounded-full bg-teal" />
+                        </div>
+                      ) : (
+                        <Circle className="h-4.5 w-4.5 text-muted-foreground/40 shrink-0" />
+                      )}
+
+                      {/* Label + progress summary */}
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className={`text-sm font-medium ${
+                            isCurrentPhase ? "text-foreground" : isComplete ? "text-foreground/80" : "text-muted-foreground"
+                          }`}>
+                            {phase.short} — {phase.label}
+                          </span>
+                          {isCurrentPhase && (
+                            <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-teal/10 text-teal">Current</span>
+                          )}
+                          {isComplete && (
+                            <span className="text-2xs font-medium px-1.5 py-0.5 rounded bg-success/10 text-success">Complete</span>
+                          )}
+                        </div>
+                        <span className="text-xs text-muted-foreground">
+                          {doneCount}/{items.length} tasks done
+                        </span>
+                      </div>
+
+                      {/* Expand/collapse indicator (not on current phase — it's always expanded) */}
+                      {!isCurrentPhase && (
+                        isExpanded
+                          ? <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
+                          : <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
+                      )}
+                    </button>
+
+                    {/* Phase content — expanded */}
+                    {isExpanded && (
+                      <div className="px-4 pb-4 pt-1 border-t border-border/50">
+                        {phaseComponents[phase.key]}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </TabsContent>
 
