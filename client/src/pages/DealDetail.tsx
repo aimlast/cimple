@@ -29,6 +29,7 @@ import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 import { BuyerComparison } from "@/components/deal/BuyerComparison";
 import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import { BuyerApprovalsPanel } from "@/components/deal/BuyerApprovalsPanel";
+import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
 import type { CimSection, BrandingSettings, Discrepancy } from "@shared/schema";
 
 /* ══════════════════════════════════════════════
@@ -1283,6 +1284,9 @@ function RightPanel({
         {tab === "analytics" && (
           <div className="space-y-4">
             <DealAnalyticsWidget dealId={dealId} />
+            <div className="pt-3 border-t border-border">
+              <SuggestedBuyersPanel dealId={dealId} />
+            </div>
             <div className="pt-3 border-t border-border">
               <BuyerApprovalsPanel dealId={dealId} />
             </div>

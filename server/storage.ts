@@ -23,10 +23,11 @@ import {
   type BuyerApprovalRequest, type InsertBuyerApprovalRequest,
   type BuyerUser, type InsertBuyerUser,
   type BrokerBuyerContact, type InsertBrokerBuyerContact,
+  type DealOutreach, type InsertDealOutreach,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
-  dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts
+  dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -190,6 +191,13 @@ export interface IStorage {
   updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined>;
   searchBuyerUsers(query: string): Promise<BuyerUser[]>;
   getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]>;
+
+  // Deal outreach (broker-controlled buyer notifications)
+  createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach>;
+  getDealOutreach(id: string): Promise<DealOutreach | undefined>;
+  getDealOutreachByDeal(dealId: string): Promise<DealOutreach[]>;
+  getDealOutreachForBuyer(dealId: string, buyerUserId: string): Promise<DealOutreach[]>;
+  updateDealOutreach(id: string, updates: Partial<DealOutreach>): Promise<DealOutreach | undefined>;
 }
 
 export class MemStorage implements IStorage {
@@ -414,6 +422,13 @@ export class MemStorage implements IStorage {
   async updateBuyerUser(): Promise<BuyerUser | undefined> { return undefined; }
   async searchBuyerUsers(): Promise<BuyerUser[]> { return []; }
   async getBuyerAccessByBuyerUser(): Promise<any[]> { return []; }
+
+  // Deal outreach (stubs — DbStorage is the real implementation)
+  async createDealOutreach(): Promise<DealOutreach> { throw new Error("Not implemented"); }
+  async getDealOutreach(): Promise<DealOutreach | undefined> { return undefined; }
+  async getDealOutreachByDeal(): Promise<DealOutreach[]> { return []; }
+  async getDealOutreachForBuyer(): Promise<DealOutreach[]> { return []; }
+  async updateDealOutreach(): Promise<DealOutreach | undefined> { return undefined; }
 }
 
 export class DbStorage implements IStorage {
@@ -1277,6 +1292,37 @@ export class DbStorage implements IStorage {
         lastActivityAt: stats.lastActivityAt,
       };
     });
+  }
+
+  // ── Deal outreach ────────────────────────────────────────────────────────
+  async createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach> {
+    const result = await db.insert(dealOutreach).values(data).returning();
+    return result[0];
+  }
+
+  async getDealOutreach(id: string): Promise<DealOutreach | undefined> {
+    const result = await db.select().from(dealOutreach).where(eq(dealOutreach.id, id));
+    return result[0];
+  }
+
+  async getDealOutreachByDeal(dealId: string): Promise<DealOutreach[]> {
+    return await db.select().from(dealOutreach)
+      .where(eq(dealOutreach.dealId, dealId))
+      .orderBy(desc(dealOutreach.createdAt));
+  }
+
+  async getDealOutreachForBuyer(dealId: string, buyerUserId: string): Promise<DealOutreach[]> {
+    return await db.select().from(dealOutreach).where(
+      sql`${dealOutreach.dealId} = ${dealId} AND ${dealOutreach.buyerUserId} = ${buyerUserId}`
+    );
+  }
+
+  async updateDealOutreach(id: string, updates: Partial<DealOutreach>): Promise<DealOutreach | undefined> {
+    const result = await db.update(dealOutreach)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dealOutreach.id, id))
+      .returning();
+    return result[0];
   }
 }
 

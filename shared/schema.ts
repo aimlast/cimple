@@ -1441,3 +1441,61 @@ export const insertBrokerBuyerContactSchema = createInsertSchema(brokerBuyerCont
 });
 export type InsertBrokerBuyerContact = z.infer<typeof insertBrokerBuyerContactSchema>;
 export type BrokerBuyerContact = typeof brokerBuyerContacts.$inferSelect;
+
+// ────────────────────────────────────────────────────────────────────
+// Deal Outreach
+// ────────────────────────────────────────────────────────────────────
+// Tracks every broker-initiated outreach to a buyer for a specific deal.
+//
+// Two key product rules drive this table:
+//   1. Cimple NEVER auto-sends outreach. A row is only created with
+//      status = "sent" when the broker explicitly clicks send. Drafts
+//      stay as status = "draft" until then.
+//   2. Each row records the rendered subject + body so brokers can audit
+//      what was actually sent (post-edit).
+//
+// Lifecycle: draft → sent → opened (optional) → clicked (optional) → replied (optional)
+
+export const dealOutreach = pgTable("deal_outreach", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  buyerUserId: varchar("buyer_user_id").notNull(),
+
+  // Snapshot of buyer info at time of outreach (so history is stable
+  // even if the buyer record changes later)
+  buyerEmail: text("buyer_email").notNull(),
+  buyerName: text("buyer_name").notNull(),
+
+  // Match snapshot — captures why we suggested this buyer
+  qualifiedScore: integer("qualified_score"),         // 0-100 composite at suggestion time
+  matchScore: integer("match_score"),                  // 0-100 deep match at suggestion time
+  topDimensions: jsonb("top_dimensions").default(sql`'[]'::jsonb`), // string[]
+
+  // Email content
+  channel: text("channel").notNull().default("email"),  // email | sms (future)
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+
+  // Lifecycle
+  status: text("status").notNull().default("draft"),
+  // draft | sent | opened | clicked | replied | bounced | failed
+  sentAt: timestamp("sent_at"),
+  openedAt: timestamp("opened_at"),
+  clickedAt: timestamp("clicked_at"),
+  repliedAt: timestamp("replied_at"),
+
+  // Failure tracking
+  errorMessage: text("error_message"),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertDealOutreachSchema = createInsertSchema(dealOutreach).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertDealOutreach = z.infer<typeof insertDealOutreachSchema>;
+export type DealOutreach = typeof dealOutreach.$inferSelect;

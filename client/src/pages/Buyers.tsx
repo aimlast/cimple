@@ -34,6 +34,8 @@ import {
 } from "lucide-react";
 
 // ── Types ──────────────────────────────────────────────────────────────────
+type Tier = "hot" | "warm" | "cool" | "cold";
+
 interface BuyerRow {
   id: string;
   email: string;
@@ -56,7 +58,19 @@ interface BuyerRow {
   addedAt: string;
   dealCount: number;
   lastActivityAt: string | null;
+  qualifiedScore: {
+    total: number;
+    tier: Tier;
+    reasons: string[];
+  };
 }
+
+const TIER_STYLES: Record<Tier, { bg: string; label: string }> = {
+  hot:  { bg: "bg-red-500/15 text-red-400 border-red-500/30",       label: "Hot" },
+  warm: { bg: "bg-orange-500/15 text-orange-400 border-orange-500/30", label: "Warm" },
+  cool: { bg: "bg-sky-500/15 text-sky-400 border-sky-500/30",          label: "Cool" },
+  cold: { bg: "bg-muted/30 text-muted-foreground border-border",       label: "Cold" },
+};
 
 interface BuyerDetail {
   buyer: BuyerRow & { buyerCriteria: Record<string, any> | null; createdAt: string; lastLoginAt: string | null };
@@ -237,6 +251,7 @@ export default function Buyers() {
                     <TableHead className="text-xs">Name</TableHead>
                     <TableHead className="text-xs">Company</TableHead>
                     <TableHead className="text-xs">Type</TableHead>
+                    <TableHead className="text-xs">Score</TableHead>
                     <TableHead className="text-xs">Profile</TableHead>
                     <TableHead className="text-xs">Source</TableHead>
                     <TableHead className="text-xs">Deals</TableHead>
@@ -264,6 +279,19 @@ export default function Buyers() {
                         {b.buyerType ? (
                           <Badge variant="outline" className="text-xs font-normal">
                             {BUYER_TYPE_LABELS[b.buyerType] ?? b.buyerType}
+                          </Badge>
+                        ) : (
+                          <span className="text-xs text-muted-foreground">—</span>
+                        )}
+                      </TableCell>
+                      <TableCell>
+                        {b.qualifiedScore ? (
+                          <Badge
+                            variant="outline"
+                            className={`text-2xs font-normal ${TIER_STYLES[b.qualifiedScore.tier].bg}`}
+                            title={b.qualifiedScore.reasons.join(" · ")}
+                          >
+                            {TIER_STYLES[b.qualifiedScore.tier].label} · {b.qualifiedScore.total}
                           </Badge>
                         ) : (
                           <span className="text-xs text-muted-foreground">—</span>

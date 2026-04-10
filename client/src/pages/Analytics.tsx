@@ -40,6 +40,8 @@ interface SectionEngagement {
   viewerCount: number;
 }
 
+type Tier = "hot" | "warm" | "cool" | "cold";
+
 interface BuyerBreakdown extends BuyerAccess {
   totalTimeSeconds: number;
   sectionsViewedCount: number;
@@ -58,7 +60,19 @@ interface BuyerBreakdown extends BuyerAccess {
     criteriaTested: number;
     topDimensions: string[];  // ["Industry", "Financials", ...]
   } | null;
+  qualifiedScore: {
+    total: number;
+    tier: Tier;
+    reasons: string[];
+  } | null;
 }
+
+const TIER_STYLES: Record<Tier, { bg: string; label: string }> = {
+  hot:  { bg: "bg-red-500/15 text-red-400 border-red-500/30",          label: "Hot" },
+  warm: { bg: "bg-orange-500/15 text-orange-400 border-orange-500/30", label: "Warm" },
+  cool: { bg: "bg-sky-500/15 text-sky-400 border-sky-500/30",          label: "Cool" },
+  cold: { bg: "bg-muted/30 text-muted-foreground border-border",       label: "Cold" },
+};
 
 const BUYER_TYPE_LABELS: Record<string, string> = {
   individual: "Individual",
@@ -471,6 +485,7 @@ export default function Analytics() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Buyer</TableHead>
+                      <TableHead>Lead score</TableHead>
                       <TableHead>Profile</TableHead>
                       <TableHead>Match fit</TableHead>
                       <TableHead className="text-right">Time</TableHead>
@@ -495,6 +510,19 @@ export default function Analytics() {
                           <p className="text-xs text-muted-foreground">
                             {b.profile?.company || b.buyerCompany || b.buyerEmail}
                           </p>
+                        </TableCell>
+                        <TableCell>
+                          {b.qualifiedScore ? (
+                            <Badge
+                              variant="outline"
+                              className={`text-[10px] font-normal ${TIER_STYLES[b.qualifiedScore.tier].bg}`}
+                              title={b.qualifiedScore.reasons.join(" · ")}
+                            >
+                              {TIER_STYLES[b.qualifiedScore.tier].label} · {b.qualifiedScore.total}
+                            </Badge>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">—</span>
+                          )}
                         </TableCell>
                         <TableCell>
                           {b.profile ? (
