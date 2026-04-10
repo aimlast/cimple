@@ -1106,37 +1106,56 @@ export default function DealDetail() {
 
           {/* ── Workflow ── */}
           <TabsContent value="workflow" className="mt-0 outline-none">
-            <div className="max-w-3xl mx-auto px-5 py-6">
+            <div className="max-w-4xl mx-auto px-6 py-6">
               {workflowContent()}
             </div>
           </TabsContent>
 
           {/* ── Buyers ── */}
           <TabsContent value="buyers" className="mt-0 outline-none">
-            <div className="px-5 py-6">
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-                <div className="space-y-6">
-                  <SuggestedBuyersPanel dealId={dealId!} />
-                  <BuyerApprovalsPanel dealId={dealId!} />
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-8">
+              {/* Pending Approvals — action items first */}
+              <section>
+                <div className="mb-3">
+                  <h2 className="text-base font-semibold">Pending Approvals</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Buyers awaiting broker and seller sign-off before CIM access.</p>
+                </div>
+                <BuyerApprovalsPanel dealId={dealId!} />
+              </section>
+
+              {/* AI Outreach — proactive suggestions */}
+              <section className="pt-4 border-t border-border">
+                <div className="mb-3">
+                  <h2 className="text-base font-semibold">Suggested Outreach</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">AI-ranked buyers by qualified-lead score. Select buyers to draft and send outreach emails.</p>
+                </div>
+                <SuggestedBuyersPanel dealId={dealId!} />
+              </section>
+
+              {/* Research tools */}
+              <section className="pt-4 border-t border-border">
+                <div className="mb-3">
+                  <h2 className="text-base font-semibold">Buyer Research</h2>
+                  <p className="text-sm text-muted-foreground mt-0.5">Search, match, and compare potential buyers for this deal.</p>
                 </div>
                 <div className="space-y-6">
                   <BuyerMatchingPanel dealId={dealId!} />
                   <BuyerComparison dealId={dealId!} />
                 </div>
-              </div>
+              </section>
             </div>
           </TabsContent>
 
           {/* ── Financials ── */}
           <TabsContent value="financials" className="mt-0 outline-none">
-            <div className="px-5 py-6">
+            <div className="px-6 py-6">
               <FinancialAnalysisCenter dealId={dealId!} />
             </div>
           </TabsContent>
 
           {/* ── Documents ── */}
           <TabsContent value="documents" className="mt-0 outline-none">
-            <div className="max-w-4xl mx-auto px-5 py-6 space-y-6">
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
               <DocumentUploadCard dealId={dealId!} toast={toast} />
 
               {documents.length > 0 && (
@@ -1188,7 +1207,7 @@ export default function DealDetail() {
 
           {/* ── Analytics ── */}
           <TabsContent value="analytics" className="mt-0 outline-none">
-            <div className="px-5 py-6">
+            <div className="px-6 py-6">
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <DealAnalyticsWidget dealId={dealId!} />
                 <ActivityTimeline dealId={dealId!} />
@@ -1198,7 +1217,7 @@ export default function DealDetail() {
 
           {/* ── Team ── */}
           <TabsContent value="team" className="mt-0 outline-none">
-            <div className="max-w-3xl mx-auto px-5 py-6 space-y-6">
+            <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
               <TeamPanel dealId={dealId!} />
 
               <div className="pt-2 border-t border-border">

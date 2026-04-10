@@ -151,3 +151,16 @@
   .dot-green { background-color: hsl(var(--success)); }
   .dot-muted { background-color: hsl(var(--muted-foreground) / 0.35); }
 }
+
+/* ─────────────────────────────────────────────
+   SIDEBAR — hover-to-expand overlay mode
+   Gap stays at icon width; sidebar floats over content on expand.
+───────────────────────────────────────────── */
+[data-slot="sidebar"] > [data-slot="sidebar-gap"] {
+  width: var(--sidebar-width-icon) !important;
+  transition: none !important;
+}
+[data-slot="sidebar"][data-state="expanded"] > [data-slot="sidebar-container"] {
+  box-shadow: 4px 0 24px rgba(0, 0, 0, 0.12);
+  z-index: 30;
+}
