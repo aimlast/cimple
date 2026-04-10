@@ -2372,6 +2372,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/deals/:dealId/analytics/computed", async (req, res) => {
     try {
       const { dealId } = req.params;
+      const { matchBuyerToDeal } = await import("./matching/engine.js");
       const [events, buyers, questions] = await Promise.all([
         storage.getAnalyticsByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
@@ -2413,12 +2414,91 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const bid = q.buyerAccessId;
         if (bid && buyerStats[bid]) buyerStats[bid].questionCount += 1;
       }
-      const buyerBreakdown = buyers.map(b => ({
-        ...b,
-        totalTimeSeconds: buyerStats[b.id]?.totalSeconds ?? 0,
-        sectionsViewedCount: buyerStats[b.id]?.sectionsEntered.size ?? 0,
-        maxScrollDepth: buyerStats[b.id]?.maxScrollDepth ?? 0,
-        questionCount: buyerStats[b.id]?.questionCount ?? 0,
+      // For each buyer, look up their Cimple account (if linked) and compute
+      // match fit against this deal. Match fit uses the SAME positive framing
+      // as the buyer-side dashboard: raw criteria-matched count + dimension
+      // chips, never letter grades. This lets brokers see "which engaged
+      // buyers are also good-fit buyers" — the signal that actually matters.
+      const deal = await storage.getDeal(dealId);
+      const ANALYTICS_DIMENSION_LABELS: Record<string, string> = {
+        financialFit: "Financials",
+        industryFit: "Industry",
+        locationFit: "Location",
+        operationalFit: "Operations",
+        dealStructureFit: "Deal structure",
+        qualificationFit: "Qualification",
+      };
+      const topDimsFromBreakdown = (bd: any): string[] => {
+        if (!bd) return [];
+        const entries: Array<[string, number]> = [];
+        for (const key of Object.keys(ANALYTICS_DIMENSION_LABELS)) {
+          const cat = bd[key];
+          if (cat && cat.max > 0) {
+            const pct = (cat.score / cat.max) * 100;
+            if (pct >= 60) entries.push([ANALYTICS_DIMENSION_LABELS[key], pct]);
+          }
+        }
+        entries.sort((a, b) => b[1] - a[1]);
+        return entries.slice(0, 3).map((e) => e[0]);
+      };
+
+      const buyerBreakdown = await Promise.all(buyers.map(async (b) => {
+        // Pull profile if buyer has a Cimple account
+        let profile: any = null;
+        if (b.buyerUserId) {
+          try {
+            const user = await storage.getBuyerUser(b.buyerUserId);
+            if (user) {
+              profile = {
+                buyerType: user.buyerType,
+                profileCompletionPct: user.profileCompletionPct,
+                hasProofOfFunds: user.hasProofOfFunds,
+                company: user.company,
+              };
+            }
+          } catch {}
+        }
+
+        // Compute match fit if we have a profile + deal data
+        let match: { criteriaMatched: number; criteriaTested: number; topDimensions: string[] } | null = null;
+        if (b.buyerUserId && deal) {
+          try {
+            const user = await storage.getBuyerUser(b.buyerUserId);
+            if (user) {
+              const criteria: any = {
+                ...(user.buyerCriteria as any || {}),
+                targetIndustries: user.targetIndustries || [],
+                targetLocations: user.targetLocations || [],
+              };
+              const result = await matchBuyerToDeal(
+                criteria,
+                {
+                  industry: deal.industry || "",
+                  subIndustry: (deal as any).subIndustry,
+                  askingPrice: (deal as any).askingPrice,
+                  extractedInfo: (deal as any).extractedInfo || {},
+                },
+                { skipAI: true },
+              );
+              match = {
+                criteriaMatched: result.criteriaMatched,
+                criteriaTested: result.criteriaTested,
+                topDimensions: topDimsFromBreakdown(result),
+              };
+            }
+          } catch {}
+        }
+
+        return {
+          ...b,
+          totalTimeSeconds: buyerStats[b.id]?.totalSeconds ?? 0,
+          sectionsViewedCount: buyerStats[b.id]?.sectionsEntered.size ?? 0,
+          maxScrollDepth: buyerStats[b.id]?.maxScrollDepth ?? 0,
+          questionCount: buyerStats[b.id]?.questionCount ?? 0,
+          hasAccount: !!b.buyerUserId,
+          profile,
+          match,
+        };
       }));
 
       // ── Heat map grid (20×10) ───────────────────────────────────────────

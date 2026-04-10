@@ -125,12 +125,14 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - Events: qa_needs_approval, buyer_question, discrepancy_found, phase_advanced, document_processed, interview_complete
 - **Files:** `server/notifications/service.ts`
 
-### Buyer Analytics (partial)
+### Buyer Analytics
 - Event tracking: view, page_view, section_enter/exit, scroll, heat_map_sample, element_hover, download_attempt, time_on_page, nda_signed, question_asked
 - Heat map data collection (normalized x/y coordinates)
 - Engagement insights aggregation (avg time, scroll depth, completion rate by industry/section/layout)
 - Learning loop feeds insights back into CIM layout engine
-- Analytics dashboard UI exists but is a stub
+- **Broker analytics dashboard live** at `client/src/pages/Analytics.tsx` — tabs for Overview, Buyer Activity, Section Engagement, Heat Map, Drop-off, Buyer Scores, Activity Timeline, Deal Comparison
+- **Profile-aware:** Buyer Activity tab joins buyer Cimple accounts to show buyer type, profile completion, proof-of-funds, and per-deal match fit (criteria matched + top dimensions)
+- **Qualified Interest insight:** Overview tab ranks buyers by `match-fit × engagement` — surfaces warmest leads that are both interested AND a good fit
 
 **Design system:**
 - Dark mode primary (near-black background, cream/light text)
@@ -151,8 +153,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - [ ] Call recording and transcription (mobile app or third-party integration)
 - [ ] Email sync (OAuth infrastructure exists but no provider secrets configured)
 - [ ] CRM integration (Salesforce, HubSpot — schema ready, implementation pending)
-- [ ] Buyer analytics dashboard UI (backend tracking exists, frontend is a stub)
-- [ ] Buyer matching / scoring
+- [ ] Proactive buyer-to-deal matching + new-deal notifications (matching engine + buyer dashboard live; auto-notify on new deal pending)
 - [ ] Comps API integration (stub exists, needs BizBuySell/DealStats API keys)
 - [ ] UX iteration pass across all flows
 
@@ -259,11 +260,11 @@ Mobile app or third-party integration. Transcripts feed directly into the knowle
 **2 — Email sync** (infrastructure ready, needs OAuth secrets)
 Gmail and Outlook OAuth infrastructure exists. Needs provider credentials to activate. Parsed emails feed knowledge base.
 
-**3 — Buyer analytics dashboard UI** (backend done, frontend stub)
-Backend tracks heat maps, time-per-page, scroll depth, element hover. Frontend dashboard needs to be built to surface this data to brokers.
+**3 — Proactive buyer matching + new-deal notifications** (engine + dashboards live)
+Matching engine and buyer-side dashboard exist. Brokers see profile-aware analytics with `match-fit × engagement` ranking. Remaining: when a broker publishes a new deal, auto-match against all buyer profiles and email buyers whose criteria hit, with positive framing ("X criteria matched").
 
-**4 — Buyer matching / scoring** (not started)
-Buyer scoring based on engagement data, CRM integration for deal management.
+**4 — Buyer scoring composites** (foundation in place)
+Composite engagement scoring exists in `BuyerComparison`. Next: incorporate match-fit + profile completeness + proof-of-funds into a single qualified-lead score per buyer.
 
 **5 — CRM integration** (schema ready)
 Salesforce, HubSpot — schema and token storage exist, implementation pending.
