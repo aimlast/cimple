@@ -26,24 +26,47 @@ export function AppSidebar() {
   const collapseTimer = useRef<ReturnType<typeof setTimeout>>();
   const cooldownRef = useRef(false);
 
-  // Auto-collapse on navigation
+  // Auto-collapse on navigation (only when route changes, not when setOpen identity changes)
+  const locationRef = useRef(location);
   useEffect(() => {
-    setOpen(false);
-    cooldownRef.current = true;
-    const t = setTimeout(() => { cooldownRef.current = false; }, 400);
-    return () => clearTimeout(t);
-  }, [location, setOpen]);
+    if (locationRef.current !== location) {
+      locationRef.current = location;
+      setOpenRef.current(false);
+      cooldownRef.current = true;
+      const t = setTimeout(() => { cooldownRef.current = false; }, 400);
+      return () => clearTimeout(t);
+    }
+  }, [location]);
 
-  const handleMouseEnter = () => {
-    if (cooldownRef.current) return;
-    if (collapseTimer.current) clearTimeout(collapseTimer.current);
-    expandTimer.current = setTimeout(() => setOpen(true), 150);
-  };
+  const setOpenRef = useRef(setOpen);
+  setOpenRef.current = setOpen;
 
-  const handleMouseLeave = () => {
-    if (expandTimer.current) clearTimeout(expandTimer.current);
-    collapseTimer.current = setTimeout(() => setOpen(false), 200);
-  };
+  // Start collapsed
+  useEffect(() => { setOpenRef.current(false); }, []);
+
+  // Attach native DOM hover listeners directly on the sidebar element.
+
+  useEffect(() => {
+    const el = document.querySelector('[data-slot="sidebar"]') as HTMLElement | null;
+    if (!el) return;
+
+    const onEnter = () => {
+      if (cooldownRef.current) return;
+      if (collapseTimer.current) clearTimeout(collapseTimer.current);
+      expandTimer.current = setTimeout(() => setOpenRef.current(true), 150);
+    };
+    const onLeave = () => {
+      if (expandTimer.current) clearTimeout(expandTimer.current);
+      collapseTimer.current = setTimeout(() => setOpenRef.current(false), 200);
+    };
+
+    el.addEventListener("mouseenter", onEnter);
+    el.addEventListener("mouseleave", onLeave);
+    return () => {
+      el.removeEventListener("mouseenter", onEnter);
+      el.removeEventListener("mouseleave", onLeave);
+    };
+  }, []);
 
   const isActive = (href: string) =>
     href === "/"
@@ -54,23 +77,21 @@ export function AppSidebar() {
     <Sidebar
       className="border-r border-sidebar-border bg-sidebar"
       collapsible="icon"
-      onMouseEnter={handleMouseEnter}
-      onMouseLeave={handleMouseLeave}
     >
       {/* ── Logo ── */}
-      <SidebarHeader className="border-b border-sidebar-border px-4 py-4 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
-        <Link href="/" className="flex items-center gap-2.5 group-data-[collapsible=icon]:justify-center">
-          {/* Icon mark — vertical rectangle + triangle (matches cimple-logo.png) */}
-          <div className="h-8 w-6 shrink-0 select-none">
-            <svg viewBox="0 0 21 28" fill="none" className="h-full w-full" style={{ color: 'hsl(40 28% 88%)' }}>
-              <rect x="1.5" y="1.5" width="18" height="25" stroke="currentColor" strokeWidth="1.75"/>
-              <path d="M3 3 L3 25 L18 25 Z" fill="currentColor"/>
-            </svg>
-          </div>
+      <SidebarHeader className="border-b border-sidebar-border px-3 py-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
+        <Link href="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+          <img
+            src="/cimple-icon.png"
+            alt="Cimple"
+            className="h-7 w-auto shrink-0 select-none"
+          />
           {/* Wordmark — hidden when collapsed */}
-          <span className="text-sidebar-foreground font-bold text-base tracking-tight truncate group-data-[collapsible=icon]:hidden" style={{ color: 'hsl(40 28% 88%)' }}>
-            cimple
-          </span>
+          <img
+            src="/cimple-text.png"
+            alt="cimple"
+            className="h-4 w-auto select-none group-data-[collapsible=icon]:hidden"
+          />
         </Link>
       </SidebarHeader>
 
