@@ -1411,3 +1411,33 @@ export function calculateBuyerProfileCompletion(user: Partial<BuyerUser>): numbe
   ];
   return checks.reduce((sum, [ok, pts]) => sum + (ok ? pts : 0), 0);
 }
+
+// ────────────────────────────────────────────────────────────────────
+// Broker Buyer Contacts
+// ────────────────────────────────────────────────────────────────────
+// A broker-specific overlay on top of `buyerUsers` — this is the broker's
+// personal contact list of buyers. A buyer can be auto-populated from any
+// deal they've been granted access to, manually added, imported via CSV,
+// or pulled in from a CRM lookup. The same buyer can appear in multiple
+// brokers' contact lists (buyerUsers is global, brokerBuyerContacts is
+// per-broker).
+
+export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  buyerUserId: varchar("buyer_user_id").notNull(),
+  source: text("source").notNull().default("manual"),  // manual | csv | crm | deal | signup
+  tags: jsonb("tags").default(sql`'[]'::jsonb`),       // string[]
+  notes: text("notes"),
+  addedAt: timestamp("added_at").defaultNow().notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertBrokerBuyerContactSchema = createInsertSchema(brokerBuyerContacts).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertBrokerBuyerContact = z.infer<typeof insertBrokerBuyerContactSchema>;
+export type BrokerBuyerContact = typeof brokerBuyerContacts.$inferSelect;

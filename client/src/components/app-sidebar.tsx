@@ -1,4 +1,4 @@
-import { BarChart3, Settings, Building2, HelpCircle, Plus, Plug } from "lucide-react";
+import { BarChart3, Settings, Building2, HelpCircle, Plus, Plug, Users } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -11,7 +11,8 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV = [
-  { label: "Deals",     href: "/",         icon: Building2 },
+  { label: "Deals",        href: "/",             icon: Building2 },
+  { label: "Buyers",       href: "/buyers",       icon: Users },
   { label: "Analytics",    href: "/analytics",    icon: BarChart3 },
   { label: "Integrations", href: "/integrations", icon: Plug },
   { label: "Settings",     href: "/settings",     icon: Settings },
