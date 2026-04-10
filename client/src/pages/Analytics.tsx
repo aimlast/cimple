@@ -24,7 +24,7 @@ import {
 import {
   Eye, Clock, TrendingUp, Users, FileText, MousePointer,
   BarChart3, Calendar, Scroll, Building, Flame, Activity,
-  FileSignature, MessageSquare, ExternalLink,
+  FileSignature, MessageSquare, ExternalLink, UserCheck, ShieldCheck, Target,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
@@ -45,7 +45,29 @@ interface BuyerBreakdown extends BuyerAccess {
   sectionsViewedCount: number;
   maxScrollDepth: number;
   questionCount: number;
+  // Cimple-account enrichment (only present when buyer has linked account)
+  hasAccount: boolean;
+  profile: {
+    buyerType: string | null;
+    profileCompletionPct: number;
+    hasProofOfFunds: boolean;
+    company: string | null;
+  } | null;
+  match: {
+    criteriaMatched: number;
+    criteriaTested: number;
+    topDimensions: string[];  // ["Industry", "Financials", ...]
+  } | null;
 }
+
+const BUYER_TYPE_LABELS: Record<string, string> = {
+  individual: "Individual",
+  strategic: "Strategic",
+  financial: "Financial",
+  search_fund: "Search fund",
+  family_office: "Family office",
+  private_equity: "PE",
+};
 
 interface HeatGrid {
   grid: number[][];
@@ -148,6 +170,100 @@ function HeatMapViz({ heatGrid }: { heatGrid: HeatGrid }) {
         <span>Low → High engagement</span>
       </div>
     </div>
+  );
+}
+
+// ── Qualified Interest card ────────────────────────────────────────────────
+// Shows the buyers who are BOTH a good fit AND highly engaged. This is the
+// signal brokers actually need: not "who clicked the most" but "who clicked
+// the most AND fits the deal." We rank by a simple composite of normalized
+// engagement (time spent) × match strength (criteria matched). Buyers with
+// no Cimple account are excluded — we have no profile, so no fit signal.
+function QualifiedInterestCard({ buyers }: { buyers: BuyerBreakdown[] }) {
+  const qualified = buyers
+    .filter(b => b.match && b.match.criteriaMatched > 0 && b.totalTimeSeconds > 0)
+    .map(b => {
+      // Normalize engagement against the most engaged buyer in this deal so
+      // the score is meaningful relative to other buyers, not absolute.
+      const maxTime = Math.max(...buyers.map(x => x.totalTimeSeconds), 1);
+      const engagementScore = b.totalTimeSeconds / maxTime;            // 0..1
+      const matchScore = (b.match!.criteriaMatched) / Math.max(b.match!.criteriaTested, 1);  // 0..1
+      return {
+        buyer: b,
+        composite: engagementScore * matchScore,
+        engagementScore,
+        matchScore,
+      };
+    })
+    .sort((a, b) => b.composite - a.composite)
+    .slice(0, 5);
+
+  if (qualified.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Target className="h-4 w-4 text-primary" />
+            Qualified interest
+          </CardTitle>
+          <CardDescription>
+            Buyers who are both a strong fit AND highly engaged with this CIM.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <div className="py-6 text-center text-xs text-muted-foreground">
+            No qualified interest yet. Buyers need a Cimple account profile and
+            engagement events for this signal to appear.
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-sm flex items-center gap-2">
+          <Target className="h-4 w-4 text-primary" />
+          Qualified interest
+        </CardTitle>
+        <CardDescription>
+          Top buyers ranked by criteria-fit × engagement. These are your warmest leads.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        {qualified.map(({ buyer, composite }) => (
+          <div key={buyer.id} className="flex items-center gap-3 p-2 rounded-md hover:bg-accent/30 transition-colors">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-1.5">
+                <p className="text-sm font-medium truncate">{buyer.buyerName || "Unknown"}</p>
+                {buyer.profile?.hasProofOfFunds && (
+                  <ShieldCheck className="h-3 w-3 text-emerald-500" />
+                )}
+              </div>
+              <p className="text-xs text-muted-foreground truncate">
+                {buyer.profile?.company || buyer.buyerEmail}
+              </p>
+            </div>
+            <div className="flex flex-col items-end gap-0.5 text-right">
+              <Badge className="bg-primary/10 text-primary border-primary/30 text-[10px]">
+                <Target className="h-2.5 w-2.5 mr-0.5" />
+                {buyer.match!.criteriaMatched} criteria
+              </Badge>
+              <span className="text-[10px] text-muted-foreground tabular-nums">
+                {fmt(buyer.totalTimeSeconds)} engaged
+              </span>
+            </div>
+            <div className="w-16 h-1.5 bg-muted rounded-full overflow-hidden">
+              <div
+                className="h-full bg-primary transition-all"
+                style={{ width: `${Math.round(composite * 100)}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -322,6 +438,10 @@ export default function Analytics() {
             </CardContent>
           </Card>
 
+          {selectedDealId !== "all" && computed && (
+            <QualifiedInterestCard buyers={computed.buyerBreakdown} />
+          )}
+
           {selectedDealId === "all" && <DealsComparisonTable />}
 
           {selectedDealId !== "all" && (
@@ -351,20 +471,71 @@ export default function Analytics() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>Buyer</TableHead>
+                      <TableHead>Profile</TableHead>
+                      <TableHead>Match fit</TableHead>
                       <TableHead className="text-right">Time</TableHead>
                       <TableHead className="text-right">Sections</TableHead>
                       <TableHead className="text-right">Scroll</TableHead>
-                      <TableHead className="text-right">Questions</TableHead>
-                      <TableHead>Last Seen</TableHead>
-                      <TableHead>Status</TableHead>
+                      <TableHead className="text-right">Q&apos;s</TableHead>
+                      <TableHead>Last seen</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
                     {computed?.buyerBreakdown.map(b => (
                       <TableRow key={b.id}>
                         <TableCell>
-                          <p className="text-sm font-medium">{b.buyerName || "Unknown"}</p>
-                          <p className="text-xs text-muted-foreground">{b.buyerEmail}</p>
+                          <div className="flex items-center gap-1.5">
+                            <p className="text-sm font-medium">{b.buyerName || "Unknown"}</p>
+                            {b.hasAccount && (
+                              <span title="Has Cimple account">
+                                <UserCheck className="h-3 w-3 text-primary" />
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-xs text-muted-foreground">
+                            {b.profile?.company || b.buyerCompany || b.buyerEmail}
+                          </p>
+                        </TableCell>
+                        <TableCell>
+                          {b.profile ? (
+                            <div className="flex flex-col gap-1">
+                              {b.profile.buyerType && (
+                                <Badge variant="outline" className="text-[10px] w-fit">
+                                  {BUYER_TYPE_LABELS[b.profile.buyerType] || b.profile.buyerType}
+                                </Badge>
+                              )}
+                              <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
+                                <span>{b.profile.profileCompletionPct}% complete</span>
+                                {b.profile.hasProofOfFunds && (
+                                  <span className="flex items-center gap-0.5 text-emerald-500" title="Proof of funds available">
+                                    <ShieldCheck className="h-2.5 w-2.5" />
+                                    PoF
+                                  </span>
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">No account</span>
+                          )}
+                        </TableCell>
+                        <TableCell>
+                          {b.match && b.match.criteriaMatched > 0 ? (
+                            <div className="flex flex-col gap-1">
+                              <Badge className="bg-primary/10 text-primary border-primary/30 text-[10px] w-fit">
+                                <Target className="h-2.5 w-2.5 mr-0.5" />
+                                {b.match.criteriaMatched} criteria
+                              </Badge>
+                              {b.match.topDimensions.length > 0 && (
+                                <span className="text-[10px] text-muted-foreground truncate max-w-[140px]">
+                                  {b.match.topDimensions.join(" · ")}
+                                </span>
+                              )}
+                            </div>
+                          ) : b.match ? (
+                            <span className="text-[10px] text-muted-foreground">No match data</span>
+                          ) : (
+                            <span className="text-[10px] text-muted-foreground italic">—</span>
+                          )}
                         </TableCell>
                         <TableCell className="text-right tabular-nums text-sm">
                           {fmt(b.totalTimeSeconds)}
@@ -378,17 +549,8 @@ export default function Analytics() {
                         <TableCell className="text-right text-sm">
                           {b.questionCount > 0 ? b.questionCount : "—"}
                         </TableCell>
-                        <TableCell className="text-sm text-muted-foreground">
+                        <TableCell className="text-xs text-muted-foreground">
                           {fmtDate(b.lastAccessedAt)}
-                        </TableCell>
-                        <TableCell>
-                          {b.revokedAt ? (
-                            <Badge variant="destructive" className="text-[10px]">Revoked</Badge>
-                          ) : b.expiresAt && new Date(b.expiresAt) < new Date() ? (
-                            <Badge variant="secondary" className="text-[10px]">Expired</Badge>
-                          ) : (
-                            <Badge variant="outline" className="text-[10px]">Active</Badge>
-                          )}
                         </TableCell>
                       </TableRow>
                     ))}
