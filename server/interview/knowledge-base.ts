@@ -1,4 +1,4 @@
-import type { Deal, Document, Task, InterviewSession, ExtractedInfo } from "@shared/schema";
+import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 
 // =====================
@@ -184,9 +184,20 @@ export function assembleKnowledgeBase(
   documents: Document[],
   tasks: Task[],
   latestSession: InterviewSession | null,
+  resolvedDiscrepancies: Discrepancy[] = [],
 ): KnowledgeBase {
-  const extractedInfo = (deal.extractedInfo as Partial<ExtractedInfo>) || {};
+  const baseExtractedInfo = (deal.extractedInfo as Partial<ExtractedInfo>) || {};
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
+
+  // Overlay resolved discrepancy values — corrected values win over raw extractedInfo
+  // so the interview agent never re-asks for or builds on stale numbers the broker
+  // already reconciled against uploaded documents.
+  const extractedInfo: Partial<ExtractedInfo> = { ...baseExtractedInfo };
+  for (const d of resolvedDiscrepancies) {
+    if (d.resolvedValue && d.field) {
+      (extractedInfo as Record<string, unknown>)[d.field] = d.resolvedValue;
+    }
+  }
 
   return {
     business: {

@@ -78,6 +78,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
   const documents = await storage.getDocumentsByDeal(dealId);
   const tasks = await storage.getTasksByDeal(dealId);
+  const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
 
   // Check for an existing active/paused session
   const existingSessions = await db
@@ -96,7 +97,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     if (messages.length > 0) {
       // Session has history — return the last AI message as the resume point
       // The frontend will display the full conversation history
-      const kb = assembleKnowledgeBase(deal, documents, tasks, session);
+      const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies);
 
       // Restore industry context from session metadata
       const sessionMeta = (session.extractedInfo as Record<string, unknown>) || {};
@@ -137,7 +138,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
   session = newSession[0];
 
   // Assemble knowledge base for the opening message
-  const kb = assembleKnowledgeBase(deal, documents, tasks, null);
+  const kb = assembleKnowledgeBase(deal, documents, tasks, null, resolvedDiscrepancies);
 
   // Generate the opening message
   const openingResult = await generateOpeningMessage(kb, deal.businessName);
@@ -197,9 +198,10 @@ export async function processTurn(
 
   const documents = await storage.getDocumentsByDeal(dealId);
   const tasks = await storage.getTasksByDeal(dealId);
+  const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
 
   // Build the knowledge base
-  const kb = assembleKnowledgeBase(deal, documents, tasks, session);
+  const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies);
 
   // Restore persisted state from session metadata
   const sessionMeta = (session.extractedInfo as Record<string, unknown>) || {};
@@ -319,7 +321,7 @@ export async function processTurn(
 
   // Rebuild coverage with the updated extracted info
   const updatedDeal = await storage.getDeal(dealId);
-  const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session);
+  const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies);
 
   return {
     message: aiResponse.message,
