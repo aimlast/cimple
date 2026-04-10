@@ -319,7 +319,7 @@ export default function Analytics() {
   const maxViews = Math.max(...recentViews.map(d => d.count), 1);
 
   return (
-    <div className="px-6 pt-6 pb-12 max-w-7xl mx-auto space-y-6">
+    <div className="px-6 pt-6 pb-12 space-y-6">
 
       {/* ── Header ────────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
