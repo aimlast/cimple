@@ -221,6 +221,16 @@ export async function processTurn(
     });
   }
 
+  // The Anthropic API requires the first message to have role "user".
+  // The opening AI message is stored without the triggering user prompt,
+  // so prepend a synthetic user message if the history starts with "assistant".
+  if (apiMessages.length > 0 && apiMessages[0].role === "assistant") {
+    apiMessages.unshift({
+      role: "user",
+      content: "Please begin the interview.",
+    });
+  }
+
   // Add the new seller message
   apiMessages.push({ role: "user", content: sellerMessage });
 

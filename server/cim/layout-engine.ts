@@ -1,7 +1,10 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const anthropic = new Anthropic({
+  apiKey: process.env.ANTHROPIC_API_KEY,
+  timeout: 600_000, // 10 min — layout generation produces large (16K token) responses
+});
 
 /**
  * generateCimLayout
@@ -148,12 +151,16 @@ ${knowledgeBase}
 
 Output a JSON array of CimLayoutSection objects. Be bespoke. Use the data available. Create sections that make this business's story compelling to a sophisticated buyer.`;
 
-  const response = await anthropic.messages.create({
+  // Use streaming to keep the TCP connection alive during long generations.
+  // Without streaming, idle socket timeouts (ETIMEDOUT) kill the connection
+  // before the full 16K-token response arrives.
+  const stream = anthropic.messages.stream({
     model: "claude-sonnet-4-5",
-    max_tokens: 8000,
+    max_tokens: 16000,
     system: systemPrompt,
     messages: [{ role: "user", content: userPrompt }],
   });
+  const response = await stream.finalMessage();
 
   const rawContent = response.content[0];
   if (rawContent.type !== "text") {
@@ -176,7 +183,39 @@ Output a JSON array of CimLayoutSection objects. Be bespoke. Use the data availa
     if (!match) {
       throw new Error(`Layout engine returned unparseable response: ${jsonText.slice(0, 200)}`);
     }
-    sections = JSON.parse(match[0]);
+    try {
+      sections = JSON.parse(match[0]);
+    } catch (e2) {
+      // Attempt repair: truncate at last complete top-level array element.
+      // Strategy: find every `},` at nesting depth 1 (i.e. the comma between
+      // top-level objects in the array), then try parsing up through the last
+      // one that succeeds.
+      const src = match[0];
+      const sectionEnds: number[] = [];
+      let depth = 0;
+      for (let i = 0; i < src.length; i++) {
+        const ch = src[i];
+        if (ch === "{") depth++;
+        else if (ch === "}") {
+          depth--;
+          if (depth === 1) sectionEnds.push(i); // closing brace of a top-level object
+        }
+      }
+      let repaired = false;
+      // Try from the last section end backwards until one parses
+      for (let k = sectionEnds.length - 1; k >= 0; k--) {
+        const candidate = src.slice(0, sectionEnds[k] + 1) + "\n]";
+        try {
+          sections = JSON.parse(candidate);
+          repaired = true;
+          console.log(`[layout-engine] JSON repaired: truncated to ${sections.length} sections (from ~${sectionEnds.length} detected)`);
+          break;
+        } catch (_) { /* try previous boundary */ }
+      }
+      if (!repaired) {
+        throw new Error(`Layout engine JSON repair failed: ${(e2 as Error).message}. Raw (first 500): ${jsonText.slice(0, 500)}`);
+      }
+    }
   }
 
   // Validate and normalise

@@ -1378,7 +1378,12 @@ Return JSON only.`,
       await storage.updateDocument(docId, { status: "parsing" } as any);
       const text = await extractTextFromFile(filePath, mimeType);
       const extracted = await extractDocumentData(text, category, subcategory);
-      await storage.updateDocument(docId, { status: "extracted", extractedData: extracted } as any);
+      await storage.updateDocument(docId, {
+        status: "extracted",
+        extractedText: text,
+        extractedData: extracted,
+        isProcessed: true,
+      } as any);
       const deal = await storage.getDeal(dealId);
       if (deal) {
         const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted);
@@ -1396,7 +1401,9 @@ Return JSON only.`,
       const { category = "other", subcategory } = req.body;
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
+        uploadedBy: "broker",
         name: req.file.originalname,
+        originalName: req.file.originalname,
         category,
         subcategory: subcategory || null,
         fileUrl: `/uploads/docs/${req.file.filename}`,

@@ -7,7 +7,7 @@
 
 import Anthropic from "@anthropic-ai/sdk";
 
-const anthropic = new Anthropic();
+const anthropic = new Anthropic({ timeout: 600_000 });
 
 // ── Types ──
 
@@ -44,7 +44,7 @@ export async function extractFinancialData(
   }
 
   const response = await anthropic.messages.create({
-    model: "claude-sonnet-4-5-20250514",
+    model: "claude-sonnet-4-5",
     max_tokens: 8192,
     messages: [
       {

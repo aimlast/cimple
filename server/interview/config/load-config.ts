@@ -29,8 +29,8 @@ function loadAgentConfig(): AgentConfig {
     // Fallback defaults if config file is missing
     return {
       models: {
-        interviewAgent: "claude-opus-4-5-20250520",
-        supportingAgents: "claude-sonnet-4-5-20250514",
+        interviewAgent: "claude-opus-4-5",
+        supportingAgents: "claude-sonnet-4-5",
       },
       api: { maxTokens: 4096, temperature: 1 },
       interview: { maxTurnsBeforeEndCheck: 30, minTurnsBeforeEnd: 10 },

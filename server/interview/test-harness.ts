@@ -18,8 +18,8 @@ import { CIM_SECTIONS, type ExtractedInfo } from "../../shared/schema";
 // Config
 // =====================
 
-const INTERVIEW_MODEL = "claude-opus-4-5-20250520";
-const SELLER_MODEL = "claude-sonnet-4-5-20250514";
+const INTERVIEW_MODEL = "claude-opus-4-5";
+const SELLER_MODEL = "claude-sonnet-4-5";
 const MAX_TURNS = 30;
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 
