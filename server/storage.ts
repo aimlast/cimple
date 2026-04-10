@@ -1169,7 +1169,7 @@ export class DbStorage implements IStorage {
     // Case-insensitive partial match on email OR name
     const result = await db.select().from(buyerUsers).where(
       sql`LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`}`
-    ).limit(10);
+    );
     return result;
   }
 
