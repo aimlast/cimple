@@ -24,6 +24,7 @@ import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { BuyerQAPanel } from "@/components/deal/BuyerQAPanel";
 import { TeamPanel } from "@/components/deal/TeamPanel";
+import { SellerProfilePanel } from "@/components/deal/SellerProfilePanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
@@ -1429,7 +1430,11 @@ export default function DealDetail() {
           {/* ── Team ── */}
           <TabsContent value="team" className="mt-0 outline-none">
             <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
-              <TeamPanel dealId={dealId!} />
+              <SellerProfilePanel dealId={dealId!} />
+
+              <div className="pt-2 border-t border-border">
+                <TeamPanel dealId={dealId!} />
+              </div>
 
               <div className="pt-2 border-t border-border">
                 <BuyerQAPanel dealId={dealId!} />

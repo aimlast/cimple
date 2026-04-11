@@ -54,6 +54,8 @@ export const deals = pgTable("deals", {
   
   // Phase 2 data - Seller questionnaire responses
   questionnaireData: jsonb("questionnaire_data"),
+  // EQ profiler — Seller Communication Profile (generated pre-interview, broker-editable)
+  sellerProfile: jsonb("seller_profile"),
   // Operational systems info
   operationalSystems: jsonb("operational_systems"), // accounting, CRM, ERP, POS systems
   employeeChart: jsonb("employee_chart"), // employee list with roles

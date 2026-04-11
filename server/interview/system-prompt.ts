@@ -28,6 +28,7 @@ function loadPrompt(filename: string): string {
 // In production, files are bundled at deploy time.
 const ROLE_AND_IDENTITY = loadPrompt("role-identity.md");
 const CONVERSATION_RULES = loadPrompt("conversation-rules.md");
+const EMOTIONAL_INTELLIGENCE = loadPrompt("emotional-intelligence.md");
 const HANDLING_DIFFICULTY = loadPrompt("handling-difficulty.md");
 const INDUSTRY_INTELLIGENCE = loadPrompt("industry-intelligence.md");
 const BOUNDARIES = loadPrompt("boundaries.md");
@@ -47,6 +48,7 @@ export function buildInterviewSystemPrompt(kb: KnowledgeBase): string {
   const parts: string[] = [
     ROLE_AND_IDENTITY,
     CONVERSATION_RULES,
+    EMOTIONAL_INTELLIGENCE,
     HANDLING_DIFFICULTY,
     INDUSTRY_INTELLIGENCE,
     BOUNDARIES,
