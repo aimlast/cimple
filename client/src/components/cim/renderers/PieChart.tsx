@@ -3,12 +3,14 @@
  * Recharts PieChart — also handles donut_chart layoutType.
  * Custom legend on the right. Professional color palette.
  */
+import { useState, useCallback } from "react";
 import {
   PieChart,
   Pie,
   Cell,
   Tooltip,
   ResponsiveContainer,
+  Sector,
 } from "recharts";
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
@@ -73,7 +75,30 @@ function CustomTooltip({ active, payload, unit }: CustomTooltipProps) {
   );
 }
 
+// Active shape renderer for hover/tap segment lift effect
+function renderActiveShape(props: any) {
+  const {
+    cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill,
+  } = props;
+
+  return (
+    <g>
+      <Sector
+        cx={cx}
+        cy={cy}
+        innerRadius={innerRadius - 2}
+        outerRadius={outerRadius + 6}
+        startAngle={startAngle}
+        endAngle={endAngle}
+        fill={fill}
+        style={{ filter: "drop-shadow(0 2px 4px rgba(0,0,0,0.15))", transition: "all 0.2s ease" }}
+      />
+    </g>
+  );
+}
+
 export function PieChartRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
   const data: PieChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const rawData = data.data || [];
 
@@ -96,6 +121,9 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
   const total = normalized.reduce((sum, d) => sum + d.value, 0);
 
+  const onPieEnter = useCallback((_: any, index: number) => setActiveIndex(index), []);
+  const onPieLeave = useCallback(() => setActiveIndex(undefined), []);
+
   return (
     <div>
       {data.title && (
@@ -117,9 +145,13 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
                 paddingAngle={normalized.length > 1 ? 2 : 0}
                 dataKey="value"
                 strokeWidth={0}
+                activeIndex={activeIndex}
+                activeShape={renderActiveShape}
+                onMouseEnter={onPieEnter}
+                onMouseLeave={onPieLeave}
               >
                 {normalized.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
+                  <Cell key={i} fill={entry.color} className="cursor-pointer transition-opacity" />
                 ))}
               </Pie>
               <Tooltip content={<CustomTooltip unit={data.unit} />} />
@@ -154,8 +186,17 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
           )}
           {normalized.map((entry, i) => {
             const pct = total > 0 ? ((entry.value / total) * 100).toFixed(1) : "0";
+            const isHighlighted = activeIndex === i;
             return (
-              <div key={i} className="flex items-center gap-2.5 min-w-0">
+              <div
+                key={i}
+                className={cn(
+                  "flex items-center gap-2.5 min-w-0 rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer",
+                  isHighlighted && "bg-muted/50",
+                )}
+                onMouseEnter={() => setActiveIndex(i)}
+                onMouseLeave={() => setActiveIndex(undefined)}
+              >
                 <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: entry.color }} />
                 <span className="text-xs text-foreground/80 truncate flex-1">{entry.name}</span>
                 <div className="flex items-center gap-1.5 flex-shrink-0">

@@ -153,5 +153,61 @@
 }
 
 /* ─────────────────────────────────────────────
+   CIM PRINT STYLES
+───────────────────────────────────────────── */
+@media print {
+  /* Hide interactive chrome */
+  .sticky, [class*="sticky"] { position: static !important; }
+  header.sticky { display: none !important; }
+  aside { display: none !important; }
+  .print\\:hidden { display: none !important; }
+
+  /* Expand all collapsed sections */
+  .cim-expandable-section .hidden { display: block !important; }
+
+  /* Financial toggle: show normalized view */
+  .print\\:block { display: block !important; }
+
+  /* Page breaks between sections */
+  .cim-section {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+  .cim-section + .cim-section {
+    page-break-before: auto;
+  }
+
+  /* Charts at high resolution */
+  .recharts-responsive-container {
+    page-break-inside: avoid;
+    break-inside: avoid;
+  }
+
+  /* Remove hover effects */
+  * { transition: none !important; }
+
+  /* Clean backgrounds for print */
+  body { background: white !important; }
+  .bg-background { background: white !important; }
+  .bg-card { background: white !important; }
+
+  /* Hide floating elements */
+  .fixed { display: none !important; }
+
+  /* Re-show the main content area */
+  main { display: block !important; }
+  .cim-section { display: block !important; }
+}
+
+/* Scrollbar hide utility for sticky nav */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+/* ─────────────────────────────────────────────
    SIDEBAR — hover-to-expand, content pushes over
 ───────────────────────────────────────────── */

@@ -13,12 +13,14 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { CimSection } from "@shared/schema";
 import type { CimBranding } from "./CimBrandingContext";
 import { CimSectionRenderer } from "./CimSectionRenderer";
+import { FinancialToggle } from "./FinancialToggle";
 
 interface ExpandableSectionProps {
   section: CimSection;
   branding: CimBranding;
   brokerMode?: boolean;
   onToggle?: (sectionKey: string, expanded: boolean) => void;
+  onFinancialToggle?: (sectionKey: string, view: "reported" | "normalized") => void;
 }
 
 /**
@@ -106,8 +108,20 @@ export function ExpandableSection({
     return () => mql.removeEventListener("change", handler);
   }, []);
 
-  // If not expandable, render normally
+  // If not expandable, render normally — use FinancialToggle for financial tables
   if (!config.isExpandable) {
+    if (section.layoutType === "financial_table") {
+      return (
+        <FinancialToggle
+          section={section}
+          branding={branding}
+          brokerMode={brokerMode}
+          onToggle={(sectionKey, view) => {
+            (onToggle as any)?.(sectionKey, view === "normalized");
+          }}
+        />
+      );
+    }
     return (
       <CimSectionRenderer
         section={section}

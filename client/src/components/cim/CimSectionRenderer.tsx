@@ -28,6 +28,7 @@ import { NumberedListRenderer }       from "./renderers/NumberedList";
 import { ScorecardRenderer }          from "./renderers/Scorecard";
 import { CoverPageRenderer }          from "./renderers/CoverPage";
 import { DividerRenderer }            from "./renderers/Divider";
+import { WaterfallChartRenderer }     from "./renderers/WaterfallChart";
 
 interface CimSectionRendererProps {
   section: CimSection;
@@ -66,6 +67,7 @@ export function CimSectionRenderer({ section, branding, brokerMode = false }: Ci
       case "numbered_list":          return <NumberedListRenderer {...rendererProps} />;
       case "scorecard":              return <ScorecardRenderer {...rendererProps} />;
       case "divider":                return <DividerRenderer {...rendererProps} />;
+      case "waterfall_chart":         return <WaterfallChartRenderer {...rendererProps} />;
       default:
         return <UnknownLayoutFallback section={section} content={content} />;
     }
