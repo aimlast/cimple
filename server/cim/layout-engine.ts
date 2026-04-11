@@ -122,6 +122,16 @@ scorecard: { items: [{label, score, benchmark?, description?}], title?, maxScore
 divider: { label?, style?: "line"|"section-break"|"page-break" }
 — Use for: visual separation between major document sections
 
+INTERACTIVE CAPABILITIES:
+
+Any section's layoutData can include these optional interactive flags:
+- expandable: true — marks the section as "summary by default, full detail on click". Use this for dense content where a buyer might want a quick scan before drilling in. Good candidates: large financial tables (>5 rows), long callout lists (>4 items), detailed numbered lists, and dense prose sections. The renderer will auto-generate a smart summary (first few rows, first few items, or first paragraph) and let the buyer expand for full detail.
+- summary: string — optional custom summary text to show in collapsed state. If omitted, the renderer generates one automatically.
+- expandLabel: string — custom label for the expand button (default: "Show full details")
+- collapseLabel: string — custom label for the collapse button (default: "Show less")
+
+Use expandable sparingly — only on sections where the full content is genuinely dense. A metric grid with 4 items does not need to be expandable. A financial table with 15 line items does.
+
 DOCUMENT STRUCTURE RULES:
 1. ALWAYS start with a cover_page section
 2. ALWAYS follow cover_page with a metric_grid showing the most important 4–6 KPIs

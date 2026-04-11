@@ -22,6 +22,8 @@ import type { Deal, BuyerAccess, CimSection, BrandingSettings, BuyerQuestion } f
 import { CIM_SECTIONS } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
+import { StickyNav } from "@/components/cim/StickyNav";
+import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 
@@ -314,6 +316,20 @@ export default function BuyerViewRoom() {
         </div>
       </header>
 
+      {/* ── Sticky section nav (appears after scrolling past cover) ────── */}
+      {hasAiSections && (
+        <StickyNav
+          sections={visibleSections}
+          onNavigate={(sectionKey, sectionTitle) => {
+            enqueue({
+              eventType: "nav_click",
+              sectionKey,
+              eventData: { sectionTitle },
+            });
+          }}
+        />
+      )}
+
       <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
         <div className="flex gap-8">
 
@@ -366,10 +382,16 @@ export default function BuyerViewRoom() {
               <div className="space-y-8">
                 {visibleSections.map(section => (
                   <div key={section.id} id={`section-${section.id}`}>
-                    <CimSectionRenderer
+                    <ExpandableSection
                       section={section}
                       branding={brandingCtx}
                       brokerMode={false}
+                      onToggle={(sectionKey, expanded) => {
+                        enqueue({
+                          eventType: expanded ? "section_expand" : "section_collapse",
+                          sectionKey,
+                        });
+                      }}
                     />
                   </div>
                 ))}
