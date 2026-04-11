@@ -148,6 +148,18 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
             fill={primaryColor}
             radius={[3, 3, 0, 0]}
             stackId={data.stacked ? "stack" : undefined}
+            className="transition-opacity"
+            onMouseEnter={(_, index) => {
+              // Subtle highlight via CSS on the parent SVG
+              const bars = document.querySelectorAll(`.recharts-bar-rectangle`);
+              bars.forEach((b, i) => {
+                (b as HTMLElement).style.opacity = i === index ? "1" : "0.6";
+              });
+            }}
+            onMouseLeave={() => {
+              const bars = document.querySelectorAll(`.recharts-bar-rectangle`);
+              bars.forEach((b) => { (b as HTMLElement).style.opacity = "1"; });
+            }}
           />
           {hasSecondary && (
             <Bar

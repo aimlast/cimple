@@ -119,6 +119,9 @@ numbered_list: { items: [{title, description?}], title?, ordered? }
 scorecard: { items: [{label, score, benchmark?, description?}], title?, maxScore? }
 — Use for: business health assessment, risk factors, readiness indicators
 
+waterfall_chart: { items: [{label, value, type?: "start"|"add"|"subtract"|"total"}], title?, unit?, currency? }
+— Use for: SDE normalization build-up, EBITDA walk, asking price build-up — any stepped financial calculation. Shows starting point, each addback/adjustment as green (add) or red (subtract) steps, and final total. Excellent for showing how you get from net income to adjusted SDE/EBITDA.
+
 divider: { label?, style?: "line"|"section-break"|"page-break" }
 — Use for: visual separation between major document sections
 
@@ -129,6 +132,10 @@ Any section's layoutData can include these optional interactive flags:
 - summary: string — optional custom summary text to show in collapsed state. If omitted, the renderer generates one automatically.
 - expandLabel: string — custom label for the expand button (default: "Show full details")
 - collapseLabel: string — custom label for the collapse button (default: "Show less")
+- relatedSections: string[] — sectionKey references to other sections that are thematically linked. When the buyer clicks a data point in this section, the viewer can scroll to or highlight the related section. Example: a donut chart showing revenue breakdown links to the detailed revenue callout cards further in the document.
+- normalizedRows: (financial_table only) — alternative row data showing normalized/adjusted figures. When present, the viewer shows an "As Reported" / "Normalized" toggle. Adjusted rows should include isAdjusted: true and adjustmentAmount: string.
+- normalizedCaption: (financial_table only) — caption to show when normalized view is active.
+- normalizedFootnotes: (financial_table only) — footnotes specific to the normalized view.
 
 Use expandable sparingly — only on sections where the full content is genuinely dense. A metric grid with 4 items does not need to be expandable. A financial table with 15 line items does.
 

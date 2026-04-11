@@ -24,6 +24,8 @@ import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
+import { FinancialToggle } from "@/components/cim/FinancialToggle";
+import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 
@@ -390,6 +392,17 @@ export default function BuyerViewRoom() {
                         enqueue({
                           eventType: expanded ? "section_expand" : "section_collapse",
                           sectionKey,
+                        });
+                      }}
+                    />
+                    <ConnectedContent
+                      section={section}
+                      allSections={visibleSections}
+                      onNavigate={(fromKey, toKey) => {
+                        enqueue({
+                          eventType: "connected_nav",
+                          sectionKey: fromKey,
+                          eventData: { targetSection: toKey },
                         });
                       }}
                     />
