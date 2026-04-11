@@ -13,6 +13,7 @@ import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse } from "./response-sche
 import { mergeExtractedFields, updateIndustryContext, type FieldChange } from "./info-merger";
 import { agentConfig } from "./config/load-config";
 import { generateSellerProfile } from "./eq-profiler";
+import { runInterviewLearningLoop } from "./learning-loop";
 
 // =====================
 // Types
@@ -250,7 +251,7 @@ export async function processTurn(
   apiMessages.push({ role: "user", content: sellerMessage });
 
   // Build the system prompt with current knowledge base
-  const systemPrompt = buildInterviewSystemPrompt(kb);
+  const systemPrompt = await buildInterviewSystemPrompt(kb);
 
   // Call Claude Opus
   const response = await anthropic.messages.create({
@@ -337,10 +338,15 @@ export async function processTurn(
     })
     .where(eq(interviewSessions.id, sessionId));
 
-  // If the interview is ending, mark the deal
+  // If the interview is ending, mark the deal and trigger learning loop
   if (aiResponse.shouldEnd) {
     await storage.updateDeal(dealId, {
       interviewCompleted: true,
+    });
+
+    // Fire-and-forget: analyze the completed interview for learning insights
+    runInterviewLearningLoop(dealId, sessionId).catch((err) => {
+      console.error(`[session-manager] Learning loop failed for session ${sessionId}:`, err);
     });
   }
 
@@ -398,7 +404,7 @@ async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
 ): Promise<{ message: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
-  const systemPrompt = buildInterviewSystemPrompt(kb);
+  const systemPrompt = await buildInterviewSystemPrompt(kb);
 
   // The opening prompt varies based on what we already know
   const hasQuestionnaireData = kb.questionnaireData && Object.keys(kb.questionnaireData).length > 0;
