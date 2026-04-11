@@ -1,5 +1,6 @@
 import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
+import type { SellerCommunicationProfile } from "./eq-profiler";
 
 // =====================
 // Types
@@ -20,6 +21,9 @@ export interface KnowledgeBase {
 
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
+
+  // Seller Communication Profile — EQ profiler output (generated pre-interview)
+  sellerProfile: SellerCommunicationProfile | null;
 
   // What the seller told us in the questionnaire before the interview
   questionnaireData: Record<string, unknown> | null;
@@ -209,6 +213,7 @@ export function assembleKnowledgeBase(
     },
     sectionCoverage: buildSectionCoverage(extractedInfo),
     industryContext: null, // Set by the AI on first turn, stored on session
+    sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
     questionnaireData,
     operationalSystems: parseOperationalSystems(deal),
     documents: documents.map(summarizeDocument),
@@ -265,6 +270,43 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     } else if (loc.raw) {
       parts.push(`- Location: ${loc.raw}`);
     }
+  }
+
+  // Seller Communication Profile (EQ profiler output)
+  if (kb.sellerProfile) {
+    parts.push("");
+    parts.push(`## Seller Communication Profile`);
+    parts.push(`This profile was generated from broker notes, prior communications, and available data about the seller.`);
+    parts.push(`Use it to adapt your tone, pacing, and approach. Do NOT reference this profile directly to the seller.`);
+    parts.push(``);
+    parts.push(`- Communication style: ${kb.sellerProfile.communicationStyle}`);
+    parts.push(`- Emotional state: ${kb.sellerProfile.emotionalState}`);
+    parts.push(`- Selling reason: ${kb.sellerProfile.sellingReason}`);
+    parts.push(`- Seller sophistication: ${kb.sellerProfile.sophistication}`);
+    parts.push(`- Business attachment: ${kb.sellerProfile.businessAttachment}`);
+    parts.push(`- Time orientation: ${kb.sellerProfile.timeOrientation}`);
+    parts.push(`- Family involvement: ${kb.sellerProfile.familyInvolvement}`);
+
+    if (kb.sellerProfile.sensitiveTopics.length > 0) {
+      parts.push(`\nSensitive topics — handle with extreme care, never bring up directly:`);
+      kb.sellerProfile.sensitiveTopics.forEach((t) => parts.push(`  - ${t}`));
+    }
+
+    if (kb.sellerProfile.personalInsights.length > 0) {
+      parts.push(`\nPersonal insights — use for subtle, natural personalization (never as compliments):`);
+      kb.sellerProfile.personalInsights.forEach((i) => parts.push(`  - ${i}`));
+    }
+
+    if (kb.sellerProfile.sellerStory) {
+      parts.push(`\nSeller background story:`);
+      parts.push(kb.sellerProfile.sellerStory);
+    }
+
+    if (kb.sellerProfile.industryContext) {
+      parts.push(`\nIndustry-specific seller behavior context:`);
+      parts.push(kb.sellerProfile.industryContext);
+    }
+    parts.push(``);
   }
 
   // Questionnaire data (what the seller already provided before the interview)

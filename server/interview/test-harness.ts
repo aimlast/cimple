@@ -273,6 +273,9 @@ function buildMockKnowledgeBase(persona: SellerPersona, extractedInfo: Partial<E
     outstandingTasks: [],
     priorSessionSummary: null,
     extractedInfo,
+    sellerProfile: null,
+    scrapedData: null,
+    scrapeSource: null,
   };
 }
 

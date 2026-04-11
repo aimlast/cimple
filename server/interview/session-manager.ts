@@ -12,6 +12,7 @@ import { buildInterviewSystemPrompt } from "./system-prompt";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse } from "./response-schema";
 import { mergeExtractedFields, updateIndustryContext, type FieldChange } from "./info-merger";
 import { agentConfig } from "./config/load-config";
+import { generateSellerProfile } from "./eq-profiler";
 
 // =====================
 // Types
@@ -136,6 +137,20 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     .returning();
 
   session = newSession[0];
+
+  // Auto-generate Seller Communication Profile if not already present.
+  // This runs in the background — we don't block the opening message on it.
+  // The profile will be available for the second turn onward.
+  if (!deal.sellerProfile) {
+    generateSellerProfile(dealId)
+      .then(async (profile) => {
+        await storage.updateDeal(dealId, { sellerProfile: profile } as any);
+        console.log(`[session-manager] Auto-generated seller profile for deal ${dealId}`);
+      })
+      .catch((err) => {
+        console.error(`[session-manager] Failed to auto-generate seller profile for deal ${dealId}:`, err);
+      });
+  }
 
   // Assemble knowledge base for the opening message
   const kb = assembleKnowledgeBase(deal, documents, tasks, null, resolvedDiscrepancies);

@@ -1031,6 +1031,56 @@ Return JSON only.`,
   });
 
   // =====================
+  // =====================
+  // Seller EQ Profile endpoints
+  // =====================
+
+  // Generate or refresh the seller communication profile
+  app.post("/api/deals/:dealId/seller-profile/generate", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { generateSellerProfile } = await import("./interview/eq-profiler");
+      const profile = await generateSellerProfile(dealId);
+      // Store on deal record
+      await storage.updateDeal(dealId, { sellerProfile: profile } as any);
+      res.json(profile);
+    } catch (error: any) {
+      console.error("[EQ profiler] Generation failed:", error);
+      res.status(500).json({ error: error.message || "Failed to generate seller profile" });
+    }
+  });
+
+  // Get the current seller profile
+  app.get("/api/deals/:dealId/seller-profile", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      res.json(deal.sellerProfile || null);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Broker overrides — update specific fields on the profile
+  app.patch("/api/deals/:dealId/seller-profile", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const existingProfile = (deal.sellerProfile as Record<string, any>) || {};
+      const overrides = req.body;
+
+      // Merge overrides into existing profile, tracking what the broker changed
+      const brokerOverrides = { ...(existingProfile.brokerOverrides || {}), ...overrides, updatedAt: new Date().toISOString() };
+      const updatedProfile = { ...existingProfile, ...overrides, brokerOverrides };
+
+      await storage.updateDeal(req.params.dealId, { sellerProfile: updatedProfile } as any);
+      res.json(updatedProfile);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // NEW: Adaptive AI Interview endpoints
   // =====================
 
