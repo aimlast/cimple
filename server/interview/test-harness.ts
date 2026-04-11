@@ -452,7 +452,7 @@ async function simulateInterview(persona: SellerPersona): Promise<EvalResult> {
 
   // Step 1: Generate opening message from interview agent
   const kb = buildMockKnowledgeBase(persona, extractedInfo, industryContext);
-  const systemPrompt = buildInterviewSystemPrompt(kb);
+  const systemPrompt = await buildInterviewSystemPrompt(kb);
 
   const hasQuestionnaireData = persona.questionnaireData && Object.keys(persona.questionnaireData).length > 0;
   let openingInstruction: string;
@@ -530,7 +530,7 @@ async function simulateInterview(persona: SellerPersona): Promise<EvalResult> {
 
     // Generate interview agent response
     const updatedKb = buildMockKnowledgeBase(persona, extractedInfo, industryContext);
-    const updatedSystemPrompt = buildInterviewSystemPrompt(updatedKb);
+    const updatedSystemPrompt = await buildInterviewSystemPrompt(updatedKb);
 
     // Build clean conversation for the agent (without the system bootstrap message)
     const cleanAgentMessages: Array<{ role: "user" | "assistant"; content: string }> = [];

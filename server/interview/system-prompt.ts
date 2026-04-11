@@ -3,6 +3,7 @@ import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import type { KnowledgeBase } from "./knowledge-base";
 import { renderKnowledgeBaseForPrompt } from "./knowledge-base";
+import { getInterviewInsightsForIndustry, renderInsightsForPrompt } from "./learning-loop";
 
 // Resolve paths relative to this file (works in both CJS and ESM/esbuild)
 const __dir = typeof __dirname !== "undefined"
@@ -44,7 +45,7 @@ const RESPONSE_FORMAT = loadPrompt("response-format.md");
  * The static sections are loaded from .md files in server/interview/prompts/.
  * The dynamic knowledge base context is rendered from the current deal state.
  */
-export function buildInterviewSystemPrompt(kb: KnowledgeBase): string {
+export async function buildInterviewSystemPrompt(kb: KnowledgeBase): Promise<string> {
   const parts: string[] = [
     ROLE_AND_IDENTITY,
     CONVERSATION_RULES,
@@ -53,11 +54,25 @@ export function buildInterviewSystemPrompt(kb: KnowledgeBase): string {
     INDUSTRY_INTELLIGENCE,
     BOUNDARIES,
     RESPONSE_FORMAT,
+  ];
+
+  // Inject learned patterns from past interviews in this industry
+  try {
+    const insights = await getInterviewInsightsForIndustry(kb.business.industry);
+    if (insights && insights.sampleCount > 0) {
+      parts.push("\n---\n");
+      parts.push(renderInsightsForPrompt(insights));
+    }
+  } catch {
+    // Non-critical — continue without insights
+  }
+
+  parts.push(
     "\n---\n",
     "# CURRENT KNOWLEDGE BASE",
     "Everything below is what we currently know about this deal. Use it to guide your questions.\n",
     renderKnowledgeBaseForPrompt(kb),
-  ];
+  );
 
   return parts.join("\n");
 }

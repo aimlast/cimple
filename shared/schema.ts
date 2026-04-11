@@ -281,6 +281,36 @@ export const engagementInsights = pgTable("engagement_insights", {
 });
 
 // =====================
+// INTERVIEW INSIGHTS - Learning loop for interview improvement
+// =====================
+export const interviewInsights = pgTable("interview_insights", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+
+  // Dimensions — what kind of interview was this
+  industry: text("industry").notNull(),
+  communicationStyle: text("communication_style"),       // from seller profile
+  sellingReason: text("selling_reason"),                  // from seller profile
+
+  // Aggregate metrics (rolling averages)
+  avgQuestionsAsked: integer("avg_questions_asked").default(0),
+  avgQuestionsAnswered: integer("avg_questions_answered").default(0),
+  avgSessionDurationMinutes: integer("avg_session_duration_minutes").default(0),
+  avgCoveragePercent: integer("avg_coverage_percent").default(0),  // 0-100
+  avgDeferredTopics: integer("avg_deferred_topics").default(0),
+
+  // Qualitative insights (AI-generated after each interview)
+  effectiveApproaches: jsonb("effective_approaches").default(sql`'[]'::jsonb`),   // string[]
+  commonStickingPoints: jsonb("common_sticking_points").default(sql`'[]'::jsonb`), // string[]
+  recommendedQuestionOrder: jsonb("recommended_question_order").default(sql`'[]'::jsonb`), // string[]
+  topicsThatBuildTrust: jsonb("topics_that_build_trust").default(sql`'[]'::jsonb`), // string[]
+
+  sampleCount: integer("sample_count").default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export type InterviewInsight = typeof interviewInsights.$inferSelect;
+
+// =====================
 // BUYER QUESTIONS - Q&A chatbot per deal
 // =====================
 export const buyerQuestions = pgTable("buyer_questions", {

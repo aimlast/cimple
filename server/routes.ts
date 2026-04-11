@@ -1084,6 +1084,50 @@ Return JSON only.`,
   // NEW: Adaptive AI Interview endpoints
   // =====================
 
+  // List all interview sessions for a deal (broker transcript view)
+  app.get("/api/deals/:dealId/sessions", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { interviewSessions: sessionsTable } = await import("@shared/schema");
+      const { eq, desc } = await import("drizzle-orm");
+      const { db } = await import("./db");
+
+      const sessions = await db
+        .select()
+        .from(sessionsTable)
+        .where(eq(sessionsTable.dealId, dealId))
+        .orderBy(desc(sessionsTable.startedAt));
+
+      const result = sessions.map((s) => {
+        const msgs = (s.messages as any[]) || [];
+        const startTime = new Date(s.startedAt).getTime();
+        const endTime = s.completedAt
+          ? new Date(s.completedAt).getTime()
+          : new Date(s.lastActivityAt).getTime();
+        const durationMinutes = Math.round((endTime - startTime) / 60000);
+
+        return {
+          id: s.id,
+          status: s.status,
+          startedAt: s.startedAt,
+          lastActivityAt: s.lastActivityAt,
+          completedAt: s.completedAt,
+          questionsAsked: s.questionsAsked ?? 0,
+          questionsAnswered: s.questionsAnswered ?? 0,
+          questionsSkipped: s.questionsSkipped ?? 0,
+          messages: msgs,
+          messageCount: msgs.length,
+          durationMinutes,
+        };
+      });
+
+      res.json(result);
+    } catch (error: any) {
+      console.error("Error fetching deal sessions:", error);
+      res.status(500).json({ error: "Failed to fetch interview sessions" });
+    }
+  });
+
   // Start or resume an interview session for a deal
   app.post("/api/interview/:dealId/start", async (req, res) => {
     try {
