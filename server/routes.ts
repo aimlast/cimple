@@ -1327,6 +1327,18 @@ Return JSON only.`,
       const { insertDealSchema } = await import("@shared/schema");
       const validatedData = insertDealSchema.parse(req.body);
       const deal = await storage.createDeal(validatedData);
+
+      // Auto-populate document requirements from industry intelligence
+      if (deal.industry) {
+        try {
+          const { populateDocumentRequirements } = await import("./documents/requirements");
+          await populateDocumentRequirements(deal.id, deal.industry);
+        } catch (e) {
+          // Non-fatal — deal still created, requirements can be populated later
+          console.warn("Auto-populate document requirements failed:", e);
+        }
+      }
+
       res.json(deal);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -1334,6 +1346,99 @@ Return JSON only.`,
       }
       console.error("Error creating deal:", error);
       res.status(500).json({ error: "Failed to create deal" });
+    }
+  });
+
+  // ── Document requirements (per-deal checklist) ──
+
+  // GET — full checklist with upload status
+  app.get("/api/deals/:dealId/document-requirements", async (req, res) => {
+    try {
+      const requirements = await storage.getDocumentRequirementsByDeal(req.params.dealId);
+      res.json(requirements);
+    } catch (error: any) {
+      console.error("Error fetching document requirements:", error);
+      res.status(500).json({ error: "Failed to fetch document requirements" });
+    }
+  });
+
+  // POST — broker adds a manual requirement
+  app.post("/api/deals/:dealId/document-requirements", async (req, res) => {
+    try {
+      const { insertDealDocumentRequirementSchema } = await import("@shared/schema");
+      const validatedData = insertDealDocumentRequirementSchema.parse({
+        ...req.body,
+        dealId: req.params.dealId,
+        source: "manual",
+      });
+      const requirement = await storage.createDocumentRequirement(validatedData);
+      res.json(requirement);
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid requirement data", details: error.errors });
+      }
+      console.error("Error creating document requirement:", error);
+      res.status(500).json({ error: "Failed to create document requirement" });
+    }
+  });
+
+  // PATCH — update status, link upload, add notes
+  app.patch("/api/deals/:dealId/document-requirements/:reqId", async (req, res) => {
+    try {
+      const existing = await storage.getDocumentRequirement(req.params.reqId);
+      if (!existing) {
+        return res.status(404).json({ error: "Document requirement not found" });
+      }
+      if (existing.dealId !== req.params.dealId) {
+        return res.status(403).json({ error: "Requirement does not belong to this deal" });
+      }
+      const requirement = await storage.updateDocumentRequirement(req.params.reqId, req.body);
+      res.json(requirement);
+    } catch (error: any) {
+      console.error("Error updating document requirement:", error);
+      res.status(500).json({ error: "Failed to update document requirement" });
+    }
+  });
+
+  // DELETE — broker removes a requirement (only source: "manual")
+  app.delete("/api/deals/:dealId/document-requirements/:reqId", async (req, res) => {
+    try {
+      const existing = await storage.getDocumentRequirement(req.params.reqId);
+      if (!existing) {
+        return res.status(404).json({ error: "Document requirement not found" });
+      }
+      if (existing.dealId !== req.params.dealId) {
+        return res.status(403).json({ error: "Requirement does not belong to this deal" });
+      }
+      if (existing.source !== "manual") {
+        return res.status(400).json({ error: "Can only delete manually-added requirements. Auto-populated requirements can be hidden by setting isRequired to false." });
+      }
+      await storage.deleteDocumentRequirement(req.params.reqId);
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Error deleting document requirement:", error);
+      res.status(500).json({ error: "Failed to delete document requirement" });
+    }
+  });
+
+  // POST — trigger auto-population from industry intelligence
+  app.post("/api/deals/:dealId/document-requirements/populate", async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) {
+        return res.status(404).json({ error: "Deal not found" });
+      }
+      const industryCategory = (req.body.industryCategory as string) || deal.industry;
+      if (!industryCategory) {
+        return res.status(400).json({ error: "No industry set on deal and no industryCategory provided" });
+      }
+      const { populateDocumentRequirements } = await import("./documents/requirements");
+      const created = await populateDocumentRequirements(deal.id, industryCategory);
+      const requirements = await storage.getDocumentRequirementsByDeal(deal.id);
+      res.json({ created, total: requirements.length, requirements });
+    } catch (error: any) {
+      console.error("Error populating document requirements:", error);
+      res.status(500).json({ error: "Failed to populate document requirements" });
     }
   });
 

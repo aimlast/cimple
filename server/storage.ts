@@ -24,10 +24,12 @@ import {
   type BuyerUser, type InsertBuyerUser,
   type BrokerBuyerContact, type InsertBrokerBuyerContact,
   type DealOutreach, type InsertDealOutreach,
+  type DealDocumentRequirement, type InsertDealDocumentRequirement,
   users, cims, brandingSettings, deals, documents, tasks, sellerInvites, buyerAccess, cimSections, analyticsEvents, faqItems, buyerQuestions, engagementInsights,
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
-  dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach
+  dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
+  dealDocumentRequirements
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
@@ -199,6 +201,13 @@ export interface IStorage {
   getDealOutreachByDeal(dealId: string): Promise<DealOutreach[]>;
   getDealOutreachForBuyer(dealId: string, buyerUserId: string): Promise<DealOutreach[]>;
   updateDealOutreach(id: string, updates: Partial<DealOutreach>): Promise<DealOutreach | undefined>;
+
+  // Document requirements (per-deal checklist)
+  createDocumentRequirement(data: InsertDealDocumentRequirement): Promise<DealDocumentRequirement>;
+  getDocumentRequirement(id: string): Promise<DealDocumentRequirement | undefined>;
+  getDocumentRequirementsByDeal(dealId: string): Promise<DealDocumentRequirement[]>;
+  updateDocumentRequirement(id: string, updates: Partial<InsertDealDocumentRequirement>): Promise<DealDocumentRequirement | undefined>;
+  deleteDocumentRequirement(id: string): Promise<void>;
 }
 
 export class MemStorage implements IStorage {
@@ -1331,6 +1340,35 @@ export class DbStorage implements IStorage {
       .where(eq(dealOutreach.id, id))
       .returning();
     return result[0];
+  }
+
+  // ── Document requirements ───────────────────────────────────────────────
+  async createDocumentRequirement(data: InsertDealDocumentRequirement): Promise<DealDocumentRequirement> {
+    const result = await db.insert(dealDocumentRequirements).values(data).returning();
+    return result[0];
+  }
+
+  async getDocumentRequirement(id: string): Promise<DealDocumentRequirement | undefined> {
+    const result = await db.select().from(dealDocumentRequirements).where(eq(dealDocumentRequirements.id, id));
+    return result[0];
+  }
+
+  async getDocumentRequirementsByDeal(dealId: string): Promise<DealDocumentRequirement[]> {
+    return await db.select().from(dealDocumentRequirements)
+      .where(eq(dealDocumentRequirements.dealId, dealId))
+      .orderBy(dealDocumentRequirements.category, dealDocumentRequirements.sortOrder);
+  }
+
+  async updateDocumentRequirement(id: string, updates: Partial<InsertDealDocumentRequirement>): Promise<DealDocumentRequirement | undefined> {
+    const result = await db.update(dealDocumentRequirements)
+      .set({ ...updates, updatedAt: new Date() })
+      .where(eq(dealDocumentRequirements.id, id))
+      .returning();
+    return result[0];
+  }
+
+  async deleteDocumentRequirement(id: string): Promise<void> {
+    await db.delete(dealDocumentRequirements).where(eq(dealDocumentRequirements.id, id));
   }
 }
 

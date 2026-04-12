@@ -1531,3 +1531,52 @@ export const insertDealOutreachSchema = createInsertSchema(dealOutreach).omit({
 });
 export type InsertDealOutreach = z.infer<typeof insertDealOutreachSchema>;
 export type DealOutreach = typeof dealOutreach.$inferSelect;
+
+// =====================================================================
+// DEAL DOCUMENT REQUIREMENTS — per-deal checklist of expected documents
+// =====================================================================
+// Tracks what documents are expected for a deal and whether they've been
+// uploaded. Auto-populated from industry intelligence when a deal is
+// created, and manually editable by the broker. Both broker and seller
+// see the same checklist.
+export const dealDocumentRequirements = pgTable("deal_document_requirements", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+
+  documentName: text("document_name").notNull(),
+  category: text("category").notNull(),
+  // Categories: financial, legal, operational, tax, compliance
+
+  isRequired: boolean("is_required").notNull().default(true),
+  // true = must-have (from CRITICAL), false = nice-to-have (from IMPORTANT)
+
+  source: text("source").notNull().default("auto"),
+  // "auto" = populated from industry intelligence, "manual" = broker added
+
+  status: text("status").notNull().default("missing"),
+  // "missing" | "uploaded" | "verified"
+
+  uploadedFileId: varchar("uploaded_file_id"),
+  // FK → documents.id (null if not yet uploaded)
+
+  uploadedBy: text("uploaded_by"),
+  // "broker" | "seller" (null if not yet uploaded)
+
+  uploadedAt: timestamp("uploaded_at"),
+
+  notes: text("notes"),
+  // Broker can add context, e.g., "Need the last 3 years, not just current"
+
+  sortOrder: integer("sort_order").notNull().default(0),
+
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+
+export const insertDealDocumentRequirementSchema = createInsertSchema(dealDocumentRequirements).omit({
+  id: true,
+  createdAt: true,
+  updatedAt: true,
+});
+export type InsertDealDocumentRequirement = z.infer<typeof insertDealDocumentRequirementSchema>;
+export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSelect;
