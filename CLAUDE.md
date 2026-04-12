@@ -42,13 +42,20 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ## What is already built
 
 ### Core Platform
-- Broker layout: sidebar with Dashboard, Deals, Analytics, Templates, Settings, Support
-- Seller routes: Progress, Chat, Documents
+- Broker layout: collapsible icon sidebar with Deals, Buyers, Analytics, Integrations, Settings
+- All broker pages under `/broker/*` namespace (see `ROUTES.md` for full route tree)
+- Deal detail: `/deal/:id/:tab` with tabs for overview, buyers, financials, documents, qa, team, interview-review
+- Seller routes: `/seller/:token` (intake), `/seller/:token/interview` (fullscreen), `/seller/:token/progress`, `/seller/:token/documents`, `/approve/:token`
+- Buyer routes: `/buyer/login`, `/buyer/signup`, `/buyer/dashboard`, `/buyer/profile`, `/view/:token`, `/review/:token`. All render inside BuyerLayout with three modes: auth (centered card), nav (top bar), immersive (no chrome)
+- Four-layout architecture: FullscreenLayout → SellerLayout → BuyerLayout → BrokerLayout (see `ROUTES.md`)
 - Buyer View Room (tokenized access with NDA signing, analytics tracking, heat maps)
 - 4-phase deal workflow: `phase1_info_collection` → `phase4_design_finalization`
 - Branding settings: logo upload, company name, disclaimer, footer, white-label support
 - Seller invite system (token-based onboarding)
 - Analytics event tracking (page views, scroll depth, heat maps, time-on-page)
+- RoleContext (`client/src/contexts/RoleContext.tsx`): holds current user role (`broker | seller | buyer`), set by layout components. No dealId/token — those come from `useParams()`
+- DealContext (`client/src/contexts/DealContext.tsx`): provides deal data to DealShell tab components without prop drilling
+- Dev Role Switcher (`client/src/components/dev/RoleSwitcher.tsx`): floating pill in dev mode for switching between broker/seller/buyer. Tree-shakes from production builds. Sources tokens from `/api/dev/role-tokens`
 
 ### AI Interview System (fully rebuilt — adaptive, not a fixed sequence)
 - Multi-turn conversational interview via Claude Opus 4.5
@@ -60,7 +67,8 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - Intelligent deferral with 6-step process for difficult questions
 - Session resume across multiple interactions
 - Deferred topics panel and real-time coverage metrics
-- **Files:** `server/interview/` (session-manager, knowledge-base, system-prompt, response-schema, info-merger, prompts/, data/, config/)
+- Shared Interview component (`client/src/components/shared/Interview.tsx`): mode="broker" (coverage panel, fields captured, "Return to Deal") vs mode="seller" (progress dots, no panel, auto-advance). CIMInterview and SellerInterview are thin wrappers.
+- **Files:** `server/interview/` (session-manager, knowledge-base, system-prompt, response-schema, info-merger, prompts/, data/, config/), `client/src/components/shared/Interview.tsx`
 
 ### CIM Design & Generation (visual output — not text-only)
 - AI-powered layout engine that produces bespoke visual sections per deal
@@ -286,9 +294,11 @@ Cimple uses a multi-agent system. Each agent has a distinct role and system prom
 
 ## User roles and flows
 
-**Broker** — creates deals, invites sellers, manages deal teams, reviews content, approves CIM, manages buyers
-**Seller** — invited to platform (token-based), completes questionnaire, participates in AI interview, reviews draft, approves Q&A answers
-**Buyer** — receives tokenized CIM link, signs NDA, views in secure room, asks questions via chatbot, analytics tracked
+**Broker** — creates deals, invites sellers, manages deal teams, reviews content, approves CIM, manages buyers. All broker pages under `/broker/*`. See `ROUTES.md`.
+**Seller** — invited to platform (token-based via `/seller/:token`), completes questionnaire, participates in AI interview, reviews draft, approves Q&A answers (via `/approve/:token`)
+**Buyer** — receives tokenized CIM link (`/view/:token`), signs NDA, views in secure room, asks questions via chatbot, analytics tracked. Self-serve accounts at `/buyer/*`.
+
+**Route architecture:** Three role-based namespaces (`/broker/*`, `/seller/*` + `/approve/*`, `/buyer/*` + `/view/*` + `/review/*`). Deal routes at `/deal/*` are broker-facing but unambiguous without a prefix. Four layout wrappers set RoleContext: FullscreenLayout (interviews, standalone approvals), SellerLayout, BuyerLayout, BrokerLayout. Full route tree documented in `ROUTES.md`.
 
 **5-phase deal workflow:**
 1. Info collection (pre-platform): calls, NDA, SQ, docs, valuation

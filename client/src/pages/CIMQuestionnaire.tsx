@@ -382,7 +382,7 @@ export default function CIMQuestionnaire() {
           localStorage.removeItem(`cim_${cimId}_questionnaireStep`);
         }
         
-        setLocation("/cim/new-documents");
+        setLocation("/broker/cim/new-documents");
       } catch (error: any) {
         console.error("Failed to save questionnaire:", error);
         toast({
@@ -400,7 +400,7 @@ export default function CIMQuestionnaire() {
     if (currentStep > 0) {
       setCurrentStep(currentStep - 1);
     } else {
-      setLocation("/new-cim");
+      setLocation("/broker/new-cim");
     }
   };
 

@@ -73,7 +73,7 @@ export default function NewCIM() {
       }));
       
       console.log("Created CIM:", cim);
-      setLocation("/cim/new-questionnaire");
+      setLocation("/broker/cim/new-questionnaire");
     } catch (error: any) {
       console.error("Failed to create CIM:", error);
       toast({
@@ -172,7 +172,7 @@ export default function NewCIM() {
       <div className="flex justify-end gap-2">
         <Button
           variant="outline"
-          onClick={() => setLocation("/")}
+          onClick={() => setLocation("/broker/deals")}
           data-testid="button-cancel"
         >
           Cancel

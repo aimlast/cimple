@@ -190,7 +190,7 @@ export default function ActiveCIMs() {
 
   const handleGenerateInvite = () => {
     const token = Math.random().toString(36).substring(2, 15);
-    navigator.clipboard.writeText(`${window.location.origin}/invite/${token}`);
+    navigator.clipboard.writeText(`${window.location.origin}/seller/${token}`);
     toast({ title: "Invite link copied", description: "Send it to the seller to begin their intake." });
     setInviteOpen(false);
     setInviteEmail("");
@@ -223,7 +223,7 @@ export default function ActiveCIMs() {
             </Button>
             <Button
               size="sm"
-              onClick={() => setLocation("/new-deal")}
+              onClick={() => setLocation("/broker/new-deal")}
               className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shadow-sm"
               data-testid="button-new-deal"
             >
@@ -295,7 +295,7 @@ export default function ActiveCIMs() {
             ))}
           </div>
         ) : filteredDeals.length === 0 ? (
-          <EmptyState searching={!!search} onNewDeal={() => setLocation("/new-deal")} />
+          <EmptyState searching={!!search} onNewDeal={() => setLocation("/broker/new-deal")} />
         ) : (
           <div>
             {actionDeals.length > 0 && (

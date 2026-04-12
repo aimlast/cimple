@@ -9,7 +9,7 @@ import { useQuery } from "@tanstack/react-query";
 import type { Cim } from "@shared/schema";
 
 export default function BrokerReview() {
-  const [, params] = useRoute("/cim/:id");
+  const [, params] = useRoute("/broker/cim/:id");
   const [, setLocation] = useLocation();
   const cimId = params?.id || "1";
   const [editDialogOpen, setEditDialogOpen] = useState(false);
@@ -33,17 +33,17 @@ export default function BrokerReview() {
     
     // If no questionnaire data, continue with questionnaire
     if (!cim.questionnaireData) {
-      return "/cim/new-questionnaire";
+      return "/broker/cim/new-questionnaire";
     }
     
     // If questionnaire done but no extracted info, continue with documents/interview
     if (!cim.extractedInfo) {
-      return "/cim/new-documents";
+      return "/broker/cim/new-documents";
     }
     
     // If we have some extracted info but CIM is not completed, continue with interview
     if (cim.status !== "completed") {
-      return `/cim/${cimId}/interview`;
+      return `/broker/cim/${cimId}/interview`;
     }
     
     return null; // CIM is complete
@@ -107,7 +107,7 @@ export default function BrokerReview() {
         <Button
           variant="ghost"
           size="sm"
-          onClick={() => setLocation("/")}
+          onClick={() => setLocation("/broker/deals")}
           data-testid="button-back"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />
@@ -136,7 +136,7 @@ export default function BrokerReview() {
               Continue Creating CIM
             </Button>
           )}
-          <Link href={`/cim/${cimId}/preview`}>
+          <Link href={`/broker/cim/${cimId}/preview`}>
             <Button variant="outline" data-testid="button-preview">
               <Eye className="h-4 w-4 mr-2" />
               Preview CIM

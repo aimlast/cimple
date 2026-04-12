@@ -143,7 +143,7 @@ export function CIMCard({
             <p className="text-xs text-muted-foreground">
               Updated {lastUpdated}
             </p>
-            <Link href={`/cim/${id}`}>
+            <Link href={`/broker/cim/${id}`}>
               <Button variant="ghost" size="sm" data-testid="button-continue">
                 Continue
               </Button>

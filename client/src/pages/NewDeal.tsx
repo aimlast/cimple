@@ -85,7 +85,7 @@ export default function NewDeal() {
 
       {/* Back */}
       <button
-        onClick={() => setLocation("/")}
+        onClick={() => setLocation("/broker/deals")}
         className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors mb-8"
         data-testid="button-back"
       >

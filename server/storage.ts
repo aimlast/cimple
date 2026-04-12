@@ -69,6 +69,7 @@ export interface IStorage {
   // Seller invite operations
   createSellerInvite(invite: InsertSellerInvite): Promise<SellerInvite>;
   getSellerInviteByToken(token: string): Promise<SellerInvite | undefined>;
+  getSellerInvitesByDealId(dealId: string): Promise<SellerInvite[]>;
   updateSellerInvite(id: string, updates: Partial<InsertSellerInvite>): Promise<SellerInvite | undefined>;
   
   // Buyer access operations
@@ -342,6 +343,7 @@ export class MemStorage implements IStorage {
   async deleteTask(): Promise<void> {}
   async createSellerInvite(): Promise<SellerInvite> { throw new Error("Use DbStorage"); }
   async getSellerInviteByToken(): Promise<SellerInvite | undefined> { return undefined; }
+  async getSellerInvitesByDealId(): Promise<SellerInvite[]> { return []; }
   async updateSellerInvite(): Promise<SellerInvite | undefined> { return undefined; }
   async createBuyerAccess(): Promise<BuyerAccess> { throw new Error("Use DbStorage"); }
   async getBuyerAccessByToken(): Promise<BuyerAccess | undefined> { return undefined; }
@@ -572,6 +574,12 @@ export class DbStorage implements IStorage {
   async getSellerInviteByToken(token: string): Promise<SellerInvite | undefined> {
     const result = await db.select().from(sellerInvites).where(eq(sellerInvites.token, token));
     return result[0];
+  }
+
+  async getSellerInvitesByDealId(dealId: string): Promise<SellerInvite[]> {
+    return db.select().from(sellerInvites)
+      .where(eq(sellerInvites.dealId, dealId))
+      .orderBy(desc(sellerInvites.createdAt));
   }
 
   async updateSellerInvite(id: string, updates: Partial<InsertSellerInvite>): Promise<SellerInvite | undefined> {
