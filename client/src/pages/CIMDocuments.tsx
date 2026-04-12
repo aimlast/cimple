@@ -9,7 +9,7 @@ export default function CIMDocuments() {
 
   const handleContinue = () => {
     console.log("Moving to AI interview");
-    setLocation("/cim/new-interview");
+    setLocation("/broker/cim/new-interview");
   };
 
   return (
@@ -63,7 +63,7 @@ export default function CIMDocuments() {
       <div className="flex justify-between gap-2">
         <Button
           variant="outline"
-          onClick={() => setLocation("/cim/new-questionnaire")}
+          onClick={() => setLocation("/broker/cim/new-questionnaire")}
           data-testid="button-back"
         >
           <ArrowLeft className="h-4 w-4 mr-2" />

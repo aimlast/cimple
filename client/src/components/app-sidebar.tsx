@@ -12,11 +12,11 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV = [
-  { label: "Deals",        href: "/",             icon: Building2 },
-  { label: "Buyers",       href: "/buyers",       icon: Users },
-  { label: "Analytics",    href: "/analytics",    icon: BarChart3 },
-  { label: "Integrations", href: "/integrations", icon: Plug },
-  { label: "Settings",     href: "/settings",     icon: Settings },
+  { label: "Deals",        href: "/broker/deals",        icon: Building2 },
+  { label: "Buyers",       href: "/broker/buyers",       icon: Users },
+  { label: "Analytics",    href: "/broker/analytics",    icon: BarChart3 },
+  { label: "Integrations", href: "/broker/integrations", icon: Plug },
+  { label: "Settings",     href: "/broker/settings",     icon: Settings },
 ];
 
 export function AppSidebar() {
@@ -69,8 +69,8 @@ export function AppSidebar() {
   }, []);
 
   const isActive = (href: string) =>
-    href === "/"
-      ? location === "/" || location === "/deals"
+    href === "/broker/deals"
+      ? location === "/" || location.startsWith("/broker/deals") || location === "/deals"
       : location.startsWith(href);
 
   return (
@@ -80,7 +80,7 @@ export function AppSidebar() {
     >
       {/* ── Logo ── */}
       <SidebarHeader className="border-b border-sidebar-border px-3 py-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
-        <Link href="/" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+        <Link href="/broker/deals" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
           <img
             src="/cimple-icon.png"
             alt="Cimple"
@@ -129,7 +129,7 @@ export function AppSidebar() {
 
         {/* ── New deal shortcut ── */}
         <div className="mt-4 px-1 group-data-[collapsible=icon]:px-0">
-          <Link href="/new-deal">
+          <Link href="/broker/new-deal">
             <div
               className="flex items-center gap-2 px-3 py-2 rounded-md text-xs text-teal/70 hover:text-teal hover:bg-teal/8 cursor-pointer transition-colors border border-dashed border-teal/20 hover:border-teal/40 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-2 group-data-[collapsible=icon]:border-0"
               data-testid="link-new-deal"

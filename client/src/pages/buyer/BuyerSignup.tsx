@@ -76,7 +76,7 @@ export default function BuyerSignup() {
       </form>
       <div className="text-center text-xs text-muted-foreground pt-2 border-t border-border">
         Already have an account?{" "}
-        <Link href="/buyer/login"><a className="text-primary hover:underline">Sign in</a></Link>
+        <Link href="/buyer/login" className="text-primary hover:underline">Sign in</Link>
       </div>
     </BuyerAuthCard>
   );

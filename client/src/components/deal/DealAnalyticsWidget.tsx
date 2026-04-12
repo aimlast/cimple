@@ -1,5 +1,5 @@
 /**
- * DealAnalyticsWidget — compact analytics summary embedded in DealDetail
+ * DealAnalyticsWidget — compact analytics summary embedded in OverviewTab
  *
  * Shows key engagement metrics at a glance without leaving the deal page.
  * Links to the full Analytics page for deeper exploration.

@@ -41,13 +41,11 @@ export function BuyerNav() {
   const NavLink = ({ href, icon: Icon, label }: { href: string; icon: any; label: string }) => {
     const active = location.startsWith(href);
     return (
-      <Link href={href}>
-        <a className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm ${
+      <Link href={href} className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm ${
           active ? "bg-accent text-foreground" : "text-muted-foreground hover:text-foreground hover:bg-accent/50"
         }`}>
-          <Icon className="h-4 w-4" />
-          {label}
-        </a>
+        <Icon className="h-4 w-4" />
+        {label}
       </Link>
     );
   };
@@ -56,7 +54,7 @@ export function BuyerNav() {
     <nav className="border-b border-border bg-card">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <Link href="/buyer/dashboard"><a className="font-semibold">Cimple</a></Link>
+          <Link href="/buyer/dashboard" className="font-semibold">Cimple</Link>
           <div className="flex items-center gap-1">
             <NavLink href="/buyer/dashboard" icon={LayoutDashboard} label="Dashboard" />
             <NavLink href="/buyer/profile" icon={UserCircle} label="Profile" />

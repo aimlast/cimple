@@ -1,0 +1,11 @@
+buyer_name,email,company,buyer_type,phone,target_industries,target_locations,budget_min,budget_max,proof_of_funds,linkedin_url,notes
+Michelle Laurent,mlaurent@laurentgroup.ca,Laurent Hospitality Group,strategic,416-555-2001,"Restaurant;Hospitality","Toronto;GTA",800000,2500000,true,linkedin.com/in/michellelaurent,Owns 4 restaurants in Toronto. Looking to add Italian concept.
+Ryan Cooper,rcooper@cooperfoodgroup.com,Cooper Food Group,strategic,416-555-2002,"Restaurant;QSR",Ontario,500000,1500000,true,linkedin.com/in/ryancooper,Multi-unit operator. Converting independents to managed operations.
+Samantha Winters,swinters@gmail.com,(Individual),individual,647-555-2003,"Restaurant;Bar",Toronto,300000,800000,false,linkedin.com/in/samanthawinters,Hospitality management grad. First restaurant purchase.
+Daniel Ortiz,dortiz@ortizventures.ca,Ortiz Ventures,financial,416-555-2004,"Restaurant;Food Service","GTA;Hamilton",1000000,3000000,true,linkedin.com/in/danielortiz,Restaurant-focused investor. Silent partner model.
+Karen Singh,ksingh@spiceroadgroup.com,Spice Road Restaurant Group,strategic,416-555-2005,"Restaurant;Ethnic Cuisine","Toronto;Mississauga",600000,1800000,true,linkedin.com/in/karensingh,Operates Indian and fusion restaurants. Expanding portfolio.
+Tom Bradley,tbradley@bradleycapital.ca,Bradley Capital,financial,647-555-2006,"Restaurant;Retail Food",Ontario,1500000,4000000,true,linkedin.com/in/tombradley,Family office. Passive restaurant investments.
+Lisa Nakamura,lnakamura@nakamuragroup.com,Nakamura Group,individual,416-555-2007,Restaurant,"Toronto;Yorkville",500000,1200000,true,linkedin.com/in/lisanakamura,Former head chef at Canoe. Wants ownership.
+Marco DeLuca,mdeluca@delucahospitality.ca,DeLuca Hospitality Inc.,strategic,416-555-2008,"Italian Restaurant;Bar","Toronto;GTA",700000,2000000,true,linkedin.com/in/marcodeluca,Italian-focused restaurateur. Perfect concept match.
+Chris Thompson,cthompson@foodventurescapital.com,Food Ventures Capital,financial,416-555-2009,"Restaurant;Food Manufacturing","Ontario;BC",2000000,5000000,true,linkedin.com/in/christhompson,Hospitality PE fund. Series of recent acquisitions.
+Amanda Green,agreen@gmail.com,(Individual),individual,647-555-2010,"Restaurant;Cafe","Toronto;East End",400000,900000,false,linkedin.com/in/amandagreen,Currently manages a restaurant. Wants to buy and operate.

@@ -2,7 +2,7 @@
  * ActivityTimeline — chronological feed of buyer events for a deal
  *
  * Shows who did what, when — views, NDA signs, section reads, questions asked.
- * Compact design for embedding in the DealDetail right panel.
+ * Compact design for embedding in the deal TeamTab.
  */
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";

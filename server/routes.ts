@@ -2560,7 +2560,7 @@ Return JSON only.`,
       } as any);
 
       const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-      const sellerReviewUrl = `${baseUrl}/buyer-approval/${request.sellerReviewToken}`;
+      const sellerReviewUrl = `${baseUrl}/review/${request.sellerReviewToken}`;
       const categoryLabel = BUYER_CATEGORIES.find(c => c.value === request.category)?.label || request.category;
 
       await notify(deal.id, "buyer_approval_broker_approved", {
@@ -4089,7 +4089,7 @@ Return JSON only.`,
         body: `You've been added as ${roleConfig.label} (${teamLabel} team) for ${deal?.businessName || "a business"}. Click below to get started.`,
         actionUrl: teamType === "buyer"
           ? `/view/${inviteToken}`
-          : `/invite/${inviteToken}`,
+          : `/seller/${inviteToken}`,
         businessName: deal?.businessName,
         specificMemberIds: [member.id],
       });
@@ -4475,6 +4475,51 @@ Do not speculate or add information not in the CIM.`,
       res.status(500).json({ error: "Failed to record events" });
     }
   });
+
+  /* ══════════════════════════════════════════════
+     DEV-ONLY: token lookup for role switcher
+  ══════════════════════════════════════════════ */
+  if (process.env.NODE_ENV === "development") {
+    app.get("/api/dev/role-tokens", async (_req, res) => {
+      try {
+        const allDeals = await storage.getAllDeals();
+        if (allDeals.length === 0) {
+          return res.json({ sellerToken: null, buyerToken: null, dealId: null });
+        }
+
+        // Search up to 5 recent deals for tokens
+        let sellerToken: string | null = null;
+        let buyerToken: string | null = null;
+        let dealId: string | null = null;
+        let dealName: string | null = null;
+
+        for (const deal of allDeals.slice(0, 5)) {
+          if (!sellerToken) {
+            const invites = await storage.getSellerInvitesByDealId(deal.id);
+            if (invites.length > 0) {
+              sellerToken = invites[0].token;
+              if (!dealId) { dealId = deal.id; dealName = deal.businessName; }
+            }
+          }
+          if (!buyerToken) {
+            const access = await storage.getBuyerAccessByDeal(deal.id);
+            if (access.length > 0) {
+              buyerToken = access[0].accessToken;
+              if (!dealId) { dealId = deal.id; dealName = deal.businessName; }
+            }
+          }
+          if (sellerToken && buyerToken) break;
+        }
+
+        // Fallback dealId to first deal
+        if (!dealId) { dealId = allDeals[0].id; dealName = allDeals[0].businessName; }
+
+        res.json({ dealId, dealName, sellerToken, buyerToken });
+      } catch (error: any) {
+        res.status(500).json({ error: error.message });
+      }
+    });
+  }
 
   const httpServer = createServer(app);
   return httpServer;
