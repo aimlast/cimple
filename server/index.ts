@@ -6,6 +6,12 @@ import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
 
 const app = express();
+
+// Trust the first proxy (Railway's reverse proxy terminates SSL).
+// Without this, express-session sees HTTP and refuses to set Secure cookies,
+// which breaks buyer login in production.
+app.set("trust proxy", 1);
+
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
 
