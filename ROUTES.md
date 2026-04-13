@@ -12,7 +12,8 @@ The sidebar, back buttons, and internal links use these canonical paths.
 
 | Path | Component | Description |
 |---|---|---|
-| `/` | ActiveCIMs | Root landing (renders deals board, no redirect) |
+| `/` | BrokerDashboard | Root landing (dashboard, no redirect) |
+| `/broker` | BrokerDashboard | Broker dashboard — pipeline, actions, activity |
 | `/broker/deals` | ActiveCIMs | Deals board (canonical) |
 | `/broker/analytics` | Analytics | Cross-deal analytics dashboard |
 | `/broker/buyers` | Buyers | Buyer CRM / directory |

@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { BarChart3, Settings, Building2, Plus, Plug, Users } from "lucide-react";
+import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -12,6 +12,7 @@ import {
 } from "@/components/ui/sidebar";
 
 const NAV = [
+  { label: "Dashboard",    href: "/broker",              icon: LayoutDashboard },
   { label: "Deals",        href: "/broker/deals",        icon: Building2 },
   { label: "Buyers",       href: "/broker/buyers",       icon: Users },
   { label: "Analytics",    href: "/broker/analytics",    icon: BarChart3 },
@@ -68,10 +69,15 @@ export function AppSidebar() {
     };
   }, []);
 
-  const isActive = (href: string) =>
-    href === "/broker/deals"
-      ? location === "/" || location.startsWith("/broker/deals") || location === "/deals"
-      : location.startsWith(href);
+  const isActive = (href: string) => {
+    if (href === "/broker") {
+      return location === "/" || location === "/broker";
+    }
+    if (href === "/broker/deals") {
+      return location.startsWith("/broker/deals") || location === "/deals";
+    }
+    return location.startsWith(href);
+  };
 
   return (
     <Sidebar
@@ -80,7 +86,7 @@ export function AppSidebar() {
     >
       {/* ── Logo ── */}
       <SidebarHeader className="border-b border-sidebar-border px-3 py-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">
-        <Link href="/broker/deals" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
+        <Link href="/broker" className="flex items-center gap-2 group-data-[collapsible=icon]:justify-center">
           <img
             src="/cimple-icon.png"
             alt="Cimple"

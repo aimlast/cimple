@@ -10,6 +10,7 @@ import { ThemeProvider } from "@/components/ThemeProvider";
 import { RoleProvider, useSetLayoutRole } from "@/contexts/RoleContext";
 import { RoleSwitcher } from "@/components/dev/RoleSwitcher";
 import NotFound from "@/pages/not-found";
+import BrokerDashboard from "@/pages/BrokerDashboard";
 import ActiveCIMs from "@/pages/ActiveCIMs";
 import Analytics from "@/pages/Analytics";
 import Templates from "@/pages/Templates";
@@ -41,10 +42,11 @@ function Redirect({ to }: { to: string }) {
 function Routes() {
   return (
     <Switch>
-      {/* ── Root (broker landing — no redirect flash) ── */}
-      <Route path="/" component={ActiveCIMs} />
+      {/* ── Root (broker landing — dashboard) ── */}
+      <Route path="/" component={BrokerDashboard} />
 
       {/* ── Canonical broker routes ── */}
+      <Route path="/broker" component={BrokerDashboard} />
       <Route path="/broker/deals" component={ActiveCIMs} />
       <Route path="/broker/analytics" component={Analytics} />
       <Route path="/broker/buyers" component={Buyers} />
