@@ -2442,6 +2442,107 @@ Return JSON only.`,
     }
   });
 
+  // ── Seller progress (token-based, no login) ──
+  app.get("/api/seller/:token/progress", async (req, res) => {
+    try {
+      const invite = await storage.getSellerInviteByToken(req.params.token);
+      if (!invite) return res.status(404).json({ error: "Invite not found" });
+
+      const deal = await storage.getDeal(invite.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // Interview coverage
+      const { buildSectionCoverage } = await import("./interview/knowledge-base");
+      const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
+      const sectionCoverage = buildSectionCoverage(extractedInfo as any);
+      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
+      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
+      const interviewPct = sectionCoverage.length > 0
+        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
+        : 0;
+
+      // Interview sessions
+      const { db } = await import("./db");
+      const { interviewSessions, buyerQuestions } = await import("@shared/schema");
+      const { eq: eqOp, desc: descOp } = await import("drizzle-orm");
+      const sessions = await db.select().from(interviewSessions)
+        .where(eqOp(interviewSessions.dealId, deal.id))
+        .orderBy(descOp(interviewSessions.lastActivityAt));
+      const hasActiveSession = sessions.some((s) => s.status === "active");
+      const hasCompletedSession = sessions.some((s) => s.status === "completed");
+      const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
+
+      // Document requirements
+      const docReqs = await storage.getDocumentRequirementsByDeal(deal.id);
+      const requiredDocs = docReqs.filter((r) => r.isRequired);
+      const uploadedRequired = requiredDocs.filter((r) => r.status !== "missing").length;
+      const totalRequired = requiredDocs.length;
+      const docPct = totalRequired > 0 ? Math.round((uploadedRequired / totalRequired) * 100) : 0;
+
+      // Uploaded documents
+      const allDocs = await storage.getDocumentsByDeal(deal.id);
+
+      // Pending seller approvals
+      const pendingQuestions = await db.select().from(buyerQuestions)
+        .where(eqOp(buyerQuestions.dealId, deal.id));
+      const pendingSeller = pendingQuestions.filter((q) => q.status === "pending_seller");
+
+      // Step status
+      const intakeCompleted = !!(deal as any).questionnaireData;
+      type StepStatus = "completed" | "current" | "upcoming";
+      let currentStep: "intake" | "interview" | "documents" | "review" = "intake";
+      if (intakeCompleted && !interviewCompleted) currentStep = "interview";
+      else if (interviewCompleted && docPct < 100) currentStep = "documents";
+      else if (interviewCompleted && docPct >= 100) currentStep = "review";
+
+      const steps: Array<{ id: string; label: string; status: StepStatus; pct?: number }> = [
+        { id: "intake", label: "Business Info", status: intakeCompleted ? "completed" : currentStep === "intake" ? "current" : "upcoming" },
+        { id: "interview", label: "Interview", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
+        { id: "documents", label: "Documents", status: docPct >= 100 ? "completed" : currentStep === "documents" ? "current" : "upcoming", pct: docPct },
+        { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
+      ];
+
+      // Broker contact
+      const broker = await storage.getUser(deal.brokerId);
+
+      res.json({
+        businessName: deal.businessName,
+        industry: deal.industry,
+        currentStep,
+        steps,
+        interview: {
+          completed: interviewCompleted,
+          hasActiveSession,
+          percentage: interviewPct,
+          sections: sectionCoverage.map((s) => ({
+            key: s.key,
+            title: s.title,
+            status: s.status,
+          })),
+        },
+        documents: {
+          requiredTotal: totalRequired,
+          requiredUploaded: uploadedRequired,
+          percentage: docPct,
+          totalUploaded: allDocs.length,
+          requirements: docReqs.map((r) => ({
+            id: r.id,
+            name: r.documentName,
+            category: r.category,
+            isRequired: r.isRequired,
+            status: r.status,
+            notes: r.notes,
+          })),
+        },
+        pendingApprovals: pendingSeller.length,
+        broker: broker ? { name: broker.name || broker.username, email: broker.email } : null,
+      });
+    } catch (error: any) {
+      console.error("Error fetching seller progress:", error);
+      res.status(500).json({ error: "Failed to fetch seller progress" });
+    }
+  });
+
   app.patch("/api/invites/:id", async (req, res) => {
     try {
       const invite = await storage.updateSellerInvite(req.params.id, req.body);

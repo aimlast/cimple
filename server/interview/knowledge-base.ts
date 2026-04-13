@@ -426,7 +426,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
 // Internal helpers
 // =====================
 
-function buildSectionCoverage(extractedInfo: Partial<ExtractedInfo>): SectionCoverage[] {
+export function buildSectionCoverage(extractedInfo: Partial<ExtractedInfo>): SectionCoverage[] {
   return CIM_SECTIONS.map((section) => {
     const fieldNames = SECTION_FIELD_MAP[section.key] || [];
     const fields = fieldNames.map((fieldName) => {
