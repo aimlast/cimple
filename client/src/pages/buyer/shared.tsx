@@ -26,7 +26,7 @@ export function BuyerAuthCard({ children }: { children: React.ReactNode }) {
             }}
           />
           <div className="text-xs text-muted-foreground mt-1">
-            Matched opportunities for private business acquirers
+            Matched CIMs for private business acquirers
           </div>
         </div>
         <div className="border border-border rounded-lg bg-card p-6 space-y-4">
