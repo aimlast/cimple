@@ -49,6 +49,16 @@ export function SellerOnboarding({ token, onComplete }: SellerOnboardingProps) {
 
   return (
     <div className="fixed inset-0 z-50 bg-background flex flex-col">
+      {/* Logo */}
+      <div className="absolute top-4 left-5 z-10">
+        <img
+          src="/cimple-text.png"
+          alt="Cimple"
+          className="h-4 w-auto"
+          style={{ filter: "brightness(0) saturate(100%) invert(56%) sepia(31%) saturate(1000%) hue-rotate(125deg) brightness(92%) contrast(87%)" }}
+        />
+      </div>
+
       {/* Screen content */}
       <div className="flex-1 overflow-hidden relative">
         <AnimatePresence mode="wait">

@@ -155,6 +155,14 @@ export function Interview({
       <div className="flex-1 flex flex-col min-w-0">
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-card/50">
+          {!isBroker && (
+            <img
+              src="/cimple-text.png"
+              alt="Cimple"
+              className="h-3.5 w-auto shrink-0"
+              style={{ filter: "brightness(0) saturate(100%) invert(56%) sepia(31%) saturate(1000%) hue-rotate(125deg) brightness(92%) contrast(87%)" }}
+            />
+          )}
           {onBack && (
             <>
               <button
