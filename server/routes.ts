@@ -1349,6 +1349,256 @@ Return JSON only.`,
     }
   });
 
+  // ── Broker dashboard ──────────────────────────────────────────────────
+  app.get("/api/broker/dashboard", async (req, res) => {
+    try {
+      const allDeals = await storage.getAllDeals();
+
+      // ─ Pipeline snapshot: group deals by phase ─
+      const phaseLabels: Record<string, string> = {
+        phase1_info_collection: "Info Collection",
+        phase2_platform_intake: "Platform Intake",
+        phase3_content_creation: "Content Creation",
+        phase4_design_finalization: "Design Finalization",
+      };
+      const phaseKeys = Object.keys(phaseLabels);
+      const pipeline = phaseKeys.map((phase) => {
+        const phaseDeals = allDeals.filter((d) => d.phase === phase);
+        const totalAskingPrice = phaseDeals.reduce((sum, d) => {
+          const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
+          return sum + (isNaN(price) ? 0 : price);
+        }, 0);
+        return {
+          phase,
+          label: phaseLabels[phase],
+          dealCount: phaseDeals.length,
+          totalAskingPrice,
+          deals: phaseDeals.map((d) => ({
+            id: d.id,
+            businessName: d.businessName,
+            industry: d.industry,
+            updatedAt: d.updatedAt,
+          })),
+        };
+      });
+
+      // ─ Quick stats ─
+      const activeDeals = allDeals.filter((d) => d.status !== "completed");
+      const totalPipelineValue = activeDeals.reduce((sum, d) => {
+        const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
+        return sum + (isNaN(price) ? 0 : price);
+      }, 0);
+      const avgDaysInPhase = activeDeals.length > 0
+        ? Math.round(
+            activeDeals.reduce((sum, d) => {
+              const daysSince = (Date.now() - new Date(d.updatedAt).getTime()) / (1000 * 60 * 60 * 24);
+              return sum + daysSince;
+            }, 0) / activeDeals.length,
+          )
+        : 0;
+
+      // Fetch cross-deal data in parallel (all deals at once, not serial)
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+      const perDealData = await Promise.all(
+        allDeals.map(async (deal) => {
+          const [access, approvals, questions] = await Promise.all([
+            storage.getBuyerAccessByDeal(deal.id),
+            storage.getBuyerApprovalRequestsByDeal(deal.id),
+            storage.getQuestionsByDeal(deal.id),
+          ]);
+          return { deal, access, approvals, questions };
+        }),
+      );
+
+      let newBuyersThisWeek = 0;
+      const pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string }> = [];
+      const unansweredQuestions: Array<{ dealId: string; dealName: string; questionPreview: string; askedAt: string }> = [];
+      const pendingReviewCIMs: Array<{ dealId: string; dealName: string }> = [];
+
+      for (const { deal, access, approvals, questions } of perDealData) {
+        // New buyers this week
+        newBuyersThisWeek += access.filter((a) => new Date(a.createdAt) > sevenDaysAgo).length;
+
+        // Pending buyer approvals
+        for (const a of approvals) {
+          if (a.status === "pending_broker_review") {
+            pendingApprovals.push({
+              dealId: deal.id,
+              dealName: deal.businessName,
+              buyerName: a.buyerName,
+              buyerCompany: a.buyerCompany,
+              submittedAt: a.createdAt?.toISOString?.() ?? new Date(a.createdAt).toISOString(),
+            });
+          }
+        }
+
+        // Unanswered Q&A
+        for (const q of questions) {
+          if (q.status === "pending_broker") {
+            unansweredQuestions.push({
+              dealId: deal.id,
+              dealName: deal.businessName,
+              questionPreview: q.question.slice(0, 120),
+              askedAt: q.createdAt?.toISOString?.() ?? new Date(q.createdAt).toISOString(),
+            });
+          }
+        }
+
+        // CIMs ready for broker review
+        if (deal.status === "pending_review") {
+          pendingReviewCIMs.push({ dealId: deal.id, dealName: deal.businessName });
+        }
+      }
+
+      // Stalled interviews (active sessions with no activity in 3+ days)
+      const { db } = await import("./db");
+      const { interviewSessions, dealDocumentRequirements, analyticsEvents: eventsTable } = await import("@shared/schema");
+      const { and, lt, gt, eq: eqOp, desc: descOp } = await import("drizzle-orm");
+      const dealMap = new Map(allDeals.map((d) => [d.id, d.businessName]));
+
+      const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+      const stalledRows = await db
+        .select()
+        .from(interviewSessions)
+        .where(
+          and(
+            eqOp(interviewSessions.status, "active"),
+            lt(interviewSessions.lastActivityAt, threeDaysAgo),
+          ),
+        );
+
+      const stalledInterviews = stalledRows.map((s) => ({
+        dealId: s.dealId,
+        dealName: dealMap.get(s.dealId) || "Unknown",
+        lastActivity: s.lastActivityAt.toISOString(),
+        daysSinceActivity: Math.floor((Date.now() - s.lastActivityAt.getTime()) / (1000 * 60 * 60 * 24)),
+      }));
+
+      // Document requirements — missing required docs per deal
+      const allReqs = await db.select().from(dealDocumentRequirements);
+      const missingByDeal = new Map<string, number>();
+      for (const r of allReqs) {
+        if (r.status === "missing" && r.isRequired) {
+          missingByDeal.set(r.dealId, (missingByDeal.get(r.dealId) || 0) + 1);
+        }
+      }
+      const pendingDocuments = Array.from(missingByDeal.entries())
+        .map(([dealId, count]) => ({
+          dealId,
+          dealName: dealMap.get(dealId) || "Unknown",
+          count,
+        }))
+        .filter((d) => d.count > 0);
+
+      // ─ Recent activity feed (last 48 hours, cap at 20) ─
+      const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
+      const activityItems: Array<{
+        type: string;
+        dealId: string;
+        dealName: string;
+        description: string;
+        timestamp: string;
+      }> = [];
+
+      // Analytics events (buyer views, NDA signs)
+      const recentEvents = await db
+        .select()
+        .from(eventsTable)
+        .where(gt(eventsTable.createdAt, twoDaysAgo))
+        .orderBy(descOp(eventsTable.createdAt));
+
+      for (const evt of recentEvents) {
+        if (evt.eventType === "view" || evt.eventType === "nda_signed") {
+          const dn = dealMap.get(evt.dealId) || "Unknown";
+          activityItems.push({
+            type: evt.eventType === "nda_signed" ? "nda_signed" : "buyer_view",
+            dealId: evt.dealId,
+            dealName: dn,
+            description: evt.eventType === "nda_signed" ? "Buyer signed NDA" : "Buyer viewed CIM",
+            timestamp: evt.createdAt.toISOString(),
+          });
+        }
+      }
+
+      // Recent Q&A, document uploads, and approval submissions (use already-fetched data)
+      for (const { deal, approvals, questions } of perDealData) {
+        for (const q of questions) {
+          const qDate = new Date(q.createdAt);
+          if (qDate > twoDaysAgo) {
+            activityItems.push({
+              type: "question_asked",
+              dealId: deal.id,
+              dealName: deal.businessName,
+              description: `Buyer asked: "${q.question.slice(0, 60)}..."`,
+              timestamp: qDate.toISOString(),
+            });
+          }
+        }
+
+        for (const a of approvals) {
+          const aDate = new Date(a.createdAt);
+          if (aDate > twoDaysAgo) {
+            activityItems.push({
+              type: "approval_submitted",
+              dealId: deal.id,
+              dealName: deal.businessName,
+              description: `Buyer submitted for approval: ${a.buyerName}`,
+              timestamp: aDate.toISOString(),
+            });
+          }
+        }
+      }
+
+      // Document uploads — need separate fetch (not in perDealData)
+      const docResults = await Promise.all(
+        allDeals.map(async (deal) => ({
+          deal,
+          docs: await storage.getDocumentsByDeal(deal.id),
+        })),
+      );
+      for (const { deal, docs } of docResults) {
+        for (const doc of docs) {
+          const dDate = new Date(doc.createdAt);
+          if (dDate > twoDaysAgo) {
+            activityItems.push({
+              type: "document_uploaded",
+              dealId: deal.id,
+              dealName: deal.businessName,
+              description: `Document uploaded: ${doc.name || doc.originalName}`,
+              timestamp: dDate.toISOString(),
+            });
+          }
+        }
+      }
+
+      // Sort by timestamp desc, cap at 20
+      activityItems.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+      const activity = activityItems.slice(0, 20);
+
+      res.json({
+        stats: {
+          activeDeals: activeDeals.length,
+          totalPipelineValue,
+          avgDaysInPhase,
+          newBuyersThisWeek,
+        },
+        pipeline,
+        actions: {
+          pendingApprovals,
+          unansweredQuestions,
+          stalledInterviews,
+          pendingReviewCIMs,
+          pendingDocuments,
+        },
+        activity,
+      });
+    } catch (error: any) {
+      console.error("Error loading broker dashboard:", error);
+      res.status(500).json({ error: "Failed to load dashboard data" });
+    }
+  });
+
   // ── Document requirements (per-deal checklist) ──
 
   // GET — full checklist with upload status
