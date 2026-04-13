@@ -337,7 +337,7 @@ export function AIConversationInterface({
           <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
         </div>
         <span className="text-sm">
-          {businessName ? `Preparing conversation for ${businessName}...` : "Starting conversation..."}
+          {businessName ? `Preparing overview for ${businessName}...` : "Starting overview..."}
         </span>
       </div>
     );
@@ -376,7 +376,7 @@ export function AIConversationInterface({
               <div className="flex items-center gap-3">
                 <CheckCircle className="h-4 w-4 text-success shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Conversation up to date</p>
+                  <p className="text-sm font-medium">Business Overview up to date</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
                     You can come back anytime to add or update details.
                   </p>
@@ -506,7 +506,7 @@ export function AIConversationInterface({
                 data-testid="button-end-interview"
               >
                 <LogOut className="h-3 w-3 mr-1" />
-                End Conversation
+                End Overview
               </Button>
             </div>
           </>

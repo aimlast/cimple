@@ -168,7 +168,7 @@ export function Interview({
             </>
           )}
           <span className="text-sm font-semibold truncate">
-            {businessName ?? "Conversation"}
+            {businessName ?? "Business Overview"}
           </span>
           {industryContext.identified && (
             <>
