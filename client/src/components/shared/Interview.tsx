@@ -156,11 +156,19 @@ export function Interview({
         {/* Top bar */}
         <div className="flex items-center gap-3 px-4 py-3 border-b border-border shrink-0 bg-card/50">
           {!isBroker && (
-            <img
-              src="/cimple-text.png"
-              alt="Cimple"
-              className="h-3.5 w-auto shrink-0"
-              style={{ filter: "brightness(0) saturate(100%) invert(56%) sepia(31%) saturate(1000%) hue-rotate(125deg) brightness(92%) contrast(87%)" }}
+            <div
+              role="img"
+              aria-label="Cimple"
+              className="h-3.5 w-14 shrink-0"
+              style={{
+                backgroundColor: "hsl(162, 65%, 38%)",
+                WebkitMaskImage: "url('/cimple-text.png')",
+                WebkitMaskSize: "contain",
+                WebkitMaskRepeat: "no-repeat",
+                maskImage: "url('/cimple-text.png')",
+                maskSize: "contain",
+                maskRepeat: "no-repeat",
+              }}
             />
           )}
           {onBack && (
