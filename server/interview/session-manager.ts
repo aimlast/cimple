@@ -94,11 +94,21 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
   );
 
   if (session) {
-    // Resume existing session
     const messages = session.messages as ConversationMessage[];
-    if (messages.length > 0) {
-      // Session has history — return the last AI message as the resume point
-      // The frontend will display the full conversation history
+    const userMessageCount = messages.filter((m) => m.role === "user").length;
+
+    // If this is an abandoned session (only the AI opening, no user replies)
+    // and the deal already had a prior completed conversation, discard it
+    // and create a fresh session with returning-seller context.
+    const hasCompletedSession = existingSessions.some((s) => s.status === "completed");
+    if (userMessageCount === 0 && hasCompletedSession) {
+      await db
+        .update(interviewSessions)
+        .set({ status: "completed", completedAt: new Date() })
+        .where(eq(interviewSessions.id, session.id));
+      session = undefined as any;
+    } else if (messages.length > 0) {
+      // Resume existing session with real conversation history
       const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies);
 
       // Restore industry context from session metadata
