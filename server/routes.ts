@@ -4933,9 +4933,9 @@ Do not speculate or add information not in the CIM.`,
   });
 
   /* ══════════════════════════════════════════════
-     DEV-ONLY: token lookup for role switcher
+     Token lookup for role switcher (gated by ?switcher=1 on frontend)
   ══════════════════════════════════════════════ */
-  if (process.env.NODE_ENV === "development") {
+  {
     app.get("/api/dev/role-tokens", async (_req, res) => {
       try {
         const allDeals = await storage.getAllDeals();
