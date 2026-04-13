@@ -386,6 +386,7 @@ export const sellerInvites = pgTable("seller_invites", {
   expiresAt: timestamp("expires_at"),
   
   status: text("status").notNull().default("pending"), // pending, sent, accepted, expired
+  onboardingCompleted: boolean("onboarding_completed").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

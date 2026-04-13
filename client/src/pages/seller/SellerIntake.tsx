@@ -34,6 +34,7 @@ import {
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { AIConversationInterface } from "@/components/AIConversationInterface";
+import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
 
 type Section = "welcome" | "business-basics" | "systems" | "employees" | "interview" | "complete";
 
@@ -56,6 +57,7 @@ export default function SellerIntake() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
   const [currentSection, setCurrentSection] = useState<Section>("welcome");
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const { toast } = useToast();
 
   const [businessBasics, setBusinessBasics] = useState({
@@ -122,7 +124,7 @@ export default function SellerIntake() {
     { id: "business-basics", label: "Business Basics", icon: Building2 },
     { id: "systems", label: "Systems Used", icon: Settings },
     { id: "employees", label: "Key People", icon: Users },
-    { id: "interview", label: "Conversation", icon: MessageCircle },
+    { id: "interview", label: "Business Overview", icon: MessageCircle },
     { id: "complete", label: "Complete", icon: CheckCircle2 },
   ];
 
@@ -283,7 +285,7 @@ export default function SellerIntake() {
                     },
                     {
                       icon: MessageCircle,
-                      title: "Conversation",
+                      title: "Business Overview",
                       desc: "Tell us about your business in your own words",
                     },
                   ].map(({ icon: Icon, title, desc }) => (
@@ -681,7 +683,7 @@ export default function SellerIntake() {
                       </>
                     ) : (
                       <>
-                        Start Conversation
+                        Start Business Overview
                         <ArrowRight className="h-4 w-4 ml-2" />
                       </>
                     )}
@@ -692,30 +694,39 @@ export default function SellerIntake() {
           )}
 
           {currentSection === "interview" && inviteData?.deal && (
-            <Card className="h-[calc(100vh-200px)]">
-              <CardHeader className="pb-2">
-                <CardTitle className="flex items-center gap-2">
-                  <MessageCircle className="h-5 w-5" />
-                  Conversation
-                </CardTitle>
-                <CardDescription>
-                  Tell us about your business naturally — our AI advisor will
-                  guide the conversation
-                </CardDescription>
-              </CardHeader>
-              <CardContent className="h-[calc(100%-80px)]">
-                <AIConversationInterface
-                  dealId={inviteData.deal.id}
-                  businessName={inviteData.deal.businessName}
-                  onComplete={() => {
-                    queryClient.invalidateQueries({
-                      queryKey: ["/api/invites", token],
-                    });
-                    setCurrentSection("complete");
-                  }}
+            <>
+              {/* Show onboarding overlay on first visit to the conversation step */}
+              {!inviteData.invite.onboardingCompleted && !onboardingDismissed && (
+                <SellerOnboarding
+                  token={token!}
+                  onComplete={() => setOnboardingDismissed(true)}
                 />
-              </CardContent>
-            </Card>
+              )}
+              <Card className="h-[calc(100vh-200px)]">
+                <CardHeader className="pb-2">
+                  <CardTitle className="flex items-center gap-2">
+                    <MessageCircle className="h-5 w-5" />
+                    Business Overview
+                  </CardTitle>
+                  <CardDescription>
+                    Tell us about your business naturally — our AI advisor will
+                    guide the conversation
+                  </CardDescription>
+                </CardHeader>
+                <CardContent className="h-[calc(100%-80px)]">
+                  <AIConversationInterface
+                    dealId={inviteData.deal.id}
+                    businessName={inviteData.deal.businessName}
+                    onComplete={() => {
+                      queryClient.invalidateQueries({
+                        queryKey: ["/api/invites", token],
+                      });
+                      setCurrentSection("complete");
+                    }}
+                  />
+                </CardContent>
+              </Card>
+            </>
           )}
 
           {currentSection === "complete" && (

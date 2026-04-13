@@ -2497,7 +2497,7 @@ Return JSON only.`,
 
       const steps: Array<{ id: string; label: string; status: StepStatus; pct?: number }> = [
         { id: "intake", label: "Business Info", status: intakeCompleted ? "completed" : currentStep === "intake" ? "current" : "upcoming" },
-        { id: "interview", label: "Conversation", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
+        { id: "interview", label: "Business Overview", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
         { id: "documents", label: "Documents", status: docPct >= 100 ? "completed" : currentStep === "documents" ? "current" : "upcoming", pct: docPct },
         { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
       ];
@@ -2553,6 +2553,19 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("Error updating invite:", error);
       res.status(500).json({ error: "Failed to update invite" });
+    }
+  });
+
+  // Mark onboarding as completed (token-based, used by SellerOnboarding)
+  app.post("/api/seller/:token/onboarding-complete", async (req, res) => {
+    try {
+      const invite = await storage.getSellerInviteByToken(req.params.token);
+      if (!invite) return res.status(404).json({ error: "Invite not found" });
+      const updated = await storage.updateSellerInvite(invite.id, { onboardingCompleted: true });
+      res.json({ success: true, invite: updated });
+    } catch (error: any) {
+      console.error("Error marking onboarding complete:", error);
+      res.status(500).json({ error: "Failed to update onboarding status" });
     }
   });
 

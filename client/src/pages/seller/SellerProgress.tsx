@@ -5,6 +5,7 @@
  * Shows current step with CTA, completed sections, what's coming next,
  * broker contact info, and estimated time remaining.
  */
+import { useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -14,8 +15,10 @@ import {
   FileText,
   Mail,
   MessageSquare,
+  PlayCircle,
   Upload,
 } from "lucide-react";
+import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
 
 interface ProgressStep {
   id: string;
@@ -60,6 +63,7 @@ const TIME_ESTIMATES: Record<string, string> = {
 
 export default function SellerProgress() {
   const { token } = useParams<{ token: string }>();
+  const [showOnboarding, setShowOnboarding] = useState(false);
 
   const { data, isLoading } = useQuery<SellerProgressData>({
     queryKey: [`/api/seller/${token}/progress`],
@@ -89,6 +93,15 @@ export default function SellerProgress() {
   const overallPct = Math.round(
     steps.reduce((sum, s) => sum + (s.status === "completed" ? 100 : (s.pct || 0)), 0) / steps.length,
   );
+
+  if (showOnboarding) {
+    return (
+      <SellerOnboarding
+        token={token!}
+        onComplete={() => setShowOnboarding(false)}
+      />
+    );
+  }
 
   return (
     <div className="p-6 max-w-3xl mx-auto space-y-8">
@@ -131,10 +144,10 @@ export default function SellerProgress() {
       )}
       {currentStep === "interview" && (
         <CTACard
-          title={interview.hasActiveSession ? "Continue your conversation" : "Start a conversation"}
+          title={interview.hasActiveSession ? "Continue your Business Overview" : "Start your Business Overview"}
           description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of sections covered so far.`}
           icon={MessageSquare}
-          buttonLabel={interview.hasActiveSession ? "Continue Conversation" : "Start Conversation"}
+          buttonLabel={interview.hasActiveSession ? "Continue Overview" : "Start Overview"}
           href={`/seller/${token}/interview`}
         />
       )}
@@ -245,8 +258,8 @@ export default function SellerProgress() {
                   {interview.completed
                     ? "Add or update details"
                     : interview.hasActiveSession
-                      ? "Continue conversation"
-                      : "Start conversation"}
+                      ? "Continue overview"
+                      : "Start overview"}
                 </span>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-teal/50" />
@@ -265,6 +278,15 @@ export default function SellerProgress() {
           </div>
         </Link>
       </div>
+
+      {/* Replay introduction */}
+      <button
+        onClick={() => setShowOnboarding(true)}
+        className="flex items-center gap-2 text-xs text-muted-foreground hover:text-teal transition-colors"
+      >
+        <PlayCircle className="h-3.5 w-3.5" />
+        Replay introduction
+      </button>
 
       {/* Broker contact */}
       {broker && (
