@@ -61,11 +61,19 @@ export default function SellerLayout() {
           {/* Left: branding + deal name */}
           <div className="flex items-center gap-3 min-w-0">
             <Link href={`/seller/${token}/progress`}>
-              <img
-                src="/cimple-text.png"
-                alt="Cimple"
-                className="h-4 w-auto cursor-pointer hover:opacity-80 transition-opacity"
-                style={{ filter: "brightness(0) saturate(100%) invert(56%) sepia(31%) saturate(1000%) hue-rotate(125deg) brightness(92%) contrast(87%)" }}
+              <div
+                role="img"
+                aria-label="Cimple"
+                className="h-4 w-16 cursor-pointer hover:opacity-80 transition-opacity"
+                style={{
+                  backgroundColor: "hsl(162, 65%, 38%)",
+                  WebkitMaskImage: "url('/cimple-text.png')",
+                  WebkitMaskSize: "contain",
+                  WebkitMaskRepeat: "no-repeat",
+                  maskImage: "url('/cimple-text.png')",
+                  maskSize: "contain",
+                  maskRepeat: "no-repeat",
+                }}
               />
             </Link>
             {businessName && (
