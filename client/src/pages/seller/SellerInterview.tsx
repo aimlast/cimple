@@ -28,7 +28,7 @@ export default function SellerInterview() {
       <div className="h-screen flex items-center justify-center">
         <div className="flex flex-col items-center gap-3 text-muted-foreground">
           <Loader2 className="h-5 w-5 animate-spin" />
-          <span className="text-sm">Loading interview...</span>
+          <span className="text-sm">Loading...</span>
         </div>
       </div>
     );
@@ -52,8 +52,8 @@ export default function SellerInterview() {
       mode="seller"
       dealId={String(inviteData.deal.id)}
       businessName={inviteData.deal.businessName}
-      onComplete={() => setLocation(`/seller/${token}`)}
-      onBack={() => setLocation(`/seller/${token}`)}
+      onComplete={() => setLocation(`/seller/${token}/progress`)}
+      onBack={() => setLocation(`/seller/${token}/progress`)}
     />
   );
 }

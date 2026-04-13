@@ -131,10 +131,10 @@ export default function SellerProgress() {
       )}
       {currentStep === "interview" && (
         <CTACard
-          title={interview.hasActiveSession ? "Continue your interview" : "Start your interview"}
-          description={`Our AI advisor will ask about your business to build a complete profile. ${interview.percentage}% of sections covered so far.`}
+          title={interview.hasActiveSession ? "Continue your conversation" : "Start a conversation"}
+          description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of sections covered so far.`}
           icon={MessageSquare}
-          buttonLabel={interview.hasActiveSession ? "Continue Interview" : "Start Interview"}
+          buttonLabel={interview.hasActiveSession ? "Continue Conversation" : "Start Conversation"}
           href={`/seller/${token}/interview`}
         />
       )}
@@ -213,7 +213,7 @@ export default function SellerProgress() {
               )}
             </div>
 
-            {/* Interview section detail */}
+            {/* Conversation section detail */}
             {step.id === "interview" && step.status === "current" && interview.sections.length > 0 && (
               <div className="mt-3 pl-9 grid grid-cols-2 gap-1.5">
                 {interview.sections.map((s) => (
@@ -234,14 +234,20 @@ export default function SellerProgress() {
         ))}
       </div>
 
-      {/* Quick links */}
+      {/* Quick links — conversation is always available */}
       <div className="grid grid-cols-2 gap-3">
         <Link href={`/seller/${token}/interview`}>
           <div className="rounded-lg border border-border bg-card p-4 hover:border-teal/30 transition-colors cursor-pointer group">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <MessageSquare className="h-4 w-4 text-muted-foreground" />
-                <span className="text-sm">Interview</span>
+                <span className="text-sm">
+                  {interview.completed
+                    ? "Add or update details"
+                    : interview.hasActiveSession
+                      ? "Continue conversation"
+                      : "Start conversation"}
+                </span>
               </div>
               <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-teal/50" />
             </div>

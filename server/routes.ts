@@ -2497,7 +2497,7 @@ Return JSON only.`,
 
       const steps: Array<{ id: string; label: string; status: StepStatus; pct?: number }> = [
         { id: "intake", label: "Business Info", status: intakeCompleted ? "completed" : currentStep === "intake" ? "current" : "upcoming" },
-        { id: "interview", label: "Interview", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
+        { id: "interview", label: "Conversation", status: interviewCompleted ? "completed" : currentStep === "interview" ? "current" : "upcoming", pct: interviewPct },
         { id: "documents", label: "Documents", status: docPct >= 100 ? "completed" : currentStep === "documents" ? "current" : "upcoming", pct: docPct },
         { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
       ];

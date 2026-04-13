@@ -122,7 +122,7 @@ export default function SellerIntake() {
     { id: "business-basics", label: "Business Basics", icon: Building2 },
     { id: "systems", label: "Systems Used", icon: Settings },
     { id: "employees", label: "Key People", icon: Users },
-    { id: "interview", label: "AI Interview", icon: MessageCircle },
+    { id: "interview", label: "Conversation", icon: MessageCircle },
     { id: "complete", label: "Complete", icon: CheckCircle2 },
   ];
 
@@ -283,8 +283,8 @@ export default function SellerIntake() {
                     },
                     {
                       icon: MessageCircle,
-                      title: "AI Interview",
-                      desc: "Guided conversation about your business",
+                      title: "Conversation",
+                      desc: "Tell us about your business in your own words",
                     },
                   ].map(({ icon: Icon, title, desc }) => (
                     <div
@@ -681,7 +681,7 @@ export default function SellerIntake() {
                       </>
                     ) : (
                       <>
-                        Continue to Interview
+                        Start Conversation
                         <ArrowRight className="h-4 w-4 ml-2" />
                       </>
                     )}
@@ -696,11 +696,11 @@ export default function SellerIntake() {
               <CardHeader className="pb-2">
                 <CardTitle className="flex items-center gap-2">
                   <MessageCircle className="h-5 w-5" />
-                  AI-Guided Interview
+                  Conversation
                 </CardTitle>
                 <CardDescription>
-                  Answer questions naturally - our AI will guide you through
-                  each topic
+                  Tell us about your business naturally — our AI advisor will
+                  guide the conversation
                 </CardDescription>
               </CardHeader>
               <CardContent className="h-[calc(100%-80px)]">
