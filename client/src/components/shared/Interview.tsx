@@ -168,7 +168,7 @@ export function Interview({
             </>
           )}
           <span className="text-sm font-semibold truncate">
-            {businessName ?? "AI Interview"}
+            {businessName ?? "Conversation"}
           </span>
           {industryContext.identified && (
             <>
@@ -325,7 +325,7 @@ export function Interview({
               </>
             ) : (
               <p className="text-xs text-muted-foreground/60">
-                Coverage updates as the interview progresses.
+                Coverage updates as the conversation progresses.
               </p>
             )}
           </div>

@@ -153,8 +153,12 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       });
   }
 
+  // If there's a completed prior session, pass it so the AI knows this is
+  // a returning seller and can welcome them back instead of starting fresh.
+  const priorCompletedSession = existingSessions.find((s) => s.status === "completed") || null;
+
   // Assemble knowledge base for the opening message
-  const kb = assembleKnowledgeBase(deal, documents, tasks, null, resolvedDiscrepancies);
+  const kb = assembleKnowledgeBase(deal, documents, tasks, priorCompletedSession, resolvedDiscrepancies);
 
   // Generate the opening message
   const openingResult = await generateOpeningMessage(kb, deal.businessName);
@@ -414,7 +418,7 @@ async function generateOpeningMessage(
   let openingInstruction: string;
 
   if (hasPriorSession) {
-    openingInstruction = `The seller is returning to continue a previous interview session. Welcome them back warmly, briefly summarize what you've already covered, and explain what areas you'd like to explore next. Do not repeat any questions that were already answered.`;
+    openingInstruction = `The seller is returning to an ongoing conversation. Welcome them back warmly. Briefly acknowledge what you already have a good picture of (don't list everything — just mention 2-3 highlights so they know you remember). Then ask if there's anything they'd like to add, update, or correct. If there are still gaps in the knowledge base, gently mention the most important one and ask if they'd like to cover it. Keep the tone casual and collaborative — this is a conversation they can come back to anytime, not a formal interview. Do not repeat any questions that were already answered.`;
   } else if (hasQuestionnaireData && hasDocuments) {
     openingInstruction = `This is the start of the interview. The seller has already completed a questionnaire and uploaded documents. Welcome them warmly, briefly acknowledge what you've already reviewed (without listing every detail), and explain that you'd like to have a conversation to fill in the details and get the full picture. Start with your first question — focus on an area where the questionnaire answers were thin or where you need more depth.`;
   } else if (hasQuestionnaireData) {

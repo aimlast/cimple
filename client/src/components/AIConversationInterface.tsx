@@ -75,7 +75,7 @@ export function AIConversationInterface({
 
         if (!res.ok) {
           const err = await res.json();
-          throw new Error(err.error || "Failed to start interview");
+          throw new Error(err.error || "Failed to start conversation");
         }
 
         const result: TurnResult = await res.json();
@@ -109,10 +109,10 @@ export function AIConversationInterface({
 
         onTurnResult?.(result);
       } catch (error: any) {
-        console.error("Failed to start interview:", error);
+        console.error("Failed to start conversation:", error);
         if (!cancelled) {
           toast({
-            title: "Failed to start interview",
+            title: "Failed to start conversation",
             description: error.message,
             variant: "destructive",
           });
@@ -337,7 +337,7 @@ export function AIConversationInterface({
           <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
         </div>
         <span className="text-sm">
-          {businessName ? `Preparing interview for ${businessName}...` : "Preparing interview..."}
+          {businessName ? `Preparing conversation for ${businessName}...` : "Starting conversation..."}
         </span>
       </div>
     );
@@ -376,9 +376,9 @@ export function AIConversationInterface({
               <div className="flex items-center gap-3">
                 <CheckCircle className="h-4 w-4 text-success shrink-0" />
                 <div>
-                  <p className="text-sm font-medium">Interview complete</p>
+                  <p className="text-sm font-medium">Conversation up to date</p>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    Your broker will review the information you've provided.
+                    You can come back anytime to add or update details.
                   </p>
                 </div>
               </div>
@@ -506,7 +506,7 @@ export function AIConversationInterface({
                 data-testid="button-end-interview"
               >
                 <LogOut className="h-3 w-3 mr-1" />
-                End Interview
+                End Conversation
               </Button>
             </div>
           </>
