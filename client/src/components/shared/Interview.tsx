@@ -233,8 +233,8 @@ export function Interview({
           />
         </div>
 
-        {/* Bottom status bar — broker only: "Return to Deal" */}
-        {interviewEnded && isBroker && (
+        {/* Bottom status bar — shown after interview ends */}
+        {interviewEnded && (
           <div className="border-t border-border px-4 py-2.5 bg-card shrink-0">
             <div className="max-w-3xl mx-auto flex justify-end">
               <Button
@@ -245,7 +245,7 @@ export function Interview({
                 data-testid="button-complete"
               >
                 <CheckCircle className="h-3.5 w-3.5 mr-1.5" />
-                {isCompleting ? "Saving..." : "Return to Deal"}
+                {isCompleting ? "Saving..." : isBroker ? "Return to Deal" : "Continue"}
               </Button>
             </div>
           </div>

@@ -279,6 +279,8 @@ export function AIConversationInterface({
 
       if (result.shouldEnd) {
         setIsFinished(true);
+        // Let the user see the completion banner, then fire onComplete
+        setTimeout(() => onComplete?.(), 2000);
       }
     } catch (error: any) {
       if (error.name === "AbortError") return;
@@ -370,14 +372,24 @@ export function AIConversationInterface({
       <div className="border-t border-border px-4 py-3 bg-card">
         {isFinished ? (
           <div className="max-w-3xl mx-auto">
-            <div className="flex items-center gap-3 px-4 py-3 rounded-lg bg-success/8 border border-success/20">
-              <CheckCircle className="h-4 w-4 text-success shrink-0" />
-              <div>
-                <p className="text-sm font-medium">Interview complete</p>
-                <p className="text-xs text-muted-foreground mt-0.5">
-                  Your broker will review the information you've provided.
-                </p>
+            <div className="flex items-center justify-between gap-3 px-4 py-3 rounded-lg bg-success/8 border border-success/20">
+              <div className="flex items-center gap-3">
+                <CheckCircle className="h-4 w-4 text-success shrink-0" />
+                <div>
+                  <p className="text-sm font-medium">Interview complete</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    Your broker will review the information you've provided.
+                  </p>
+                </div>
               </div>
+              {onComplete && (
+                <button
+                  onClick={() => onComplete()}
+                  className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-teal text-teal-foreground hover:bg-teal/90 transition-colors"
+                >
+                  Continue →
+                </button>
+              )}
             </div>
           </div>
         ) : (
