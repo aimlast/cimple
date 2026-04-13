@@ -208,9 +208,10 @@ function RoleSwitcherInner() {
 }
 
 /**
- * Export: renders nothing in production, renders the switcher in dev.
+ * Export: renders in dev mode, or in production when ?switcher=1 is in the URL.
  */
 export function RoleSwitcher() {
-  if (!import.meta.env.DEV) return null;
+  const show = import.meta.env.DEV || new URLSearchParams(window.location.search).has("switcher");
+  if (!show) return null;
   return <RoleSwitcherInner />;
 }
