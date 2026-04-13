@@ -11,7 +11,20 @@ export function BuyerAuthCard({ children }: { children: React.ReactNode }) {
     <div className="min-h-screen bg-background flex items-center justify-center p-6">
       <div className="w-full max-w-md space-y-6">
         <div className="text-center">
-          <div className="text-2xl font-semibold tracking-tight">Cimple</div>
+          <div
+            className="h-6 w-24 mx-auto"
+            style={{
+              backgroundColor: "hsl(162, 65%, 38%)",
+              WebkitMaskImage: "url('/cimple-text.png')",
+              WebkitMaskSize: "contain",
+              WebkitMaskRepeat: "no-repeat",
+              WebkitMaskPosition: "center",
+              maskImage: "url('/cimple-text.png')",
+              maskSize: "contain",
+              maskRepeat: "no-repeat",
+              maskPosition: "center",
+            }}
+          />
           <div className="text-xs text-muted-foreground mt-1">
             Matched opportunities for private business acquirers
           </div>
@@ -54,7 +67,20 @@ export function BuyerNav() {
     <nav className="border-b border-border bg-card">
       <div className="max-w-6xl mx-auto px-6 h-14 flex items-center justify-between">
         <div className="flex items-center gap-6">
-          <Link href="/buyer/dashboard" className="font-semibold">Cimple</Link>
+          <Link href="/buyer/dashboard">
+            <div
+              className="h-4 w-16"
+              style={{
+                backgroundColor: "hsl(162, 65%, 38%)",
+                WebkitMaskImage: "url('/cimple-text.png')",
+                WebkitMaskSize: "contain",
+                WebkitMaskRepeat: "no-repeat",
+                maskImage: "url('/cimple-text.png')",
+                maskSize: "contain",
+                maskRepeat: "no-repeat",
+              }}
+            />
+          </Link>
           <div className="flex items-center gap-1">
             <NavLink href="/buyer/dashboard" icon={LayoutDashboard} label="Dashboard" />
             <NavLink href="/buyer/profile" icon={UserCircle} label="Profile" />
