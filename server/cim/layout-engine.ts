@@ -207,11 +207,21 @@ Output a JSON array of CimLayoutSection objects. Be bespoke. Use the data availa
       // Strategy: find every `},` at nesting depth 1 (i.e. the comma between
       // top-level objects in the array), then try parsing up through the last
       // one that succeeds.
+      //
+      // String-aware: we skip over characters inside JSON strings so that braces
+      // appearing inside text values don't throw off the depth counter.
       const src = match[0];
       const sectionEnds: number[] = [];
       let depth = 0;
+      let inString = false;
       for (let i = 0; i < src.length; i++) {
         const ch = src[i];
+        if (inString) {
+          if (ch === "\\") { i++; continue; } // skip escape sequence
+          if (ch === "\"") inString = false;
+          continue;
+        }
+        if (ch === "\"") { inString = true; continue; }
         if (ch === "{") depth++;
         else if (ch === "}") {
           depth--;
