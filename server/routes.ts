@@ -4988,6 +4988,44 @@ Do not speculate or add information not in the CIM.`,
         res.status(500).json({ error: error.message });
       }
     });
+
+    // Dev-only: auto-login as a test buyer account so the role switcher
+    // can land on the real buyer dashboard. Looks up (or creates) a single
+    // shared dev buyer, then sets the session cookie. Used by RoleSwitcher.
+    app.post("/api/dev/login-as-buyer", async (_req, res) => {
+      try {
+        const DEV_BUYER_EMAIL = "dev.buyer@cimple.dev";
+        const bcrypt = (await import("bcryptjs")).default;
+        let user = await storage.getBuyerUserByEmail(DEV_BUYER_EMAIL);
+        if (!user) {
+          const passwordHash = await bcrypt.hash(crypto.randomUUID(), 10);
+          user = await storage.createBuyerUser({
+            email: DEV_BUYER_EMAIL,
+            name: "Dev Buyer",
+            passwordHash,
+          } as any);
+
+          // Auto-link this dev buyer to existing buyerAccess rows so the
+          // dashboard has CIMs to show.
+          const allDeals = await storage.getAllDeals();
+          for (const deal of allDeals.slice(0, 10)) {
+            const accesses = await storage.getBuyerAccessByDeal(deal.id);
+            for (const access of accesses) {
+              if (!access.buyerUserId) {
+                try {
+                  await storage.updateBuyerAccess(access.id, { buyerUserId: user.id } as any);
+                } catch { /* non-fatal */ }
+              }
+            }
+          }
+        }
+        (_req.session as any).buyerId = user.id;
+        res.json({ ok: true, buyerId: user.id, email: user.email });
+      } catch (error: any) {
+        console.error("Dev login-as-buyer error:", error);
+        res.status(500).json({ error: error.message });
+      }
+    });
   }
 
   const httpServer = createServer(app);
