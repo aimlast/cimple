@@ -76,7 +76,7 @@ function RoleSwitcherInner() {
 
   const currentConfig = ROLE_CONFIG[role];
 
-  const switchTo = (target: Role) => {
+  const switchTo = async (target: Role) => {
     if (target === role && devOverride) {
       // Clicking current role clears override
       setDevOverride(null);
@@ -100,10 +100,19 @@ function RoleSwitcherInner() {
         }
         break;
       case "buyer":
+        // Auto-login as a dev buyer so the dashboard is reachable, then
+        // land on /buyer/dashboard. Falls back to /view/<token> if dev
+        // login isn't available for any reason.
+        try {
+          const r = await fetch("/api/dev/login-as-buyer", { method: "POST" });
+          if (r.ok) {
+            setLocation("/buyer/dashboard");
+            break;
+          }
+        } catch { /* fall through to fallback */ }
         if (tokens?.buyerToken) {
           setLocation(`/view/${tokens.buyerToken}`);
         } else {
-          // Try buyer dashboard (session-auth based)
           setLocation("/buyer/login");
         }
         break;
