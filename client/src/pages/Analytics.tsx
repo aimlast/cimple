@@ -6,7 +6,7 @@
  * All heavy aggregation is done server-side via /analytics/computed.
  * recharts used for section bar chart and scroll-depth funnel.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Card, CardContent, CardHeader, CardTitle, CardDescription,
 } from "@/components/ui/card";
@@ -284,10 +284,42 @@ function QualifiedInterestCard({ buyers }: { buyers: BuyerBreakdown[] }) {
 // ── Main ───────────────────────────────────────────────────────────────────
 export default function Analytics() {
   const [selectedDealId, setSelectedDealId] = useState<string>("all");
+  // Tracks whether the broker explicitly picked a deal (or "All CIMs") so the
+  // auto-default below never fights a manual choice.
+  const userPickedDeal = useRef(false);
 
   const { data: deals, isLoading: dealsLoading } = useQuery<Deal[]>({
     queryKey: ["/api/deals"],
   });
+
+  // Same query DealsComparisonTable uses — React Query dedupes the fetch.
+  const { data: comparison } = useQuery<DealComparison[]>({
+    queryKey: ["/api/analytics/deals-comparison"],
+    queryFn: async () => {
+      const res = await fetch("/api/analytics/deals-comparison");
+      if (!res.ok) throw new Error();
+      return res.json();
+    },
+  });
+
+  // Default to the most-viewed deal so the per-deal tabs (Buyer Activity,
+  // Section Engagement, Heat Map, ...) are immediately usable instead of
+  // landing on "All CIMs" with six disabled tabs.
+  useEffect(() => {
+    if (userPickedDeal.current || selectedDealId !== "all") return;
+    const mostViewed = comparison?.[0]; // endpoint returns deals sorted by views
+    if (mostViewed?.dealId) setSelectedDealId(mostViewed.dealId);
+  }, [comparison, selectedDealId]);
+
+  const [activeTab, setActiveTab] = useState("overview");
+  // Per-deal tabs are disabled on "All CIMs" — if one is active when the
+  // broker switches back to "all", fall back to Overview instead of showing
+  // a selected-but-disabled tab with empty content.
+  useEffect(() => {
+    if (selectedDealId === "all" && activeTab !== "overview") {
+      setActiveTab("overview");
+    }
+  }, [selectedDealId, activeTab]);
 
   const { data: summary, isLoading: summaryLoading } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary", selectedDealId],
@@ -330,7 +362,13 @@ export default function Analytics() {
           </p>
         </div>
         <div className="flex items-center gap-3">
-          <Select value={selectedDealId} onValueChange={setSelectedDealId}>
+          <Select
+            value={selectedDealId}
+            onValueChange={(v) => {
+              userPickedDeal.current = true;
+              setSelectedDealId(v);
+            }}
+          >
             <SelectTrigger className="w-[220px]">
               <SelectValue placeholder="Select a CIM" />
             </SelectTrigger>
@@ -391,7 +429,7 @@ export default function Analytics() {
       </div>
 
       {/* ── Tabs ─────────────────────────────────────────────────────────── */}
-      <Tabs defaultValue="overview" className="w-full">
+      <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
         <TabsList className="flex-wrap h-auto gap-1">
           <TabsTrigger value="overview">Overview</TabsTrigger>
           <TabsTrigger value="buyers" disabled={selectedDealId === "all"}>
@@ -413,6 +451,13 @@ export default function Analytics() {
             Activity
           </TabsTrigger>
         </TabsList>
+
+        {selectedDealId === "all" && (
+          <p className="text-xs text-muted-foreground mt-2">
+            Viewing all CIMs combined — select a specific deal above to unlock
+            per-deal tabs (buyer activity, section engagement, heat map, and more).
+          </p>
+        )}
 
         {/* ── Overview ──────────────────────────────────────────────────────── */}
         <TabsContent value="overview" className="mt-6 space-y-6">
