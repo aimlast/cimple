@@ -8,6 +8,7 @@
 import { useState, useRef, useCallback } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import {
   ArrowLeft,
   Check,
@@ -65,6 +66,7 @@ export default function SellerDocuments() {
     enabled: !!token,
   });
   const dealId = inviteData?.deal?.id;
+  const { toast } = useToast();
 
   // Get progress data with document requirements
   const { data: progress, isLoading } = useQuery<SellerProgressData>({
@@ -84,7 +86,10 @@ export default function SellerDocuments() {
         method: "POST",
         body: formData,
       });
-      if (!uploadRes.ok) throw new Error("Upload failed");
+      if (!uploadRes.ok) {
+        const body = await uploadRes.json().catch(() => ({}));
+        throw new Error(body.error || `"${file.name}" could not be uploaded`);
+      }
       const doc = await uploadRes.json();
 
       // 2. If matching a requirement, link them
@@ -107,16 +112,51 @@ export default function SellerDocuments() {
       queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
       setUploadingFor(null);
     },
+    onError: (err: Error) => {
+      setUploadingFor(null);
+      // Silent-failure fix: unsupported/oversized files used to just vanish
+      toast({
+        title: "Upload failed",
+        description: err.message + " Accepted formats: PDF, Excel, Word, PowerPoint, CSV, text — up to 20MB.",
+        variant: "destructive",
+      });
+    },
   });
+
+  // Best-effort match of a dropped file to an open checklist requirement by
+  // name/category keywords, so a drag-and-dropped "2023 Tax Return.pdf"
+  // counts toward "Tax Returns (3 Years)" instead of silently not counting.
+  const guessRequirement = useCallback(
+    (file: File): string | undefined => {
+      const open = (progress?.documents.requirements ?? []).filter(
+        (r) => r.status === "missing",
+      );
+      if (open.length === 0) return undefined;
+      const name = file.name.toLowerCase();
+      const scored = open
+        .map((r) => {
+          const words = r.name
+            .toLowerCase()
+            .split(/[^a-z0-9]+/)
+            .filter((w: string) => w.length >= 3 && !["the", "and", "years", "year", "months", "current"].includes(w));
+          const hits = words.filter((w: string) => name.includes(w)).length;
+          return { id: r.id, hits };
+        })
+        .sort((a, b) => b.hits - a.hits);
+      return scored[0] && scored[0].hits > 0 ? scored[0].id : undefined;
+    },
+    [progress],
+  );
 
   const handleFileSelect = useCallback(
     (files: FileList | null, requirementId?: string) => {
       if (!files || files.length === 0) return;
       for (const file of Array.from(files)) {
-        uploadMutation.mutate({ file, requirementId });
+        const target = requirementId ?? guessRequirement(file);
+        uploadMutation.mutate({ file, requirementId: target });
       }
     },
-    [uploadMutation],
+    [uploadMutation, guessRequirement],
   );
 
   const handleDrop = useCallback(
