@@ -144,9 +144,13 @@ export function Interview({
   const missingCount = sectionCoverage.filter(
     (s) => s.status === "missing",
   ).length;
+  // Same formula as the seller progress page (/api/seller/:token/progress) —
+  // partial sections count at 40% so the two surfaces never disagree.
   const progressPercent =
     sectionCoverage.length > 0
-      ? Math.round((coveredCount / sectionCoverage.length) * 100)
+      ? Math.round(
+          ((coveredCount + partialCount * 0.4) / sectionCoverage.length) * 100,
+        )
       : 0;
 
   return (
