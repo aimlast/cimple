@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard } from "lucide-react";
+import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard, LifeBuoy } from "lucide-react";
 import { Link, useLocation } from "wouter";
 import {
   Sidebar,
@@ -18,6 +18,7 @@ const NAV = [
   { label: "Analytics",    href: "/broker/analytics",    icon: BarChart3 },
   { label: "Integrations", href: "/broker/integrations", icon: Plug },
   { label: "Settings",     href: "/broker/settings",     icon: Settings },
+  { label: "Support",      href: "/broker/support",      icon: LifeBuoy },
 ];
 
 export function AppSidebar() {

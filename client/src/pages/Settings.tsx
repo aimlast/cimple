@@ -144,6 +144,53 @@ export default function Settings() {
   const [requireNda, setRequireNda] = useState(true);
   const [autoAdvancePhase, setAutoAdvancePhase] = useState(false);
 
+  // Broker workspace prefs (firm info, notifications, deal defaults) —
+  // persisted on the user row via /api/broker-auth/settings.
+  const { data: brokerSettings } = useQuery<{ settings: Record<string, any> }>({
+    queryKey: ["/api/broker-auth/settings"],
+    queryFn: async () => {
+      const r = await fetch("/api/broker-auth/settings", { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load settings");
+      return r.json();
+    },
+  });
+
+  useEffect(() => {
+    const s = brokerSettings?.settings;
+    if (!s) return;
+    if (s.firmName !== undefined) setFirmName(s.firmName);
+    if (s.firmEmail !== undefined) setFirmEmail(s.firmEmail);
+    if (s.firmPhone !== undefined) setFirmPhone(s.firmPhone);
+    const n = s.notifications ?? {};
+    if (n.newBuyer !== undefined) setEmailNewBuyer(n.newBuyer);
+    if (n.buyerViews !== undefined) setEmailBuyerViews(n.buyerViews);
+    if (n.phaseComplete !== undefined) setEmailPhaseComplete(n.phaseComplete);
+    if (n.weeklyDigest !== undefined) setEmailWeeklyDigest(n.weeklyDigest);
+    const d = s.dealDefaults ?? {};
+    if (d.expirationDays !== undefined) setDefaultExpiration(String(d.expirationDays));
+    if (d.requireNda !== undefined) setRequireNda(d.requireNda);
+    if (d.autoAdvancePhase !== undefined) setAutoAdvancePhase(d.autoAdvancePhase);
+  }, [brokerSettings]);
+
+  const saveSettings = useMutation({
+    mutationFn: async (patch: Record<string, any>) => {
+      const r = await fetch("/api/broker-auth/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(patch),
+      });
+      if (!r.ok) throw new Error("Failed to save settings");
+      return r.json();
+    },
+    onError: () =>
+      toast({
+        title: "Save failed",
+        description: "Your settings could not be saved. Please try again.",
+        variant: "destructive",
+      }),
+  });
+
   useEffect(() => {
     if (brandingSettings) {
       setPrimaryColor(brandingSettings.primaryColor);
@@ -255,24 +302,37 @@ export default function Settings() {
   };
 
   const handleSaveAccount = () => {
-    toast({
-      title: "Account Saved",
-      description: "Your account settings have been updated.",
-    });
+    saveSettings.mutate(
+      { firmName, firmEmail, firmPhone },
+      { onSuccess: () => toast({ title: "Account saved", description: "Your firm information has been updated." }) },
+    );
   };
 
   const handleSaveNotifications = () => {
-    toast({
-      title: "Notifications Saved",
-      description: "Your notification preferences have been updated.",
-    });
+    saveSettings.mutate(
+      {
+        notifications: {
+          newBuyer: emailNewBuyer,
+          buyerViews: emailBuyerViews,
+          phaseComplete: emailPhaseComplete,
+          weeklyDigest: emailWeeklyDigest,
+        },
+      },
+      { onSuccess: () => toast({ title: "Notifications saved", description: "Your notification preferences have been updated." }) },
+    );
   };
 
   const handleSaveDefaults = () => {
-    toast({
-      title: "Defaults Saved",
-      description: "Your deal defaults have been updated.",
-    });
+    saveSettings.mutate(
+      {
+        dealDefaults: {
+          expirationDays: parseInt(defaultExpiration, 10) || 30,
+          requireNda,
+          autoAdvancePhase,
+        },
+      },
+      { onSuccess: () => toast({ title: "Defaults saved", description: "Your deal defaults have been updated." }) },
+    );
   };
 
   if (isLoading) {
@@ -806,103 +866,26 @@ export default function Settings() {
           </div>
         </TabsContent>
 
-        <TabsContent value="integrations" className="mt-6 space-y-6">
+        <TabsContent value="integrations" className="mt-6">
           <Card>
             <CardHeader>
               <CardTitle className="flex items-center gap-2">
                 <Link2 className="h-5 w-5" />
-                CRM Integrations
+                Integrations
               </CardTitle>
-              <CardDescription>Connect your CRM to sync buyer and deal data</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-orange-100 dark:bg-orange-900/30">
-                    <Building className="h-5 w-5 text-orange-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium">HubSpot</p>
-                    <p className="text-sm text-muted-foreground">Sync contacts and deals</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Coming Soon</Badge>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-100 dark:bg-blue-900/30">
-                    <Building className="h-5 w-5 text-blue-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium">Salesforce</p>
-                    <p className="text-sm text-muted-foreground">Enterprise CRM integration</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Coming Soon</Badge>
-                </div>
-              </div>
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-green-100 dark:bg-green-900/30">
-                    <Building className="h-5 w-5 text-green-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium">Pipedrive</p>
-                    <p className="text-sm text-muted-foreground">Sales pipeline management</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Coming Soon</Badge>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Mail className="h-5 w-5" />
-                Email Integrations
-              </CardTitle>
-              <CardDescription>Connect email services for notifications</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-4 border rounded-lg">
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-purple-100 dark:bg-purple-900/30">
-                    <Mail className="h-5 w-5 text-purple-600" />
-                  </div>
-                  <div>
-                    <p className="font-medium">SendGrid</p>
-                    <p className="text-sm text-muted-foreground">Transactional email delivery</p>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline">Coming Soon</Badge>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Users className="h-5 w-5" />
-                Team Management
-              </CardTitle>
-              <CardDescription>Manage team members and permissions</CardDescription>
+              <CardDescription>
+                Email, CRM, and call-recording connections are managed on the
+                Integrations page.
+              </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8">
-                <Users className="h-12 w-12 mx-auto mb-4 text-muted-foreground opacity-50" />
-                <p className="text-muted-foreground">Team management coming soon</p>
-                <p className="text-xs text-muted-foreground mt-1">
-                  Invite team members and manage access levels
-                </p>
-              </div>
+              <Button
+                variant="outline"
+                onClick={() => (window.location.href = "/broker/integrations")}
+                data-testid="button-open-integrations"
+              >
+                Open Integrations
+              </Button>
             </CardContent>
           </Card>
         </TabsContent>
