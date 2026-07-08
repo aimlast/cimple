@@ -239,6 +239,7 @@ export class MemStorage implements IStorage {
       role: "broker",
       email: null,
       name: null,
+      settings: null,
       createdAt: new Date(),
     };
     this.users.set(id, user);

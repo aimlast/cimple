@@ -130,4 +130,34 @@ export function registerBrokerAuthRoutes(app: Express) {
       res.status(500).json({ error: "Failed to load user" });
     }
   });
+
+  // Broker workspace preferences (firm info, notification prefs, deal
+  // defaults). Stored as jsonb on the user row; the Settings page owns the
+  // shape. Patches shallow-merge so each tab can save independently.
+  app.get("/api/broker-auth/settings", requireBroker, async (req, res) => {
+    try {
+      const user = await storage.getUser(req.session.brokerId!);
+      res.json({ settings: (user as User | undefined)?.settings ?? {} });
+    } catch (error: any) {
+      console.error("[broker-auth] Settings load error:", error);
+      res.status(500).json({ error: "Failed to load settings" });
+    }
+  });
+
+  app.patch("/api/broker-auth/settings", requireBroker, async (req, res) => {
+    try {
+      const patch = req.body;
+      if (!patch || typeof patch !== "object" || Array.isArray(patch)) {
+        return res.status(400).json({ error: "Settings must be an object" });
+      }
+      const user = await storage.getUser(req.session.brokerId!);
+      const current = ((user as User | undefined)?.settings ?? {}) as Record<string, unknown>;
+      const merged = { ...current, ...patch };
+      await db.update(users).set({ settings: merged }).where(eq(users.id, req.session.brokerId!));
+      res.json({ settings: merged });
+    } catch (error: any) {
+      console.error("[broker-auth] Settings save error:", error);
+      res.status(500).json({ error: "Failed to save settings" });
+    }
+  });
 }

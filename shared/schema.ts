@@ -13,6 +13,10 @@ export const users = pgTable("users", {
   role: text("role").notNull().default("broker"), // broker, seller, buyer
   email: text("email"),
   name: text("name"),
+  // Broker workspace preferences: firm info, notification prefs, deal
+  // defaults ({ firmName, firmEmail, firmPhone, notifications: {...},
+  // dealDefaults: {...} }). Free-form jsonb — the Settings page owns the shape.
+  settings: jsonb("settings"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 

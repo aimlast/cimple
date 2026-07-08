@@ -13,17 +13,11 @@ import NotFound from "@/pages/not-found";
 import BrokerDashboard from "@/pages/BrokerDashboard";
 import ActiveCIMs from "@/pages/ActiveCIMs";
 import Analytics from "@/pages/Analytics";
-import Templates from "@/pages/Templates";
 import Settings from "@/pages/Settings";
 import Support from "@/pages/Support";
-import NewCIM from "@/pages/NewCIM";
 import NewDeal from "@/pages/NewDeal";
 import DealShell from "@/pages/broker/deal/DealShell";
-import CIMQuestionnaire from "@/pages/CIMQuestionnaire";
-import CIMDocuments from "@/pages/CIMDocuments";
 import CIMInterview from "@/pages/CIMInterview";
-import BrokerReview from "@/pages/BrokerReview";
-import CIMPreview from "@/pages/CIMPreview";
 import CIMDesigner from "@/pages/CIMDesigner";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import Integrations from "@/pages/Integrations";
@@ -53,16 +47,19 @@ function Routes() {
       <Route path="/broker/buyers" component={Buyers} />
       <Route path="/broker/integrations" component={Integrations} />
       <Route path="/broker/settings" component={Settings} />
-      <Route path="/broker/templates" component={Templates} />
       <Route path="/broker/support" component={Support} />
       <Route path="/broker/new-deal" component={NewDeal} />
-      <Route path="/broker/new-cim" component={NewCIM} />
-      <Route path="/broker/cim/new-questionnaire" component={CIMQuestionnaire} />
-      <Route path="/broker/cim/new-documents" component={CIMDocuments} />
-      <Route path="/broker/cim/new-interview" component={CIMInterview} />
-      <Route path="/broker/cim/:id/preview" component={CIMPreview} />
+      {/* The legacy "New CIM" flow (separate cims table, dead-end interview,
+          upload zone that discarded files) was removed — deal creation is
+          the single flow. Old links land on the working equivalents. */}
+      <Route path="/broker/templates">{() => <Redirect to="/broker/deals" />}</Route>
+      <Route path="/broker/new-cim">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/broker/cim/new-questionnaire">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/broker/cim/new-documents">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/broker/cim/new-interview">{() => <Redirect to="/broker/new-deal" />}</Route>
       <Route path="/broker/cim/:dealId/design" component={CIMDesigner} />
-      <Route path="/broker/cim/:id" component={BrokerReview} />
+      <Route path="/broker/cim/:id/preview">{(params: { id: string }) => <Redirect to={`/deal/${params.id}`} />}</Route>
+      <Route path="/broker/cim/:id">{(params: { id: string }) => <Redirect to={`/deal/${params.id}`} />}</Route>
 
       {/* Deal routes (already namespaced — no move needed) */}
       <Route path="/deal/:dealId/design" component={CIMDesigner} />
@@ -76,13 +73,13 @@ function Routes() {
       <Route path="/buyers">{() => <Redirect to="/broker/buyers" />}</Route>
       <Route path="/integrations">{() => <Redirect to="/broker/integrations" />}</Route>
       <Route path="/settings">{() => <Redirect to="/broker/settings" />}</Route>
-      <Route path="/templates">{() => <Redirect to="/broker/templates" />}</Route>
+      <Route path="/templates">{() => <Redirect to="/broker/deals" />}</Route>
       <Route path="/support">{() => <Redirect to="/broker/support" />}</Route>
       <Route path="/new-deal">{() => <Redirect to="/broker/new-deal" />}</Route>
-      <Route path="/new-cim">{() => <Redirect to="/broker/new-cim" />}</Route>
-      <Route path="/cim/new-questionnaire">{() => <Redirect to="/broker/cim/new-questionnaire" />}</Route>
-      <Route path="/cim/new-documents">{() => <Redirect to="/broker/cim/new-documents" />}</Route>
-      <Route path="/cim/new-interview">{() => <Redirect to="/broker/cim/new-interview" />}</Route>
+      <Route path="/new-cim">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/cim/new-questionnaire">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/cim/new-documents">{() => <Redirect to="/broker/new-deal" />}</Route>
+      <Route path="/cim/new-interview">{() => <Redirect to="/broker/new-deal" />}</Route>
       <Route path="/cim/:id/preview">{(params: { id: string }) => <Redirect to={`/broker/cim/${params.id}/preview`} />}</Route>
       <Route path="/cim/:dealId/design">{(params: { dealId: string }) => <Redirect to={`/broker/cim/${params.dealId}/design`} />}</Route>
       <Route path="/cim/:id">{(params: { id: string }) => <Redirect to={`/broker/cim/${params.id}`} />}</Route>
@@ -187,7 +184,6 @@ function FullscreenLayout() {
       <Switch>
         {/* Broker interview */}
         <Route path="/deal/:id/interview" component={CIMInterview} />
-        <Route path="/broker/cim/:id/interview" component={CIMInterview} />
         {/* Seller interview (fullscreen) */}
         <Route path="/seller/:token/interview" component={SellerInterview} />
         {/* Legacy seller invite redirect → /seller/:token */}

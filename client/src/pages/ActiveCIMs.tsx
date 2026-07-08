@@ -164,8 +164,6 @@ function DealGroup({ label, icon, deals }: { label: string; icon: React.ReactNod
 /* ─── Page ─── */
 export default function ActiveCIMs() {
   const [search, setSearch] = useState("");
-  const [inviteOpen, setInviteOpen] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
   const [, setLocation] = useLocation();
   const { toast } = useToast();
 
@@ -188,14 +186,6 @@ export default function ActiveCIMs() {
   const liveCount  = deals.filter(d => d.isLive).length;
   const totalDeals = deals.length;
 
-  const handleGenerateInvite = () => {
-    const token = Math.random().toString(36).substring(2, 15);
-    navigator.clipboard.writeText(`${window.location.origin}/seller/${token}`);
-    toast({ title: "Invite link copied", description: "Send it to the seller to begin their intake." });
-    setInviteOpen(false);
-    setInviteEmail("");
-  };
-
   return (
     <div className="flex flex-col h-full min-h-screen">
 
@@ -213,14 +203,6 @@ export default function ActiveCIMs() {
             </p>
           </div>
           <div className="flex items-center gap-2 mt-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setInviteOpen(true)}
-              className="h-8 text-xs text-muted-foreground hover:text-foreground"
-            >
-              Invite Seller
-            </Button>
             <Button
               size="sm"
               onClick={() => setLocation("/broker/new-deal")}
@@ -331,40 +313,6 @@ export default function ActiveCIMs() {
       </div>
 
       {/* ── Invite seller dialog ── */}
-      <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Invite Seller</DialogTitle>
-            <DialogDescription>
-              Generate a secure intake link. The seller will be guided through the process by AI.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-3 space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs text-muted-foreground">Seller email (optional)</Label>
-              <Input
-                placeholder="seller@example.com"
-                type="email"
-                value={inviteEmail}
-                onChange={e => setInviteEmail(e.target.value)}
-                className="h-9"
-              />
-            </div>
-          </div>
-          <DialogFooter>
-            <Button variant="outline" size="sm" onClick={() => setInviteOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
-              onClick={handleGenerateInvite}
-            >
-              Copy Invite Link
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

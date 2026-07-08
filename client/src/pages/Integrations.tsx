@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 import {
   Mail, Database, Phone, Video, ArrowRight,
   CheckCircle2, Circle, ExternalLink, Plug, X, Plus, Trash2,
@@ -187,6 +188,7 @@ function IntegrationCardComponent({
 
 export default function Integrations() {
   const queryClient = useQueryClient();
+  const { toast } = useToast();
   const [activeCategory, setActiveCategory] = useState<"all" | "email" | "crm" | "calls">("all");
 
   const { data: connectedIntegrations = [] } = useQuery<any[]>({
@@ -228,8 +230,28 @@ export default function Integrations() {
       await fetch(`/api/integrations/${existing.id}`, { method: "DELETE" });
       queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
     } else {
-      // Start OAuth flow
-      window.location.href = `/api/auth/${provider}`;
+      // The OAuth flow isn't configured yet — explain in-app instead of
+      // navigating the whole browser to a raw 501 JSON response.
+      try {
+        const res = await fetch(`/api/auth/${provider}`);
+        const body = await res.json().catch(() => ({}));
+        if (res.status === 501) {
+          toast({
+            title: "Email sync isn't available yet",
+            description: body.message || "This connection requires OAuth credentials that haven't been configured. Contact support to enable it.",
+          });
+          return;
+        }
+        if (body.redirectUrl) {
+          window.location.href = body.redirectUrl;
+        }
+      } catch {
+        toast({
+          title: "Connection failed",
+          description: "Could not reach the server. Please try again.",
+          variant: "destructive",
+        });
+      }
     }
   };
 
