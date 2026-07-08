@@ -3,8 +3,10 @@ import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.j
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
-  timeout: 600_000, // 10 min — layout generation produces large (16K token) responses
+  timeout: 600_000, // 10 min headroom across the batched generation calls
 });
+
+const MODEL = "claude-sonnet-4-5";
 
 /**
  * generateCimLayout
@@ -16,7 +18,26 @@ const anthropic = new Anthropic({
  *   - The best visual format for each piece of content
  *   - The structured data to populate each section
  *
- * No two CIMs should look the same unless the businesses are identical.
+ * TWO-PHASE PIPELINE. The original implementation generated the entire
+ * document (14-22 fully-populated sections) in ONE 16K-token response.
+ * Data-rich deals — exactly the flagship deals brokerages care about —
+ * routinely blew that limit mid-JSON: the tail sections (financials and
+ * transaction, generated last) silently vanished behind a "success" toast,
+ * or the broker got a raw JSON-repair error.
+ *
+ * Now:
+ *   Phase 1 — one small call plans the document: a manifest of sections
+ *             (key, title, layout type, one-line brief). ~1-2K tokens,
+ *             structurally immune to truncation.
+ *   Phase 2 — each section's full layoutData is generated in parallel
+ *             batches, one small call per section, with the manifest as
+ *             sibling context. A section that fails after retry degrades
+ *             to a prose fallback and is reported in document.warnings —
+ *             sections are never silently dropped.
+ *
+ * All calls share one cached system prefix (rules + layout specs + the
+ * deal knowledge base), so phase 2 reads the prompt from Anthropic's
+ * cache instead of re-paying for it per section.
  */
 export interface EngagementInsightInput {
   sectionType: string;
@@ -24,6 +45,23 @@ export interface EngagementInsightInput {
   avgTimeSpentSeconds: number;
   sampleCount: number;
 }
+
+interface ManifestEntry {
+  sectionKey: string;
+  sectionTitle: string;
+  order: number;
+  layoutType: string;
+  tags: string[];
+  aiLayoutReasoning: string;
+  /** One-line description of what this section must cover */
+  contentBrief: string;
+}
+
+type SystemBlock = {
+  type: "text";
+  text: string;
+  cache_control?: { type: "ephemeral" };
+};
 
 export async function generateCimLayout(params: {
   dealId: string;
@@ -44,22 +82,249 @@ export async function generateCimLayout(params: {
 }): Promise<CimDocument> {
 
   const knowledgeBase = buildKnowledgeBase(params);
+  const warnings: string[] = [];
 
-  const systemPrompt = `You are Cimple's CIM Design Agent. Your job is to transform a business's collected information into a bespoke, visually compelling Confidential Information Memorandum document blueprint.
+  // Shared, cached prefix: identical bytes for the manifest call and every
+  // section call, so Anthropic's prompt cache serves it after the first call.
+  const sharedSystem: SystemBlock = {
+    type: "text",
+    text: `${DESIGN_AGENT_RULES}\n\n# DEAL KNOWLEDGE BASE\n\n${knowledgeBase}`,
+    cache_control: { type: "ephemeral" },
+  };
+
+  // ── Phase 1: plan the document ─────────────────────────────────────────
+  const manifest = await generateManifest(sharedSystem);
+
+  // ── Phase 2: generate each section's content in parallel batches ──────
+  const BATCH_SIZE = 5;
+  const generated: CimLayoutSection[] = [];
+  for (let i = 0; i < manifest.length; i += BATCH_SIZE) {
+    const batch = manifest.slice(i, i + BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map((entry) => generateSection(sharedSystem, entry, manifest, warnings)),
+    );
+    generated.push(...results);
+  }
+
+  // Validate and normalise
+  let sections: CimLayoutSection[] = generated.map((s, i) => ({
+    sectionKey: s.sectionKey || `section_${i + 1}`,
+    sectionTitle: s.sectionTitle || `Section ${i + 1}`,
+    order: s.order ?? i + 1,
+    layoutType: (s.layoutType || "unknown") as LayoutType,
+    layoutData: s.layoutData || {},
+    aiDraftContent: s.aiDraftContent,
+    aiLayoutReasoning: s.aiLayoutReasoning || "",
+    tags: Array.isArray(s.tags) ? s.tags : [],
+    isVisible: s.isVisible !== false,
+    brokerApproved: false,
+    brokerEditedContent: undefined,
+    layoutOverride: undefined,
+  }));
+
+  // Ensure cover_page is first
+  const coverIdx = sections.findIndex(s => s.layoutType === "cover_page");
+  if (coverIdx > 0) {
+    const [cover] = sections.splice(coverIdx, 1);
+    sections.unshift(cover);
+    sections.forEach((s, i) => { s.order = i + 1; });
+  }
+
+  if (warnings.length > 0) {
+    console.warn(`[layout-engine] Generated with ${warnings.length} warning(s):`, warnings);
+  }
+
+  return {
+    dealId: params.dealId,
+    sections,
+    generatedAt: new Date().toISOString(),
+    version: 1,
+    warnings: warnings.length > 0 ? warnings : undefined,
+  };
+}
+
+// ── Phase 1: manifest ──────────────────────────────────────────────────────
+
+const MANIFEST_TOOL = {
+  name: "cim_manifest",
+  description: "The section plan for this CIM document.",
+  input_schema: {
+    type: "object" as const,
+    required: ["sections"],
+    properties: {
+      sections: {
+        type: "array",
+        items: {
+          type: "object",
+          required: ["sectionKey", "sectionTitle", "order", "layoutType", "tags", "aiLayoutReasoning", "contentBrief"],
+          properties: {
+            sectionKey: { type: "string", description: "Unique snake_case identifier you invent (e.g. 'revenue_breakdown', 'backlog_pipeline')." },
+            sectionTitle: { type: "string", description: "Professional display title." },
+            order: { type: "number" },
+            layoutType: { type: "string", description: "One of the layout types from the spec." },
+            tags: { type: "array", items: { type: "string" } },
+            aiLayoutReasoning: { type: "string", description: "1-2 sentences: why this layout for this content." },
+            contentBrief: { type: "string", description: "One line: exactly what this section covers and which knowledge-base facts feed it." },
+          },
+        },
+      },
+    },
+  },
+} as const;
+
+async function generateManifest(sharedSystem: SystemBlock): Promise<ManifestEntry[]> {
+  const attempt = async (): Promise<ManifestEntry[] | null> => {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 4000,
+      system: [
+        sharedSystem,
+        {
+          type: "text",
+          text: "# TASK\nPlan this CIM document. Output ONLY the section manifest via the cim_manifest tool — no layoutData yet. Be bespoke to this business: the section list should tell this business's story to a sophisticated buyer, including the industry-specific sections the rules require.",
+        },
+      ] as never,
+      tools: [MANIFEST_TOOL] as never,
+      tool_choice: { type: "tool", name: "cim_manifest" },
+      messages: [{ role: "user", content: "Produce the section manifest for this deal." }],
+    });
+    if (response.stop_reason === "max_tokens") return null;
+    const block = response.content.find((b) => b.type === "tool_use");
+    if (!block || block.type !== "tool_use") return null;
+    const input = block.input as { sections?: unknown };
+    if (!Array.isArray(input.sections) || input.sections.length === 0) return null;
+    return (input.sections as ManifestEntry[]).filter(
+      (s) => s && typeof s.sectionKey === "string" && typeof s.layoutType === "string",
+    );
+  };
+
+  const first = await attempt();
+  if (first && first.length > 0) return first;
+  console.warn("[layout-engine] Manifest generation failed — retrying once");
+  const second = await attempt();
+  if (second && second.length > 0) return second;
+  throw new Error("CIM generation failed while planning the document. Please try again.");
+}
+
+// ── Phase 2: per-section content ───────────────────────────────────────────
+
+const SECTION_TOOL = {
+  name: "cim_section",
+  description: "The full content for one CIM section.",
+  input_schema: {
+    type: "object" as const,
+    required: ["layoutData"],
+    properties: {
+      layoutData: {
+        type: "object",
+        description: "The structured data for this section's layoutType, exactly matching the shape from the layout spec.",
+      },
+      aiDraftContent: {
+        type: "string",
+        description: "Prose content string. Required for prose_highlight and two_column; optional elsewhere.",
+      },
+    },
+  },
+} as const;
+
+async function generateSection(
+  sharedSystem: SystemBlock,
+  entry: ManifestEntry,
+  manifest: ManifestEntry[],
+  warnings: string[],
+): Promise<CimLayoutSection> {
+  const siblingList = manifest
+    .map((m) => `${m.order}. ${m.sectionTitle} (${m.layoutType}) — ${m.contentBrief}`)
+    .join("\n");
+
+  const attempt = async (): Promise<{ layoutData: Record<string, unknown>; aiDraftContent?: string } | null> => {
+    const response = await anthropic.messages.create({
+      model: MODEL,
+      max_tokens: 6000,
+      system: [
+        sharedSystem,
+        {
+          type: "text",
+          text: `# TASK\nGenerate the full content for ONE section of this CIM via the cim_section tool.\n\nThe complete document plan (do not duplicate content that belongs to sibling sections):\n${siblingList}`,
+        },
+      ] as never,
+      tools: [SECTION_TOOL] as never,
+      tool_choice: { type: "tool", name: "cim_section" },
+      messages: [
+        {
+          role: "user",
+          content: `Generate section ${entry.order}: "${entry.sectionTitle}" (sectionKey: ${entry.sectionKey})\nLayout type: ${entry.layoutType}\nBrief: ${entry.contentBrief}\n\nProduce layoutData exactly matching the ${entry.layoutType} shape from the spec, populated with real values from the knowledge base. Use the interactive flags (expandable, relatedSections, normalizedRows) where the rules call for them.`,
+        },
+      ],
+    });
+    if (response.stop_reason === "max_tokens") return null;
+    const block = response.content.find((b) => b.type === "tool_use");
+    if (!block || block.type !== "tool_use") return null;
+    const input = block.input as { layoutData?: unknown; aiDraftContent?: unknown };
+    if (!input.layoutData || typeof input.layoutData !== "object") return null;
+    return {
+      layoutData: input.layoutData as Record<string, unknown>,
+      aiDraftContent: typeof input.aiDraftContent === "string" ? input.aiDraftContent : undefined,
+    };
+  };
+
+  let result: Awaited<ReturnType<typeof attempt>> = null;
+  try {
+    result = await attempt();
+    if (!result) {
+      console.warn(`[layout-engine] Section "${entry.sectionKey}" invalid/truncated — retrying once`);
+      result = await attempt();
+    }
+  } catch (err) {
+    console.error(`[layout-engine] Section "${entry.sectionKey}" generation error:`, err);
+    try {
+      result = await attempt();
+    } catch { /* fall through to fallback */ }
+  }
+
+  if (!result) {
+    // Never silently drop a planned section — degrade to prose the broker
+    // can edit, and surface a warning so the UI can say so.
+    warnings.push(`Section "${entry.sectionTitle}" could not be generated and was replaced with an editable placeholder.`);
+    return {
+      sectionKey: entry.sectionKey,
+      sectionTitle: entry.sectionTitle,
+      order: entry.order,
+      layoutType: "prose_highlight" as LayoutType,
+      layoutData: {
+        body: `This section (${entry.contentBrief}) could not be generated automatically. Edit this placeholder or regenerate the section from the CIM Designer.`,
+      },
+      aiDraftContent: undefined,
+      aiLayoutReasoning: "Fallback: automatic generation failed for this section.",
+      tags: entry.tags ?? [],
+      isVisible: true,
+      brokerApproved: false,
+      brokerEditedContent: undefined,
+      layoutOverride: undefined,
+    };
+  }
+
+  return {
+    sectionKey: entry.sectionKey,
+    sectionTitle: entry.sectionTitle,
+    order: entry.order,
+    layoutType: entry.layoutType as LayoutType,
+    layoutData: result.layoutData,
+    aiDraftContent: result.aiDraftContent,
+    aiLayoutReasoning: entry.aiLayoutReasoning,
+    tags: entry.tags ?? [],
+    isVisible: true,
+    brokerApproved: false,
+    brokerEditedContent: undefined,
+    layoutOverride: undefined,
+  };
+}
+
+// ── Shared design-agent rules (cached prefix) ──────────────────────────────
+
+const DESIGN_AGENT_RULES = `You are Cimple's CIM Design Agent. Your job is to transform a business's collected information into a bespoke, visually compelling Confidential Information Memorandum document blueprint.
 
 You are NOT generating a template. You are generating a bespoke document for this specific business.
-
-YOUR OUTPUT IS A JSON ARRAY of section objects. Each section has:
-- sectionKey: unique snake_case identifier you invent (e.g. "revenue_breakdown", "backlog_pipeline", "lease_summary")
-- sectionTitle: professional display title
-- order: integer starting at 1
-- layoutType: the visual format (see list below)
-- layoutData: the structured data to render (varies by layoutType — see spec below)
-- aiDraftContent: prose content string (for prose-heavy layouts, required for prose_highlight and two_column)
-- aiLayoutReasoning: 1–2 sentences explaining why you chose this layout for this content
-- tags: array of category tags
-- isVisible: true
-- brokerApproved: false
 
 LAYOUT TYPES AND THEIR layoutData SHAPE:
 
@@ -158,124 +423,7 @@ DOCUMENT STRUCTURE RULES:
 9. Every major claim should be supported by a visual where possible
 10. The reason_for_sale and transition details should ALWAYS use prose_highlight — this is personal
 
-11. If BUYER ENGAGEMENT DATA is provided in the knowledge base, use it to favour layout types that have historically held buyer attention for similar content in this industry. All else being equal, prefer the layout type with higher avg_time_seconds for a given section type.
-
-IMPORTANT: Your output must be valid JSON. Only output the JSON array — no markdown, no explanation, no wrapper object.`;
-
-  const userPrompt = `Generate a bespoke CIM layout for this business:
-
-${knowledgeBase}
-
-Output a JSON array of CimLayoutSection objects. Be bespoke. Use the data available. Create sections that make this business's story compelling to a sophisticated buyer.`;
-
-  // Use streaming to keep the TCP connection alive during long generations.
-  // Without streaming, idle socket timeouts (ETIMEDOUT) kill the connection
-  // before the full 16K-token response arrives.
-  const stream = anthropic.messages.stream({
-    model: "claude-sonnet-4-5",
-    max_tokens: 16000,
-    system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-  });
-  const response = await stream.finalMessage();
-
-  const rawContent = response.content[0];
-  if (rawContent.type !== "text") {
-    throw new Error("Layout engine returned non-text response");
-  }
-
-  // Parse the JSON — strip any accidental markdown fencing
-  const jsonText = rawContent.text
-    .replace(/^```json\s*/i, "")
-    .replace(/^```\s*/i, "")
-    .replace(/\s*```$/i, "")
-    .trim();
-
-  let sections: CimLayoutSection[];
-  try {
-    sections = JSON.parse(jsonText);
-  } catch (e) {
-    // Try to extract JSON array from the response
-    const match = jsonText.match(/\[[\s\S]*\]/);
-    if (!match) {
-      throw new Error(`Layout engine returned unparseable response: ${jsonText.slice(0, 200)}`);
-    }
-    try {
-      sections = JSON.parse(match[0]);
-    } catch (e2) {
-      // Attempt repair: truncate at last complete top-level array element.
-      // Strategy: find every `},` at nesting depth 1 (i.e. the comma between
-      // top-level objects in the array), then try parsing up through the last
-      // one that succeeds.
-      //
-      // String-aware: we skip over characters inside JSON strings so that braces
-      // appearing inside text values don't throw off the depth counter.
-      const src = match[0];
-      const sectionEnds: number[] = [];
-      let depth = 0;
-      let inString = false;
-      for (let i = 0; i < src.length; i++) {
-        const ch = src[i];
-        if (inString) {
-          if (ch === "\\") { i++; continue; } // skip escape sequence
-          if (ch === "\"") inString = false;
-          continue;
-        }
-        if (ch === "\"") { inString = true; continue; }
-        if (ch === "{") depth++;
-        else if (ch === "}") {
-          depth--;
-          if (depth === 1) sectionEnds.push(i); // closing brace of a top-level object
-        }
-      }
-      let repaired = false;
-      // Try from the last section end backwards until one parses
-      for (let k = sectionEnds.length - 1; k >= 0; k--) {
-        const candidate = src.slice(0, sectionEnds[k] + 1) + "\n]";
-        try {
-          sections = JSON.parse(candidate);
-          repaired = true;
-          console.log(`[layout-engine] JSON repaired: truncated to ${sections.length} sections (from ~${sectionEnds.length} detected)`);
-          break;
-        } catch (_) { /* try previous boundary */ }
-      }
-      if (!repaired) {
-        throw new Error(`Layout engine JSON repair failed: ${(e2 as Error).message}. Raw (first 500): ${jsonText.slice(0, 500)}`);
-      }
-    }
-  }
-
-  // Validate and normalise
-  sections = sections.map((s, i) => ({
-    sectionKey: s.sectionKey || `section_${i + 1}`,
-    sectionTitle: s.sectionTitle || `Section ${i + 1}`,
-    order: s.order ?? i + 1,
-    layoutType: (s.layoutType || "unknown") as LayoutType,
-    layoutData: s.layoutData || {},
-    aiDraftContent: s.aiDraftContent,
-    aiLayoutReasoning: s.aiLayoutReasoning || "",
-    tags: Array.isArray(s.tags) ? s.tags : [],
-    isVisible: s.isVisible !== false,
-    brokerApproved: false,
-    brokerEditedContent: undefined,
-    layoutOverride: undefined,
-  }));
-
-  // Ensure cover_page is first
-  const coverIdx = sections.findIndex(s => s.layoutType === "cover_page");
-  if (coverIdx > 0) {
-    const [cover] = sections.splice(coverIdx, 1);
-    sections.unshift(cover);
-    sections.forEach((s, i) => { s.order = i + 1; });
-  }
-
-  return {
-    dealId: params.dealId,
-    sections,
-    generatedAt: new Date().toISOString(),
-    version: 1,
-  };
-}
+11. If BUYER ENGAGEMENT DATA is provided in the knowledge base, use it to favour layout types that have historically held buyer attention for similar content in this industry. All else being equal, prefer the layout type with higher avg_time_seconds for a given section type.`;
 
 /**
  * buildKnowledgeBase

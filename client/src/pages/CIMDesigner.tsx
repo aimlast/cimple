@@ -36,7 +36,7 @@ const LAYOUT_TYPES = [
   "pie_chart", "donut_chart", "line_chart", "timeline",
   "financial_table", "comparison_table", "callout_list", "icon_stat_row",
   "prose_highlight", "two_column", "org_chart", "location_card",
-  "stat_callout", "numbered_list", "scorecard", "divider",
+  "stat_callout", "numbered_list", "scorecard", "waterfall_chart", "divider",
 ] as const;
 
 export default function CIMDesigner() {
