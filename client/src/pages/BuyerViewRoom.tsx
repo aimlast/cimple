@@ -17,13 +17,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import {
   Building, Clock, Lock, AlertCircle, FileText,
 } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Deal, BuyerAccess, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
+import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { FinancialToggle } from "@/components/cim/FinancialToggle";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
@@ -35,6 +36,8 @@ interface ViewData {
   sections: CimSection[];
   publishedQuestions: BuyerQuestion[];
   branding: BrandingSettings | null;
+  /** True when the server is withholding CIM content until the NDA is signed */
+  ndaGate?: boolean;
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
@@ -201,7 +204,7 @@ function useAnalytics(dealId: string | undefined, accessId: string | undefined) 
 // ── Main component ─────────────────────────────────────────────────────────
 export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
-  const [ndaAccepted, setNdaAccepted] = useState(false);
+  const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
   const [localDecision, setLocalDecision] = useState<"under_review" | "interested" | "not_interested" | "lapsed" | null>(null);
   const startTimeRef = useRef(Date.now());
@@ -274,10 +277,16 @@ export default function BuyerViewRoom() {
   const currentDecision = (localDecision || (access as any).decision || "under_review") as
     "under_review" | "interested" | "not_interested" | "lapsed";
 
-  // NDA gate
-  const needsNda = (access as any).ndaRequired && !(access as any).ndaSigned && !ndaAccepted;
-  if (needsNda) {
-    return <NdaGate deal={deal} token={token!} onAccepted={() => setNdaAccepted(true)} />;
+  // NDA gate — the server withholds sections until the NDA is signed, so
+  // after signing we refetch to receive the actual CIM content.
+  if (data.ndaGate) {
+    return (
+      <NdaGate
+        deal={deal}
+        token={token!}
+        onAccepted={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token] })}
+      />
+    );
   }
 
   const brandingCtx = buildBranding(brandingSettings, deal);
@@ -384,6 +393,7 @@ export default function BuyerViewRoom() {
               <div className="space-y-8">
                 {visibleSections.map(section => (
                   <div key={section.id} id={`section-${section.id}`}>
+                    <SectionBoundary sectionTitle={section.sectionTitle}>
                     <ExpandableSection
                       section={section}
                       branding={brandingCtx}
@@ -406,6 +416,7 @@ export default function BuyerViewRoom() {
                         });
                       }}
                     />
+                    </SectionBoundary>
                   </div>
                 ))}
               </div>
