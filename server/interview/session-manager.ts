@@ -422,6 +422,9 @@ export async function processTurn(
   if (aiResponse.shouldEnd) {
     await storage.updateDeal(dealId, {
       interviewCompleted: true,
+      // A finished interview means platform intake is underway — move the
+      // deal off phase 1 so the broker's Overview reflects reality.
+      ...(deal.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
 
     // Fire-and-forget: analyze the completed interview for learning insights
@@ -572,7 +575,11 @@ export async function endSessionManually(
       .where(eq(interviewSessions.id, sessionId));
   }
 
-  await storage.updateDeal(dealId, { interviewCompleted: true });
+  const dealRow = await storage.getDeal(dealId);
+  await storage.updateDeal(dealId, {
+    interviewCompleted: true,
+    ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
+  });
 
   // Fire-and-forget: learn from the transcript like an AI-driven ending does
   runInterviewLearningLoop(dealId, sessionId).catch((err) => {

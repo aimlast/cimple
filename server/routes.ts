@@ -3603,6 +3603,7 @@ Return JSON only.`,
         success: true,
         sectionCount: document.sections.length,
         generatedAt: document.generatedAt,
+        warnings: document.warnings ?? [],
         cimContent,
       });
     } catch (error: any) {
@@ -4522,7 +4523,7 @@ Return JSON only.`,
         cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
       } as any);
 
-      res.json({ sectionCount: document.sections.length, generatedAt: document.generatedAt });
+      res.json({ sectionCount: document.sections.length, generatedAt: document.generatedAt, warnings: document.warnings ?? [] });
     } catch (error: any) {
       console.error("Layout generation error:", error);
       res.status(500).json({ error: error.message || "Layout generation failed" });

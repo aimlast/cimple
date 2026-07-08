@@ -499,6 +499,8 @@ function Phase1Center() {
             size="sm"
             className="bg-teal text-teal-foreground hover:bg-teal/90 shrink-0"
             data-testid="button-advance-phase-2"
+            disabled={update.isPending}
+            onClick={() => update.mutate({ phase: "phase2_platform_intake" } as Partial<Deal>)}
           >
             Advance to Phase 2{" "}
             <ChevronRight className="h-3.5 w-3.5 ml-1" />
@@ -830,15 +832,26 @@ function Phase3Center() {
       }
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: { sectionCount?: number; warnings?: string[] }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       queryClient.invalidateQueries({
         queryKey: ["/api/deals", dealId, "cim-sections"],
       });
-      toast({
-        title: "CIM generated",
-        description: "Visual sections created. Review and edit below.",
-      });
+      const warnings = data?.warnings ?? [];
+      if (warnings.length > 0) {
+        // Partial success is shown honestly — never a clean "success" toast
+        // when sections fell back to placeholders.
+        toast({
+          title: `CIM generated with ${warnings.length} warning${warnings.length > 1 ? "s" : ""}`,
+          description: warnings.join(" "),
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "CIM generated",
+          description: "Visual sections created. Review and edit below.",
+        });
+      }
     },
     onError: (e: Error) =>
       toast({

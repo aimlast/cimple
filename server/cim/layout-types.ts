@@ -35,6 +35,7 @@ export type LayoutType =
   | "numbered_list"
   | "tag_cloud"
   | "scorecard"
+  | "waterfall_chart"
   | "divider"
   | "unknown"; // fallback — renders raw JSON gracefully
 
@@ -333,4 +334,6 @@ export interface CimDocument {
   generatedAt: string;
   version: number;
   // Branding applied at render time (not stored here)
+  /** Non-fatal generation problems (e.g. a section fell back to prose) */
+  warnings?: string[];
 }
