@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
@@ -37,11 +38,11 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
 
-  const { data: questions = [], isLoading } = useQuery<BuyerQuestion[]>({
+  const { data: questions = [], isLoading, error: loadError, refetch } = useQuery<BuyerQuestion[]>({
     queryKey: ["/api/deals", dealId, "questions"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/questions`);
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error("Failed to load buyer questions");
       return r.json();
     },
   });
@@ -71,6 +72,10 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  if (loadError) {
+    return <PanelError what="buyer questions" onRetry={() => refetch()} />;
   }
 
   if (questions.length === 0) {

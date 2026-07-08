@@ -7,6 +7,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
@@ -44,11 +45,11 @@ export function DiscrepancyPanel({ dealId, onAllResolved }: DiscrepancyPanelProp
   const [responses, setResponses] = useState<Record<string, string>>({});
   const [resolvedValues, setResolvedValues] = useState<Record<string, string>>({});
 
-  const { data: discrepancies = [], isLoading } = useQuery<Discrepancy[]>({
+  const { data: discrepancies = [], isLoading, error: loadError, refetch } = useQuery<Discrepancy[]>({
     queryKey: ["/api/deals", dealId, "discrepancies"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/discrepancies`);
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error("Failed to load discrepancies");
       return r.json();
     },
   });
@@ -114,6 +115,10 @@ export function DiscrepancyPanel({ dealId, onAllResolved }: DiscrepancyPanelProp
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  if (loadError) {
+    return <PanelError what="discrepancies" onRetry={() => refetch()} />;
   }
 
   // No discrepancies yet — show run button

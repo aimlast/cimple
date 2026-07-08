@@ -2,6 +2,7 @@
  * BuyersTab — Active buyers, pending approvals, outreach & matching.
  */
 import { useQuery } from "@tanstack/react-query";
+import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
 import { BuyerApprovalsPanel } from "@/components/deal/BuyerApprovalsPanel";
 import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
@@ -17,11 +18,12 @@ import {
 export function BuyersTab() {
   const { dealId } = useDeal();
 
-  const { data: buyerAccessList = [] } = useQuery<any[]>({
+  const { data: buyerAccessList = [], error: buyersError, refetch: refetchBuyers } = useQuery<any[]>({
     queryKey: ["/api/deals", dealId, "buyers"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/buyers`);
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("Failed to load buyers");
+      return r.json();
     },
   });
 
@@ -31,12 +33,21 @@ export function BuyersTab() {
       const r = await fetch(
         `/api/deals/${dealId}/analytics/buyer-scores`,
       );
+      // Scores enrich the table but aren't essential — degrade quietly
       return r.ok ? r.json() : [];
     },
   });
 
   const activeBuyers = buyerAccessList.filter((b: any) => !b.revokedAt);
   const scoreMap = new Map(buyerScores.map((s: any) => [s.buyerId, s]));
+
+  if (buyersError) {
+    return (
+      <div className="p-6">
+        <PanelError what="buyers" onRetry={() => refetchBuyers()} />
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-8">

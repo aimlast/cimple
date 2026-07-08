@@ -8,6 +8,7 @@
 import { useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -76,11 +77,12 @@ function DocumentUploadCard() {
   const [docFile, setDocFile] = useState<File | null>(null);
   const [docCategory, setDocCategory] = useState("financials");
 
-  const { data: docs = [] } = useQuery<DocType[]>({
+  const { data: docs = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
     queryKey: ["/api/deals", dealId, "documents"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/documents`);
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("Failed to load documents");
+      return r.json();
     },
   });
 
@@ -1279,11 +1281,12 @@ function Phase4Center() {
 function DocumentTable() {
   const { dealId } = useDeal();
 
-  const { data: documents = [] } = useQuery<DocType[]>({
+  const { data: documents = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
     queryKey: ["/api/deals", dealId, "documents"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/documents`);
-      return r.ok ? r.json() : [];
+      if (!r.ok) throw new Error("Failed to load documents");
+      return r.json();
     },
   });
 
@@ -1297,6 +1300,9 @@ function DocumentTable() {
       }),
   });
 
+  if (docsError) {
+    return <PanelError what="documents" onRetry={() => refetchDocs()} />;
+  }
   if (documents.length === 0) return null;
 
   return (
