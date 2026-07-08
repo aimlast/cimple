@@ -173,6 +173,13 @@ Write only the section body — no section heading, no intro preamble like "Here
 }
 
 export async function registerRoutes(app: Express): Promise<Server> {
+  // Deploy healthcheck — public by design, returns no data. (The previous
+  // healthcheck path /api/cims broke when broker auth landed: Railway got
+  // 401s and marked otherwise-healthy deploys as failed.)
+  app.get("/api/health", (_req, res) => {
+    res.json({ ok: true });
+  });
+
   // Serve uploaded files
   const uploadsDir = path.join(process.cwd(), "public", "uploads");
   if (!fs.existsSync(uploadsDir)) {
@@ -2685,7 +2692,9 @@ Return JSON only.`,
         buyerEmail: body.buyerEmail,
         buyerName: body.buyerName || null,
         buyerCompany: body.buyerCompany || null,
-        expiresAt: body.expiresAt || null,
+        // Security spec: links auto-expire after 30 days unless the broker
+        // sets a different expiry (they can extend from the buyers panel).
+        expiresAt: body.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
       };
       const access = await storage.createBuyerAccess(validatedData);
       res.json(access);
@@ -2698,40 +2707,72 @@ Return JSON only.`,
     }
   });
 
+  // Auto-generate blind overrides in the background the first time a
+  // blind-mode link is opened before the broker ran "Generate blind CIM".
+  // In-flight guard prevents a stampede of redaction runs per deal.
+  const blindGenInFlight = new Set<string>();
+  function ensureBlindOverridesInBackground(deal: { id: string; businessName: string; industry: string; extractedInfo: unknown }) {
+    if (blindGenInFlight.has(deal.id)) return;
+    blindGenInFlight.add(deal.id);
+    (async () => {
+      const sections = await storage.getCimSectionsByDeal(deal.id);
+      if (sections.length === 0) return;
+      const { generateBlindOverrides } = await import("./cim/redaction-engine");
+      const overrides = await generateBlindOverrides(sections, {
+        businessName: deal.businessName,
+        industry: deal.industry,
+        extractedInfo: deal.extractedInfo as Record<string, any> | null,
+      });
+      await storage.deleteCimSectionOverrides(deal.id, "blind");
+      for (const override of overrides) {
+        await storage.createCimSectionOverride({
+          dealId: deal.id,
+          cimSectionId: override.cimSectionId,
+          mode: "blind",
+          layoutData: override.layoutData,
+          contentOverride: override.contentOverride,
+        });
+      }
+      console.log(`[view] Auto-generated ${overrides.length} blind overrides for deal ${deal.id}`);
+    })()
+      .catch((err) => console.error(`[view] Blind auto-generation failed for deal ${deal.id}:`, err))
+      .finally(() => blindGenInFlight.delete(deal.id));
+  }
+
   app.get("/api/view/:token", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
       if (!access) {
         return res.status(404).json({ error: "Access denied or link expired" });
       }
-      
+
       // Check expiration
       if (access.expiresAt && new Date(access.expiresAt) < new Date()) {
         return res.status(403).json({ error: "Link has expired" });
       }
-      
+
       // Check if revoked
       if (access.revokedAt) {
         return res.status(403).json({ error: "Access has been revoked" });
       }
-      
+
       // Get the associated deal
       const deal = await storage.getDeal(access.dealId);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
       }
-      
-      // Update last accessed
-      await storage.updateBuyerAccess(access.id, {
-        lastAccessedAt: new Date(),
-      });
 
-      // Enrich with sections, branding, published Q&A
-      const [baseSections, publishedQuestions, branding] = await Promise.all([
-        storage.getCimSectionsByDeal(deal.id),
-        storage.getPublishedQuestions(deal.id),
-        deal.brokerId ? storage.getBrandingByBroker(deal.brokerId) : Promise.resolve(undefined),
-      ]);
+      // Stamp the view: firstViewedAt anchors the decision-reminder pipeline
+      // and viewCount drives the decision panel. These were never written
+      // before, which silently disabled both features.
+      const now = new Date();
+      const viewStamp: Record<string, unknown> = {
+        lastAccessedAt: now,
+        viewCount: (access.viewCount ?? 0) + 1,
+      };
+      if (!access.firstViewedAt) viewStamp.firstViewedAt = now;
+      await storage.updateBuyerAccess(access.id, viewStamp as any);
+      const freshAccess = { ...access, ...viewStamp };
 
       // Determine CIM mode from buyer's access level
       const cimMode = (() => {
@@ -2742,7 +2783,41 @@ Return JSON only.`,
         }
       })();
 
-      // Apply overrides if not normal mode
+      // Buyers get a minimal whitelisted deal payload — never the raw deal
+      // record (extractedInfo, broker notes, valuation data). Legacy
+      // cimContent only ships in normal mode: it has no redacted variant.
+      const publicDeal = {
+        id: deal.id,
+        businessName: deal.businessName,
+        industry: deal.industry,
+        cimContent: cimMode === "normal" ? deal.cimContent : null,
+      };
+
+      const branding = deal.brokerId
+        ? await storage.getBrandingByBroker(deal.brokerId)
+        : undefined;
+
+      // NDA gate — enforced server-side. Until the NDA is signed, no CIM
+      // sections or Q&A leave the server (previously the full payload
+      // shipped and the gate was a client-side render decision).
+      if (deal.ndaRequired && !access.ndaSigned) {
+        return res.json({
+          access: freshAccess,
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding: branding ?? null,
+          cimMode,
+          ndaGate: true,
+        });
+      }
+
+      const [baseSections, publishedQuestions] = await Promise.all([
+        storage.getCimSectionsByDeal(deal.id),
+        storage.getPublishedQuestions(deal.id),
+      ]);
+
+      // Apply redaction/enrichment overrides for non-normal modes
       let sections = baseSections;
       if (cimMode !== "normal" && baseSections.length > 0) {
         const overrides = await storage.getCimSectionOverrides(deal.id, cimMode);
@@ -2758,10 +2833,15 @@ Return JSON only.`,
               brokerEditedContent: override.contentOverride || s.brokerEditedContent,
             };
           });
+        } else if (cimMode === "blind") {
+          // No redacted version exists yet — kick off generation so the next
+          // view is properly blind. (This view serves the un-redacted
+          // sections; converges automatically without broker action.)
+          ensureBlindOverridesInBackground(deal);
         }
       }
 
-      res.json({ access, deal, sections, publishedQuestions, branding: branding ?? null, cimMode });
+      res.json({ access: freshAccess, deal: publicDeal, sections, publishedQuestions, branding: branding ?? null, cimMode });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -2812,7 +2892,7 @@ Return JSON only.`,
       if (access.revokedAt) return res.status(403).json({ error: "Access revoked" });
 
       const decisionSchema = z.object({
-        decision: z.enum(["interested", "not_interested"]),
+        decision: z.enum(["interested", "not_interested", "need_more_time"]),
         nextStep: z.enum(["seller_call", "management_meeting", "site_visit", "loi", "more_info", "other"]).optional().nullable(),
         reason: z.string().max(2000).optional().nullable(),
       });
@@ -2820,6 +2900,18 @@ Return JSON only.`,
 
       const deal = await storage.getDeal(access.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // "Need more time" isn't a terminal decision — it resets the reminder
+      // clock (fresh day-3/6/8 cycle) and leaves the buyer under review.
+      if (decision === "need_more_time") {
+        await storage.updateBuyerAccess(access.id, {
+          decision: null,
+          decisionAt: null,
+          firstViewedAt: new Date(),
+          reminderStage: "none",
+        } as any);
+        return res.json({ success: true, decision: "need_more_time" });
+      }
 
       // Record the decision
       await storage.updateBuyerAccess(access.id, {
@@ -3232,7 +3324,7 @@ Return JSON only.`,
         buyerName: request.buyerName || null,
         buyerCompany: request.buyerCompany || null,
         accessLevel: "full",
-        expiresAt: null,
+        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30-day default per security spec
       } as any);
 
       const updated = await storage.updateBuyerApprovalRequest(request.id, {

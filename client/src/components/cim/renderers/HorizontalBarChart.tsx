@@ -73,12 +73,13 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
     value: typeof d.value === "string" ? parseFloat(d.value) || 0 : d.value,
   }));
 
-  const maxValue = Math.max(...normalized.map((d) => d.value));
-
-  // Compute percentages for label rendering
+  // Percent labels are shares of the TOTAL (a 50/30/20 revenue split reads
+  // 50%/30%/20%). Dividing by the max made the largest bar always read
+  // "100%" — visibly wrong in customer-concentration contexts.
+  const totalValue = normalized.reduce((s, d) => s + d.value, 0);
   const withPercent = normalized.map((d) => ({
     ...d,
-    percent: maxValue > 0 ? ((d.value / maxValue) * 100).toFixed(0) + "%" : "0%",
+    percent: totalValue > 0 ? ((d.value / totalValue) * 100).toFixed(0) + "%" : "0%",
   }));
 
   // Dynamic height based on item count

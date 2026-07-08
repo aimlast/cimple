@@ -26,6 +26,7 @@ import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import type { Deal, CimSection, CimSectionOverride, BrandingSettings } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
+import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { useLocation } from "wouter";
 
@@ -331,11 +332,13 @@ export default function CIMDesigner() {
                       }`}
                       onClick={() => selectSection(section)}
                     >
-                      <CimSectionRenderer
-                        section={section}
-                        branding={brandingCtx}
-                        brokerMode
-                      />
+                      <SectionBoundary sectionTitle={section.sectionTitle}>
+                        <CimSectionRenderer
+                          section={section}
+                          branding={brandingCtx}
+                          brokerMode
+                        />
+                      </SectionBoundary>
                     </div>
                   ))}
                 </div>

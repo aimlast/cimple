@@ -62,6 +62,25 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, viewC
   const [comment, setComment] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [snoozed, setSnoozed] = useState(false);
+
+  // "Need more time" — resets the reminder clock server-side and hides the
+  // panel for this session. Not a terminal decision.
+  async function needMoreTime() {
+    setSubmitting(true);
+    try {
+      await fetch(`/api/view/${token}/decision`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ decision: "need_more_time" }),
+      });
+      setSnoozed(true);
+    } catch {
+      setSnoozed(true); // hide anyway — this action must never trap the buyer
+    } finally {
+      setSubmitting(false);
+    }
+  }
 
   const status = currentDecision || "under_review";
   const isFinal = status === "interested" || status === "not_interested" || status === "lapsed";
@@ -126,8 +145,8 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, viewC
     );
   }
 
-  // ── Breathing room on first visit — no prompt shown ───────────────────
-  if (!showActive) {
+  // ── Breathing room on first visit / snoozed — no prompt shown ─────────
+  if (!showActive || snoozed) {
     return null;
   }
 
@@ -169,6 +188,17 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, viewC
               >
                 <ThumbsDown className="h-4 w-4 mr-2" />
                 Not interested
+              </Button>
+              <Button
+                size="lg"
+                variant="ghost"
+                className="text-muted-foreground"
+                onClick={needMoreTime}
+                disabled={submitting}
+                data-testid="button-need-more-time"
+              >
+                <Clock className="h-4 w-4 mr-2" />
+                I need more time
               </Button>
             </div>
           </div>
