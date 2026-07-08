@@ -15,10 +15,16 @@ app.set("trust proxy", 1);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
 
-// ── Session middleware (used by buyer auth system) ────────────────────
-// Buyer accounts log in with email + password, session stored in an
-// httpOnly cookie. Brokers don't use this yet (tokenless). The shape is
-// `req.session.buyerId` when a buyer is logged in.
+// ── Session middleware (broker + buyer auth) ──────────────────────────
+// Buyers log in with email + password (`req.session.buyerId`); brokers log
+// in with username + password (`req.session.brokerId`). Both live in the
+// same httpOnly session cookie.
+//
+// In production a real SESSION_SECRET is mandatory — the hardcoded fallback
+// would make every session cookie forgeable.
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET environment variable must be set in production");
+}
 const MemoryStore = createMemoryStore(session);
 app.use(
   session({
@@ -39,6 +45,7 @@ app.use(
 declare module "express-session" {
   interface SessionData {
     buyerId?: string;
+    brokerId?: string;
   }
 }
 

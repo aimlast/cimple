@@ -101,7 +101,19 @@ export default function SellerIntake() {
       employeeChart: any;
     }) => {
       if (!inviteData?.deal?.id) throw new Error("No deal found");
-      return apiRequest("PATCH", `/api/deals/${inviteData.deal.id}`, data);
+      // The invite token authenticates the seller — the deal PATCH endpoint
+      // only accepts intake fields from a token that maps to this deal.
+      const res = await fetch(`/api/deals/${inviteData.deal.id}`, {
+        method: "PATCH",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Seller-Token": token || "",
+        },
+        body: JSON.stringify(data),
+        credentials: "include",
+      });
+      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invites", token] });
