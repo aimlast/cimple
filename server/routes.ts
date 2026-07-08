@@ -1,4 +1,4 @@
-import type { Express } from "express";
+import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
 import path from "path";
@@ -4946,10 +4946,32 @@ Do not speculate or add information not in the CIM.`,
   });
 
   /* ══════════════════════════════════════════════
-     Token lookup for role switcher (gated by ?switcher=1 on frontend)
+     Dev role switcher endpoints.
+     SECURITY: these expose real access tokens and can create a buyer
+     session, so they are DISABLED in production by default. To use the
+     role switcher on the live deploy for a demo, set the Railway env var
+     ENABLE_DEV_SWITCHER=true (and remove it when done). Outside production
+     (local dev) they are always available.
   ══════════════════════════════════════════════ */
   {
-    app.get("/api/dev/role-tokens", async (_req, res) => {
+    const devSwitcherEnabled = () =>
+      process.env.NODE_ENV !== "production" ||
+      process.env.ENABLE_DEV_SWITCHER === "true";
+
+    // Gate every /api/dev/* route below. Respond 404 (not 403) so the
+    // endpoints are indistinguishable from "does not exist" when disabled.
+    const requireDevSwitcher = (
+      _req: Request,
+      res: Response,
+      next: NextFunction,
+    ) => {
+      if (!devSwitcherEnabled()) {
+        return res.status(404).json({ error: "Not found" });
+      }
+      next();
+    };
+
+    app.get("/api/dev/role-tokens", requireDevSwitcher, async (_req, res) => {
       try {
         const allDeals = await storage.getAllDeals();
         if (allDeals.length === 0) {
@@ -4992,7 +5014,7 @@ Do not speculate or add information not in the CIM.`,
     // Dev-only: auto-login as a test buyer account so the role switcher
     // can land on the real buyer dashboard. Looks up (or creates) a single
     // shared dev buyer, then sets the session cookie. Used by RoleSwitcher.
-    app.post("/api/dev/login-as-buyer", async (_req, res) => {
+    app.post("/api/dev/login-as-buyer", requireDevSwitcher, async (_req, res) => {
       try {
         const DEV_BUYER_EMAIL = "dev.buyer@cimple.dev";
         const bcrypt = (await import("bcryptjs")).default;

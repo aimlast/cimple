@@ -8,7 +8,7 @@ import {
 } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
-import { buildInterviewSystemPrompt } from "./system-prompt";
+import { buildInterviewSystemBlocks } from "./system-prompt";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse } from "./response-schema";
 import { mergeExtractedFields, updateIndustryContext, type FieldChange } from "./info-merger";
 import { agentConfig } from "./config/load-config";
@@ -265,13 +265,13 @@ export async function processTurn(
   apiMessages.push({ role: "user", content: sellerMessage });
 
   // Build the system prompt with current knowledge base
-  const systemPrompt = await buildInterviewSystemPrompt(kb);
+  const systemBlocks = await buildInterviewSystemBlocks(kb);
 
   // Call Claude Opus
   const response = await anthropic.messages.create({
     model: INTERVIEW_MODEL,
     max_tokens: agentConfig.api.maxTokens,
-    system: systemPrompt,
+    system: systemBlocks,
     tools: [INTERVIEW_RESPONSE_TOOL],
     tool_choice: { type: "tool", name: "interview_response" },
     messages: apiMessages,
@@ -418,7 +418,7 @@ async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
 ): Promise<{ message: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
-  const systemPrompt = await buildInterviewSystemPrompt(kb);
+  const systemBlocks = await buildInterviewSystemBlocks(kb);
 
   // The opening prompt varies based on what we already know
   const hasQuestionnaireData = kb.questionnaireData && Object.keys(kb.questionnaireData).length > 0;
@@ -440,7 +440,7 @@ async function generateOpeningMessage(
   const response = await anthropic.messages.create({
     model: INTERVIEW_MODEL,
     max_tokens: agentConfig.api.maxTokens,
-    system: systemPrompt,
+    system: systemBlocks,
     tools: [INTERVIEW_RESPONSE_TOOL],
     tool_choice: { type: "tool", name: "interview_response" },
     messages: [
