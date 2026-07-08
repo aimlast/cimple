@@ -530,6 +530,12 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  /** Look up a document by its stored fileUrl (used by the /uploads/docs access gate). */
+  async getDocumentByFileUrl(fileUrl: string): Promise<Document | undefined> {
+    const result = await db.select().from(documents).where(eq(documents.fileUrl, fileUrl));
+    return result[0];
+  }
+
   async getDocumentsByDeal(dealId: string): Promise<Document[]> {
     const result = await db.select().from(documents).where(eq(documents.dealId, dealId)).orderBy(desc(documents.createdAt));
     return result;

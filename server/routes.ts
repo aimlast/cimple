@@ -180,11 +180,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
     res.json({ ok: true });
   });
 
-  // Serve uploaded files
-  const uploadsDir = path.join(process.cwd(), "public", "uploads");
+  // Uploaded files live under UPLOADS_DIR — on Railway this is a persistent
+  // volume (e.g. /data/uploads) so documents and logos survive redeploys.
+  // Locally it falls back to public/uploads.
+  const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
   if (!fs.existsSync(uploadsDir)) {
     fs.mkdirSync(uploadsDir, { recursive: true });
   }
+
+  // Confidential documents (tax returns, financials, leases) are NOT public:
+  // access requires the broker session that owns the deal, or the deal's
+  // seller invite token (?token= / X-Seller-Token). Everything else under
+  // /uploads (branding logos) stays public.
+  app.use("/uploads/docs", async (req, res, next) => {
+    try {
+      const filename = decodeURIComponent(req.path.replace(/^\//, ""));
+      if (!filename || filename.includes("..")) return res.status(404).json({ error: "Not found" });
+      const doc = await storage.getDocumentByFileUrl(`/uploads/docs/${filename}`);
+      if (!doc) return res.status(404).json({ error: "Not found" });
+
+      if (req.session.brokerId) {
+        const deal = await storage.getDeal(doc.dealId);
+        if (deal && deal.brokerId === req.session.brokerId) return next();
+      }
+      const token = (req.query.token as string) || (req.headers["x-seller-token"] as string);
+      if (token) {
+        const invite = await storage.getSellerInviteByToken(token);
+        if (invite && invite.dealId === doc.dealId) return next();
+      }
+      return res.status(401).json({ error: "Not authorized" });
+    } catch (err) {
+      console.error("Document access check failed:", err);
+      return res.status(500).json({ error: "Access check failed" });
+    }
+  });
+
   app.use("/uploads", (await import("express")).default.static(uploadsDir));
 
   // ── Broker + buyer authentication, buyer dashboard ────────────────────
@@ -1871,7 +1901,7 @@ Return JSON only.`,
   const docUpload = multer({
     storage: multer.diskStorage({
       destination: (req, file, cb) => {
-        const dir = path.join(process.cwd(), "public", "uploads", "docs");
+        const dir = path.join(uploadsDir, "docs");
         fs.mkdirSync(dir, { recursive: true });
         cb(null, dir);
       },
@@ -1884,6 +1914,10 @@ Return JSON only.`,
     fileFilter: (req, file, cb) => {
       const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls", ".pptx", ".ppt", ".docx", ".doc"];
       const ext = path.extname(file.originalname).toLowerCase();
+      if (!allowed.includes(ext)) {
+        // Mark the rejection so the route can explain instead of a generic 400
+        (req as any).fileRejectionReason = `"${file.originalname}" is a ${ext || "file"} — that format isn't supported.`;
+      }
       cb(null, allowed.includes(ext));
     },
   });
@@ -1919,7 +1953,11 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
     try {
-      if (!req.file) return res.status(400).json({ error: "No file uploaded" });
+      if (!req.file) {
+        return res.status(400).json({
+          error: (req as any).fileRejectionReason || "No file uploaded",
+        });
+      }
       const { category = "other", subcategory } = req.body;
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
@@ -1943,7 +1981,7 @@ Return JSON only.`,
     try {
       const doc = await storage.getDocument(req.params.id);
       if (!doc) return res.status(404).json({ error: "Document not found" });
-      const filePath = path.join(process.cwd(), "public", doc.fileUrl || "");
+      const filePath = path.join(uploadsDir, (doc.fileUrl || "").replace(/^\/uploads\//, ""));
       parseDocumentAsync(doc.id, filePath, null, doc.category || "other", doc.subcategory || null, doc.dealId);
       res.json({ status: "parsing" });
     } catch (error: any) {
