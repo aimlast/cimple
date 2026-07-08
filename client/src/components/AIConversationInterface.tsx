@@ -9,6 +9,7 @@ import type { ConversationMessage } from "@shared/schema";
 
 interface TurnResult {
   message: string;
+  whyItMatters?: string;
   suggestedAnswers: string[];
   sessionId: string;
   captured: {
@@ -49,12 +50,16 @@ export function AIConversationInterface({
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [suggestedAnswers, setSuggestedAnswers] = useState<string[]>([]);
-  const [selectedAnswers, setSelectedAnswers] = useState<Set<number>>(new Set());
+  const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isStarting, setIsStarting] = useState(true);
   const [isFinished, setIsFinished] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
+  // Buyer-rationale per AI message, keyed by message timestamp
+  const [whyByTs, setWhyByTs] = useState<Record<string, string>>({});
+  // Two-stage thinking indicator — after a few seconds the label reassures
+  const [slowThinking, setSlowThinking] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -93,12 +98,16 @@ export function AIConversationInterface({
               // Don't show suggestions when resuming — context is already established
             } else {
               // New session — just the opening message
+              const ts = new Date().toISOString();
               setMessages([{
                 role: "ai",
                 content: result.message,
-                timestamp: new Date().toISOString(),
+                timestamp: ts,
               }]);
               setSuggestedAnswers(result.suggestedAnswers || []);
+              if (result.whyItMatters) {
+                setWhyByTs({ [ts]: result.whyItMatters });
+              }
             }
 
             if (history.status === "completed") {
@@ -132,6 +141,17 @@ export function AIConversationInterface({
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isLoading]);
+
+  // Escalate the thinking label after a few seconds so long Opus turns
+  // read as "still with you" rather than frozen.
+  useEffect(() => {
+    if (!isLoading) {
+      setSlowThinking(false);
+      return;
+    }
+    const t = setTimeout(() => setSlowThinking(true), 6000);
+    return () => clearTimeout(t);
+  }, [isLoading]);
 
   // Speech recognition
   const getSpeechRecognition = useCallback(() => {
@@ -240,7 +260,7 @@ export function AIConversationInterface({
     setInput("");
     inputRef.current = "";
     setSuggestedAnswers([]); // Clear chips while waiting for AI response
-    setSelectedAnswers(new Set());
+    setSelectedAnswer(null);
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -268,6 +288,9 @@ export function AIConversationInterface({
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, aiMessage]);
+      if (result.whyItMatters) {
+        setWhyByTs((prev) => ({ ...prev, [aiMessage.timestamp]: result.whyItMatters! }));
+      }
 
       // Show new suggested answers for this question
       if (!result.shouldEnd) {
@@ -288,10 +311,13 @@ export function AIConversationInterface({
       console.error("Interview message error:", error);
       const errorMessage: ConversationMessage = {
         role: "ai",
-        content: "I'm sorry, something went wrong on my end. Could you try sending that again?",
+        content: "I'm sorry, something went wrong on my end. Your answer is still in the box below — just hit send again.",
         timestamp: new Date().toISOString(),
       };
       setMessages((prev) => [...prev, errorMessage]);
+      // Restore the seller's text so they don't have to retype it
+      setInput(cleanedInput);
+      inputRef.current = cleanedInput;
     } finally {
       setAbortController(null);
       setIsLoading(false);
@@ -311,6 +337,16 @@ export function AIConversationInterface({
     handleCancel();
     setIsFinished(true);
 
+    // Tell the server so the session closes, progress advances, and the next
+    // visit doesn't resume a conversation the seller already ended.
+    if (sessionId) {
+      fetch(`/api/interview/${dealId}/end`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sessionId }),
+      }).catch((err) => console.error("Failed to finalize interview end:", err));
+    }
+
     const finishMessage: ConversationMessage = {
       role: "ai",
       content: "Thank you for your time. Your broker will review the information you've provided and may reach out if they need anything else.",
@@ -318,10 +354,12 @@ export function AIConversationInterface({
     };
     setMessages((prev) => [...prev, finishMessage]);
     onComplete?.();
-  }, [stopRecording, handleCancel, onComplete]);
+  }, [stopRecording, handleCancel, onComplete, sessionId, dealId]);
 
+  // Enter sends (the convention in every messaging app); Shift+Enter inserts
+  // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && (e.shiftKey || e.ctrlKey || e.metaKey)) {
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
     }
@@ -353,6 +391,15 @@ export function AIConversationInterface({
             role={message.role}
             content={message.content}
             timestamp={message.timestamp}
+            whyItMatters={message.role === "ai" ? whyByTs[message.timestamp] : undefined}
+            onEdit={
+              message.role === "user" && !isFinished && !isLoading
+                ? (content) => {
+                    setInput(content);
+                    inputRef.current = content;
+                  }
+                : undefined
+            }
           />
         ))}
         {isLoading && (
@@ -362,7 +409,11 @@ export function AIConversationInterface({
               <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
               <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
             </div>
-            <span className="text-xs text-muted-foreground">thinking...</span>
+            <span className="text-xs text-muted-foreground">
+              {slowThinking
+                ? "Still with you — pulling your details together..."
+                : "Your advisor is thinking..."}
+            </span>
           </div>
         )}
         <div ref={messagesEndRef} />
@@ -404,28 +455,22 @@ export function AIConversationInterface({
               </div>
             )}
 
-            {/* Suggested answer chips — multi-select */}
+            {/* Suggested answer chips — single-select: picking one fills the
+                composer (editable before sending); picking another replaces it.
+                Multi-select produced nonsense like "One. Three." */}
             {suggestedAnswers.length > 0 && !isLoading && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
                 {suggestedAnswers.map((answer, idx) => {
-                  const isSelected = selectedAnswers.has(idx);
+                  const isSelected = selectedAnswer === idx;
                   return (
                     <button
                       key={idx}
                       onClick={() => {
-                        const next = new Set(selectedAnswers);
-                        if (isSelected) {
-                          next.delete(idx);
-                        } else {
-                          next.add(idx);
-                        }
-                        setSelectedAnswers(next);
-                        // Combine all selected answers into the input
-                        const combined = suggestedAnswers
-                          .filter((_, i) => next.has(i))
-                          .join(". ");
-                        setInput(combined);
-                        inputRef.current = combined;
+                        const next = isSelected ? null : idx;
+                        setSelectedAnswer(next);
+                        const text = next === null ? "" : answer;
+                        setInput(text);
+                        inputRef.current = text;
                       }}
                       className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium
                         transition-colors duration-100 cursor-pointer select-none
@@ -453,8 +498,8 @@ export function AIConversationInterface({
                     : isLoading
                       ? "Waiting..."
                       : suggestedAnswers.length > 0
-                        ? "Select an option above or type your own response..."
-                        : "Your response... (Shift+Enter to send)"
+                        ? "Pick an option above or type your own response..."
+                        : "Your response..."
                 }
                 className="resize-none min-h-[56px] text-sm"
                 disabled={isLoading}
@@ -496,7 +541,9 @@ export function AIConversationInterface({
             </div>
 
             <div className="max-w-3xl mx-auto mt-1.5 flex justify-between items-center">
-              <span className="text-[10px] text-muted-foreground/60">Shift+Enter to send</span>
+              <span className="text-[10px] text-muted-foreground/60">
+                Enter to send · Shift+Enter for a new line · Progress saves automatically
+              </span>
               <Button
                 variant="ghost"
                 size="sm"

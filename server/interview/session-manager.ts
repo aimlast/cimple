@@ -22,6 +22,8 @@ import { runInterviewLearningLoop } from "./learning-loop";
 export interface TurnResult {
   /** The message to display to the seller */
   message: string;
+  /** Buyer-rationale for the question asked — behind "Why we ask this" */
+  whyItMatters?: string;
   /** Pre-populated answer options the seller can click to respond */
   suggestedAnswers: string[];
   /** Session ID (for subsequent turns) */
@@ -212,6 +214,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
   return {
     message: openingResult.message,
+    whyItMatters: openingResult.whyItMatters,
     suggestedAnswers: openingResult.suggestedAnswers,
     sessionId: session.id,
     captured: { total: countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
@@ -433,6 +436,7 @@ export async function processTurn(
 
   return {
     message: aiResponse.message,
+    whyItMatters: aiResponse.whyItMatters,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     sessionId,
     captured: {
@@ -480,7 +484,7 @@ async function getSession(sessionId: string): Promise<InterviewSession | null> {
 async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
-): Promise<{ message: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
+): Promise<{ message: string; whyItMatters?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
   // The opening prompt varies based on what we already know
@@ -539,9 +543,43 @@ async function generateOpeningMessage(
 
   return {
     message: aiResponse.message,
+    whyItMatters: aiResponse.whyItMatters,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     industryContext,
   };
+}
+
+/**
+ * Ends a session at the seller's explicit request (the "End Overview"
+ * button). Previously this was client-side only: the session stayed
+ * "active" forever, deal.interviewCompleted stayed false (so the seller's
+ * progress never advanced), and the next visit dropped the seller straight
+ * back into the conversation they thought they had closed.
+ */
+export async function endSessionManually(
+  dealId: string,
+  sessionId: string,
+): Promise<{ ok: true }> {
+  const session = await getSession(sessionId);
+  if (!session || session.dealId !== dealId) {
+    throw new Error("Session not found for this deal");
+  }
+
+  if (session.status !== "completed") {
+    await db
+      .update(interviewSessions)
+      .set({ status: "completed", completedAt: new Date(), lastActivityAt: new Date() })
+      .where(eq(interviewSessions.id, sessionId));
+  }
+
+  await storage.updateDeal(dealId, { interviewCompleted: true });
+
+  // Fire-and-forget: learn from the transcript like an AI-driven ending does
+  runInterviewLearningLoop(dealId, sessionId).catch((err) => {
+    console.error(`[session-manager] Learning loop failed for manually-ended session ${sessionId}:`, err);
+  });
+
+  return { ok: true };
 }
 
 function countExtractedFields(deal: { extractedInfo: unknown }): number {

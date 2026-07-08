@@ -12,6 +12,13 @@ export interface InterviewResponse {
   /** The conversational message shown to the seller */
   message: string;
 
+  /**
+   * One-sentence buyer-rationale for the question just asked — shown behind a
+   * "Why we ask this" affordance so the seller understands the purpose
+   * without the message itself getting preachy.
+   */
+  whyItMatters?: string;
+
   /** Pre-populated answer options the seller can click to respond */
   suggestedAnswers: string[];
 
@@ -94,6 +101,10 @@ export const INTERVIEW_RESPONSE_TOOL = {
       message: {
         type: "string",
         description: "Your conversational message to the seller. This is what they see. Keep it warm, professional, and concise. One brief acknowledgment of their answer, then your next question.",
+      },
+      whyItMatters: {
+        type: "string",
+        description: "One sentence explaining why the question you just asked matters to buyers — e.g. 'Buyers discount heavily for owner-dependent operations, so demonstrating a capable team directly increases your valuation.' Shown to the seller only when they tap 'Why we ask this'. Keep it specific to this business and this question, never generic. Omit when the message isn't asking a question (e.g. wrap-up turns).",
       },
       suggestedAnswers: {
         type: "array",
