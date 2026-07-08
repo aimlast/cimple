@@ -9,7 +9,7 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
 import { buildInterviewSystemBlocks } from "./system-prompt";
-import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse } from "./response-schema";
+import { callInterviewWithRecovery, governCompletion } from "./turn-guard";
 import { mergeExtractedFields, updateIndustryContext, type FieldChange } from "./info-merger";
 import { agentConfig } from "./config/load-config";
 import { generateSellerProfile } from "./eq-profiler";
@@ -267,31 +267,83 @@ export async function processTurn(
   // Build the system prompt with current knowledge base
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
-  // Call Claude Opus
-  const response = await anthropic.messages.create({
-    model: INTERVIEW_MODEL,
-    max_tokens: agentConfig.api.maxTokens,
-    system: systemBlocks,
-    tools: [INTERVIEW_RESPONSE_TOOL],
-    tool_choice: { type: "tool", name: "interview_response" },
-    messages: apiMessages,
-  });
+  // Seller turns so far, including this one — drives completion governance
+  // and the wrap-up pacing nudge.
+  const userTurnCount =
+    existingMessages.filter((m) => m.role === "user").length + 1;
 
-  // Parse the structured response
-  const toolUseBlock = response.content.find((block) => block.type === "tool_use");
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    throw new Error("Interview agent did not return a structured response");
+  // Past the soft ceiling, steer the agent toward wrapping up rather than
+  // letting a long session run open-ended.
+  if (userTurnCount >= agentConfig.interview.maxTurnsBeforeEndCheck) {
+    systemBlocks.push({
+      type: "text",
+      text: `# PACING\nThis conversation has run ${userTurnCount} seller turns. Respect the seller's time: focus only on remaining [CRITICAL] gaps, convert everything else into broker follow-up tasks, and move toward a natural wrap-up.`,
+    });
   }
 
-  const aiResponse = toolUseBlock.input as unknown as InterviewResponse;
+  const callParams = {
+    model: INTERVIEW_MODEL,
+    maxTokens: agentConfig.api.maxTokens,
+    temperature: agentConfig.api.temperature,
+    system: systemBlocks,
+    messages: apiMessages,
+  };
+
+  // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
+  // retries once and then degrades gracefully instead of dead-ending the seller.
+  let { response: aiResponse } = await callInterviewWithRecovery(anthropic, callParams);
 
   // Merge extracted fields
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
-  const { merged, updatedConfidence, changes } = mergeExtractedFields(
+  let { merged, updatedConfidence, changes } = mergeExtractedFields(
     existingExtracted as Record<string, string>,
     aiResponse.extractedFields,
     confidenceLevels,
   );
+
+  // Completion governance: the model may only end once the configured turn
+  // floor is met and every critical section has at least partial coverage.
+  // A seller's explicit request to stop always wins. When an end is blocked,
+  // the model is re-called once with an instruction to continue into the most
+  // important gap, so the seller sees a natural transition — not a dead stop.
+  if (aiResponse.shouldEnd) {
+    const prospectiveKb = assembleKnowledgeBase(
+      { ...deal, extractedInfo: merged } as typeof deal,
+      documents,
+      tasks,
+      session,
+      resolvedDiscrepancies,
+    );
+    const verdict = governCompletion({
+      shouldEnd: aiResponse.shouldEnd,
+      endReason: aiResponse.endReason,
+      sellerMessage,
+      userTurnCount,
+      sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({ key: s.key, status: s.status })),
+      deferredTopics: aiResponse.reasoning.deferredTopics,
+      minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
+    });
+
+    if (!verdict.allowEnd) {
+      console.warn(`[session-manager] Blocked premature interview end: ${verdict.blockReason}`);
+      const { response: continued } = await callInterviewWithRecovery(anthropic, {
+        ...callParams,
+        messages: [
+          ...apiMessages,
+          { role: "assistant" as const, content: aiResponse.message },
+          { role: "user" as const, content: verdict.continuationInstruction! },
+        ],
+      });
+      continued.shouldEnd = false; // governance is authoritative
+      aiResponse = continued;
+
+      // Fold in anything the continuation turn extracted
+      const remerge = mergeExtractedFields(merged, aiResponse.extractedFields, updatedConfidence);
+      merged = remerge.merged;
+      updatedConfidence = remerge.updatedConfidence;
+      changes = [...changes, ...remerge.changes];
+    }
+  }
 
   // Update industry context
   const updatedIndustryContext = updateIndustryContext(
@@ -437,12 +489,13 @@ async function generateOpeningMessage(
     openingInstruction = `This is the start of the interview. You don't have much background yet. Welcome the seller warmly, briefly explain the purpose of the interview (to collect the information needed for a professional CIM/CBO document that will present their business to qualified buyers), and start with a broad opening question to understand the business — what they do, how long they've been operating, and where they're located. This will help you identify the industry and location context for industry-specific questions.`;
   }
 
-  const response = await anthropic.messages.create({
+  // Recovery-wrapped: retries a malformed/truncated opening once, then falls
+  // back below — the seller never lands on an empty chat with no question.
+  const { response: aiResponse, degraded } = await callInterviewWithRecovery(anthropic, {
     model: INTERVIEW_MODEL,
-    max_tokens: agentConfig.api.maxTokens,
+    maxTokens: agentConfig.api.maxTokens,
+    temperature: agentConfig.api.temperature,
     system: systemBlocks,
-    tools: [INTERVIEW_RESPONSE_TOOL],
-    tool_choice: { type: "tool", name: "interview_response" },
     messages: [
       {
         role: "user",
@@ -451,20 +504,15 @@ async function generateOpeningMessage(
     ],
   });
 
-  const toolUseBlock = response.content.find((block) => block.type === "tool_use");
-  if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
-    // Fallback if the model doesn't use the tool
-    const textBlock = response.content.find((block) => block.type === "text");
+  if (degraded || !aiResponse.message) {
+    // The turn-guard's generic recovery copy is wrong for a first contact —
+    // use a business-specific opening instead.
     return {
-      message: textBlock && textBlock.type === "text"
-        ? textBlock.text
-        : `Hi! I'm here to learn about ${businessName} so we can put together a great CIM for your buyers. Let's start — can you tell me a bit about the business?`,
+      message: `Hi! I'm here to learn about ${businessName} so we can put together a great CIM for your buyers. Let's start — can you tell me a bit about the business?`,
       suggestedAnswers: [],
       industryContext: null,
     };
   }
-
-  const aiResponse = toolUseBlock.input as unknown as InterviewResponse;
 
   // Extract industry context if the AI identified it from questionnaire data
   let industryContext: IndustryContext | null = null;
