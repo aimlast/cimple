@@ -7,10 +7,10 @@ import {
   type ConversationMessage,
 } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
-import { assembleKnowledgeBase, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
+import { assembleKnowledgeBase, KNOWN_EXTRACTED_FIELDS, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
 import { buildInterviewSystemBlocks } from "./system-prompt";
 import { callInterviewWithRecovery, governCompletion } from "./turn-guard";
-import { mergeExtractedFields, updateIndustryContext, type FieldChange } from "./info-merger";
+import { mergeExtractedFields, updateIndustryContext, canonicalFieldName, type FieldChange } from "./info-merger";
 import { agentConfig } from "./config/load-config";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
@@ -75,8 +75,19 @@ const INTERVIEW_MODEL = agentConfig.models.interviewAgent;
  */
 export async function startOrResumeSession(dealId: string): Promise<TurnResult> {
   // Load the deal and all related data
-  const deal = await storage.getDeal(dealId);
+  let deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
+
+  // Seed extractedInfo from the intake questionnaire so answers the seller
+  // already typed count toward coverage and are NEVER re-asked. (Intake keys
+  // like "reasonForSelling" are canonicalised to schema keys like
+  // "reasonForSale" — previously they never matched, so coverage showed the
+  // section as missing and the agent asked again.)
+  const seeded = seedExtractedInfoFromQuestionnaire(deal);
+  if (seeded) {
+    await storage.updateDeal(dealId, { extractedInfo: seeded });
+    deal = { ...deal, extractedInfo: seeded };
+  }
 
   const documents = await storage.getDocumentsByDeal(dealId);
   const tasks = await storage.getTasksByDeal(dealId);
@@ -541,6 +552,35 @@ function countExtractedFields(deal: { extractedInfo: unknown }): number {
   ).length;
 }
 
+/**
+ * Copies intake-questionnaire answers into extractedInfo (canonicalised key
+ * names, coverage-known fields only, never overwriting existing values).
+ * Returns the new extractedInfo map when anything was added, else null.
+ */
+function seedExtractedInfoFromQuestionnaire(deal: {
+  questionnaireData: unknown;
+  extractedInfo: unknown;
+}): Record<string, unknown> | null {
+  const questionnaire = deal.questionnaireData as Record<string, unknown> | null;
+  if (!questionnaire || Object.keys(questionnaire).length === 0) return null;
+
+  const existing = (deal.extractedInfo || {}) as Record<string, unknown>;
+  let added = false;
+  const seeded = { ...existing };
+
+  for (const [rawKey, rawValue] of Object.entries(questionnaire)) {
+    if (typeof rawValue !== "string" || rawValue.trim() === "") continue;
+    const key = canonicalFieldName(rawKey);
+    if (!KNOWN_EXTRACTED_FIELDS.has(key)) continue;
+    const current = seeded[key];
+    if (current !== null && current !== undefined && current !== "") continue;
+    seeded[key] = rawValue.trim();
+    added = true;
+  }
+
+  return added ? seeded : null;
+}
+
 function extractIndustryContextForFrontend(
   ctx: IndustryContext | null,
 ): TurnResult["industryContext"] {
@@ -556,6 +596,6 @@ function extractIndustryContextForFrontend(
     identified: true,
     industry: ctx.industry + (ctx.subIndustry ? ` — ${ctx.subIndustry}` : ""),
     activeTopics: ctx.industrySpecificAreas,
-    coveredTopics: [], // Computed from the diff of initial vs active
+    coveredTopics: ctx.coveredIndustryTopics ?? [],
   };
 }

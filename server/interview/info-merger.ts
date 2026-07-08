@@ -3,10 +3,73 @@ import type { ExtractedField, InterviewReasoning } from "./response-schema";
 import type { IndustryContext, LocationContext } from "./knowledge-base";
 
 /**
+ * Canonical spellings for extractedInfo fields.
+ *
+ * The model (and the intake questionnaire) sometimes use variant key names —
+ * "reasonForSelling" instead of "reasonForSale", "employeeCount" instead of
+ * "employees". Those variants were stored verbatim, so section coverage never
+ * credited them and the agent would RE-ASK questions the seller had already
+ * answered. Every write now lands on the canonical key.
+ */
+const FIELD_ALIASES: Record<string, string> = {
+  // Reason for sale
+  reasonForSelling: "reasonForSale",
+  sellingReason: "reasonForSale",
+  reasonToSell: "reasonForSale",
+  // Company age
+  yearsInBusiness: "yearsOperating",
+  yearsInOperation: "yearsOperating",
+  yearsEstablished: "yearsOperating",
+  // Transition / training
+  transitionAvailability: "transitionPlan",
+  transitionSupport: "transitionPlan",
+  trainingPlan: "trainingSupport",
+  // People
+  employeeCount: "employees",
+  numberOfEmployees: "employees",
+  staffCount: "employees",
+  headcount: "employees",
+  staff: "employees",
+  keyStaff: "keyEmployees",
+  keyPersonnel: "keyEmployees",
+  // Financials
+  revenue: "annualRevenue",
+  annualSales: "annualRevenue",
+  totalRevenue: "annualRevenue",
+  yearlyRevenue: "annualRevenue",
+  salesGrowth: "revenueGrowth",
+  margins: "operatingMargins",
+  profitMargins: "operatingMargins",
+  // Structure & premises
+  ownershipStructure: "entityType",
+  legalStructure: "entityType",
+  leaseTerms: "leaseDetails",
+  leaseInfo: "leaseDetails",
+  lease: "leaseDetails",
+  // Positioning
+  uniqueSellingPoint: "uniqueSellingProposition",
+  usp: "uniqueSellingProposition",
+  competitiveAdvantages: "competitiveAdvantage",
+  growthPotential: "growthOpportunities",
+  growthOpportunity: "growthOpportunities",
+  // Compliance & sale terms
+  permitsAndLicenses: "permitsLicenses",
+  licenses: "permitsLicenses",
+  askingPriceExpectation: "askingPrice",
+  priceExpectation: "askingPrice",
+};
+
+/** Resolve a field name to its canonical spelling. */
+export function canonicalFieldName(fieldName: string): string {
+  return FIELD_ALIASES[fieldName] ?? fieldName;
+}
+
+/**
  * Merges newly extracted fields from an interview turn into the
  * existing extractedInfo on the deal.
  *
  * Rules:
+ * - Field names are canonicalised first (see FIELD_ALIASES)
  * - Confirmed data overwrites everything
  * - Inferred data only overwrites if no confirmed data exists
  * - Approximate data only overwrites if the field is empty
@@ -25,8 +88,9 @@ export function mergeExtractedFields(
   const updatedConfidence = { ...existingConfidence };
   const changes: FieldChange[] = [];
 
-  for (const [fieldName, field] of Object.entries(newFields)) {
+  for (const [rawFieldName, field] of Object.entries(newFields)) {
     if (!field.value) continue;
+    const fieldName = canonicalFieldName(rawFieldName);
 
     const existingValue = merged[fieldName as keyof ExtractedInfo];
     const existingConf = existingConfidence[fieldName];
@@ -67,11 +131,17 @@ export function updateIndustryContext(
     return existing;
   }
 
-  // If we already have an industry context, update the topic lists
+  // If we already have an industry context, update the topic lists.
+  // Covered topics accumulate across turns (union) so the agent and the
+  // broker UI both see what has already been handled.
   if (existing) {
     return {
       ...existing,
       industrySpecificAreas: reasoning.industryContext.activeIndustryTopics,
+      coveredIndustryTopics: Array.from(new Set([
+        ...(existing.coveredIndustryTopics ?? []),
+        ...reasoning.industryContext.coveredIndustryTopics,
+      ])),
       regulatoryNotes: reasoning.industryContext.regulatoryNotes,
     };
   }
@@ -82,6 +152,7 @@ export function updateIndustryContext(
     subIndustry: reasoning.industryContext.subIndustry || null,
     location,
     industrySpecificAreas: reasoning.industryContext.activeIndustryTopics,
+    coveredIndustryTopics: reasoning.industryContext.coveredIndustryTopics ?? [],
     regulatoryNotes: reasoning.industryContext.regulatoryNotes,
   };
 }
