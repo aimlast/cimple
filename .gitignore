@@ -10,3 +10,4 @@ public/uploads/
 *.log
 .local/
 .claude/
+PITCH-DECK-CONTENT.md
