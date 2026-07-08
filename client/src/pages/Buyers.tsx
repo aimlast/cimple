@@ -98,7 +98,7 @@ const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
   crm_imported: { label: "CRM", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
 };
 
-const BROKER_ID = "default-broker";
+// Broker identity comes from the server session — no client-side broker id.
 
 function formatRelative(iso: string | null): string {
   if (!iso) return "Never";
@@ -124,8 +124,8 @@ export default function Buyers() {
   const [importOpen, setImportOpen] = useState(false);
 
   const { data, isLoading } = useQuery<{ buyers: BuyerRow[] }>({
-    queryKey: ["/api/broker/buyers", BROKER_ID],
-    queryFn: () => apiRequest("GET", `/api/broker/buyers?brokerId=${BROKER_ID}`).then(r => r.json()),
+    queryKey: ["/api/broker/buyers"],
+    queryFn: () => apiRequest("GET", "/api/broker/buyers").then(r => r.json()),
   });
 
   const buyers = data?.buyers ?? [];
@@ -445,7 +445,6 @@ function AddBuyerDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const payload = {
-        brokerId: BROKER_ID,
         email: form.email.trim(),
         name: form.name.trim(),
         company: form.company.trim() || null,
@@ -468,7 +467,7 @@ function AddBuyerDialog({
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", BROKER_ID] });
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       toast({
         title: "Buyer added",
         description: form.sendInvite
@@ -672,7 +671,6 @@ function ImportCsvDialog({
   const mutation = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", "/api/broker/buyers/import-csv", {
-        brokerId: BROKER_ID,
         csv,
         sendInvites,
       });
@@ -684,7 +682,7 @@ function ImportCsvDialog({
     },
     onSuccess: (data) => {
       setResult(data);
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", BROKER_ID] });
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       toast({
         title: "Import complete",
         description: `${data.accepted.length} buyer${data.accepted.length === 1 ? "" : "s"} imported.`,
@@ -836,8 +834,8 @@ function BuyerDetailDrawer({
   const [, setLocation] = useLocation();
 
   const { data, isLoading } = useQuery<BuyerDetail>({
-    queryKey: ["/api/broker/buyers", buyerId, BROKER_ID],
-    queryFn: () => apiRequest("GET", `/api/broker/buyers/${buyerId}?brokerId=${BROKER_ID}`).then(r => r.json()),
+    queryKey: ["/api/broker/buyers", buyerId],
+    queryFn: () => apiRequest("GET", `/api/broker/buyers/${buyerId}`).then(r => r.json()),
     enabled: !!buyerId,
   });
 
@@ -857,7 +855,7 @@ function BuyerDetailDrawer({
     mutationFn: async () => {
       if (!buyerId) return;
       const tags = tagsText.split(",").map(s => s.trim()).filter(Boolean);
-      const r = await apiRequest("PATCH", `/api/broker/buyers/${buyerId}?brokerId=${BROKER_ID}`, {
+      const r = await apiRequest("PATCH", `/api/broker/buyers/${buyerId}`, {
         tags,
         notes: notes.trim() || null,
       });
@@ -865,8 +863,8 @@ function BuyerDetailDrawer({
       return r.json();
     },
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId, BROKER_ID] });
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", BROKER_ID] });
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
+      qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       toast({ title: "Saved" });
     },
     onError: () => toast({ title: "Failed to save", variant: "destructive" }),

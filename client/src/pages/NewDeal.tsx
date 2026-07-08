@@ -39,7 +39,6 @@ export default function NewDeal() {
     mutationFn: async (data: { businessName: string; industry: string; websiteUrl?: string; description?: string }) => {
       const response = await apiRequest("POST", "/api/deals", {
         ...data,
-        brokerId: "default-broker",
         phase: "phase1_info_collection",
         status: "draft",
       });

@@ -89,6 +89,10 @@ function RoleSwitcherInner() {
     // Navigate to a real page for the target role
     switch (target) {
       case "broker":
+        // Establish a broker session first — broker pages now require auth
+        try {
+          await fetch("/api/dev/login-as-broker", { method: "POST", credentials: "include" });
+        } catch { /* the auth gate will fall back to the login screen */ }
         setLocation("/broker/deals");
         break;
       case "seller":

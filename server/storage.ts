@@ -33,7 +33,7 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, desc, sql, count, avg, sum } from "drizzle-orm";
+import { eq, desc, sql, count, avg, sum, inArray } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -749,6 +749,54 @@ export class DbStorage implements IStorage {
       avgTimeSpent: Number(timeResult[0]?.avg) || 0,
       totalTimeSpent: Number(timeResult[0]?.total) || 0,
       recentViews: recentViewsResult.map(r => ({ date: String(r.date), count: r.count }))
+    };
+  }
+
+  /**
+   * Multi-tenant variant of getAnalyticsSummary: aggregates only across the
+   * given deal ids (a broker's own deals). An empty list short-circuits to a
+   * zero summary rather than issuing IN () queries.
+   */
+  async getAnalyticsSummaryForDeals(dealIds: string[]): Promise<{
+    totalViews: number;
+    uniqueBuyers: number;
+    avgTimeSpent: number;
+    totalTimeSpent: number;
+    recentViews: { date: string; count: number }[];
+  }> {
+    if (dealIds.length === 0) {
+      return { totalViews: 0, uniqueBuyers: 0, avgTimeSpent: 0, totalTimeSpent: 0, recentViews: [] };
+    }
+
+    const [viewsResult, buyersResult, timeResult, recentViewsResult] = await Promise.all([
+      db.select({ count: count() })
+        .from(analyticsEvents)
+        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'view'`),
+      db.select({ count: sql<number>`COUNT(DISTINCT ${analyticsEvents.buyerAccessId})` })
+        .from(analyticsEvents)
+        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'view'`),
+      db.select({
+        avg: sql<number>`COALESCE(AVG(${analyticsEvents.timeSpentSeconds}), 0)`,
+        total: sql<number>`COALESCE(SUM(${analyticsEvents.timeSpentSeconds}), 0)`,
+      })
+        .from(analyticsEvents)
+        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'time_on_page'`),
+      db.select({
+        date: sql<string>`DATE(${analyticsEvents.createdAt})`,
+        count: count(),
+      })
+        .from(analyticsEvents)
+        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'view' AND ${analyticsEvents.createdAt} > NOW() - INTERVAL '30 days'`)
+        .groupBy(sql`DATE(${analyticsEvents.createdAt})`)
+        .orderBy(sql`DATE(${analyticsEvents.createdAt})`),
+    ]);
+
+    return {
+      totalViews: viewsResult[0]?.count || 0,
+      uniqueBuyers: Number(buyersResult[0]?.count) || 0,
+      avgTimeSpent: Number(timeResult[0]?.avg) || 0,
+      totalTimeSpent: Number(timeResult[0]?.total) || 0,
+      recentViews: recentViewsResult.map(r => ({ date: String(r.date), count: r.count })),
     };
   }
 

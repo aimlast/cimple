@@ -1,7 +1,7 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Switch, Route, useLocation, Router as WouterRouter } from "wouter";
 import { queryClient } from "./lib/queryClient";
-import { QueryClientProvider } from "@tanstack/react-query";
+import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
@@ -31,6 +31,7 @@ import Buyers from "@/pages/Buyers";
 import SellerLayout from "@/layouts/SellerLayout";
 import SellerInterview from "@/pages/seller/SellerInterview";
 import BuyerLayout from "@/layouts/BuyerLayout";
+import BrokerLogin from "@/pages/broker/BrokerLogin";
 
 /** Redirect helper — replaces current URL in history (for legacy bookmarks) */
 function Redirect({ to }: { to: string }) {
@@ -108,17 +109,67 @@ function isFullscreen(path: string) {
   return false;
 }
 
+/**
+ * BrokerAuthGate — broker pages require a broker session.
+ *
+ * Order of attempts: (1) existing session via /api/broker-auth/me,
+ * (2) one dev auto-login attempt (available in local dev and when
+ * ENABLE_DEV_SWITCHER=true on the deploy — keeps the demo flow
+ * zero-login), (3) the sign-in screen, rendered in place so the deep
+ * link survives login.
+ */
+function BrokerAuthGate({ children }: { children: React.ReactNode }) {
+  const { data: me, isLoading, refetch } = useQuery<{ user: unknown } | null>({
+    queryKey: ["/api/broker-auth/me"],
+    queryFn: async () => {
+      const res = await fetch("/api/broker-auth/me", { credentials: "include" });
+      if (res.status === 401) return null;
+      if (!res.ok) throw new Error("Auth check failed");
+      return res.json();
+    },
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+  });
+  const [devAttempt, setDevAttempt] = useState<"idle" | "pending" | "done">("idle");
+
+  useEffect(() => {
+    if (!isLoading && me === null && devAttempt === "idle") {
+      setDevAttempt("pending");
+      fetch("/api/dev/login-as-broker", { method: "POST", credentials: "include" })
+        .then((r) => (r.ok ? refetch() : undefined))
+        .catch(() => {})
+        .finally(() => setDevAttempt("done"));
+    }
+  }, [isLoading, me, devAttempt, refetch]);
+
+  if (isLoading || devAttempt === "pending") {
+    return (
+      <div className="h-screen w-full flex items-center justify-center bg-background">
+        <div className="flex gap-1.5">
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
+          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
+        </div>
+      </div>
+    );
+  }
+  if (me === null) return <BrokerLogin />;
+  return <>{children}</>;
+}
+
 function BrokerLayout() {
   useSetLayoutRole("broker");
   return (
-    <SidebarProvider defaultOpen={false} style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
-      <div className="flex h-screen w-full overflow-hidden bg-background">
-        <AppSidebar />
-        <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
-          <Routes />
-        </main>
-      </div>
-    </SidebarProvider>
+    <BrokerAuthGate>
+      <SidebarProvider defaultOpen={false} style={{ "--sidebar-width": "14rem", "--sidebar-width-icon": "3rem" } as React.CSSProperties}>
+        <div className="flex h-screen w-full overflow-hidden bg-background">
+          <AppSidebar />
+          <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
+            <Routes />
+          </main>
+        </div>
+      </SidebarProvider>
+    </BrokerAuthGate>
   );
 }
 
