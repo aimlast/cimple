@@ -6,6 +6,7 @@
  */
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
+import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -38,11 +39,11 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
   const [addingTo, setAddingTo] = useState<TeamType | null>(null);
   const [newMember, setNewMember] = useState({ email: "", name: "", phone: "", role: "" });
 
-  const { data: members = [], isLoading } = useQuery<DealMember[]>({
+  const { data: members = [], isLoading, error: loadError, refetch } = useQuery<DealMember[]>({
     queryKey: ["/api/deals", dealId, "members"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/members`);
-      if (!r.ok) return [];
+      if (!r.ok) throw new Error("Failed to load team members");
       return r.json();
     },
   });
@@ -99,6 +100,10 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
         <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  if (loadError) {
+    return <PanelError what="team members" onRetry={() => refetch()} />;
   }
 
   const renderTeam = (teamType: TeamType) => {

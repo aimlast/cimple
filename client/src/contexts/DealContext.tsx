@@ -42,7 +42,7 @@ export function DealProvider({
 }) {
   const [, setLocation] = useLocation();
 
-  const { data: deal, isLoading } = useQuery<Deal>({
+  const { data: deal, isLoading, error, refetch } = useQuery<Deal>({
     queryKey: ["/api/deals", dealId],
     enabled: !!dealId,
   });
@@ -56,6 +56,24 @@ export function DealProvider({
       <div className="flex h-full items-center justify-center">
         {isLoading ? (
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+        ) : error ? (
+          // A failed fetch is NOT "deal not found" — offer a retry instead of
+          // sending the broker away from a deal that exists.
+          <div className="text-center">
+            <AlertCircle className="h-8 w-8 text-amber-500/60 mx-auto mb-2" />
+            <p className="text-sm font-medium">Couldn't load this deal</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              A loading problem occurred — the deal itself is safe.
+            </p>
+            <div className="flex items-center justify-center gap-2 mt-3">
+              <Button variant="outline" size="sm" onClick={() => refetch()}>
+                Try again
+              </Button>
+              <Button variant="ghost" size="sm" onClick={() => setLocation("/broker/deals")}>
+                Back to Deals
+              </Button>
+            </div>
+          </div>
         ) : (
           <div className="text-center">
             <AlertCircle className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
