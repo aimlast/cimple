@@ -31,7 +31,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 | AI | Anthropic Claude API — use `claude-opus-4-5` for the interview agent, `claude-sonnet-4-5` for supporting agents |
 | Notifications | Resend (email) + Twilio (SMS) — graceful console fallback when credentials absent |
 | Deployment | Railway.app (Nixpacks, NIXPACKS_NODE_VERSION=20) |
-| Auth | Session-based (brokers + buyers via express-session/memorystore + bcryptjs), token-based (sellers, tokenized buyer view rooms) |
+| Auth | Session-based (brokers: username/password via `/api/broker-auth/*` + `requireBroker` middleware with per-broker data scoping; buyers via `/api/buyer-auth/*`), token-based (sellers, tokenized buyer view rooms). SESSION_SECRET is mandatory in production. |
 
 **Live URL:** https://cimple-production.up.railway.app
 
@@ -40,6 +40,15 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ---
 
 ## What is already built
+
+### Hardening pass (2026-07-08) — read this first
+- **Broker auth + multi-tenancy**: every broker endpoint requires a session and scopes by `session.brokerId`; deal ownership is checked on read/write/delete. Dev/demo escape: `ENABLE_DEV_SWITCHER=true` enables `/api/dev/login-as-{broker,buyer}` and the role switcher; the frontend BrokerAuthGate auto-logs-in as `broker_demo` when available.
+- **View room integrity**: NDA is enforced server-side (sections withheld until signed when `deal.ndaRequired`); buyers receive a whitelisted deal payload (never `extractedInfo`/notes); teaser/full access levels serve the Blind CIM with auto-generation of redaction overrides on first view; new links expire in 30 days; `firstViewedAt`/`viewCount` are stamped on every view (drives the decision panel + day-3/6/8 reminder pipeline).
+- **CIM layout engine is two-phase**: a manifest call plans sections, then each section generates in parallel batches with a shared cached prefix — immune to the old 16K-token truncation. Failures degrade to editable placeholders and surface in `document.warnings` + the broker toast.
+- **Interview upgrades**: industry knowledge is sliced per deal + prompt-cached (~12K tokens vs ~62K); completion is governed (min-turn floor, critical-section coverage, seller stop always wins); malformed output recovers gracefully; intake answers seed extractedInfo (never re-ask); `whyItMatters` buyer-rationale per question; Enter-to-send UI with edit-previous-answer.
+- **Document storage**: uploads live under `UPLOADS_DIR` (Railway volume `/data/uploads`) and survive redeploys; `/uploads/docs/*` requires the owning broker session or the deal's seller token.
+- **Removed** (2026-07-08): the legacy "New CIM" flow (NewCIM/CIMQuestionnaire/CIMDocuments/BrokerReview/CIMPreview + `cims`-table UI), mock Templates page, dead root-level duplicate seller pages, and the components/examples folder. Deal creation is a single flow (`/broker/new-deal`).
+- **Settings persist** per broker user (`users.settings` jsonb via `/api/broker-auth/settings`); Support page is honest and in the sidebar.
 
 ### Core Platform
 - Broker layout: collapsible icon sidebar with Deals, Buyers, Analytics, Integrations, Settings
@@ -381,7 +390,9 @@ Polish all flows, responsive design, error states, loading states.
 |---|---|---|
 | `DATABASE_URL` | PostgreSQL connection string | Yes |
 | `ANTHROPIC_API_KEY` | Claude API access | Yes |
-| `SESSION_SECRET` | Express session encryption | Yes |
+| `SESSION_SECRET` | Express session encryption | Yes (hard-fail in production if missing) |
+| `UPLOADS_DIR` | Persistent uploads root (Railway volume `/data/uploads`) | Prod yes (falls back to `public/uploads`) |
+| `ENABLE_DEV_SWITCHER` | Enables `/api/dev/*` role-switcher endpoints in production (demos) | No (dev endpoints off in prod by default) |
 | `RESEND_API_KEY` | Email delivery via Resend | No (falls back to console) |
 | `RESEND_FROM_EMAIL` | Sender address | No (defaults to notifications@cimple.app) |
 | `TWILIO_ACCOUNT_SID` | SMS delivery via Twilio | No (falls back to console) |

@@ -10,6 +10,11 @@ Legacy paths redirect for external links and bookmarks only.
 All broker-facing pages live under the `/broker` prefix.
 The sidebar, back buttons, and internal links use these canonical paths.
 
+All broker pages require a broker session (`BrokerAuthGate` wraps
+BrokerLayout). Unauthenticated visitors see the sign-in screen in place —
+deep links survive login. In local dev (and on deploys with
+`ENABLE_DEV_SWITCHER=true`) the gate auto-logs-in as the demo broker.
+
 | Path | Component | Description |
 |---|---|---|
 | `/` | BrokerDashboard | Root landing (dashboard, no redirect) |
@@ -18,18 +23,15 @@ The sidebar, back buttons, and internal links use these canonical paths.
 | `/broker/analytics` | Analytics | Cross-deal analytics dashboard |
 | `/broker/buyers` | Buyers | Buyer CRM / directory |
 | `/broker/integrations` | Integrations | CRM + email integrations |
-| `/broker/settings` | Settings | Broker account settings |
-| `/broker/templates` | Templates | CIM templates |
-| `/broker/support` | Support | Help & support |
-| `/broker/new-deal` | NewDeal | Create a new deal |
-| `/broker/new-cim` | NewCIM | Create a new CIM (legacy flow) |
-| `/broker/cim/new-questionnaire` | CIMQuestionnaire | CIM questionnaire step |
-| `/broker/cim/new-documents` | CIMDocuments | CIM document upload step |
-| `/broker/cim/new-interview` | CIMInterview | CIM interview step (legacy flow) |
-| `/broker/cim/:id` | BrokerReview | CIM review page |
-| `/broker/cim/:id/preview` | CIMPreview | CIM preview |
-| `/broker/cim/:id/interview` | CIMInterview | CIM interview (fullscreen) |
+| `/broker/settings` | Settings | Broker account settings (persisted per user) |
+| `/broker/support` | Support | Help & support (in sidebar) |
+| `/broker/new-deal` | NewDeal | Create a new deal (the ONLY creation flow) |
 | `/broker/cim/:dealId/design` | CIMDesigner | CIM visual designer |
+
+The legacy "New CIM" flow (`/broker/new-cim`, `/broker/cim/new-*`,
+`/broker/cim/:id`, `/broker/cim/:id/preview`) and the mock Templates page
+were removed 2026-07-08; those paths now redirect to `/broker/new-deal`,
+`/deal/:id`, or `/broker/deals`.
 
 ## Deal Routes (`/deal/*`)
 
@@ -38,7 +40,7 @@ Deal detail pages. Not prefixed with `/broker` because they're already namespace
 | Path | Component | Description |
 |---|---|---|
 | `/deal/:id` | DealShell | Deal detail (redirects to `/deal/:id/overview`) |
-| `/deal/:id/:tab` | DealShell | Deal detail with tab (overview, buyers, financials, documents, qa, team, interview-review) |
+| `/deal/:id/:tab` | DealShell | Deal detail with tab (overview, buyers, qa, team, financials, interview-review). Unknown tabs fall back to overview. Document management lives inside the Overview tab — there is no separate documents tab. |
 | `/deal/:dealId/design` | CIMDesigner | CIM designer for a deal |
 | `/deal/:id/interview` | CIMInterview | Deal interview (fullscreen) |
 
@@ -106,15 +108,15 @@ They exist only for external links and bookmarks. Internal navigation must never
 | `/buyers` | `/broker/buyers` |
 | `/integrations` | `/broker/integrations` |
 | `/settings` | `/broker/settings` |
-| `/templates` | `/broker/templates` |
+| `/templates` | `/broker/deals` |
 | `/support` | `/broker/support` |
 | `/new-deal` | `/broker/new-deal` |
-| `/new-cim` | `/broker/new-cim` |
-| `/cim/new-questionnaire` | `/broker/cim/new-questionnaire` |
-| `/cim/new-documents` | `/broker/cim/new-documents` |
-| `/cim/new-interview` | `/broker/cim/new-interview` |
-| `/cim/:id` | `/broker/cim/:id` |
-| `/cim/:id/preview` | `/broker/cim/:id/preview` |
+| `/new-cim` | `/broker/new-deal` |
+| `/cim/new-questionnaire` | `/broker/new-deal` |
+| `/cim/new-documents` | `/broker/new-deal` |
+| `/cim/new-interview` | `/broker/new-deal` |
+| `/cim/:id` | `/broker/cim/:id` → `/deal/:id` |
+| `/cim/:id/preview` | `/broker/cim/:id/preview` → `/deal/:id` |
 | `/cim/:dealId/design` | `/broker/cim/:dealId/design` |
 
 ### Seller redirects
