@@ -1161,6 +1161,25 @@ Return JSON only.`,
     }
   });
 
+  // Seller explicitly ends the interview ("End Overview" button). Marks the
+  // session completed and the deal's interview done so progress advances and
+  // the next visit doesn't resume a conversation the seller already closed.
+  app.post("/api/interview/:dealId/end", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      const { sessionId } = req.body;
+      if (!sessionId || typeof sessionId !== "string") {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+      const { endSessionManually } = await import("./interview/session-manager");
+      const result = await endSessionManually(dealId, sessionId);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Interview end error:", error);
+      res.status(500).json({ error: error.message || "Failed to end interview" });
+    }
+  });
+
   // Get conversation history for a session (used when resuming on the frontend)
   app.get("/api/interview/session/:sessionId/history", async (req, res) => {
     try {

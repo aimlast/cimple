@@ -109,6 +109,10 @@ export function normalizeInterviewResponse(raw: unknown): {
 
   const response: InterviewResponse = {
     message,
+    whyItMatters:
+      typeof r.whyItMatters === "string" && r.whyItMatters.trim().length > 0
+        ? r.whyItMatters.trim()
+        : undefined,
     suggestedAnswers,
     extractedFields,
     reasoning,
