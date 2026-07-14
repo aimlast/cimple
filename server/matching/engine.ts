@@ -159,11 +159,28 @@ function rangeScore(value: number, min: number | null, max: number | null): { sc
   return { score: 50, note: "No criteria specified" };
 }
 
+function escapeRegex(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Whole-word / whole-phrase match between a value and any target. The old
+ * naive substring test (`a.includes(b) || b.includes(a)`) produced false
+ * matches — e.g. deal industry "IT" matched target "capital" because
+ * "capital".includes("it"). Now a target only matches when it appears as a
+ * bounded word/phrase in the text (or vice versa), so "IT" matches
+ * "IT Services" but not "capital".
+ */
 function textMatchesAny(text: string, targets: string[]): boolean {
-  const lower = text.toLowerCase();
+  const lower = text.toLowerCase().trim();
+  if (!lower) return false;
   return targets.some(t => {
     const tl = t.toLowerCase().trim();
-    return lower.includes(tl) || tl.includes(lower);
+    if (!tl) return false;
+    if (lower === tl) return true;
+    const targetInText = new RegExp(`\\b${escapeRegex(tl)}\\b`).test(lower);
+    const textInTarget = new RegExp(`\\b${escapeRegex(lower)}\\b`).test(tl);
+    return targetInText || textInTarget;
   });
 }
 
