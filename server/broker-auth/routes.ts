@@ -47,6 +47,41 @@ export async function getOwnedDeal(
   return deal;
 }
 
+/**
+ * True when the request carries a seller invite token (X-Seller-Token header
+ * or ?token= query) that maps to this deal. This is how a logged-out seller
+ * proves they're allowed to act on their own deal.
+ */
+export async function sellerTokenMatchesDeal(
+  req: Request,
+  dealId: string,
+): Promise<boolean> {
+  const token =
+    (req.headers["x-seller-token"] as string | undefined) ||
+    (typeof req.query.token === "string" ? req.query.token : undefined);
+  if (!token) return false;
+  const invite = await storage.getSellerInviteByToken(token);
+  return !!invite && invite.dealId === dealId;
+}
+
+/**
+ * Dual-auth gate for endpoints shared by brokers and sellers (the interview,
+ * document upload, the seller's document checklist). Access is granted when
+ * either the broker session owns the deal OR a seller token maps to it.
+ * Previously these endpoints trusted the raw dealId in the URL with no check —
+ * anyone who knew or guessed a deal id could read or drive its interview.
+ */
+export async function canAccessDeal(
+  req: Request,
+  dealId: string,
+): Promise<boolean> {
+  if (req.session.brokerId) {
+    const owned = await getOwnedDeal(dealId, req.session.brokerId);
+    if (owned) return true;
+  }
+  return sellerTokenMatchesDeal(req, dealId);
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 function toPublicUser(user: User) {

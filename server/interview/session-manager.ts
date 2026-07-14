@@ -459,6 +459,12 @@ export async function processTurn(
 /**
  * Gets the conversation history for a session (for frontend display on resume).
  */
+/** Returns the dealId a session belongs to (for access checks), or null. */
+export async function getSessionDealId(sessionId: string): Promise<string | null> {
+  const session = await getSession(sessionId);
+  return session?.dealId ?? null;
+}
+
 export async function getSessionHistory(sessionId: string): Promise<{
   messages: ConversationMessage[];
   status: string;

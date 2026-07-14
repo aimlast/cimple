@@ -89,6 +89,8 @@ interface InterviewProps {
   mode: "broker" | "seller";
   dealId: string;
   businessName?: string;
+  /** Seller invite token — authenticates seller-mode interview API calls */
+  sellerToken?: string;
   onComplete?: () => void;
   onBack?: () => void;
 }
@@ -97,6 +99,7 @@ export function Interview({
   mode,
   dealId,
   businessName,
+  sellerToken,
   onComplete,
   onBack,
 }: InterviewProps) {
@@ -248,6 +251,7 @@ export function Interview({
           <AIConversationInterface
             dealId={dealId}
             businessName={businessName}
+            sellerToken={sellerToken}
             onTurnResult={handleTurnResult}
             onComplete={handleComplete}
           />

@@ -16,7 +16,7 @@ import { notify, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
-import { registerBrokerAuthRoutes, requireBroker, getOwnedDeal } from "./broker-auth/routes.js";
+import { registerBrokerAuthRoutes, requireBroker, getOwnedDeal, canAccessDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser } from "@shared/schema";
@@ -1173,6 +1173,9 @@ Return JSON only.`,
   app.post("/api/interview/:dealId/start", async (req, res) => {
     try {
       const { dealId } = req.params;
+      if (!(await canAccessDeal(req, dealId))) {
+        return res.status(401).json({ error: "Not authorized for this interview" });
+      }
       const result = await startOrResumeSession(dealId);
       res.json(result);
     } catch (error: any) {
@@ -1185,6 +1188,9 @@ Return JSON only.`,
   app.post("/api/interview/:dealId/message", async (req, res) => {
     try {
       const { dealId } = req.params;
+      if (!(await canAccessDeal(req, dealId))) {
+        return res.status(401).json({ error: "Not authorized for this interview" });
+      }
       const { message, sessionId } = req.body;
 
       if (!message || typeof message !== "string") {
@@ -1208,6 +1214,9 @@ Return JSON only.`,
   app.post("/api/interview/:dealId/end", async (req, res) => {
     try {
       const { dealId } = req.params;
+      if (!(await canAccessDeal(req, dealId))) {
+        return res.status(401).json({ error: "Not authorized for this interview" });
+      }
       const { sessionId } = req.body;
       if (!sessionId || typeof sessionId !== "string") {
         return res.status(400).json({ error: "Session ID is required" });
@@ -1225,6 +1234,13 @@ Return JSON only.`,
   app.get("/api/interview/session/:sessionId/history", async (req, res) => {
     try {
       const { sessionId } = req.params;
+      // Resolve the session's deal so we can authorize against it — the
+      // sessionId alone is not proof of access.
+      const { getSessionDealId } = await import("./interview/session-manager");
+      const dealId = await getSessionDealId(sessionId);
+      if (!dealId || !(await canAccessDeal(req, dealId))) {
+        return res.status(401).json({ error: "Not authorized for this session" });
+      }
       const result = await getSessionHistory(sessionId);
       res.json(result);
     } catch (error: any) {
@@ -1668,9 +1684,12 @@ Return JSON only.`,
 
   // ── Document requirements (per-deal checklist) ──
 
-  // GET — full checklist with upload status
+  // GET — full checklist with upload status (broker session or seller token)
   app.get("/api/deals/:dealId/document-requirements", async (req, res) => {
     try {
+      if (!(await canAccessDeal(req, req.params.dealId))) {
+        return res.status(401).json({ error: "Not authorized" });
+      }
       const requirements = await storage.getDocumentRequirementsByDeal(req.params.dealId);
       res.json(requirements);
     } catch (error: any) {
@@ -1699,9 +1718,12 @@ Return JSON only.`,
     }
   });
 
-  // PATCH — update status, link upload, add notes
+  // PATCH — update status, link upload, add notes (broker session or seller token)
   app.patch("/api/deals/:dealId/document-requirements/:reqId", async (req, res) => {
     try {
+      if (!(await canAccessDeal(req, req.params.dealId))) {
+        return res.status(401).json({ error: "Not authorized" });
+      }
       const existing = await storage.getDocumentRequirement(req.params.reqId);
       if (!existing) {
         return res.status(404).json({ error: "Document requirement not found" });
@@ -1953,15 +1975,23 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
     try {
+      // Auth runs after multer (which has already written the file to the
+      // deal's dir); on failure, delete the orphaned file before returning.
+      if (!(await canAccessDeal(req, req.params.dealId))) {
+        if (req.file?.path) fs.unlink(req.file.path, () => {});
+        return res.status(401).json({ error: "Not authorized" });
+      }
       if (!req.file) {
         return res.status(400).json({
           error: (req as any).fileRejectionReason || "No file uploaded",
         });
       }
       const { category = "other", subcategory } = req.body;
+      // Attribute the upload correctly: a broker session vs a seller token.
+      const uploadedBy = req.session.brokerId ? "broker" : "seller";
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
-        uploadedBy: "broker",
+        uploadedBy,
         name: req.file.originalname,
         originalName: req.file.originalname,
         category,
@@ -5063,7 +5093,7 @@ Do not speculate or add information not in the CIM.`,
   });
 
   // Legacy ID-based seller approve (for in-app use)
-  app.post("/api/questions/:questionId/seller-approve", async (req, res) => {
+  app.post("/api/questions/:questionId/seller-approve", requireBroker, async (req, res) => {
     try {
       const { questionId } = req.params;
       const { approved, revision } = req.body;
@@ -5099,7 +5129,7 @@ Do not speculate or add information not in the CIM.`,
   });
 
   // Get pending seller approval questions for a deal
-  app.get("/api/deals/:dealId/questions/pending-seller", async (req, res) => {
+  app.get("/api/deals/:dealId/questions/pending-seller", requireBroker, async (req, res) => {
     try {
       const questions = await storage.getQuestionsByDeal(req.params.dealId);
       const pending = questions.filter(q => q.status === "pending_seller");

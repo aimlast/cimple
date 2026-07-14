@@ -68,6 +68,7 @@ export default function SellerInterview() {
       mode="seller"
       dealId={String(inviteData.deal.id)}
       businessName={inviteData.deal.businessName}
+      sellerToken={token!}
       onComplete={() => setLocation(`/seller/${token}/progress`)}
       onBack={() => setLocation(`/seller/${token}/progress`)}
     />
