@@ -912,6 +912,19 @@ function Phase3Center() {
     },
   });
 
+  const advancePhase = useMutation({
+    mutationFn: async (phase: string) => {
+      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, { phase });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Moved to Design & Finalization" });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Couldn't advance", description: e.message, variant: "destructive" }),
+  });
+
   if (!deal.interviewCompleted) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -1011,9 +1024,21 @@ function Phase3Center() {
         </div>
         <div className="flex items-center gap-2">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
-            <span className="text-xs font-medium text-success flex items-center gap-1">
-              <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
-            </span>
+            deal.phase === "phase4_design_finalization" ? (
+              <span className="text-xs font-medium text-success flex items-center gap-1">
+                <CheckCircle2 className="h-3.5 w-3.5" /> Both approved
+              </span>
+            ) : (
+              <Button
+                size="sm"
+                className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+                onClick={() => advancePhase.mutate("phase4_design_finalization")}
+                disabled={advancePhase.isPending}
+                data-testid="button-advance-phase-4"
+              >
+                Advance to Design <ChevronRight className="h-3.5 w-3.5" />
+              </Button>
+            )
           ) : deal.contentApprovedByBroker ? (
             <Button
               size="sm"
@@ -1189,6 +1214,23 @@ function Phase4Center() {
     },
   });
 
+  const designApprove = useMutation({
+    mutationFn: async (role: "broker" | "seller") => {
+      const data =
+        role === "broker"
+          ? { designApprovedByBroker: true }
+          : { designApprovedBySeller: true };
+      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, data);
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Design approved" });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Approval failed", description: e.message, variant: "destructive" }),
+  });
+
   return (
     <div className="space-y-4">
       <div className="flex items-start justify-between gap-4">
@@ -1211,14 +1253,22 @@ function Phase4Center() {
       </div>
       <div className="grid gap-3">
         {[
-          { label: "Design generated", done: !!deal.cimDesignData },
+          {
+            label: "Design generated",
+            // The layout engine stamps cimLayoutGeneratedAt; cimDesignData is
+            // the legacy field and is usually null on current deals.
+            done: !!deal.cimLayoutGeneratedAt || !!deal.cimDesignData,
+            action: null as null | "broker" | "seller",
+          },
           {
             label: "Broker approved",
             done: !!deal.designApprovedByBroker,
+            action: "broker" as const,
           },
           {
             label: "Seller approved",
             done: !!deal.designApprovedBySeller,
+            action: "seller" as const,
           },
         ].map((item) => (
           <div
@@ -1231,10 +1281,22 @@ function Phase4Center() {
               <Circle className="h-[1.125rem] w-[1.125rem] text-muted-foreground/30 shrink-0" />
             )}
             <span
-              className={`text-sm ${item.done ? "line-through text-muted-foreground" : ""}`}
+              className={`text-sm flex-1 ${item.done ? "line-through text-muted-foreground" : ""}`}
             >
               {item.label}
             </span>
+            {!item.done && item.action && (
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 text-xs shrink-0"
+                onClick={() => designApprove.mutate(item.action!)}
+                disabled={designApprove.isPending}
+                data-testid={`button-design-approve-${item.action}`}
+              >
+                Approve as {item.action === "broker" ? "Broker" : "Seller"}
+              </Button>
+            )}
           </div>
         ))}
       </div>
