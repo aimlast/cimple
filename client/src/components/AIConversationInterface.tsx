@@ -36,6 +36,8 @@ interface TurnResult {
 interface AIConversationInterfaceProps {
   dealId: string;
   businessName?: string;
+  /** Seller invite token — sent as X-Seller-Token to authenticate seller-mode calls */
+  sellerToken?: string;
   onTurnResult?: (result: TurnResult) => void;
   onComplete?: () => void;
 }
@@ -43,9 +45,15 @@ interface AIConversationInterfaceProps {
 export function AIConversationInterface({
   dealId,
   businessName,
+  sellerToken,
   onTurnResult,
   onComplete,
 }: AIConversationInterfaceProps) {
+  // Seller-mode calls carry the invite token; broker-mode relies on the
+  // session cookie. authHeaders merges the token header when present.
+  const authHeaders = (base: Record<string, string> = {}) =>
+    sellerToken ? { ...base, "X-Seller-Token": sellerToken } : base;
+
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
@@ -75,7 +83,7 @@ export function AIConversationInterface({
       try {
         const res = await fetch(`/api/interview/${dealId}/start`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: authHeaders({ "Content-Type": "application/json" }),
         });
 
         if (!res.ok) {
@@ -90,7 +98,9 @@ export function AIConversationInterface({
 
         // If resuming, load full history
         if (result.message) {
-          const historyRes = await fetch(`/api/interview/session/${result.sessionId}/history`);
+          const historyRes = await fetch(`/api/interview/session/${result.sessionId}/history`, {
+            headers: authHeaders(),
+          });
           if (historyRes.ok) {
             const history = await historyRes.json();
             if (history.messages && history.messages.length > 0) {
@@ -269,7 +279,7 @@ export function AIConversationInterface({
     try {
       const res = await fetch(`/api/interview/${dealId}/message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ message: cleanedInput, sessionId }),
         signal: controller.signal,
       });
@@ -342,7 +352,7 @@ export function AIConversationInterface({
     if (sessionId) {
       fetch(`/api/interview/${dealId}/end`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ sessionId }),
       }).catch((err) => console.error("Failed to finalize interview end:", err));
     }

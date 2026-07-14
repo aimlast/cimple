@@ -84,6 +84,7 @@ export default function SellerDocuments() {
       formData.append("file", file);
       const uploadRes = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
+        headers: token ? { "X-Seller-Token": token } : {},
         body: formData,
       });
       if (!uploadRes.ok) {
@@ -96,7 +97,10 @@ export default function SellerDocuments() {
       if (requirementId) {
         await fetch(`/api/deals/${dealId}/document-requirements/${requirementId}`, {
           method: "PATCH",
-          headers: { "Content-Type": "application/json" },
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { "X-Seller-Token": token } : {}),
+          },
           body: JSON.stringify({
             status: "uploaded",
             uploadedFileId: doc.id,
