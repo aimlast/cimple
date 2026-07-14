@@ -362,7 +362,7 @@ export default function BuyerProfile() {
                     onChange={(e) => update({ liquidFunds: e.target.value })}
                   />
                   <p className="text-[11px] text-muted-foreground mt-1">
-                    This is kept private. Brokers only see a range, never the exact amount.
+                    Kept private and used to match you with deals in your range. When you request access to a CIM, the reviewing broker and seller see only a range — never the exact figure.
                   </p>
                 </Field>
 

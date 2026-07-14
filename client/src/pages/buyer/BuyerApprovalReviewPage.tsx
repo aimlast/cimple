@@ -7,6 +7,7 @@
  * CC'ing both brokers) or Decline (→ request closed, brokers notified).
  */
 import { useState } from "react";
+import { fundsToRange } from "@/lib/funds";
 import { useParams } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
@@ -255,7 +256,7 @@ export default function BuyerApprovalReviewPage() {
                   Financial capability
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
-                  {fc.liquidFunds && <div><span className="text-muted-foreground">Liquid funds:</span> {fc.liquidFunds}</div>}
+                  {fc.liquidFunds && <div><span className="text-muted-foreground">Liquid funds:</span> {fundsToRange(fc.liquidFunds)}</div>}
                   {fc.investmentSizeTarget && <div><span className="text-muted-foreground">Target size:</span> {fc.investmentSizeTarget}</div>}
                   {fc.sourceOfFunds && <div><span className="text-muted-foreground">Source:</span> {fc.sourceOfFunds}</div>}
                   {fc.hasProofOfFunds && <div className="text-emerald-500">Proof of funds on file</div>}
