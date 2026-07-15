@@ -89,6 +89,12 @@ export const deals = pgTable("deals", {
   cimLayoutGeneratedAt: timestamp("cim_layout_generated_at"),
   cimLayoutVersion: integer("cim_layout_version").default(0),
 
+  // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
+  // so the view layer can redact identifying info that isn't inside a section
+  // override — section titles and the view-room header — with the same name
+  // the section content was redacted to.
+  blindCodename: text("blind_codename"),
+
   // Buyer access settings
   ndaRequired: boolean("nda_required").default(true),
   watermarkText: text("watermark_text"), // custom watermark; defaults to buyer name

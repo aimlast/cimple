@@ -29,7 +29,7 @@ export async function generateBlindOverrides(
     industry?: string | null;
     extractedInfo?: Record<string, any> | null;
   },
-): Promise<RedactionResult[]> {
+): Promise<{ codename: string; overrides: RedactionResult[] }> {
   // Build a mapping of known identifiers to help the AI
   const extractedInfo = deal.extractedInfo || {};
   const knownIdentifiers: string[] = [
@@ -48,7 +48,7 @@ export async function generateBlindOverrides(
   ];
   const codename = codenames[Math.floor(Math.random() * codenames.length)];
 
-  const results: RedactionResult[] = [];
+  const overrides: RedactionResult[] = [];
 
   // Process in batches of 3 to avoid rate limits but maintain speed
   for (let i = 0; i < sections.length; i += 3) {
@@ -56,10 +56,10 @@ export async function generateBlindOverrides(
     const batchResults = await Promise.all(
       batch.map((section) => redactSection(section, knownIdentifiers, codename, deal.industry)),
     );
-    results.push(...batchResults);
+    overrides.push(...batchResults);
   }
 
-  return results;
+  return { codename, overrides };
 }
 
 async function redactSection(

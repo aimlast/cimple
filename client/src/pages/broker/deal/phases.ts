@@ -11,7 +11,9 @@ export const PHASES = [
     short: "Phase 1",
     items: (deal: Deal) => [
       { label: "NDA signed", done: !!deal.ndaSigned },
-      { label: "Seller questionnaire", done: !!deal.sqCompleted },
+      // Auto-reflects the seller finishing intake — no manual "mark received"
+      // needed once questionnaire data exists.
+      { label: "Seller questionnaire", done: !!deal.questionnaireData || !!deal.sqCompleted },
       { label: "Valuation", done: !!deal.valuationCompleted },
     ],
   },

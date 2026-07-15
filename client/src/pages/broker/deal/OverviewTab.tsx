@@ -576,6 +576,21 @@ function Phase2Center() {
   const [, setLocation] = useLocation();
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
 
+  // Advance Platform Intake → Content Creation. Without this, a broker who
+  // finished the interview had no visible way to reach the Generate CIM step
+  // (it lived inside the collapsed Phase 3 accordion).
+  const advanceToContent = useMutation({
+    mutationFn: async () => {
+      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
+        phase: "phase3_content_creation",
+      });
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+    },
+  });
+
   const scrapeMutation = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/scrape`, {
@@ -766,6 +781,35 @@ function Phase2Center() {
           </div>
         </div>
       </div>
+
+      {/* Advance to Content Creation — the clear next step once the interview
+          is done. Previously there was no path from here to CIM generation. */}
+      {deal.interviewCompleted && (
+        <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
+          <div>
+            <p className="text-sm font-medium">Ready to build the CIM</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              The interview is complete. Move to Content Creation to generate
+              the CIM from everything you've collected.
+            </p>
+          </div>
+          <Button
+            className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shrink-0"
+            onClick={() => advanceToContent.mutate()}
+            disabled={advanceToContent.isPending}
+            data-testid="button-advance-phase-3"
+          >
+            {advanceToContent.isPending ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <>
+                Continue to Content Creation
+                <ChevronRight className="h-3.5 w-3.5" />
+              </>
+            )}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -1524,7 +1568,9 @@ export function OverviewTab() {
                   )}
                 </div>
                 <span className="text-xs text-muted-foreground">
-                  {doneCount}/{items.length} tasks done
+                  {isComplete
+                    ? "Phase complete"
+                    : `${doneCount}/${items.length} tasks done`}
                 </span>
               </div>
 
