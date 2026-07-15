@@ -1208,6 +1208,51 @@ Return JSON only.`,
     }
   });
 
+  // Streaming variant of the message endpoint — Server-Sent Events. The AI
+  // message streams token-by-token for a live, conversational feel; a final
+  // "done" event carries the authoritative structured turn result (coverage,
+  // suggestions, etc.). Falls back to the plain /message endpoint if a client
+  // can't use SSE.
+  app.post("/api/interview/:dealId/message/stream", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      if (!(await canAccessDeal(req, dealId))) {
+        return res.status(401).json({ error: "Not authorized for this interview" });
+      }
+      const { message, sessionId } = req.body;
+      if (!message || typeof message !== "string") {
+        return res.status(400).json({ error: "Message string is required" });
+      }
+      if (!sessionId || typeof sessionId !== "string") {
+        return res.status(400).json({ error: "Session ID is required" });
+      }
+
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache, no-transform");
+      res.setHeader("Connection", "keep-alive");
+      res.flushHeaders?.();
+      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+
+      try {
+        const result = await processTurn(dealId, sessionId, message, (chunk) =>
+          send({ type: "delta", text: chunk }),
+        );
+        send({ type: "done", result });
+      } catch (err: any) {
+        console.error("Interview stream error:", err);
+        send({ type: "error", error: err.message || "Failed to process message" });
+      }
+      res.end();
+    } catch (error: any) {
+      console.error("Interview stream setup error:", error);
+      if (!res.headersSent) {
+        res.status(500).json({ error: error.message || "Failed to process message" });
+      } else {
+        res.end();
+      }
+    }
+  });
+
   // Seller explicitly ends the interview ("End Overview" button). Marks the
   // session completed and the deal's interview done so progress advances and
   // the next visit doesn't resume a conversation the seller already closed.
