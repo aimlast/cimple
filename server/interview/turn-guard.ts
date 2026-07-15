@@ -145,9 +145,39 @@ export interface InterviewCallParams {
  * turn (a short "let's keep going" message with no extraction) so the seller
  * is never dead-ended by a 500.
  */
+/**
+ * Extracts the current value of the top-level "message" string from a partial
+ * tool-input JSON buffer, decoding JSON escapes. Returns the text accumulated
+ * so far and whether the string has closed. Used to stream the conversational
+ * message to the seller as the model emits it.
+ */
+function extractMessageSoFar(buf: string): { text: string; complete: boolean } | null {
+  const m = buf.match(/"message"\s*:\s*"/);
+  if (!m || m.index === undefined) return null;
+  let i = m.index + m[0].length;
+  let out = "";
+  while (i < buf.length) {
+    const c = buf[i];
+    if (c === "\\") {
+      const next = buf[i + 1];
+      if (next === undefined) break; // incomplete escape at buffer edge — wait for more
+      out += next === "n" ? "\n" : next === "t" ? "\t" : next === "r" ? "\r" : next;
+      i += 2;
+      continue;
+    }
+    if (c === '"') return { text: out, complete: true };
+    out += c;
+    i++;
+  }
+  return { text: out, complete: false };
+}
+
 export async function callInterviewWithRecovery(
   anthropic: Anthropic,
   params: InterviewCallParams,
+  /** When provided, the FIRST attempt streams the message field and emits each
+   *  new text chunk here. Retries and governance re-calls never stream. */
+  onDelta?: (chunk: string) => void,
 ): Promise<{ response: InterviewResponse; degraded: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
@@ -176,8 +206,55 @@ export async function callInterviewWithRecovery(
     return normalized;
   };
 
+  // Streaming variant of the first attempt: streams the message field for
+  // display, but the FINAL parse (finalMessage) is authoritative — identical
+  // validation to the non-streaming path.
+  const streamAttempt = async (
+    messages: InterviewCallParams["messages"],
+  ): Promise<{ response: InterviewResponse; valid: boolean }> => {
+    const stream = anthropic.messages.stream({
+      model: params.model,
+      max_tokens: params.maxTokens,
+      temperature: params.temperature,
+      system: params.system as never,
+      tools: [INTERVIEW_RESPONSE_TOOL],
+      tool_choice: { type: "tool", name: "interview_response" },
+      messages,
+    });
+
+    let jsonBuf = "";
+    let emitted = 0;
+    for await (const event of stream) {
+      if (
+        event.type === "content_block_delta" &&
+        event.delta.type === "input_json_delta"
+      ) {
+        jsonBuf += event.delta.partial_json;
+        const msg = extractMessageSoFar(jsonBuf);
+        if (msg && msg.text.length > emitted) {
+          onDelta!(msg.text.slice(emitted));
+          emitted = msg.text.length;
+        }
+      }
+    }
+
+    const finalMessage = await stream.finalMessage();
+    const toolUseBlock = finalMessage.content.find((b) => b.type === "tool_use");
+    if (!toolUseBlock || toolUseBlock.type !== "tool_use") {
+      return { response: normalizeInterviewResponse(null).response, valid: false };
+    }
+    const normalized = normalizeInterviewResponse(toolUseBlock.input);
+    if (finalMessage.stop_reason === "max_tokens") {
+      console.warn("[turn-guard] Streamed interview response hit max_tokens — retrying");
+      return { response: normalized.response, valid: false };
+    }
+    return normalized;
+  };
+
   try {
-    const first = await attempt(params.messages);
+    const first = onDelta
+      ? await streamAttempt(params.messages)
+      : await attempt(params.messages);
     if (first.valid) return { response: first.response, degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");

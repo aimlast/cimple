@@ -232,6 +232,9 @@ export async function processTurn(
   dealId: string,
   sessionId: string,
   sellerMessage: string,
+  /** Optional: stream the AI message text to the caller as it's generated.
+   *  Purely a display channel — the returned TurnResult is authoritative. */
+  onDelta?: (chunk: string) => void,
 ): Promise<TurnResult> {
   // Load everything
   const deal = await storage.getDeal(dealId);
@@ -305,7 +308,9 @@ export async function processTurn(
 
   // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
   // retries once and then degrades gracefully instead of dead-ending the seller.
-  let { response: aiResponse } = await callInterviewWithRecovery(anthropic, callParams);
+  // onDelta streams the message text for display; the parsed result is still
+  // authoritative (governance/merge/persist below are unchanged).
+  let { response: aiResponse } = await callInterviewWithRecovery(anthropic, callParams, onDelta);
 
   // Merge extracted fields
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;

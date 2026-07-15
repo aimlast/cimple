@@ -68,6 +68,9 @@ export function AIConversationInterface({
   const [whyByTs, setWhyByTs] = useState<Record<string, string>>({});
   // Two-stage thinking indicator — after a few seconds the label reassures
   const [slowThinking, setSlowThinking] = useState(false);
+  // True once the AI reply has started streaming in — swaps the thinking dots
+  // for the live text.
+  const [isStreaming, setIsStreaming] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const recognitionRef = useRef<any>(null);
@@ -276,61 +279,104 @@ export function AIConversationInterface({
     const controller = new AbortController();
     setAbortController(controller);
 
+    // The AI reply streams into a single bubble, identified by this timestamp.
+    const aiTs = new Date().toISOString();
+    let streamedAny = false;
+    const ensureBubble = () => {
+      if (streamedAny) return;
+      streamedAny = true;
+      setMessages((prev) => [...prev, { role: "ai", content: "", timestamp: aiTs }]);
+    };
+    const appendToBubble = (chunk: string) => {
+      ensureBubble();
+      setMessages((prev) =>
+        prev.map((m) => (m.timestamp === aiTs && m.role === "ai" ? { ...m, content: m.content + chunk } : m)),
+      );
+    };
+    const setBubble = (text: string) => {
+      ensureBubble();
+      setMessages((prev) =>
+        prev.map((m) => (m.timestamp === aiTs && m.role === "ai" ? { ...m, content: text } : m)),
+      );
+    };
+
     try {
-      const res = await fetch(`/api/interview/${dealId}/message`, {
+      const res = await fetch(`/api/interview/${dealId}/message/stream`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
         body: JSON.stringify({ message: cleanedInput, sessionId }),
         signal: controller.signal,
       });
 
-      if (!res.ok) {
-        const err = await res.json();
+      if (!res.ok || !res.body) {
+        const err = await res.json().catch(() => ({}));
         throw new Error(err.error || `${res.status}: ${res.statusText}`);
       }
 
-      const result: TurnResult = await res.json();
+      // Parse the SSE stream: `data: {json}\n\n` frames.
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result: TurnResult | null = null;
+      let streamError: string | null = null;
 
-      // Add AI response
-      const aiMessage: ConversationMessage = {
-        role: "ai",
-        content: result.message,
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, aiMessage]);
-      if (result.whyItMatters) {
-        setWhyByTs((prev) => ({ ...prev, [aiMessage.timestamp]: result.whyItMatters! }));
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const frames = buffer.split("\n\n");
+        buffer = frames.pop() || "";
+        for (const frame of frames) {
+          const line = frame.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const evt = JSON.parse(line.slice(6));
+          if (evt.type === "delta") {
+            setIsStreaming(true); // swaps the "thinking" dots for live text
+            appendToBubble(evt.text);
+          } else if (evt.type === "done") {
+            result = evt.result as TurnResult;
+          } else if (evt.type === "error") {
+            streamError = evt.error || "Failed to process message";
+          }
+        }
       }
 
-      // Show new suggested answers for this question
+      if (streamError) throw new Error(streamError);
+      if (!result) throw new Error("No response received");
+
+      // The done result is authoritative — set the bubble to its final message
+      // (identical to the streamed text on the happy path; corrects it if the
+      // server's governance/recovery produced a different message).
+      setBubble(result.message);
+      if (result.whyItMatters) {
+        setWhyByTs((prev) => ({ ...prev, [aiTs]: result!.whyItMatters! }));
+      }
       if (!result.shouldEnd) {
         setSuggestedAnswers(result.suggestedAnswers || []);
       }
-
-      // Update parent with turn results
       onTurnResult?.(result);
-
       if (result.shouldEnd) {
         setIsFinished(true);
-        // Let the user see the completion banner, then fire onComplete
         setTimeout(() => onComplete?.(), 2000);
       }
     } catch (error: any) {
       if (error.name === "AbortError") return;
 
       console.error("Interview message error:", error);
-      const errorMessage: ConversationMessage = {
-        role: "ai",
-        content: "I'm sorry, something went wrong on my end. Your answer is still in the box below — just hit send again.",
-        timestamp: new Date().toISOString(),
-      };
-      setMessages((prev) => [...prev, errorMessage]);
+      const errText =
+        "I'm sorry, something went wrong on my end. Your answer is still in the box below — just hit send again.";
+      if (streamedAny) {
+        setBubble(errText);
+      } else {
+        setMessages((prev) => [...prev, { role: "ai", content: errText, timestamp: aiTs }]);
+      }
       // Restore the seller's text so they don't have to retype it
       setInput(cleanedInput);
       inputRef.current = cleanedInput;
     } finally {
       setAbortController(null);
       setIsLoading(false);
+      setIsStreaming(false);
     }
   }, [input, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult]);
 
@@ -339,6 +385,7 @@ export function AIConversationInterface({
       abortController.abort();
       setAbortController(null);
       setIsLoading(false);
+      setIsStreaming(false);
     }
   }, [abortController]);
 
@@ -412,7 +459,7 @@ export function AIConversationInterface({
             }
           />
         ))}
-        {isLoading && (
+        {isLoading && !isStreaming && (
           <div className="flex items-center gap-2">
             <div className="flex gap-1">
               <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
