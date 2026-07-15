@@ -38,6 +38,8 @@ interface ViewData {
   branding: BrandingSettings | null;
   /** True when the server is withholding CIM content until the NDA is signed */
   ndaGate?: boolean;
+  /** True when the blind (redacted) version is still being prepared */
+  preparing?: boolean;
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
@@ -220,6 +222,9 @@ export default function BuyerViewRoom() {
       }
       return res.json();
     },
+    // While the redacted version is being prepared, poll until it's ready.
+    refetchInterval: (query) =>
+      (query.state.data as ViewData | undefined)?.preparing ? 4000 : false,
   });
 
   const { attachObserver, enqueue } = useAnalytics(data?.deal?.id, data?.access?.id);
@@ -286,6 +291,27 @@ export default function BuyerViewRoom() {
         token={token!}
         onAccepted={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token] })}
       />
+    );
+  }
+
+  // Blind version still being prepared — show a holding state (the query is
+  // polling in the background) rather than the un-redacted document.
+  if (data.preparing) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-sm text-center space-y-3">
+          <div className="flex justify-center gap-1.5">
+            <span className="h-2 w-2 rounded-full bg-teal/50 animate-bounce" />
+            <span className="h-2 w-2 rounded-full bg-teal/50 animate-bounce" style={{ animationDelay: "0.15s" }} />
+            <span className="h-2 w-2 rounded-full bg-teal/50 animate-bounce" style={{ animationDelay: "0.3s" }} />
+          </div>
+          <h2 className="text-lg font-semibold">Preparing your confidential view</h2>
+          <p className="text-sm text-muted-foreground">
+            We're finalizing the secure version of this document. This only
+            takes a moment — it will open automatically.
+          </p>
+        </div>
+      </div>
     );
   }
 

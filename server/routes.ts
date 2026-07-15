@@ -2786,7 +2786,7 @@ Return JSON only.`,
       const sections = await storage.getCimSectionsByDeal(deal.id);
       if (sections.length === 0) return;
       const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const overrides = await generateBlindOverrides(sections, {
+      const { codename, overrides } = await generateBlindOverrides(sections, {
         businessName: deal.businessName,
         industry: deal.industry,
         extractedInfo: deal.extractedInfo as Record<string, any> | null,
@@ -2801,6 +2801,7 @@ Return JSON only.`,
           contentOverride: override.contentOverride,
         });
       }
+      await storage.updateDeal(deal.id, { blindCodename: codename } as any);
       console.log(`[view] Auto-generated ${overrides.length} blind overrides for deal ${deal.id}`);
     })()
       .catch((err) => console.error(`[view] Blind auto-generation failed for deal ${deal.id}:`, err))
@@ -2851,12 +2852,20 @@ Return JSON only.`,
         }
       })();
 
+      // In blind mode the buyer must never see the real business name — not
+      // in the header, the NDA card, or section titles. Use the persisted
+      // project codename (falls back to a neutral label if redaction hasn't
+      // run yet, in which case we serve the "preparing" state below).
+      const blindMode = cimMode === "blind";
+      const codename = deal.blindCodename || null;
+      const displayName = blindMode ? (codename || "Confidential Opportunity") : deal.businessName;
+
       // Buyers get a minimal whitelisted deal payload — never the raw deal
       // record (extractedInfo, broker notes, valuation data). Legacy
       // cimContent only ships in normal mode: it has no redacted variant.
       const publicDeal = {
         id: deal.id,
-        businessName: deal.businessName,
+        businessName: displayName,
         industry: deal.industry,
         cimContent: cimMode === "normal" ? deal.cimContent : null,
       };
@@ -2890,23 +2899,49 @@ Return JSON only.`,
       if (cimMode !== "normal" && baseSections.length > 0) {
         const overrides = await storage.getCimSectionOverrides(deal.id, cimMode);
         if (overrides.length > 0) {
+          // Section titles are NOT stored in the override (which only holds
+          // layoutData + content), so redact them here with the same codename.
+          const identifiers = [
+            deal.businessName,
+            (deal.extractedInfo as Record<string, any> | null)?.ownerName,
+            (deal.extractedInfo as Record<string, any> | null)?.locations,
+          ].filter((v): v is string => typeof v === "string" && v.length > 0);
+          const nameRegex = blindMode && identifiers.length > 0
+            ? new RegExp(identifiers.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi")
+            : null;
+          const redactTitle = (t: string) =>
+            nameRegex && codename ? t.replace(nameRegex, codename) : t;
+
           const overrideMap = new Map(overrides.map(o => [o.cimSectionId, o]));
           sections = baseSections.map(s => {
+            const sectionTitle = redactTitle(s.sectionTitle || "");
             const override = overrideMap.get(String(s.id));
-            if (!override) return s;
+            if (!override) return { ...s, sectionTitle };
             return {
               ...s,
+              sectionTitle,
               layoutData: override.layoutData || s.layoutData,
               aiDraftContent: override.contentOverride || s.aiDraftContent,
               brokerEditedContent: override.contentOverride || s.brokerEditedContent,
             };
           });
-        } else if (cimMode === "blind") {
-          // No redacted version exists yet — kick off generation so the next
-          // view is properly blind. (This view serves the un-redacted
-          // sections; converges automatically without broker action.)
+        } else if (blindMode) {
+          // No redacted version exists yet. Do NOT serve the real, un-redacted
+          // sections — that would leak identity to the first viewer. Serve a
+          // "preparing" holding state and generate; the client polls back.
           ensureBlindOverridesInBackground(deal);
+          return res.json({
+            access: freshAccess,
+            deal: publicDeal,
+            sections: [],
+            publishedQuestions: [],
+            branding: branding ?? null,
+            cimMode,
+            preparing: true,
+          });
         }
+        // dd mode with no overrides yet: serving base sections is acceptable —
+        // a due-diligence buyer has already earned full-identity access.
       }
 
       res.json({ access: freshAccess, deal: publicDeal, sections, publishedQuestions, branding: branding ?? null, cimMode });
@@ -3693,7 +3728,7 @@ Return JSON only.`,
       }
 
       const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const overrides = await generateBlindOverrides(sections, {
+      const { codename, overrides } = await generateBlindOverrides(sections, {
         businessName: deal.businessName,
         industry: deal.industry,
         extractedInfo: deal.extractedInfo as Record<string, any> | null,
@@ -3710,6 +3745,7 @@ Return JSON only.`,
           contentOverride: override.contentOverride,
         });
       }
+      await storage.updateDeal(dealId, { blindCodename: codename } as any);
 
       res.json({ success: true, overrideCount: overrides.length });
     } catch (error: any) {
