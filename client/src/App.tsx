@@ -20,6 +20,7 @@ import DealShell from "@/pages/broker/deal/DealShell";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
+import SellerNdaPage from "@/pages/SellerNdaPage";
 import Integrations from "@/pages/Integrations";
 import Buyers from "@/pages/Buyers";
 import SellerLayout from "@/layouts/SellerLayout";
@@ -104,6 +105,8 @@ function isFullscreen(path: string) {
   if (path.startsWith("/invite/")) return true;
   // Seller Q&A approval (standalone page, own token table)
   if (path.startsWith("/approve/")) return true;
+  // Seller NDA e-sign (standalone token page)
+  if (path.startsWith("/sign-nda/")) return true;
   return false;
 }
 
@@ -175,7 +178,7 @@ function FullscreenLayout() {
   const [loc] = useLocation();
   // Derive role from URL pattern
   const fsRole =
-    loc.startsWith("/seller/") || loc.startsWith("/invite/") || loc.startsWith("/approve/")
+    loc.startsWith("/seller/") || loc.startsWith("/invite/") || loc.startsWith("/approve/") || loc.startsWith("/sign-nda/")
       ? "seller" as const
       : "broker" as const; // /deal/:id/interview is broker
   useSetLayoutRole(fsRole);
@@ -191,6 +194,8 @@ function FullscreenLayout() {
         <Route path="/invite/:token">{(params: { token: string }) => <Redirect to={`/seller/${params.token}`} />}</Route>
         {/* Seller Q&A approval (standalone) */}
         <Route path="/approve/:token" component={SellerApprovalPage} />
+        {/* Seller NDA e-sign (standalone) */}
+        <Route path="/sign-nda/:token" component={SellerNdaPage} />
         <Route component={NotFound} />
       </Switch>
     </div>

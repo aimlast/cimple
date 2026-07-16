@@ -209,4 +209,21 @@ app.use((req, res, next) => {
     // Start the buyer-decision reminder scheduler (runs every 6 hours)
     startReminderScheduler();
   });
+
+  // Graceful shutdown: Railway sends SIGTERM when replacing a deployment.
+  // Without this handler Node exits non-zero and Railway emails a false
+  // "Deploy Crashed" alert on every redeploy.
+  let shuttingDown = false;
+  const shutdown = (signal: string) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    log(`${signal} received — shutting down gracefully`);
+    server.close(() => {
+      sessionPool.end().finally(() => process.exit(0));
+    });
+    // Force-exit if in-flight requests hang past Railway's grace period
+    setTimeout(() => process.exit(0), 8000).unref();
+  };
+  process.on("SIGTERM", () => shutdown("SIGTERM"));
+  process.on("SIGINT", () => shutdown("SIGINT"));
 })();

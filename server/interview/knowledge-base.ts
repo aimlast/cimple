@@ -215,6 +215,11 @@ export function assembleKnowledgeBase(
     }
   }
 
+  // Per-field confidence lives on the session (interview turns write it) —
+  // used to label coverage fields honestly instead of hardcoding "confirmed".
+  const sessionMeta = (latestSession?.extractedInfo as Record<string, unknown> | null) || {};
+  const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string> | undefined) ?? undefined;
+
   return {
     business: {
       name: deal.businessName,
@@ -223,7 +228,7 @@ export function assembleKnowledgeBase(
       description: deal.description,
       location: parseLocation(deal, questionnaireData),
     },
-    sectionCoverage: buildSectionCoverage(extractedInfo),
+    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels),
     industryContext: null, // Set by the AI on first turn, stored on session
     sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
     questionnaireData,
@@ -464,18 +469,26 @@ export function isSubstantiveValue(value: unknown): boolean {
   return /\d/.test(v) || v.length >= 3;
 }
 
-export function buildSectionCoverage(extractedInfo: Partial<ExtractedInfo>): SectionCoverage[] {
+export function buildSectionCoverage(
+  extractedInfo: Partial<ExtractedInfo>,
+  /** Per-field confidence from the interview session (_confidenceLevels).
+   *  Fields the interview hasn't touched (docs/questionnaire-sourced) have
+   *  no entry and are labeled "inferred" — not "confirmed" — so the agent
+   *  knows to verify them rather than treat them as seller-confirmed. */
+  confidenceLevels?: Record<string, string>,
+): SectionCoverage[] {
   return CIM_SECTIONS.map((section) => {
     const fieldNames = SECTION_FIELD_MAP[section.key] || [];
     const fields = fieldNames.map((fieldName) => {
       const raw = extractedInfo[fieldName as keyof ExtractedInfo] ?? null;
       // Quality gate: junk placeholders don't count as answers
       const value = isSubstantiveValue(raw) ? (raw as string) : null;
-      return {
-        fieldName,
-        value,
-        confidence: (value ? "confirmed" : "unknown") as "confirmed" | "inferred" | "approximate" | "unknown",
-      };
+      const sessionConf = confidenceLevels?.[fieldName];
+      const confidence: "confirmed" | "inferred" | "approximate" | "unknown" =
+        !value ? "unknown"
+        : sessionConf === "confirmed" || sessionConf === "approximate" ? sessionConf
+        : "inferred";
+      return { fieldName, value, confidence };
     });
 
     const populatedCount = fields.filter((f) => f.value !== null).length;
