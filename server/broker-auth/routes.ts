@@ -15,13 +15,16 @@
  */
 import type { Express, Request, Response, NextFunction } from "express";
 import bcrypt from "bcryptjs";
+import crypto from "crypto";
 import { z } from "zod";
-import { eq } from "drizzle-orm";
+import { eq, and, gt, sql } from "drizzle-orm";
 import { db } from "../db";
 import { users, type Deal, type User } from "@shared/schema";
 import { storage } from "../storage";
+import { sendDirectEmail } from "../notifications/service.js";
 
 const BCRYPT_ROUNDS = 10;
+const RESET_TOKEN_TTL_MS = 60 * 60 * 1000; // 1 hour
 
 // ── Middleware ──────────────────────────────────────────────────────────
 
@@ -193,6 +196,107 @@ export function registerBrokerAuthRoutes(app: Express) {
     } catch (error: any) {
       console.error("[broker-auth] Settings save error:", error);
       res.status(500).json({ error: "Failed to save settings" });
+    }
+  });
+
+  // ── Password management ─────────────────────────────────────────────
+
+  app.post("/api/broker-auth/change-password", requireBroker, async (req, res) => {
+    try {
+      const schema = z.object({
+        currentPassword: z.string().min(1),
+        newPassword: z.string().min(8, "New password must be at least 8 characters"),
+      });
+      const { currentPassword, newPassword } = schema.parse(req.body);
+
+      const user = await storage.getUser(req.session.brokerId!);
+      if (!user) return res.status(401).json({ error: "Not authenticated" });
+
+      const ok = await verifyPassword(user, currentPassword);
+      if (!ok) return res.status(401).json({ error: "Current password is incorrect" });
+
+      const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+      await db.update(users).set({ password: passwordHash }).where(eq(users.id, user.id));
+      res.json({ success: true });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: error.errors?.[0]?.message || "Invalid password data" });
+      }
+      console.error("[broker-auth] Change password error:", error);
+      res.status(500).json({ error: "Failed to change password" });
+    }
+  });
+
+  // Forgot password: always responds 200 (no account enumeration). When the
+  // account exists and has an email, a one-hour reset link is sent.
+  app.post("/api/broker-auth/request-reset", async (req, res) => {
+    try {
+      const schema = z.object({ username: z.string().min(1) });
+      const { username } = schema.parse(req.body);
+
+      const user = await storage.getUserByUsername(username.trim());
+      if (user && user.role === "broker" && user.email) {
+        const token = crypto.randomBytes(32).toString("hex");
+        await db
+          .update(users)
+          .set({ resetToken: token, resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS) })
+          .where(eq(users.id, user.id));
+
+        const baseUrl = process.env.APP_URL || "https://cimple-production.up.railway.app";
+        await sendDirectEmail(
+          user.email,
+          "Reset your Cimple password",
+          `<p>Hi${user.name ? ` ${user.name}` : ""},</p>
+           <p>A password reset was requested for your Cimple broker account. This link is valid for one hour:</p>
+           <p><a href="${baseUrl}/broker/reset-password/${token}">Reset your password</a></p>
+           <p>If you didn't request this, you can safely ignore this email.</p>`,
+        );
+      } else if (user && user.role === "broker" && !user.email) {
+        console.warn(`[broker-auth] Reset requested for ${username} but the account has no email on file`);
+      }
+
+      res.json({ success: true, message: "If that account exists, a reset link is on its way." });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Username is required" });
+      }
+      console.error("[broker-auth] Request reset error:", error);
+      res.status(500).json({ error: "Failed to request reset" });
+    }
+  });
+
+  app.post("/api/broker-auth/reset-password", async (req, res) => {
+    try {
+      const schema = z.object({
+        token: z.string().min(10),
+        newPassword: z.string().min(8, "Password must be at least 8 characters"),
+      });
+      const { token, newPassword } = schema.parse(req.body);
+
+      const rows = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.resetToken, token), gt(users.resetTokenExpiresAt, sql`NOW()`)));
+      const user = rows[0];
+      if (!user) {
+        return res.status(400).json({ error: "This reset link is invalid or has expired. Request a new one." });
+      }
+
+      const passwordHash = await bcrypt.hash(newPassword, BCRYPT_ROUNDS);
+      await db
+        .update(users)
+        .set({ password: passwordHash, resetToken: null, resetTokenExpiresAt: null })
+        .where(eq(users.id, user.id));
+
+      // Log them in right away
+      req.session.brokerId = user.id;
+      res.json({ success: true, user: toPublicUser(user) });
+    } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: error.errors?.[0]?.message || "Invalid reset data" });
+      }
+      console.error("[broker-auth] Reset password error:", error);
+      res.status(500).json({ error: "Failed to reset password" });
     }
   });
 }

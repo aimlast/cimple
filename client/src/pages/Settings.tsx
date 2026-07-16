@@ -9,6 +9,7 @@ import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { 
   Save, 
   User, 
@@ -171,6 +172,34 @@ export default function Settings() {
     if (d.requireNda !== undefined) setRequireNda(d.requireNda);
     if (d.autoAdvancePhase !== undefined) setAutoAdvancePhase(d.autoAdvancePhase);
   }, [brokerSettings]);
+
+  const [pwDialogOpen, setPwDialogOpen] = useState(false);
+  const [pwCurrent, setPwCurrent] = useState("");
+  const [pwNew, setPwNew] = useState("");
+  const [pwConfirm, setPwConfirm] = useState("");
+
+  const changePassword = useMutation({
+    mutationFn: async () => {
+      const r = await fetch("/api/broker-auth/change-password", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ currentPassword: pwCurrent, newPassword: pwNew }),
+      });
+      if (!r.ok) {
+        const body = await r.json().catch(() => ({}));
+        throw new Error(body.error || "Failed to change password");
+      }
+      return r.json();
+    },
+    onSuccess: () => {
+      setPwDialogOpen(false);
+      setPwCurrent(""); setPwNew(""); setPwConfirm("");
+      toast({ title: "Password changed", description: "Use your new password next time you sign in." });
+    },
+    onError: (e: Error) =>
+      toast({ title: "Couldn't change password", description: e.message, variant: "destructive" }),
+  });
 
   const saveSettings = useMutation({
     mutationFn: async (patch: Record<string, any>) => {
@@ -436,25 +465,58 @@ export default function Settings() {
             <CardContent className="space-y-4">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-medium">Two-Factor Authentication</p>
-                  <p className="text-sm text-muted-foreground">Add an extra layer of security</p>
-                </div>
-                <Button variant="outline" data-testid="button-setup-2fa">
-                  Set Up
-                </Button>
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div>
                   <p className="font-medium">Change Password</p>
                   <p className="text-sm text-muted-foreground">Update your account password</p>
                 </div>
-                <Button variant="outline" data-testid="button-change-password">
+                <Button
+                  variant="outline"
+                  onClick={() => setPwDialogOpen(true)}
+                  data-testid="button-change-password"
+                >
                   Change
                 </Button>
               </div>
             </CardContent>
           </Card>
+
+          <Dialog open={pwDialogOpen} onOpenChange={setPwDialogOpen}>
+            <DialogContent className="max-w-sm">
+              <DialogHeader>
+                <DialogTitle>Change password</DialogTitle>
+                <DialogDescription>
+                  Enter your current password, then choose a new one (at least 8 characters).
+                </DialogDescription>
+              </DialogHeader>
+              <div className="space-y-3 py-1">
+                <div>
+                  <Label htmlFor="pw-current" className="text-xs text-muted-foreground">Current password</Label>
+                  <Input id="pw-current" type="password" autoComplete="current-password" value={pwCurrent} onChange={(e) => setPwCurrent(e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <Label htmlFor="pw-new" className="text-xs text-muted-foreground">New password</Label>
+                  <Input id="pw-new" type="password" autoComplete="new-password" value={pwNew} onChange={(e) => setPwNew(e.target.value)} className="mt-1" />
+                </div>
+                <div>
+                  <Label htmlFor="pw-confirm" className="text-xs text-muted-foreground">Confirm new password</Label>
+                  <Input id="pw-confirm" type="password" autoComplete="new-password" value={pwConfirm} onChange={(e) => setPwConfirm(e.target.value)} className="mt-1" />
+                </div>
+                {pwNew && pwConfirm && pwNew !== pwConfirm && (
+                  <p className="text-xs text-destructive">Passwords don't match.</p>
+                )}
+              </div>
+              <DialogFooter>
+                <Button variant="ghost" onClick={() => setPwDialogOpen(false)}>Cancel</Button>
+                <Button
+                  className="bg-teal text-teal-foreground hover:bg-teal/90"
+                  disabled={changePassword.isPending || !pwCurrent || pwNew.length < 8 || pwNew !== pwConfirm}
+                  onClick={() => changePassword.mutate()}
+                  data-testid="button-confirm-change-password"
+                >
+                  {changePassword.isPending ? "Saving..." : "Change password"}
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
 
           <div className="flex justify-end">
             <Button onClick={handleSaveAccount} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-account">

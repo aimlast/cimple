@@ -42,7 +42,7 @@ export async function sendDirectEmail(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.app>",
+        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.ca>",
         to: [to],
         cc: cc && cc.length > 0 ? cc : undefined,
         subject,
@@ -76,7 +76,7 @@ async function sendEmail(to: string, subject: string, html: string): Promise<boo
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.app>",
+        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.ca>",
         to: [to],
         subject,
         html,

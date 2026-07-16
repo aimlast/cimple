@@ -12,7 +12,29 @@ export default function BrokerLogin() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [mode, setMode] = useState<"login" | "forgot" | "forgot-sent">("login");
   const queryClient = useQueryClient();
+
+  const requestReset = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/broker-auth/request-reset", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username }),
+        credentials: "include",
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || "Could not request a reset");
+      }
+      return res.json();
+    },
+    onSuccess: () => {
+      setError(null);
+      setMode("forgot-sent");
+    },
+    onError: (e: Error) => setError(e.message),
+  });
 
   const login = useMutation({
     mutationFn: async () => {
@@ -111,7 +133,41 @@ export default function BrokerLogin() {
             >
               {login.isPending ? "Signing in..." : "Sign in"}
             </button>
+
+            <button
+              type="button"
+              onClick={() => { setError(null); setMode("forgot"); }}
+              className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+              data-testid="button-forgot-password"
+            >
+              Forgot password?
+            </button>
           </form>
+
+          {mode === "forgot" && (
+            <div className="mt-4 pt-4 border-t border-border space-y-3">
+              <p className="text-xs text-muted-foreground">
+                Enter your username and we'll email you a reset link.
+              </p>
+              <button
+                onClick={() => requestReset.mutate()}
+                disabled={requestReset.isPending || !username.trim()}
+                className="w-full h-9 rounded-md border border-teal/40 text-teal text-sm font-medium hover:bg-teal/5 transition-colors disabled:opacity-50"
+                data-testid="button-send-reset"
+              >
+                {requestReset.isPending ? "Sending..." : "Email me a reset link"}
+              </button>
+            </div>
+          )}
+
+          {mode === "forgot-sent" && (
+            <div className="mt-4 pt-4 border-t border-border">
+              <p className="text-xs text-muted-foreground">
+                If that account exists, a reset link is on its way. The link is
+                valid for one hour — check your inbox.
+              </p>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground mt-4">

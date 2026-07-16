@@ -26,6 +26,7 @@ import SellerLayout from "@/layouts/SellerLayout";
 import SellerInterview from "@/pages/seller/SellerInterview";
 import BuyerLayout from "@/layouts/BuyerLayout";
 import BrokerLogin from "@/pages/broker/BrokerLogin";
+import BrokerResetPassword from "@/pages/broker/BrokerResetPassword";
 
 /** Redirect helper — replaces current URL in history (for legacy bookmarks) */
 function Redirect({ to }: { to: string }) {
@@ -210,6 +211,15 @@ function AppContent() {
   if (isFullscreen(location)) return <FullscreenLayout />;
   if (location.startsWith("/seller/")) return <SellerLayout />;
   if (location.startsWith("/buyer/") || location.startsWith("/view/") || location.startsWith("/review/")) return <BuyerLayout />;
+  // Password reset must be reachable logged-out — it renders outside the
+  // BrokerAuthGate that wraps everything else broker-side.
+  if (location.startsWith("/broker/reset-password/")) {
+    return (
+      <Switch>
+        <Route path="/broker/reset-password/:token" component={BrokerResetPassword} />
+      </Switch>
+    );
+  }
   return <BrokerLayout />;
 }
 
