@@ -4,46 +4,67 @@
  */
 import type { Deal } from "@shared/schema";
 
+/** Who performs a checklist item — drives the badge next to each label. */
+export type PhaseActor = "broker" | "seller" | "auto";
+
+export interface PhaseItem {
+  label: string;
+  done: boolean;
+  actor: PhaseActor;
+  /** Optional items don't count toward phase completion or block advancing. */
+  optional?: boolean;
+}
+
 export const PHASES = [
   {
     key: "phase1_info_collection",
-    label: "Info Collection",
+    label: "Broker Prep",
     short: "Phase 1",
-    items: (deal: Deal) => [
-      { label: "NDA signed", done: !!deal.ndaSigned },
+    intro:
+      "Your prep work. Invite the seller when ready — one secure link covers their questionnaire, documents, and the AI interview. Valuation is optional here; finish it any time before the CIM.",
+    // `extras.invited` comes from the invites query where available (OverviewTab);
+    // the stepper calls without it and falls back to questionnaire evidence.
+    items: (deal: Deal, extras?: { invited?: boolean }): PhaseItem[] => [
+      { label: "Seller invited", actor: "broker", done: extras?.invited ?? !!deal.questionnaireData },
+      { label: "NDA signed", actor: "broker", done: !!deal.ndaSigned },
       // Auto-reflects the seller finishing intake — no manual "mark received"
       // needed once questionnaire data exists.
-      { label: "Seller questionnaire", done: !!deal.questionnaireData || !!deal.sqCompleted },
-      { label: "Valuation", done: !!deal.valuationCompleted },
+      { label: "Seller questionnaire", actor: "seller", done: !!deal.questionnaireData || !!deal.sqCompleted },
+      { label: "Valuation", actor: "broker", optional: true, done: !!deal.valuationCompleted },
     ],
   },
   {
     key: "phase2_platform_intake",
-    label: "Platform Intake",
+    label: "Seller Intake",
     short: "Phase 2",
-    items: (deal: Deal) => [
-      { label: "Onboarding complete", done: !!deal.questionnaireData },
-      { label: "AI interview", done: !!deal.interviewCompleted },
+    intro:
+      "Mostly the seller's turn — they work through their invite link while you watch progress here. The public-data scrape runs on your click; the AI verifies everything with the seller.",
+    items: (deal: Deal): PhaseItem[] => [
+      { label: "Seller onboarding", actor: "seller", done: !!deal.questionnaireData },
+      { label: "Public data scraped", actor: "auto", optional: true, done: !!deal.scrapedAt },
+      { label: "AI interview", actor: "seller", done: !!deal.interviewCompleted },
     ],
   },
   {
     key: "phase3_content_creation",
     label: "Content Creation",
     short: "Phase 3",
-    items: (deal: Deal) => [
-      { label: "CIM draft generated", done: !!deal.cimContent },
-      { label: "Broker reviewed", done: !!deal.contentApprovedByBroker },
-      { label: "Seller approved", done: !!deal.contentApprovedBySeller },
+    intro: "The AI drafts the CIM from everything collected; you review, then the seller approves.",
+    items: (deal: Deal): PhaseItem[] => [
+      { label: "CIM draft generated", actor: "auto", done: !!deal.cimContent },
+      { label: "Broker reviewed", actor: "broker", done: !!deal.contentApprovedByBroker },
+      { label: "Seller approved", actor: "seller", done: !!deal.contentApprovedBySeller },
     ],
   },
   {
     key: "phase4_design_finalization",
     label: "Design & Final",
     short: "Phase 4",
-    items: (deal: Deal) => [
-      { label: "Design generated", done: !!deal.cimDesignData },
-      { label: "Broker approved", done: !!deal.designApprovedByBroker },
-      { label: "Seller approved", done: !!deal.designApprovedBySeller },
+    intro: "The AI designs the visual CIM; you approve the layout, then the seller signs off.",
+    items: (deal: Deal): PhaseItem[] => [
+      { label: "Design generated", actor: "auto", done: !!deal.cimDesignData },
+      { label: "Broker approved", actor: "broker", done: !!deal.designApprovedByBroker },
+      { label: "Seller approved", actor: "seller", done: !!deal.designApprovedBySeller },
     ],
   },
 ] as const;

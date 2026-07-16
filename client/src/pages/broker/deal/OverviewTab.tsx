@@ -5,7 +5,7 @@
  * document upload/table, website scrape card, integration prompts,
  * and deal analytics summary.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
@@ -51,6 +51,11 @@ import {
   Phone,
   Database,
   Plug,
+  Copy,
+  ExternalLink,
+  Send,
+  Eye,
+  Undo2,
 } from "lucide-react";
 import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
@@ -60,6 +65,7 @@ import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
   Deal,
+  SellerInvite,
   Document as DocType,
   CimSection,
   BrandingSettings,
@@ -68,14 +74,61 @@ import type {
 import { CIM_SECTIONS } from "@shared/schema";
 
 /* ═══════════════════════════════════════════
+   SHARED HELPERS
+═══════════════════════════════════════════ */
+/** "Who does this" badge shown next to each checklist item. */
+function ActorBadge({ who }: { who: "broker" | "seller" | "auto" }) {
+  const map = {
+    broker: { label: "You", cls: "bg-teal/10 text-teal" },
+    seller: { label: "Waiting on seller", cls: "bg-amber-500/10 text-amber-600" },
+    auto: { label: "Automatic", cls: "bg-muted text-muted-foreground" },
+  } as const;
+  const m = map[who];
+  return (
+    <span
+      className={`text-2xs font-medium px-1.5 py-0.5 rounded ${m.cls} shrink-0`}
+    >
+      {m.label}
+    </span>
+  );
+}
+
+/** The deal's seller invites — one secure link per seller for the whole flow. */
+function useInvites(dealId: string) {
+  return useQuery<SellerInvite[]>({
+    queryKey: ["/api/deals", dealId, "invites"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/invites`);
+      if (!r.ok) return [];
+      return r.json();
+    },
+  });
+}
+
+/* ═══════════════════════════════════════════
    DOCUMENT UPLOAD CARD
 ═══════════════════════════════════════════ */
-function DocumentUploadCard() {
+function DocumentUploadCard({
+  openSignal,
+}: {
+  openSignal?: { category: string; tab: "file" | "paste"; nonce: number } | null;
+}) {
   const { dealId } = useDeal();
   const { toast } = useToast();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [docFile, setDocFile] = useState<File | null>(null);
   const [docCategory, setDocCategory] = useState("financials");
+  const [uploadTab, setUploadTab] = useState<"file" | "paste">("file");
+  const [pasteText, setPasteText] = useState("");
+  const [pasteTitle, setPasteTitle] = useState("");
+
+  // Other cards (e.g. the Calls tile) can pop this dialog open pre-configured.
+  useEffect(() => {
+    if (!openSignal) return;
+    setDocCategory(openSignal.category);
+    setUploadTab(openSignal.tab);
+    setUploadOpen(true);
+  }, [openSignal]);
 
   const { data: docs = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
     queryKey: ["/api/deals", dealId, "documents"],
@@ -88,9 +141,19 @@ function DocumentUploadCard() {
 
   const uploadDoc = useMutation({
     mutationFn: async () => {
-      if (!docFile) throw new Error("No file selected");
+      // Pasted text becomes a plain .txt upload — same pipeline, zero server changes.
+      const file =
+        uploadTab === "paste"
+          ? new File(
+              [pasteText],
+              `${(pasteTitle.trim() || "call-transcript").replace(/[^a-zA-Z0-9-_ ]/g, "")}.txt`,
+              { type: "text/plain" },
+            )
+          : docFile;
+      if (!file || (uploadTab === "paste" && !pasteText.trim()))
+        throw new Error(uploadTab === "paste" ? "Nothing pasted" : "No file selected");
       const formData = new FormData();
-      formData.append("file", docFile);
+      formData.append("file", file);
       formData.append("category", docCategory);
       const r = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
@@ -108,6 +171,8 @@ function DocumentUploadCard() {
         description: "Parsing will begin automatically.",
       });
       setDocFile(null);
+      setPasteText("");
+      setPasteTitle("");
       setUploadOpen(false);
     },
     onError: (err: Error) => {
@@ -187,15 +252,53 @@ function DocumentUploadCard() {
             </DialogDescription>
           </DialogHeader>
           <div className="py-3 space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">File</Label>
-              <Input
-                type="file"
-                accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
-                onChange={(e) => setDocFile(e.target.files?.[0] || null)}
-                className="h-9"
-              />
+            <div className="flex gap-1 rounded-md bg-muted p-0.5 w-fit">
+              {(["file", "paste"] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setUploadTab(t)}
+                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                    uploadTab === t
+                      ? "bg-card shadow-sm"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {t === "file" ? "Upload file" : "Paste text"}
+                </button>
+              ))}
             </div>
+            {uploadTab === "file" ? (
+              <div className="space-y-1.5">
+                <Label className="text-xs">File</Label>
+                <Input
+                  type="file"
+                  accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
+                  onChange={(e) => setDocFile(e.target.files?.[0] || null)}
+                  className="h-9"
+                />
+              </div>
+            ) : (
+              <>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Title (optional)</Label>
+                  <Input
+                    placeholder="e.g. Seller call — July 15"
+                    value={pasteTitle}
+                    onChange={(e) => setPasteTitle(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Text</Label>
+                  <Textarea
+                    placeholder="Paste a call transcript, meeting notes, or any text — the AI extracts the key facts into the deal profile."
+                    value={pasteText}
+                    onChange={(e) => setPasteText(e.target.value)}
+                    className="min-h-[10rem] text-sm"
+                  />
+                </div>
+              </>
+            )}
             <div className="space-y-1.5">
               <Label className="text-xs">Category</Label>
               <Select value={docCategory} onValueChange={setDocCategory}>
@@ -224,7 +327,10 @@ function DocumentUploadCard() {
               size="sm"
               className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => uploadDoc.mutate()}
-              disabled={!docFile || uploadDoc.isPending}
+              disabled={
+                (uploadTab === "file" ? !docFile : !pasteText.trim()) ||
+                uploadDoc.isPending
+              }
             >
               {uploadDoc.isPending ? "Uploading..." : "Upload & Parse"}
             </Button>
@@ -239,30 +345,58 @@ function DocumentUploadCard() {
    INTEGRATION PROMPT CARD
 ═══════════════════════════════════════════ */
 function IntegrationPromptCard({
-  context,
+  onOpenTranscripts,
 }: {
-  context: "phase1" | "phase2";
+  onOpenTranscripts: () => void;
 }) {
+  // Single shared card. It used to be mounted once per phase with per-phase
+  // dismissal keys — treat any legacy key as dismissed.
   const [dismissed, setDismissed] = useState(() =>
-    localStorage.getItem(`cimple_integration_prompt_${context}`) ===
-      "dismissed",
+    ["shared", "phase1", "phase2"].some(
+      (k) =>
+        localStorage.getItem(`cimple_integration_prompt_${k}`) === "dismissed",
+    ),
   );
   const [, setLocation] = useLocation();
 
   if (dismissed) return null;
 
   const dismiss = () => {
-    localStorage.setItem(
-      `cimple_integration_prompt_${context}`,
-      "dismissed",
-    );
+    localStorage.setItem("cimple_integration_prompt_shared", "dismissed");
     setDismissed(true);
   };
 
-  const integrations = [
-    { icon: Mail, label: "Email", desc: "Read seller communications" },
-    { icon: Database, label: "CRM", desc: "Import deal notes & contacts" },
-    { icon: Phone, label: "Calls", desc: "Transcripts from seller calls" },
+  const tiles: {
+    icon: typeof Mail;
+    label: string;
+    desc: string;
+    badge: string;
+    badgeCls: string;
+    onClick?: () => void;
+  }[] = [
+    {
+      icon: Phone,
+      label: "Calls",
+      desc: "Upload or paste call transcripts",
+      badge: "Works now",
+      badgeCls: "bg-success/10 text-success",
+      onClick: onOpenTranscripts,
+    },
+    {
+      icon: Database,
+      label: "CRM",
+      desc: "Connect Pipedrive for buyer prefill",
+      badge: "Available",
+      badgeCls: "bg-teal/10 text-teal",
+      onClick: () => setLocation("/broker/integrations"),
+    },
+    {
+      icon: Mail,
+      label: "Email",
+      desc: "Read seller communications",
+      badge: "Coming soon",
+      badgeCls: "bg-muted text-muted-foreground",
+    },
   ];
 
   return (
@@ -283,20 +417,42 @@ function IntegrationPromptCard({
       </div>
       <p className="text-xs text-muted-foreground mb-3">
         The more context the AI has before the interview, the less the seller
-        needs to repeat. Connect email, CRM, or call recordings so the AI
+        needs to repeat. Add call transcripts or connect your CRM so the AI
         starts smarter.
       </p>
       <div className="grid grid-cols-3 gap-2 mb-3">
-        {integrations.map(({ icon: Icon, label, desc }) => (
-          <div
-            key={label}
-            className="rounded-md border border-border bg-card p-2.5 text-center"
-          >
-            <Icon className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
-            <p className="text-2xs font-medium">{label}</p>
-            <p className="text-[10px] text-muted-foreground">{desc}</p>
-          </div>
-        ))}
+        {tiles.map(({ icon: Icon, label, desc, badge, badgeCls, onClick }) =>
+          onClick ? (
+            <button
+              key={label}
+              onClick={onClick}
+              className="rounded-md border border-border bg-card p-2.5 text-center hover:border-teal/40 hover:bg-teal/5 transition-colors cursor-pointer"
+            >
+              <Icon className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
+              <p className="text-2xs font-medium">{label}</p>
+              <p className="text-[10px] text-muted-foreground">{desc}</p>
+              <span
+                className={`inline-block mt-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${badgeCls}`}
+              >
+                {badge}
+              </span>
+            </button>
+          ) : (
+            <div
+              key={label}
+              className="rounded-md border border-border bg-card/50 p-2.5 text-center opacity-70"
+            >
+              <Icon className="h-4 w-4 text-muted-foreground mx-auto mb-1" />
+              <p className="text-2xs font-medium">{label}</p>
+              <p className="text-[10px] text-muted-foreground">{desc}</p>
+              <span
+                className={`inline-block mt-1.5 text-[10px] font-medium px-1.5 py-0.5 rounded ${badgeCls}`}
+              >
+                {badge}
+              </span>
+            </div>
+          ),
+        )}
       </div>
       <div className="flex items-center gap-2">
         <Button
@@ -319,7 +475,7 @@ function IntegrationPromptCard({
 }
 
 /* ═══════════════════════════════════════════
-   PHASE 1 CENTER — Info Collection
+   PHASE 1 CENTER — Broker Prep
 ═══════════════════════════════════════════ */
 function Phase1Center() {
   const { deal, dealId } = useDeal();
@@ -327,7 +483,44 @@ function Phase1Center() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [sellerEmail, setSellerEmail] = useState("");
   const [sellerName, setSellerName] = useState("");
+  const [inviteResult, setInviteResult] = useState<{
+    url: string;
+    emailSent: boolean;
+    email: string;
+  } | null>(null);
   const [askingPrice, setAskingPrice] = useState(deal.askingPrice || "");
+  const [ndaOpen, setNdaOpen] = useState(false);
+  const [ndaEmail, setNdaEmail] = useState("");
+  const [ndaText, setNdaText] = useState("");
+
+  const { data: invites = [] } = useInvites(dealId);
+  const activeInvite = invites[0];
+  const inviteUrl = activeInvite
+    ? `${window.location.origin}/seller/${activeInvite.token}`
+    : null;
+
+  const defaultNdaText = `CONFIDENTIALITY AGREEMENT
+
+This agreement is between the broker engaged to market ${deal.businessName} and the undersigned seller representative, in connection with the preparation of a Confidential Information Memorandum ("CIM").
+
+The undersigned agrees that:
+
+1. All information exchanged during this engagement — including financial statements, customer and supplier details, employee information, and business operations — is confidential.
+2. Confidential information will be used solely for preparing and reviewing the sale materials for the business.
+3. Confidential information will not be shared with any third party without prior written consent, except professional advisors bound by equivalent confidentiality obligations.
+4. These obligations survive the end of the engagement.
+
+Signed electronically via the Cimple platform.`;
+
+  const copyInviteLink = async () => {
+    if (!inviteUrl) return;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      toast({ title: "Invite link copied" });
+    } catch {
+      toast({ title: "Copy failed — link:", description: inviteUrl });
+    }
+  };
 
   const update = useMutation({
     mutationFn: async (data: Partial<Deal>) => {
@@ -338,57 +531,220 @@ function Phase1Center() {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({ title: "Updated" });
     },
+    onError: (err: Error) => {
+      toast({
+        title: "Update failed",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
   });
 
   const invite = useMutation({
-    mutationFn: async (data: {
-      sellerEmail: string;
-      sellerName: string;
-    }) => {
-      const r = await apiRequest(
-        "POST",
-        `/api/deals/${dealId}/invites`,
-        data,
-      );
+    mutationFn: async (data: { sellerEmail: string; sellerName: string }) => {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/invites`, data);
       return r.json();
     },
     onSuccess: (data) => {
-      const url = `${window.location.origin}/seller/${data.token}`;
-      navigator.clipboard.writeText(url);
-      toast({
-        title: "Invite link copied",
-        description: "Send it to the seller.",
+      const url =
+        data.inviteUrl || `${window.location.origin}/seller/${data.token}`;
+      queryClient.invalidateQueries({
+        queryKey: ["/api/deals", dealId, "invites"],
       });
-      setInviteOpen(false);
+      // Keep the dialog open in a success state — the link must never be
+      // lost to a missed toast or a failed clipboard write.
+      setInviteResult({
+        url,
+        emailSent: !!data.emailSent,
+        email: data.sellerEmail || sellerEmail,
+      });
+      navigator.clipboard.writeText(url).catch(() => {});
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Invite failed",
+        description: err.message,
+        variant: "destructive",
+      });
     },
   });
 
-  const steps = [
+  const sendNda = useMutation({
+    mutationFn: async (data: { sellerEmail: string; ndaText: string }) => {
+      const r = await apiRequest("POST", `/api/deals/${dealId}/nda/send`, data);
+      return r.json();
+    },
+    onSuccess: (data) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      queryClient.invalidateQueries({
+        queryKey: ["/api/deals", dealId, "invites"],
+      });
+      setNdaOpen(false);
+      toast({
+        title: data.emailSent
+          ? "NDA sent for signature"
+          : "NDA ready — email not sent",
+        description: data.emailSent
+          ? "The seller will get an email with a signing link."
+          : `Send this link to the seller: ${data.url}`,
+      });
+      if (!data.emailSent && data.url)
+        navigator.clipboard.writeText(data.url).catch(() => {});
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Could not send NDA",
+        description: err.message,
+        variant: "destructive",
+      });
+    },
+  });
+
+  const inviteStatus = !activeInvite
+    ? null
+    : deal.questionnaireData
+      ? "Seller active — onboarding complete"
+      : activeInvite.acceptedAt
+        ? "Link opened — seller in progress"
+        : activeInvite.sentAt
+          ? `Invite emailed${activeInvite.sellerEmail ? ` to ${activeInvite.sellerEmail}` : ""} — waiting on seller`
+          : "Link created — not emailed yet";
+
+  type Step = {
+    key: string;
+    label: string;
+    desc: string;
+    who: "broker" | "seller" | "auto";
+    done: boolean;
+    optional?: boolean;
+    testId: string;
+    action?: () => void;
+    actionLabel?: string;
+    secondaryAction?: () => void;
+    secondaryLabel?: string;
+    input?: React.ReactNode;
+    /** Rendered when the step is done (status, links, undo…). */
+    doneExtra?: React.ReactNode;
+    undo?: () => void;
+  };
+
+  const sellerLinkButtons = activeInvite && (
+    <div className="flex flex-wrap items-center gap-2 mt-2">
+      {!deal.questionnaireData && (
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-7 text-xs gap-1.5 border-teal/30 text-teal hover:bg-teal/10"
+          disabled={invite.isPending}
+          onClick={() => {
+            // Re-send (or first-send) the email for the existing invite —
+            // the server reuses the same token.
+            if (activeInvite.sellerEmail) {
+              setInviteResult(null);
+              setInviteOpen(true);
+              invite.mutate({
+                sellerEmail: activeInvite.sellerEmail,
+                sellerName: activeInvite.sellerName || "",
+              });
+            } else {
+              setInviteResult(null);
+              setInviteOpen(true);
+            }
+          }}
+          data-testid="button-email-invite"
+        >
+          <Send className="h-3 w-3" />
+          {invite.isPending
+            ? "Sending..."
+            : activeInvite.sentAt
+              ? "Re-send email"
+              : "Email invite to seller"}
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant="outline"
+        className="h-7 text-xs gap-1.5"
+        onClick={copyInviteLink}
+        data-testid="button-copy-invite-link"
+      >
+        <Copy className="h-3 w-3" /> Copy invite link
+      </Button>
+      <Button
+        size="sm"
+        variant="ghost"
+        className="h-7 text-xs gap-1.5 text-muted-foreground"
+        onClick={() => window.open(inviteUrl!, "_blank")}
+        data-testid="button-open-seller-view"
+      >
+        <ExternalLink className="h-3 w-3" /> Preview seller view
+      </Button>
+    </div>
+  );
+
+  const steps: Step[] = [
+    {
+      key: "invite",
+      label: "Invite Seller",
+      desc: activeInvite
+        ? inviteStatus!
+        : "One secure link covers the seller's questionnaire, document uploads, and the AI interview.",
+      who: "broker",
+      done: !!activeInvite,
+      testId: "button-invite-seller",
+      action: () => {
+        setInviteResult(null);
+        setInviteOpen(true);
+      },
+      actionLabel: "Invite Seller",
+      doneExtra: (
+        <div className="mt-1">
+          {sellerLinkButtons}
+        </div>
+      ),
+    },
     {
       key: "nda",
       label: "NDA",
-      desc: "Non-Disclosure Agreement signed by seller",
+      desc: deal.ndaSigned
+        ? `Signed${deal.ndaSignerName ? ` by ${deal.ndaSignerName}` : ""}${deal.ndaSignedAt ? ` on ${new Date(deal.ndaSignedAt).toLocaleDateString()}` : ""}`
+        : "Send it for e-signature through Cimple, or handle it your usual way and mark it signed.",
+      who: "broker",
       done: !!deal.ndaSigned,
-      testId: "button-mark-nda-signed",
-      action: () =>
-        update.mutate({ ndaSigned: true, ndaSignedAt: new Date() }),
-      actionLabel: "Mark as Signed",
+      testId: "button-send-nda",
+      action: () => {
+        setNdaEmail(activeInvite?.sellerEmail || "");
+        setNdaText(deal.ndaText || defaultNdaText);
+        setNdaOpen(true);
+      },
+      actionLabel: "Send for E-Signature",
+      secondaryAction: () => update.mutate({ ndaSigned: true }),
+      secondaryLabel: "Mark as Signed",
+      undo: () => update.mutate({ ndaSigned: false } as Partial<Deal>),
     },
     {
       key: "sq",
       label: "Seller Questionnaire",
-      desc: "Initial business information from seller",
-      done: !!deal.sqCompleted,
+      desc: deal.questionnaireData
+        ? "Completed by the seller"
+        : "The seller fills this in from their invite link — it completes automatically.",
+      who: "seller",
+      done: !!deal.questionnaireData || !!deal.sqCompleted,
       testId: "button-mark-questionnaire-complete",
-      action: () => setInviteOpen(true),
-      actionLabel: "Send to Seller",
       secondaryAction: () => update.mutate({ sqCompleted: true }),
-      secondaryLabel: "Mark as Received",
+      secondaryLabel: "Mark as Received (collected outside Cimple)",
+      // Only manually-set completion can be undone — real seller data can't.
+      undo:
+        deal.sqCompleted && !deal.questionnaireData
+          ? () => update.mutate({ sqCompleted: false })
+          : undefined,
     },
     {
       key: "valuation",
       label: "Valuation",
-      desc: "Business valuation and asking price established",
+      desc: "Optional here — finish it any time before generating the CIM.",
+      who: "broker",
+      optional: true,
       done: !!deal.valuationCompleted,
       testId: "button-mark-valuation-complete",
       action: () =>
@@ -406,19 +762,22 @@ function Phase1Center() {
           data-testid="input-asking-price"
         />
       ),
+      undo: () => update.mutate({ valuationCompleted: false }),
     },
   ];
 
-  const allDone = steps.every((s) => s.done);
+  const requiredDone = steps.filter((s) => !s.optional).every((s) => s.done);
+  const valuationOpen = !deal.valuationCompleted;
 
   return (
     <div className="space-y-3">
       <div>
         <h2 className="text-lg font-semibold tracking-tight">
-          Phase 1 — Info Collection
+          Phase 1 — Broker Prep
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          Complete these steps before beginning the AI-powered intake.
+          Your prep work. Invite the seller when ready — one secure link covers
+          their questionnaire, documents, and the AI interview.
         </p>
       </div>
 
@@ -430,53 +789,77 @@ function Phase1Center() {
           <div className="flex items-start gap-3">
             {step.done ? (
               <CheckCircle2
-                className="h-4.5 w-4.5 text-success mt-0.5 shrink-0"
+                className="text-success mt-0.5 shrink-0"
                 style={{ width: "1.125rem", height: "1.125rem" }}
               />
             ) : (
               <Circle
-                className="h-4.5 w-4.5 text-muted-foreground/30 mt-0.5 shrink-0"
+                className="text-muted-foreground/30 mt-0.5 shrink-0"
                 style={{ width: "1.125rem", height: "1.125rem" }}
               />
             )}
             <div className="flex-1 min-w-0">
-              <p
-                className={`text-sm font-medium ${step.done ? "line-through text-muted-foreground" : ""}`}
-              >
-                {step.label}
-              </p>
+              <div className="flex items-center gap-2 flex-wrap">
+                <p
+                  className={`text-sm font-medium ${step.done ? "line-through text-muted-foreground" : ""}`}
+                >
+                  {step.label}
+                </p>
+                <ActorBadge who={step.who} />
+                {step.optional && !step.done && (
+                  <span className="text-2xs text-muted-foreground/60">
+                    optional
+                  </span>
+                )}
+              </div>
               <p className="text-xs text-muted-foreground mt-0.5">
                 {step.desc}
               </p>
               {!step.done && (
                 <div className="mt-2.5 space-y-2">
-                  {(step as any).input}
-                  <div className="flex items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant={
-                        (step as any).secondaryAction ? "outline" : "default"
-                      }
-                      className={`h-7 text-xs ${!(step as any).secondaryAction ? "bg-teal text-teal-foreground hover:bg-teal/90" : ""}`}
-                      onClick={step.action}
-                      disabled={update.isPending}
-                      data-testid={step.testId}
-                    >
-                      {step.actionLabel}
-                    </Button>
-                    {(step as any).secondaryAction && (
+                  {step.input}
+                  <div className="flex items-center gap-2 flex-wrap">
+                    {step.action && (
+                      <Button
+                        size="sm"
+                        className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
+                        onClick={step.action}
+                        disabled={update.isPending}
+                        data-testid={step.testId}
+                      >
+                        {step.actionLabel}
+                      </Button>
+                    )}
+                    {step.secondaryAction && (
                       <Button
                         size="sm"
                         variant="ghost"
                         className="h-7 text-xs text-muted-foreground"
-                        onClick={(step as any).secondaryAction}
+                        onClick={step.secondaryAction}
                         disabled={update.isPending}
                         data-testid={`${step.testId}-secondary`}
                       >
-                        {(step as any).secondaryLabel}
+                        {step.secondaryLabel}
                       </Button>
                     )}
                   </div>
+                </div>
+              )}
+              {step.done && (
+                <div className="mt-1">
+                  {step.doneExtra}
+                  {step.undo && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-6 mt-1 px-1.5 text-2xs text-muted-foreground/60 hover:text-muted-foreground gap-1"
+                      onClick={step.undo}
+                      disabled={update.isPending}
+                      data-testid={`${step.testId}-undo`}
+                    >
+                      <Undo2 className="h-3 w-3" /> Undo
+                    </Button>
+                  )}
                 </div>
               )}
             </div>
@@ -484,17 +867,16 @@ function Phase1Center() {
         </div>
       ))}
 
-      <DocumentUploadCard />
-      <IntegrationPromptCard context="phase1" />
-
-      {allDone && (
+      {requiredDone && (
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-teal">
-              Phase 1 complete
+              Ready for Seller Intake
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Ready to advance to Platform Intake.
+              {valuationOpen
+                ? "Valuation is still open — you can finish it any time before the CIM."
+                : "Ready to advance to Seller Intake."}
             </p>
           </div>
           <Button
@@ -502,40 +884,148 @@ function Phase1Center() {
             className="bg-teal text-teal-foreground hover:bg-teal/90 shrink-0"
             data-testid="button-advance-phase-2"
             disabled={update.isPending}
-            onClick={() => update.mutate({ phase: "phase2_platform_intake" } as Partial<Deal>)}
+            onClick={() =>
+              update.mutate({ phase: "phase2_platform_intake" } as Partial<Deal>)
+            }
           >
-            Advance to Phase 2{" "}
-            <ChevronRight className="h-3.5 w-3.5 ml-1" />
+            Advance to Phase 2 <ChevronRight className="h-3.5 w-3.5 ml-1" />
           </Button>
         </div>
       )}
 
       <Dialog open={inviteOpen} onOpenChange={setInviteOpen}>
         <DialogContent>
+          {inviteResult ? (
+            <>
+              <DialogHeader>
+                <DialogTitle>Seller invited</DialogTitle>
+                <DialogDescription>
+                  {inviteResult.emailSent
+                    ? `An invite email is on its way to ${inviteResult.email}.`
+                    : "The email could not be sent — share the link below with the seller directly."}
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-3 space-y-2">
+                <Label className="text-xs">Seller's secure link</Label>
+                <div className="flex gap-2">
+                  <Input
+                    readOnly
+                    value={inviteResult.url}
+                    className="h-9 text-xs font-mono"
+                    onFocus={(e) => e.target.select()}
+                  />
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-9 shrink-0 gap-1.5"
+                    onClick={() => {
+                      navigator.clipboard
+                        .writeText(inviteResult.url)
+                        .then(() => toast({ title: "Link copied" }))
+                        .catch(() => {});
+                    }}
+                  >
+                    <Copy className="h-3.5 w-3.5" /> Copy
+                  </Button>
+                </div>
+                <p className="text-2xs text-muted-foreground">
+                  This one link covers the seller's questionnaire, document
+                  uploads, and the AI interview.
+                </p>
+              </div>
+              <div className="flex justify-end">
+                <Button
+                  size="sm"
+                  className="bg-teal text-teal-foreground hover:bg-teal/90"
+                  onClick={() => setInviteOpen(false)}
+                >
+                  Done
+                </Button>
+              </div>
+            </>
+          ) : (
+            <>
+              <DialogHeader>
+                <DialogTitle>Invite Seller</DialogTitle>
+                <DialogDescription>
+                  Emails the seller a secure link for their questionnaire,
+                  documents, and the AI interview.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="py-3 space-y-3">
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Seller name</Label>
+                  <Input
+                    placeholder="Jane Smith"
+                    value={sellerName}
+                    onChange={(e) => setSellerName(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label className="text-xs">Seller email</Label>
+                  <Input
+                    type="email"
+                    placeholder="jane@example.com"
+                    value={sellerEmail}
+                    onChange={(e) => setSellerEmail(e.target.value)}
+                    className="h-9"
+                  />
+                </div>
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setInviteOpen(false)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  size="sm"
+                  className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+                  onClick={() => invite.mutate({ sellerEmail, sellerName })}
+                  disabled={
+                    !sellerName.trim() || !sellerEmail.trim() || invite.isPending
+                  }
+                  data-testid="button-generate-invite"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                  {invite.isPending ? "Sending..." : "Send Invite"}
+                </Button>
+              </div>
+            </>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={ndaOpen} onOpenChange={setNdaOpen}>
+        <DialogContent className="max-w-xl">
           <DialogHeader>
-            <DialogTitle>Send Questionnaire to Seller</DialogTitle>
+            <DialogTitle>Send NDA for E-Signature</DialogTitle>
             <DialogDescription>
-              Generate a secure intake link for the seller.
+              The seller gets an email with a signing page — their typed name,
+              date, and IP are recorded. Edit the template below or paste your
+              brokerage's own NDA text.
             </DialogDescription>
           </DialogHeader>
           <div className="py-3 space-y-3">
-            <div className="space-y-1.5">
-              <Label className="text-xs">Seller name</Label>
-              <Input
-                placeholder="Jane Smith"
-                value={sellerName}
-                onChange={(e) => setSellerName(e.target.value)}
-                className="h-9"
-              />
-            </div>
             <div className="space-y-1.5">
               <Label className="text-xs">Seller email</Label>
               <Input
                 type="email"
                 placeholder="jane@example.com"
-                value={sellerEmail}
-                onChange={(e) => setSellerEmail(e.target.value)}
+                value={ndaEmail}
+                onChange={(e) => setNdaEmail(e.target.value)}
                 className="h-9"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">Agreement text</Label>
+              <Textarea
+                value={ndaText}
+                onChange={(e) => setNdaText(e.target.value)}
+                className="min-h-[14rem] text-xs font-mono"
               />
             </div>
           </div>
@@ -543,22 +1033,23 @@ function Phase1Center() {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => setInviteOpen(false)}
+              onClick={() => setNdaOpen(false)}
             >
               Cancel
             </Button>
             <Button
               size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
-              onClick={() => invite.mutate({ sellerEmail, sellerName })}
-              disabled={
-                !sellerName.trim() ||
-                !sellerEmail.trim() ||
-                invite.isPending
+              className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+              onClick={() =>
+                sendNda.mutate({ sellerEmail: ndaEmail, ndaText })
               }
-              data-testid="button-generate-invite"
+              disabled={
+                !ndaEmail.trim() || !ndaText.trim() || sendNda.isPending
+              }
+              data-testid="button-send-nda-confirm"
             >
-              {invite.isPending ? "Generating..." : "Copy Invite Link"}
+              <Send className="h-3.5 w-3.5" />
+              {sendNda.isPending ? "Sending..." : "Send for Signature"}
             </Button>
           </div>
         </DialogContent>
@@ -568,13 +1059,39 @@ function Phase1Center() {
 }
 
 /* ═══════════════════════════════════════════
-   PHASE 2 CENTER — Platform Intake
+   PHASE 2 CENTER — Seller Intake
 ═══════════════════════════════════════════ */
+/** Friendly labels for the scraper's known field keys (server/scraper/index.ts). */
+const SCRAPED_FIELD_LABELS: Record<string, string> = {
+  businessDescription: "Business description",
+  yearFounded: "Year founded",
+  yearsOperating: "Years operating",
+  numberOfLocations: "Number of locations",
+  locationSite: "Location",
+  website: "Website",
+  keyProducts: "Key products / services",
+  revenueStreams: "Revenue streams",
+  targetMarket: "Target market",
+  competitiveAdvantage: "Competitive advantage",
+  uniqueSellingProposition: "Unique selling proposition",
+  brandIdentity: "Brand identity",
+  awards: "Awards & recognition",
+  managementTeam: "Management team",
+  employees: "Employees",
+};
+
 function Phase2Center() {
   const { deal, dealId } = useDeal();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
+  const [showScraped, setShowScraped] = useState(false);
+
+  const { data: invites = [] } = useInvites(dealId);
+  const activeInvite = invites[0];
+  const inviteUrl = activeInvite
+    ? `${window.location.origin}/seller/${activeInvite.token}`
+    : null;
 
   // Advance Platform Intake → Content Creation. Without this, a broker who
   // finished the interview had no visible way to reach the Generate CIM step
@@ -603,14 +1120,14 @@ function Phase2Center() {
       return r.json() as Promise<{
         fieldsExtracted: string[];
         fieldCount: number;
-        websiteUrl: string;
+        source: string;
       }>;
     },
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
         title: "Scrape complete",
-        description: `${result.fieldCount} fields extracted from ${result.websiteUrl}`,
+        description: `${result.fieldCount} fields found — tap "View scraped data" to review them.`,
       });
     },
     onError: (err: Error) => {
@@ -639,11 +1156,11 @@ function Phase2Center() {
     <div className="space-y-4">
       <div>
         <h2 className="text-lg font-semibold tracking-tight">
-          Phase 2 — Platform Intake
+          Phase 2 — Seller Intake
         </h2>
         <p className="text-sm text-muted-foreground mt-0.5">
-          The seller completes onboarding, then the AI conducts the
-          interview.
+          Mostly the seller's turn — they work through their invite link while
+          you watch progress here.
         </p>
       </div>
 
@@ -657,15 +1174,49 @@ function Phase2Center() {
           ) : (
             <Circle className="h-[1.125rem] w-[1.125rem] text-muted-foreground/30 shrink-0" />
           )}
-          <div>
-            <p
-              className={`text-sm font-medium ${deal.questionnaireData ? "line-through text-muted-foreground" : ""}`}
-            >
-              Seller onboarding
-            </p>
+          <div className="flex-1 min-w-0">
+            <div className="flex items-center gap-2 flex-wrap">
+              <p
+                className={`text-sm font-medium ${deal.questionnaireData ? "line-through text-muted-foreground" : ""}`}
+              >
+                Seller onboarding
+              </p>
+              <ActorBadge who="seller" />
+            </div>
             <p className="text-xs text-muted-foreground">
-              Systems, key people, business basics
+              {deal.questionnaireData
+                ? "Systems, key people, business basics — completed by the seller"
+                : activeInvite
+                  ? activeInvite.acceptedAt
+                    ? "Seller opened their link and is working through onboarding."
+                    : `Invite ${activeInvite.sentAt ? "emailed" : "created"}${activeInvite.sellerEmail ? ` for ${activeInvite.sellerEmail}` : ""} — waiting on the seller to start.`
+                  : "No seller invited yet — invite them from Phase 1 to unlock onboarding."}
             </p>
+            {activeInvite && !deal.questionnaireData && (
+              <div className="flex flex-wrap items-center gap-2 mt-2">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => {
+                    navigator.clipboard
+                      .writeText(inviteUrl!)
+                      .then(() => toast({ title: "Invite link copied" }))
+                      .catch(() => toast({ title: "Link", description: inviteUrl! }));
+                  }}
+                >
+                  <Copy className="h-3 w-3" /> Copy invite link
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1.5 text-muted-foreground"
+                  onClick={() => window.open(inviteUrl!, "_blank")}
+                >
+                  <ExternalLink className="h-3 w-3" /> Preview seller view
+                </Button>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -720,29 +1271,79 @@ function Phase2Center() {
               </div>
             )}
             {isScraped && (
-              <Button
-                size="sm"
-                variant="ghost"
-                className="mt-2 h-7 text-xs text-muted-foreground/60 hover:text-muted-foreground px-0 gap-1.5"
-                onClick={() => scrapeMutation.mutate()}
-                disabled={scrapeMutation.isPending}
-              >
-                {scrapeMutation.isPending ? (
-                  <>
-                    <Loader2 className="h-3 w-3 animate-spin" />{" "}
-                    Re-scraping...
-                  </>
-                ) : (
-                  "Re-scrape"
-                )}
-              </Button>
+              <div className="mt-2 flex items-center gap-1">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setShowScraped(true)}
+                  data-testid="button-view-scraped-data"
+                >
+                  <Eye className="h-3 w-3" /> View scraped data
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs text-muted-foreground/60 hover:text-muted-foreground gap-1.5"
+                  onClick={() => scrapeMutation.mutate()}
+                  disabled={scrapeMutation.isPending}
+                >
+                  {scrapeMutation.isPending ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />{" "}
+                      Re-scraping...
+                    </>
+                  ) : (
+                    "Re-scrape"
+                  )}
+                </Button>
+              </div>
             )}
           </div>
         </div>
       </div>
 
-      <DocumentUploadCard />
-      <IntegrationPromptCard context="phase2" />
+      <Dialog open={showScraped} onOpenChange={setShowScraped}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Scraped public data</DialogTitle>
+            <DialogDescription>
+              {scrapedFieldCount} fields found
+              {scrapedDate ? ` on ${scrapedDate}` : ""} —{" "}
+              <span className="text-amber-600">
+                unverified: the AI confirms each item with the seller during
+                the interview.
+              </span>
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-y-auto space-y-3 py-2 pr-1">
+            {Object.entries(
+              (deal.scrapedData as Record<string, string>) || {},
+            ).map(([key, value]) => (
+              <div key={key}>
+                <p className="text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                  {SCRAPED_FIELD_LABELS[key] ||
+                    key
+                      .replace(/([A-Z])/g, " $1")
+                      .replace(/^./, (c) => c.toUpperCase())}
+                </p>
+                {key === "website" ? (
+                  <a
+                    href={/^https?:/.test(value) ? value : `https://${value}`}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="text-sm text-teal hover:underline break-all"
+                  >
+                    {value}
+                  </a>
+                ) : (
+                  <p className="text-sm whitespace-pre-wrap">{value}</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </DialogContent>
+      </Dialog>
 
       {/* AI Interview */}
       <div
@@ -1485,7 +2086,14 @@ export function OverviewTab() {
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(
     new Set(),
   );
+  // Set by the Calls tile to pop the shared upload dialog pre-configured.
+  const [uploadSignal, setUploadSignal] = useState<{
+    category: string;
+    tab: "file" | "paste";
+    nonce: number;
+  } | null>(null);
 
+  const { data: invites = [] } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
 
   const phaseComponents: Record<string, React.ReactNode> = {
@@ -1510,8 +2118,9 @@ export function OverviewTab() {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
         const isExpanded = isCurrentPhase || expandedPhases.has(phase.key);
-        const items = phase.items(deal);
-        const doneCount = items.filter((i) => i.done).length;
+        const items = phase.items(deal, { invited: invites.length > 0 });
+        const required = items.filter((i) => !i.optional);
+        const doneCount = required.filter((i) => i.done).length;
 
         return (
           <div
@@ -1570,7 +2179,7 @@ export function OverviewTab() {
                 <span className="text-xs text-muted-foreground">
                   {isComplete
                     ? "Phase complete"
-                    : `${doneCount}/${items.length} tasks done`}
+                    : `${doneCount}/${required.length} tasks done`}
                 </span>
               </div>
 
@@ -1590,6 +2199,31 @@ export function OverviewTab() {
           </div>
         );
       })}
+
+      {/* Shared inputs — documents + data sources feed the AI in every
+          phase (late lease amendments, new transcripts), so they render
+          once here instead of per-phase. */}
+      {(
+        <div className="pt-3 space-y-3">
+          <div>
+            <h3 className="text-sm font-semibold">Ongoing inputs</h3>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Documents and data sources feed the AI throughout intake — you or
+              the seller can add them at any time.
+            </p>
+          </div>
+          <DocumentUploadCard openSignal={uploadSignal} />
+          <IntegrationPromptCard
+            onOpenTranscripts={() =>
+              setUploadSignal({
+                category: "transcripts",
+                tab: "paste",
+                nonce: Date.now(),
+              })
+            }
+          />
+        </div>
+      )}
 
       {/* Document table below phases */}
       <DocumentTable />

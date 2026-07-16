@@ -57,6 +57,16 @@ const FIELD_ALIASES: Record<string, string> = {
   licenses: "permitsLicenses",
   askingPriceExpectation: "askingPrice",
   priceExpectation: "askingPrice",
+  // Document-extractor vocabulary (server/documents/extractor.ts) — the doc
+  // pipeline routes its keys through canonicalFieldName too, so its emitted
+  // names must land on the canonical spellings the coverage classifier and
+  // the interview prompt read. Without these, document extractions were
+  // invisible to coverage and the agent re-asked answered questions.
+  totalEmployees: "employees",
+  permits: "permitsLicenses",
+  equipment: "assetsIncluded",
+  propertyNotes: "propertyInfo",
+  ownerHoursPerWeek: "ownerInvolvement",
 };
 
 /** Resolve a field name to its canonical spelling. */

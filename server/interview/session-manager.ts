@@ -30,7 +30,13 @@ export interface TurnResult {
   sessionId: string;
   /** Summary of what was captured this turn */
   captured: {
+    /** Populated coverage-known canonical fields — same vocabulary as the
+     *  CIM COVERAGE panel, so the header count can never wildly diverge
+     *  from the panel again. */
     total: number;
+    /** Every populated extractedInfo key, including ad-hoc document
+     *  extraction keys that don't map to a CIM section. */
+    rawTotal: number;
     newFields: string[];
     updatedFields: string[];
     changes: FieldChange[];
@@ -136,7 +142,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
         message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
         suggestedAnswers: [],
         sessionId: session.id,
-        captured: { total: countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+        captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
         sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
         industryContext: extractIndustryContextForFrontend(kb.industryContext),
         deferredTopics: (sessionMeta._deferredTopics as string[]) || [],
@@ -193,6 +199,20 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     timestamp: new Date().toISOString(),
   };
 
+  // Confidence map from the most recent prior session (if any) — confirmed
+  // fields stay confirmed across sessions.
+  const priorSessions = await db
+    .select()
+    .from(interviewSessions)
+    .where(eq(interviewSessions.dealId, dealId))
+    .orderBy(desc(interviewSessions.lastActivityAt));
+  const priorMeta = priorSessions.find((s) => s.id !== session.id)?.extractedInfo as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const priorConfidenceLevels =
+    (priorMeta?._confidenceLevels as Record<string, string> | undefined) ?? {};
+
   await db
     .update(interviewSessions)
     .set({
@@ -202,7 +222,10 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       extractedInfo: {
         _industryContext: openingResult.industryContext,
         _deferredTopics: [],
-        _confidenceLevels: {},
+        // Carry seller confirmations forward from any prior session — a
+        // fresh map would demote confirmed fields to "inferred" and make
+        // the agent re-verify answers the seller already gave.
+        _confidenceLevels: priorConfidenceLevels,
       },
     })
     .where(eq(interviewSessions.id, session.id));
@@ -217,7 +240,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     whyItMatters: openingResult.whyItMatters,
     suggestedAnswers: openingResult.suggestedAnswers,
     sessionId: session.id,
-    captured: { total: countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+    captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
     sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
     deferredTopics: [],
@@ -448,7 +471,7 @@ export async function processTurn(
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     sessionId,
     captured: {
-      total: countExtractedFields(updatedDeal!),
+      ...countExtractedFields(updatedDeal!),
       newFields: changes.filter((c) => c.previousValue === null).map((c) => c.fieldName),
       updatedFields: changes.filter((c) => c.previousValue !== null).map((c) => c.fieldName),
       changes,
@@ -600,12 +623,19 @@ export async function endSessionManually(
   return { ok: true };
 }
 
-function countExtractedFields(deal: { extractedInfo: unknown }): number {
+function countExtractedFields(deal: { extractedInfo: unknown }): { total: number; rawTotal: number } {
   const info = deal.extractedInfo as Record<string, unknown> | null;
-  if (!info) return 0;
-  return Object.values(info).filter(
-    (v) => v !== null && v !== undefined && v !== "",
-  ).length;
+  if (!info) return { total: 0, rawTotal: 0 };
+  const populated = Object.entries(info).filter(
+    ([, v]) => v !== null && v !== undefined && v !== "",
+  );
+  return {
+    // Only coverage-known canonical fields count toward the headline number —
+    // ad-hoc document keys inflated it to "207 fields captured" while the
+    // coverage panel (which reads the canonical vocabulary) showed 0 covered.
+    total: populated.filter(([k]) => KNOWN_EXTRACTED_FIELDS.has(k)).length,
+    rawTotal: populated.length,
+  };
 }
 
 /**

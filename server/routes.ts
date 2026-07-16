@@ -1826,10 +1826,32 @@ Return JSON only.`,
     }
   });
 
+  // ── Re-run document extraction with the current pipeline ──
+  // Replays stored extractions through the canonicalising merge and, where
+  // the files are on disk, re-extracts with the expanded CIM vocabulary.
+  // Fixes deals whose documents were ingested before the coverage fix.
+  app.post("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Re-extraction calls Claude per document — allow up to 10 minutes.
+      req.setTimeout(10 * 60 * 1000);
+      res.setTimeout(10 * 60 * 1000);
+      const { reprocessDealDocuments } = await import("./documents/reprocess");
+      const result = await reprocessDealDocuments(deal.id);
+      res.json(result);
+    } catch (error: any) {
+      console.error("Reprocess error:", error);
+      res.status(500).json({ error: error.message || "Failed to reprocess documents" });
+    }
+  });
+
   // ── Public data scrape ──
   app.post("/api/deals/:dealId/scrape", requireBroker, async (req, res) => {
     try {
       const { dealId } = req.params;
+      const owned = await getOwnedDeal(dealId, req.session.brokerId);
+      if (!owned) return res.status(404).json({ error: "Deal not found" });
       const { websiteUrl } = req.body as { websiteUrl?: string };
       const { scrapeDeal } = await import("./scraper/index");
       const result = await scrapeDeal(dealId, websiteUrl || undefined);
@@ -1878,6 +1900,15 @@ Return JSON only.`,
       }
 
       const validatedData = insertDealSchema.partial().parse(allowedBody);
+      // NDA lifecycle is server-stamped: trust the server clock on sign,
+      // clear the signature details on undo.
+      if (validatedData.ndaSigned === true && !validatedData.ndaSignedAt) {
+        validatedData.ndaSignedAt = new Date();
+      } else if (validatedData.ndaSigned === false) {
+        validatedData.ndaSignedAt = null;
+        validatedData.ndaSignerName = null;
+        validatedData.ndaSignedIp = null;
+      }
       const deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
@@ -2104,6 +2135,54 @@ Return JSON only.`,
       res.json(integration);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to create integration" });
+    }
+  });
+
+  // Validate a Pipedrive API token server-side, then upsert the integration —
+  // a bad token must never land as "connected".
+  app.post("/api/integrations/pipedrive/connect", requireBroker, async (req, res) => {
+    try {
+      const apiToken =
+        typeof req.body.apiToken === "string" ? req.body.apiToken.trim() : "";
+      if (!apiToken) return res.status(400).json({ error: "API token is required" });
+
+      try {
+        const check = await fetch(
+          `https://api.pipedrive.com/v1/users/me?api_token=${encodeURIComponent(apiToken)}`,
+        );
+        const body: any = await check.json().catch(() => null);
+        if (!check.ok || !body?.success) {
+          return res
+            .status(400)
+            .json({ error: "Pipedrive rejected that token — double-check it and try again." });
+        }
+      } catch {
+        return res
+          .status(400)
+          .json({ error: "Could not reach Pipedrive to validate the token. Try again shortly." });
+      }
+
+      const existing = (
+        await storage.getIntegrationsByBroker(req.session.brokerId!)
+      ).find((i) => i.provider === "pipedrive");
+      const integration = existing
+        ? await storage.updateIntegration(existing.id, {
+            accessToken: apiToken,
+            status: "connected",
+            connectedAt: new Date(),
+          } as any)
+        : await storage.createIntegration({
+            provider: "pipedrive",
+            status: "connected",
+            accessToken: apiToken,
+            connectedAt: new Date(),
+            brokerId: req.session.brokerId,
+          } as any);
+
+      res.json({ ok: true, integration });
+    } catch (error: any) {
+      console.error("Pipedrive connect error:", error);
+      res.status(500).json({ error: "Failed to connect Pipedrive" });
     }
   });
 
@@ -2605,17 +2684,92 @@ Return JSON only.`,
   // SELLER INVITE ROUTES
   // =============================
   
+  // Prefer APP_URL; fall back to the requesting host so non-production
+  // deploys never email links pointing at the production URL.
+  const appBase = (req: Request) =>
+    process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+
+  // One invite per seller email per deal — both the questionnaire invite and
+  // the NDA flow share the same token. Validates through the insert schema.
+  const findOrCreateSellerInvite = async (
+    dealId: string,
+    sellerEmail: string,
+    sellerName?: string | null,
+  ) => {
+    const { insertSellerInviteSchema } = await import("@shared/schema");
+    const existing = await storage.getSellerInvitesByDealId(dealId);
+    const match = sellerEmail
+      ? existing.find(
+          (i) => (i.sellerEmail || "").toLowerCase() === sellerEmail.toLowerCase(),
+        )
+      : undefined;
+    if (match) {
+      // Keep the seller's name current on re-invite.
+      if (sellerName && sellerName !== match.sellerName) {
+        const updated = await storage.updateSellerInvite(match.id, { sellerName });
+        if (updated) return updated;
+      }
+      return match;
+    }
+    const validated = insertSellerInviteSchema.parse({
+      dealId,
+      token: crypto.randomUUID(),
+      sellerEmail: sellerEmail || null,
+      sellerName: sellerName || null,
+    });
+    return storage.createSellerInvite(validated);
+  };
+
+  const sellerInviteEmailHtml = (
+    sellerName: string | null,
+    businessName: string,
+    inviteUrl: string,
+  ) => `
+    <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+      <h2 style="color: #14b8a6; margin-bottom: 16px;">Let's tell the story of ${businessName}</h2>
+      <p>Hello${sellerName ? ` ${sellerName}` : ""},</p>
+      <p>Your broker is preparing the confidential sale materials for <strong>${businessName}</strong> and has set up a secure workspace for you on Cimple.</p>
+      <p>One link covers everything: a short questionnaire, document uploads, and a guided interview with an AI advisor that helps you present the business at its best.</p>
+      <p style="margin: 32px 0;">
+        <a href="${inviteUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Start your business profile</a>
+      </p>
+      <p style="color: #888; font-size: 12px;">This is your personal secure link — please don't forward it. You can stop and resume any time; your progress is saved.</p>
+    </div>
+  `;
+
+  // Creates (or re-sends) the seller's invite. One invite per seller email —
+  // repeat sends reuse the same token instead of minting new live links.
   app.post("/api/deals/:dealId/invites", requireBroker, async (req, res) => {
     try {
-      const { insertSellerInviteSchema } = await import("@shared/schema");
-      const token = crypto.randomUUID();
-      const validatedData = insertSellerInviteSchema.parse({
-        ...req.body,
-        dealId: req.params.dealId,
-        token,
-      });
-      const invite = await storage.createSellerInvite(validatedData);
-      res.json(invite);
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const sellerEmail =
+        typeof req.body.sellerEmail === "string" ? req.body.sellerEmail.trim() : "";
+      const sellerName =
+        typeof req.body.sellerName === "string" ? req.body.sellerName.trim() : "";
+
+      let invite = await findOrCreateSellerInvite(deal.id, sellerEmail, sellerName);
+
+      const inviteUrl = `${appBase(req)}/seller/${invite.token}`;
+      let emailSent = false;
+      if (sellerEmail) {
+        emailSent = await sendDirectEmail(
+          sellerEmail,
+          `${deal.businessName}: start your business profile`,
+          sellerInviteEmailHtml(invite.sellerName ?? null, deal.businessName, inviteUrl),
+        );
+        if (emailSent) {
+          const updated = await storage.updateSellerInvite(invite.id, {
+            sentAt: new Date(),
+            // Never regress an accepted invite back to "sent".
+            ...(invite.status === "accepted" ? {} : { status: "sent" as const }),
+          });
+          if (updated) invite = updated;
+        }
+      }
+
+      res.json({ ...invite, inviteUrl, emailSent });
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid invite data", details: error.errors });
@@ -2625,13 +2779,160 @@ Return JSON only.`,
     }
   });
 
-  app.get("/api/invites/:token", async (req, res) => {
+  // Broker-facing invite list — powers the invite status card + copy-link UI.
+  app.get("/api/deals/:dealId/invites", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const invites = await storage.getSellerInvitesByDealId(deal.id);
+      res.json(invites);
+    } catch (error: any) {
+      console.error("Error listing invites:", error);
+      res.status(500).json({ error: "Failed to list invites" });
+    }
+  });
+
+  // ── Seller NDA e-sign (optional flow — brokers can also mark signed manually) ──
+  app.post("/api/deals/:dealId/nda/send", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      const sellerEmail =
+        typeof req.body.sellerEmail === "string" ? req.body.sellerEmail.trim() : "";
+      const ndaText = typeof req.body.ndaText === "string" ? req.body.ndaText.trim() : "";
+      if (!sellerEmail) return res.status(400).json({ error: "Seller email is required" });
+      if (!ndaText) return res.status(400).json({ error: "Agreement text is required" });
+
+      await storage.updateDeal(deal.id, { ndaText } as any);
+
+      // Reuse the seller's existing invite token so one link identity covers
+      // the whole engagement; create one if the seller was never invited.
+      const invite = await findOrCreateSellerInvite(
+        deal.id,
+        sellerEmail,
+        typeof req.body.sellerName === "string" ? req.body.sellerName.trim() : null,
+      );
+
+      const url = `${appBase(req)}/sign-nda/${invite.token}`;
+      const emailSent = await sendDirectEmail(
+        sellerEmail,
+        `Signature requested: confidentiality agreement for ${deal.businessName}`,
+        `
+    <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+      <h2 style="color: #14b8a6; margin-bottom: 16px;">Signature requested</h2>
+      <p>Hello${invite.sellerName ? ` ${invite.sellerName}` : ""},</p>
+      <p>Your broker has requested your signature on a confidentiality agreement for <strong>${deal.businessName}</strong>. It takes under a minute — review the agreement and sign by typing your name.</p>
+      <p style="margin: 32px 0;">
+        <a href="${url}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review &amp; sign</a>
+      </p>
+      <p style="color: #888; font-size: 12px;">This is your personal secure link — please don't forward it.</p>
+    </div>
+  `,
+      );
+
+      res.json({ ok: true, url, emailSent });
+    } catch (error: any) {
+      console.error("Error sending NDA:", error);
+      res.status(500).json({ error: "Failed to send NDA" });
+    }
+  });
+
+  app.get("/api/sign-nda/:token", async (req, res) => {
     try {
       const invite = await storage.getSellerInviteByToken(req.params.token);
+      if (!invite) return res.status(404).json({ error: "Signing link not found or expired" });
+      const deal = await storage.getDeal(invite.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!deal.ndaText) {
+        return res.status(404).json({ error: "No agreement is pending for this link" });
+      }
+      const broker = deal.brokerId ? await storage.getUser(deal.brokerId) : null;
+      res.json({
+        businessName: deal.businessName,
+        brokerName: broker?.name || broker?.username || null,
+        ndaText: deal.ndaText,
+        ndaSigned: !!deal.ndaSigned,
+        ndaSignedAt: deal.ndaSignedAt,
+        signerName: deal.ndaSignerName || null,
+      });
+    } catch (error: any) {
+      console.error("Error loading NDA:", error);
+      res.status(500).json({ error: "Failed to load agreement" });
+    }
+  });
+
+  app.post("/api/sign-nda/:token", async (req, res) => {
+    try {
+      const invite = await storage.getSellerInviteByToken(req.params.token);
+      if (!invite) return res.status(404).json({ error: "Signing link not found or expired" });
+      const deal = await storage.getDeal(invite.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (deal.ndaSigned) {
+        // Already signed by someone — report the signer of record instead of
+        // letting a second signer believe their signature was recorded.
+        return res.json({
+          ok: true,
+          alreadySigned: true,
+          signerName: deal.ndaSignerName || null,
+          ndaSignedAt: deal.ndaSignedAt,
+        });
+      }
+
+      const signerName =
+        typeof req.body.signerName === "string" ? req.body.signerName.trim() : "";
+      if (!signerName) return res.status(400).json({ error: "Please type your full name to sign" });
+
+      await storage.updateDeal(deal.id, {
+        ndaSigned: true,
+        ndaSignedAt: new Date(),
+        ndaSignerName: signerName,
+        ndaSignedIp: req.ip || null,
+      } as any);
+
+      // Let the broker know — best-effort, never blocks the signature.
+      const broker = deal.brokerId ? await storage.getUser(deal.brokerId) : null;
+      if (broker?.email) {
+        sendDirectEmail(
+          broker.email,
+          `NDA signed: ${deal.businessName}`,
+          `
+    <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+      <h2 style="color: #14b8a6; margin-bottom: 16px;">NDA signed</h2>
+      <p><strong>${signerName}</strong> just signed the confidentiality agreement for <strong>${deal.businessName}</strong>.</p>
+      <p style="color: #888; font-size: 12px;">Signed ${new Date().toLocaleString()} — recorded with timestamp and IP in the deal.</p>
+    </div>
+  `,
+        ).catch(() => {});
+      }
+
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Error signing NDA:", error);
+      res.status(500).json({ error: "Failed to record signature" });
+    }
+  });
+
+  app.get("/api/invites/:token", async (req, res) => {
+    try {
+      let invite = await storage.getSellerInviteByToken(req.params.token);
       if (!invite) {
         return res.status(404).json({ error: "Invite not found or expired" });
       }
-      
+
+      // First open = accepted; powers the broker's "seller in progress" status.
+      // The deal's own broker previewing the seller view must not trip it.
+      const isOwningBroker =
+        !!req.session?.brokerId &&
+        (await storage.getDeal(invite.dealId))?.brokerId === req.session.brokerId;
+      if (!invite.acceptedAt && !isOwningBroker) {
+        const stamped = await storage.updateSellerInvite(invite.id, {
+          acceptedAt: new Date(),
+          status: "accepted",
+        });
+        if (stamped) invite = stamped;
+      }
+
       // Get the associated deal
       const deal = await storage.getDeal(invite.dealId);
       if (!deal) {

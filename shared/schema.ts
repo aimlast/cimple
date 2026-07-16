@@ -54,6 +54,10 @@ export const deals = pgTable("deals", {
   // Phase 1 data
   ndaSigned: boolean("nda_signed").default(false),
   ndaSignedAt: timestamp("nda_signed_at"),
+  // Seller e-sign NDA (optional flow — broker can also just mark as signed)
+  ndaText: text("nda_text"),
+  ndaSignerName: text("nda_signer_name"),
+  ndaSignedIp: text("nda_signed_ip"),
   sqCompleted: boolean("sq_completed").default(false),
   valuationCompleted: boolean("valuation_completed").default(false),
   askingPrice: text("asking_price"),
@@ -112,7 +116,13 @@ export const deals = pgTable("deals", {
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
 
-export const insertDealSchema = createInsertSchema(deals).omit({
+export const insertDealSchema = createInsertSchema(deals, {
+  // Timestamps arrive as ISO strings over JSON; without coercion drizzle-zod
+  // uses strict z.date() and any PATCH containing one of these fields 400s.
+  ndaSignedAt: z.coerce.date().nullable().optional(),
+  scrapedAt: z.coerce.date().nullable().optional(),
+  cimLayoutGeneratedAt: z.coerce.date().nullable().optional(),
+}).omit({
   id: true,
   createdAt: true,
   updatedAt: true,

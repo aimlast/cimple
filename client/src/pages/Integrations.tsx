@@ -1,13 +1,20 @@
 import { useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import {
   Mail, Database, Phone, Video, ArrowRight,
   CheckCircle2, Circle, ExternalLink, Plug, X, Plus, Trash2,
+  FileText, Loader2,
 } from "lucide-react";
-import { apiRequest } from "@/lib/queryClient";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter,
+  DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
-type IntegrationStatus = "connected" | "disconnected" | "coming_soon";
+type IntegrationStatus = "connected" | "disconnected" | "coming_soon" | "available";
 
 interface IntegrationCard {
   id: string;
@@ -18,6 +25,10 @@ interface IntegrationCard {
   category: "email" | "crm" | "calls";
   status: IntegrationStatus;
   connectedId?: string;
+  /** Short honest note rendered under a disabled Coming Soon button */
+  comingSoonNote?: string;
+  /** When set, the card is a working feature link instead of a connectable provider */
+  link?: { href: string; label: string };
 }
 
 const INTEGRATION_CATALOG: Omit<IntegrationCard, "status" | "connectedId">[] = [
@@ -28,6 +39,7 @@ const INTEGRATION_CATALOG: Omit<IntegrationCard, "status" | "connectedId">[] = [
     description: "Read email threads between you and sellers to pre-populate the knowledge base before the AI interview.",
     icon: Mail,
     category: "email",
+    comingSoonNote: "Available soon — email sync is in development.",
   },
   {
     id: "outlook",
@@ -36,6 +48,15 @@ const INTEGRATION_CATALOG: Omit<IntegrationCard, "status" | "connectedId">[] = [
     description: "Connect your Outlook account to automatically pull in seller communication history.",
     icon: Mail,
     category: "email",
+    comingSoonNote: "Available soon — email sync is in development.",
+  },
+  {
+    id: "pipedrive",
+    provider: "pipedrive",
+    name: "Pipedrive",
+    description: "Sync deal stages and prefill buyer submissions from your Pipedrive contacts. Works today with your API token.",
+    icon: Database,
+    category: "crm",
   },
   {
     id: "salesforce",
@@ -52,6 +73,15 @@ const INTEGRATION_CATALOG: Omit<IntegrationCard, "status" | "connectedId">[] = [
     description: "Pull deal records, contact notes, and communication logs from HubSpot into the knowledge base.",
     icon: Database,
     category: "crm",
+  },
+  {
+    id: "call-transcripts",
+    provider: "call_transcripts",
+    name: "Call Transcripts",
+    description: "Works today — upload or paste call transcripts on any deal's Overview tab; the AI extracts key facts into the deal profile.",
+    icon: FileText,
+    category: "calls",
+    link: { href: "/broker/deals", label: "Go to deals" },
   },
   {
     id: "zoom",
@@ -112,6 +142,13 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
       </span>
     );
   }
+  if (status === "available") {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-teal/10 text-teal">
+        <CheckCircle2 className="h-3 w-3" /> Works Today
+      </span>
+    );
+  }
   return (
     <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-neutral-100 text-neutral-500">
       <Circle className="h-3 w-3" /> Not Connected
@@ -127,8 +164,10 @@ function IntegrationCardComponent({
   onConnect: (provider: string) => void;
 }) {
   const Icon = card.icon;
+  const [, navigate] = useLocation();
   const isComingSoon = card.status === "coming_soon";
   const isConnected = card.status === "connected";
+  const isFeatureLink = card.status === "available" && !!card.link;
 
   return (
     <div
@@ -146,6 +185,8 @@ function IntegrationCardComponent({
             className={`h-10 w-10 rounded-lg flex items-center justify-center ${
               isConnected
                 ? "bg-emerald-100 text-emerald-600"
+                : isFeatureLink
+                ? "bg-teal/10 text-teal"
                 : "bg-neutral-100 text-neutral-500"
             }`}
           >
@@ -161,11 +202,23 @@ function IntegrationCardComponent({
       <p className="text-xs text-neutral-500 leading-relaxed mb-4">{card.description}</p>
 
       {isComingSoon ? (
+        <>
+          <button
+            disabled
+            className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-400 cursor-not-allowed"
+          >
+            Coming Soon
+          </button>
+          {card.comingSoonNote && (
+            <p className="text-2xs text-neutral-400 text-center mt-2">{card.comingSoonNote}</p>
+          )}
+        </>
+      ) : isFeatureLink ? (
         <button
-          disabled
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-400 cursor-not-allowed"
+          onClick={() => navigate(card.link!.href)}
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-teal text-white hover:bg-teal/90 transition-colors flex items-center justify-center gap-1.5"
         >
-          Coming Soon
+          {card.link!.label} <ArrowRight className="h-3.5 w-3.5" />
         </button>
       ) : isConnected ? (
         <button
@@ -210,15 +263,57 @@ export default function Integrations() {
       .map((i: any) => i.provider)
   );
 
+  // Pipedrive connect dialog state
+  const [pipedriveOpen, setPipedriveOpen] = useState(false);
+  const [pipedriveToken, setPipedriveToken] = useState("");
+  const [pipedriveError, setPipedriveError] = useState<string | null>(null);
+
+  const connectPipedrive = useMutation({
+    mutationFn: async (apiToken: string) => {
+      const res = await fetch("/api/integrations/pipedrive/connect", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({ apiToken }),
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Could not connect to Pipedrive. Check the token and try again.");
+      }
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
+      setPipedriveOpen(false);
+      setPipedriveToken("");
+      setPipedriveError(null);
+      toast({
+        title: "Pipedrive connected",
+        description: "Deal stages will sync and buyer submissions can now prefill from your Pipedrive contacts.",
+      });
+    },
+    onError: (err) => {
+      // Keep the dialog open and surface the error inline
+      setPipedriveError(err instanceof Error ? err.message : "Could not connect to Pipedrive.");
+    },
+  });
+
+  // Providers that are genuinely not connectable yet. Gmail/Outlook stay here
+  // until OAuth credentials exist — a live Connect button that always 501s
+  // reads as a dead click, so they get the honest Coming Soon treatment.
+  const COMING_SOON = ["gmail", "outlook", "salesforce", "hubspot", "zoom", "otter", "fireflies"];
+
   // Merge catalog with connected status
   const cards: IntegrationCard[] = INTEGRATION_CATALOG.map((c) => {
     const connected = connectedIntegrations.find((i: any) => i.provider === c.provider && i.status === "connected");
-    const comingSoon = ["salesforce", "hubspot", "zoom", "otter", "fireflies"].includes(c.provider);
-    return {
-      ...c,
-      status: connected ? "connected" as const : comingSoon ? "coming_soon" as const : "disconnected" as const,
-      connectedId: connected?.id,
-    };
+    const status: IntegrationStatus = connected
+      ? "connected"
+      : c.link
+      ? "available"
+      : COMING_SOON.includes(c.provider)
+      ? "coming_soon"
+      : "disconnected";
+    return { ...c, status, connectedId: connected?.id };
   });
 
   const filteredCards = activeCategory === "all" ? cards : cards.filter((c) => c.category === activeCategory);
@@ -229,30 +324,18 @@ export default function Integrations() {
       // Disconnect
       await fetch(`/api/integrations/${existing.id}`, { method: "DELETE" });
       queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
-    } else {
-      // The OAuth flow isn't configured yet — explain in-app instead of
-      // navigating the whole browser to a raw 501 JSON response.
-      try {
-        const res = await fetch(`/api/auth/${provider}`);
-        const body = await res.json().catch(() => ({}));
-        if (res.status === 501) {
-          toast({
-            title: "Email sync isn't available yet",
-            description: body.message || "This connection requires OAuth credentials that haven't been configured. Contact support to enable it.",
-          });
-          return;
-        }
-        if (body.redirectUrl) {
-          window.location.href = body.redirectUrl;
-        }
-      } catch {
-        toast({
-          title: "Connection failed",
-          description: "Could not reach the server. Please try again.",
-          variant: "destructive",
-        });
-      }
+      return;
     }
+    // Pipedrive connects via an API token dialog — no OAuth round-trip needed.
+    if (provider === "pipedrive") {
+      setPipedriveToken("");
+      setPipedriveError(null);
+      setPipedriveOpen(true);
+      return;
+    }
+    // No other provider is connectable yet. The old GET /api/auth/:provider
+    // path was removed — it always returned 501 (OAuth secrets not
+    // configured), so those cards now render as disabled Coming Soon instead.
   };
 
   const categories = [
@@ -377,6 +460,83 @@ export default function Integrations() {
           </div>
         </div>
       </div>
+
+      {/* Pipedrive connect dialog */}
+      <Dialog
+        open={pipedriveOpen}
+        onOpenChange={(open) => {
+          setPipedriveOpen(open);
+          if (!open) {
+            setPipedriveToken("");
+            setPipedriveError(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <Database className="h-4 w-4 text-teal" /> Connect Pipedrive
+            </DialogTitle>
+            <DialogDescription>
+              Paste your Pipedrive API token — find it in Pipedrive under
+              Settings &rarr; Personal preferences &rarr; API.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              if (!pipedriveToken.trim() || connectPipedrive.isPending) return;
+              setPipedriveError(null);
+              connectPipedrive.mutate(pipedriveToken.trim());
+            }}
+            className="space-y-3"
+          >
+            <Input
+              type="password"
+              autoComplete="off"
+              placeholder="Pipedrive API token"
+              value={pipedriveToken}
+              onChange={(e) => {
+                setPipedriveToken(e.target.value);
+                if (pipedriveError) setPipedriveError(null);
+              }}
+              autoFocus
+            />
+            {pipedriveError && (
+              <p className="text-xs text-red-500 leading-relaxed" role="alert">
+                {pipedriveError}
+              </p>
+            )}
+            <p className="text-2xs text-neutral-500 leading-relaxed">
+              The token is stored securely and only used to sync deal stages and
+              prefill buyer submissions. You can disconnect at any time.
+            </p>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setPipedriveOpen(false)}
+                disabled={connectPipedrive.isPending}
+              >
+                Cancel
+              </Button>
+              <Button
+                type="submit"
+                className="bg-teal text-white hover:bg-teal/90"
+                disabled={!pipedriveToken.trim() || connectPipedrive.isPending}
+              >
+                {connectPipedrive.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Connecting…
+                  </>
+                ) : (
+                  "Connect"
+                )}
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
