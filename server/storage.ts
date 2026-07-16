@@ -240,6 +240,8 @@ export class MemStorage implements IStorage {
       email: null,
       name: null,
       settings: null,
+      resetToken: null,
+      resetTokenExpiresAt: null,
       createdAt: new Date(),
     };
     this.users.set(id, user);

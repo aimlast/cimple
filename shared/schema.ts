@@ -17,6 +17,9 @@ export const users = pgTable("users", {
   // defaults ({ firmName, firmEmail, firmPhone, notifications: {...},
   // dealDefaults: {...} }). Free-form jsonb — the Settings page owns the shape.
   settings: jsonb("settings"),
+  // Password reset (broker forgot-password flow)
+  resetToken: text("reset_token"),
+  resetTokenExpiresAt: timestamp("reset_token_expires_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
 });
 
