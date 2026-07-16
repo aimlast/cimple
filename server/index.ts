@@ -1,6 +1,7 @@
 import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
+import pg from "pg";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import * as Sentry from "@sentry/node";
@@ -18,6 +19,20 @@ if (process.env.SENTRY_DSN) {
   });
   console.log("[sentry] Error monitoring active");
 }
+
+// Last-resort safety nets: log (and report) instead of dying silently.
+// Uncaught exceptions still exit (state may be corrupt) — Railway restarts
+// the container — but now the reason lands in the logs and Sentry first.
+process.on("unhandledRejection", (reason) => {
+  console.error("[fatal] Unhandled promise rejection:", reason);
+  Sentry.captureException(reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[fatal] Uncaught exception:", err);
+  Sentry.captureException(err);
+  // Give the log/Sentry flush a moment, then exit so Railway restarts clean
+  setTimeout(() => process.exit(1), 2000);
+});
 
 const app = express();
 
@@ -52,15 +67,23 @@ if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
 // deploys and restarts (the previous in-memory store wiped every session on
 // each redeploy). The store creates its own small pg pool + table.
 const PgSession = connectPgSimple(session);
+// Explicit pool with an error handler: managed Postgres drops idle
+// connections periodically, and an unhandled pool 'error' event kills the
+// whole Node process (this was crashing production every few hours).
+const sessionPool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  max: 3,
+});
+sessionPool.on("error", (err) => {
+  console.warn("[session-store] pg pool error (recovered):", err.message);
+});
 app.use(
   session({
     secret: process.env.SESSION_SECRET || "dev-session-secret-change-me",
     resave: false,
     saveUninitialized: false,
     store: new PgSession({
-      conObject: {
-        connectionString: process.env.DATABASE_URL,
-      },
+      pool: sessionPool,
       tableName: "user_sessions",
       createTableIfMissing: true,
       pruneSessionInterval: 60 * 60, // prune expired sessions hourly

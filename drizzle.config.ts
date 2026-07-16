@@ -11,4 +11,9 @@ export default defineConfig({
   dbCredentials: {
     url: process.env.DATABASE_URL,
   },
+  // user_sessions is created and owned by connect-pg-simple at runtime, not
+  // by the Drizzle schema. Without this exclusion, `db:push` (which runs on
+  // every deploy) sees an "unknown" table and tries to DROP it — prompting
+  // for confirmation, which crashes in the non-interactive deploy shell.
+  tablesFilter: ["!user_sessions"],
 });
