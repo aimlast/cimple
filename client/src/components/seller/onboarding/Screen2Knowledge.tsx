@@ -127,7 +127,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                 {/* Pipe outer */}
                 <path
                   d={PIPE_PATH}
-                  stroke="hsl(162,65%,38%)"
+                  stroke="hsl(38,42%,60%)"
                   strokeWidth="6"
                   strokeLinecap="round"
                   opacity="0.15"
@@ -135,14 +135,14 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                 {/* Pipe inner */}
                 <path
                   d={PIPE_PATH}
-                  stroke="hsl(162,65%,38%)"
+                  stroke="hsl(38,42%,60%)"
                   strokeWidth="2"
                   strokeLinecap="round"
                   opacity="0.25"
                 />
                 {/* 4 pulses, all rendered at mount, staggered begin */}
                 {Array.from({ length: PULSE_COUNT }, (_, i) => (
-                  <circle key={i} r="3" fill="hsl(162,65%,38%)" opacity="0">
+                  <circle key={i} r="3" fill="hsl(38,42%,60%)" opacity="0">
                     <animateMotion
                       dur={`${PULSE_DURATION}s`}
                       begin={`${i * PULSE_INTERVAL}s`}
@@ -274,9 +274,9 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                 >
                   <div className="bg-card border border-teal/25 rounded-full p-1 shadow-sm">
                     <svg width="22" height="22" viewBox="0 0 22 22">
-                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(162,65%,38%)" strokeWidth="3" strokeDasharray="20 37" opacity="0.3" />
-                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(162,65%,38%)" strokeWidth="3" strokeDasharray="14 43" strokeDashoffset="-20" opacity="0.6" />
-                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(162,65%,38%)" strokeWidth="3" strokeDasharray="23 34" strokeDashoffset="-34" opacity="1" />
+                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(38,42%,60%)" strokeWidth="3" strokeDasharray="20 37" opacity="0.3" />
+                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(38,42%,60%)" strokeWidth="3" strokeDasharray="14 43" strokeDashoffset="-20" opacity="0.6" />
+                      <circle cx="11" cy="11" r="9" fill="none" stroke="hsl(38,42%,60%)" strokeWidth="3" strokeDasharray="23 34" strokeDashoffset="-34" opacity="1" />
                     </svg>
                   </div>
                 </motion.div>
@@ -295,9 +295,9 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                 >
                   <div className="bg-card border border-teal/25 rounded p-1 shadow-sm w-8 h-7 flex items-end">
                     <svg width="22" height="16" viewBox="0 0 22 16">
-                      <rect width="22" height="16" rx="1" fill="hsl(162,65%,38%)" opacity="0.1" />
-                      <polygon points="0,16 7,8 12,12 16,6 22,14 22,16" fill="hsl(162,65%,38%)" opacity="0.3" />
-                      <circle cx="16" cy="5" r="2.5" fill="hsl(162,65%,38%)" opacity="0.4" />
+                      <rect width="22" height="16" rx="1" fill="hsl(38,42%,60%)" opacity="0.1" />
+                      <polygon points="0,16 7,8 12,12 16,6 22,14 22,16" fill="hsl(38,42%,60%)" opacity="0.3" />
+                      <circle cx="16" cy="5" r="2.5" fill="hsl(38,42%,60%)" opacity="0.4" />
                     </svg>
                   </div>
                 </motion.div>
@@ -319,7 +319,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                       <polyline
                         points="1,12 6,8 10,10 14,4 19,6 23,2"
                         fill="none"
-                        stroke="hsl(162,65%,38%)"
+                        stroke="hsl(38,42%,60%)"
                         strokeWidth="1.5"
                         strokeLinecap="round"
                         strokeLinejoin="round"
@@ -349,7 +349,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
                     style={{
                       left: `calc(50% + ${s.x}px)`,
                       top: `calc(50% + ${s.y}px)`,
-                      color: "hsl(162,65%,38%)",
+                      color: "hsl(38,42%,60%)",
                     }}
                     initial={{ opacity: 0, scale: 0 }}
                     animate={{
