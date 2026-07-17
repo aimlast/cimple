@@ -56,7 +56,7 @@ export function SellerOnboarding({ token, onComplete }: SellerOnboardingProps) {
           aria-label="Cimple"
           className="h-4 w-16"
           style={{
-            backgroundColor: "hsl(162, 65%, 38%)",
+            backgroundColor: "hsl(42, 26%, 92%)",
             WebkitMaskImage: "url('/cimple-text.png')",
             WebkitMaskSize: "contain",
             WebkitMaskRepeat: "no-repeat",

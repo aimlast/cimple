@@ -73,7 +73,7 @@ export default function BrokerLogin() {
             aria-label="Cimple"
             className="h-6 w-24"
             style={{
-              backgroundColor: "hsl(162, 65%, 38%)",
+              backgroundColor: "hsl(42, 26%, 92%)",
               WebkitMaskImage: "url('/cimple-text.png')",
               WebkitMaskSize: "contain",
               WebkitMaskRepeat: "no-repeat",

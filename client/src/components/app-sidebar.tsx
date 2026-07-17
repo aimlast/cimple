@@ -1,5 +1,5 @@
 import { useRef, useEffect } from "react";
-import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard, LifeBuoy, Sun, Moon } from "lucide-react";
+import { BarChart3, Settings, Building2, Plus, Plug, Users, LayoutDashboard, LifeBuoy, Sun, Moon, LogOut } from "lucide-react";
 import { useTheme } from "@/components/ThemeProvider";
 import { Link, useLocation } from "wouter";
 import {
@@ -155,7 +155,10 @@ export function AppSidebar() {
           <span className="text-2xs text-sidebar-foreground/30 tracking-wide group-data-[collapsible=icon]:hidden">
             &copy; {new Date().getFullYear()} Cimple
           </span>
-          <ThemeFooterToggle />
+          <div className="flex items-center gap-0.5">
+            <ThemeFooterToggle />
+            <LogoutButton />
+          </div>
         </div>
       </SidebarFooter>
     </Sidebar>
@@ -173,6 +176,27 @@ function ThemeFooterToggle() {
       data-testid="button-theme-toggle-sidebar"
     >
       {isLight ? <Moon className="h-3.5 w-3.5" /> : <Sun className="h-3.5 w-3.5" />}
+    </button>
+  );
+}
+
+function LogoutButton() {
+  const handleLogout = async () => {
+    try {
+      await fetch("/api/broker-auth/logout", { method: "POST", credentials: "include" });
+    } finally {
+      // Full reload clears every cached query and drops back to the login gate
+      window.location.href = "/broker";
+    }
+  };
+  return (
+    <button
+      onClick={handleLogout}
+      className="p-1.5 rounded-md text-sidebar-foreground/40 hover:text-sidebar-accent-foreground hover:bg-sidebar-accent transition-colors shrink-0"
+      title="Log out"
+      data-testid="button-logout"
+    >
+      <LogOut className="h-3.5 w-3.5" />
     </button>
   );
 }
