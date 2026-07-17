@@ -52,10 +52,12 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
   const statusCfg = STATUS_CONFIG[analysis.status] || STATUS_CONFIG.draft;
   const StatusIcon = statusCfg.icon;
 
-  // Extract key metrics from normalization data
+  // Canonical shapes (see server/financial/shape.ts)
   const normalization = analysis.normalization as {
-    metric?: string;
-    years?: Array<{ year: string; netIncome?: number; adjustedTotal?: number }>;
+    metric?: "sde" | "ebitda";
+    years?: string[];
+    netIncome?: Record<string, number>;
+    addbacks?: Array<{ approved: boolean; type?: string; amounts: Record<string, number> }>;
   } | null;
 
   const pnl = analysis.reclassifiedPnl as {
@@ -65,23 +67,40 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
 
   const wc = analysis.workingCapital as {
     netWorkingCapital?: number;
-    pegAmount?: number;
+    pegAmount?: number | null;
   } | null;
 
-  // Get revenue from P&L if available
+  // Revenue = sum of all Revenue-category rows for a year
   const years = pnl?.years || [];
   const latestYear = years[years.length - 1];
-  const revenueRow = pnl?.rows?.find(r => r.category === "Revenue" || r.name?.toLowerCase().includes("revenue"));
-  const latestRevenue = revenueRow && latestYear ? revenueRow.values?.[latestYear] : undefined;
-  const prevRevenue = revenueRow && years.length > 1 ? revenueRow.values?.[years[years.length - 2]] : undefined;
+  const revenueForYear = (year: string | undefined): number | undefined => {
+    if (!year || !pnl?.rows) return undefined;
+    const revRows = pnl.rows.filter(r => r.category === "Revenue");
+    if (revRows.length === 0) return undefined;
+    return revRows.reduce((sum, r) => sum + (r.values?.[year] || 0), 0);
+  };
+  const latestRevenue = revenueForYear(latestYear);
+  const prevRevenue = years.length > 1 ? revenueForYear(years[years.length - 2]) : undefined;
 
-  // Get SDE/EBITDA from normalization
+  // Adjusted SDE/EBITDA = net income + approved applicable addbacks
+  const metric = normalization?.metric === "ebitda" ? "ebitda" : "sde";
+  const metricLabel = metric === "ebitda" ? "EBITDA" : "SDE";
   const normYears = normalization?.years || [];
-  const latestNormYear = normYears[normYears.length - 1];
-  const prevNormYear = normYears.length > 1 ? normYears[normYears.length - 2] : undefined;
-  const latestAdjusted = latestNormYear?.adjustedTotal;
-  const prevAdjusted = prevNormYear?.adjustedTotal;
-  const metricLabel = normalization?.metric === "ebitda" ? "EBITDA" : "SDE";
+  const adjustedForYear = (year: string | undefined): number | undefined => {
+    if (!year || !normalization) return undefined;
+    let total = normalization.netIncome?.[year];
+    if (total === undefined && !(normalization.addbacks?.length)) return undefined;
+    total = total ?? 0;
+    for (const ab of normalization.addbacks ?? []) {
+      if (ab.approved && (metric === "sde" || ab.type !== "sde")) {
+        total += ab.amounts?.[year] || 0;
+      }
+    }
+    return total;
+  };
+  const latestNormYearKey = normYears[normYears.length - 1];
+  const latestAdjusted = adjustedForYear(latestNormYearKey);
+  const prevAdjusted = normYears.length > 1 ? adjustedForYear(normYears[normYears.length - 2]) : undefined;
 
   const sourceDocIds = (analysis.sourceDocumentIds as string[]) || [];
 
@@ -135,8 +154,8 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
               <TrendIcon current={latestAdjusted} previous={prevAdjusted} />
             </div>
             <p className="text-lg font-semibold">{formatCurrency(latestAdjusted)}</p>
-            {latestNormYear?.year && (
-              <p className="text-2xs text-muted-foreground mt-0.5">{latestNormYear.year}</p>
+            {latestNormYearKey && (
+              <p className="text-2xs text-muted-foreground mt-0.5">{latestNormYearKey}</p>
             )}
           </CardContent>
         </Card>

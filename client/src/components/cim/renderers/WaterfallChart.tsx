@@ -16,6 +16,7 @@ import {
   Cell,
   ReferenceLine,
 } from "recharts";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -134,9 +135,9 @@ function WaterfallTooltip({ active, payload, currency }: CustomTooltipProps) {
   if (!entry) return null;
 
   const colorMap = {
-    start: "#6b7280",
-    add: "#22c55e",
-    subtract: "#ef4444",
+    start: CIM_DOC.neutral,
+    add: CIM_DOC.positive,
+    subtract: CIM_DOC.negative,
     total: "#2dc88e",
   };
 
@@ -151,12 +152,12 @@ function WaterfallTooltip({ active, payload, currency }: CustomTooltipProps) {
       </div>
       <div className="space-y-0.5">
         {entry.type === "add" && (
-          <span className="text-emerald-500 font-medium">
+          <span className="font-medium" style={{ color: CIM_DOC.positive }}>
             +{formatCurrency(entry.rawValue, currency)}
           </span>
         )}
         {entry.type === "subtract" && (
-          <span className="text-red-500 font-medium">
+          <span className="font-medium" style={{ color: CIM_DOC.negative }}>
             {formatCurrency(entry.rawValue, currency)}
           </span>
         )}
@@ -187,10 +188,11 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
   const waterfallData = buildWaterfallData(items);
   const primaryColor = branding.primaryHex || "#2dc88e";
 
+  // Paper-tuned semantic colors — softer than UI status colors, print-friendly
   const colorMap: Record<string, string> = {
-    start: "#6b7280",
-    add: "#22c55e",
-    subtract: "#ef4444",
+    start: CIM_DOC.neutral,
+    add: CIM_DOC.positive,
+    subtract: CIM_DOC.negative,
     total: primaryColor,
   };
 
@@ -207,14 +209,15 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           margin={{ top: 8, right: 16, left: 8, bottom: 8 }}
           barCategoryGap="25%"
         >
+          {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="hsl(var(--border))"
+            stroke={CIM_DOC.line}
             vertical={false}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 10, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 10, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
             interval={0}
@@ -223,14 +226,14 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
             height={60}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => formatCurrency(v, data.currency)}
           />
           <Tooltip
             content={<WaterfallTooltip currency={data.currency} />}
-            cursor={{ fill: "hsl(var(--muted) / 0.3)" }}
+            cursor={{ fill: CIM_DOC.stripe, fillOpacity: 0.5 }}
           />
           {/* Invisible base bar */}
           <Bar dataKey="base" stackId="waterfall" fill="transparent" />
@@ -246,11 +249,11 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
       {/* Legend */}
       <div className="flex items-center justify-center gap-6 mt-3">
         <div className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm bg-emerald-500" />
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: CIM_DOC.positive }} />
           <span className="text-[11px] text-muted-foreground">Addback</span>
         </div>
         <div className="flex items-center gap-1.5">
-          <span className="w-2.5 h-2.5 rounded-sm bg-red-500" />
+          <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: CIM_DOC.negative }} />
           <span className="text-[11px] text-muted-foreground">Deduction</span>
         </div>
         <div className="flex items-center gap-1.5">

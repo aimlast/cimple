@@ -2288,7 +2288,9 @@ Return JSON only.`,
     try {
       const analysis = await storage.getLatestFinancialAnalysis(req.params.dealId);
       if (!analysis) return res.status(404).json({ error: "No financial analysis found" });
-      res.json(analysis);
+      // Convert legacy-shaped rows so they render in the UI (see financial/shape.ts)
+      const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
+      res.json(normalizeFinancialAnalysisRow(analysis));
     } catch (error: any) {
       console.error("Error fetching financial analysis:", error);
       res.status(500).json({ error: "Failed to fetch financial analysis" });
@@ -2302,7 +2304,8 @@ Return JSON only.`,
       if (!analysis || analysis.dealId !== req.params.dealId) {
         return res.status(404).json({ error: "Financial analysis not found" });
       }
-      res.json(analysis);
+      const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
+      res.json(normalizeFinancialAnalysisRow(analysis));
     } catch (error: any) {
       console.error("Error fetching financial analysis:", error);
       res.status(500).json({ error: "Failed to fetch financial analysis" });
@@ -2310,7 +2313,7 @@ Return JSON only.`,
   });
 
   // Broker edits (notes, manual comps, addback adjustments, etc.)
-  app.patch("/api/deals/:dealId/financial-analysis/:id", async (req, res) => {
+  app.patch("/api/deals/:dealId/financial-analysis/:id", requireBroker, async (req, res) => {
     try {
       const existing = await storage.getFinancialAnalysis(req.params.id);
       if (!existing || existing.dealId !== req.params.dealId) {

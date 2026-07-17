@@ -1,13 +1,13 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { TrendingUp, AlertTriangle } from "lucide-react";
+import { TrendingUp, AlertTriangle, Info } from "lucide-react";
 
 /* ──────────────────────────────────────────────
    Types
 ─────────────────────────────────────────────── */
 export interface FinancialInsight {
   id: string;
-  type: "positive" | "negative";
+  type: "positive" | "negative" | "neutral";
   title: string;
   detail: string;
   cimSection?: string;
@@ -16,6 +16,7 @@ export interface FinancialInsight {
 export interface InsightsData {
   positive: FinancialInsight[];
   negative: FinancialInsight[];
+  neutral?: FinancialInsight[];
 }
 
 interface InsightsPanelProps {
@@ -45,7 +46,8 @@ const CIM_SECTION_LABELS: Record<string, string> = {
    Component
 ─────────────────────────────────────────────── */
 export function InsightsPanel({ data }: InsightsPanelProps) {
-  if (!data || (data.positive.length === 0 && data.negative.length === 0)) {
+  const neutral = data?.neutral ?? [];
+  if (!data || (data.positive.length === 0 && data.negative.length === 0 && neutral.length === 0)) {
     return (
       <Card>
         <CardHeader>
@@ -117,6 +119,23 @@ export function InsightsPanel({ data }: InsightsPanelProps) {
           )}
         </div>
       </div>
+
+      {/* Neutral / contextual insights */}
+      {neutral.length > 0 && (
+        <div className="space-y-2">
+          <div className="flex items-center gap-2 px-1 mb-1">
+            <Info className="h-3.5 w-3.5 text-muted-foreground" />
+            <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Context & Observations
+            </p>
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {neutral.map(insight => (
+              <InsightCard key={insight.id} insight={insight} />
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -125,9 +144,12 @@ export function InsightsPanel({ data }: InsightsPanelProps) {
    Insight card sub-component
 ─────────────────────────────────────────────── */
 function InsightCard({ insight }: { insight: FinancialInsight }) {
-  const isPositive = insight.type === "positive";
-  const borderColor = isPositive ? "border-success/20" : "border-amber-500/20";
-  const accentBg = isPositive ? "bg-success/5" : "bg-amber-500/5";
+  const borderColor = insight.type === "positive" ? "border-success/20"
+    : insight.type === "neutral" ? "border-border/50"
+    : "border-amber-500/20";
+  const accentBg = insight.type === "positive" ? "bg-success/5"
+    : insight.type === "neutral" ? "bg-muted/20"
+    : "bg-amber-500/5";
 
   return (
     <Card className={`${borderColor} ${accentBg}`}>

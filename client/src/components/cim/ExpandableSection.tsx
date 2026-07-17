@@ -150,10 +150,10 @@ export function ExpandableSection({
         />
       </div>
 
-      {/* Summary view (shown when collapsed) */}
+      {/* Summary view (shown when collapsed) — same theme-locked paper scope */}
       {!expanded && (
         <div
-          className="cim-section relative"
+          className="cim-doc cim-section relative"
           data-section-key={section.sectionKey}
           data-layout-type={section.layoutType}
           data-track-section={section.sectionKey}

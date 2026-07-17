@@ -169,6 +169,117 @@
   --chart-5: 15 65% 48%;
 }
 
+/* ─────────────────────────────────────────────
+   CIM DOCUMENT SURFACE — theme-locked "paper"
+
+   The CIM is a document, not a UI surface. It must read as a
+   premium printed memorandum — warm paper, near-black ink —
+   IDENTICALLY in dark mode, light mode, and print.
+
+   `.cim-doc` hard-sets its own palette and then remaps the app
+   theme tokens within its scope, so every existing bg-card /
+   text-foreground / text-muted-foreground / border-border /
+   text-teal usage inside the document resolves to the paper
+   palette regardless of the app theme. Values are deliberate
+   literals — never derived from the active theme.
+───────────────────────────────────────────── */
+.cim-doc {
+  /* ── Document palette (constant in both themes) ── */
+  --cim-paper: 43 50% 97%;          /* #FBF8F2 warm paper           */
+  --cim-card: 40 30% 99%;           /* #FEFDFB elevated card         */
+  --cim-ink: 38 14% 11%;            /* #201D18 near-black ink        */
+  --cim-ink-soft: 38 9% 25%;        /* #46423B secondary text        */
+  --cim-ink-muted: 40 8% 39%;       /* #6B665C captions / labels     */
+  --cim-line: 44 25% 85%;           /* #E3DED0 hairline borders      */
+  --cim-line-soft: 44 28% 89%;      /* #EBE7DB soft rules            */
+  --cim-stripe: 44 37% 92%;         /* #F2EEE3 table stripe / muted  */
+  --cim-brass: 38 55% 40%;          /* #9E752E brand-brass accent    */
+
+  /* ── Remap app tokens inside the document ── */
+  --background: var(--cim-paper);
+  --foreground: var(--cim-ink);
+  --border: var(--cim-line);
+  --input: var(--cim-line-soft);
+  --ring: var(--cim-brass);
+
+  --card: var(--cim-card);
+  --card-foreground: var(--cim-ink);
+  --card-border: var(--cim-line);
+
+  --popover: var(--cim-card);
+  --popover-foreground: var(--cim-ink);
+  --popover-border: var(--cim-line);
+
+  --primary: var(--cim-ink);
+  --primary-foreground: var(--cim-paper);
+
+  --secondary: var(--cim-stripe);
+  --secondary-foreground: var(--cim-ink-soft);
+  --muted: var(--cim-stripe);
+  --muted-foreground: var(--cim-ink-muted);
+  --accent: var(--cim-stripe);
+  --accent-foreground: var(--cim-ink);
+
+  --destructive: 0 60% 42%;
+  --destructive-foreground: 0 0% 100%;
+
+  --teal: var(--cim-brass);
+  --teal-foreground: 42 30% 96%;
+  --teal-muted: 40 45% 90%;
+  --teal-muted-foreground: 38 60% 26%;
+
+  --success: 150 45% 30%;
+  --success-foreground: 0 0% 100%;
+  --success-muted: 145 40% 90%;
+  --success-muted-foreground: 150 50% 20%;
+
+  --blue: 215 55% 38%;
+  --blue-foreground: 0 0% 100%;
+  --blue-muted: 215 45% 91%;
+  --blue-muted-foreground: 215 60% 27%;
+
+  --shadow-xs: 0 1px 2px 0 hsl(38 30% 20% / 0.05);
+  --shadow-sm: 0 1px 3px 0 hsl(38 30% 20% / 0.07), 0 1px 2px -1px hsl(38 30% 20% / 0.05);
+  --shadow: 0 4px 6px -1px hsl(38 30% 20% / 0.07), 0 2px 4px -2px hsl(38 30% 20% / 0.05);
+  --shadow-md: 0 8px 16px -4px hsl(38 30% 20% / 0.08), 0 3px 6px -3px hsl(38 30% 20% / 0.06);
+  --shadow-lg: 0 12px 24px -6px hsl(38 30% 20% / 0.10), 0 4px 8px -4px hsl(38 30% 20% / 0.07);
+
+  --chart-1: 38 55% 42%;
+  --chart-2: 150 45% 36%;
+  --chart-3: 215 60% 46%;
+  --chart-4: 260 40% 52%;
+  --chart-5: 15 65% 48%;
+
+  /* ── Base document rendering ── */
+  color-scheme: light;
+  background-color: hsl(var(--cim-paper));
+  color: hsl(var(--cim-ink));
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* The document "sheet" — one continuous piece of paper hosting
+   all sections. Host pages wrap the section list in this. */
+.cim-sheet {
+  border: 1px solid hsl(var(--cim-line));
+  border-radius: 0.75rem;
+  box-shadow:
+    0 1px 2px hsl(38 30% 15% / 0.06),
+    0 16px 40px -12px hsl(38 30% 15% / 0.12);
+}
+
+/* A CIM section rendered standalone (outside a sheet — e.g. the
+   deal Overview preview) becomes its own small paper card so ink
+   text never sits on the app background. Inside a sheet the
+   padding collapses and the sheet provides the frame. */
+.cim-section.cim-doc {
+  padding: 1.25rem;
+  border-radius: 0.65rem;
+}
+.cim-sheet .cim-section.cim-doc {
+  padding: 0;
+  border-radius: 0;
+}
+
 
 
 /* ─────────────────────────────────────────────
@@ -269,6 +380,16 @@
   body { background: white !important; }
   .bg-background { background: white !important; }
   .bg-card { background: white !important; }
+
+  /* The document surface is already paper — flatten the sheet
+     chrome so print is pure white with no frame */
+  .cim-doc { background: white !important; }
+  .cim-sheet {
+    border: none !important;
+    box-shadow: none !important;
+    border-radius: 0 !important;
+    padding: 0 !important;
+  }
 
   /* Hide floating elements */
   .fixed { display: none !important; }

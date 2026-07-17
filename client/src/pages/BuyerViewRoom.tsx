@@ -43,12 +43,18 @@ interface ViewData {
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
+// Ink-colored literal (not a theme token) so it stays visible-but-subtle on
+// the paper document surface in BOTH app themes.
 function Watermark({ email }: { email: string }) {
   return (
-    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-[0.04]">
+    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-[0.05]">
       <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-24 -rotate-45">
         {Array.from({ length: 24 }).map((_, i) => (
-          <span key={i} className="text-xl font-bold text-foreground whitespace-nowrap select-none">
+          <span
+            key={i}
+            className="text-xl font-bold whitespace-nowrap select-none"
+            style={{ color: "#46423B" }}
+          >
             {email}
           </span>
         ))}
@@ -416,7 +422,9 @@ export default function BuyerViewRoom() {
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
           <main className="flex-1 min-w-0">
             {hasAiSections ? (
-              <div className="space-y-8">
+              /* The document itself: one continuous theme-locked paper sheet.
+                 App chrome around it (header, TOC, decision panel) keeps app tokens. */
+              <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
                 {visibleSections.map(section => (
                   <div key={section.id} id={`section-${section.id}`}>
                     <SectionBoundary sectionTitle={section.sectionTitle}>
@@ -447,14 +455,14 @@ export default function BuyerViewRoom() {
                 ))}
               </div>
             ) : legacySections.length > 0 ? (
-              // Legacy text fallback
-              <div className="space-y-10">
+              // Legacy text fallback — same theme-locked paper sheet
+              <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
                 {legacySections.map(section => (
                   <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key}>
                     <h2 className="text-xl font-bold tracking-tight mb-4" style={{ color: brandingCtx.headingColor }}>
                       {section.title}
                     </h2>
-                    <div className="prose prose-sm max-w-none">
+                    <div className="prose prose-sm max-w-prose text-sm leading-[1.7]">
                       <div dangerouslySetInnerHTML={{
                         __html: (cimContent?.[section.key] || "").replace(/\n/g, "<br />"),
                       }} />

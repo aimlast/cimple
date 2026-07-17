@@ -1092,11 +1092,16 @@ export class DbStorage implements IStorage {
   }
 
   async getResolvedDiscrepancies(dealId: string): Promise<Discrepancy[]> {
-    const { and } = await import("drizzle-orm");
+    const { and, inArray } = await import("drizzle-orm");
+    // Returns interview-relevant discrepancies:
+    //  - "resolved"/"accepted": consumers overlay resolvedValue onto extractedInfo
+    //    (all callers guard on d.resolvedValue, so rows without one are inert)
+    //  - "ask_seller": the broker routed these to the AI interview — the
+    //    knowledge base renders them as priority topics for the agent to probe
     return db.select().from(discrepancies)
       .where(and(
         eq(discrepancies.dealId, dealId),
-        eq(discrepancies.status, "resolved"),
+        inArray(discrepancies.status, ["resolved", "accepted", "ask_seller"]),
       ));
   }
 

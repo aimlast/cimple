@@ -52,7 +52,20 @@ function TealDot() {
 
 export function CalloutListRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: CalloutListLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
-  const items = data.items || [];
+
+  // The AI sometimes emits `stats: [{label, value, description}]` for
+  // icon_stat_row sections instead of `items` — normalize at render time so
+  // the section is never silently blank. (Render-side only; no schema change.)
+  const rawStats = (data as any).stats;
+  const statItems: CalloutItem[] = Array.isArray(rawStats)
+    ? rawStats
+        .filter((s: any) => s && (s.label || s.value))
+        .map((s: any) => ({
+          title: s.label || s.value,
+          description: [s.label ? s.value : null, s.description].filter(Boolean).join(" — "),
+        }))
+    : [];
+  const items = data.items && data.items.length > 0 ? data.items : statItems;
 
   // icon_stat_row: horizontal row of icon + stat
   const isIconStatRow = section.layoutType === "icon_stat_row";

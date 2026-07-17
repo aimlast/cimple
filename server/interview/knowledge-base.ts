@@ -46,6 +46,21 @@ export interface KnowledgeBase {
   // Publicly scraped data — UNVERIFIED, must be confirmed with seller during interview
   scrapedData: Record<string, string> | null;
   scrapeSource: "website" | "internet_search" | "website_and_internet" | null;
+
+  // Discrepancies the broker routed to the interview ("Ask the seller").
+  // The agent must probe these naturally as priority topics — answers flow
+  // back through normal extraction. Optional because KBs persisted before
+  // this field existed (and test fixtures) lack it.
+  askSellerDiscrepancies?: AskSellerDiscrepancy[];
+}
+
+export interface AskSellerDiscrepancy {
+  field: string;
+  valueA: string | null; // e.g. "898,079 — Workbook (internal statements)"
+  valueB: string | null; // e.g. "$980,830 — Seller interview"
+  severity: string;
+  explanation: string | null;
+  suggestedResolution: string | null;
 }
 
 export interface LocationContext {
@@ -207,13 +222,26 @@ export function assembleKnowledgeBase(
 
   // Overlay resolved discrepancy values — corrected values win over raw extractedInfo
   // so the interview agent never re-asks for or builds on stale numbers the broker
-  // already reconciled against uploaded documents.
+  // already reconciled against uploaded documents. (ask_seller rows have no
+  // resolvedValue, so they never overlay — they become priority topics below.)
   const extractedInfo: Partial<ExtractedInfo> = { ...baseExtractedInfo };
   for (const d of resolvedDiscrepancies) {
     if (d.resolvedValue && d.field) {
       (extractedInfo as Record<string, unknown>)[d.field] = d.resolvedValue;
     }
   }
+
+  // Discrepancies the broker explicitly routed to the interview
+  const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
+    .filter((d) => d.status === "ask_seller")
+    .map((d) => ({
+      field: d.field,
+      valueA: d.interviewValue,
+      valueB: d.documentValue,
+      severity: d.severity,
+      explanation: d.aiExplanation,
+      suggestedResolution: d.suggestedResolution,
+    }));
 
   // Per-field confidence lives on the session (interview turns write it) —
   // used to label coverage fields honestly instead of hardcoding "confirmed".
@@ -241,6 +269,7 @@ export function assembleKnowledgeBase(
     extractedInfo,
     scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
+    askSellerDiscrepancies,
   };
 }
 
@@ -250,6 +279,27 @@ export function assembleKnowledgeBase(
 
 export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   const parts: string[] = [];
+
+  // Broker-routed discrepancies — highest-priority topics for this interview
+  if ((kb.askSellerDiscrepancies ?? []).length > 0) {
+    parts.push(`## 🔴 PRIORITY: DISCREPANCIES THE BROKER NEEDS CLARIFIED`);
+    parts.push(`Our financial analysis found conflicting values across the deal's sources (documents, tax returns, workbook, prior statements). The broker has asked YOU to clarify these with the seller during this interview.`);
+    parts.push(``);
+    parts.push(`HOW TO HANDLE THESE (critical):`);
+    parts.push(`- Raise each one naturally at a relevant moment — NEVER read them out as a list, and NEVER sound accusatory. The seller usually has an innocent explanation (gross vs net, timing, different basis of accounting).`);
+    parts.push(`- Frame it as making sure the CIM is accurate: "I want to make sure we present this correctly — I've seen slightly different revenue figures in the documents..."`);
+    parts.push(`- When the seller explains, capture the corrected/confirmed value as a normal extracted field so it flows into the knowledge base.`);
+    parts.push(`- These take priority over routine gap-filling questions. Cover them before ending the interview.`);
+    parts.push(``);
+    for (const d of kb.askSellerDiscrepancies!) {
+      parts.push(`- ${d.field} [${d.severity}]`);
+      if (d.valueA) parts.push(`    Value 1: ${d.valueA}`);
+      if (d.valueB) parts.push(`    Value 2: ${d.valueB}`);
+      if (d.explanation) parts.push(`    Why it matters: ${d.explanation}`);
+      if (d.suggestedResolution) parts.push(`    Suggested approach: ${d.suggestedResolution}`);
+    }
+    parts.push(``);
+  }
 
   // Scraped data — shown first so the agent is primed to verify it
   if (kb.scrapedData && Object.keys(kb.scrapedData).length > 0) {

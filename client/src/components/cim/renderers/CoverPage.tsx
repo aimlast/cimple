@@ -1,8 +1,14 @@
 /**
  * CoverPage renderer
- * Full-bleed dark cover page — Goldman Sachs pitch book style.
+ * Full-bleed premium pitch-book cover — deep warm ink with cream type.
+ *
+ * THEME-LOCKED: every color here is a deliberate literal (see CIM_DOC).
+ * The old version used `bg-foreground` + `text-white`, which inverted to a
+ * bright-cream background with white type in the dark app theme. The cover
+ * must look identical in dark mode, light mode, and print.
  */
 import { cn } from "@/lib/utils";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -26,6 +32,8 @@ interface RendererProps {
   section: CimSection;
 }
 
+const CREAM = CIM_DOC.coverCream;
+
 export function CoverPageRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: CoverPageLayoutData = layoutData && Object.keys(layoutData).length > 0
     ? layoutData
@@ -40,13 +48,19 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
     data.ebitda && { label: "EBITDA", value: data.ebitda },
   ].filter(Boolean) as { label: string; value: string }[];
 
-  const accentHex = branding.accentHex || branding.primaryHex || "#2dc88e";
+  const accentHex = branding.accentHex || branding.primaryHex || CIM_DOC.brass;
 
   return (
-    <div className="relative min-h-[680px] bg-foreground flex flex-col justify-between overflow-hidden rounded-lg select-none">
+    <div
+      className="relative min-h-[680px] flex flex-col justify-between overflow-hidden rounded-lg select-none"
+      style={{
+        background: `linear-gradient(165deg, ${CIM_DOC.coverInkHi} 0%, ${CIM_DOC.coverInk} 55%, #131009 130%)`,
+        color: CREAM,
+      }}
+    >
       {/* Subtle texture overlay */}
       <div className="absolute inset-0 opacity-[0.03]"
-        style={{ backgroundImage: "repeating-linear-gradient(45deg, #fff 0, #fff 1px, transparent 0, transparent 50%)", backgroundSize: "6px 6px" }} />
+        style={{ backgroundImage: `repeating-linear-gradient(45deg, ${CREAM} 0, ${CREAM} 1px, transparent 0, transparent 50%)`, backgroundSize: "6px 6px" }} />
 
       {/* Accent line at top */}
       <div className="absolute top-0 left-0 right-0 h-[3px]" style={{ backgroundColor: accentHex }} />
@@ -60,7 +74,7 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
           {confidentialLabel}
         </span>
         {data.date && (
-          <span className="text-2xs text-white/30 tracking-wide">{data.date}</span>
+          <span className="text-2xs tracking-wide" style={{ color: `${CREAM}4D` }}>{data.date}</span>
         )}
       </div>
 
@@ -70,12 +84,18 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
         {(data.industry || data.location) && (
           <div className="flex items-center gap-3 mb-8">
             {data.industry && (
-              <span className="text-xs font-medium px-3 py-1 rounded-full border border-white/10 text-white/50">
+              <span
+                className="text-xs font-medium px-3 py-1 rounded-full border"
+                style={{ borderColor: `${CREAM}26`, color: `${CREAM}99` }}
+              >
                 {data.industry}
               </span>
             )}
             {data.location && (
-              <span className="text-xs font-medium px-3 py-1 rounded-full border border-white/10 text-white/50">
+              <span
+                className="text-xs font-medium px-3 py-1 rounded-full border"
+                style={{ borderColor: `${CREAM}26`, color: `${CREAM}99` }}
+              >
                 {data.location}
               </span>
             )}
@@ -83,13 +103,16 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
         )}
 
         {/* Business name */}
-        <h1 className="text-5xl font-semibold tracking-tight text-white leading-tight mb-4 max-w-2xl">
+        <h1
+          className="text-5xl font-semibold tracking-tight leading-tight mb-4 max-w-2xl"
+          style={{ color: CREAM }}
+        >
           {businessName}
         </h1>
 
         {/* Tagline */}
         {data.tagline && (
-          <p className="text-lg text-white/50 font-normal mt-2 max-w-xl leading-relaxed">
+          <p className="text-lg font-normal mt-2 max-w-xl leading-relaxed" style={{ color: `${CREAM}99` }}>
             {data.tagline}
           </p>
         )}
@@ -99,19 +122,19 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
           <div className="flex items-center gap-6 mt-12">
             {metrics.map((m, i) => (
               <div key={i} className="flex flex-col">
-                <span className="text-xl font-semibold text-white">{m.value}</span>
-                <span className="text-2xs uppercase tracking-widest text-white/35 mt-0.5">{m.label}</span>
+                <span className="text-xl font-semibold tabular-nums" style={{ color: CREAM }}>{m.value}</span>
+                <span className="text-2xs uppercase tracking-widest mt-0.5" style={{ color: `${CREAM}66` }}>{m.label}</span>
               </div>
             ))}
             {metrics.length > 0 && (
-              <div className="h-8 w-px bg-white/10 mx-1 first:hidden" />
+              <div className="h-8 w-px mx-1 first:hidden" style={{ backgroundColor: `${CREAM}1A` }} />
             )}
           </div>
         )}
 
         {/* Prose fallback */}
         {metrics.length === 0 && content && (
-          <p className="text-sm text-white/40 mt-8 max-w-lg leading-relaxed">{content}</p>
+          <p className="text-sm mt-8 max-w-lg leading-relaxed" style={{ color: `${CREAM}80` }}>{content}</p>
         )}
       </div>
 
@@ -119,18 +142,18 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
       <div className="relative z-10 flex items-end justify-between px-12 pb-10">
         <div>
           {firmName && (
-            <p className="text-sm font-semibold text-white/70">{firmName}</p>
+            <p className="text-sm font-semibold" style={{ color: `${CREAM}B3` }}>{firmName}</p>
           )}
-          <p className="text-2xs text-white/20 mt-1 tracking-wide">
+          <p className="text-2xs mt-1 tracking-wide" style={{ color: `${CREAM}40` }}>
             This document is strictly confidential and intended solely for the named recipient.
           </p>
         </div>
         {/* Accent mark */}
-        <div className="w-8 h-8 rounded-full border-2 opacity-20" style={{ borderColor: accentHex }} />
+        <div className="w-8 h-8 rounded-full border-2 opacity-25" style={{ borderColor: accentHex }} />
       </div>
 
       {/* Bottom accent line */}
-      <div className="absolute bottom-0 left-0 right-0 h-[1px] bg-white/5" />
+      <div className="absolute bottom-0 left-0 right-0 h-[1px]" style={{ backgroundColor: `${CREAM}0D` }} />
     </div>
   );
 }

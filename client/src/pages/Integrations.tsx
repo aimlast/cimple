@@ -130,21 +130,21 @@ const CATEGORY_INFO = {
 function StatusBadge({ status }: { status: IntegrationStatus }) {
   if (status === "connected") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-emerald-500/10 text-success-muted-foreground">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-success-muted text-success-muted-foreground">
         <CheckCircle2 className="h-3 w-3" /> Connected
       </span>
     );
   }
   if (status === "coming_soon") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-amber-500/10 text-amber-600">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-muted text-muted-foreground">
         Coming Soon
       </span>
     );
   }
   if (status === "available") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-teal/10 text-teal">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-teal-muted text-teal-muted-foreground">
         <CheckCircle2 className="h-3 w-3" /> Works Today
       </span>
     );
@@ -173,10 +173,10 @@ function IntegrationCardComponent({
     <div
       className={`relative rounded-xl border p-5 transition-all ${
         isComingSoon
-          ? "border-neutral-200 bg-neutral-50/50 opacity-70"
+          ? "border-card-border bg-card/60 opacity-70"
           : isConnected
-          ? "border-emerald-200 bg-success-muted/30"
-          : "border-neutral-200 bg-white hover:border-teal/40 hover:shadow-sm"
+          ? "border-success/30 bg-success-muted/40"
+          : "border-card-border bg-card hover:border-teal/40"
       }`}
     >
       <div className="flex items-start justify-between mb-3">
@@ -184,16 +184,16 @@ function IntegrationCardComponent({
           <div
             className={`h-10 w-10 rounded-lg flex items-center justify-center ${
               isConnected
-                ? "bg-emerald-100 text-success-muted-foreground"
+                ? "bg-success-muted text-success-muted-foreground"
                 : isFeatureLink
-                ? "bg-teal/10 text-teal"
+                ? "bg-teal-muted text-teal-muted-foreground"
                 : "bg-muted text-muted-foreground"
             }`}
           >
             <Icon className="h-5 w-5" />
           </div>
           <div>
-            <h3 className="font-semibold text-sm text-neutral-900">{card.name}</h3>
+            <h3 className="font-semibold text-sm text-foreground">{card.name}</h3>
             <StatusBadge status={card.status} />
           </div>
         </div>
@@ -205,32 +205,32 @@ function IntegrationCardComponent({
         <>
           <button
             disabled
-            className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-muted text-neutral-400 cursor-not-allowed"
+            className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-muted text-muted-foreground/70 cursor-not-allowed"
           >
             Coming Soon
           </button>
           {card.comingSoonNote && (
-            <p className="text-2xs text-neutral-400 text-center mt-2">{card.comingSoonNote}</p>
+            <p className="text-2xs text-muted-foreground/70 text-center mt-2">{card.comingSoonNote}</p>
           )}
         </>
       ) : isFeatureLink ? (
         <button
           onClick={() => navigate(card.link!.href)}
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-teal text-white hover:bg-teal/90 transition-colors flex items-center justify-center gap-1.5"
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-teal text-teal-foreground hover:bg-teal/90 transition-colors flex items-center justify-center gap-1.5"
         >
           {card.link!.label} <ArrowRight className="h-3.5 w-3.5" />
         </button>
       ) : isConnected ? (
         <button
           onClick={() => onConnect(card.provider)}
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-red-100 transition-colors"
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
         >
           Disconnect
         </button>
       ) : (
         <button
           onClick={() => onConnect(card.provider)}
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-teal text-white hover:bg-teal/90 transition-colors flex items-center justify-center gap-1.5"
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-teal text-teal-foreground hover:bg-teal/90 transition-colors flex items-center justify-center gap-1.5"
         >
           Connect <ArrowRight className="h-3.5 w-3.5" />
         </button>
@@ -351,10 +351,10 @@ export default function Integrations() {
         {/* Header */}
         <div className="mb-8">
           <div className="flex items-center gap-3 mb-2">
-            <div className="h-9 w-9 rounded-lg bg-teal/10 flex items-center justify-center">
-              <Plug className="h-5 w-5 text-teal" />
+            <div className="h-9 w-9 rounded-lg bg-teal-muted flex items-center justify-center">
+              <Plug className="h-5 w-5 text-teal-muted-foreground" />
             </div>
-            <h1 className="text-2xl font-bold text-neutral-900 tracking-tight">Integrations</h1>
+            <h1 className="text-2xl font-bold text-foreground tracking-tight">Integrations</h1>
           </div>
           <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
             Connect your email, CRM, and call recording tools to automatically feed existing communications
@@ -364,17 +364,17 @@ export default function Integrations() {
         </div>
 
         {/* Stats bar */}
-        <div className="flex items-center gap-6 mb-6 pb-6 border-b border-neutral-200">
+        <div className="flex items-center gap-6 mb-6 pb-6 border-b border-border">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-            <span className="text-sm text-neutral-600">
-              <span className="font-semibold text-neutral-900">{connectedProviders.size}</span> connected
+            <CheckCircle2 className="h-4 w-4 text-success" />
+            <span className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">{connectedProviders.size}</span> connected
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <Circle className="h-4 w-4 text-neutral-300" />
-            <span className="text-sm text-neutral-600">
-              <span className="font-semibold text-neutral-900">{INTEGRATION_CATALOG.length - connectedProviders.size}</span> available
+            <Circle className="h-4 w-4 text-muted-foreground/40" />
+            <span className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">{INTEGRATION_CATALOG.length - connectedProviders.size}</span> available
             </span>
           </div>
         </div>
@@ -387,8 +387,8 @@ export default function Integrations() {
               onClick={() => setActiveCategory(key)}
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                 activeCategory === key
-                  ? "bg-teal/10 text-teal"
-                  : "text-muted-foreground hover:text-neutral-700 hover:bg-muted"
+                  ? "bg-teal-muted text-teal-muted-foreground"
+                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
               }`}
             >
               {CatIcon && <CatIcon className="h-3.5 w-3.5" />}
@@ -399,13 +399,13 @@ export default function Integrations() {
 
         {/* Category description (when filtered) */}
         {activeCategory !== "all" && (
-          <div className="mb-6 p-4 rounded-lg bg-neutral-50 border border-neutral-100">
+          <div className="mb-6 p-4 rounded-lg bg-card border border-card-border">
             <div className="flex items-center gap-2 mb-1">
               {(() => {
                 const CatIcon = CATEGORY_INFO[activeCategory].icon;
                 return <CatIcon className="h-4 w-4 text-teal" />;
               })()}
-              <h2 className="text-sm font-semibold text-neutral-900">
+              <h2 className="text-sm font-semibold text-foreground">
                 {CATEGORY_INFO[activeCategory].title}
               </h2>
             </div>
@@ -427,14 +427,14 @@ export default function Integrations() {
         </div>
 
         {/* How it works section */}
-        <div className="mt-12 p-6 rounded-xl bg-neutral-50 border border-neutral-100">
-          <h2 className="text-sm font-semibold text-neutral-900 mb-4">How integrations work</h2>
+        <div className="mt-12 p-6 rounded-xl bg-card border border-card-border">
+          <h2 className="text-sm font-semibold text-foreground mb-4">How integrations work</h2>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div>
               <div className="h-8 w-8 rounded-full bg-teal/10 text-teal flex items-center justify-center text-sm font-bold mb-2">
                 1
               </div>
-              <h3 className="text-xs font-semibold text-neutral-800 mb-1">Connect your tools</h3>
+              <h3 className="text-xs font-semibold text-foreground mb-1">Connect your tools</h3>
               <p className="text-2xs text-muted-foreground leading-relaxed">
                 Securely authorize Cimple to read (never write) data from your connected accounts.
               </p>
@@ -443,7 +443,7 @@ export default function Integrations() {
               <div className="h-8 w-8 rounded-full bg-teal/10 text-teal flex items-center justify-center text-sm font-bold mb-2">
                 2
               </div>
-              <h3 className="text-xs font-semibold text-neutral-800 mb-1">Specify what to read</h3>
+              <h3 className="text-xs font-semibold text-foreground mb-1">Specify what to read</h3>
               <p className="text-2xs text-muted-foreground leading-relaxed">
                 For each deal, tell us which email addresses, CRM records, or call recordings to pull in.
               </p>
@@ -452,7 +452,7 @@ export default function Integrations() {
               <div className="h-8 w-8 rounded-full bg-teal/10 text-teal flex items-center justify-center text-sm font-bold mb-2">
                 3
               </div>
-              <h3 className="text-xs font-semibold text-neutral-800 mb-1">AI builds the knowledge base</h3>
+              <h3 className="text-xs font-semibold text-foreground mb-1">AI builds the knowledge base</h3>
               <p className="text-2xs text-muted-foreground leading-relaxed">
                 The AI reads everything and pre-populates the seller's profile. The interview starts smarter — less repetition, better questions.
               </p>
@@ -503,7 +503,7 @@ export default function Integrations() {
               autoFocus
             />
             {pipedriveError && (
-              <p className="text-xs text-red-500 leading-relaxed" role="alert">
+              <p className="text-xs text-destructive leading-relaxed" role="alert">
                 {pipedriveError}
               </p>
             )}
@@ -522,7 +522,7 @@ export default function Integrations() {
               </Button>
               <Button
                 type="submit"
-                className="bg-teal text-white hover:bg-teal/90"
+                className="bg-teal text-teal-foreground hover:bg-teal/90"
                 disabled={!pipedriveToken.trim() || connectPipedrive.isPending}
               >
                 {connectPipedrive.isPending ? (

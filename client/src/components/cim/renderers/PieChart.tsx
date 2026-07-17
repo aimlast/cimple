@@ -13,6 +13,7 @@ import {
   Sector,
 } from "recharts";
 import { cn } from "@/lib/utils";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -39,6 +40,7 @@ interface RendererProps {
 }
 
 function buildPalette(primary: string, accent: string): string[] {
+  // Tail colors are warm neutrals tuned for the paper document surface
   return [
     primary,
     accent,
@@ -46,9 +48,9 @@ function buildPalette(primary: string, accent: string): string[] {
     "#94c9b8",
     "#b8ddd4",
     "#d4ede8",
-    "#6b7280",
-    "#9ca3af",
-    "#d1d5db",
+    CIM_DOC.neutral,
+    "#ABA697",
+    "#CFC9BB",
   ];
 }
 

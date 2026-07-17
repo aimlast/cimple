@@ -30,8 +30,8 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
 
   return (
     <div className={cn("flex gap-8", hasRight ? "items-start" : "")}>
-      {/* Left: prose */}
-      <div className={cn("flex-1 min-w-0", hasRight && "max-w-[60%]")}>
+      {/* Left: prose — capped measure so full-width text never becomes a wall */}
+      <div className={cn("flex-1 min-w-0", hasRight ? "max-w-[60%]" : "max-w-prose")}>
         {data.subheading && (
           <p className="text-xs font-semibold text-teal uppercase tracking-widest mb-3">
             {data.subheading}
@@ -40,7 +40,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
         {body && (
           <div className="prose prose-sm max-w-none text-foreground/80 leading-relaxed">
             {body.split("\n\n").map((para, i) => (
-              <p key={i} className="text-sm leading-relaxed mb-3 last:mb-0">
+              <p key={i} className="text-sm leading-[1.7] mb-3 last:mb-0">
                 {para}
               </p>
             ))}

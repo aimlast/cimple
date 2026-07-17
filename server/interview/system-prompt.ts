@@ -97,6 +97,18 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
     // Non-critical — continue without insights
   }
 
+  // Broker-routed discrepancies get a top-level directive so the agent treats
+  // them as mandatory coverage, not optional context (details render inside
+  // the knowledge base section below).
+  const askSellerCount = (kb.askSellerDiscrepancies ?? []).length;
+  if (askSellerCount > 0) {
+    dynamicParts.push(
+      `# MANDATORY THIS SESSION: ${askSellerCount} broker-flagged discrepanc${askSellerCount === 1 ? "y" : "ies"}`,
+      `The broker routed specific data conflicts to this interview (see "PRIORITY: DISCREPANCIES" in the knowledge base below). Work each one into the conversation naturally and capture the seller's clarification before wrapping up.`,
+      "\n---\n",
+    );
+  }
+
   dynamicParts.push(
     "# CURRENT KNOWLEDGE BASE",
     "Everything below is what we currently know about this deal. Use it to guide your questions.\n",
