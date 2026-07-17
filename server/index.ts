@@ -2,6 +2,7 @@ import express, { type Request, Response, NextFunction } from "express";
 import session from "express-session";
 import connectPgSimple from "connect-pg-simple";
 import pg from "pg";
+import path from "path";
 import helmet from "helmet";
 import rateLimit from "express-rate-limit";
 import * as Sentry from "@sentry/node";
@@ -49,6 +50,20 @@ app.use(
 // Without this, express-session sees HTTP and refuses to set Secure cookies,
 // which breaks buyer login in production.
 app.set("trust proxy", 1);
+
+// ── Marketing site ────────────────────────────────────────────────────
+// cimple.ca (apex + www) serves the landing page; the product lives at
+// app.cimple.ca. /landing previews the same page on any host.
+const LANDING_HOSTS = new Set(["cimple.ca", "www.cimple.ca"]);
+const landingFile = path.resolve(process.cwd(), "server", "landing", "index.html");
+app.use((req, res, next) => {
+  if (req.method !== "GET") return next();
+  const host = (req.get("host") || "").split(":")[0].toLowerCase();
+  if (req.path === "/landing" || (LANDING_HOSTS.has(host) && req.path === "/")) {
+    return res.sendFile(landingFile);
+  }
+  next();
+});
 
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: false }));
@@ -113,6 +128,7 @@ for (const p of [
   "/api/buyer-auth/login",
   "/api/buyer-auth/signup",
   "/api/buyer-auth/request-reset",
+  "/api/early-access",
 ]) {
   app.use(p, authLimiter);
 }

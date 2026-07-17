@@ -6,91 +6,170 @@
    LIGHT MODE — cream + black + teal
    Primary mode for Cimple.
 ───────────────────────────────────────────── */
-:root {
+:root, .dark {
+  /* ─────────────────────────────────────────
+     OBSIDIAN — default (dark) theme
+     Layered near-blacks, logo-cream type and
+     primary buttons, champagne-brass accents.
+     Note: the --teal token now carries the
+     BRASS accent value; the name is kept so
+     every existing text-teal/bg-teal usage
+     restyles without a codebase-wide rename.
+  ───────────────────────────────────────── */
   /* ── Base surfaces ── */
-  --background: 40 22% 96%;            /* warm cream — matches logo */
-  --foreground: 0 0% 6%;               /* near-black — matches logo */
-  --border: 40 12% 88%;                /* warm light border */
-  --input: 40 12% 91%;
-  --ring: 162 65% 38%;                 /* teal focus ring */
+  --background: 240 5% 5%;
+  --foreground: 42 26% 92%;
+  --border: 240 4% 15%;
+  --input: 240 4% 13%;
+  --ring: 38 42% 60%;
 
-  --card: 0 0% 100%;                   /* white cards — elevated from cream bg */
-  --card-foreground: 0 0% 6%;
-  --card-border: 40 12% 90%;
+  --card: 240 4% 8%;
+  --card-foreground: 42 26% 92%;
+  --card-border: 240 4% 13%;
 
-  /* ── Sidebar — pure black (matches logo, creates premium contrast) ── */
-  --sidebar: 0 0% 4%;
-  --sidebar-foreground: 40 15% 62%;
-  --sidebar-border: 0 0% 11%;
-  --sidebar-primary: 162 65% 42%;      /* teal active state */
-  --sidebar-primary-foreground: 0 0% 4%;
-  --sidebar-accent: 0 0% 10%;
-  --sidebar-accent-foreground: 40 18% 80%;
-  --sidebar-ring: 162 65% 42%;
+  /* ── Sidebar — deepest black, brass active ── */
+  --sidebar: 240 6% 3.5%;
+  --sidebar-foreground: 40 10% 58%;
+  --sidebar-border: 240 4% 10%;
+  --sidebar-primary: 38 42% 62%;
+  --sidebar-primary-foreground: 240 6% 4%;
+  --sidebar-accent: 240 4% 9%;
+  --sidebar-accent-foreground: 42 20% 82%;
+  --sidebar-ring: 38 42% 62%;
 
   /* ── Popovers ── */
-  --popover: 0 0% 100%;
-  --popover-foreground: 0 0% 6%;
-  --popover-border: 40 12% 88%;
+  --popover: 240 4% 9%;
+  --popover-foreground: 42 26% 92%;
+  --popover-border: 240 4% 15%;
 
-  /* ── Primary = teal ── */
-  --primary: 162 65% 38%;
-  --primary-foreground: 0 0% 100%;
+  /* ── Primary = cream (black text) ── */
+  --primary: 42 26% 92%;
+  --primary-foreground: 240 6% 6%;
 
   /* ── Supporting surfaces ── */
-  --secondary: 40 12% 92%;
-  --secondary-foreground: 0 0% 18%;
-  --muted: 40 12% 93%;
-  --muted-foreground: 0 0% 42%;
-  --accent: 40 12% 91%;
-  --accent-foreground: 0 0% 12%;
+  --secondary: 240 4% 12%;
+  --secondary-foreground: 42 15% 80%;
+  --muted: 240 4% 11%;
+  --muted-foreground: 40 8% 60%;
+  --accent: 240 4% 12%;
+  --accent-foreground: 42 20% 88%;
 
   /* ── Status ── */
-  --destructive: 0 68% 50%;
+  --destructive: 0 55% 52%;
   --destructive-foreground: 0 0% 100%;
 
-  /* ── Teal — primary CTA, active states ── */
-  --teal: 162 65% 38%;
-  --teal-foreground: 0 0% 100%;
-  --teal-muted: 162 40% 93%;
-  --teal-muted-foreground: 162 65% 26%;
+  /* ── Brass accent (token name kept as --teal) ── */
+  --teal: 38 42% 60%;
+  --teal-foreground: 240 6% 6%;
+  --teal-muted: 38 25% 12%;
+  --teal-muted-foreground: 38 45% 70%;
 
-  /* ── Success (completed, verified) ── */
-  --success: 145 55% 38%;
+  /* ── Success ── */
+  --success: 152 30% 44%;
   --success-foreground: 0 0% 100%;
-  --success-muted: 145 45% 93%;
-  --success-muted-foreground: 145 55% 25%;
+  --success-muted: 152 25% 11%;
+  --success-muted-foreground: 152 35% 60%;
 
   /* ── Blue (secondary interactive) ── */
-  --blue: 211 78% 48%;
-  --blue-foreground: 0 0% 100%;
-  --blue-muted: 211 55% 93%;
-  --blue-muted-foreground: 211 78% 32%;
+  --blue: 215 45% 60%;
+  --blue-foreground: 240 6% 6%;
+  --blue-muted: 215 30% 13%;
+  --blue-muted-foreground: 215 50% 72%;
 
   /* ── Typography ── */
   --font-sans: 'Plus Jakarta Sans', sans-serif;
   --font-mono: 'JetBrains Mono', monospace;
   --radius: 0.5rem;
 
-  /* ── Shadows ── */
+  /* ── Shadows (deeper on dark) ── */
+  --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.4);
+  --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.45), 0 1px 2px -1px hsl(0 0% 0% / 0.4);
+  --shadow: 0 4px 6px -1px hsl(0 0% 0% / 0.45), 0 2px 4px -2px hsl(0 0% 0% / 0.4);
+  --shadow-md: 0 8px 16px -4px hsl(0 0% 0% / 0.5), 0 3px 6px -3px hsl(0 0% 0% / 0.45);
+  --shadow-lg: 0 12px 24px -6px hsl(0 0% 0% / 0.55), 0 4px 8px -4px hsl(0 0% 0% / 0.5);
+
+  /* ── Charts ── */
+  --chart-1: 38 42% 60%;
+  --chart-2: 152 30% 48%;
+  --chart-3: 215 45% 60%;
+  --chart-4: 260 35% 62%;
+  --chart-5: 15 55% 58%;
+
+  --spacing: 0.25rem;
+  --tracking-normal: 0em;
+}
+
+/* ─────────────────────────────────────────────
+   LIGHT — warm paper, black primaries, brass
+───────────────────────────────────────────── */
+.light {
+  --background: 40 25% 96.5%;
+  --foreground: 240 5% 8%;
+  --border: 40 12% 87%;
+  --input: 40 12% 90%;
+  --ring: 38 55% 42%;
+
+  --card: 0 0% 100%;
+  --card-foreground: 240 5% 8%;
+  --card-border: 40 12% 89%;
+
+  /* Sidebar stays black in both themes — brand anchor */
+  --sidebar: 240 6% 3.5%;
+  --sidebar-foreground: 40 10% 58%;
+  --sidebar-border: 240 4% 10%;
+  --sidebar-primary: 38 42% 62%;
+  --sidebar-primary-foreground: 240 6% 4%;
+  --sidebar-accent: 240 4% 9%;
+  --sidebar-accent-foreground: 42 20% 82%;
+  --sidebar-ring: 38 42% 62%;
+
+  --popover: 0 0% 100%;
+  --popover-foreground: 240 5% 8%;
+  --popover-border: 40 12% 87%;
+
+  /* Primary inverts: black buttons, cream text */
+  --primary: 240 5% 9%;
+  --primary-foreground: 42 30% 94%;
+
+  --secondary: 40 12% 92%;
+  --secondary-foreground: 240 4% 20%;
+  --muted: 40 12% 92.5%;
+  --muted-foreground: 40 5% 42%;
+  --accent: 40 14% 90%;
+  --accent-foreground: 240 5% 12%;
+
+  --destructive: 0 65% 48%;
+  --destructive-foreground: 0 0% 100%;
+
+  --teal: 38 55% 40%;
+  --teal-foreground: 42 30% 96%;
+  --teal-muted: 40 40% 91%;
+  --teal-muted-foreground: 38 60% 28%;
+
+  --success: 150 45% 34%;
+  --success-foreground: 0 0% 100%;
+  --success-muted: 145 40% 92%;
+  --success-muted-foreground: 150 50% 22%;
+
+  --blue: 215 60% 44%;
+  --blue-foreground: 0 0% 100%;
+  --blue-muted: 215 45% 92%;
+  --blue-muted-foreground: 215 60% 30%;
+
   --shadow-xs: 0 1px 2px 0 hsl(0 0% 0% / 0.05);
   --shadow-sm: 0 1px 3px 0 hsl(0 0% 0% / 0.07), 0 1px 2px -1px hsl(0 0% 0% / 0.05);
   --shadow: 0 4px 6px -1px hsl(0 0% 0% / 0.07), 0 2px 4px -2px hsl(0 0% 0% / 0.05);
   --shadow-md: 0 8px 16px -4px hsl(0 0% 0% / 0.08), 0 3px 6px -3px hsl(0 0% 0% / 0.06);
   --shadow-lg: 0 12px 24px -6px hsl(0 0% 0% / 0.10), 0 4px 8px -4px hsl(0 0% 0% / 0.07);
 
-  /* ── Charts ── */
-  --chart-1: 162 65% 40%;
-  --chart-2: 145 55% 38%;
-  --chart-3: 211 78% 48%;
-  --chart-4: 260 65% 55%;
-  --chart-5: 15 78% 52%;
-
-  --spacing: 0.25rem;
-  --tracking-normal: 0em;
+  --chart-1: 38 55% 42%;
+  --chart-2: 150 45% 36%;
+  --chart-3: 215 60% 46%;
+  --chart-4: 260 40% 52%;
+  --chart-5: 15 65% 48%;
 }
 
-/* Dark mode intentionally removed — cream/light is the only theme. */
+
 
 /* ─────────────────────────────────────────────
    BASE STYLES

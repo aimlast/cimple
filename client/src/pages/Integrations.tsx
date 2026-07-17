@@ -130,7 +130,7 @@ const CATEGORY_INFO = {
 function StatusBadge({ status }: { status: IntegrationStatus }) {
   if (status === "connected") {
     return (
-      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-emerald-500/10 text-emerald-600">
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-emerald-500/10 text-success-muted-foreground">
         <CheckCircle2 className="h-3 w-3" /> Connected
       </span>
     );
@@ -150,7 +150,7 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-neutral-100 text-neutral-500">
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium bg-muted text-muted-foreground">
       <Circle className="h-3 w-3" /> Not Connected
     </span>
   );
@@ -175,7 +175,7 @@ function IntegrationCardComponent({
         isComingSoon
           ? "border-neutral-200 bg-neutral-50/50 opacity-70"
           : isConnected
-          ? "border-emerald-200 bg-emerald-50/30"
+          ? "border-emerald-200 bg-success-muted/30"
           : "border-neutral-200 bg-white hover:border-teal/40 hover:shadow-sm"
       }`}
     >
@@ -184,10 +184,10 @@ function IntegrationCardComponent({
           <div
             className={`h-10 w-10 rounded-lg flex items-center justify-center ${
               isConnected
-                ? "bg-emerald-100 text-emerald-600"
+                ? "bg-emerald-100 text-success-muted-foreground"
                 : isFeatureLink
                 ? "bg-teal/10 text-teal"
-                : "bg-neutral-100 text-neutral-500"
+                : "bg-muted text-muted-foreground"
             }`}
           >
             <Icon className="h-5 w-5" />
@@ -199,13 +199,13 @@ function IntegrationCardComponent({
         </div>
       </div>
 
-      <p className="text-xs text-neutral-500 leading-relaxed mb-4">{card.description}</p>
+      <p className="text-xs text-muted-foreground leading-relaxed mb-4">{card.description}</p>
 
       {isComingSoon ? (
         <>
           <button
             disabled
-            className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-neutral-100 text-neutral-400 cursor-not-allowed"
+            className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-muted text-neutral-400 cursor-not-allowed"
           >
             Coming Soon
           </button>
@@ -223,7 +223,7 @@ function IntegrationCardComponent({
       ) : isConnected ? (
         <button
           onClick={() => onConnect(card.provider)}
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-red-50 text-red-600 hover:bg-red-100 transition-colors"
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-red-100 transition-colors"
         >
           Disconnect
         </button>
@@ -356,7 +356,7 @@ export default function Integrations() {
             </div>
             <h1 className="text-2xl font-bold text-neutral-900 tracking-tight">Integrations</h1>
           </div>
-          <p className="text-sm text-neutral-500 max-w-2xl leading-relaxed">
+          <p className="text-sm text-muted-foreground max-w-2xl leading-relaxed">
             Connect your email, CRM, and call recording tools to automatically feed existing communications
             and notes into the AI. The more context the AI has before the seller interview, the
             less the seller needs to repeat — and the better the CIM.
@@ -388,7 +388,7 @@ export default function Integrations() {
               className={`px-4 py-2 rounded-lg text-sm font-medium transition-colors flex items-center gap-1.5 ${
                 activeCategory === key
                   ? "bg-teal/10 text-teal"
-                  : "text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100"
+                  : "text-muted-foreground hover:text-neutral-700 hover:bg-muted"
               }`}
             >
               {CatIcon && <CatIcon className="h-3.5 w-3.5" />}
@@ -409,7 +409,7 @@ export default function Integrations() {
                 {CATEGORY_INFO[activeCategory].title}
               </h2>
             </div>
-            <p className="text-xs text-neutral-500 leading-relaxed">
+            <p className="text-xs text-muted-foreground leading-relaxed">
               {CATEGORY_INFO[activeCategory].description}
             </p>
           </div>
@@ -435,7 +435,7 @@ export default function Integrations() {
                 1
               </div>
               <h3 className="text-xs font-semibold text-neutral-800 mb-1">Connect your tools</h3>
-              <p className="text-2xs text-neutral-500 leading-relaxed">
+              <p className="text-2xs text-muted-foreground leading-relaxed">
                 Securely authorize Cimple to read (never write) data from your connected accounts.
               </p>
             </div>
@@ -444,7 +444,7 @@ export default function Integrations() {
                 2
               </div>
               <h3 className="text-xs font-semibold text-neutral-800 mb-1">Specify what to read</h3>
-              <p className="text-2xs text-neutral-500 leading-relaxed">
+              <p className="text-2xs text-muted-foreground leading-relaxed">
                 For each deal, tell us which email addresses, CRM records, or call recordings to pull in.
               </p>
             </div>
@@ -453,7 +453,7 @@ export default function Integrations() {
                 3
               </div>
               <h3 className="text-xs font-semibold text-neutral-800 mb-1">AI builds the knowledge base</h3>
-              <p className="text-2xs text-neutral-500 leading-relaxed">
+              <p className="text-2xs text-muted-foreground leading-relaxed">
                 The AI reads everything and pre-populates the seller's profile. The interview starts smarter — less repetition, better questions.
               </p>
             </div>
@@ -507,7 +507,7 @@ export default function Integrations() {
                 {pipedriveError}
               </p>
             )}
-            <p className="text-2xs text-neutral-500 leading-relaxed">
+            <p className="text-2xs text-muted-foreground leading-relaxed">
               The token is stored securely and only used to sync deal stages and
               prefill buyer submissions. You can disconnect at any time.
             </p>

@@ -206,10 +206,10 @@ function DocumentUploadCard({
                     key={d.id}
                     className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${
                       (d.status as string) === "extracted"
-                        ? "bg-emerald-50 text-emerald-600"
+                        ? "bg-success-muted text-success-muted-foreground"
                         : (d.status as string) === "parsing"
-                          ? "bg-amber-50 text-amber-600"
-                          : "bg-neutral-100 text-neutral-500"
+                          ? "bg-amber-500/10 text-amber-600"
+                          : "bg-muted text-muted-foreground"
                     }`}
                   >
                     <FileText className="h-2.5 w-2.5" />
@@ -2052,10 +2052,10 @@ function DocumentTable() {
                   <span
                     className={`inline-flex items-center px-2 py-0.5 rounded-full text-2xs font-medium ${
                       (doc.status as string) === "extracted"
-                        ? "bg-emerald-50 text-emerald-600"
+                        ? "bg-success-muted text-success-muted-foreground"
                         : (doc.status as string) === "parsing"
-                          ? "bg-amber-50 text-amber-600"
-                          : "bg-neutral-100 text-neutral-500"
+                          ? "bg-amber-500/10 text-amber-600"
+                          : "bg-muted text-muted-foreground"
                     }`}
                   >
                     {doc.status}

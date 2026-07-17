@@ -105,17 +105,17 @@ export function BuyersTab() {
                     under_review: {
                       label: "Under Review",
                       icon: Clock,
-                      className: "text-amber-600 bg-amber-50",
+                      className: "text-amber-600 bg-amber-500/10",
                     },
                     interested: {
                       label: "Interested",
                       icon: ThumbsUp,
-                      className: "text-emerald-600 bg-emerald-50",
+                      className: "text-success-muted-foreground bg-success-muted",
                     },
                     not_interested: {
                       label: "Not Interested",
                       icon: ThumbsDown,
-                      className: "text-red-500 bg-red-50",
+                      className: "text-red-500 bg-destructive/10",
                     },
                     lapsed: {
                       label: "Lapsed",
@@ -136,7 +136,7 @@ export function BuyersTab() {
                   > = {
                     high: {
                       label: "High",
-                      className: "text-emerald-600",
+                      className: "text-success-muted-foreground",
                     },
                     medium: {
                       label: "Medium",
@@ -234,7 +234,7 @@ export function BuyersTab() {
                       </td>
                       <td className="px-4 py-3">
                         {buyer.ndaSigned ? (
-                          <span className="text-xs text-emerald-600 font-medium">
+                          <span className="text-xs text-success-muted-foreground font-medium">
                             Signed
                           </span>
                         ) : (
