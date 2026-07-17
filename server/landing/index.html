@@ -1019,29 +1019,49 @@
   });
 
   /* Blob set: brass and warm-grey radial gradients, very low alpha. */
+  /* Motion is time-based with explicit periods (seconds) — glacial drift.
+     Each blob completes one slow orbit in 50-120s; nothing pulses fast. */
+  var TAU = Math.PI * 2;
   var blobs = [
-    { x: 0.24, y: 0.30, r: 0.52, hue: 'brass',  a: 0.075, sx: 0.000021, sy: 0.000015, px: 0.0,  py: 1.9 },
-    { x: 0.74, y: 0.24, r: 0.44, hue: 'brass',  a: 0.055, sx: 0.000017, sy: 0.000023, px: 2.1,  py: 4.2 },
-    { x: 0.52, y: 0.72, r: 0.58, hue: 'grey',   a: 0.060, sx: 0.000013, sy: 0.000019, px: 4.4,  py: 0.8 },
-    { x: 0.88, y: 0.66, r: 0.38, hue: 'brass',  a: 0.045, sx: 0.000025, sy: 0.000011, px: 1.2,  py: 3.3 },
-    { x: 0.10, y: 0.78, r: 0.40, hue: 'grey',   a: 0.050, sx: 0.000015, sy: 0.000021, px: 3.6,  py: 2.7 }
+    { x: 0.24, y: 0.30, r: 0.52, hue: 'brass',  a: 0.075, Tx: 97,  Ty: 71,  px: 0.0,  py: 1.9 },
+    { x: 0.74, y: 0.24, r: 0.44, hue: 'brass',  a: 0.055, Tx: 113, Ty: 83,  px: 2.1,  py: 4.2 },
+    { x: 0.52, y: 0.72, r: 0.58, hue: 'grey',   a: 0.060, Tx: 127, Ty: 89,  px: 4.4,  py: 0.8 },
+    { x: 0.88, y: 0.66, r: 0.38, hue: 'brass',  a: 0.045, Tx: 79,  Ty: 107, px: 1.2,  py: 3.3 },
+    { x: 0.10, y: 0.78, r: 0.40, hue: 'grey',   a: 0.050, Tx: 101, Ty: 61,  px: 3.6,  py: 2.7 }
   ];
+
+  /* Lazy cursor glow — a faint brass light that eases toward the pointer.
+     Interactive without being busy; skipped for touch devices. */
+  var glow = { x: 0.5, y: 0.42, tx: 0.5, ty: 0.42, active: false };
+  if (window.matchMedia('(pointer: fine)').matches) {
+    hero.addEventListener('mousemove', function (e) {
+      var rect = hero.getBoundingClientRect();
+      glow.tx = (e.clientX - rect.left) / Math.max(rect.width, 1);
+      glow.ty = (e.clientY - rect.top) / Math.max(rect.height, 1);
+      glow.active = true;
+    }, { passive: true });
+    hero.addEventListener('mouseleave', function () { glow.active = false; }, { passive: true });
+  }
 
   function blobColor(hue, alpha) {
     if (hue === 'brass') { return 'rgba(201, 168, 106, ' + alpha + ')'; }
     return 'rgba(122, 114, 100, ' + alpha + ')';
   }
 
+  var lastT = 0;
   function drawFrame(t) {
+    var dt = Math.min(Math.max(t - lastT, 0), 100); /* ms since last frame, clamped */
+    lastT = t;
+    var ts = t / 1000; /* seconds */
     ctx.clearRect(0, 0, W, H);
     ctx.fillStyle = '#0A0A0B';
     ctx.fillRect(0, 0, W, H);
     var base = Math.max(W, H);
     for (var i = 0; i < blobs.length; i++) {
       var b = blobs[i];
-      var cx = (b.x + 0.06 * Math.sin(t * b.sx * 1000 + b.px)) * W;
-      var cy = (b.y + 0.05 * Math.cos(t * b.sy * 1000 + b.py)) * H;
-      var r = b.r * base * (1 + 0.04 * Math.sin(t * 0.00009 + b.px));
+      var cx = (b.x + 0.06 * Math.sin(TAU * ts / b.Tx + b.px)) * W;
+      var cy = (b.y + 0.05 * Math.cos(TAU * ts / b.Ty + b.py)) * H;
+      var r = b.r * base * (1 + 0.04 * Math.sin(TAU * ts / 73 + b.px));
       var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
       g.addColorStop(0, blobColor(b.hue, b.a));
       g.addColorStop(0.55, blobColor(b.hue, b.a * 0.45));
@@ -1051,6 +1071,23 @@
       ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.fill();
     }
+    /* cursor glow: time-normalized easing (~1.5s to settle), gentle fade
+       to a resting spot behind the headline when the pointer leaves */
+    var ease = 1 - Math.pow(0.35, dt / 1000);
+    var restX = 0.5, restY = 0.42;
+    var targetX = glow.active ? glow.tx : restX;
+    var targetY = glow.active ? glow.ty : restY;
+    glow.x += (targetX - glow.x) * ease;
+    glow.y += (targetY - glow.y) * ease;
+    var gr = base * 0.34;
+    var gg = ctx.createRadialGradient(glow.x * W, glow.y * H, 0, glow.x * W, glow.y * H, gr);
+    gg.addColorStop(0, 'rgba(201, 168, 106, 0.055)');
+    gg.addColorStop(0.6, 'rgba(201, 168, 106, 0.022)');
+    gg.addColorStop(1, 'rgba(201, 168, 106, 0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(glow.x * W, glow.y * H, gr, 0, Math.PI * 2);
+    ctx.fill();
   }
 
   if (reducedMotion) {
