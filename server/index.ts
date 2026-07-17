@@ -56,11 +56,21 @@ app.set("trust proxy", 1);
 // app.cimple.ca. /landing previews the same page on any host.
 const LANDING_HOSTS = new Set(["cimple.ca", "www.cimple.ca"]);
 const landingFile = path.resolve(process.cwd(), "server", "landing", "index.html");
+// Preserved earlier drafts stay reachable for side-by-side comparison
+// (/landing/v1, /landing/v2, …) while index.html is the live version.
+const landingVersion = (v: string) =>
+  path.resolve(process.cwd(), "server", "landing", `${v}.html`);
 app.use((req, res, next) => {
   if (req.method !== "GET") return next();
   const host = (req.get("host") || "").split(":")[0].toLowerCase();
   if (req.path === "/landing" || (LANDING_HOSTS.has(host) && req.path === "/")) {
     return res.sendFile(landingFile);
+  }
+  const versionMatch = req.path.match(/^\/landing\/(v\d+)$/);
+  if (versionMatch) {
+    return res.sendFile(landingVersion(versionMatch[1]), (err) => {
+      if (err) next();
+    });
   }
   next();
 });
