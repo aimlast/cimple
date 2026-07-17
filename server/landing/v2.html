@@ -9,7 +9,6 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-<script>document.documentElement.className += ' js';</script>
 <style>
   :root {
     --bg: #0A0A0B;
@@ -22,7 +21,6 @@
     --faint: #6F6A60;
     --brass: #C9A86A;
     --brass-hi: #D9BC85;
-    --stmt: #1A1309;
     --radius: 10px;
     --font-ui: 'Plus Jakarta Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
     --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
@@ -133,6 +131,14 @@
     align-items: center;
     gap: 10px;
   }
+  .brand svg { display: block; }
+  .wordmark {
+    font-weight: 800;
+    font-size: 21px;
+    letter-spacing: -0.045em;
+    color: var(--cream);
+    line-height: 1;
+  }
   .nav-links {
     display: flex;
     align-items: center;
@@ -159,321 +165,95 @@
   /* ---------- Hero ---------- */
   .hero {
     position: relative;
-    min-height: 88vh;
+    min-height: 92vh;
     display: flex;
-    align-items: center;
-    padding: 150px 0 90px;
+    flex-direction: column;
+    justify-content: center;
+    padding: 140px 0 80px;
     overflow: hidden;
+  }
+  #hero-canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    z-index: 0;
   }
   .hero-dots {
     position: absolute;
     inset: 0;
-    z-index: 0;
-    background-image: radial-gradient(circle, rgba(244, 239, 226, 0.04) 1px, transparent 1px);
+    z-index: 1;
+    background-image: radial-gradient(circle, rgba(244, 239, 226, 0.045) 1px, transparent 1px);
     background-size: 30px 30px;
-    -webkit-mask-image: radial-gradient(ellipse 90% 80% at 55% 38%, black 25%, transparent 100%);
-    mask-image: radial-gradient(ellipse 90% 80% at 55% 38%, black 25%, transparent 100%);
+    -webkit-mask-image: radial-gradient(ellipse 90% 75% at 50% 40%, black 30%, transparent 100%);
+    mask-image: radial-gradient(ellipse 90% 75% at 50% 40%, black 30%, transparent 100%);
     pointer-events: none;
   }
-  .hero-grid {
+  .hero-fade {
+    position: absolute;
+    left: 0; right: 0; bottom: 0;
+    height: 180px;
+    z-index: 2;
+    background: linear-gradient(to bottom, rgba(10, 10, 11, 0), var(--bg));
+    pointer-events: none;
+  }
+  .hero-content {
     position: relative;
-    z-index: 1;
-    display: grid;
-    grid-template-columns: minmax(0, 1.02fr) minmax(0, 0.98fr);
-    gap: 48px;
-    align-items: center;
-    width: 100%;
+    z-index: 3;
+    text-align: center;
+    max-width: 860px;
+    margin: 0 auto;
   }
   .hero h1 {
-    font-size: clamp(36px, 4.4vw, 58px);
+    font-size: clamp(40px, 6.4vw, 72px);
     font-weight: 800;
     letter-spacing: -0.035em;
-    margin-bottom: 24px;
+    margin-bottom: 26px;
   }
-  .hero h1 em { font-style: normal; color: var(--brass); }
+  .hero h1 em {
+    font-style: normal;
+    color: var(--brass);
+  }
   .hero-sub {
-    font-size: clamp(16px, 1.6vw, 18px);
+    font-size: clamp(16px, 2vw, 19px);
     font-weight: 300;
     color: var(--muted);
-    max-width: 520px;
-    margin-bottom: 38px;
+    max-width: 640px;
+    margin: 0 auto 40px;
     line-height: 1.7;
   }
   .hero-ctas {
     display: flex;
     align-items: center;
+    justify-content: center;
     gap: 14px;
     flex-wrap: wrap;
+    margin-bottom: 72px;
   }
-
-  /* ---------- Hero centerpiece: the CIM assembling itself ---------- */
-  .hero-visual {
-    position: relative;
+  .stat-strip {
     display: flex;
+    align-items: stretch;
     justify-content: center;
+    gap: 0;
+    flex-wrap: wrap;
   }
-  .cim-stage {
-    position: relative;
-    width: 460px;
-    height: 500px;
-    max-width: 100%;
-    perspective: 1100px;
-    transform-style: preserve-3d;
+  .stat {
+    padding: 0 40px;
+    text-align: center;
   }
-  .stage-glow {
-    position: absolute;
-    inset: -12%;
-    background: radial-gradient(48% 44% at 50% 48%, rgba(201, 168, 106, 0.14), rgba(201, 168, 106, 0.04) 55%, transparent 75%);
-    pointer-events: none;
-  }
-  .cim-tilt {
-    position: absolute;
-    left: 50%;
-    top: 58px;
-    width: 290px;
-    height: 384px;
-    margin-left: -145px;
-    transform-style: preserve-3d;
-    animation: cimTilt 9s ease-in-out infinite;
-    z-index: 3;
-  }
-  @keyframes cimTilt {
-    0%, 100% { transform: rotateX(4deg) rotateY(-4deg); }
-    25%      { transform: rotateX(-3deg) rotateY(3deg) translateZ(10px); }
-    50%      { transform: rotateX(3deg) rotateY(4deg); }
-    75%      { transform: rotateX(-4deg) rotateY(-3deg) translateZ(8px); }
-  }
-  .doc-back {
-    position: absolute;
-    inset: 0;
-    border-radius: 14px;
-    border: 1px solid var(--border-2);
-    background: #101013;
-  }
-  .doc-back.b1 { transform: translateZ(-42px) translate(16px, 14px); opacity: 0.75; }
-  .doc-back.b2 { transform: translateZ(-84px) translate(32px, 28px); opacity: 0.45; }
-  .cim-doc {
-    position: absolute;
-    inset: 0;
-    border-radius: 14px;
-    border: 1px solid rgba(201, 168, 106, 0.45);
-    background:
-      radial-gradient(130% 110% at 85% -10%, rgba(201, 168, 106, 0.10), transparent 55%),
-      linear-gradient(165deg, #16161A, #0E0E11);
-    box-shadow: 0 50px 90px -34px rgba(0, 0, 0, 0.85), 0 0 0 1px rgba(0, 0, 0, 0.4);
-    padding: 26px 24px 22px;
-    display: flex;
-    flex-direction: column;
-  }
-  .doc-brand { display: flex; align-items: center; gap: 10px; margin-bottom: 22px; }
-  .doc-conf {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: var(--brass);
-    line-height: 1.5;
-  }
-  .doc-title {
-    font-size: 23px;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    color: var(--cream);
-    margin-bottom: 8px;
-  }
-  .doc-red {
-    font-size: 12px;
-    color: var(--faint);
-    display: flex;
-    align-items: center;
-    gap: 7px;
-    margin-bottom: 22px;
-  }
-  .redact {
-    display: inline-block;
-    height: 10px;
-    width: 58px;
-    border-radius: 3px;
-    background: repeating-linear-gradient(90deg, #3A372F 0 9px, #322F29 9px 13px);
-    vertical-align: middle;
-  }
-  .doc-lines .line {
-    height: 7px;
-    border-radius: 3px;
-    background: #1E1E23;
-    margin-bottom: 9px;
-  }
-  .doc-lines .line.w80 { width: 80%; }
-  .doc-lines .line.w62 { width: 62%; }
-  .doc-metrics {
-    display: flex;
-    margin-top: auto;
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-    gap: 14px;
-  }
-  .doc-metric { flex: 1; }
-  .doc-metric + .doc-metric { border-left: 1px solid var(--border); padding-left: 14px; }
-  .doc-metric .n {
-    font-family: var(--font-mono);
-    font-size: 15px;
-    font-weight: 600;
-    color: var(--cream);
-    display: block;
-  }
-  .doc-metric .l { font-size: 10px; color: var(--faint); letter-spacing: 0.05em; }
-  .doc-asm { margin-top: 18px; }
-  .doc-asm .asm-label {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    letter-spacing: 0.22em;
-    text-transform: uppercase;
-    color: var(--faint);
-    display: block;
-    margin-bottom: 7px;
-  }
-  .asm-track {
-    height: 4px;
-    border-radius: 2px;
-    background: #1E1E23;
-    overflow: hidden;
-  }
-  .asm-fill {
-    height: 100%;
-    width: 100%;
-    border-radius: 2px;
-    background: linear-gradient(90deg, var(--brass), var(--brass-hi));
-    transform-origin: left;
-    transform: scaleX(0.55);
-    animation: asmFill 4.5s ease-in-out infinite alternate;
-  }
-  @keyframes asmFill {
-    from { transform: scaleX(0.55); }
-    to   { transform: scaleX(0.92); }
-  }
-
-  /* Source fragments orbiting + absorbed into the CIM */
-  .frag {
-    position: absolute;
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    font-weight: 500;
-    letter-spacing: 0.02em;
-    color: var(--muted);
-    background: rgba(18, 18, 20, 0.92);
-    border: 1px solid var(--border-2);
-    border-radius: 999px;
-    padding: 7px 13px;
-    white-space: nowrap;
-    box-shadow: 0 14px 30px -12px rgba(0, 0, 0, 0.7);
-    will-change: transform, opacity;
-    animation: absorb var(--dur, 8s) ease-in-out infinite;
-    animation-delay: var(--delay, 0s);
-  }
-  .frag b { color: var(--brass-hi); font-weight: 600; }
-  @keyframes absorb {
-    0%   { opacity: 0; transform: translate3d(0, 12px, 0) scale(0.92); }
-    9%   { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-    38%  { transform: translate3d(0, -7px, 0) scale(1); }
-    58%  { opacity: 1; transform: translate3d(0, 0, 0) scale(1); }
-    90%  { opacity: 0.85; transform: translate3d(calc(var(--tx) * 0.9), calc(var(--ty) * 0.9), 26px) scale(0.6); }
-    100% { opacity: 0; transform: translate3d(var(--tx), var(--ty), 40px) scale(0.48); }
-  }
-  .frag.f1 { top: 6px;    left: -6px;   z-index: 2; }
-  .frag.f2 { top: 34px;   right: -14px; z-index: 2; }
-  .frag.f3 { top: 236px;  right: -30px; z-index: 4; }
-  .frag.f4 { bottom: 92px; left: -20px; z-index: 2; }
-  .frag.f5 { bottom: 2px;  right: 12px;  z-index: 4; }
-  .frag.f6 { top: 330px;  left: -32px;  z-index: 4; }
-
-  /* ---------- Stat band (count-up) ---------- */
-  .stat-band {
-    border-top: 1px solid var(--border);
-    border-bottom: 1px solid var(--border);
-    background: #101013;
-    padding: 64px 0;
-  }
-  .stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 32px;
-  }
-  .stat { text-align: center; }
   .stat + .stat { border-left: 1px solid var(--border); }
   .stat-num {
     font-family: var(--font-mono);
-    font-size: clamp(40px, 5vw, 58px);
+    font-size: 26px;
     font-weight: 600;
     color: var(--brass);
     display: block;
-    line-height: 1.1;
-    margin-bottom: 8px;
-    font-variant-numeric: tabular-nums;
+    margin-bottom: 4px;
   }
   .stat-label {
-    font-size: 14px;
-    color: var(--muted);
+    font-size: 13px;
+    color: var(--faint);
     letter-spacing: 0.02em;
-  }
-
-  /* ---------- Industry marquee ---------- */
-  .industries { padding: 84px 0 72px; }
-  .mq-caption {
-    text-align: center;
-    font-size: 15.5px;
-    font-weight: 300;
-    color: var(--muted);
-    max-width: 560px;
-    margin: 0 auto 36px;
-    padding: 0 24px;
-  }
-  .mq-caption strong { color: var(--cream); font-weight: 600; }
-  .marquee {
-    overflow: hidden;
-    -webkit-mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
-    mask-image: linear-gradient(90deg, transparent, #000 10%, #000 90%, transparent);
-  }
-  .mq-track {
-    display: flex;
-    width: max-content;
-    animation: mq 45s linear infinite;
-    will-change: transform;
-  }
-  .marquee:hover .mq-track { animation-play-state: paused; }
-  @keyframes mq {
-    to { transform: translate3d(-50%, 0, 0); }
-  }
-  .mq-list {
-    display: flex;
-    align-items: center;
-    gap: 14px;
-    padding-right: 14px;
-  }
-  .mq-chip {
-    font-family: var(--font-mono);
-    font-size: 12.5px;
-    color: var(--muted);
-    border: 1px solid var(--border-2);
-    border-radius: 999px;
-    padding: 9px 18px;
-    white-space: nowrap;
-    transition: border-color 0.2s ease, color 0.2s ease;
-  }
-  .mq-chip:hover { border-color: rgba(201, 168, 106, 0.5); color: var(--brass-hi); }
-
-  /* ---------- Checkerboard transitions (Modular-style pixel edge) ---------- */
-  .checker {
-    height: 88px;
-    background:
-      repeating-linear-gradient(90deg, var(--brass) 0 44px, transparent 44px 616px) 0 0 / 616px 44px repeat-x,
-      repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 44px, transparent 44px 88px) 0 0 / 88px 44px repeat-x,
-      repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 44px, transparent 44px 88px) 44px 100% / 88px 44px repeat-x;
-  }
-  .checker.flip {
-    background:
-      repeating-linear-gradient(90deg, var(--brass) 0 44px, transparent 44px 616px) 308px 100% / 616px 44px repeat-x,
-      repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 44px, transparent 44px 88px) 44px 0 / 88px 44px repeat-x,
-      repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 44px, transparent 44px 88px) 0 100% / 88px 44px repeat-x;
   }
 
   /* ---------- Section shells ---------- */
@@ -488,19 +268,20 @@
   }
   .section-head h2 em { font-style: normal; color: var(--brass); white-space: nowrap; }
   .section-head p { font-size: 17px; font-weight: 300; color: var(--muted); }
+  .hairline { border: none; border-top: 1px solid var(--border); margin: 0; }
 
-  /* ---------- The loop: alternating rows + product mockups ---------- */
-  .loop-row {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-    gap: 60px;
-    align-items: center;
-    padding: 58px 0;
+  /* ---------- The loop (how it works) ---------- */
+  .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px; }
+  .steps .step:nth-child(-n+2) { grid-column: span 3; }
+  .steps .step:nth-child(n+3) { grid-column: span 2; }
+  .step {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 36px 34px;
+    transition: border-color 0.25s ease, background-color 0.25s ease;
   }
-  .loop-row + .loop-row { border-top: 1px solid var(--border); }
-  .loop-row.flip .loop-text { order: 2; }
-  .loop-row.flip .loop-mock { order: 1; }
-  .loop-text { max-width: 460px; }
+  .step:hover { border-color: rgba(201, 168, 106, 0.35); background: var(--panel-2); }
   .step-num {
     font-family: var(--font-mono);
     font-size: 13px;
@@ -508,341 +289,43 @@
     color: var(--brass);
     letter-spacing: 0.18em;
     display: block;
-    margin-bottom: 20px;
+    margin-bottom: 22px;
   }
-  .loop-text h3 { font-size: 24px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.015em; }
-  .loop-text p { font-size: 15.5px; color: var(--muted); font-weight: 300; }
+  .step h3 { font-size: 21px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.015em; }
+  .step p { font-size: 15px; color: var(--muted); font-weight: 300; }
 
-  .mock {
-    background: linear-gradient(160deg, #141416, #101013);
-    border: 1px solid var(--border-2);
-    border-radius: 14px;
-    box-shadow: 0 36px 70px -32px rgba(0, 0, 0, 0.7);
-    overflow: hidden;
-  }
-  .mock-bar {
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    padding: 13px 18px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(23, 23, 26, 0.6);
-  }
-  .mock-bar .dots { display: flex; gap: 5px; }
-  .mock-bar .dots i {
-    width: 8px; height: 8px;
-    border-radius: 50%;
-    background: var(--border-2);
-    display: block;
-  }
-  .mock-bar .mt {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--faint);
-  }
-  .mock-pad { padding: 20px 22px 22px; }
-
-  /* 01 — Sources */
-  .src-row {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 14px;
-    padding: 11px 0;
-    font-size: 13.5px;
-    color: var(--muted);
-    border-bottom: 1px solid var(--border);
-    transition: opacity 0.5s ease var(--d, 0s), transform 0.5s ease var(--d, 0s);
-  }
-  .src-row:last-child { border-bottom: none; }
-  .js .io:not(.in) .src-row { opacity: 0; transform: translateX(-14px); }
-  .src-row .st {
-    position: relative;
-    font-family: var(--font-mono);
-    font-size: 11px;
-    white-space: nowrap;
-  }
-  .src-row .st-pend {
-    color: var(--faint);
-    transition: opacity 0.3s ease calc(var(--d, 0s) + 0.55s);
-  }
-  .src-row .st-done {
-    position: absolute;
-    right: 0; top: 0;
-    color: var(--brass-hi);
-    opacity: 0;
-    transition: opacity 0.3s ease calc(var(--d, 0s) + 0.62s);
-  }
-  .io.in .src-row .st-pend { opacity: 0; }
-  .io.in .src-row .st-done { opacity: 1; }
-
-  /* 02 — Seller profile */
-  .p-chips { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
-  .p-chip {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--muted);
-    border: 1px solid var(--border-2);
-    border-radius: 999px;
-    padding: 8px 14px;
-    transition: opacity 0.45s ease var(--d, 0s), transform 0.45s cubic-bezier(0.2, 0.8, 0.3, 1.2) var(--d, 0s);
-  }
-  .js .io:not(.in) .p-chip { opacity: 0; transform: scale(0.85); }
-  .p-status {
-    font-family: var(--font-mono);
-    font-size: 11.5px;
-    color: var(--brass-hi);
-    border-top: 1px solid var(--border);
-    padding-top: 16px;
-    transition: opacity 0.5s ease 0.7s;
-  }
-  .js .io:not(.in) .p-status { opacity: 0; }
-
-  /* 03 — Interview chat */
-  .chat { display: flex; flex-direction: column; gap: 12px; }
-  .bub {
-    max-width: 88%;
-    border-radius: 12px;
-    padding: 13px 16px;
-    font-size: 13.5px;
-    line-height: 1.55;
-    transition: opacity 0.55s ease var(--d, 0s), transform 0.55s ease var(--d, 0s);
-  }
-  .js .io:not(.in) .bub { opacity: 0; transform: translateY(14px); }
-  .bub-ai {
-    align-self: flex-start;
-    background: var(--panel-2);
+  /* ---------- Three CIMs, one engine ---------- */
+  .usp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
+  .usp {
+    background: var(--panel);
     border: 1px solid var(--border);
-    border-left: 2px solid var(--brass);
-    color: var(--cream);
-  }
-  .bub-ai .who, .bub-seller .who {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    letter-spacing: 0.2em;
-    text-transform: uppercase;
-    color: var(--faint);
-    margin-bottom: 6px;
-  }
-  .bub-seller {
-    align-self: flex-end;
-    background: rgba(201, 168, 106, 0.08);
-    border: 1px solid rgba(201, 168, 106, 0.25);
-    color: var(--muted);
-  }
-  .typing { display: inline-flex; gap: 4px; padding: 3px 2px 0; }
-  .typing i {
-    width: 6px; height: 6px;
-    border-radius: 50%;
-    background: var(--brass);
-    display: block;
-    animation: tri 1.2s ease-in-out infinite;
-  }
-  .typing i:nth-child(2) { animation-delay: 0.15s; }
-  .typing i:nth-child(3) { animation-delay: 0.3s; }
-  @keyframes tri {
-    0%, 60%, 100% { opacity: 0.25; transform: none; }
-    30% { opacity: 1; transform: translateY(-3px); }
-  }
-  .chat-note {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    color: var(--faint);
-    border-top: 1px solid var(--border);
-    margin-top: 8px;
-    padding-top: 14px;
-    transition: opacity 0.5s ease 0.8s;
-  }
-  .js .io:not(.in) .chat-note { opacity: 0; }
-  .chat-note b { color: var(--brass); font-weight: 500; }
-
-  /* 04 — Mini CIM with growing chart */
-  .mini-cover { border-bottom: 1px solid var(--border); padding: 18px 22px 16px; }
-  .mini-cover .k {
-    font-family: var(--font-mono);
-    font-size: 9px;
-    letter-spacing: 0.24em;
-    text-transform: uppercase;
-    color: var(--brass);
-    display: block;
-    margin-bottom: 5px;
-  }
-  .mini-cover .t { font-size: 17px; font-weight: 800; color: var(--cream); letter-spacing: -0.01em; }
-  .chart {
-    display: flex;
-    align-items: flex-end;
-    gap: 14px;
-    height: 150px;
-    padding: 22px 22px 0;
-  }
-  .chart .col { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; height: 100%; }
-  .chart .bar {
-    border-radius: 4px 4px 0 0;
-    background: linear-gradient(180deg, var(--brass-hi), rgba(201, 168, 106, 0.45));
-    transform-origin: bottom;
-    transition: transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0s);
-  }
-  .js .io:not(.in) .chart .bar { transform: scaleY(0); }
-  .chart .col:nth-child(5) .bar { background: linear-gradient(180deg, var(--cream), rgba(244, 239, 226, 0.5)); }
-  .chart-x {
-    display: flex;
-    gap: 14px;
-    padding: 8px 22px 0;
-    border-top: 1px solid var(--border);
-  }
-  .chart-x span {
-    flex: 1;
-    text-align: center;
-    font-family: var(--font-mono);
-    font-size: 9.5px;
-    color: var(--faint);
-  }
-  .mock-foot {
-    font-size: 12px;
-    color: var(--faint);
-    padding: 12px 22px 18px;
-  }
-  .mock-foot b { color: var(--brass); font-weight: 500; }
-
-  /* 05 — Engagement analytics */
-  .eng-row { padding: 10px 0; }
-  .eng-top {
-    display: flex;
-    justify-content: space-between;
-    font-size: 13px;
-    color: var(--muted);
-    margin-bottom: 7px;
-  }
-  .eng-top .tm { font-family: var(--font-mono); font-size: 12px; color: var(--cream); }
-  .eng-track {
-    height: 8px;
-    border-radius: 4px;
-    background: #1C1C20;
-    overflow: hidden;
-  }
-  .eng-fill {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, var(--brass), var(--brass-hi));
-    transform-origin: left;
-    transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0s);
-  }
-  .js .io:not(.in) .eng-fill { transform: scaleX(0); }
-  .eng-note {
-    font-size: 12.5px;
-    color: var(--faint);
-    border-top: 1px solid var(--border);
-    margin-top: 14px;
-    padding-top: 14px;
-    transition: opacity 0.5s ease 0.9s;
-  }
-  .js .io:not(.in) .eng-note { opacity: 0; }
-  .eng-note b { color: var(--brass-hi); font-weight: 500; }
-
-  /* ---------- Statement (full-bleed, huge type) ---------- */
-  .statement {
+    border-radius: 14px;
+    padding: 38px 32px;
     position: relative;
-    background: linear-gradient(180deg, var(--stmt), #0F0C07 82%, var(--stmt));
-    padding: max(17vh, 140px) 0;
-    overflow: hidden;
+    transition: border-color 0.25s ease, background-color 0.25s ease;
   }
-  .statement::before {
-    content: "";
-    position: absolute;
-    inset: -22%;
+  .usp:hover { border-color: rgba(201, 168, 106, 0.35); background: var(--panel-2); }
+  .usp.original {
+    border-color: rgba(201, 168, 106, 0.28);
     background:
-      radial-gradient(46% 56% at 28% 38%, rgba(201, 168, 106, 0.15), transparent 62%),
-      radial-gradient(38% 48% at 76% 66%, rgba(201, 168, 106, 0.09), transparent 62%);
-    animation: wash 60s ease-in-out infinite alternate;
-    will-change: transform;
-    pointer-events: none;
+      radial-gradient(120% 140% at 80% -20%, rgba(201, 168, 106, 0.07), transparent 55%),
+      var(--panel);
   }
-  @keyframes wash {
-    to { transform: translate3d(5%, -4%, 0) scale(1.06); }
-  }
-  .statement .container { position: relative; }
-  .statement-big {
-    font-size: clamp(44px, 8vw, 108px);
-    font-weight: 800;
-    letter-spacing: -0.04em;
-    line-height: 1.02;
-    color: var(--cream);
-    max-width: 15ch;
-    /* Clip-reveal is driven by the section's .in (observing the clipped
-       element itself never fires: the target's own clip-path zeroes its
-       intersection rect in Chromium). */
-    clip-path: inset(-2% -2% -2% -2%);
-    transition: opacity 0.7s ease, transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1), clip-path 0.9s cubic-bezier(0.22, 0.61, 0.36, 1);
-  }
-  .js .statement:not(.in) .statement-big { opacity: 0.001; transform: translateY(44px); clip-path: inset(0 0 100% 0); }
-  .statement-quiet {
-    font-size: clamp(16px, 1.8vw, 19px);
-    font-weight: 300;
-    color: var(--muted);
-    max-width: 620px;
-    margin-top: 30px;
-    transition: opacity 0.6s ease 0.3s, transform 0.65s cubic-bezier(0.22, 0.61, 0.36, 1) 0.3s;
-  }
-  .js .statement:not(.in) .statement-quiet { opacity: 0; transform: translateY(24px); }
-
-  /* ---------- Three CIMs: fanned document stack ---------- */
-  .fan {
-    position: relative;
-    height: 470px;
-    max-width: 940px;
-    margin: 0 auto;
-  }
-  .fan-card {
-    position: absolute;
-    top: 10px;
-    left: 50%;
-    width: 330px;
-    min-height: 420px;
-    margin-left: -165px;
-    background: linear-gradient(160deg, #141416, #101013);
-    border: 1px solid var(--border-2);
-    border-radius: 16px;
-    padding: 30px 28px;
-    box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.75);
-    transition: transform 0.85s cubic-bezier(0.22, 0.61, 0.36, 1), border-color 0.3s ease;
-    display: flex;
-    flex-direction: column;
-  }
-  .fan-card:hover { border-color: rgba(201, 168, 106, 0.4); }
-  .fan-card .usp-tag {
+  .usp.original:hover { border-color: rgba(201, 168, 106, 0.5); }
+  .usp-tag {
     font-family: var(--font-mono);
     font-size: 11px;
     letter-spacing: 0.2em;
     color: var(--faint);
     text-transform: uppercase;
     display: inline-block;
-    align-self: flex-start;
     border: 1px solid var(--border-2);
     border-radius: 999px;
     padding: 4px 12px;
-    margin-bottom: 24px;
+    margin-bottom: 26px;
   }
-  .fan-card h3 { font-size: 21px; margin-bottom: 12px; letter-spacing: -0.015em; }
-  .fan-card p { font-size: 14.5px; font-weight: 300; color: var(--muted); }
-  .fan-card .doc-edge {
-    margin-top: auto;
-    padding-top: 22px;
-    display: flex;
-    gap: 8px;
-  }
-  .fan-card .doc-edge i {
-    height: 6px;
-    border-radius: 3px;
-    background: #1E1E23;
-    display: block;
-  }
-  .fan-card .doc-edge i:nth-child(1) { width: 42%; }
-  .fan-card .doc-edge i:nth-child(2) { width: 26%; }
-  .fan-card .doc-edge i:nth-child(3) { width: 14%; }
+  .usp h3 { font-size: 20px; margin-bottom: 12px; letter-spacing: -0.015em; }
+  .usp p { font-size: 15px; font-weight: 300; }
   .origin-chip {
     font-family: var(--font-mono);
     font-size: 10.5px;
@@ -854,30 +337,114 @@
     border-radius: 999px;
     padding: 4px 12px;
     display: inline-block;
-    align-self: flex-start;
     margin-bottom: 12px;
   }
-  .fan-card.f3-card {
-    border-color: rgba(201, 168, 106, 0.28);
-    background:
-      radial-gradient(120% 140% at 80% -20%, rgba(201, 168, 106, 0.07), transparent 55%),
-      linear-gradient(160deg, #141416, #101013);
+
+  /* ---------- CIM Preview ---------- */
+  .preview-wrap { max-width: 760px; margin: 72px auto 0; }
+  .cim-card {
+    background: linear-gradient(160deg, #141416, #101013);
+    border: 1px solid var(--border-2);
+    border-radius: 16px;
+    overflow: hidden;
+    box-shadow: 0 40px 80px -30px rgba(0, 0, 0, 0.7);
   }
-  /* spread (revealed) state is the default; pre-reveal is a tight stack */
-  .fan-card.f1 { z-index: 1; transform: translateX(-88%) rotate(-5deg); }
-  .fan-card.f2 { z-index: 2; transform: rotate(0.5deg); }
-  .fan-card.f3-card { z-index: 3; transform: translateX(88%) rotate(5deg); }
-  .js .fan:not(.in) .fan-card.f1 { transform: translateX(-5%) rotate(-6deg); }
-  .js .fan:not(.in) .fan-card.f2 { transform: translateX(0) rotate(2deg); }
-  .js .fan:not(.in) .fan-card.f3-card { transform: translateX(5%) rotate(7deg); }
-  .fan.in .fan-card.f1:hover { transform: translateX(-88%) rotate(-5deg) translateY(-12px); }
-  .fan.in .fan-card.f2:hover { transform: rotate(0.5deg) translateY(-12px); }
-  .fan.in .fan-card.f3-card:hover { transform: translateX(88%) rotate(5deg) translateY(-12px); }
+  .cim-head {
+    padding: 34px 38px 30px;
+    border-bottom: 1px solid var(--border);
+    background:
+      radial-gradient(120% 160% at 85% -20%, rgba(201, 168, 106, 0.12), transparent 55%),
+      var(--panel-2);
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 20px;
+    flex-wrap: wrap;
+  }
+  .cim-kicker {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    letter-spacing: 0.24em;
+    color: var(--brass);
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 12px;
+  }
+  .cim-title { font-size: 26px; font-weight: 800; letter-spacing: -0.02em; color: var(--cream); margin-bottom: 8px; }
+  .cim-redacted {
+    font-size: 14px;
+    color: var(--faint);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .redact {
+    display: inline-block;
+    height: 12px;
+    width: 74px;
+    border-radius: 3px;
+    background: repeating-linear-gradient(90deg, #3A372F 0 10px, #322F29 10px 14px);
+    vertical-align: middle;
+  }
+  .cim-chip {
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: var(--brass-hi);
+    border: 1px solid rgba(201, 168, 106, 0.4);
+    background: rgba(201, 168, 106, 0.08);
+    border-radius: 999px;
+    padding: 6px 14px;
+    align-self: flex-start;
+  }
+  .cim-metrics {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    padding: 30px 38px;
+    gap: 20px;
+  }
+  .cim-metric { text-align: left; }
+  .cim-metric .m-num {
+    font-family: var(--font-mono);
+    font-size: 24px;
+    font-weight: 600;
+    color: var(--cream);
+    display: block;
+    margin-bottom: 2px;
+  }
+  .cim-metric .m-label {
+    font-size: 12.5px;
+    color: var(--faint);
+    letter-spacing: 0.04em;
+  }
+  .cim-metric + .cim-metric { border-left: 1px solid var(--border); padding-left: 20px; }
+  .cim-body {
+    padding: 0 38px 34px;
+  }
+  .cim-body .line {
+    height: 9px;
+    border-radius: 3px;
+    background: #1C1C20;
+    margin-bottom: 10px;
+  }
+  .cim-body .line.w80 { width: 80%; }
+  .cim-body .line.w60 { width: 60%; }
+  .cim-body .section-label {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--muted);
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+    padding-top: 4px;
+  }
   .preview-caption {
     text-align: center;
     font-size: 14px;
     color: var(--faint);
-    margin-top: 34px;
+    margin-top: 24px;
   }
   .preview-caption strong { color: var(--brass); font-weight: 600; }
 
@@ -892,75 +459,34 @@
       radial-gradient(90% 120% at 20% -30%, rgba(201, 168, 106, 0.09), transparent 60%),
       #101012;
     border-radius: 19px;
-    padding: 68px 56px;
-  }
-  .flagship-grid {
-    display: grid;
-    grid-template-columns: minmax(0, 1.08fr) minmax(0, 0.92fr);
-    gap: 52px;
-    align-items: center;
+    padding: 72px 56px;
   }
   .flagship-panel h2 {
-    font-size: clamp(30px, 4vw, 42px);
+    font-size: clamp(30px, 4vw, 44px);
     font-weight: 800;
     letter-spacing: -0.03em;
     margin-bottom: 24px;
+    max-width: 640px;
   }
   .flagship-panel h2 em { font-style: normal; color: var(--brass); white-space: nowrap; }
   .flagship-lead {
-    font-size: 16.5px;
+    font-size: 17.5px;
     font-weight: 300;
     color: var(--muted);
+    max-width: 720px;
     margin-bottom: 18px;
   }
   .flagship-punch {
-    font-size: 16.5px;
+    font-size: 17.5px;
     font-weight: 400;
     color: var(--cream);
-  }
-  .rk-row { padding: 12px 0; border-bottom: 1px solid var(--border); }
-  .rk-row:last-of-type { border-bottom: none; }
-  .rk-top {
-    display: flex;
-    justify-content: space-between;
-    align-items: baseline;
-    margin-bottom: 8px;
-  }
-  .rk-name { font-size: 13.5px; font-weight: 600; color: var(--cream); }
-  .rk-score { font-family: var(--font-mono); font-size: 12.5px; color: var(--brass-hi); font-variant-numeric: tabular-nums; }
-  .rk-score .den { color: var(--faint); }
-  .rk-track { height: 8px; border-radius: 4px; background: #1C1C20; overflow: hidden; }
-  .rk-fill {
-    height: 100%;
-    border-radius: 4px;
-    background: linear-gradient(90deg, var(--brass), var(--brass-hi));
-    transform-origin: left;
-    transition: transform 0.9s cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0s);
-  }
-  .rk-row.dim .rk-fill { background: linear-gradient(90deg, #4A4438, #6F6A60); }
-  .js .io:not(.in) .rk-fill { transform: scaleX(0); }
-  .rk-chips {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 8px;
-    padding-top: 16px;
-    border-top: 1px solid var(--border);
-    margin-top: 6px;
-  }
-  .rk-chip {
-    font-family: var(--font-mono);
-    font-size: 10px;
-    letter-spacing: 0.06em;
-    color: var(--faint);
-    border: 1px solid var(--border-2);
-    border-radius: 999px;
-    padding: 4px 10px;
+    max-width: 720px;
   }
   .proof-grid {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
     gap: 16px;
-    margin-top: 52px;
+    margin-top: 48px;
   }
   .proof {
     background: rgba(201, 168, 106, 0.05);
@@ -981,6 +507,27 @@
     margin-bottom: 8px;
   }
   .proof p { font-size: 14.5px; font-weight: 300; color: var(--muted); }
+
+  /* ---------- Manifesto strip ---------- */
+  .manifesto {
+    padding: 104px 0;
+    text-align: center;
+  }
+  .manifesto .big {
+    font-size: clamp(28px, 4.5vw, 48px);
+    font-weight: 800;
+    letter-spacing: -0.03em;
+    color: var(--cream);
+    line-height: 1.15;
+    margin-bottom: 20px;
+  }
+  .manifesto .quiet {
+    font-size: 17px;
+    font-weight: 300;
+    color: var(--muted);
+    max-width: 620px;
+    margin: 0 auto;
+  }
 
   /* ---------- Security band ---------- */
   .security-band {
@@ -1086,55 +633,30 @@
   .footer-inner .fine { font-size: 13.5px; color: var(--faint); }
   .footer-inner a.fine:hover { color: var(--brass-hi); }
 
-  /* ---------- Scroll entrances ---------- */
+  /* ---------- Reveal on scroll ---------- */
   .reveal {
-    transition: opacity 0.6s ease var(--d, 0s), transform 0.65s cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0s);
+    opacity: 0;
+    transform: translateY(16px);
+    transition: opacity 0.35s ease, transform 0.35s ease;
   }
-  .js .reveal:not(.in) { opacity: 0; transform: translateY(24px); }
-  .r-scale { transition: opacity 0.6s ease var(--d, 0s), transform 0.7s cubic-bezier(0.22, 0.61, 0.36, 1) var(--d, 0s); }
-  .js .r-scale:not(.in) { transform: scale(0.95); }
-
-  /* ---------- Reduced motion: freeze to composed states ---------- */
+  .reveal.in { opacity: 1; transform: none; }
+  .steps .reveal:nth-child(2), .usp-grid .reveal:nth-child(2), .security-grid .reveal:nth-child(2), .proof-grid .reveal:nth-child(2) { transition-delay: 0.07s; }
+  .steps .reveal:nth-child(3), .usp-grid .reveal:nth-child(3), .security-grid .reveal:nth-child(3), .proof-grid .reveal:nth-child(3) { transition-delay: 0.14s; }
+  .steps .reveal:nth-child(4), .security-grid .reveal:nth-child(4) { transition-delay: 0.21s; }
+  .steps .reveal:nth-child(5), .security-grid .reveal:nth-child(5) { transition-delay: 0.28s; }
   @media (prefers-reduced-motion: reduce) {
-    .cim-tilt, .frag, .asm-fill, .mq-track, .typing i, .statement::before { animation: none !important; }
-    .frag { opacity: 1 !important; }
-    .asm-fill { transform: scaleX(0.86); }
-    .marquee { -webkit-mask-image: none; mask-image: none; }
-    .mq-track { width: auto; flex-wrap: wrap; justify-content: center; }
-    .mq-list { flex-wrap: wrap; justify-content: center; padding-right: 0; }
-    .mq-list[aria-hidden="true"] { display: none; }
-    .reveal, .r-scale, .fan-card, .src-row, .p-chip, .p-status, .statement-big, .statement-quiet,
-    .bub, .chat-note, .chart .bar, .eng-fill, .eng-note, .rk-fill, .btn { transition: none !important; }
-    .js .reveal:not(.in), .js .r-scale:not(.in),
-    .js .statement:not(.in) .statement-big, .js .statement:not(.in) .statement-quiet { opacity: 1; transform: none; clip-path: none; }
+    .reveal { opacity: 1; transform: none; transition: none; }
+    .btn { transition: none; }
   }
 
   /* ---------- Responsive ---------- */
-  @media (max-width: 1020px) {
-    .hero { min-height: 0; padding-top: 130px; }
-    .hero-grid { grid-template-columns: minmax(0, 1fr); gap: 56px; }
-    .hero-visual { order: 2; min-width: 0; }
-    .cim-stage { width: min(460px, 100%); }
-    .loop-row { grid-template-columns: 1fr; gap: 32px; padding: 48px 0; }
-    .loop-row.flip .loop-text { order: 1; }
-    .loop-row.flip .loop-mock { order: 2; }
-    .loop-text { max-width: 560px; }
-    .flagship-grid { grid-template-columns: 1fr; gap: 40px; }
+  @media (max-width: 920px) {
+    .usp-grid { grid-template-columns: 1fr; }
     .proof-grid { grid-template-columns: 1fr; }
+    .steps { grid-template-columns: 1fr; }
+    .steps .step { grid-column: auto; }
     .security-grid { grid-template-columns: repeat(3, 1fr); row-gap: 36px; }
     .flagship-panel { padding: 56px 32px; }
-  }
-  @media (max-width: 860px) {
-    .fan { height: auto; display: grid; gap: 18px; max-width: 480px; }
-    .fan-card, .fan-card.f1, .fan-card.f2, .fan-card.f3-card,
-    .js .fan:not(.in) .fan-card.f1, .js .fan:not(.in) .fan-card.f2, .js .fan:not(.in) .fan-card.f3-card {
-      position: static;
-      width: auto;
-      min-height: 0;
-      margin-left: 0;
-      transform: none;
-    }
-    .fan.in .fan-card.f1:hover, .fan.in .fan-card.f2:hover, .fan.in .fan-card.f3-card:hover { transform: translateY(-6px); }
   }
   @media (max-width: 768px) {
     .nav-links { display: none; }
@@ -1142,29 +664,23 @@
     .nav-right { gap: 12px; }
     .nav-right .signin { white-space: nowrap; font-size: 13.5px; }
     .nav .btn { padding: 8px 13px; font-size: 13px; }
+    .nav .wordmark { font-size: 19px; }
     .section { padding: 80px 0; }
-    .hero { padding-top: 116px; padding-bottom: 56px; }
-    .cim-stage { transform: scale(0.78); transform-origin: top center; height: 420px; }
-    .stat-band { padding: 48px 0; }
-    .stats { grid-template-columns: 1fr; gap: 26px; }
-    .stat + .stat { border-left: none; border-top: 1px solid var(--border); padding-top: 26px; }
-    .industries { padding: 64px 0 56px; }
-    .checker, .checker.flip {
-      height: 56px;
-      background:
-        repeating-linear-gradient(90deg, var(--brass) 0 28px, transparent 28px 392px) 0 0 / 392px 28px repeat-x,
-        repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 28px, transparent 28px 56px) 0 0 / 56px 28px repeat-x,
-        repeating-linear-gradient(90deg, var(--sq, var(--panel-2)) 0 28px, transparent 28px 56px) 28px 100% / 56px 28px repeat-x;
-    }
-    .statement { padding: 110px 0; }
+    .hero { padding-top: 120px; }
+    .hero-ctas { margin-bottom: 56px; }
+    .stat { padding: 0; flex: 1 1 100%; }
+    .stat + .stat { border-left: none; border-top: 1px solid var(--border); padding-top: 18px; margin-top: 18px; }
+    .cim-metrics { grid-template-columns: 1fr 1fr; }
+    .cim-metric + .cim-metric { border-left: none; padding-left: 0; }
+    .cim-head, .cim-metrics { padding-left: 26px; padding-right: 26px; }
+    .cim-body { padding-left: 26px; padding-right: 26px; }
     .security-grid { grid-template-columns: 1fr 1fr; }
     .cta-panel { padding: 56px 24px; }
     .flagship-panel { padding: 48px 24px; }
+    .manifesto { padding: 80px 0; }
   }
   @media (max-width: 480px) {
     .security-grid { grid-template-columns: 1fr; }
-    .frag.f3 { right: -8px; }
-    .frag.f6 { left: -10px; }
   }
 </style>
 </head>
@@ -1196,374 +712,171 @@
 
   <!-- ================= HERO ================= -->
   <section class="hero">
+    <canvas id="hero-canvas" aria-hidden="true"></canvas>
     <div class="hero-dots" aria-hidden="true"></div>
-    <div class="container hero-grid">
-      <div class="hero-copy">
-        <span class="eyebrow">For business brokers &amp; M&amp;A advisors</span>
-        <h1>Your next CIM starts <em>before</em> the first question.</h1>
-        <p class="hero-sub">By the time Cimple's AI sits down with your seller, it has already absorbed every call note, email, document, and public trace of the business. It interviews like a seasoned advisor, adapts to the person in front of it, and builds a CIM buyers actually read.</p>
-        <div class="hero-ctas">
-          <a class="btn btn-primary" href="#early-access">Request early access</a>
-          <a class="btn btn-secondary" href="#how-it-works">See how it works</a>
-        </div>
+    <div class="hero-fade" aria-hidden="true"></div>
+    <div class="container hero-content">
+      <span class="eyebrow">For business brokers &amp; M&amp;A advisors</span>
+      <h1>Your next CIM starts <em>before</em> the first question.</h1>
+      <p class="hero-sub">By the time Cimple's AI sits down with your seller, it has already absorbed every call note, email, document, and public trace of the business. It interviews like a seasoned advisor, adapts to the person in front of it, and builds a CIM buyers actually read.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-primary" href="#early-access">Request early access</a>
+        <a class="btn btn-secondary" href="#how-it-works">See how it works</a>
       </div>
-      <div class="hero-visual" role="img" aria-label="A confidential CIM cover assembling itself while source fragments — call transcripts, parsed financials, lease terms, CRM notes, web data — drift into the document.">
-        <div class="cim-stage" aria-hidden="true">
-          <div class="stage-glow"></div>
-          <div class="cim-tilt">
-            <div class="doc-back b2"></div>
-            <div class="doc-back b1"></div>
-            <div class="cim-doc">
-              <div class="doc-brand">
-                <img src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAKcAAADVCAYAAAAy/OAmAAAGGUlEQVR4nO3dsW4UZxSG4XXk3nsDaHMBiL0AJLaIhESRmJIGpwtNmCISVNYWyKlsT0OJvIVbyxI1EhdhiRsgVxCuwNEJWGDAy+7sP/N/55z3KZFAW7waM7Of59+aTm9ftocHI0DJX8/2R9vjnZ3R7N7d2p8FuMa6/On6HwE6iBOyiBOyiBOyiBOyiBOyiBOyiBOyiBOyiBOytrv8pX8/fBhdXLwr/2kQ0ni8M5reuT1MnPa9p30xf3HxbqvL30cus3t3L9++eT3cj3WWTOhb5zhtyfT740eXZT8OUOiG6PiIqydE47T/e7ZHB1w9ofkoqfnzyf//4S3zcYDCzzlbfrxDNU57htU8fcLVE5rfEM33n41+ntwiUOjFaTdHx0d/l/rngLLfre/++oCbI+gOPxavXpb+J5FU8Tgnk1uj+f5zrp7QnMxxcwTpPecJP96hGifDEEgv4RmGQDZOhiGQ/h0ihiGQ/gU3hiGQjZNhCKR/NdiefQKScdrN0fnZKVdPaL5UgWEIpN/4wTAEsnEyDIH0u5IYhkD6RV4MQyAbpw1Ddn97wNUTmq9A5OoJ2TgZhkD65bE2DLHzN2t/DuipHqfh2Sdk42QYAtk4DcMQyMZpN0eLVy+5ekIvTrP3+BHDEGjGabg5gmycDEMgG6dpnv7BMASacdrNEV9tQjJOwzAEsnGa9pCX0WYmHafdHDEMyUs6TsMwJC/5OA3nbObkIk67OWIYko+LOA3DkHzcxMkwJB83cRqGIbm4itPwOsU83MVpq3mGITm4i9MwDMnBZZycs5mDyzivXqfIMCQ2t3EahiGxuY6T1XxsruO8+uaIYUhM7uM0DENiChEn52zGFCJOwzmb8YSJk2FIPGHiNAxDYgkVp2EYEke4OBmGxBEuTsMwJIaQcTIMiSFknIZzNv0LG6fhdYq+hY6TYYhvoeM0nLPpV/g4Da9T9ClFnAxDfEoRp2EY4k+aODln0580cV69TpFnn36kitMwDPEjXZycs+lHujgNzz59SBknwxAfUsZpGIboSxunYRiiLXWcDEO0pY7TcHOkK32chmGIJuLknE1ZxPkJV089xPkJwxA9xPkFztnUQpxf4dmnDuL8CsMQHcT5HZyzqYE4b7g5Oj875epZGXHegGFIfcS5BDdHdRHnEgxD6iLOH2AYUg9xroCvNusgzhUwDKmDOFfEOZvDI841bo4YhgyLONfAMGRYxLkmztkcDnF2uDliGDIM4uyAYcgwiLMDztkcBnF2xDmb/SPODTAM6RdxboBhSL+Ic0Ocs9kf4ixwc8QwpB/EWQDDkH4QZyEMQ8ojzkK4OSqPOAt/c8QwpBziLIxhSDnEWRjnbJZDnD3gnM0yiLMHDEPKIM6eMAzZHHH2iHM2N0OcPb9OkWef3RFnzxiGdEecPeOcze6Ic6DXKTIMWR9xDoRhyPqIcyAMQ9ZHnAPidYrrIc6BsZpfHXEOjGHI6oizAoYhqyHOCjhnczXEWfF1igxDliPOihiGLEecFXHO5nLEWRnPPm9GnJUxDLkZcQrgnM3vI04RvE7xW8QpgmHIt4hTCDdH1xGnGIYhnxGnGIYhnxGnIIYhHxGnIIYhHxGnqIZzNolT2SL5zRFxCpsmH4YQp7h54nM2idPBzdH52WnKqydxOrCbdBhCnE4sEt4cEacTk4TDEOJ0ZJ5sGEKczpwk+vFOnM7MEp2zSZwOnSS5ehKnQ+MkwxDidKpJMAwhTsfa4OdsEqfzm6Mm8DCEOJ2bBx6GEKdz48DnbBJnAHtBz9kkziAWAZ99EmcQk4DDEOIMpAl2ziZxBrs5Ogn04504g5kFGoYQZ0BtkHM2iTPozVEbYBhCnEE1AYYhxBlY63wYQpyBzZy/TpE4gzt2/DpF4gxu7HgYQpwJ7DkdhhBnEq3DH+/Emeh1inNnwxDiTKRxNgwhzkTGzs7ZJM6Er1PcdTIMIc6EvAxDiDOhiZPVPHEm/pXiqfgwhDgTa8WHIcSZ2Ex8GLJlX2u9ffO69ucArvnl/kOunNBFnJBFnJBFnJBFnJBFnJBFnJBFnJBFnJBFnJBFnJC1/f79P6MXB4e1Pwcw+pJ1+R+GmNo5sZqxmgAAAABJRU5ErkJggg==" alt="" width="17" height="22" style="display:block;width:17px;height:22px"/>
-                <span class="doc-conf">Confidential<br>Business Overview</span>
-              </div>
-              <div class="doc-title">Project Meridian</div>
-              <div class="doc-red"><span class="redact"></span> Manufacturing Ltd. &middot; Ontario</div>
-              <div class="doc-lines">
-                <div class="line"></div>
-                <div class="line w80"></div>
-                <div class="line w62"></div>
-              </div>
-              <div class="doc-metrics">
-                <div class="doc-metric"><span class="n">$4.2M</span><span class="l">Revenue</span></div>
-                <div class="doc-metric"><span class="n">$1.1M</span><span class="l">SDE</span></div>
-                <div class="doc-metric"><span class="n">32</span><span class="l">Staff</span></div>
-              </div>
-              <div class="doc-asm">
-                <span class="asm-label">Profile assembly</span>
-                <div class="asm-track"><div class="asm-fill"></div></div>
-              </div>
-            </div>
-          </div>
-          <span class="frag f1" style="--tx: 152px; --ty: 226px; --dur: 7s; --delay: -5.2s;">Call transcript &middot; <b>42 facts</b></span>
-          <span class="frag f2" style="--tx: -150px; --ty: 198px; --dur: 8.5s; --delay: -2.5s;">2023 P&amp;L <b>parsed</b></span>
-          <span class="frag f3" style="--tx: -138px; --ty: 0px; --dur: 6.5s; --delay: -4s;">Lease <b>reviewed</b></span>
-          <span class="frag f4" style="--tx: 178px; --ty: -142px; --dur: 9.5s; --delay: -1.5s;">CRM notes <b>merged</b></span>
-          <span class="frag f5" style="--tx: -142px; --ty: -228px; --dur: 7.5s; --delay: -6.3s;">Web scrape &middot; <b>11 fields</b></span>
-          <span class="frag f6" style="--tx: 198px; --ty: -92px; --dur: 10s; --delay: -3.2s;">SDE <b>normalized</b></span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= STAT BAND ================= -->
-  <section class="stat-band">
-    <div class="container">
-      <div class="stats" id="stats">
+      <div class="stat-strip">
         <div class="stat">
-          <span class="stat-num" data-count data-target="40" data-suffix="+">40+</span>
+          <span class="stat-num">40+</span>
           <span class="stat-label">industries of built-in deal expertise</span>
         </div>
         <div class="stat">
-          <span class="stat-num" data-count data-target="3" data-suffix="">3</span>
+          <span class="stat-num">3</span>
           <span class="stat-label">CIM versions — blind, full &amp; diligence</span>
         </div>
         <div class="stat">
-          <span class="stat-num" data-count data-target="49" data-suffix="">49</span>
+          <span class="stat-num">49</span>
           <span class="stat-label">matching criteria per buyer</span>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ================= INDUSTRY MARQUEE ================= -->
-  <section class="industries" aria-label="Industry coverage">
-    <p class="mq-caption">Built-in deal expertise across <strong>40+ industries</strong> — and the provincial rules that come with them.</p>
-    <div class="marquee">
-      <div class="mq-track">
-        <div class="mq-list">
-          <span class="mq-chip">Construction</span>
-          <span class="mq-chip">Restaurants</span>
-          <span class="mq-chip">Medical clinics</span>
-          <span class="mq-chip">HVAC</span>
-          <span class="mq-chip">E-commerce</span>
-          <span class="mq-chip">Logistics</span>
-          <span class="mq-chip">SaaS</span>
-          <span class="mq-chip">Manufacturing</span>
-          <span class="mq-chip">Landscaping</span>
-          <span class="mq-chip">Dental practices</span>
-          <span class="mq-chip">Auto repair</span>
-          <span class="mq-chip">Salons &amp; spas</span>
-          <span class="mq-chip">Plumbing</span>
-          <span class="mq-chip">Pharmacies</span>
-          <span class="mq-chip">Trucking &amp; freight</span>
-          <span class="mq-chip">Veterinary</span>
-          <span class="mq-chip">Childcare</span>
-          <span class="mq-chip">Franchise resales</span>
-          <span class="mq-chip">Distribution</span>
-          <span class="mq-chip">Property management</span>
-          <span class="mq-chip">Accounting firms</span>
-        </div>
-        <div class="mq-list" aria-hidden="true">
-          <span class="mq-chip">Construction</span>
-          <span class="mq-chip">Restaurants</span>
-          <span class="mq-chip">Medical clinics</span>
-          <span class="mq-chip">HVAC</span>
-          <span class="mq-chip">E-commerce</span>
-          <span class="mq-chip">Logistics</span>
-          <span class="mq-chip">SaaS</span>
-          <span class="mq-chip">Manufacturing</span>
-          <span class="mq-chip">Landscaping</span>
-          <span class="mq-chip">Dental practices</span>
-          <span class="mq-chip">Auto repair</span>
-          <span class="mq-chip">Salons &amp; spas</span>
-          <span class="mq-chip">Plumbing</span>
-          <span class="mq-chip">Pharmacies</span>
-          <span class="mq-chip">Trucking &amp; freight</span>
-          <span class="mq-chip">Veterinary</span>
-          <span class="mq-chip">Childcare</span>
-          <span class="mq-chip">Franchise resales</span>
-          <span class="mq-chip">Distribution</span>
-          <span class="mq-chip">Property management</span>
-          <span class="mq-chip">Accounting firms</span>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- checkerboard transition -->
-  <div class="checker" style="--sq:#16161A" aria-hidden="true"></div>
-
   <!-- ================= THE LOOP ================= -->
-  <section class="section" id="how-it-works" style="padding-top: 90px;">
+  <section class="section" id="how-it-works">
     <div class="container">
       <div class="section-head reveal">
         <span class="eyebrow">The loop</span>
         <h2>How a Cimple <em>deal runs</em>.</h2>
         <p>Five steps. Each one feeds the next — and the last one feeds the first.</p>
       </div>
-
-      <!-- 01 -->
-      <div class="loop-row io">
-        <div class="loop-text reveal">
+      <div class="steps">
+        <article class="step reveal">
           <span class="step-num">01</span>
           <h3>It starts before the interview</h3>
           <p>Calls, emails, CRM notes, financials, leases, web presence — everything you already have is parsed and merged into one structured profile before the seller is ever asked a question.</p>
-        </div>
-        <div class="loop-mock reveal r-scale" style="--d:.1s">
-          <div class="mock">
-            <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span><span class="mt">Sources — Project Meridian</span></div>
-            <div class="mock-pad">
-              <div class="src-row" style="--d:.15s"><span>Email thread — 14 messages</span><span class="st"><span class="st-pend">parsing&hellip;</span><span class="st-done">&#10003; parsed</span></span></div>
-              <div class="src-row" style="--d:.27s"><span>Call recording — 38 min</span><span class="st"><span class="st-pend">transcribing&hellip;</span><span class="st-done">&#10003; transcribed</span></span></div>
-              <div class="src-row" style="--d:.39s"><span>2021&ndash;2023 financials</span><span class="st"><span class="st-pend">extracting&hellip;</span><span class="st-done">&#10003; extracted</span></span></div>
-              <div class="src-row" style="--d:.51s"><span>CRM contact notes</span><span class="st"><span class="st-pend">merging&hellip;</span><span class="st-done">&#10003; merged</span></span></div>
-              <div class="src-row" style="--d:.63s"><span>Public web</span><span class="st"><span class="st-pend">scraping&hellip;</span><span class="st-done">&#10003; 11 fields</span></span></div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 02 -->
-      <div class="loop-row flip io">
-        <div class="loop-text reveal">
+        </article>
+        <article class="step reveal">
           <span class="step-num">02</span>
           <h3>It reads the room</h3>
           <p>Cimple builds a communication profile of your seller and adjusts its tone, pacing, and questions to match — a nervous first-time seller gets a different conversation than a serial acquirer.</p>
-        </div>
-        <div class="loop-mock reveal r-scale" style="--d:.1s">
-          <div class="mock">
-            <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span><span class="mt">Seller profile</span></div>
-            <div class="mock-pad">
-              <div class="p-chips">
-                <span class="p-chip" style="--d:.15s">Direct communicator</span>
-                <span class="p-chip" style="--d:.3s">Detail-oriented</span>
-                <span class="p-chip" style="--d:.45s">First-time seller — reassure on confidentiality</span>
-              </div>
-              <p class="p-status">&#10003; Interview style adjusted</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 03 -->
-      <div class="loop-row io">
-        <div class="loop-text reveal">
+        </article>
+        <article class="step reveal">
           <span class="step-num">03</span>
           <h3>Then, the interview</h3>
           <p>Adaptive, industry-specific probing: bonding capacity for contractors, liquor licensing for restaurants, payer mix for clinics. It never asks for anything it already knows.</p>
-        </div>
-        <div class="loop-mock reveal r-scale" style="--d:.1s">
-          <div class="mock">
-            <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span><span class="mt">Interview — general contractor, Ontario</span></div>
-            <div class="mock-pad">
-              <div class="chat">
-                <div class="bub bub-ai" style="--d:.2s">
-                  <span class="who">Cimple</span>
-                  Your WSIB clearance and bonding capacity — has surety ever been an issue on larger bids?
-                </div>
-                <div class="bub bub-seller" style="--d:.5s">
-                  <span class="who">Seller</span>
-                  <span class="typing"><i></i><i></i><i></i></span>
-                </div>
-                <p class="chat-note"><b>Already known — not asked again:</b> revenue &middot; lease terms &middot; staff count</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- 04 -->
-      <div class="loop-row flip io">
-        <div class="loop-text reveal">
+        </article>
+        <article class="step reveal">
           <span class="step-num">04</span>
           <h3>A CIM built for buyers</h3>
           <p>Branded to your firm and the business. Information is presented the way buyers actually digest it — layouts informed by how real buyers read real CIMs.</p>
-        </div>
-        <div class="loop-mock reveal r-scale" style="--d:.1s">
-          <div class="mock">
-            <div class="mini-cover">
-              <span class="k">Confidential Business Overview</span>
-              <span class="t">Project Meridian &mdash; Revenue Growth</span>
-            </div>
-            <div class="chart" aria-hidden="true">
-              <div class="col"><div class="bar" style="height:34%; --d:.2s"></div></div>
-              <div class="col"><div class="bar" style="height:48%; --d:.32s"></div></div>
-              <div class="col"><div class="bar" style="height:42%; --d:.44s"></div></div>
-              <div class="col"><div class="bar" style="height:66%; --d:.56s"></div></div>
-              <div class="col"><div class="bar" style="height:88%; --d:.68s"></div></div>
-            </div>
-            <div class="chart-x" aria-hidden="true">
-              <span>FY21</span><span>FY22</span><span>FY23</span><span>FY24</span><span>FY25</span>
-            </div>
-            <p class="mock-foot"><b>Layout engine:</b> layouts informed by how buyers actually read.</p>
-          </div>
-        </div>
-      </div>
-
-      <!-- 05 -->
-      <div class="loop-row io">
-        <div class="loop-text reveal">
+        </article>
+        <article class="step reveal">
           <span class="step-num">05</span>
           <h3>The loop closes</h3>
           <p>You see who read what, for how long, and where they stopped. The engine uses it to design the next CIM better.</p>
-        </div>
-        <div class="loop-mock reveal r-scale" style="--d:.1s">
-          <div class="mock">
-            <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span><span class="mt">Buyer engagement — last 7 days</span></div>
-            <div class="mock-pad">
-              <div class="eng-row">
-                <div class="eng-top"><span>Financials</span><span class="tm">4:32</span></div>
-                <div class="eng-track"><div class="eng-fill" style="width:84%; --d:.2s"></div></div>
-              </div>
-              <div class="eng-row">
-                <div class="eng-top"><span>Growth</span><span class="tm">2:11</span></div>
-                <div class="eng-track"><div class="eng-fill" style="width:48%; --d:.35s"></div></div>
-              </div>
-              <div class="eng-row">
-                <div class="eng-top"><span>Operations</span><span class="tm">1:48</span></div>
-                <div class="eng-track"><div class="eng-fill" style="width:38%; --d:.5s"></div></div>
-              </div>
-              <p class="eng-note">Buyer dropped at page 14 <b>&rarr; next CIM moves financials earlier.</b></p>
-            </div>
-          </div>
-        </div>
+        </article>
       </div>
-
     </div>
   </section>
-
-  <!-- checkerboard into the statement -->
-  <div class="checker" style="--sq:#1A1309" aria-hidden="true"></div>
-
-  <!-- ================= STATEMENT ================= -->
-  <section class="statement io">
-    <div class="container">
-      <h2 class="statement-big">Anyone can generate a document.</h2>
-      <p class="statement-quiet">The difference is what's underneath — the harvesting, the adaptation, and the loop that makes every CIM smarter than the last.</p>
-    </div>
-  </section>
-
-  <!-- checkerboard out of the statement -->
-  <div class="checker flip" style="--sq:#1A1309" aria-hidden="true"></div>
 
   <!-- ================= THREE CIMS, ONE ENGINE ================= -->
-  <section class="section" id="cims">
+  <section class="section" id="cims" style="padding-top: 40px;">
     <div class="container">
       <div class="section-head center reveal">
         <span class="eyebrow">The CIMs</span>
         <h2>Three CIMs. <em>One engine.</em></h2>
         <p>Every version is generated from the same structured profile — one deal, three levels of disclosure, matched to where each buyer stands.</p>
       </div>
-      <div class="fan io">
-        <article class="fan-card f1">
+      <div class="usp-grid">
+        <article class="usp reveal">
           <span class="usp-tag">First contact</span>
           <h3>Blind CIM</h3>
           <p>Identity replaced with a project codename — name, location, people, all protected. Safe for first contact, generated automatically with every deal.</p>
-          <div class="doc-edge" aria-hidden="true"><i></i><i></i><i></i></div>
         </article>
-        <article class="fan-card f2">
+        <article class="usp reveal">
           <span class="usp-tag">After the NDA</span>
           <h3>Full CIM</h3>
           <p>The complete memorandum — the full story, the financials, the visuals — unlocked once the NDA is signed.</p>
-          <div class="doc-edge" aria-hidden="true"><i></i><i></i><i></i></div>
         </article>
-        <article class="fan-card f3-card">
-          <span class="usp-tag">In diligence</span>
+        <article class="usp original reveal">
+          <span class="usp-tag">In diligence</span><br>
           <span class="origin-chip">A Cimple original</span>
           <h3>Diligence CIM</h3>
           <p>For buyers already in due diligence: verification detail inline, customer detail revealed, previously-withheld information surfaced. The deal doesn't stall while you re-assemble documents.</p>
-          <div class="doc-edge" aria-hidden="true"><i></i><i></i><i></i></div>
         </article>
       </div>
-      <p class="preview-caption reveal"><strong>The blind version</strong> — identity protected until the NDA is signed.</p>
+      <div class="preview-wrap reveal">
+        <div class="cim-card" role="img" aria-label="Mock cover of a blind CIM for a fictional deal, Project Meridian, with identifying details redacted">
+          <div class="cim-head">
+            <div>
+              <span class="cim-kicker">Confidential Business Overview</span>
+              <div class="cim-title">Project Meridian</div>
+              <div class="cim-redacted"><span class="redact" aria-hidden="true"></span> Manufacturing Ltd. &middot; Ontario</div>
+            </div>
+            <span class="cim-chip">Blind version</span>
+          </div>
+          <div class="cim-metrics">
+            <div class="cim-metric">
+              <span class="m-num">$4.2M</span>
+              <span class="m-label">Revenue</span>
+            </div>
+            <div class="cim-metric">
+              <span class="m-num">$1.1M</span>
+              <span class="m-label">SDE</span>
+            </div>
+            <div class="cim-metric">
+              <span class="m-num">32</span>
+              <span class="m-label">Employees</span>
+            </div>
+            <div class="cim-metric">
+              <span class="m-num">2009</span>
+              <span class="m-label">Established</span>
+            </div>
+          </div>
+          <div class="cim-body">
+            <div class="section-label">Executive Summary</div>
+            <div class="line"></div>
+            <div class="line w80"></div>
+            <div class="line w60"></div>
+          </div>
+        </div>
+        <p class="preview-caption"><strong>The blind version</strong> — identity protected until the NDA is signed.</p>
+      </div>
     </div>
   </section>
 
   <!-- ================= FLAGSHIP: BUYER MATCHING ================= -->
   <section class="section" id="matching" style="padding-top: 40px;">
     <div class="container">
-      <div class="flagship-outer reveal r-scale">
+      <div class="flagship-outer reveal">
         <div class="flagship-panel">
-          <div class="flagship-grid">
-            <div class="flagship-copy">
-              <span class="eyebrow">The flagship</span>
-              <h2>Buyer matching that's <em>finally possible</em>.</h2>
-              <p class="flagship-lead">Matching buyers to deals only works when every deal speaks the same language. Cimple writes every CIM from the same deep, structured harvest — so every deal has a consistent, comparable profile underneath, and buyers can be ranked against 49 real criteria.</p>
-              <p class="flagship-punch">Platforms matching from a folder of Word documents and mixed-source PDFs are guessing. Cimple isn't — it wrote the CIM.</p>
-            </div>
-            <div class="mock io" id="ranking">
-              <div class="mock-bar"><span class="dots"><i></i><i></i><i></i></span><span class="mt">Buyer ranking — Project Meridian</span></div>
-              <div class="mock-pad">
-                <div class="rk-row">
-                  <div class="rk-top"><span class="rk-name">Buyer A</span><span class="rk-score"><span data-count data-target="41" data-suffix="">41</span><span class="den">/49 criteria</span></span></div>
-                  <div class="rk-track"><div class="rk-fill" style="width:84%; --d:.2s"></div></div>
-                </div>
-                <div class="rk-row">
-                  <div class="rk-top"><span class="rk-name">Buyer B</span><span class="rk-score"><span data-count data-target="36" data-suffix="">36</span><span class="den">/49 criteria</span></span></div>
-                  <div class="rk-track"><div class="rk-fill" style="width:73%; --d:.35s"></div></div>
-                </div>
-                <div class="rk-row dim">
-                  <div class="rk-top"><span class="rk-name">Buyer C</span><span class="rk-score"><span data-count data-target="22" data-suffix="">22</span><span class="den">/49 criteria</span></span></div>
-                  <div class="rk-track"><div class="rk-fill" style="width:45%; --d:.5s"></div></div>
-                </div>
-                <div class="rk-chips" aria-hidden="true">
-                  <span class="rk-chip">Industry fit</span>
-                  <span class="rk-chip">EBITDA range</span>
-                  <span class="rk-chip">Geography</span>
-                  <span class="rk-chip">Deal structure</span>
-                  <span class="rk-chip">Growth profile</span>
-                </div>
-              </div>
-            </div>
-          </div>
+          <span class="eyebrow">The flagship</span>
+          <h2>Buyer matching that's <em>finally possible</em>.</h2>
+          <p class="flagship-lead">Matching buyers to deals only works when every deal speaks the same language. Cimple writes every CIM from the same deep, structured harvest — so every deal has a consistent, comparable profile underneath, and buyers can be ranked against 49 real criteria.</p>
+          <p class="flagship-punch">Platforms matching from a folder of Word documents and mixed-source PDFs are guessing. Cimple isn't — it wrote the CIM.</p>
           <div class="proof-grid">
             <div class="proof reveal">
               <strong>49 criteria</strong>
               <p>Financials, operations, deal structure, growth, fit — scored for every buyer, on every deal.</p>
             </div>
-            <div class="proof reveal" style="--d:.1s">
+            <div class="proof reveal">
               <strong>Consistent base data</strong>
               <p>The same engine harvests every deal, so every profile is comparable — the part nobody else has.</p>
             </div>
-            <div class="proof reveal" style="--d:.2s">
+            <div class="proof reveal">
               <strong>Included from day one</strong>
               <p>Matching is part of Cimple for every broker from the start — not a module you add later.</p>
             </div>
           </div>
         </div>
       </div>
+    </div>
+  </section>
+
+  <!-- ================= MANIFESTO ================= -->
+  <section class="manifesto">
+    <div class="container reveal">
+      <p class="big">Anyone can generate a document.</p>
+      <p class="quiet">The difference is what's underneath — the harvesting, the adaptation, and the loop that makes every CIM smarter than the last.</p>
     </div>
   </section>
 
@@ -1578,21 +891,21 @@
           </svg>
           <span>Server-enforced NDA gating</span>
         </div>
-        <div class="sec-item reveal" style="--d:.1s">
+        <div class="sec-item reveal">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M12 3s6.5 7 6.5 11.5a6.5 6.5 0 01-13 0C5.5 10 12 3 12 3z"/>
             <path d="M9.5 14.5a2.5 2.5 0 002.5 2.5"/>
           </svg>
           <span>Watermarked every view</span>
         </div>
-        <div class="sec-item reveal" style="--d:.2s">
+        <div class="sec-item reveal">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <circle cx="12" cy="12" r="9"/>
             <path d="M12 7v5l3 3"/>
           </svg>
           <span>Links expire in 30 days</span>
         </div>
-        <div class="sec-item reveal" style="--d:.3s">
+        <div class="sec-item reveal">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M3 3l18 18"/>
             <path d="M10.6 5.1A9.8 9.8 0 0112 5c7 0 10 7 10 7a17.6 17.6 0 01-3.2 4.2M6.6 6.6C3.8 8.4 2 12 2 12s3 7 10 7a9.7 9.7 0 004.3-1"/>
@@ -1600,7 +913,7 @@
           </svg>
           <span>Blind CIMs by default</span>
         </div>
-        <div class="sec-item reveal" style="--d:.4s">
+        <div class="sec-item reveal">
           <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="#C9A86A" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <rect x="4" y="11" width="16" height="9" rx="2"/>
             <path d="M8 11V7a4 4 0 018 0v4"/>
@@ -1608,14 +921,14 @@
           <span>Per-brokerage data isolation</span>
         </div>
       </div>
-      <p class="security-note reveal" style="--d:.5s">Built for confidential processes. Reviewed under Canadian privacy law (PIPEDA).</p>
+      <p class="security-note reveal">Built for confidential processes. Reviewed under Canadian privacy law (PIPEDA).</p>
     </div>
   </section>
 
   <!-- ================= EARLY ACCESS ================= -->
   <section class="section" id="early-access">
     <div class="container">
-      <div class="cta-outer reveal r-scale">
+      <div class="cta-outer reveal">
         <div class="cta-panel">
           <span class="eyebrow">Early access</span>
           <h2>Now onboarding a limited group of brokerages.</h2>
@@ -1669,10 +982,10 @@
   }, { passive: true });
   updateNav();
 
-  /* ---------- Scroll entrances (.reveal) + mockup choreography (.io) ---------- */
-  var animated = document.querySelectorAll('.reveal, .io');
+  /* ---------- Reveal on scroll ---------- */
+  var reveals = document.querySelectorAll('.reveal');
   if (reducedMotion || !('IntersectionObserver' in window)) {
-    animated.forEach(function (el) { el.classList.add('in'); });
+    reveals.forEach(function (el) { el.classList.add('in'); });
   } else {
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (entry) {
@@ -1681,41 +994,129 @@
           io.unobserve(entry.target);
         }
       });
-    }, { threshold: 0.16, rootMargin: '0px 0px -6% 0px' });
-    animated.forEach(function (el) { io.observe(el); });
+    }, { threshold: 0.12, rootMargin: '0px 0px -6% 0px' });
+    reveals.forEach(function (el) { io.observe(el); });
   }
 
-  /* ---------- Count-up (stats + buyer ranking) ----------
-     HTML ships with final values; JS rewinds to 0 and counts up once on
-     scroll-into-view. Reduced motion / no-IO: final values stay as-is. */
-  var counters = document.querySelectorAll('[data-count]');
-  function runCount(el) {
-    if (el.dataset.done) { return; }
-    el.dataset.done = '1';
-    var target = parseInt(el.getAttribute('data-target'), 10) || 0;
-    var suffix = el.getAttribute('data-suffix') || '';
-    var duration = 1200;
-    var t0 = null;
-    el.textContent = '0' + suffix;
-    function frame(t) {
-      if (t0 === null) { t0 = t; }
-      var p = Math.min((t - t0) / duration, 1);
-      var eased = 1 - Math.pow(1 - p, 3);
-      el.textContent = Math.round(target * eased) + suffix;
-      if (p < 1) { window.requestAnimationFrame(frame); }
-    }
-    window.requestAnimationFrame(frame);
+  /* ---------- Hero canvas: drifting aurora blobs ---------- */
+  var canvas = document.getElementById('hero-canvas');
+  var ctx = canvas.getContext('2d');
+  var hero = canvas.parentElement;
+  var dpr = Math.min(window.devicePixelRatio || 1, 1.5);
+  var W = 0, H = 0;
+
+  function resize() {
+    W = hero.clientWidth;
+    H = hero.clientHeight;
+    canvas.width = Math.round(W * dpr);
+    canvas.height = Math.round(H * dpr);
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
-  if (!reducedMotion && 'IntersectionObserver' in window && counters.length) {
-    var cio = new IntersectionObserver(function (entries) {
-      entries.forEach(function (entry) {
-        if (entry.isIntersecting) {
-          runCount(entry.target);
-          cio.unobserve(entry.target);
-        }
-      });
-    }, { threshold: 0.4 });
-    counters.forEach(function (el) { cio.observe(el); });
+  resize();
+  window.addEventListener('resize', function () {
+    resize();
+    if (reducedMotion) { drawFrame(0); }
+  });
+
+  /* Blob set: brass and warm-grey radial gradients, very low alpha. */
+  /* Motion is time-based with explicit periods (seconds) — glacial drift.
+     Each blob completes one slow orbit in 50-120s; nothing pulses fast. */
+  var TAU = Math.PI * 2;
+  var blobs = [
+    { x: 0.24, y: 0.30, r: 0.52, hue: 'brass',  a: 0.075, Tx: 97,  Ty: 71,  px: 0.0,  py: 1.9 },
+    { x: 0.74, y: 0.24, r: 0.44, hue: 'brass',  a: 0.055, Tx: 113, Ty: 83,  px: 2.1,  py: 4.2 },
+    { x: 0.52, y: 0.72, r: 0.58, hue: 'grey',   a: 0.060, Tx: 127, Ty: 89,  px: 4.4,  py: 0.8 },
+    { x: 0.88, y: 0.66, r: 0.38, hue: 'brass',  a: 0.045, Tx: 79,  Ty: 107, px: 1.2,  py: 3.3 },
+    { x: 0.10, y: 0.78, r: 0.40, hue: 'grey',   a: 0.050, Tx: 101, Ty: 61,  px: 3.6,  py: 2.7 }
+  ];
+
+  /* Lazy cursor glow — a faint brass light that eases toward the pointer.
+     Interactive without being busy; skipped for touch devices. */
+  var glow = { x: 0.5, y: 0.42, tx: 0.5, ty: 0.42, active: false };
+  if (window.matchMedia('(pointer: fine)').matches) {
+    hero.addEventListener('mousemove', function (e) {
+      var rect = hero.getBoundingClientRect();
+      glow.tx = (e.clientX - rect.left) / Math.max(rect.width, 1);
+      glow.ty = (e.clientY - rect.top) / Math.max(rect.height, 1);
+      glow.active = true;
+    }, { passive: true });
+    hero.addEventListener('mouseleave', function () { glow.active = false; }, { passive: true });
+  }
+
+  function blobColor(hue, alpha) {
+    if (hue === 'brass') { return 'rgba(201, 168, 106, ' + alpha + ')'; }
+    return 'rgba(122, 114, 100, ' + alpha + ')';
+  }
+
+  var lastT = 0;
+  function drawFrame(t) {
+    var dt = Math.min(Math.max(t - lastT, 0), 100); /* ms since last frame, clamped */
+    lastT = t;
+    var ts = t / 1000; /* seconds */
+    ctx.clearRect(0, 0, W, H);
+    ctx.fillStyle = '#0A0A0B';
+    ctx.fillRect(0, 0, W, H);
+    var base = Math.max(W, H);
+    for (var i = 0; i < blobs.length; i++) {
+      var b = blobs[i];
+      var cx = (b.x + 0.06 * Math.sin(TAU * ts / b.Tx + b.px)) * W;
+      var cy = (b.y + 0.05 * Math.cos(TAU * ts / b.Ty + b.py)) * H;
+      var r = b.r * base * (1 + 0.04 * Math.sin(TAU * ts / 73 + b.px));
+      var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+      g.addColorStop(0, blobColor(b.hue, b.a));
+      g.addColorStop(0.55, blobColor(b.hue, b.a * 0.45));
+      g.addColorStop(1, blobColor(b.hue, 0));
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    /* cursor glow: time-normalized easing (~1.5s to settle), gentle fade
+       to a resting spot behind the headline when the pointer leaves */
+    var ease = 1 - Math.pow(0.35, dt / 1000);
+    var restX = 0.5, restY = 0.42;
+    var targetX = glow.active ? glow.tx : restX;
+    var targetY = glow.active ? glow.ty : restY;
+    glow.x += (targetX - glow.x) * ease;
+    glow.y += (targetY - glow.y) * ease;
+    var gr = base * 0.34;
+    var gg = ctx.createRadialGradient(glow.x * W, glow.y * H, 0, glow.x * W, glow.y * H, gr);
+    gg.addColorStop(0, 'rgba(201, 168, 106, 0.055)');
+    gg.addColorStop(0.6, 'rgba(201, 168, 106, 0.022)');
+    gg.addColorStop(1, 'rgba(201, 168, 106, 0)');
+    ctx.fillStyle = gg;
+    ctx.beginPath();
+    ctx.arc(glow.x * W, glow.y * H, gr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  if (reducedMotion) {
+    drawFrame(12000); /* one static, composed frame */
+  } else {
+    var last = 0;
+    var FRAME_MS = 33; /* ~30fps */
+    var running = true;
+
+    function loop(ts) {
+      if (running && ts - last >= FRAME_MS) {
+        last = ts;
+        drawFrame(ts);
+      }
+      window.requestAnimationFrame(loop);
+    }
+    window.requestAnimationFrame(loop);
+
+    /* Pause when tab hidden or hero scrolled away — keep CPU cheap. */
+    document.addEventListener('visibilitychange', function () {
+      running = !document.hidden && heroVisible;
+    });
+    var heroVisible = true;
+    if ('IntersectionObserver' in window) {
+      new IntersectionObserver(function (entries) {
+        heroVisible = entries[0].isIntersecting;
+        running = heroVisible && !document.hidden;
+      }, { threshold: 0 }).observe(hero);
+    }
   }
 
   /* ---------- Early access form ---------- */
