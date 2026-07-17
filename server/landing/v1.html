@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Cimple — AI-built CIMs for business brokers</title>
-<meta name="description" content="Cimple's AI absorbs every call note, email, document, and public trace of a business before it interviews your seller — then builds CIMs buyers actually read. Blind, full &amp; diligence versions, with buyer matching built on consistent deal data.">
+<meta name="description" content="Cimple's AI interviews your seller like a seasoned advisor, gathers every document and detail, and designs a buyer-ready CIM. Built for business brokers and M&A advisors.">
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='6' fill='%230A0A0B'/%3E%3Cpolygon points='10,5 22,5 22,27' fill='%23F4EFE2'/%3E%3Crect x='10' y='5' width='12' height='22' fill='none' stroke='%23F4EFE2' stroke-width='1.4'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -270,10 +270,8 @@
   .section-head p { font-size: 17px; font-weight: 300; color: var(--muted); }
   .hairline { border: none; border-top: 1px solid var(--border); margin: 0; }
 
-  /* ---------- The loop (how it works) ---------- */
-  .steps { display: grid; grid-template-columns: repeat(6, 1fr); gap: 20px; }
-  .steps .step:nth-child(-n+2) { grid-column: span 3; }
-  .steps .step:nth-child(n+3) { grid-column: span 2; }
+  /* ---------- How it works ---------- */
+  .steps { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
   .step {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -294,7 +292,7 @@
   .step h3 { font-size: 21px; font-weight: 700; margin-bottom: 12px; letter-spacing: -0.015em; }
   .step p { font-size: 15px; color: var(--muted); font-weight: 300; }
 
-  /* ---------- Three CIMs, one engine ---------- */
+  /* ---------- Why Cimple ---------- */
   .usp-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; }
   .usp {
     background: var(--panel);
@@ -305,13 +303,6 @@
     transition: border-color 0.25s ease, background-color 0.25s ease;
   }
   .usp:hover { border-color: rgba(201, 168, 106, 0.35); background: var(--panel-2); }
-  .usp.original {
-    border-color: rgba(201, 168, 106, 0.28);
-    background:
-      radial-gradient(120% 140% at 80% -20%, rgba(201, 168, 106, 0.07), transparent 55%),
-      var(--panel);
-  }
-  .usp.original:hover { border-color: rgba(201, 168, 106, 0.5); }
   .usp-tag {
     font-family: var(--font-mono);
     font-size: 11px;
@@ -326,22 +317,9 @@
   }
   .usp h3 { font-size: 20px; margin-bottom: 12px; letter-spacing: -0.015em; }
   .usp p { font-size: 15px; font-weight: 300; }
-  .origin-chip {
-    font-family: var(--font-mono);
-    font-size: 10.5px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--brass-hi);
-    border: 1px solid rgba(201, 168, 106, 0.4);
-    background: rgba(201, 168, 106, 0.08);
-    border-radius: 999px;
-    padding: 4px 12px;
-    display: inline-block;
-    margin-bottom: 12px;
-  }
 
   /* ---------- CIM Preview ---------- */
-  .preview-wrap { max-width: 760px; margin: 72px auto 0; }
+  .preview-wrap { max-width: 760px; margin: 0 auto; }
   .cim-card {
     background: linear-gradient(160deg, #141416, #101013);
     border: 1px solid var(--border-2);
@@ -447,87 +425,6 @@
     margin-top: 24px;
   }
   .preview-caption strong { color: var(--brass); font-weight: 600; }
-
-  /* ---------- Flagship: buyer matching ---------- */
-  .flagship-outer {
-    background: linear-gradient(135deg, rgba(201, 168, 106, 0.45), rgba(201, 168, 106, 0.06) 38%, rgba(201, 168, 106, 0.1) 62%, rgba(201, 168, 106, 0.35));
-    border-radius: 20px;
-    padding: 1px;
-  }
-  .flagship-panel {
-    background:
-      radial-gradient(90% 120% at 20% -30%, rgba(201, 168, 106, 0.09), transparent 60%),
-      #101012;
-    border-radius: 19px;
-    padding: 72px 56px;
-  }
-  .flagship-panel h2 {
-    font-size: clamp(30px, 4vw, 44px);
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    margin-bottom: 24px;
-    max-width: 640px;
-  }
-  .flagship-panel h2 em { font-style: normal; color: var(--brass); white-space: nowrap; }
-  .flagship-lead {
-    font-size: 17.5px;
-    font-weight: 300;
-    color: var(--muted);
-    max-width: 720px;
-    margin-bottom: 18px;
-  }
-  .flagship-punch {
-    font-size: 17.5px;
-    font-weight: 400;
-    color: var(--cream);
-    max-width: 720px;
-  }
-  .proof-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 16px;
-    margin-top: 48px;
-  }
-  .proof {
-    background: rgba(201, 168, 106, 0.05);
-    border: 1px solid rgba(201, 168, 106, 0.22);
-    border-radius: 12px;
-    padding: 24px 26px;
-    transition: border-color 0.25s ease;
-  }
-  .proof:hover { border-color: rgba(201, 168, 106, 0.45); }
-  .proof strong {
-    display: block;
-    font-family: var(--font-mono);
-    font-size: 13px;
-    font-weight: 600;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    color: var(--brass-hi);
-    margin-bottom: 8px;
-  }
-  .proof p { font-size: 14.5px; font-weight: 300; color: var(--muted); }
-
-  /* ---------- Manifesto strip ---------- */
-  .manifesto {
-    padding: 104px 0;
-    text-align: center;
-  }
-  .manifesto .big {
-    font-size: clamp(28px, 4.5vw, 48px);
-    font-weight: 800;
-    letter-spacing: -0.03em;
-    color: var(--cream);
-    line-height: 1.15;
-    margin-bottom: 20px;
-  }
-  .manifesto .quiet {
-    font-size: 17px;
-    font-weight: 300;
-    color: var(--muted);
-    max-width: 620px;
-    margin: 0 auto;
-  }
 
   /* ---------- Security band ---------- */
   .security-band {
@@ -640,10 +537,10 @@
     transition: opacity 0.35s ease, transform 0.35s ease;
   }
   .reveal.in { opacity: 1; transform: none; }
-  .steps .reveal:nth-child(2), .usp-grid .reveal:nth-child(2), .security-grid .reveal:nth-child(2), .proof-grid .reveal:nth-child(2) { transition-delay: 0.07s; }
-  .steps .reveal:nth-child(3), .usp-grid .reveal:nth-child(3), .security-grid .reveal:nth-child(3), .proof-grid .reveal:nth-child(3) { transition-delay: 0.14s; }
+  .steps .reveal:nth-child(2), .usp-grid .reveal:nth-child(2), .security-grid .reveal:nth-child(2) { transition-delay: 0.07s; }
+  .steps .reveal:nth-child(3), .usp-grid .reveal:nth-child(3), .security-grid .reveal:nth-child(3) { transition-delay: 0.14s; }
   .steps .reveal:nth-child(4), .security-grid .reveal:nth-child(4) { transition-delay: 0.21s; }
-  .steps .reveal:nth-child(5), .security-grid .reveal:nth-child(5) { transition-delay: 0.28s; }
+  .security-grid .reveal:nth-child(5) { transition-delay: 0.28s; }
   @media (prefers-reduced-motion: reduce) {
     .reveal { opacity: 1; transform: none; transition: none; }
     .btn { transition: none; }
@@ -652,11 +549,7 @@
   /* ---------- Responsive ---------- */
   @media (max-width: 920px) {
     .usp-grid { grid-template-columns: 1fr; }
-    .proof-grid { grid-template-columns: 1fr; }
-    .steps { grid-template-columns: 1fr; }
-    .steps .step { grid-column: auto; }
     .security-grid { grid-template-columns: repeat(3, 1fr); row-gap: 36px; }
-    .flagship-panel { padding: 56px 32px; }
   }
   @media (max-width: 768px) {
     .nav-links { display: none; }
@@ -665,6 +558,7 @@
     .nav-right .signin { white-space: nowrap; font-size: 13.5px; }
     .nav .btn { padding: 8px 13px; font-size: 13px; }
     .nav .wordmark { font-size: 19px; }
+    .steps { grid-template-columns: 1fr; }
     .section { padding: 80px 0; }
     .hero { padding-top: 120px; }
     .hero-ctas { margin-bottom: 56px; }
@@ -676,8 +570,6 @@
     .cim-body { padding-left: 26px; padding-right: 26px; }
     .security-grid { grid-template-columns: 1fr 1fr; }
     .cta-panel { padding: 56px 24px; }
-    .flagship-panel { padding: 48px 24px; }
-    .manifesto { padding: 80px 0; }
   }
   @media (max-width: 480px) {
     .security-grid { grid-template-columns: 1fr; }
@@ -699,8 +591,7 @@
     <nav aria-label="Primary">
       <ul class="nav-links">
         <li><a href="#how-it-works">How it works</a></li>
-        <li><a href="#cims">The CIMs</a></li>
-        <li><a href="#matching">Matching</a></li>
+        <li><a href="#why-cimple">Why Cimple</a></li>
         <li><a href="#security">Security</a></li>
       </ul>
     </nav>
@@ -720,8 +611,8 @@
     <div class="hero-fade" aria-hidden="true"></div>
     <div class="container hero-content">
       <span class="eyebrow">For business brokers &amp; M&amp;A advisors</span>
-      <h1>Your next CIM starts <em>before</em> the first question.</h1>
-      <p class="hero-sub">By the time Cimple's AI sits down with your seller, it has already absorbed every call note, email, document, and public trace of the business. It interviews like a seasoned advisor, adapts to the person in front of it, and builds a CIM buyers actually read.</p>
+      <h1>Your next CIM starts with a <em>conversation</em>.</h1>
+      <p class="hero-sub">Cimple's AI interviews your seller like a seasoned advisor — gathering every document, number, and detail — then designs a buyer-ready CIM. You stay in control of every word buyers see.</p>
       <div class="hero-ctas">
         <a class="btn btn-primary" href="#early-access">Request early access</a>
         <a class="btn btn-secondary" href="#how-it-works">See how it works</a>
@@ -732,80 +623,83 @@
           <span class="stat-label">industries of built-in deal expertise</span>
         </div>
         <div class="stat">
-          <span class="stat-num">3</span>
-          <span class="stat-label">CIM versions — blind, full &amp; diligence</span>
+          <span class="stat-num">21</span>
+          <span class="stat-label">visual layout types</span>
         </div>
         <div class="stat">
-          <span class="stat-num">49</span>
-          <span class="stat-label">matching criteria per buyer</span>
+          <span class="stat-num">3</span>
+          <span class="stat-label">CIM versions — full, blind &amp; diligence</span>
         </div>
       </div>
     </div>
   </section>
 
-  <!-- ================= THE LOOP ================= -->
+  <!-- ================= HOW IT WORKS ================= -->
   <section class="section" id="how-it-works">
     <div class="container">
       <div class="section-head reveal">
-        <span class="eyebrow">The loop</span>
-        <h2>How a Cimple <em>deal runs</em>.</h2>
-        <p>Five steps. Each one feeds the next — and the last one feeds the first.</p>
+        <span class="eyebrow">How it works</span>
+        <h2>From first call to buyer-ready, <em>without the grind</em>.</h2>
+        <p>Four steps. Most of them happen while you're working the next deal.</p>
       </div>
       <div class="steps">
         <article class="step reveal">
           <span class="step-num">01</span>
-          <h3>It starts before the interview</h3>
-          <p>Calls, emails, CRM notes, financials, leases, web presence — everything you already have is parsed and merged into one structured profile before the seller is ever asked a question.</p>
+          <h3>Invite your seller</h3>
+          <p>One secure link. The AI conducts an adaptive interview that probes like a skilled advisor, asks industry-specific questions — bonding for construction, liquor licensing for restaurants, payer mix for clinics — and never asks for anything twice.</p>
         </article>
         <article class="step reveal">
           <span class="step-num">02</span>
-          <h3>It reads the room</h3>
-          <p>Cimple builds a communication profile of your seller and adjusts its tone, pacing, and questions to match — a nervous first-time seller gets a different conversation than a serial acquirer.</p>
+          <h3>Every source, one profile</h3>
+          <p>Financial statements, tax returns, leases, call transcripts, public web data — parsed, cross-checked, and merged into a single structured business profile. Discrepancies get flagged, not buried.</p>
         </article>
         <article class="step reveal">
           <span class="step-num">03</span>
-          <h3>Then, the interview</h3>
-          <p>Adaptive, industry-specific probing: bonding capacity for contractors, liquor licensing for restaurants, payer mix for clinics. It never asks for anything it already knows.</p>
+          <h3>A CIM that looks designed</h3>
+          <p>The layout engine builds bespoke visual pages: charts, timelines, metric grids. A blind version with a project codename is generated automatically for early-stage buyers.</p>
         </article>
         <article class="step reveal">
           <span class="step-num">04</span>
-          <h3>A CIM built for buyers</h3>
-          <p>Branded to your firm and the business. Information is presented the way buyers actually digest it — layouts informed by how real buyers read real CIMs.</p>
-        </article>
-        <article class="step reveal">
-          <span class="step-num">05</span>
-          <h3>The loop closes</h3>
-          <p>You see who read what, for how long, and where they stopped. The engine uses it to design the next CIM better.</p>
+          <h3>Share, track, decide</h3>
+          <p>Buyers view in secure NDA-gated rooms. You see who read what, for how long — and which buyers actually match the deal.</p>
         </article>
       </div>
     </div>
   </section>
 
-  <!-- ================= THREE CIMS, ONE ENGINE ================= -->
-  <section class="section" id="cims" style="padding-top: 40px;">
+  <!-- ================= WHY CIMPLE ================= -->
+  <section class="section" id="why-cimple" style="padding-top: 40px;">
     <div class="container">
       <div class="section-head center reveal">
-        <span class="eyebrow">The CIMs</span>
-        <h2>Three CIMs. <em>One engine.</em></h2>
-        <p>Every version is generated from the same structured profile — one deal, three levels of disclosure, matched to where each buyer stands.</p>
+        <span class="eyebrow">Why Cimple</span>
+        <h2>Three things no template <em>can do</em>.</h2>
       </div>
       <div class="usp-grid">
         <article class="usp reveal">
-          <span class="usp-tag">First contact</span>
-          <h3>Blind CIM</h3>
-          <p>Identity replaced with a project codename — name, location, people, all protected. Safe for first contact, generated automatically with every deal.</p>
+          <span class="usp-tag">USP 01</span>
+          <h3>Industry-native questioning</h3>
+          <p>Generic templates miss what buyers ask first. Cimple knows what matters in 40+ industries, down to provincial licensing.</p>
         </article>
         <article class="usp reveal">
-          <span class="usp-tag">After the NDA</span>
-          <h3>Full CIM</h3>
-          <p>The complete memorandum — the full story, the financials, the visuals — unlocked once the NDA is signed.</p>
+          <span class="usp-tag">USP 02</span>
+          <h3>It never asks twice</h3>
+          <p>Everything already collected — documents, questionnaires, calls — is known before the first question. Sellers feel heard, not processed.</p>
         </article>
-        <article class="usp original reveal">
-          <span class="usp-tag">In diligence</span><br>
-          <span class="origin-chip">A Cimple original</span>
-          <h3>Diligence CIM</h3>
-          <p>For buyers already in due diligence: verification detail inline, customer detail revealed, previously-withheld information surfaced. The deal doesn't stall while you re-assemble documents.</p>
+        <article class="usp reveal">
+          <span class="usp-tag">USP 03</span>
+          <h3>Design is the product</h3>
+          <p>A CIM is a first impression. Every section is laid out visually — not a Word doc with a logo.</p>
         </article>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CIM PREVIEW ================= -->
+  <section class="section" id="preview" style="padding-top: 40px;">
+    <div class="container">
+      <div class="section-head center reveal">
+        <span class="eyebrow">The blind CIM</span>
+        <h2>Confidential by <em>default</em>.</h2>
       </div>
       <div class="preview-wrap reveal">
         <div class="cim-card" role="img" aria-label="Mock cover of a blind CIM for a fictional deal, Project Meridian, with identifying details redacted">
@@ -844,42 +738,6 @@
         </div>
         <p class="preview-caption"><strong>The blind version</strong> — identity protected until the NDA is signed.</p>
       </div>
-    </div>
-  </section>
-
-  <!-- ================= FLAGSHIP: BUYER MATCHING ================= -->
-  <section class="section" id="matching" style="padding-top: 40px;">
-    <div class="container">
-      <div class="flagship-outer reveal">
-        <div class="flagship-panel">
-          <span class="eyebrow">The flagship</span>
-          <h2>Buyer matching that's <em>finally possible</em>.</h2>
-          <p class="flagship-lead">Matching buyers to deals only works when every deal speaks the same language. Cimple writes every CIM from the same deep, structured harvest — so every deal has a consistent, comparable profile underneath, and buyers can be ranked against 49 real criteria.</p>
-          <p class="flagship-punch">Platforms matching from a folder of Word documents and mixed-source PDFs are guessing. Cimple isn't — it wrote the CIM.</p>
-          <div class="proof-grid">
-            <div class="proof reveal">
-              <strong>49 criteria</strong>
-              <p>Financials, operations, deal structure, growth, fit — scored for every buyer, on every deal.</p>
-            </div>
-            <div class="proof reveal">
-              <strong>Consistent base data</strong>
-              <p>The same engine harvests every deal, so every profile is comparable — the part nobody else has.</p>
-            </div>
-            <div class="proof reveal">
-              <strong>Included from day one</strong>
-              <p>Matching is part of Cimple for every broker from the start — not a module you add later.</p>
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <!-- ================= MANIFESTO ================= -->
-  <section class="manifesto">
-    <div class="container reveal">
-      <p class="big">Anyone can generate a document.</p>
-      <p class="quiet">The difference is what's underneath — the harvesting, the adaptation, and the loop that makes every CIM smarter than the last.</p>
     </div>
   </section>
 
