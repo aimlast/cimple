@@ -75,7 +75,10 @@ export function CimSectionRenderer({ section, branding, brokerMode = false }: Ci
 
   return (
     <div
-      className={`cim-section relative ${!section.isVisible ? "opacity-40" : ""}`}
+      // `cim-doc` locks the document to the paper palette regardless of
+      // the app theme (see index.css) — the CIM must render identically
+      // in dark mode, light mode, and print.
+      className={`cim-doc cim-section relative ${!section.isVisible ? "opacity-40" : ""}`}
       data-section-key={section.sectionKey}
       data-layout-type={section.layoutType}
       data-track-section={section.sectionKey}
@@ -112,7 +115,7 @@ function UnknownLayoutFallback({ section, content }: { section: CimSection; cont
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-5">
       {content ? (
-        <p className="text-sm leading-relaxed whitespace-pre-wrap">{content}</p>
+        <p className="text-sm leading-relaxed whitespace-pre-wrap max-w-prose">{content}</p>
       ) : (
         <pre className="text-xs text-muted-foreground overflow-auto">
           {JSON.stringify(section.layoutData, null, 2)}

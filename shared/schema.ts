@@ -797,9 +797,15 @@ export const discrepancies = pgTable("discrepancies", {
   documentName: text("document_name"),
   severity: text("severity").notNull(), // "critical" | "significant" | "minor"
   category: text("category").notNull(), // "financial" | "operational" | "legal" | "factual"
+  // Where this discrepancy was generated: "interview" (interview-vs-document check)
+  // or "financial_analysis" (cross-source check during the financial analysis run).
+  source: text("source").notNull().default("interview"),
   aiExplanation: text("ai_explanation"),
   suggestedResolution: text("suggested_resolution"),
-  status: text("status").notNull().default("open"), // "open" | "seller_responded" | "resolved" | "accepted"
+  // "open" | "seller_responded" | "resolved" | "accepted"
+  // | "ask_seller"  — broker routed it to the AI interview to raise with the seller
+  // | "superseded"  — replaced by a newer financial-analysis run (never deleted)
+  status: text("status").notNull().default("open"),
   sellerResponse: text("seller_response"),
   brokerNotes: text("broker_notes"),
   resolvedValue: text("resolved_value"),

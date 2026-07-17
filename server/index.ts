@@ -238,17 +238,23 @@ app.use((req, res, next) => {
 
   // Graceful shutdown: Railway sends SIGTERM when replacing a deployment.
   // Without this handler Node exits non-zero and Railway emails a false
-  // "Deploy Crashed" alert on every redeploy.
+  // "Deploy Crashed" alert on every redeploy. Two hard-learned details:
+  // (1) server.close() waits for keep-alive connections the proxy holds
+  // open, so sever them explicitly; (2) Railway's kill grace is short —
+  // exit well inside it rather than waiting the polite way.
   let shuttingDown = false;
   const shutdown = (signal: string) => {
     if (shuttingDown) return;
     shuttingDown = true;
-    log(`${signal} received — shutting down gracefully`);
-    server.close(() => {
-      sessionPool.end().finally(() => process.exit(0));
-    });
-    // Force-exit if in-flight requests hang past Railway's grace period
-    setTimeout(() => process.exit(0), 8000).unref();
+    log(`${signal} received — shutting down`);
+    server.close(() => process.exit(0));
+    // Node 18.2+: drop keep-alive/idle sockets so close() can complete
+    if (typeof (server as any).closeAllConnections === "function") {
+      (server as any).closeAllConnections();
+    }
+    sessionPool.end().catch(() => {});
+    // Hard exit inside Railway's grace window no matter what
+    setTimeout(() => process.exit(0), 2000).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));

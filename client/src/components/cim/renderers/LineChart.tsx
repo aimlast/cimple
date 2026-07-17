@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
   Dot,
 } from "recharts";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -39,7 +40,8 @@ interface RendererProps {
 }
 
 function buildLineColors(primary: string, accent: string): string[] {
-  return [primary, accent, "#64b8a0", "#94c9b8", "#6b7280", "#9ca3af"];
+  // Warm-neutral tail colors chosen to read on the paper document surface
+  return [primary, accent, "#64b8a0", "#94c9b8", CIM_DOC.neutral, "#ABA697"];
 }
 
 interface CustomTooltipProps {
@@ -100,32 +102,33 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
           data={chartData}
           margin={{ top: 4, right: 16, left: 0, bottom: data.xLabel ? 24 : 8 }}
         >
+          {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="hsl(var(--border))"
+            stroke={CIM_DOC.line}
             vertical={false}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
-            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: "hsl(var(--muted-foreground))" } : undefined}
+            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => v.toLocaleString()}
-            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: "hsl(var(--muted-foreground))" } : undefined}
+            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} series={series} />}
-            cursor={{ stroke: "hsl(var(--border))", strokeWidth: 1 }}
+            cursor={{ stroke: CIM_DOC.line, strokeWidth: 1 }}
           />
           {showLegend && (
             <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: CIM_DOC.inkSoft }}
               iconType="circle"
               iconSize={8}
               formatter={(value) => series.find((s) => s.key === value)?.label || value}

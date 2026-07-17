@@ -7,6 +7,33 @@
 import { createContext, useContext } from "react";
 import type { BrandingSettings } from "@shared/schema";
 
+/**
+ * CIM document palette — literal hex values for the theme-locked "paper"
+ * document surface (see `.cim-doc` in index.css). Recharts requires explicit
+ * colors for SVG internals (axes, grid, labels, cursors), so chart renderers
+ * import these instead of app theme tokens. These values NEVER change with
+ * the app theme — the document looks identical in dark and light mode.
+ */
+export const CIM_DOC = {
+  paper: "#FBF8F2",        // warm paper background
+  card: "#FEFDFB",         // elevated card on paper
+  ink: "#201D18",          // near-black text
+  inkSoft: "#46423B",      // secondary text
+  inkMuted: "#6B665C",     // axis labels, captions
+  inkFaint: "#8C8779",     // faintest annotations
+  line: "#E3DED0",         // hairline borders / chart grid
+  stripe: "#F2EEE3",       // table stripe / hover cursor fill
+  brass: "#9E752E",        // brand-brass accent on paper
+  // Chart semantic colors — tuned for paper (softer than UI status colors)
+  positive: "#2E7D5B",     // additions / good
+  negative: "#B4483E",     // deductions / bad
+  neutral: "#8A8475",      // warm neutral gray for base bars
+  // Cover page (deliberately dark — premium pitch-book cover)
+  coverInk: "#191713",     // deep warm near-black
+  coverInkHi: "#23201B",   // gradient top
+  coverCream: "#F5F1E6",   // cream type on the cover
+} as const;
+
 export interface CimBranding {
   // Broker/firm brand (from BrandingSettings)
   firmName: string;

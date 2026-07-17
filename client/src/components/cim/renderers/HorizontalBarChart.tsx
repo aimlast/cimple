@@ -13,6 +13,7 @@ import {
   ResponsiveContainer,
   LabelList,
 } from "recharts";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -103,14 +104,15 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
           margin={{ top: 4, right: data.showPercentages ? 48 : 16, left: 0, bottom: 4 }}
           barCategoryGap="25%"
         >
+          {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="hsl(var(--border))"
+            stroke={CIM_DOC.line}
             horizontal={false}
           />
           <XAxis
             type="number"
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => v.toLocaleString()}
@@ -119,13 +121,13 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
             type="category"
             dataKey="name"
             width={leftMargin}
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkSoft }}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} />}
-            cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
+            cursor={{ fill: CIM_DOC.stripe, fillOpacity: 0.6 }}
           />
           <Bar dataKey="value" radius={[0, 3, 3, 0]}>
             {withPercent.map((_, index) => (
@@ -135,7 +137,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
               <LabelList
                 dataKey="percent"
                 position="right"
-                style={{ fontSize: 11, fill: "hsl(var(--muted-foreground))", fontWeight: 500 }}
+                style={{ fontSize: 11, fill: CIM_DOC.inkMuted, fontWeight: 500 }}
               />
             )}
           </Bar>

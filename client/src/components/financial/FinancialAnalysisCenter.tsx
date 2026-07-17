@@ -5,7 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
-import type { FinancialAnalysis } from "@shared/schema";
+import type { FinancialAnalysis, Discrepancy } from "@shared/schema";
 
 import { FinancialOverview } from "@/components/financial/FinancialOverview";
 import { ReclassifiedTable } from "@/components/financial/ReclassifiedTable";
@@ -19,10 +19,12 @@ import type { ClarifyingQuestion } from "@/components/financial/ClarifyingQuesti
 import { InsightsPanel } from "@/components/financial/InsightsPanel";
 import type { InsightsData } from "@/components/financial/InsightsPanel";
 import { AddbackVerification } from "@/components/financial/AddbackVerification";
+import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 
 import {
   DollarSign, Loader2, RefreshCw, Zap, BarChart3,
-  Scale, Calculator, HelpCircle, Lightbulb, ArrowLeft, ShieldCheck
+  Scale, Calculator, HelpCircle, Lightbulb, ArrowLeft, ShieldCheck,
+  AlertTriangle, CheckCircle2, GitCompareArrows, MessageCircleQuestion,
 } from "lucide-react";
 
 /* ──────────────────────────────────────────────
@@ -49,8 +51,9 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 ─────────────────────────────────────────────── */
 export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCenterProps) {
   const { toast } = useToast();
+  const [tab, setTab] = useState("overview");
 
-  // Fetch latest financial analysis
+  // Fetch latest financial analysis; poll while a run is in progress
   const { data: analysis, isLoading } = useQuery<FinancialAnalysis | null>({
     queryKey: ["/api/deals", dealId, "financial-analysis"],
     queryFn: async () => {
@@ -59,7 +62,27 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       if (!r.ok) throw new Error("Failed to fetch");
       return r.json();
     },
+    refetchInterval: (query) =>
+      query.state.data?.status === "running" ? 4000 : false,
   });
+
+  // Financial-analysis discrepancies (cross-source conflicts) — drives the
+  // routing banner. Shares the cache key with DiscrepancyPanel.
+  const { data: allDiscrepancies = [] } = useQuery<Discrepancy[]>({
+    queryKey: ["/api/deals", dealId, "discrepancies"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`);
+      if (!r.ok) throw new Error("Failed to load discrepancies");
+      return r.json();
+    },
+  });
+  const finDiscrepancies = allDiscrepancies.filter(
+    (d) => d.source === "financial_analysis" && d.status !== "superseded",
+  );
+  const unrouted = finDiscrepancies.filter((d) => d.status === "open" || d.status === "seller_responded");
+  const unroutedCritical = unrouted.filter((d) => d.severity === "critical");
+  const routedToSeller = finDiscrepancies.filter((d) => d.status === "ask_seller");
+  const resolvedDisc = finDiscrepancies.filter((d) => d.status === "resolved" || d.status === "accepted");
 
   // Run / re-run analysis
   const runAnalysis = useMutation({
@@ -69,7 +92,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
-      toast({ title: "Analysis started", description: "Financial analysis is running. This may take a moment." });
+      toast({ title: "Analysis started", description: "Analyzing all documents, tax returns, and deal knowledge. This can take a couple of minutes." });
     },
     onError: (err: Error) => {
       toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
@@ -151,9 +174,10 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           </div>
           <p className="text-sm font-medium mb-1">No financial analysis yet</p>
           <p className="text-xs text-muted-foreground mb-6 max-w-md mx-auto">
-            Upload financial documents (P&L, Balance Sheet, Tax Returns) first, then run the analysis.
-            The AI will reclassify accounts, calculate SDE/EBITDA, identify working capital,
-            and surface clarifying questions.
+            The AI analyzes everything known about the deal — financial statements, tax returns,
+            valuation workbooks, emails, and interview answers. It reclassifies accounts,
+            calculates SDE/EBITDA, identifies working capital, cross-checks values between
+            sources, and surfaces clarifying questions.
           </p>
           <Button
             className="bg-teal text-teal-foreground hover:bg-teal/90 gap-2"
@@ -170,6 +194,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       </div>
     );
   }
+
+  const isRunning = analysis.status === "running";
+  const isFailed = analysis.status === "failed";
 
   // Analysis exists — show tabbed interface
   return (
@@ -197,18 +224,109 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           variant="outline"
           className="h-8 text-xs gap-1.5"
           onClick={() => runAnalysis.mutate()}
-          disabled={runAnalysis.isPending}
+          disabled={runAnalysis.isPending || isRunning}
         >
-          {runAnalysis.isPending ? (
-            <><Loader2 className="h-3 w-3 animate-spin" /> Re-running...</>
+          {runAnalysis.isPending || isRunning ? (
+            <><Loader2 className="h-3 w-3 animate-spin" /> Running...</>
           ) : (
             <><RefreshCw className="h-3 w-3" /> Re-run Analysis</>
           )}
         </Button>
       </div>
 
+      {/* Running banner */}
+      {isRunning && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-center gap-3">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-400 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-400">Analysis in progress</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Extracting statements, cross-checking every source, and building the normalization. This page updates automatically.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {/* Failed banner */}
+      {isFailed && (
+        <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-3 flex items-start gap-3">
+          <AlertTriangle className="h-4 w-4 text-destructive shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-destructive">Analysis failed</p>
+            {analysis.aiReasoning && (
+              <p className="text-xs text-muted-foreground mt-0.5">{analysis.aiReasoning}</p>
+            )}
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1 shrink-0"
+            onClick={() => runAnalysis.mutate()}
+            disabled={runAnalysis.isPending}
+          >
+            <RefreshCw className="h-3 w-3" /> Retry
+          </Button>
+        </div>
+      )}
+
+      {/* Discrepancy routing banner */}
+      {!isRunning && finDiscrepancies.length > 0 && (
+        unrouted.length > 0 ? (
+          <div className={`rounded-lg border px-4 py-3 flex items-center gap-3 ${
+            unroutedCritical.length > 0
+              ? "border-red-500/30 bg-red-500/5"
+              : "border-amber-500/30 bg-amber-500/5"
+          }`}>
+            <GitCompareArrows className={`h-4 w-4 shrink-0 ${unroutedCritical.length > 0 ? "text-red-400" : "text-amber-400"}`} />
+            <div className="flex-1 min-w-0">
+              <p className={`text-sm font-medium ${unroutedCritical.length > 0 ? "text-red-400" : "text-amber-400"}`}>
+                {unrouted.length} discrepanc{unrouted.length === 1 ? "y" : "ies"} to route
+                {unroutedCritical.length > 0 && ` (${unroutedCritical.length} critical)`}
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Sources disagree on these values. Resolve each one now, or send it to the AI seller interview.
+                The analysis is finalized once every critical discrepancy is routed or resolved.
+              </p>
+            </div>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-7 text-xs shrink-0"
+              onClick={() => setTab("discrepancies")}
+            >
+              Review
+            </Button>
+          </div>
+        ) : routedToSeller.length > 0 ? (
+          <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 px-4 py-3 flex items-center gap-3">
+            <MessageCircleQuestion className="h-4 w-4 text-blue-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-blue-400">
+                All discrepancies routed — {routedToSeller.length} awaiting the seller interview
+              </p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                The AI interview will raise {routedToSeller.length === 1 ? "it" : "them"} with the seller naturally. Answers flow back into the knowledge base.
+              </p>
+            </div>
+            <Button size="sm" variant="ghost" className="h-7 text-xs shrink-0" onClick={() => setTab("discrepancies")}>
+              View
+            </Button>
+          </div>
+        ) : (
+          <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/5 px-4 py-3 flex items-center gap-3">
+            <CheckCircle2 className="h-4 w-4 text-emerald-400 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-emerald-400">All financial discrepancies resolved</p>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                {resolvedDisc.length} conflict{resolvedDisc.length === 1 ? "" : "s"} reconciled. The analysis is finalized.
+              </p>
+            </div>
+          </div>
+        )
+      )}
+
       {/* Tabs */}
-      <Tabs defaultValue="overview" className="w-full">
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
         <TabsList className="w-full justify-start bg-muted/50 h-9">
           <TabsTrigger value="overview" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <BarChart3 className="h-3 w-3" /> Overview
@@ -224,6 +342,16 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           </TabsTrigger>
           <TabsTrigger value="working-capital" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <DollarSign className="h-3 w-3" /> Working Capital
+          </TabsTrigger>
+          <TabsTrigger value="discrepancies" className="text-xs gap-1.5 data-[state=active]:bg-background">
+            <GitCompareArrows className="h-3 w-3" /> Discrepancies
+            {unrouted.length > 0 && (
+              <span className={`ml-1 h-4 min-w-[1rem] rounded-full text-2xs font-medium flex items-center justify-center px-1 ${
+                unroutedCritical.length > 0 ? "bg-red-500/20 text-red-400" : "bg-amber-500/20 text-amber-400"
+              }`}>
+                {unrouted.length}
+              </span>
+            )}
           </TabsTrigger>
           <TabsTrigger value="questions" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <HelpCircle className="h-3 w-3" /> Questions
@@ -257,6 +385,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <ReclassifiedTable
             data={bsData}
             title="Reclassified Balance Sheet"
+            mode="balance"
             onUpdate={handleBsUpdate}
           />
         </TabsContent>
@@ -270,6 +399,14 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
 
         <TabsContent value="working-capital">
           <WorkingCapitalPanel data={wcData} />
+        </TabsContent>
+
+        <TabsContent value="discrepancies">
+          <DiscrepancyPanel
+            dealId={dealId}
+            sourceFilter="financial_analysis"
+            hideRunCheck
+          />
         </TabsContent>
 
         <TabsContent value="questions">

@@ -29,13 +29,14 @@ interface RendererProps {
 
 function scoreColor(pct: number): string {
   if (pct >= 75) return "bg-success";
-  if (pct >= 50) return "bg-amber-400";
+  if (pct >= 50) return "bg-amber-500";
   return "bg-destructive";
 }
 
 function scoreTextColor(pct: number): string {
   if (pct >= 75) return "text-success";
-  if (pct >= 50) return "text-amber-500";
+  // amber-600 for adequate contrast on the paper surface
+  if (pct >= 50) return "text-amber-600";
   return "text-destructive";
 }
 

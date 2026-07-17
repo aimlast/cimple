@@ -293,7 +293,11 @@ export default function CIMDesigner() {
 
           {/* CENTER: CIM preview ───────────────────────────────────────────── */}
           <div className="flex-1 overflow-hidden bg-muted/20">
-            <ScrollArea className="h-full">
+            {/* Radix wraps ScrollArea content in a `display: table` div, which
+                sizes to max-content and lets the document sheet overflow
+                horizontally in narrow panes — force it back to block so the
+                sheet shrinks to the available width. */}
+            <ScrollArea className="h-full [&>[data-radix-scroll-area-viewport]>div]:!block">
               {previewSections.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
                   <Wand2 className="h-10 w-10 mb-4 opacity-20" />
@@ -303,8 +307,8 @@ export default function CIMDesigner() {
                   </p>
                 </div>
               ) : (
-                <div className="max-w-[860px] mx-auto py-8 px-6 space-y-8">
-                  {/* Mode indicator banner */}
+                <div className="max-w-[880px] mx-auto py-8 px-6 space-y-4">
+                  {/* Mode indicator banner — app chrome, stays outside the document */}
                   {previewMode !== "normal" && (
                     <div className={`rounded-lg border px-4 py-2 text-xs flex items-center gap-2 ${
                       previewMode === "blind"
@@ -322,25 +326,29 @@ export default function CIMDesigner() {
                       </span>
                     </div>
                   )}
-                  {previewSections.map(section => (
-                    <div
-                      key={section.id}
-                      className={`rounded-xl transition-all cursor-pointer ${
-                        selectedSectionId === section.id
-                          ? "ring-2 ring-teal ring-offset-2 ring-offset-background"
-                          : "hover:ring-1 hover:ring-border"
-                      }`}
-                      onClick={() => selectSection(section)}
-                    >
-                      <SectionBoundary sectionTitle={section.sectionTitle}>
-                        <CimSectionRenderer
-                          section={section}
-                          branding={brandingCtx}
-                          brokerMode
-                        />
-                      </SectionBoundary>
-                    </div>
-                  ))}
+                  {/* The document itself: theme-locked paper sheet, WYSIWYG with
+                      what buyers see in the view room regardless of app theme. */}
+                  <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
+                    {previewSections.map(section => (
+                      <div
+                        key={section.id}
+                        className={`rounded-xl transition-all cursor-pointer ${
+                          selectedSectionId === section.id
+                            ? "ring-2 ring-teal ring-offset-2 ring-offset-background"
+                            : "hover:ring-1 hover:ring-border"
+                        }`}
+                        onClick={() => selectSection(section)}
+                      >
+                        <SectionBoundary sectionTitle={section.sectionTitle}>
+                          <CimSectionRenderer
+                            section={section}
+                            branding={brandingCtx}
+                            brokerMode
+                          />
+                        </SectionBoundary>
+                      </div>
+                    ))}
+                  </div>
                 </div>
               )}
             </ScrollArea>

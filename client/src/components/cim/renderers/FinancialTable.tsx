@@ -97,8 +97,10 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
                   key={i}
                   className={cn(
                     "border-b border-border/50 last:border-0",
-                    isTotal && "border-t border-border bg-muted/20",
-                    !isTotal && "hover:bg-muted/20 transition-colors"
+                    isTotal && "border-t border-border bg-muted/40",
+                    // Subtle zebra stripe on the paper surface — aids row scanning
+                    !isTotal && i % 2 === 1 && "bg-muted/25",
+                    !isTotal && "hover:bg-muted/50 transition-colors"
                   )}
                 >
                   <td

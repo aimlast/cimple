@@ -24,13 +24,15 @@ interface ReclassifiedTableProps {
   data: ReclassifiedTableData | null;
   title?: string;
   years?: string[];
+  /** "pnl" (default) computes a Net Income total; "balance" groups balance-sheet categories. */
+  mode?: "pnl" | "balance";
   onUpdate?: (updated: ReclassifiedTableData) => void;
 }
 
 /* ──────────────────────────────────────────────
    Category config
 ─────────────────────────────────────────────── */
-const CATEGORIES = [
+const PNL_CATEGORIES = [
   { value: "Revenue",                label: "Revenue" },
   { value: "COGS",                   label: "Cost of Goods Sold" },
   { value: "Operating Expenses",     label: "Operating Expenses" },
@@ -44,10 +46,18 @@ const CATEGORIES = [
   { value: "Excluded",               label: "Excluded" },
 ];
 
-const CATEGORY_ORDER = CATEGORIES.map(c => c.value);
+const BALANCE_CATEGORIES = [
+  { value: "Current Assets",         label: "Current Assets" },
+  { value: "Fixed Assets",           label: "Fixed Assets" },
+  { value: "Other Assets",           label: "Other Assets" },
+  { value: "Current Liabilities",    label: "Current Liabilities" },
+  { value: "Long-Term Liabilities",  label: "Long-Term Liabilities" },
+  { value: "Equity",                 label: "Equity" },
+  { value: "Excluded",               label: "Excluded" },
+];
 
-function getCategoryOrder(cat: string): number {
-  const idx = CATEGORY_ORDER.indexOf(cat);
+function getCategoryOrder(cat: string, order: string[]): number {
+  const idx = order.indexOf(cat);
   return idx >= 0 ? idx : 999;
 }
 
@@ -74,41 +84,32 @@ function amountColor(val: number | undefined | null, isTotal = false): string {
 /* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
-export function ReclassifiedTable({ data, title = "Income Statement", years: yearsProp, onUpdate }: ReclassifiedTableProps) {
+export function ReclassifiedTable({ data, title = "Income Statement", years: yearsProp, mode = "pnl", onUpdate }: ReclassifiedTableProps) {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string>("");
 
-  if (!data || !data.rows || data.rows.length === 0) {
-    return (
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{title}</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground text-center py-8">
-            No data available. Run the financial analysis to populate this table.
-          </p>
-        </CardContent>
-      </Card>
-    );
-  }
+  const categories = mode === "balance" ? BALANCE_CATEGORIES : PNL_CATEGORIES;
+  const categoryOrder = categories.map(c => c.value);
 
-  const years = yearsProp || data.years || [];
+  // NOTE: all hooks must run before the empty-state return (data can flip
+  // between null and loaded across renders — conditional hooks would crash).
+  const rows = data?.rows ?? [];
+  const years = yearsProp || data?.years || [];
 
   // Group rows by category
   const grouped = useMemo(() => {
     const groups: Record<string, FinancialRow[]> = {};
-    for (const row of data.rows) {
+    for (const row of rows) {
       const cat = row.category || "Other";
       if (!groups[cat]) groups[cat] = [];
       groups[cat].push(row);
     }
     // Sort groups by category order
     const sorted = Object.entries(groups).sort(
-      ([a], [b]) => getCategoryOrder(a) - getCategoryOrder(b)
+      ([a], [b]) => getCategoryOrder(a, categoryOrder) - getCategoryOrder(b, categoryOrder)
     );
     return sorted;
-  }, [data.rows]);
+  }, [rows, categoryOrder.join("|")]);
 
   // Calculate category subtotals
   const categoryTotals = useMemo(() => {
@@ -122,13 +123,13 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
     return totals;
   }, [grouped, years]);
 
-  // Grand total (Revenue - everything else)
+  // Grand total (Revenue + Other Income - everything else). Only meaningful in P&L mode.
   const grandTotals = useMemo(() => {
     const totals: Record<string, number> = {};
     for (const year of years) {
       let total = 0;
       for (const [cat, catTotal] of Object.entries(categoryTotals)) {
-        if (cat === "Revenue") {
+        if (cat === "Revenue" || cat === "Other Income") {
           total += catTotal[year] || 0;
         } else if (cat !== "Excluded") {
           total -= Math.abs(catTotal[year] || 0);
@@ -140,7 +141,7 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
   }, [categoryTotals, years]);
 
   const handleCategoryChange = useCallback((rowId: string, newCategory: string) => {
-    if (!onUpdate) return;
+    if (!onUpdate || !data) return;
     const updatedRows = data.rows.map(r =>
       r.id === rowId ? { ...r, category: newCategory } : r
     );
@@ -152,6 +153,21 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
     setEditingRowId(rowId);
     setEditCategory(currentCategory);
   };
+
+  if (!data || rows.length === 0) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">{title}</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <p className="text-sm text-muted-foreground text-center py-8">
+            No data available. Run the financial analysis to populate this table.
+          </p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card>
@@ -193,21 +209,24 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
                   onCancelEditing={() => setEditingRowId(null)}
                   onSaveCategory={handleCategoryChange}
                   editable={!!onUpdate}
+                  categories={categories}
                 />
               ))}
 
-              {/* Grand total */}
-              <tr className="border-t-2 border-border bg-muted/30">
-                <td className="px-4 py-3 font-semibold text-sm">Net Income</td>
-                {years.map(year => (
-                  <td key={year} className={`text-right px-4 py-3 text-sm font-semibold ${
-                    grandTotals[year] < 0 ? "text-red-400" : "text-teal"
-                  }`}>
-                    {formatAmount(grandTotals[year])}
-                  </td>
-                ))}
-                {onUpdate && <td />}
-              </tr>
+              {/* Grand total — P&L only (balance sheets show per-category subtotals) */}
+              {mode === "pnl" && (
+                <tr className="border-t-2 border-border bg-muted/30">
+                  <td className="px-4 py-3 font-semibold text-sm">Net Income</td>
+                  {years.map(year => (
+                    <td key={year} className={`text-right px-4 py-3 text-sm font-semibold ${
+                      grandTotals[year] < 0 ? "text-red-400" : "text-teal"
+                    }`}>
+                      {formatAmount(grandTotals[year])}
+                    </td>
+                  ))}
+                  {onUpdate && <td />}
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
@@ -231,6 +250,7 @@ interface CategoryGroupProps {
   onCancelEditing: () => void;
   onSaveCategory: (rowId: string, category: string) => void;
   editable: boolean;
+  categories: Array<{ value: string; label: string }>;
 }
 
 function CategoryGroup({
@@ -245,6 +265,7 @@ function CategoryGroup({
   onCancelEditing,
   onSaveCategory,
   editable,
+  categories,
 }: CategoryGroupProps) {
   return (
     <>
@@ -277,7 +298,7 @@ function CategoryGroup({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {CATEGORIES.map(c => (
+                      {categories.map(c => (
                         <SelectItem key={c.value} value={c.value} className="text-xs">
                           {c.label}
                         </SelectItem>

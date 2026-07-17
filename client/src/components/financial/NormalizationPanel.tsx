@@ -19,6 +19,9 @@ export interface Addback {
   category: string; // owner_comp, discretionary, non_recurring, one_time, other
   amounts: Record<string, number>; // year -> amount
   approved: boolean;
+  /** "sde" addbacks are owner-specific and only apply to SDE; "ebitda" apply to both. */
+  type?: "sde" | "ebitda";
+  confidence?: "high" | "medium" | "low";
 }
 
 export interface NormalizationData {
@@ -77,6 +80,32 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
   const [newDesc, setNewDesc] = useState("");
   const [newAmounts, setNewAmounts] = useState<Record<string, string>>({});
 
+  // NOTE: hooks must run before any early return (data can flip between null
+  // and loaded across renders — conditional hooks would crash the tab).
+  const metric = data?.metric ?? "sde";
+  const years = data?.years ?? [];
+  const netIncome = data?.netIncome ?? {};
+  const addbacks = data?.addbacks ?? [];
+  const metricLabel = metric === "ebitda" ? "EBITDA" : "SDE";
+
+  /** In EBITDA mode, owner-specific (type "sde") addbacks don't apply. */
+  const appliesToMetric = (ab: Addback) => metric === "sde" || ab.type !== "sde";
+
+  // Calculate adjusted totals per year (only approved addbacks that apply to the metric)
+  const adjustedTotals = useMemo(() => {
+    const totals: Record<string, number> = {};
+    for (const year of years) {
+      let total = netIncome[year] || 0;
+      for (const ab of addbacks) {
+        if (ab.approved && (metric === "sde" || ab.type !== "sde")) {
+          total += ab.amounts[year] || 0;
+        }
+      }
+      totals[year] = total;
+    }
+    return totals;
+  }, [years, netIncome, addbacks, metric]);
+
   if (!data) {
     return (
       <Card>
@@ -92,9 +121,6 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
     );
   }
 
-  const { metric, years, netIncome, addbacks } = data;
-  const metricLabel = metric === "ebitda" ? "EBITDA" : "SDE";
-
   // Toggle metric
   const toggleMetric = () => {
     if (!onUpdate) return;
@@ -109,21 +135,6 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
     );
     onUpdate({ ...data, addbacks: updatedAddbacks });
   };
-
-  // Calculate adjusted totals per year (only approved addbacks)
-  const adjustedTotals = useMemo(() => {
-    const totals: Record<string, number> = {};
-    for (const year of years) {
-      let total = netIncome[year] || 0;
-      for (const ab of addbacks) {
-        if (ab.approved) {
-          total += ab.amounts[year] || 0;
-        }
-      }
-      totals[year] = total;
-    }
-    return totals;
-  }, [years, netIncome, addbacks]);
 
   // Add custom addback
   const addCustomAddback = () => {
@@ -233,9 +244,11 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                 {/* Addback rows */}
                 {addbacks.map(ab => {
                   const catCfg = ADDBACK_CATEGORIES[ab.category] || ADDBACK_CATEGORIES.other;
+                  const applies = appliesToMetric(ab);
+                  const counted = ab.approved && applies;
                   return (
                     <tr key={ab.id} className={`border-b border-border/50 transition-colors ${
-                      ab.approved ? "hover:bg-accent/30" : "opacity-50 hover:bg-accent/20"
+                      counted ? "hover:bg-accent/30" : "opacity-50 hover:bg-accent/20"
                     }`}>
                       <td className="px-4 py-2.5 pl-6">
                         <div className="flex items-start gap-2">
@@ -247,6 +260,11 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                               <p className="text-2xs text-muted-foreground mt-0.5 truncate">{ab.description}</p>
                             )}
                           </div>
+                          {ab.type === "sde" && (
+                            <Badge className="bg-muted text-muted-foreground border-0 text-2xs shrink-0">
+                              SDE only
+                            </Badge>
+                          )}
                           <Badge className={`${catCfg.color} text-2xs shrink-0`}>
                             {catCfg.label}
                           </Badge>
@@ -254,9 +272,9 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                       </td>
                       {years.map(year => (
                         <td key={year} className={`text-right px-4 py-2.5 text-xs tabular-nums ${
-                          ab.approved ? "text-success" : "text-muted-foreground"
+                          counted ? "text-success" : "text-muted-foreground"
                         }`}>
-                          {ab.approved ? `+${formatAmount(ab.amounts[year])}` : formatAmount(ab.amounts[year])}
+                          {counted ? `+${formatAmount(ab.amounts[year])}` : formatAmount(ab.amounts[year])}
                         </td>
                       ))}
                       {onUpdate && (

@@ -13,6 +13,7 @@ import {
   Legend,
 } from "recharts";
 import { cn } from "@/lib/utils";
+import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 
@@ -112,32 +113,33 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalized} margin={{ top: 4, right: 16, left: 0, bottom: data.xLabel ? 24 : 8 }}
           barCategoryGap="30%">
+          {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke="hsl(var(--border))"
+            stroke={CIM_DOC.line}
             vertical={false}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
-            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: "hsl(var(--muted-foreground))" } : undefined}
+            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }}
+            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => v.toLocaleString()}
-            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: "hsl(var(--muted-foreground))" } : undefined}
+            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} />}
-            cursor={{ fill: "hsl(var(--muted) / 0.5)" }}
+            cursor={{ fill: CIM_DOC.stripe, fillOpacity: 0.6 }}
           />
           {hasSecondary && (
             <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 8 }}
+              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: CIM_DOC.inkSoft }}
               iconType="circle"
               iconSize={8}
             />
