@@ -2680,6 +2680,35 @@ Return JSON only.`,
     }
   });
 
+  // ── Early-access requests from the cimple.ca landing page ──
+  app.post("/api/early-access", async (req, res) => {
+    try {
+      const email = typeof req.body.email === "string" ? req.body.email.trim() : "";
+      const firm = typeof req.body.firm === "string" ? req.body.firm.trim() : "";
+      if (!email || !/.+@.+\..+/.test(email)) {
+        return res.status(400).json({ error: "A valid email is required" });
+      }
+      console.log(`[early-access] ${email}${firm ? ` (${firm})` : ""}`);
+      // Best-effort notify — the visitor always gets a friendly yes.
+      sendDirectEmail(
+        "aim.kitabi@gmail.com",
+        `Early access request: ${email}`,
+        `
+    <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0b; color: #e5e5e5;">
+      <h2 style="color: #c9a86a; margin-bottom: 16px;">New early-access request</h2>
+      <p><strong>Email:</strong> ${email.replace(/</g, "&lt;")}</p>
+      ${firm ? `<p><strong>Brokerage:</strong> ${firm.replace(/</g, "&lt;")}</p>` : ""}
+      <p style="color: #888; font-size: 12px;">Submitted via cimple.ca ${new Date().toLocaleString()}</p>
+    </div>
+  `,
+      ).catch(() => {});
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Early-access error:", error);
+      res.status(500).json({ error: "Something went wrong" });
+    }
+  });
+
   // =============================
   // SELLER INVITE ROUTES
   // =============================

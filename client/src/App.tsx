@@ -231,7 +231,7 @@ function AppContent() {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <ThemeProvider forcedTheme="light" enableSystem={false}>
+      <ThemeProvider defaultTheme="dark">
         <TooltipProvider>
           <RoleProvider>
             <WouterRouter>

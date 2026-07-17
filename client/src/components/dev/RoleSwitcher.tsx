@@ -31,13 +31,13 @@ const ROLE_CONFIG: Record<
     label: "Seller",
     color: "text-amber-600",
     dot: "bg-amber-500",
-    bg: "bg-amber-50 border-amber-200",
+    bg: "bg-amber-500/10 border-amber-200",
   },
   buyer: {
     label: "Buyer",
-    color: "text-blue-600",
+    color: "text-blue-muted-foreground",
     dot: "bg-blue-500",
-    bg: "bg-blue-50 border-blue-200",
+    bg: "bg-blue-muted border-blue-200",
   },
 };
 
