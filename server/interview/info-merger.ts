@@ -67,11 +67,63 @@ const FIELD_ALIASES: Record<string, string> = {
   equipment: "assetsIncluded",
   propertyNotes: "propertyInfo",
   ownerHoursPerWeek: "ownerInvolvement",
+  // Key-sprawl families observed in stress-test transcripts (pipeline vs
+  // clientPipeline, capex vs capexRequirements, clientChurn vs
+  // customerRetention vs logoRetention, four overlapping lottery fields,
+  // atmRevenue vs ATMrevenue). Each family lands on one stable spelling.
+  clientPipeline: "pipeline",
+  salesPipeline: "pipeline",
+  capex: "capexRequirements",
+  capitalExpenditures: "capexRequirements",
+  clientChurn: "customerRetention",
+  customerChurn: "customerRetention",
+  churnRate: "customerRetention",
+  logoRetention: "customerRetention",
+  clientRetention: "customerRetention",
+  retentionRate: "customerRetention",
+  lotteryCommission: "lotteryRevenue",
+  lotterySales: "lotteryRevenue",
+  lotteryIncome: "lotteryRevenue",
+  atmIncome: "atmRevenue",
+  insuranceCarrier: "insuranceCoverage",
+  insuranceCarriers: "insuranceCoverage",
+  insurancePolicies: "insuranceCoverage",
+  clients: "customerBase",
+  customers: "customerBase",
 };
 
-/** Resolve a field name to its canonical spelling. */
-export function canonicalFieldName(fieldName: string): string {
-  return FIELD_ALIASES[fieldName] ?? fieldName;
+// Case-insensitive alias lookup — "ATMrevenue" and "atmRevenue" must resolve
+// identically. Built once from FIELD_ALIASES (keys AND canonical values, so a
+// wrong-cased canonical name still lands on the canonical spelling).
+const LOWER_ALIAS_MAP: Record<string, string> = (() => {
+  const map: Record<string, string> = {};
+  for (const canonical of Object.values(FIELD_ALIASES)) {
+    map[canonical.toLowerCase()] = canonical;
+  }
+  for (const [alias, canonical] of Object.entries(FIELD_ALIASES)) {
+    map[alias.toLowerCase()] = canonical;
+  }
+  return map;
+})();
+
+/**
+ * Resolve a field name to its canonical spelling (case-insensitive).
+ *
+ * When `existingKeys` is provided, a name that matches an existing
+ * extractedInfo key case-insensitively reuses THAT key — so the model minting
+ * "ATMrevenue" next to an existing "atmRevenue" merges instead of forking.
+ */
+export function canonicalFieldName(fieldName: string, existingKeys?: Iterable<string>): string {
+  const direct = FIELD_ALIASES[fieldName];
+  if (direct) return direct;
+  const lower = fieldName.toLowerCase();
+  const ciAlias = LOWER_ALIAS_MAP[lower];
+  if (ciAlias) return ciAlias;
+  if (existingKeys) {
+    const match = Array.from(existingKeys).find((key) => key.toLowerCase() === lower);
+    if (match) return match;
+  }
+  return fieldName;
 }
 
 /**
@@ -100,7 +152,7 @@ export function mergeExtractedFields(
 
   for (const [rawFieldName, field] of Object.entries(newFields)) {
     if (!field.value) continue;
-    const fieldName = canonicalFieldName(rawFieldName);
+    const fieldName = canonicalFieldName(rawFieldName, Object.keys(merged));
 
     const existingValue = merged[fieldName as keyof ExtractedInfo];
     const existingConf = existingConfidence[fieldName];
@@ -165,6 +217,88 @@ export function updateIndustryContext(
     coveredIndustryTopics: reasoning.industryContext.coveredIndustryTopics ?? [],
     regulatoryNotes: reasoning.industryContext.regulatoryNotes,
   };
+}
+
+// =====================
+// Grounding guard
+// =====================
+
+/**
+ * High-stakes fields where a fabricated "confirmed" value would put a false
+ * claim into a CIM. Grounding is checked mechanically after every merge.
+ */
+const HIGH_STAKES_FIELDS = new Set([
+  "customerConcentration",
+  "annualRevenue",
+  "askingPrice",
+  "operatingMargins",
+  "revenueGrowth",
+  "debt",
+]);
+
+// Quantities can be spelled out ("one-point-one million", "half", "forty percent")
+const SPELLED_QUANTITY_RE =
+  /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|half|third|quarter|percent|point)\b/i;
+
+/** True when text plausibly contains a quantity (digits or spelled numbers). */
+function containsQuantity(text: string): boolean {
+  return /\d/.test(text) || SPELLED_QUANTITY_RE.test(text);
+}
+
+// Values that assert an absence/negative claim (e.g. "no single customer
+// exceeds 20%") — the classic fabricated-diversification pattern.
+const NEGATIVE_ASSERTION_RE =
+  /\b(no (single|one|customer|client|gc|supplier)|none of (our|the)|does ?n[o']t exceed|not exceed|no concentration|diversified|well[- ]diversified)\b/i;
+
+const NEGATION_RE = /\b(no|not|none|nothing|never|nobody|isn't|doesn't|don't|aren't|won't)\b/i;
+
+export interface GroundingFlag {
+  fieldName: string;
+  reason: string;
+}
+
+/**
+ * Post-merge grounding check for high-stakes writes sourced from the seller's
+ * turn. If the model wrote a value asserting a quantity the seller's message
+ * doesn't contain (or a negative claim the seller never negated), the write is
+ * downgraded to "approximate" confidence and flagged so the caller can queue
+ * the topic on the deferral ledger for a proper circle-back.
+ *
+ * Mutates `updatedConfidence` in place (the merged value itself is kept — it
+ * may still be a useful lead — but it can never masquerade as confirmed).
+ */
+export function applyGroundingGuard(
+  changes: FieldChange[],
+  updatedConfidence: Record<string, string>,
+  sellerMessage: string,
+): GroundingFlag[] {
+  const flags: GroundingFlag[] = [];
+  const sellerHasQuantity = containsQuantity(sellerMessage);
+
+  for (const change of changes) {
+    if (!HIGH_STAKES_FIELDS.has(change.fieldName)) continue;
+    if (change.source !== "seller_statement") continue;
+    if (change.newConfidence !== "confirmed") continue;
+
+    const valueAssertsQuantity = /\d/.test(change.newValue);
+    const valueAssertsNegative = NEGATIVE_ASSERTION_RE.test(change.newValue);
+    const sellerNegated = NEGATION_RE.test(sellerMessage);
+
+    let reason: string | null = null;
+    if (valueAssertsQuantity && !sellerHasQuantity) {
+      reason = `value asserts a number but the seller's message contains none`;
+    } else if (valueAssertsNegative && !sellerNegated) {
+      reason = `value asserts a negative claim the seller never made`;
+    }
+
+    if (reason) {
+      updatedConfidence[change.fieldName] = "approximate";
+      change.newConfidence = "approximate";
+      flags.push({ fieldName: change.fieldName, reason });
+    }
+  }
+
+  return flags;
 }
 
 // =====================

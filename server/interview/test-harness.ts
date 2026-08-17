@@ -20,7 +20,7 @@ import { CIM_SECTIONS, type ExtractedInfo } from "../../shared/schema";
 
 const INTERVIEW_MODEL = "claude-opus-4-5";
 const SELLER_MODEL = "claude-sonnet-4-5";
-const MAX_TURNS = 30;
+const MAX_TURNS = Number(process.env.HARNESS_MAX_TURNS ?? 30);
 const API_KEY = process.env.ANTHROPIC_API_KEY;
 
 if (!API_KEY) {
@@ -384,7 +384,9 @@ function evaluateInterview(
   }
 
   // Check: Were deferred topics ever circled back to?
-  const deferredTopics = rawResponses.flatMap(r => r.reasoning.deferredTopics);
+  // (Schema split: deferrals are now per-turn deltas in reasoning.newDeferrals;
+  // optional chaining tolerates raw/unnormalized model output.)
+  const deferredTopics = rawResponses.flatMap(r => (r.reasoning.newDeferrals ?? []).map(d => d.topic));
   const circleBackCount = rawResponses.filter(r => r.reasoning.topicStatus === "circling_back").length;
   if (deferredTopics.length > 0 && circleBackCount === 0) {
     issues.push("WEAK: Agent deferred topics but never circled back to any");

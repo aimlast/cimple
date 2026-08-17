@@ -85,6 +85,17 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
 
   const dynamicParts: string[] = [];
 
+  // Today's date — MUST stay in the dynamic block (it changes daily; baking it
+  // into the cached prefix would both bust the cache at midnight and, worse,
+  // let a stale anchor write wrong years into the knowledge base when the
+  // model resolves "last year" / "three years ago").
+  const today = new Date().toISOString().slice(0, 10);
+  dynamicParts.push(
+    `# TODAY'S DATE: ${today}`,
+    `Resolve every relative date the seller gives ("last year", "three years ago", "since COVID") against this date — never against your training data's sense of "now" — and capture resolved years with confidence "approximate" unless the seller states the year explicitly.`,
+    "\n---\n",
+  );
+
   // Learned patterns from past interviews in this industry (may change between
   // interviews, so kept out of the cached prefix).
   try {
