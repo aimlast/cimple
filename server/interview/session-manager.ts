@@ -9,8 +9,27 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, KNOWN_EXTRACTED_FIELDS, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
 import { buildInterviewSystemBlocks } from "./system-prompt";
-import { callInterviewWithRecovery, governCompletion } from "./turn-guard";
-import { mergeExtractedFields, updateIndustryContext, canonicalFieldName, type FieldChange } from "./info-merger";
+import {
+  callInterviewWithRecovery,
+  governCompletion,
+  detectStopSignal,
+  buildStopSignalNudge,
+  CRITICAL_SECTIONS,
+} from "./turn-guard";
+import {
+  mergeExtractedFields,
+  updateIndustryContext,
+  canonicalFieldName,
+  applyGroundingGuard,
+  type FieldChange,
+} from "./info-merger";
+import {
+  updateDeferralLedger,
+  openDeferrals,
+  deferralTopicStrings,
+  parseLedger,
+  type DeferralEntry,
+} from "./deferral-ledger";
 import { agentConfig } from "./config/load-config";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
@@ -138,6 +157,13 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
       const lastAiMessage = [...messages].reverse().find((m) => m.role === "ai");
 
+      // Deferrals come from the durable ledger; _deferredTopics is the legacy
+      // fallback for sessions persisted before the ledger existed.
+      const resumeLedger = parseLedger(sessionMeta._deferralLedger);
+      const resumeDeferred = resumeLedger.length > 0
+        ? deferralTopicStrings(resumeLedger)
+        : (sessionMeta._deferredTopics as string[]) || [];
+
       return {
         message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
         suggestedAnswers: [],
@@ -145,7 +171,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
         sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
         industryContext: extractIndustryContextForFrontend(kb.industryContext),
-        deferredTopics: (sessionMeta._deferredTopics as string[]) || [],
+        deferredTopics: resumeDeferred,
         shouldEnd: false,
       };
     }
@@ -222,6 +248,8 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       extractedInfo: {
         _industryContext: openingResult.industryContext,
         _deferredTopics: [],
+        _deferralLedger: [],
+        _stopSignalCount: 0,
         // Carry seller confirmations forward from any prior session — a
         // fresh map would demote confirmed fields to "inferred" and make
         // the agent re-verify answers the seller already gave.
@@ -280,6 +308,21 @@ export async function processTurn(
   }
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string>) || {};
 
+  // Durable deferral ledger + stop-signal counter (see deferral-ledger.ts and
+  // turn-guard.detectStopSignal). Legacy sessions without a ledger start empty.
+  const priorLedger: DeferralEntry[] = parseLedger(sessionMeta._deferralLedger);
+  const priorStopCount =
+    typeof sessionMeta._stopSignalCount === "number" ? sessionMeta._stopSignalCount : 0;
+
+  // Render the agent's own outstanding deferrals into the dynamic prompt block
+  // so it can circle back — the model's context alone forgets them.
+  kb.openDeferrals = openDeferrals(priorLedger).map((d) => ({
+    topic: d.topic,
+    reason: d.reason,
+    whereInfoLives: d.whereInfoLives,
+    createdAtTurn: d.createdAtTurn,
+  }));
+
   // Build the conversation history for the API
   const existingMessages = session.messages as ConversationMessage[];
   const apiMessages: Array<{ role: "user" | "assistant"; content: string }> = [];
@@ -312,12 +355,57 @@ export async function processTurn(
   const userTurnCount =
     existingMessages.filter((m) => m.role === "user").length + 1;
 
-  // Past the soft ceiling, steer the agent toward wrapping up rather than
-  // letting a long session run open-ended.
-  if (userTurnCount >= agentConfig.interview.maxTurnsBeforeEndCheck) {
+  // Critical CIM sections currently missing — used for triage whenever the
+  // remaining question budget shrinks (stop signal, wrap-up, checkpoint).
+  const missingCritical = kb.sectionCoverage
+    .filter((s) => CRITICAL_SECTIONS.has(s.key) && s.status === "missing")
+    .map((s) => s.key);
+
+  // Seller stop signal — the first one permits at most ONE closing question;
+  // the second forces a goodbye (and turn-guard-style forced shouldEnd below).
+  const stopNow = detectStopSignal(sellerMessage);
+  const stopSignalCount = priorStopCount + (stopNow ? 1 : 0);
+  if (stopNow) {
+    console.log(
+      `[session-manager] Seller stop signal #${stopSignalCount} detected on session ${sessionId}`,
+    );
     systemBlocks.push({
       type: "text",
-      text: `# PACING\nThis conversation has run ${userTurnCount} seller turns. Respect the seller's time: focus only on remaining [CRITICAL] gaps, convert everything else into broker follow-up tasks, and move toward a natural wrap-up.`,
+      text: buildStopSignalNudge(stopSignalCount, missingCritical),
+    });
+  }
+
+  // Financial-core checkpoint: by mid-session the interview must have secured
+  // (or explicitly deferred) revenue and asking-price expectations. Rapport
+  // sequencing is fine early; sessions that end with zero financial core are
+  // not. Skipped while a stop signal is active — the stop nudge already
+  // triages to the same critical gaps.
+  const extractedNow = kb.extractedInfo as Record<string, unknown>;
+  const financialCoreMissing =
+    !extractedNow.annualRevenue || !extractedNow.askingPrice;
+  if (!stopNow && userTurnCount >= 8 && financialCoreMissing) {
+    const missingBits = [
+      !extractedNow.annualRevenue ? "a revenue figure or band (annualRevenue)" : null,
+      !extractedNow.askingPrice ? "the seller's asking-price expectation (askingPrice)" : null,
+    ].filter(Boolean);
+    systemBlocks.push({
+      type: "text",
+      text:
+        `# FINANCIAL-CORE CHECKPOINT\n` +
+        `This session has run ${userTurnCount} seller turns and still lacks: ${missingBits.join(" and ")}. ` +
+        `Sessions can end abruptly — steer toward these within the next couple of exchanges (or secure an explicit deferral with where the numbers live). Do not spend remaining goodwill on secondary topics first.`,
+    });
+  }
+
+  // Past the soft ceiling, steer the agent toward wrapping up rather than
+  // letting a long session run open-ended — triaged by the coverage map.
+  if (userTurnCount >= agentConfig.interview.maxTurnsBeforeEndCheck) {
+    const triage = missingCritical.length > 0
+      ? ` Critical sections still missing: ${missingCritical.join(", ")} — remaining questions go there first.`
+      : "";
+    systemBlocks.push({
+      type: "text",
+      text: `# PACING\nThis conversation has run ${userTurnCount} seller turns. Respect the seller's time: focus only on remaining [CRITICAL] gaps, convert everything else into broker follow-up tasks, and move toward a natural wrap-up.${triage}`,
     });
   }
 
@@ -335,6 +423,20 @@ export async function processTurn(
   // authoritative (governance/merge/persist below are unchanged).
   let { response: aiResponse } = await callInterviewWithRecovery(anthropic, callParams, onDelta);
 
+  // FORCED END — the seller has now asked to stop more than once, so ending
+  // is no longer model discretion. This is the symmetric mirror of the
+  // governance shouldEnd=false override below: turn-guard can veto ends AND
+  // (here) force them. Without this, a model that keeps sneaking in "one last
+  // thing" leaves the seller trapped in a session only /end can close.
+  const forcedEnd = stopNow && stopSignalCount >= 2;
+  if (forcedEnd && !aiResponse.shouldEnd) {
+    console.warn(
+      `[session-manager] Forcing shouldEnd=true after ${stopSignalCount} seller stop signals (model returned shouldEnd=false)`,
+    );
+    aiResponse.shouldEnd = true;
+    aiResponse.endReason = aiResponse.endReason || "Seller asked to stop (repeated stop signals)";
+  }
+
   // Merge extracted fields
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
   let { merged, updatedConfidence, changes } = mergeExtractedFields(
@@ -343,12 +445,23 @@ export async function processTurn(
     confidenceLevels,
   );
 
+  // Apply this turn's deferral deltas to the durable ledger (append-only
+  // until resolved — see deferral-ledger.ts).
+  let ledger = updateDeferralLedger(
+    priorLedger,
+    aiResponse.reasoning.newDeferrals,
+    aiResponse.reasoning.resolvedDeferrals,
+    userTurnCount,
+  );
+
   // Completion governance: the model may only end once the configured turn
   // floor is met and every critical section has at least partial coverage.
-  // A seller's explicit request to stop always wins. When an end is blocked,
-  // the model is re-called once with an instruction to continue into the most
-  // important gap, so the seller sees a natural transition — not a dead stop.
-  if (aiResponse.shouldEnd) {
+  // A seller's explicit request to stop always wins (and a forced end is by
+  // definition a seller request — governance is skipped). When an end is
+  // blocked, the model is re-called once with an instruction to continue into
+  // the most important gap, so the seller sees a natural transition — not a
+  // dead stop.
+  if (aiResponse.shouldEnd && !forcedEnd) {
     const prospectiveKb = assembleKnowledgeBase(
       { ...deal, extractedInfo: merged } as typeof deal,
       documents,
@@ -362,7 +475,7 @@ export async function processTurn(
       sellerMessage,
       userTurnCount,
       sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({ key: s.key, status: s.status })),
-      deferredTopics: aiResponse.reasoning.deferredTopics,
+      deferredTopics: deferralTopicStrings(ledger),
       minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
     });
 
@@ -384,7 +497,38 @@ export async function processTurn(
       merged = remerge.merged;
       updatedConfidence = remerge.updatedConfidence;
       changes = [...changes, ...remerge.changes];
+
+      // ...and the continuation turn's deferral deltas
+      ledger = updateDeferralLedger(
+        ledger,
+        aiResponse.reasoning.newDeferrals,
+        aiResponse.reasoning.resolvedDeferrals,
+        userTurnCount,
+      );
     }
+  }
+
+  // GROUNDING GUARD — mechanical backstop for the prompt-side dodge rules:
+  // a high-stakes "confirmed" write whose quantity (or negative claim) does
+  // not appear in the seller's actual message is downgraded to approximate
+  // and queued on the deferral ledger for a proper circle-back. A fabricated
+  // fact can never masquerade as seller-confirmed in the CIM pipeline.
+  const groundingFlags = applyGroundingGuard(changes, updatedConfidence, sellerMessage);
+  if (groundingFlags.length > 0) {
+    console.warn(
+      `[session-manager] Grounding guard downgraded ${groundingFlags.length} field(s): ` +
+        groundingFlags.map((f) => `${f.fieldName} (${f.reason})`).join("; "),
+    );
+    ledger = updateDeferralLedger(
+      ledger,
+      groundingFlags.map((f) => ({
+        topic: `verify ${f.fieldName}`,
+        reason: `automatic grounding check: ${f.reason}; captured as approximate — confirm with the seller`,
+        whereInfoLives: "",
+      })),
+      [],
+      userTurnCount,
+    );
   }
 
   // Update industry context
@@ -439,7 +583,11 @@ export async function processTurn(
       questionsSkipped,
       extractedInfo: {
         _industryContext: updatedIndustryContext,
-        _deferredTopics: aiResponse.reasoning.deferredTopics,
+        // Open ledger topics — kept for the resume path and the learning
+        // loop, which read _deferredTopics; the ledger itself is durable.
+        _deferredTopics: deferralTopicStrings(ledger),
+        _deferralLedger: ledger,
+        _stopSignalCount: stopSignalCount,
         _confidenceLevels: updatedConfidence,
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
@@ -478,7 +626,9 @@ export async function processTurn(
     },
     sectionCoverage: updatedKb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
-    deferredTopics: aiResponse.reasoning.deferredTopics,
+    // Derived from the durable ledger — stable and append-only until
+    // resolved, so the broker-facing panel no longer flickers or loses items.
+    deferredTopics: deferralTopicStrings(ledger),
     shouldEnd: aiResponse.shouldEnd,
     endReason: aiResponse.endReason,
   };

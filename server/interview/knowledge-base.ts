@@ -52,6 +52,22 @@ export interface KnowledgeBase {
   // back through normal extraction. Optional because KBs persisted before
   // this field existed (and test fixtures) lack it.
   askSellerDiscrepancies?: AskSellerDiscrepancy[];
+
+  // Open entries from the durable deferral ledger (session-manager sets this
+  // per turn). Rendered into the dynamic prompt so the agent always sees its
+  // outstanding items and can circle back. Optional for old callers/fixtures.
+  openDeferrals?: Array<{
+    topic: string;
+    reason: string;
+    whereInfoLives: string;
+    createdAtTurn: number;
+  }>;
+
+  // Per-field confidence from the interview session (_confidenceLevels).
+  // Fields WITHOUT an entry were sourced from documents/questionnaire and
+  // must be presented as already-known (verify, never re-ask). Optional for
+  // old callers/fixtures.
+  fieldConfidence?: Record<string, string>;
 }
 
 export interface AskSellerDiscrepancy {
@@ -270,6 +286,7 @@ export function assembleKnowledgeBase(
     scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
     askSellerDiscrepancies,
+    fieldConfidence: confidenceLevels,
   };
 }
 
@@ -318,6 +335,46 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     parts.push(``);
     for (const [key, value] of Object.entries(kb.scrapedData)) {
       parts.push(`- ${key}: "${value}"  [UNVERIFIED — confirm with seller]`);
+    }
+    parts.push(``);
+  }
+
+  // ALREADY-KNOWN facts — every populated extractedInfo key, whatever its
+  // source. Doc-extracted values used to render only inside section coverage
+  // (and ad-hoc doc keys not at all), so the agent treated them as background
+  // and re-asked them — sellers noticed every time. This block makes every
+  // known fact first-class with a hard do-not-re-ask imperative.
+  {
+    const known = Object.entries(kb.extractedInfo).filter(([, v]) => isSubstantiveValue(v));
+    if (known.length > 0) {
+      const conf = kb.fieldConfidence ?? {};
+      parts.push(`## ⛔ ALREADY ANSWERED — DO NOT RE-ASK. CONFIRM OR DEEPEN ONLY.`);
+      parts.push(`Every fact below is already on file (from uploaded documents, the questionnaire, or earlier conversation). Before EVERY question you ask, scan this list:`);
+      parts.push(`- If the fact you need is here, do NOT ask for it. Cite it and ask only for what is genuinely new (the delta): "Your P&L shows a 72/28 Shopify/Amazon split — has that shifted this year?"`);
+      parts.push(`- Values marked [from documents/questionnaire] came in before the interview: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Your suggestedAnswers must be consistent with these values — never offer a guess at a number already on file.`);
+      parts.push(`- When capturing new fields, REUSE these exact key names when the concept matches; only mint a new key for a genuinely new concept.`);
+      parts.push(``);
+      for (const [key, value] of known) {
+        const sessionConf = conf[key];
+        const label = sessionConf
+          ? `seller ${sessionConf}`
+          : "from documents/questionnaire";
+        parts.push(`- ${key}: ${String(value)}  [${label}]`);
+      }
+      parts.push(``);
+    }
+  }
+
+  // Open deferral ledger — the agent's own outstanding items, durable across
+  // turns. Without this the model forgot its deferrals and never circled back.
+  if ((kb.openDeferrals ?? []).length > 0) {
+    parts.push(`## OPEN DEFERRALS (your outstanding items — durable ledger)`);
+    parts.push(`These topics were raised and set aside earlier in this interview. They are NOT resolved. Circle back when a natural opening appears; before wrapping up, either resolve each one or convert it into a broker follow-up task. When one is resolved, list its topic in reasoning.resolvedDeferrals.`);
+    for (const d of kb.openDeferrals!) {
+      const where = d.whereInfoLives ? ` (info lives: ${d.whereInfoLives})` : "";
+      const why = d.reason ? ` — ${d.reason}` : "";
+      parts.push(`- [turn ${d.createdAtTurn}] ${d.topic}${why}${where}`);
     }
     parts.push(``);
   }
@@ -437,10 +494,11 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   if (kb.documents.length > 0) {
     parts.push("");
     parts.push(`## Uploaded Documents`);
-    parts.push(`These documents have been uploaded for this deal. Do NOT ask the seller to upload documents they've already provided.`);
+    parts.push(`These documents have been uploaded for this deal. Do NOT ask the seller to upload documents they've already provided. Facts extracted from processed documents already appear in the ALREADY ANSWERED list above — asking the seller for them reads as "you didn't look at what I sent you" and destroys trust.`);
     for (const doc of kb.documents) {
       const status = doc.isProcessed ? "processed" : doc.status;
-      parts.push(`- ${doc.name} (${doc.category}${doc.subcategory ? `/${doc.subcategory}` : ""}) — ${status}`);
+      const extracted = doc.hasExtractedData || doc.hasExtractedText ? " — contents extracted into the knowledge base" : "";
+      parts.push(`- ${doc.name} (${doc.category}${doc.subcategory ? `/${doc.subcategory}` : ""}) — ${status}${extracted}`);
     }
   }
 
@@ -519,6 +577,19 @@ export function isSubstantiveValue(value: unknown): boolean {
   return /\d/.test(v) || v.length >= 3;
 }
 
+/**
+ * Sections that may only be credited by their own designated core field. The
+ * asking_price section used to flip to "partial" when adjacent fields (e.g.
+ * equipment → assetsIncluded) were populated — even though no asking-price
+ * information had ever been mentioned — which both lied to the broker and let
+ * completion governance treat the section as covered. A section listed here
+ * stays "missing" until its core field itself is populated.
+ */
+const SECTION_CORE_FIELDS: Record<string, string[]> = {
+  asking_price: ["askingPrice"],
+  financials: ["annualRevenue"],
+};
+
 export function buildSectionCoverage(
   extractedInfo: Partial<ExtractedInfo>,
   /** Per-field confidence from the interview session (_confidenceLevels).
@@ -544,8 +615,13 @@ export function buildSectionCoverage(
     const populatedCount = fields.filter((f) => f.value !== null).length;
     const totalCount = fields.length;
 
+    const coreFields = SECTION_CORE_FIELDS[section.key];
+    const coreMissing =
+      coreFields !== undefined &&
+      !fields.some((f) => coreFields.includes(f.fieldName) && f.value !== null);
+
     let status: SectionCoverage["status"];
-    if (totalCount === 0 || populatedCount === 0) {
+    if (totalCount === 0 || populatedCount === 0 || coreMissing) {
       status = "missing";
     } else if (populatedCount >= totalCount * 0.6) {
       status = "well_covered";

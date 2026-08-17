@@ -42,6 +42,24 @@ export interface ExtractedField {
   value: string;
   confidence: "confirmed" | "inferred" | "approximate";
   source: "seller_statement" | "document" | "questionnaire";
+  /**
+   * Grounding constraint — how this value relates to what the seller actually
+   * said this turn. "verbatim" = the seller stated it (possibly reworded);
+   * "computed" = arithmetic on numbers the seller gave; "inferred" = a
+   * reasonable derivation. Only "verbatim" values may carry confidence
+   * "confirmed" — the normalizer enforces this mechanically.
+   */
+  basis?: "verbatim" | "computed" | "inferred";
+}
+
+/** A topic the agent set aside this turn, with enough context to circle back. */
+export interface NewDeferral {
+  /** Short stable topic label, e.g. "customer_concentration" or "lease terms" */
+  topic: string;
+  /** Why it was deferred (seller declined, needs lookup, seller dodged, etc.) */
+  reason: string;
+  /** Where the information lives (system, document, person), if known */
+  whereInfoLives: string;
 }
 
 export interface InterviewReasoning {
@@ -49,10 +67,16 @@ export interface InterviewReasoning {
   currentTopic: string;
 
   /** Status of the current topic */
-  topicStatus: "exploring" | "probing" | "moving_on" | "circling_back";
+  topicStatus: "exploring" | "probing" | "moving_on" | "circling_back" | "dodged";
 
-  /** Topics we've deferred to revisit later */
-  deferredTopics: string[];
+  /** Topics deferred THIS TURN (appended to the durable server-side ledger) */
+  newDeferrals: NewDeferral[];
+
+  /** Previously deferred topics that were RESOLVED this turn (ledger keys/labels) */
+  resolvedDeferrals: string[];
+
+  /** Topics not yet covered that you plan to reach — planning, NOT deferrals */
+  plannedTopics: string[];
 
   /** What the agent plans to ask next and why */
   nextIntent: string;
@@ -109,35 +133,40 @@ export const INTERVIEW_RESPONSE_TOOL = {
       suggestedAnswers: {
         type: "array",
         items: { type: "string" },
-        description: "3–5 short, clickable answer options for the question you just asked. The seller can tap one to pre-fill their reply, then edit it before sending. Rules: (1) Keep each option brief — 2 to 8 words. (2) Base them on your industry knowledge and what you already know about this specific business. (3) Cover the most common realistic answers for this type of question in this industry. (4) For yes/no questions include both options. (5) If the question is open-ended and numerical (e.g. exact revenue figures), return an empty array — do not guess numbers. (6) Always make the options feel specific to this business and industry, not generic placeholders.",
+        description: "3–5 short, clickable answer options for the question you just asked. The seller can tap one to pre-fill their reply, then edit it before sending. Rules: (1) Keep each option brief — 2 to 8 words. (2) Base them on your industry knowledge and what you already know about this specific business. (3) All options must answer the SAME dimension of the question — if the question has two parts, suggest for the primary part only. (4) For yes/no questions include both options. (5) If the knowledge base already contains a value relevant to the question, options must be consistent with it — never guess at a number already on file. (6) For questions asking for an exact figure the seller would know precisely, never guess numbers — instead offer honest escape hatches ('Not sure, I'd have to check', 'My accountant would know'). (7) For predictably sensitive questions (reason for sale, health, family, litigation), one option must be a graceful deferral like 'I'd rather discuss that with my broker privately'. (8) Always make the options feel specific to this business and industry, not generic placeholders.",
       },
       extractedFields: {
         type: "object",
-        description: "Key-value map of newly extracted or updated information from this turn. Keys should match the extractedInfo schema fields (e.g., 'employees', 'leaseDetails', 'keyProducts'). Only include fields where the seller provided NEW or CHANGED information in this turn.",
+        description: "Key-value map of newly extracted or updated information from this turn. Keys should match the extractedInfo schema fields (e.g., 'employees', 'leaseDetails', 'keyProducts') — reuse an EXISTING key from the knowledge base whenever one covers the concept; only mint a new key for a genuinely new concept. Only include fields where the seller provided NEW or CHANGED information in this turn. GROUNDING (critical): a value may only assert what the seller actually stated. If the seller deflected, dodged, or answered a quantitative or yes/no question without the quantity or the yes/no, emit NO field for that topic — set reasoning.topicStatus to 'dodged' and add it to newDeferrals instead. Never write a claim the seller did not make.",
         additionalProperties: {
           type: "object",
-          required: ["value", "confidence", "source"],
+          required: ["value", "confidence", "source", "basis"],
           properties: {
             value: {
               type: "string",
-              description: "The extracted information value.",
+              description: "The extracted information value. Must be supported by what the seller actually said — never an assumption, never a charitable filling-in of a dodge.",
             },
             confidence: {
               type: "string",
               enum: ["confirmed", "inferred", "approximate"],
-              description: "How confident we are in this data. 'confirmed' = seller explicitly stated it. 'inferred' = reasonably derived from what they said. 'approximate' = seller gave a rough estimate.",
+              description: "How confident we are in this data. 'confirmed' = seller explicitly stated it. 'inferred' = reasonably derived from what they said. 'approximate' = seller gave a rough estimate. Only basis 'verbatim' values may be 'confirmed'.",
             },
             source: {
               type: "string",
               enum: ["seller_statement", "document", "questionnaire"],
               description: "Where this information came from. Almost always 'seller_statement' during an interview.",
             },
+            basis: {
+              type: "string",
+              enum: ["verbatim", "computed", "inferred"],
+              description: "Grounding: 'verbatim' = the seller stated this (possibly reworded, meaning preserved). 'computed' = arithmetic on numbers the seller gave (e.g. converting dollars to a percentage). 'inferred' = derived from context. If you cannot honestly call it one of these, do not emit the field.",
+            },
           },
         },
       },
       reasoning: {
         type: "object",
-        required: ["currentTopic", "topicStatus", "deferredTopics", "nextIntent", "industryContext"],
+        required: ["currentTopic", "topicStatus", "newDeferrals", "resolvedDeferrals", "plannedTopics", "nextIntent", "industryContext"],
         description: "Your internal reasoning about the interview state. This is NOT shown to the seller.",
         properties: {
           currentTopic: {
@@ -146,13 +175,40 @@ export const INTERVIEW_RESPONSE_TOOL = {
           },
           topicStatus: {
             type: "string",
-            enum: ["exploring", "probing", "moving_on", "circling_back"],
-            description: "What you're doing with the current topic. 'exploring' = initial questions. 'probing' = pushing for more detail on a vague answer. 'moving_on' = this topic is covered or deferred. 'circling_back' = revisiting a previously deferred topic.",
+            enum: ["exploring", "probing", "moving_on", "circling_back", "dodged"],
+            description: "What you're doing with the current topic. 'exploring' = initial questions. 'probing' = pushing for more detail on a vague answer. 'moving_on' = this topic is covered or deferred. 'circling_back' = revisiting a previously deferred topic. 'dodged' = the seller deflected without answering — capture NOTHING for it, add it to newDeferrals, and plan a later reframe.",
           },
-          deferredTopics: {
+          newDeferrals: {
+            type: "array",
+            description: "Topics deferred THIS TURN only. The server keeps a durable ledger — you'll see the open items in your prompt as OPEN DEFERRALS. Do NOT re-list already-open items here; only genuinely new deferrals.",
+            items: {
+              type: "object",
+              required: ["topic", "reason", "whereInfoLives"],
+              properties: {
+                topic: {
+                  type: "string",
+                  description: "Short stable topic label, e.g. 'customer_concentration' or 'exact lease figures'.",
+                },
+                reason: {
+                  type: "string",
+                  description: "Why it was deferred: seller declined, needs to look it up, seller dodged, sensitive, etc.",
+                },
+                whereInfoLives: {
+                  type: "string",
+                  description: "Where the answer lives if known — a system (QuickBooks, Jobber), a document, or a person (accountant, office manager). Empty string if unknown.",
+                },
+              },
+            },
+          },
+          resolvedDeferrals: {
             type: "array",
             items: { type: "string" },
-            description: "Topics you've set aside to revisit later. Include context about why they were deferred.",
+            description: "Topic labels from the OPEN DEFERRALS list that were actually resolved this turn (the seller answered, or it became a broker task). The server marks them resolved on the ledger.",
+          },
+          plannedTopics: {
+            type: "array",
+            items: { type: "string" },
+            description: "Topics not yet covered that you still plan to reach. This is your planning list — NEVER put not-yet-asked topics into newDeferrals; a deferral is only something that was raised and set aside.",
           },
           nextIntent: {
             type: "string",

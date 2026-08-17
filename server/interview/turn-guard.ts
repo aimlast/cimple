@@ -29,6 +29,7 @@ import type { SystemBlock } from "./system-prompt";
 
 const CONFIDENCE_VALUES = new Set(["confirmed", "inferred", "approximate"]);
 const SOURCE_VALUES = new Set(["seller_statement", "document", "questionnaire"]);
+const BASIS_VALUES = new Set(["verbatim", "computed", "inferred"]);
 const TASK_TYPES = new Set(["document_request", "follow_up", "skipped_question"]);
 
 /**
@@ -55,14 +56,26 @@ export function normalizeInterviewResponse(raw: unknown): {
       if (!val || typeof val !== "object") continue;
       const f = val as Record<string, unknown>;
       if (typeof f.value !== "string" || f.value.trim() === "") continue;
+      const basis = BASIS_VALUES.has(f.basis as string)
+        ? (f.basis as NonNullable<ExtractedField["basis"]>)
+        : undefined;
+      let confidence: ExtractedField["confidence"] = CONFIDENCE_VALUES.has(f.confidence as string)
+        ? (f.confidence as ExtractedField["confidence"])
+        : "approximate";
+      // Grounding cap: only a value the seller actually stated ("verbatim")
+      // may be confirmed. Computed/inferred values are capped at "inferred" —
+      // mechanically guaranteeing nothing the model marks uncertain lands as
+      // a confirmed fact in the CIM pipeline.
+      if (confidence === "confirmed" && basis && basis !== "verbatim") {
+        confidence = "inferred";
+      }
       extractedFields[key] = {
         value: f.value,
-        confidence: CONFIDENCE_VALUES.has(f.confidence as string)
-          ? (f.confidence as ExtractedField["confidence"])
-          : "approximate",
+        confidence,
         source: SOURCE_VALUES.has(f.source as string)
           ? (f.source as ExtractedField["source"])
           : "seller_statement",
+        ...(basis ? { basis } : {}),
       };
     }
   }
@@ -74,12 +87,34 @@ export function normalizeInterviewResponse(raw: unknown): {
   const strArray = (v: unknown): string[] =>
     Array.isArray(v) ? v.filter((s): s is string => typeof s === "string") : [];
 
+  // Deferral deltas. Tolerates the legacy `deferredTopics` string array (from
+  // a cached/degraded response) by treating its entries as new deferrals.
+  const newDeferrals: InterviewResponse["reasoning"]["newDeferrals"] = [];
+  if (Array.isArray(rawReasoning.newDeferrals)) {
+    for (const d of rawReasoning.newDeferrals as unknown[]) {
+      if (!d || typeof d !== "object") continue;
+      const nd = d as Record<string, unknown>;
+      if (typeof nd.topic !== "string" || nd.topic.trim() === "") continue;
+      newDeferrals.push({
+        topic: nd.topic,
+        reason: typeof nd.reason === "string" ? nd.reason : "",
+        whereInfoLives: typeof nd.whereInfoLives === "string" ? nd.whereInfoLives : "",
+      });
+    }
+  }
+  for (const legacy of strArray(rawReasoning.deferredTopics)) {
+    if (legacy.trim() === "") continue;
+    newDeferrals.push({ topic: legacy, reason: "", whereInfoLives: "" });
+  }
+
   const reasoning: InterviewResponse["reasoning"] = {
     currentTopic: typeof rawReasoning.currentTopic === "string" ? rawReasoning.currentTopic : "",
-    topicStatus: ["exploring", "probing", "moving_on", "circling_back"].includes(rawReasoning.topicStatus as string)
+    topicStatus: ["exploring", "probing", "moving_on", "circling_back", "dodged"].includes(rawReasoning.topicStatus as string)
       ? (rawReasoning.topicStatus as InterviewResponse["reasoning"]["topicStatus"])
       : "exploring",
-    deferredTopics: strArray(rawReasoning.deferredTopics),
+    newDeferrals,
+    resolvedDeferrals: strArray(rawReasoning.resolvedDeferrals),
+    plannedTopics: strArray(rawReasoning.plannedTopics),
     nextIntent: typeof rawReasoning.nextIntent === "string" ? rawReasoning.nextIntent : "",
     industryContext: {
       identified: rawIc.identified === true,
@@ -122,6 +157,26 @@ export function normalizeInterviewResponse(raw: unknown): {
   };
 
   return { response, valid: message.length > 0 };
+}
+
+/**
+ * Soft-fail guard for empty answer chips: a question turn with zero
+ * suggestedAnswers renders no chips in the UI (observed on an annual-revenue
+ * turn in stress testing). Numeric questions legitimately avoid guessed
+ * numbers, so the backfill offers honest escape hatches instead of figures.
+ * Mutates and returns the response.
+ */
+export function backfillSuggestedAnswers(response: InterviewResponse): InterviewResponse {
+  const asksQuestion = response.message.includes("?");
+  if (asksQuestion && response.suggestedAnswers.length === 0 && !response.shouldEnd) {
+    response.suggestedAnswers = [
+      "Not sure — I'd have to check",
+      "My accountant/bookkeeper would know",
+      "Let me type out the details",
+      "Prefer to come back to this",
+    ];
+  }
+  return response;
 }
 
 // =====================
@@ -255,7 +310,7 @@ export async function callInterviewWithRecovery(
     const first = onDelta
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
-    if (first.valid) return { response: first.response, degraded: false };
+    if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");
     const retryMessages = [
@@ -271,7 +326,7 @@ export async function callInterviewWithRecovery(
       },
     ];
     const second = await attempt(retryMessages);
-    if (second.valid) return { response: second.response, degraded: false };
+    if (second.valid) return { response: backfillSuggestedAnswers(second.response), degraded: false };
   } catch (err) {
     console.error("[turn-guard] Interview model call failed:", err);
   }
@@ -286,7 +341,9 @@ export async function callInterviewWithRecovery(
     reasoning: {
       currentTopic: "",
       topicStatus: "exploring",
-      deferredTopics: [],
+      newDeferrals: [],
+      resolvedDeferrals: [],
+      plannedTopics: [],
       nextIntent: "Recover from a malformed model response and re-ask.",
       industryContext: {
         identified: false, industry: "", subIndustry: "", location: "",
@@ -309,7 +366,7 @@ export async function callInterviewWithRecovery(
  * knowledge-base.ts. "Some coverage" = status is not "missing" — partial is
  * acceptable (deferral tasks may legitimately cover the rest).
  */
-const CRITICAL_SECTIONS = new Set([
+export const CRITICAL_SECTIONS = new Set([
   "overview",
   "revenue_sources",
   "employees",
@@ -317,9 +374,76 @@ const CRITICAL_SECTIONS = new Set([
   "asking_price",
 ]);
 
-/** Phrases that mean the seller is asking to stop — their request always wins. */
-const EXPLICIT_STOP_RE =
-  /\b(stop|end (this|the)? ?(interview|conversation|overview|session)|that'?s (all|enough) for (now|today)|i('| a)?m done|have to (go|run|leave)|(finish|continue|pick this up|come back) (later|tomorrow|another time)|out of time|no more time|later today|talk (later|tomorrow))\b/i;
+/**
+ * Phrases that mean the seller is asking to stop — their request always wins.
+ * Used BOTH to allow a model-proposed end (governCompletion) and to detect
+ * incoming stop signals BEFORE the model call (detectStopSignal), so the two
+ * sides of governance can never disagree about what counts as a stop.
+ *
+ * Bare "stop" is intentionally NOT matched (sellers say "customers stop by",
+ * "we stop taking orders at 9") — stop must be phrased as a request to end.
+ */
+const STOP_PHRASES: string[] = [
+  String.raw`(?:let'?s|can we|we should|i(?:'d| would)? (?:like|want|need) to|please) (?:stop|end|wrap(?: it| this)? up|call it)(?: here| now| a day)?`,
+  String.raw`stop (?:here|now|the interview|this)`,
+  String.raw`end (?:this|the) ?(?:interview|conversation|overview|session|call)`,
+  String.raw`we(?:'| a)?re done(?! with)`,
+  String.raw`i(?:'| a)?m done(?! with)`,
+  String.raw`that(?:'| i)?s (?:all|enough|it) for (?:now|today|tonight)`,
+  String.raw`that(?:'| i)?s enough`,
+  String.raw`enough for (?:now|today)`,
+  String.raw`done for (?:now|today|the day)`,
+  String.raw`i (?:(?:really|just|actually|do) ){0,2}(?:have|need|got|gotta) to (?:go|run|leave|head out|get back)`,
+  String.raw`have to get back to`,
+  String.raw`gotta (?:go|run)`,
+  String.raw`out of time`,
+  String.raw`no more time`,
+  String.raw`hard stop`,
+  String.raw`call it a day`,
+  String.raw`wrap (?:this|it) up`,
+  String.raw`pick (?:this|it) up (?:later|tomorrow|another time)`,
+  String.raw`(?:finish|continue|come back) (?:later|tomorrow|another time)`,
+  String.raw`talk (?:later|tomorrow)`,
+  String.raw`i(?:'| a)?m leaving`,
+  String.raw`no more questions`,
+];
+
+const STOP_SIGNAL_RE = new RegExp(`\\b(?:${STOP_PHRASES.join("|")})\\b`, "i");
+
+/**
+ * True when the seller's message is a request to stop the interview. Run on
+ * every incoming seller message in session-manager BEFORE the model call:
+ * the first signal permits one closing question; the second forces goodbye
+ * and shouldEnd=true regardless of what the model returns.
+ */
+export function detectStopSignal(sellerMessage: string): boolean {
+  return STOP_SIGNAL_RE.test(sellerMessage);
+}
+
+/**
+ * Builds the system nudge injected when a stop signal fires. Coverage-aware:
+ * if the seller grants one last question, it must go to the most critical gap.
+ */
+export function buildStopSignalNudge(
+  stopCount: number,
+  missingCriticalSections: string[],
+): string {
+  if (stopCount <= 1) {
+    const triage = missingCriticalSections.length > 0
+      ? ` If you ask it, take it from the critical sections still missing — ${missingCriticalSections.join(", ")} — nothing else is worth their remaining patience.`
+      : ` Everything critical is at least partially covered — prefer wrapping up over asking anything.`;
+    return (
+      `# SELLER STOP SIGNAL\n` +
+      `The seller has just signaled they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage} ` +
+      `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another.`
+    );
+  }
+  return (
+    `# SELLER STOP — FINAL\n` +
+    `The seller has now asked to stop more than once. Ask NOTHING — no questions, no "one quick thing". ` +
+    `Say a warm goodbye, recap in one sentence, note that unanswered items are saved for next time, and set shouldEnd to true. This is mandatory.`
+  );
+}
 
 export interface GovernanceInput {
   shouldEnd: boolean;
@@ -351,7 +475,7 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (!input.shouldEnd) return { allowEnd: false };
 
   const sellerAskedToStop =
-    EXPLICIT_STOP_RE.test(input.sellerMessage) ||
+    STOP_SIGNAL_RE.test(input.sellerMessage) ||
     /seller (asked|requested|wants|needs) to (stop|end|pause|leave|go)/i.test(input.endReason ?? "");
   if (sellerAskedToStop) return { allowEnd: true };
 
