@@ -106,7 +106,9 @@ async function generateSectionWithClaude(
     contextParts.push(`=== BROKER NOTES ===\n${data.description}`);
   }
 
-  const confirmed = Object.entries(data.extractedInfo).filter(([, v]) => v);
+  const confirmed = Object.entries(data.extractedInfo).filter(
+    ([k, v]) => v && !k.startsWith("_"),
+  );
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (from seller interview) ===\n` +

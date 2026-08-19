@@ -439,6 +439,9 @@ function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): st
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     parts.push("\n--- INTERVIEW DATA ---");
     for (const [key, value] of Object.entries(params.extractedInfo)) {
+      // "_"-prefixed keys are broker-private / session-meta (e.g.
+      // _brokerPrivateNotes) and must NEVER feed CIM generation.
+      if (key.startsWith("_")) continue;
       if (value && String(value).trim()) {
         parts.push(`${formatKey(key)}: ${value}`);
       }

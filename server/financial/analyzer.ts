@@ -183,7 +183,12 @@ async function assembleSources(
 
   // 3. Knowledge base (extractedInfo) — the merged view of interview, docs,
   //    emails, and scrape. Numbers stated in emails/calls land here.
-  const extractedInfo = (deal.extractedInfo as Record<string, unknown>) || {};
+  const extractedInfo = Object.fromEntries(
+    Object.entries((deal.extractedInfo as Record<string, unknown>) || {}).filter(
+      // "_"-prefixed keys are broker-private / session-meta — not analysis input
+      ([k]) => !k.startsWith("_"),
+    ),
+  );
   let knowledgeBaseContext = "";
   if (Object.keys(extractedInfo).length > 0) {
     const json = JSON.stringify(extractedInfo, null, 1);

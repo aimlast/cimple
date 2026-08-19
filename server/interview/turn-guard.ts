@@ -46,8 +46,14 @@ export function normalizeInterviewResponse(raw: unknown): {
 
   const message = typeof r.message === "string" ? r.message.trim() : "";
 
+  // Un-instantiated template tokens ("Around $X", "N% range") have shipped to
+  // real sellers as chips — drop any chip carrying placeholder syntax.
+  const CHIP_TEMPLATE_RE = /\$X\b|\{|\}|\bN%|\bX%|\[[A-Z]+\]/;
   const suggestedAnswers = Array.isArray(r.suggestedAnswers)
-    ? r.suggestedAnswers.filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    ? r.suggestedAnswers.filter(
+        (s): s is string =>
+          typeof s === "string" && s.trim().length > 0 && !CHIP_TEMPLATE_RE.test(s),
+      )
     : [];
 
   const extractedFields: Record<string, ExtractedField> = {};
@@ -143,6 +149,21 @@ export function normalizeInterviewResponse(raw: unknown): {
         }))
     : [];
 
+  const privateNotes: InterviewResponse["privateNotes"] = Array.isArray(r.privateNotes)
+    ? (r.privateNotes as unknown[])
+        .filter(
+          (n): n is { note: string; reason: string } =>
+            !!n &&
+            typeof n === "object" &&
+            typeof (n as Record<string, unknown>).note === "string" &&
+            ((n as Record<string, unknown>).note as string).trim().length > 0,
+        )
+        .map((n) => ({
+          note: n.note.trim(),
+          reason: typeof n.reason === "string" ? n.reason.trim() : "",
+        }))
+    : [];
+
   const response: InterviewResponse = {
     message,
     whyItMatters:
@@ -152,6 +173,7 @@ export function normalizeInterviewResponse(raw: unknown): {
     suggestedAnswers,
     extractedFields,
     reasoning,
+    privateNotes,
     newTasks,
     shouldEnd: r.shouldEnd === true,
     endReason: typeof r.endReason === "string" ? r.endReason : undefined,
@@ -412,14 +434,58 @@ const STOP_PHRASES: string[] = [
 
 const STOP_SIGNAL_RE = new RegExp(`\\b(?:${STOP_PHRASES.join("|")})\\b`, "i");
 
+// Completion-acceptance phrases: how a seller accepts a wrap-up the AGENT
+// offered ("anything else?" → "that covers it"). Too ambiguous to count as
+// stops on their own ("we're good" answers many questions), so they only
+// count when the agent's previous message actually offered to wrap.
+const COMPLETION_PHRASES = [
+  String.raw`that (?:about )?covers (?:it|everything)`,
+  String.raw`that(?:'| i)?s everything`,
+  String.raw`that(?:'| i)?s (?:about )?(?:all|it)\.?$`,
+  String.raw`nothing (?:else|more) (?:to add|from me|i can think of)`,
+  String.raw`nothing else`,
+  String.raw`we(?:'| a)?re (?:all )?(?:good|set)`,
+  String.raw`i(?:'| a)?m (?:all )?(?:good|set)`,
+  String.raw`all set`,
+  String.raw`sounds good,? (?:that(?:'| i)?s (?:it|all))`,
+];
+const COMPLETION_RE = new RegExp(`\\b(?:${COMPLETION_PHRASES.join("|")})\\b`, "i");
+// A wrap offer must be INTERVIEW-scoped. "Anything else about the lease?" is
+// a topic probe — "nothing else" answers it and must never count as a stop
+// (review-caught: topic-scoped probes turned routine answers into stop
+// signals that could force-end the interview).
+const WRAP_OFFER_RE =
+  /covered everything|that (?:about )?wraps|wrap(?:ping)? (?:up|things up)|before we (?:wrap|finish|close)|final (?:question|thoughts?)|last (?:question|thing)|anything else you(?:'d| would) like to (?:add|cover|mention|share)|anything (?:else|more) (?:for|from) (?:me|you) today/i;
+const TOPIC_SCOPED_RE =
+  /(?:anything|something) (?:else|more)[^.?!]{0,40}\b(?:about|regarding|concerning|on (?:the|your|that|this)) /i;
+
 /**
  * True when the seller's message is a request to stop the interview. Run on
  * every incoming seller message in session-manager BEFORE the model call:
  * the first signal permits one closing question; the second forces goodbye
  * and shouldEnd=true regardless of what the model returns.
+ *
+ * `prevAiMessage` (the agent's preceding message) unlocks the completion
+ * branch: a chips-only seller who clicks "That covers it" after the agent
+ * offered to wrap has ended the interview — observed live, one such seller
+ * was carried 20 more turns because only typed stop phrases counted.
  */
-export function detectStopSignal(sellerMessage: string): boolean {
-  return STOP_SIGNAL_RE.test(sellerMessage);
+export function detectStopSignal(sellerMessage: string, prevAiMessage?: string): boolean {
+  if (STOP_SIGNAL_RE.test(sellerMessage)) return true;
+  if (!prevAiMessage) return false;
+  // The completion branch requires ALL of: an interview-scoped wrap offer
+  // (not a topic probe), a completion phrase, and that the phrase is the
+  // bulk of the message — "Nothing else on the lease, the landlord handles
+  // maintenance" is an answer, not a goodbye.
+  const m = COMPLETION_RE.exec(sellerMessage);
+  if (!m) return false;
+  const residual = sellerMessage.replace(m[0], "").replace(/[\s.,!—-]+/g, " ").trim();
+  return (
+    WRAP_OFFER_RE.test(prevAiMessage) &&
+    !TOPIC_SCOPED_RE.test(prevAiMessage) &&
+    sellerMessage.trim().length <= 80 &&
+    residual.length <= 15
+  );
 }
 
 /**
@@ -429,14 +495,19 @@ export function detectStopSignal(sellerMessage: string): boolean {
 export function buildStopSignalNudge(
   stopCount: number,
   missingCriticalSections: string[],
+  declinedTopics: string[] = [],
 ): string {
+  const declineBan =
+    declinedTopics.length > 0
+      ? ` NEVER use it on a topic the seller already declined (${declinedTopics.join("; ")}) — re-pressing a declined topic at the door is the single most trust-destroying move available to you.`
+      : "";
   if (stopCount <= 1) {
     const triage = missingCriticalSections.length > 0
       ? ` If you ask it, take it from the critical sections still missing — ${missingCriticalSections.join(", ")} — nothing else is worth their remaining patience.`
       : ` Everything critical is at least partially covered — prefer wrapping up over asking anything.`;
     return (
       `# SELLER STOP SIGNAL\n` +
-      `The seller has just signaled they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage} ` +
+      `The seller has just signaled they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage}${declineBan} ` +
       `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another.`
     );
   }
@@ -456,6 +527,9 @@ export interface GovernanceInput {
   sectionCoverage: Array<{ key: string; status: "well_covered" | "partial" | "missing" }>;
   deferredTopics: string[];
   minTurnsBeforeEnd: number;
+  /** Session-manager's authoritative stop detection for this turn (sees the
+   *  previous agent message; covers completion-acceptance stops). */
+  sellerStopDetected?: boolean;
 }
 
 export interface GovernanceResult {
@@ -476,7 +550,12 @@ export interface GovernanceResult {
 export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (!input.shouldEnd) return { allowEnd: false };
 
+  // Session-manager's stop detection is authoritative (it sees the previous
+  // agent message, which unlocks completion-acceptance stops like "that
+  // covers it" — this regex alone would miss those and force the model to
+  // keep questioning a seller who just accepted the wrap-up).
   const sellerAskedToStop =
+    input.sellerStopDetected === true ||
     STOP_SIGNAL_RE.test(input.sellerMessage) ||
     /seller (asked|requested|wants|needs) to (stop|end|pause|leave|go)/i.test(input.endReason ?? "");
   if (sellerAskedToStop) return { allowEnd: true };

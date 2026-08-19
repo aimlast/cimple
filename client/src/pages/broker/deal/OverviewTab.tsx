@@ -1461,7 +1461,7 @@ function Phase3Center() {
 
   const extractedCount = Object.keys(
     (deal.extractedInfo as object) || {},
-  ).length;
+  ).filter((k) => !k.startsWith("_")).length;
   const scrapedCount = Object.keys(
     ((deal as any).scrapedData as object) || {},
   ).length;

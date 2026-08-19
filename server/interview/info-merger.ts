@@ -157,6 +157,17 @@ export function mergeExtractedFields(
     const existingValue = merged[fieldName as keyof ExtractedInfo];
     const existingConf = existingConfidence[fieldName];
 
+    // No-op suppression: an identical value at the same confidence is not a
+    // change — recording it produced phantom updatedFields in the broker UI.
+    if (
+      existingValue !== undefined &&
+      existingValue !== null &&
+      String(existingValue) === field.value &&
+      existingConf === field.confidence
+    ) {
+      continue;
+    }
+
     // Determine if this new value should overwrite
     const shouldOverwrite = getShouldOverwrite(existingValue, existingConf, field.confidence);
 
@@ -326,6 +337,40 @@ export function numbersMateriallyConflict(a: string, b: string, tolerance = 0.1)
   return false;
 }
 
+// Spelled-out quantities parsed to values ("forty" → 40, "two million" →
+// 2,000,000) so the fidelity guard can legitimize model-normalized figures
+// ("forty percent" spoken → "40%" captured). Simple sequences only.
+const SPELLED_UNITS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20,
+  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80,
+  ninety: 90, half: 0.5, quarter: 0.25,
+};
+const SPELLED_MAGS: Record<string, number> = {
+  hundred: 100, thousand: 1_000, million: 1_000_000, billion: 1_000_000_000,
+};
+
+export function spelledNumbers(text: string): number[] {
+  const words = text.toLowerCase().split(/[^a-z0-9.]+/);
+  const out: number[] = [];
+  for (let i = 0; i < words.length; i++) {
+    // A digit token directly followed by a magnitude word ("1.2 million")
+    const asDigit = /^\d+(?:\.\d+)?$/.test(words[i]) ? parseFloat(words[i]) : null;
+    let val = SPELLED_UNITS[words[i]] ?? asDigit;
+    if (val === null || val === undefined) continue;
+    let consumed = false;
+    while (i + 1 < words.length && SPELLED_MAGS[words[i + 1]] !== undefined) {
+      val *= SPELLED_MAGS[words[i + 1]];
+      i++;
+      consumed = true;
+    }
+    // Bare digit tokens without a magnitude are already covered elsewhere
+    if (asDigit !== null && !consumed) continue;
+    out.push(val);
+  }
+  return out;
+}
+
 // Quantities can be spelled out ("one-point-one million", "half", "forty percent")
 const SPELLED_QUANTITY_RE =
   /\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|billion|dozen|half|third|quarter|percent|point)\b/i;
@@ -385,6 +430,72 @@ export function applyGroundingGuard(
       updatedConfidence[change.fieldName] = "approximate";
       change.newConfidence = "approximate";
       flags.push({ fieldName: change.fieldName, reason });
+    }
+  }
+
+  return flags;
+}
+
+/**
+ * NUMERIC-FIDELITY GUARD — the grounding guard's sibling, covering ALL fields
+ * (not just high-stakes ones). A "confirmed" seller-statement write must not
+ * contain numbers the seller didn't say: observed in live QA, a seller's
+ * "$6,000 up to $14,000" was stored as "$4,000 up to $18,000" confirmed.
+ * Every comparable number in the value must match a number in the seller's
+ * message (or carry over from the previous value); otherwise the write is
+ * downgraded to approximate and flagged for reconciliation. Skipped when the
+ * seller's message contains no digits (spelled-out quantities are handled
+ * leniently — the grounding guard already polices pure fabrication).
+ */
+export function applyNumericFidelityGuard(
+  changes: FieldChange[],
+  updatedConfidence: Record<string, string>,
+  sellerMessage: string,
+): GroundingFlag[] {
+  const flags: GroundingFlag[] = [];
+  // Strict typed extraction on the CLAIMED side; permissive on the SPOKEN
+  // side. The model normalizes units the seller left bare ("food cost runs
+  // 32" → "32%", "about 1.2" → "$1.2M"), so every bare digit token in the
+  // message legitimizes its value at any standard magnitude. Only when the
+  // seller gave typed (currency/percent) figures do we enforce at all —
+  // spelled-out quantities ("two million") stay the grounding guard's job.
+  const spokenTyped = typedNumericValues(sellerMessage).map((t) => t.value);
+  const spokenSpelled = spelledNumbers(sellerMessage);
+  const bareTokens: number[] = [];
+  for (const m of Array.from(sellerMessage.matchAll(/\d[\d,]*(?:\.\d+)?/g))) {
+    const n = parseFloat(m[0].replace(/,/g, ""));
+    if (!Number.isNaN(n)) bareTokens.push(n);
+  }
+  if (spokenTyped.length === 0 && spokenSpelled.length === 0 && bareTokens.length === 0) {
+    return flags;
+  }
+  const MAGNITUDES = [1, 1_000, 1_000_000, 1_000_000_000];
+  const close = (a: number, b: number) => {
+    const base = Math.max(Math.abs(a), Math.abs(b));
+    return base === 0 || Math.abs(a - b) / base <= 0.01;
+  };
+
+  for (const change of changes) {
+    if (change.source !== "seller_statement") continue;
+    if (change.newConfidence !== "confirmed") continue;
+    const claimed = typedNumericValues(change.newValue).map((t) => t.value);
+    if (claimed.length === 0) continue;
+    const carried = change.previousValue
+      ? typedNumericValues(String(change.previousValue)).map((t) => t.value)
+      : [];
+    const matches = (n: number) =>
+      [...spokenTyped, ...spokenSpelled, ...carried].some((s) => close(n, s)) ||
+      [...bareTokens, ...spokenSpelled].some((b) =>
+        MAGNITUDES.some((mag) => close(n, b * mag)),
+      );
+    const unmatched = claimed.filter((n) => !matches(n));
+    if (unmatched.length > 0) {
+      updatedConfidence[change.fieldName] = "approximate";
+      change.newConfidence = "approximate";
+      flags.push({
+        fieldName: change.fieldName,
+        reason: `value contains number(s) not present in the seller's message (${unmatched.slice(0, 3).join(", ")})`,
+      });
     }
   }
 

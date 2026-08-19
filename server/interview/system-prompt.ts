@@ -4,7 +4,7 @@ import { fileURLToPath } from "url";
 import type { KnowledgeBase } from "./knowledge-base";
 import { renderKnowledgeBaseForPrompt } from "./knowledge-base";
 import { getInterviewInsightsForIndustry, renderInsightsForPrompt } from "./learning-loop";
-import { buildIndustryKnowledge } from "./industry-loader";
+import { buildIndustryKnowledge, matchIndustrySection } from "./industry-loader";
 
 // Resolve paths relative to this file (works in both CJS and ESM/esbuild)
 const __dir = typeof __dirname !== "undefined"
@@ -68,10 +68,20 @@ export type SystemBlock = {
  * quality: the relevant intelligence is no longer drowned out.
  */
 export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<SystemBlock[]> {
-  const industryKnowledge = buildIndustryKnowledge(
-    kb.business.industry,
-    kb.business.subIndustry,
-  );
+  // Prefer the IDENTIFIED industry over the deal's label: a deal created as
+  // generic "Consulting" whose interview reveals construction-safety work
+  // must get the specific playbook, not the generic one. This busts the
+  // prompt cache once, on the turn identification lands — correct trade.
+  // ...but only when the identified free-text label actually resolves to a
+  // playbook section — otherwise a model-phrased label ("Beauty services")
+  // would silently downgrade a deal whose broker label ("Salon & spa")
+  // matched, losing the industry intelligence entirely.
+  const identified = kb.industryContext?.industry ? kb.industryContext : null;
+  const identifiedResolves =
+    identified && matchIndustrySection(identified.industry, identified.subIndustry) !== null;
+  const industryKnowledge = identifiedResolves
+    ? buildIndustryKnowledge(identified!.industry, identified!.subIndustry)
+    : buildIndustryKnowledge(kb.business.industry, kb.business.subIndustry);
 
   const staticPrefix = [
     ROLE_AND_IDENTITY,
