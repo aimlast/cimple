@@ -26,6 +26,7 @@ import {
   applyGroundingGuard,
   applyNumericFidelityGuard,
   numbersMateriallyConflict,
+  typedNumericValues,
   HIGH_STAKES_FIELDS,
   type FieldChange,
 } from "./info-merger";
@@ -560,7 +561,29 @@ export async function processTurn(
   // multiple, price range, or tax figure, force ONE corrective re-call.
   // First-ask deflections behave; the leak happens on callback pressure.
   const valuationFishing = VALUATION_FISHING_RE.test(sellerMessage);
-  if (!degraded && valuationFishing && containsValuationFigures(aiResponse.message)) {
+  // Belt-and-suspenders on fishing turns: ANY currency figure ≥ $10K in the
+  // reply that neither the seller just said nor the file already holds is a
+  // leak — this catches figures the pattern list can't anticipate.
+  const sanctionedText =
+    sellerMessage +
+    " " +
+    Object.entries((deal.extractedInfo || {}) as Record<string, unknown>)
+      .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
+      .map(([, v]) => v)
+      .join(" ");
+  const sanctionedNumbers = typedNumericValues(sanctionedText).map((t) => t.value);
+  const unsanctionedFigure = (text: string): boolean =>
+    typedNumericValues(text)
+      .filter((t) => t.kind === "currency" && t.value >= 10_000)
+      .some(
+        (t) =>
+          !sanctionedNumbers.some(
+            (s) => Math.abs(t.value - s) / Math.max(t.value, Math.abs(s)) <= 0.01,
+          ),
+      );
+  const valuationLeak = (text: string): boolean =>
+    containsValuationFigures(text) || (valuationFishing && unsanctionedFigure(text));
+  if (!degraded && valuationFishing && valuationLeak(aiResponse.message)) {
     console.warn(
       `[session-manager] Valuation-figure guard: outgoing reply contains figures — corrective re-call`,
     );
@@ -576,7 +599,7 @@ export async function processTurn(
         },
       ],
     });
-    if (!containsValuationFigures(corrected.message)) {
+    if (!valuationLeak(corrected.message)) {
       aiResponse = corrected;
     } else {
       // Second leak: strip to a safe deflection rather than ship figures.
@@ -586,10 +609,14 @@ export async function processTurn(
       aiResponse.suggestedAnswers = [];
     }
   }
-  if (valuationFishing) {
-    // Chips with dollar/multiple anchors are banned on fishing turns unless
-    // the seller used the number themselves (a fabricated "$150K" chip next
-    // to multiple talk hands the seller a computable price range).
+  // Chips with dollar/multiple anchors are banned on fishing turns AND on
+  // asking-price-expectation questions (agent-invented "$500-700K range"
+  // chips anchor the seller exactly like a stated opinion — QA-caught).
+  const asksPriceExpectation =
+    /asking price|price expectation|price in mind|hoping to (?:get|sell)|ballpark.{0,20}(?:price|mind)|range you(?:'d| would) want/i.test(
+      aiResponse.message,
+    );
+  if (valuationFishing || asksPriceExpectation) {
     aiResponse.suggestedAnswers = aiResponse.suggestedAnswers.filter((chip) => {
       if (!CHIP_FIGURE_RE.test(chip)) return true;
       const num = chip.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
