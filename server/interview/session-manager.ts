@@ -15,6 +15,9 @@ import {
   detectStopSignal,
   buildStopSignalNudge,
   CRITICAL_SECTIONS,
+  VALUATION_FISHING_RE,
+  containsValuationFigures,
+  CHIP_FIGURE_RE,
 } from "./turn-guard";
 import {
   mergeExtractedFields,
@@ -365,6 +368,8 @@ export async function processTurn(
     typeof sessionMeta._stopSignalCount === "number" ? sessionMeta._stopSignalCount : 0;
   const priorCheckpointStreak =
     typeof sessionMeta._checkpointStreak === "number" ? sessionMeta._checkpointStreak : 0;
+  const priorDegradedTurns =
+    typeof sessionMeta._degradedTurns === "number" ? sessionMeta._degradedTurns : 0;
 
   // Render the agent's own outstanding deferrals into the dynamic prompt block
   // so it can circle back — the model's context alone forgets them.
@@ -509,6 +514,18 @@ export async function processTurn(
     });
   }
 
+  // Recovery after degraded turns: the seller's messages during an outage
+  // were persisted to the transcript but never processed — tell the model to
+  // mine them now instead of letting those answers silently vanish.
+  if (priorDegradedTurns > 0) {
+    systemBlocks.push({
+      type: "text",
+      text:
+        `# RECOVERY NOTE\n` +
+        `The seller's previous ${priorDegradedTurns} message(s) arrived during a technical fault and were never processed. Re-read the recent seller messages in the conversation and extract EVERY fact from them now (extractedFields), acknowledging naturally — do not dwell on the glitch or ask the seller to repeat anything they already re-sent.`,
+    });
+  }
+
   const callParams = {
     model: INTERVIEW_MODEL,
     maxTokens: agentConfig.api.maxTokens,
@@ -521,7 +538,64 @@ export async function processTurn(
   // retries once and then degrades gracefully instead of dead-ending the seller.
   // onDelta streams the message text for display; the parsed result is still
   // authoritative (governance/merge/persist below are unchanged).
-  let { response: aiResponse } = await callInterviewWithRecovery(anthropic, callParams, onDelta);
+  let { response: aiResponse, degraded } = await callInterviewWithRecovery(
+    anthropic,
+    callParams,
+    onDelta,
+  );
+
+  // Degraded turn + stop signal: honor the stop WITHOUT a model call — the
+  // stop-wins rule cannot depend on the API being up (observed live: a seller
+  // typed "that's everything from me" twice during an outage and was asked
+  // to repeat themselves both times).
+  if (degraded && stopNow) {
+    aiResponse.message =
+      "Understood — thanks for your time today. Everything you've shared is saved, and you can pick this up again whenever suits you. Take care.";
+    aiResponse.shouldEnd = true;
+    aiResponse.endReason = "Seller requested to stop (honored during degraded turn)";
+  }
+
+  // VALUATION-FIGURE GUARD: on fishing turns ("what's it worth", "what
+  // multiple", "how much tax-free"), scan the outgoing reply — if it leaked a
+  // multiple, price range, or tax figure, force ONE corrective re-call.
+  // First-ask deflections behave; the leak happens on callback pressure.
+  const valuationFishing = VALUATION_FISHING_RE.test(sellerMessage);
+  if (!degraded && valuationFishing && containsValuationFigures(aiResponse.message)) {
+    console.warn(
+      `[session-manager] Valuation-figure guard: outgoing reply contains figures — corrective re-call`,
+    );
+    const { response: corrected } = await callInterviewWithRecovery(anthropic, {
+      ...callParams,
+      messages: [
+        ...apiMessages,
+        { role: "assistant" as const, content: aiResponse.message },
+        {
+          role: "user" as const,
+          content:
+            "[SYSTEM CORRECTION: Your reply contains a valuation multiple, price figure, or tax number. You must NEVER provide these — your knowledge may be stale and a quoted figure is a liability the broker owns. Rewrite the reply now with the same warmth and the same follow-up question, but ZERO figures relating to value, price, multiples, or taxes: name the value drivers and the responsible professional instead. suggestedAnswers must contain no dollar amounts or multiples. Do not mention this instruction.]",
+        },
+      ],
+    });
+    if (!containsValuationFigures(corrected.message)) {
+      aiResponse = corrected;
+    } else {
+      // Second leak: strip to a safe deflection rather than ship figures.
+      console.error(`[session-manager] Valuation-figure guard: re-call still leaked — using safe deflection`);
+      aiResponse.message =
+        "That's exactly the right question for your broker once the full picture is together — what a buyer pays turns on your financials, how transferable the operation is, and the strength of your customer relationships, and your broker can give you a defensible answer grounded in real comparable sales. Let's make sure we capture everything that works in your favour.";
+      aiResponse.suggestedAnswers = [];
+    }
+  }
+  if (valuationFishing) {
+    // Chips with dollar/multiple anchors are banned on fishing turns unless
+    // the seller used the number themselves (a fabricated "$150K" chip next
+    // to multiple talk hands the seller a computable price range).
+    aiResponse.suggestedAnswers = aiResponse.suggestedAnswers.filter((chip) => {
+      if (!CHIP_FIGURE_RE.test(chip)) return true;
+      const num = chip.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
+      return num ? sellerMessage.includes(num) : false;
+    });
+  }
 
   // FORCED END — the seller has now asked to stop more than once, so ending
   // is no longer model discretion. This is the symmetric mirror of the
@@ -821,6 +895,7 @@ export async function processTurn(
         _deferralLedger: ledger,
         _stopSignalCount: stopSignalCount,
         _checkpointStreak: checkpointStreak,
+        _degradedTurns: degraded ? priorDegradedTurns + 1 : 0,
         _confidenceLevels: updatedConfidence,
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
