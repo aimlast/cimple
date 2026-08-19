@@ -81,6 +81,13 @@ export interface InterviewReasoning {
   /** What the agent plans to ask next and why */
   nextIntent: string;
 
+  /**
+   * Re-ask guard — before composing the question, the model names the
+   * ALREADY ANSWERED keys closest to it and states the delta it is asking
+   * for. Forces attention onto the on-file facts at generation time.
+   */
+  priorCheck: string;
+
   /** Industry context — identified once, persists across turns */
   industryContext: {
     identified: boolean;
@@ -166,7 +173,7 @@ export const INTERVIEW_RESPONSE_TOOL = {
       },
       reasoning: {
         type: "object",
-        required: ["currentTopic", "topicStatus", "newDeferrals", "resolvedDeferrals", "plannedTopics", "nextIntent", "industryContext"],
+        required: ["currentTopic", "topicStatus", "newDeferrals", "resolvedDeferrals", "plannedTopics", "priorCheck", "nextIntent", "industryContext"],
         description: "Your internal reasoning about the interview state. This is NOT shown to the seller.",
         properties: {
           currentTopic: {
@@ -203,12 +210,16 @@ export const INTERVIEW_RESPONSE_TOOL = {
           resolvedDeferrals: {
             type: "array",
             items: { type: "string" },
-            description: "Topic labels from the OPEN DEFERRALS list that were actually resolved this turn (the seller answered, or it became a broker task). The server marks them resolved on the ledger.",
+            description: "Topic labels from the OPEN DEFERRALS list where the INFORMATION ITSELF was obtained this turn — the seller answered, or the value arrived via a document. The answer must appear in extractedFields. Creating a broker task, follow-up, or document request does NOT resolve a deferral: the topic stays open until the actual answer exists. The server marks them resolved on the ledger.",
           },
           plannedTopics: {
             type: "array",
             items: { type: "string" },
             description: "Topics not yet covered that you still plan to reach. This is your planning list — NEVER put not-yet-asked topics into newDeferrals; a deferral is only something that was raised and set aside.",
+          },
+          priorCheck: {
+            type: "string",
+            description: "RE-ASK GUARD — fill this in BEFORE composing your question. Name the ALREADY ANSWERED keys closest to the question you are about to ask, and state in a few words why your question asks for something NEW (a delta, a deepening, or an explicit confirmation) rather than repeating what is on file. Write 'none related' only if nothing on file touches the question. If you cannot articulate a genuine delta, change your question — asking a seller for a fact their documents or questionnaire already provided is the single most credibility-destroying mistake. This applies to suggestedAnswers too: never offer answer options for a fact already on file.",
           },
           nextIntent: {
             type: "string",

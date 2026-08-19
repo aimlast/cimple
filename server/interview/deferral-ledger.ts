@@ -27,16 +27,19 @@ export interface DeferralEntry {
   resolvedAtTurn?: number;
 }
 
-/** Normalises a topic label for matching: lowercase, alphanumeric words only. */
+/** Normalises a topic label for matching: lowercase, alphanumeric words only.
+ * camelCase splits at case boundaries so system topics built from field names
+ * ("reconcile annualRevenue") match the model's natural labels ("annual revenue"). */
 function slugify(topic: string): string {
   return topic
+    .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
     .replace(/^_+|_+$/g, "");
 }
 
 /** True when two topic labels refer to the same deferral (exact or containment). */
-function topicsMatch(a: string, b: string): boolean {
+export function topicsMatch(a: string, b: string): boolean {
   const sa = slugify(a);
   const sb = slugify(b);
   if (!sa || !sb) return false;

@@ -227,7 +227,7 @@ export function updateIndustryContext(
  * High-stakes fields where a fabricated "confirmed" value would put a false
  * claim into a CIM. Grounding is checked mechanically after every merge.
  */
-const HIGH_STAKES_FIELDS = new Set([
+export const HIGH_STAKES_FIELDS = new Set([
   "customerConcentration",
   "annualRevenue",
   "askingPrice",
@@ -235,6 +235,96 @@ const HIGH_STAKES_FIELDS = new Set([
   "revenueGrowth",
   "debt",
 ]);
+
+/**
+ * Typed numbers extracted from a field value, used to detect material
+ * conflicts between a seller's verbal figure and a value already on file.
+ * Only unambiguous kinds are compared:
+ * - "currency": $-prefixed, magnitude-suffixed ("2.3M", "500k"), or ≥ 1000
+ * - "percent": immediately followed by % / "percent"
+ * Everything else (small counts like "top 5 clients", "3 major accounts")
+ * is too ambiguous to compare and is dropped, as are bare year-like tokens
+ * ("FY2023") which would otherwise mask or fake conflicts.
+ */
+export interface TypedNumber {
+  value: number;
+  kind: "currency" | "percent";
+}
+
+const MAGNITUDE: Record<string, number> = {
+  k: 1_000, thousand: 1_000,
+  m: 1_000_000, mm: 1_000_000, million: 1_000_000,
+  b: 1_000_000_000, billion: 1_000_000_000,
+};
+
+export function typedNumericValues(text: string): TypedNumber[] {
+  // Shared-suffix ranges ("1.5-2M", "$1.5 to 2 million") leave the first
+  // bound bare — copy the suffix onto it so both parse at the right scale.
+  const expanded = text.replace(
+    /(\d+(?:\.\d+)?)(\s*(?:-|–|—|to)\s*)(\$?\s*\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)\b/gi,
+    (_, a, sep, b, suf) => `${a}${suf}${sep}${b}${suf}`,
+  );
+  const out: TypedNumber[] = [];
+  // Suffix must end at a word boundary — without (?![a-z]) "3 major" parsed
+  // as 3 million and "12 month lease" as 12 million (review-caught).
+  const re = /(\$)?\s*([\d][\d,]*(?:\.\d+)?)\s*(k|mm?|million|thousand|b|billion)?(?![a-z0-9])\s*(%|percent\b)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(expanded)) !== null) {
+    let n = parseFloat(m[2].replace(/,/g, ""));
+    if (Number.isNaN(n)) continue;
+    const dollar = !!m[1];
+    const suffix = (m[3] || "").toLowerCase();
+    const pct = !!m[4];
+    if (suffix) n *= MAGNITUDE[suffix] ?? 1;
+    if (pct && !suffix) {
+      out.push({ value: n, kind: "percent" });
+      continue;
+    }
+    // Bare year-like tokens are labels, not quantities
+    if (!dollar && !suffix && Number.isInteger(n) && n >= 1900 && n <= 2099) continue;
+    if (dollar || suffix || n >= 1000) {
+      out.push({ value: n, kind: "currency" });
+    }
+    // Small unadorned numbers ("top 5", "3 locations") are ignored
+  }
+  return out;
+}
+
+/** First comparable number in a string, or null when none present. */
+export function firstNumericValue(text: string): number | null {
+  const all = typedNumericValues(text);
+  return all.length > 0 ? all[0].value : null;
+}
+
+/**
+ * True when two field values materially disagree numerically: both contain
+ * comparable numbers of the same kind, and NO same-kind pair is within the
+ * tolerance. Two same-kind numbers on one side are treated as a range —
+ * the other side's value landing inside (with tolerance) is agreement.
+ */
+export function numbersMateriallyConflict(a: string, b: string, tolerance = 0.1): boolean {
+  const as = typedNumericValues(a);
+  const bs = typedNumericValues(b);
+  for (const kind of ["currency", "percent"] as const) {
+    const xs = as.filter((t) => t.kind === kind).map((t) => t.value);
+    const ys = bs.filter((t) => t.kind === kind).map((t) => t.value);
+    if (xs.length === 0 || ys.length === 0) continue;
+    const close = (x: number, y: number) => {
+      const base = Math.max(Math.abs(x), Math.abs(y));
+      return base === 0 || Math.abs(x - y) / base <= tolerance;
+    };
+    const inRange = (v: number, range: number[]) =>
+      range.length === 2 &&
+      v >= Math.min(...range) * (1 - tolerance) &&
+      v <= Math.max(...range) * (1 + tolerance);
+    const anyAgreement =
+      xs.some((x) => ys.some((y) => close(x, y))) ||
+      xs.some((x) => inRange(x, ys)) ||
+      ys.some((y) => inRange(y, xs));
+    if (!anyAgreement) return true;
+  }
+  return false;
+}
 
 // Quantities can be spelled out ("one-point-one million", "half", "forty percent")
 const SPELLED_QUANTITY_RE =

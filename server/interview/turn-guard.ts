@@ -115,6 +115,7 @@ export function normalizeInterviewResponse(raw: unknown): {
     newDeferrals,
     resolvedDeferrals: strArray(rawReasoning.resolvedDeferrals),
     plannedTopics: strArray(rawReasoning.plannedTopics),
+    priorCheck: typeof rawReasoning.priorCheck === "string" ? rawReasoning.priorCheck : "",
     nextIntent: typeof rawReasoning.nextIntent === "string" ? rawReasoning.nextIntent : "",
     industryContext: {
       identified: rawIc.identified === true,
@@ -344,6 +345,7 @@ export async function callInterviewWithRecovery(
       newDeferrals: [],
       resolvedDeferrals: [],
       plannedTopics: [],
+      priorCheck: "",
       nextIntent: "Recover from a malformed model response and re-ask.",
       industryContext: {
         identified: false, industry: "", subIndustry: "", location: "",
