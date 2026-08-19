@@ -1,6 +1,10 @@
 [build]
 builder = "NIXPACKS"
-buildCommand = "npm install && npm run build"
+# --include=dev is required: Railway's builder exports NODE_ENV=production
+# into the build, which makes a bare `npm install` skip devDependencies —
+# and vite/esbuild (the build tools) live there. Broke 2026-08-18 when
+# Railway updated its build image; "sh: 1: vite: not found", exit 127.
+buildCommand = "npm install --include=dev && npm run build"
 
 [deploy]
 startCommand = "npm run db:push && npm run start"
