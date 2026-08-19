@@ -351,14 +351,27 @@ export async function callInterviewWithRecovery(
     const second = await attempt(retryMessages);
     if (second.valid) return { response: backfillSuggestedAnswers(second.response), degraded: false };
   } catch (err) {
-    console.error("[turn-guard] Interview model call failed:", err);
+    // A billing failure is not transient — every subsequent call will fail
+    // identically until the account is topped up. Make it unmissable in logs.
+    const msg = err instanceof Error ? err.message : String(err);
+    if (/credit balance|billing/i.test(msg)) {
+      console.error(
+        "[turn-guard][BILLING] Anthropic API billing failure — ALL interviews are degraded until credits are topped up:",
+        msg,
+      );
+    } else {
+      console.error("[turn-guard] Interview model call failed:", err);
+    }
   }
 
-  // Degraded fallback — keep the conversation alive rather than 500ing.
+  // Degraded fallback — keep the conversation alive rather than 500ing. The
+  // message is honest about the fault (the seller's answer was NOT processed;
+  // asking them to re-send with no explanation trained them to retype into a
+  // dead pipeline). No "?" — the chip backfill must not decorate this turn.
   console.error("[turn-guard] Falling back to degraded turn");
   const { response } = normalizeInterviewResponse({
     message:
-      "Sorry — I lost my train of thought for a moment there. Could you tell me that once more, or add anything else you think a buyer should know?",
+      "I'm having a brief technical issue on my end, and your last message may not have been recorded. Give it a moment, then please send it again — everything before this point is saved.",
     suggestedAnswers: [],
     extractedFields: {},
     reasoning: {
@@ -433,6 +446,32 @@ const STOP_PHRASES: string[] = [
 ];
 
 const STOP_SIGNAL_RE = new RegExp(`\\b(?:${STOP_PHRASES.join("|")})\\b`, "i");
+
+// ── Valuation-figure guard ─────────────────────────────────────────────
+// Sellers fish for valuation/tax numbers; the model deflects the first ask
+// cleanly but leaks on callbacks ("what multiple should I expect?" got
+// "2x-4x adjusted earnings" plus a fabricated "$150K" chip in live QA).
+// These patterns let session-manager scan the OUTGOING reply on fishing
+// turns and force one corrective re-call when figures leak.
+
+export const VALUATION_FISHING_RE =
+  /\bworth\b|valuation|ballpark|what.{0,30}(?:price|multiple)|how much.{0,30}(?:get|sell|keep|clear)|multiple of (?:profit|earnings|sde|ebitda)|what multiple|tax.?free|capital gains|exemption/i;
+
+export function containsValuationFigures(text: string): boolean {
+  return (
+    // "4x adjusted earnings", "3× SDE", "2x profit"
+    /\d+(?:\.\d+)?\s*[x×]\s*(?:adjusted\s+|normalized\s+)?(?:earnings|sde|ebitda|profit|revenue|sales|cash ?flow)/i.test(text) ||
+    // "worth around $800K", "expect $600,000 to $1M", "valued in the $X range"
+    /(?:worth|valued?|value at|fetch|expect|sell for|list(?:ed)? (?:at|for)|range of|in the range)\D{0,25}\$\s?\d/i.test(text) ||
+    // tax figures: "$1.25M tax-free", "$970K under the exemption"
+    /\$\s?[\d,.]+\s?[kmb]?(?:illion)?\D{0,30}(?:tax.?free|exempt)/i.test(text) ||
+    /(?:tax.?free|exemption)\D{0,30}\$\s?\d/i.test(text)
+  );
+}
+
+/** Chips carrying dollar amounts or multiples — banned on fishing turns
+ *  unless the seller themselves used the number. */
+export const CHIP_FIGURE_RE = /\$\s?\d|\d+(?:\.\d+)?\s*[x×]\b/;
 
 // Completion-acceptance phrases: how a seller accepts a wrap-up the AGENT
 // offered ("anything else?" → "that covers it"). Too ambiguous to count as

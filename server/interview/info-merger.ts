@@ -358,6 +358,20 @@ export function spelledNumbers(text: string): number[] {
     const asDigit = /^\d+(?:\.\d+)?$/.test(words[i]) ? parseFloat(words[i]) : null;
     let val = SPELLED_UNITS[words[i]] ?? asDigit;
     if (val === null || val === undefined) continue;
+    // Compound tens+units: "thirty one" / "thirty-one" → 31 (without this,
+    // a seller's "thirty-one percent" parsed as [30, 1] and the correctly
+    // captured "31%" was falsely flagged as fabricated — review-caught).
+    if (
+      asDigit === null &&
+      val >= 20 &&
+      val <= 90 &&
+      val % 10 === 0 &&
+      i + 1 < words.length &&
+      (SPELLED_UNITS[words[i + 1]] ?? 10) < 10
+    ) {
+      val += SPELLED_UNITS[words[i + 1]];
+      i++;
+    }
     let consumed = false;
     while (i + 1 < words.length && SPELLED_MAGS[words[i + 1]] !== undefined) {
       val *= SPELLED_MAGS[words[i + 1]];
@@ -487,7 +501,15 @@ export function applyNumericFidelityGuard(
       [...spokenTyped, ...spokenSpelled, ...carried].some((s) => close(n, s)) ||
       [...bareTokens, ...spokenSpelled].some((b) =>
         MAGNITUDES.some((mag) => close(n, b * mag)),
-      );
+      ) ||
+      // Arithmetic complements: "80% is recurring, the rest is seasonal"
+      // legitimizes a derived 20% — flagging strictly-implied percentages
+      // just pollutes the ledger with verify-noise.
+      (n > 0 &&
+        n < 100 &&
+        [...spokenTyped, ...spokenSpelled, ...bareTokens].some(
+          (s) => s > 0 && s < 100 && Math.abs(n - (100 - s)) <= 1,
+        ));
     const unmatched = claimed.filter((n) => !matches(n));
     if (unmatched.length > 0) {
       updatedConfidence[change.fieldName] = "approximate";
