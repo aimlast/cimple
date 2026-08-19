@@ -28,6 +28,15 @@ export interface InterviewResponse {
   /** Internal reasoning (not shown to the seller) */
   reasoning: InterviewReasoning;
 
+  /**
+   * BROKER-PRIVATE notes — sensitive facts the broker needs for context but
+   * which must NEVER appear in any CIM or be repeated to the seller
+   * unprompted (health, litigation detail, family circumstances, staff
+   * departures the seller asked kept quiet). Stored outside the CIM-feeding
+   * fields. The public-safe framing goes in extractedFields instead.
+   */
+  privateNotes?: { note: string; reason: string }[];
+
   /** Tasks to create for deferred/unresolvable items */
   newTasks: NewTask[];
 
@@ -198,7 +207,7 @@ export const INTERVIEW_RESPONSE_TOOL = {
                 },
                 reason: {
                   type: "string",
-                  description: "Why it was deferred: seller declined, needs to look it up, seller dodged, sensitive, etc.",
+                  description: "Why it was deferred: needs to look it up, seller dodged, sensitive, etc. If the seller explicitly REFUSED to share (privacy, broker-only), phrase the reason with the words 'declined to share' or 'only with their broker' — the server hard-blocks re-asking declined topics, so the distinction matters: a lookup gap gets circled back, a refusal never does.",
                 },
                 whereInfoLives: {
                   type: "string",
@@ -262,6 +271,18 @@ export const INTERVIEW_RESPONSE_TOOL = {
                 description: "Location-specific regulatory requirements, permits, or licensing notes relevant to this industry in this jurisdiction.",
               },
             },
+          },
+        },
+      },
+      privateNotes: {
+        type: "array",
+        description: "BROKER-PRIVATE notes for sensitive facts the broker needs but which must NEVER enter a CIM or be repeated to the seller unprompted — health disclosures, litigation detail, family circumstances, a staff departure the seller asked kept quiet. Use this whenever a seller says 'don't put that in writing' about something the broker genuinely needs: tell the seller honestly 'that goes to your broker only, never the sale document' (NEVER promise total non-documentation), put the sensitive detail here, and put only the public-safe framing (e.g. 'personal circumstances') in extractedFields. Empty array when nothing sensitive arose.",
+        items: {
+          type: "object",
+          required: ["note", "reason"],
+          properties: {
+            note: { type: "string", description: "The sensitive fact, stated plainly for the broker." },
+            reason: { type: "string", description: "Why it is broker-private (e.g. 'seller asked this stay out of documents; health-related')." },
           },
         },
       },

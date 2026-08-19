@@ -56,7 +56,10 @@ export async function runDiscrepancyCheck(
     return []; // Nothing to cross-reference
   }
 
-  const interviewData = deal.extractedInfo || {};
+  // "_"-prefixed keys are broker-private / session-meta — never cross-referenced
+  const interviewData = Object.fromEntries(
+    Object.entries(deal.extractedInfo || {}).filter(([k]) => !k.startsWith("_")),
+  );
   const questionnaireData = deal.questionnaireData || {};
 
   const message = await anthropic.messages.create({

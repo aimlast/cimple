@@ -21,6 +21,7 @@ import {
   updateIndustryContext,
   canonicalFieldName,
   applyGroundingGuard,
+  applyNumericFidelityGuard,
   numbersMateriallyConflict,
   HIGH_STAKES_FIELDS,
   type FieldChange,
@@ -28,6 +29,7 @@ import {
 import {
   updateDeferralLedger,
   openDeferrals,
+  declinedDeferrals,
   deferralTopicStrings,
   topicsMatch,
   parseLedger,
@@ -242,6 +244,51 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
   const priorConfidenceLevels =
     (priorMeta?._confidenceLevels as Record<string, string> | undefined) ?? {};
 
+  // Carry the deferral ledger across sessions — a seller who does the
+  // interview in two sittings must not lose their open deferrals (observed:
+  // the ledger silently reset to [] on resume, so the broker's outstanding
+  // items vanished and circle-backs never happened).
+  let seededLedger: DeferralEntry[] = parseLedger(priorMeta?._deferralLedger);
+
+  // Pre-seeded conflict scan: when the questionnaire and a document disagree
+  // materially on the same field BEFORE the interview starts, mint a
+  // reconcile deferral so the agent raises it instead of silently adopting
+  // whichever value happened to merge last.
+  const qd = (deal.questionnaireData || {}) as Record<string, unknown>;
+  const seededInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
+  const preConflicts: { topic: string; reason: string; whereInfoLives: string }[] = [];
+  for (const [rawKey, rawVal] of Object.entries(qd)) {
+    if (typeof rawVal !== "string" || !rawVal.trim()) continue;
+    const key = canonicalFieldName(rawKey, Object.keys(seededInfo));
+    const onFile = seededInfo[key];
+    if (typeof onFile !== "string" || !onFile.trim() || onFile === rawVal) continue;
+    // Never re-mint a conflict that already has a ledger entry — open OR
+    // resolved. The questionnaire never changes after reconciliation, so
+    // without this check every new session would reopen the settled item
+    // and re-ask the seller a question they already answered.
+    if (seededLedger.some((e) => topicsMatch(e.topic, `reconcile ${key}`))) continue;
+    if (numbersMateriallyConflict(rawVal, onFile)) {
+      preConflicts.push({
+        topic: `reconcile ${key}`,
+        reason: `questionnaire says "${rawVal}" but the value on file is "${onFile}" — ask which is right and why they differ`,
+        whereInfoLives: "",
+      });
+    }
+  }
+  if (preConflicts.length > 0) {
+    console.log(
+      `[session-manager] Pre-seeded conflict scan found ${preConflicts.length} questionnaire-vs-document conflict(s) on deal ${dealId}`,
+    );
+    seededLedger = updateDeferralLedger(seededLedger, preConflicts, [], 0);
+  }
+
+  // Prefer a prior session's IDENTIFIED industry context over the opening
+  // call's fresh guess — a returning seller's niche is already known.
+  const priorIndustryContext = priorMeta?._industryContext as IndustryContext | undefined;
+  const seededIndustryContext = priorIndustryContext?.industry
+    ? priorIndustryContext
+    : openingResult.industryContext;
+
   await db
     .update(interviewSessions)
     .set({
@@ -249,9 +296,9 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       questionsAsked: 1,
       lastActivityAt: new Date(),
       extractedInfo: {
-        _industryContext: openingResult.industryContext,
-        _deferredTopics: [],
-        _deferralLedger: [],
+        _industryContext: seededIndustryContext,
+        _deferredTopics: deferralTopicStrings(seededLedger),
+        _deferralLedger: seededLedger,
         _stopSignalCount: 0,
         // Carry seller confirmations forward from any prior session — a
         // fresh map would demote confirmed fields to "inferred" and make
@@ -262,8 +309,8 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     .where(eq(interviewSessions.id, session.id));
 
   // If the AI identified industry context in the opening, update the KB
-  if (openingResult.industryContext) {
-    kb.industryContext = openingResult.industryContext;
+  if (seededIndustryContext) {
+    kb.industryContext = seededIndustryContext;
   }
 
   return {
@@ -274,7 +321,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
     sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
-    deferredTopics: [],
+    deferredTopics: deferralTopicStrings(seededLedger),
     shouldEnd: false,
   };
 }
@@ -326,6 +373,7 @@ export async function processTurn(
     reason: d.reason,
     whereInfoLives: d.whereInfoLives,
     createdAtTurn: d.createdAtTurn,
+    ...(d.declined ? { declined: true } : {}),
   }));
 
   // Build the conversation history for the API
@@ -360,23 +408,48 @@ export async function processTurn(
   const userTurnCount =
     existingMessages.filter((m) => m.role === "user").length + 1;
 
+  // Topics the seller explicitly declined — hard-blocked from re-asking and
+  // from closing-question triage (observed: asking price re-asked 17 times
+  // after a privacy decline, and declined topics re-pressed after goodbyes).
+  const declinedTopics = declinedDeferrals(priorLedger).map((d) => d.topic);
+
   // Critical CIM sections currently missing — used for triage whenever the
   // remaining question budget shrinks (stop signal, wrap-up, checkpoint).
+  // A section whose topic sits on the open ledger (deferred OR declined) is
+  // ADDRESSED for triage purposes: the broker follow-up exists, and steering
+  // the last question there re-presses what the seller already set aside.
+  const ledgerAddressed = (sectionKey: string): boolean => {
+    const patterns: Record<string, RegExp> = {
+      asking_price: /price|valuation|deal.?terms/i,
+      financials: /revenue|financial|margin|sde|ebitda|profit|earnings/i,
+      reason_for_sale: /reason.?for.?sale|why.*sell/i,
+    };
+    const re = patterns[sectionKey];
+    if (!re) return false;
+    return openDeferrals(priorLedger).some((d) => re.test(d.topic));
+  };
   const missingCritical = kb.sectionCoverage
-    .filter((s) => CRITICAL_SECTIONS.has(s.key) && s.status === "missing")
+    .filter((s) => CRITICAL_SECTIONS.has(s.key) && s.status === "missing" && !ledgerAddressed(s.key))
     .map((s) => s.key);
 
   // Seller stop signal — the first one permits at most ONE closing question;
   // the second forces a goodbye (and turn-guard-style forced shouldEnd below).
-  const stopNow = detectStopSignal(sellerMessage);
-  const stopSignalCount = priorStopCount + (stopNow ? 1 : 0);
+  // The previous agent message unlocks completion-acceptance detection
+  // ("anything else?" → "that covers it"), which chips-only sellers rely on.
+  const prevAiMessage = [...existingMessages].reverse().find((m) => m.role === "ai")?.content;
+  const stopNow = detectStopSignal(sellerMessage, prevAiMessage);
+  // Consecutive-only escalation: a substantive non-stop turn resets the
+  // counter, so two isolated false positives twenty turns apart can never
+  // combine into a forced end. Genuine repeat stops ("I really have to go")
+  // re-match the stop patterns and still escalate back-to-back.
+  const stopSignalCount = stopNow ? priorStopCount + 1 : 0;
   if (stopNow) {
     console.log(
       `[session-manager] Seller stop signal #${stopSignalCount} detected on session ${sessionId}`,
     );
     systemBlocks.push({
       type: "text",
-      text: buildStopSignalNudge(stopSignalCount, missingCritical),
+      text: buildStopSignalNudge(stopSignalCount, missingCritical, declinedTopics),
     });
   }
 
@@ -501,9 +574,17 @@ export async function processTurn(
       endReason: aiResponse.endReason,
       sellerMessage,
       userTurnCount,
-      sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({ key: s.key, status: s.status })),
+      // Deferred/declined critical sections count as addressed — blocking an
+      // end over a topic the seller set aside orders the model to re-press
+      // it, contradicting the decline ban rendered in the same prompt.
+      sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({
+        key: s.key,
+        status:
+          s.status === "missing" && ledgerAddressed(s.key) ? ("partial" as const) : s.status,
+      })),
       deferredTopics: deferralTopicStrings(ledger),
       minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
+      sellerStopDetected: stopNow || priorStopCount > 0,
     });
 
     if (!verdict.allowEnd) {
@@ -597,12 +678,97 @@ export async function processTurn(
     ledger = updateDeferralLedger(ledger, conflictDeferrals, [], userTurnCount);
   }
 
+  // NUMERIC-FIDELITY GUARD: a "confirmed" value must not contain numbers the
+  // seller never said (observed: "$6,000 to $14,000" stored as "$4,000 to
+  // $18,000" confirmed). Mismatches downgrade to approximate + reconcile.
+  const fidelityFlags = applyNumericFidelityGuard(changes, updatedConfidence, sellerMessage);
+  if (fidelityFlags.length > 0) {
+    console.warn(
+      `[session-manager] Numeric-fidelity guard downgraded ${fidelityFlags.length} field(s): ` +
+        fidelityFlags.map((f) => `${f.fieldName} (${f.reason})`).join("; "),
+    );
+    ledger = updateDeferralLedger(
+      ledger,
+      fidelityFlags.map((f) => ({
+        topic: `verify ${f.fieldName}`,
+        reason: `automatic fidelity check: ${f.reason}; re-confirm the exact figure with the seller`,
+        whereInfoLives: "",
+      })),
+      [],
+      userTurnCount,
+    );
+  }
+
+  // DISCLOSURE-PERSISTENCE GUARD: if the agent told the seller it "noted" or
+  // will "flag" something but this turn wrote no fields, no deferrals, no
+  // private notes, and no tasks, the disclosure would vanish (observed:
+  // flood-damaged inventory verbally "noted", zero trace anywhere). Mint a
+  // ledger entry from the seller's own words so the broker always sees it.
+  // First-person commitments only — "as you noted earlier" is the agent
+  // referring to the SELLER's words, not a promise to record anything.
+  const NOTED_LANGUAGE_RE =
+    /(?:^|[.!?]\s+)Noted\b|\b(?:duly|that'?s) noted\b|\bI(?:'ve| have)? (?:noted|flagged|made a note|recorded)\b|\bI'?ll (?:note|flag|record|make a note)\b|\bflagg(?:ed|ing) (?:that|this|it) for\b/;
+  const disclosureUnwritten =
+    NOTED_LANGUAGE_RE.test(aiResponse.message) &&
+    Object.keys(aiResponse.extractedFields).length === 0 &&
+    changes.length === 0 &&
+    aiResponse.reasoning.newDeferrals.length === 0 &&
+    (aiResponse.privateNotes ?? []).length === 0 &&
+    aiResponse.newTasks.length === 0;
+  if (disclosureUnwritten) {
+    const topic = aiResponse.reasoning.currentTopic || "seller disclosure";
+    // Never let the fallback note resurrect a settled item via fuzzy match —
+    // mint only when no ledger entry (open or resolved) covers the topic.
+    if (!ledger.some((e) => topicsMatch(e.topic, topic))) {
+      console.warn(
+        `[session-manager] Disclosure-persistence guard: agent said "noted" with nothing written — ledgering "${topic}"`,
+      );
+      ledger = updateDeferralLedger(
+        ledger,
+        [
+          {
+            topic,
+            reason: `agent committed to noting this but captured nothing — review turn ${userTurnCount} of the transcript`,
+            whereInfoLives: "",
+          },
+        ],
+        [],
+        userTurnCount,
+      );
+    }
+  }
+
   // Update industry context
   const updatedIndustryContext = updateIndustryContext(
     kb.industryContext,
     aiResponse.reasoning,
     kb.business.location,
   );
+
+  // BROKER-PRIVATE NOTES: sensitive facts land in _brokerPrivateNotes on the
+  // deal — visible to the broker, excluded from every CIM-feeding path (the
+  // layout engine, financial analysis, and field counters all skip "_" keys).
+  if ((aiResponse.privateNotes ?? []).length > 0) {
+    const existing = Array.isArray((merged as Record<string, unknown>)._brokerPrivateNotes)
+      ? ((merged as Record<string, unknown>)._brokerPrivateNotes as {
+          note: string;
+          reason: string;
+          turn?: number;
+        }[])
+      : [];
+    const fresh = (aiResponse.privateNotes ?? []).filter(
+      (n) => !existing.some((e) => e.note === n.note),
+    );
+    if (fresh.length > 0) {
+      (merged as Record<string, unknown>)._brokerPrivateNotes = [
+        ...existing,
+        ...fresh.map((n) => ({ ...n, turn: userTurnCount })),
+      ];
+      console.log(
+        `[session-manager] Stored ${fresh.length} broker-private note(s) on deal ${dealId}`,
+      );
+    }
+  }
 
   // Save to deal
   await storage.updateDeal(dealId, {

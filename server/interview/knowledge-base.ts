@@ -61,6 +61,8 @@ export interface KnowledgeBase {
     reason: string;
     whereInfoLives: string;
     createdAtTurn: number;
+    /** Seller explicitly declined — hard-blocked from re-asking */
+    declined?: boolean;
   }>;
 
   // Per-field confidence from the interview session (_confidenceLevels).
@@ -345,7 +347,9 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // and re-asked them — sellers noticed every time. This block makes every
   // known fact first-class with a hard do-not-re-ask imperative.
   {
-    const known = Object.entries(kb.extractedInfo).filter(([, v]) => isSubstantiveValue(v));
+    const known = Object.entries(kb.extractedInfo).filter(
+      ([k, v]) => !k.startsWith("_") && isSubstantiveValue(v),
+    );
     if (known.length > 0) {
       const conf = kb.fieldConfidence ?? {};
       parts.push(`## ⛔ ALREADY ANSWERED — DO NOT RE-ASK. CONFIRM OR DEEPEN ONLY.`);
@@ -374,7 +378,25 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     for (const d of kb.openDeferrals!) {
       const where = d.whereInfoLives ? ` (info lives: ${d.whereInfoLives})` : "";
       const why = d.reason ? ` — ${d.reason}` : "";
-      parts.push(`- [turn ${d.createdAtTurn}] ${d.topic}${why}${where}`);
+      const ban = d.declined
+        ? ` ⛔ DECLINED by the seller — do NOT re-ask this session under any circumstances (not even as the closing question); the broker will handle it. Only if the seller re-opens it themselves may you follow up.`
+        : "";
+      parts.push(`- [turn ${d.createdAtTurn}] ${d.topic}${why}${where}${ban}`);
+    }
+    parts.push(``);
+  }
+
+  // Broker-private notes — the agent must remember what it promised to keep
+  // out of documents, so it never re-asks or contradicts itself. Never quoted
+  // back to the seller unprompted, never in any CIM.
+  const privateNotes = (kb.extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
+  if (Array.isArray(privateNotes) && privateNotes.length > 0) {
+    parts.push(`## BROKER-PRIVATE NOTES (already recorded — broker's eyes only, NEVER in a CIM)`);
+    parts.push(
+      `You already hold these sensitive facts. Do not re-ask about them, do not repeat them to the seller unprompted, and never let them into CIM-facing fields.`,
+    );
+    for (const n of privateNotes as { note: string; reason?: string }[]) {
+      parts.push(`- ${n.note}${n.reason ? ` (${n.reason})` : ""}`);
     }
     parts.push(``);
   }

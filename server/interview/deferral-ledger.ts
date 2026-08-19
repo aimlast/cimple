@@ -25,7 +25,22 @@ export interface DeferralEntry {
   createdAtTurn: number;
   /** Seller-turn number when it was resolved, if resolved */
   resolvedAtTurn?: number;
+  /**
+   * True when the seller explicitly DECLINED the topic (privacy, "with my
+   * broker only") rather than merely lacking the answer. Declined topics are
+   * hard-blocked: never re-asked this session, never the closing question.
+   */
+  declined?: boolean;
 }
+
+/**
+ * Reasons that signal an explicit seller REFUSAL to share, as opposed to a
+ * lookup gap ("prefers to check QuickBooks" is a deferral, not a decline —
+ * marking lookups declined would permanently block the circle-backs the
+ * ledger exists for). Requires refusal language with a sharing object.
+ */
+const DECLINE_REASON_RE =
+  /rather not|declin\w* to (share|answer|discuss|say|disclose)|won'?t (share|say|disclose|discuss)|prefer(s)? not to (say|share|discuss|answer|disclose)|keep (it|that|this) (private|confidential)|not comfortable (sharing|discussing|answering)|doesn'?t want to (share|discuss|disclose)|refused|only (with|through) (my|the|their) broker|discuss (it|that|this) (privately )?with (my|the|their) broker/i;
 
 /** Normalises a topic label for matching: lowercase, alphanumeric words only.
  * camelCase splits at case boundaries so system topics built from field names
@@ -76,11 +91,13 @@ export function updateDeferralLedger(
 
   for (const d of newDeferrals) {
     if (!d.topic || d.topic.trim() === "") continue;
+    const declined = DECLINE_REASON_RE.test(d.reason ?? "");
     const match = ledger.find((e) => topicsMatch(e.topic, d.topic));
     if (match) {
       // Same topic again: refresh context; reopen if it had been resolved.
       if (d.reason) match.reason = d.reason;
       if (d.whereInfoLives) match.whereInfoLives = d.whereInfoLives;
+      if (declined) match.declined = true; // a decline is sticky
       if (match.status === "resolved") {
         match.status = "open";
         delete match.resolvedAtTurn;
@@ -93,6 +110,7 @@ export function updateDeferralLedger(
         whereInfoLives: d.whereInfoLives?.trim() ?? "",
         status: "open",
         createdAtTurn: turn,
+        ...(declined ? { declined: true } : {}),
       });
     }
   }
@@ -102,6 +120,11 @@ export function updateDeferralLedger(
 
 export function openDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
   return ledger.filter((e) => e.status === "open");
+}
+
+/** Open entries the seller explicitly declined — hard-blocked from re-asking. */
+export function declinedDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
+  return openDeferrals(ledger).filter((e) => e.declined === true);
 }
 
 /**
