@@ -342,46 +342,58 @@ export function numbersMateriallyConflict(a: string, b: string, tolerance = 0.1)
 // ("forty percent" spoken → "40%" captured). Simple sequences only.
 const SPELLED_UNITS: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8,
-  nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20,
-  thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80,
-  ninety: 90, half: 0.5, quarter: 0.25,
+  nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14,
+  fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70,
+  eighty: 80, ninety: 90, half: 0.5, quarter: 0.25,
 };
 const SPELLED_MAGS: Record<string, number> = {
   hundred: 100, thousand: 1_000, million: 1_000_000, billion: 1_000_000_000,
 };
 
 export function spelledNumbers(text: string): number[] {
+  // Proper additive composition: "six hundred eighteen thousand" → 618,000
+  // (a naive per-word walk yielded [600, 18000] and falsely flagged the
+  // correctly captured $618,000 — QA-caught). Standard accumulator: units
+  // add, "hundred" multiplies the running group, big magnitudes bank it.
   const words = text.toLowerCase().split(/[^a-z0-9.]+/);
   const out: number[] = [];
+  let current = 0;
+  let total = 0;
+  let inNumber = false;
+  const flush = () => {
+    if (inNumber && total + current > 0) out.push(total + current);
+    current = 0;
+    total = 0;
+    inNumber = false;
+  };
   for (let i = 0; i < words.length; i++) {
-    // A digit token directly followed by a magnitude word ("1.2 million")
-    const asDigit = /^\d+(?:\.\d+)?$/.test(words[i]) ? parseFloat(words[i]) : null;
-    let val = SPELLED_UNITS[words[i]] ?? asDigit;
-    if (val === null || val === undefined) continue;
-    // Compound tens+units: "thirty one" / "thirty-one" → 31 (without this,
-    // a seller's "thirty-one percent" parsed as [30, 1] and the correctly
-    // captured "31%" was falsely flagged as fabricated — review-caught).
-    if (
-      asDigit === null &&
-      val >= 20 &&
-      val <= 90 &&
-      val % 10 === 0 &&
-      i + 1 < words.length &&
-      (SPELLED_UNITS[words[i + 1]] ?? 10) < 10
-    ) {
-      val += SPELLED_UNITS[words[i + 1]];
-      i++;
+    const w = words[i];
+    const unit = SPELLED_UNITS[w];
+    const isDigit = /^\d+(?:\.\d+)?$/.test(w);
+    if (unit !== undefined) {
+      current += unit;
+      inNumber = true;
+    } else if (isDigit) {
+      // Digit tokens only participate when a magnitude word follows
+      // ("1.2 million"); bare digits are handled by the caller's tokenizer.
+      flush();
+      if (SPELLED_MAGS[words[i + 1]] !== undefined) {
+        current = parseFloat(w);
+        inNumber = true;
+      }
+    } else if (w === "hundred" && inNumber) {
+      current = (current || 1) * 100;
+    } else if (SPELLED_MAGS[w] !== undefined && w !== "hundred" && inNumber) {
+      total += (current || 1) * SPELLED_MAGS[w];
+      current = 0;
+    } else if (w === "and" && inNumber) {
+      continue; // "one hundred and forty"
+    } else {
+      flush();
     }
-    let consumed = false;
-    while (i + 1 < words.length && SPELLED_MAGS[words[i + 1]] !== undefined) {
-      val *= SPELLED_MAGS[words[i + 1]];
-      i++;
-      consumed = true;
-    }
-    // Bare digit tokens without a magnitude are already covered elsewhere
-    if (asDigit !== null && !consumed) continue;
-    out.push(val);
   }
+  flush();
   return out;
 }
 

@@ -443,6 +443,12 @@ const STOP_PHRASES: string[] = [
   String.raw`talk (?:later|tomorrow)`,
   String.raw`i(?:'| a)?m leaving`,
   String.raw`no more questions`,
+  // Self-addressed completion declarations are unambiguous stops even
+  // without a wrap offer — "from me" / "I've got" removes the ambiguity
+  // that keeps bare "that's everything" gated behind the wrap-offer check.
+  String.raw`that(?:'| i)?s (?:everything|all|it) from me`,
+  String.raw`that(?:'| i)?s (?:everything|all) i(?:'ve| have)? got`,
+  String.raw`nothing (?:more|else) from me`,
 ];
 
 const STOP_SIGNAL_RE = new RegExp(`\\b(?:${STOP_PHRASES.join("|")})\\b`, "i");
@@ -459,10 +465,15 @@ export const VALUATION_FISHING_RE =
 
 export function containsValuationFigures(text: string): boolean {
   return (
-    // "4x adjusted earnings", "3× SDE", "2x profit"
-    /\d+(?:\.\d+)?\s*[x×]\s*(?:adjusted\s+|normalized\s+)?(?:earnings|sde|ebitda|profit|revenue|sales|cash ?flow)/i.test(text) ||
+    // ANY multiple token ("2x", "3.5×") — on a fishing turn there is no
+    // legitimate use of one; the earlier noun-anchored pattern missed
+    // "2x to 3.5x THOSE discretionary earnings" (QA-caught leak).
+    /\b\d+(?:\.\d+)?\s*[x×]\b/i.test(text) ||
     // "worth around $800K", "expect $600,000 to $1M", "valued in the $X range"
     /(?:worth|valued?|value at|fetch|expect|sell for|list(?:ed)? (?:at|for)|range of|in the range)\D{0,25}\$\s?\d/i.test(text) ||
+    // Hypothetical/illustrative anchors smuggle real anchors: "If I say
+    // $400K and it turns out to be $600K..." (QA-caught leak)
+    /(?:if i sa(?:y|id)|say i said|suppose|let'?s say|for example|e\.g\.)\D{0,20}\$\s?\d/i.test(text) ||
     // tax figures: "$1.25M tax-free", "$970K under the exemption"
     /\$\s?[\d,.]+\s?[kmb]?(?:illion)?\D{0,30}(?:tax.?free|exempt)/i.test(text) ||
     /(?:tax.?free|exemption)\D{0,30}\$\s?\d/i.test(text)
