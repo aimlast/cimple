@@ -21,12 +21,15 @@ import {
   updateIndustryContext,
   canonicalFieldName,
   applyGroundingGuard,
+  numbersMateriallyConflict,
+  HIGH_STAKES_FIELDS,
   type FieldChange,
 } from "./info-merger";
 import {
   updateDeferralLedger,
   openDeferrals,
   deferralTopicStrings,
+  topicsMatch,
   parseLedger,
   type DeferralEntry,
 } from "./deferral-ledger";
@@ -49,9 +52,9 @@ export interface TurnResult {
   sessionId: string;
   /** Summary of what was captured this turn */
   captured: {
-    /** Populated coverage-known canonical fields — same vocabulary as the
-     *  CIM COVERAGE panel, so the header count can never wildly diverge
-     *  from the panel again. */
+    /** Every populated substantive business field (canonical + legitimate
+     *  ad-hoc keys), excluding session-meta keys and per-document meta
+     *  (summary, callNotes, redFlags, …) that aren't business facts. */
     total: number;
     /** Every populated extractedInfo key, including ad-hoc document
      *  extraction keys that don't map to a CIM section. */
@@ -313,6 +316,8 @@ export async function processTurn(
   const priorLedger: DeferralEntry[] = parseLedger(sessionMeta._deferralLedger);
   const priorStopCount =
     typeof sessionMeta._stopSignalCount === "number" ? sessionMeta._stopSignalCount : 0;
+  const priorCheckpointStreak =
+    typeof sessionMeta._checkpointStreak === "number" ? sessionMeta._checkpointStreak : 0;
 
   // Render the agent's own outstanding deferrals into the dynamic prompt block
   // so it can circle back — the model's context alone forgets them.
@@ -381,19 +386,41 @@ export async function processTurn(
   // not. Skipped while a stop signal is active — the stop nudge already
   // triages to the same critical gaps.
   const extractedNow = kb.extractedInfo as Record<string, unknown>;
-  const financialCoreMissing =
-    !extractedNow.annualRevenue || !extractedNow.askingPrice;
-  if (!stopNow && userTurnCount >= 8 && financialCoreMissing) {
-    const missingBits = [
-      !extractedNow.annualRevenue ? "a revenue figure or band (annualRevenue)" : null,
-      !extractedNow.askingPrice ? "the seller's asking-price expectation (askingPrice)" : null,
-    ].filter(Boolean);
+  // Profitability counts as covered when any margin/earnings field is present
+  // OR it sits on the deferral ledger (an explicit deferral is an answer).
+  const PROFIT_FIELDS = ["operatingMargins", "grossMargin", "sde", "ebitda", "netProfit", "netIncome", "cashFlow", "profitability"];
+  const hasProfitability =
+    PROFIT_FIELDS.some((f) => !!extractedNow[f]) ||
+    openDeferrals(priorLedger).some((d) => /profit|margin|sde|ebitda|earnings/i.test(d.topic));
+  const deferredPrice = openDeferrals(priorLedger).some((d) => /price|valuation/i.test(d.topic));
+  // An explicit revenue deferral ("accountant has the P&L") satisfies the
+  // checkpoint exactly like the price/profit escapes — without this the MUST
+  // escalation would order endless re-asks of a question the seller already
+  // deferred (review-caught).
+  const deferredRevenue = openDeferrals(priorLedger).some((d) =>
+    /revenue|sales|top.?line|p&l|financial/i.test(d.topic),
+  );
+  const missingBits = [
+    !extractedNow.annualRevenue && !deferredRevenue ? "a revenue figure or band (annualRevenue)" : null,
+    !hasProfitability ? "profitability — margins, SDE/EBITDA, or at least a directional sense (operatingMargins)" : null,
+    !extractedNow.askingPrice && !deferredPrice ? "the seller's asking-price expectation (askingPrice)" : null,
+  ].filter(Boolean);
+  const checkpointActive = !stopNow && userTurnCount >= 8 && missingBits.length > 0;
+  const checkpointStreak = checkpointActive ? priorCheckpointStreak + 1 : 0;
+  if (checkpointActive) {
+    // The polite version gets ignored when industry topics feel more
+    // interesting (observed: 11 consecutive ignored reminders). From the
+    // third consecutive reminder on, escalate to a hard directive.
+    const directive =
+      checkpointStreak >= 3
+        ? `You have now been reminded ${checkpointStreak} times and have not asked. Unless the seller just asked you something that needs answering first, your VERY NEXT question MUST target one of these gaps — or, if the seller genuinely can't answer, secure an explicit deferral with where the numbers live. This overrides topic-flow preferences.`
+        : `Sessions can end abruptly — steer toward these within the next couple of exchanges (or secure an explicit deferral with where the numbers live). Do not spend remaining goodwill on secondary topics first.`;
     systemBlocks.push({
       type: "text",
       text:
         `# FINANCIAL-CORE CHECKPOINT\n` +
-        `This session has run ${userTurnCount} seller turns and still lacks: ${missingBits.join(" and ")}. ` +
-        `Sessions can end abruptly — steer toward these within the next couple of exchanges (or secure an explicit deferral with where the numbers live). Do not spend remaining goodwill on secondary topics first.`,
+        `This session has run ${userTurnCount} seller turns and still lacks: ${missingBits.join("; ")}. ` +
+        directive,
     });
   }
 
@@ -531,6 +558,45 @@ export async function processTurn(
     );
   }
 
+  // DOC-CONFLICT GUARD: when a verbal figure materially overwrites a
+  // high-stakes value already on file (observed: a $2.3M GMV comment silently
+  // replacing the P&L's $1.82M net revenue), keep the new value but open a
+  // reconcile deferral so the agent probes the delta (gross vs net, before vs
+  // after refunds) instead of the conflict disappearing. Three suppressions
+  // (all review-caught): (1) a reconcile already open at turn start or
+  // resolved this turn means we're mid-reconciliation — flagging the
+  // corrective write would reopen the loop forever; (2) approximate/inferred
+  // prior values aren't trustworthy enough to reconcile against (the old
+  // number may be a downgraded model guess, not something the seller or a
+  // document ever asserted); (3) non-conflicting number shapes are handled
+  // inside numbersMateriallyConflict.
+  const reconcileSettledTopics = [
+    ...openDeferrals(priorLedger).map((d) => d.topic),
+    ...aiResponse.reasoning.resolvedDeferrals,
+  ];
+  const conflictDeferrals = changes
+    .filter(
+      (c) =>
+        HIGH_STAKES_FIELDS.has(c.fieldName) &&
+        c.previousValue &&
+        c.previousConfidence !== "approximate" &&
+        c.previousConfidence !== "inferred" &&
+        !reconcileSettledTopics.some((t) => topicsMatch(t, `reconcile ${c.fieldName}`)) &&
+        numbersMateriallyConflict(String(c.previousValue), String(c.newValue)),
+    )
+    .map((c) => ({
+      topic: `reconcile ${c.fieldName}`,
+      reason: `seller's latest figure (${c.newValue}) differs materially from the value already on record (${c.previousValue}) — confirm which is right and why they differ (e.g. gross vs net, or an intentional update)`,
+      whereInfoLives: "",
+    }));
+  if (conflictDeferrals.length > 0) {
+    console.warn(
+      `[session-manager] Doc-conflict guard opened ${conflictDeferrals.length} reconcile deferral(s): ` +
+        conflictDeferrals.map((d) => d.topic).join(", "),
+    );
+    ledger = updateDeferralLedger(ledger, conflictDeferrals, [], userTurnCount);
+  }
+
   // Update industry context
   const updatedIndustryContext = updateIndustryContext(
     kb.industryContext,
@@ -588,6 +654,7 @@ export async function processTurn(
         _deferredTopics: deferralTopicStrings(ledger),
         _deferralLedger: ledger,
         _stopSignalCount: stopSignalCount,
+        _checkpointStreak: checkpointStreak,
         _confidenceLevels: updatedConfidence,
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
@@ -773,17 +840,26 @@ export async function endSessionManually(
   return { ok: true };
 }
 
+// Per-document meta keys the extraction prompt requests (summaries, call
+// logistics) — real extractedInfo keys, but not business facts, so they don't
+// belong in the "fields captured" headline.
+const DOC_META_KEY_RE =
+  /^(summary|keyFacts|redFlags|actionItems|keyTopics|sellerConcerns|buyerInterests|followUpNeeded|call[A-Z].*)$|Notes$/;
+
 function countExtractedFields(deal: { extractedInfo: unknown }): { total: number; rawTotal: number } {
   const info = deal.extractedInfo as Record<string, unknown> | null;
   if (!info) return { total: 0, rawTotal: 0 };
   const populated = Object.entries(info).filter(
-    ([, v]) => v !== null && v !== undefined && v !== "",
+    ([k, v]) =>
+      v !== null && v !== undefined && v !== "" && !k.startsWith("_") && !DOC_META_KEY_RE.test(k),
   );
+  // The headline counts every substantive business field. It previously
+  // counted only canonical-vocabulary keys, which sat frozen while real
+  // industry-specific fields accumulated (observed pinned at 17 while the KB
+  // grew to 43); pure junk-key sprawl is prevented upstream by key
+  // canonicalisation + merge-time key reuse.
   return {
-    // Only coverage-known canonical fields count toward the headline number —
-    // ad-hoc document keys inflated it to "207 fields captured" while the
-    // coverage panel (which reads the canonical vocabulary) showed 0 covered.
-    total: populated.filter(([k]) => KNOWN_EXTRACTED_FIELDS.has(k)).length,
+    total: populated.length,
     rawTotal: populated.length,
   };
 }

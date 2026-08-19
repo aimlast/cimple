@@ -1996,6 +1996,18 @@ Return JSON only.`,
   // DOCUMENT UPLOAD + PARSING
   // =============================
 
+  // Multer/busboy decodes multipart filenames as latin1, so UTF-8 names
+  // arrive mojibake'd ("—" → "â"). Round-trip back to UTF-8; keep the raw
+  // value when the round-trip produces replacement chars (genuine latin1).
+  const decodeUploadName = (raw: string): string => {
+    try {
+      const decoded = Buffer.from(raw, "latin1").toString("utf8");
+      return decoded.includes("�") ? raw : decoded;
+    } catch {
+      return raw;
+    }
+  };
+
   const docUpload = multer({
     storage: multer.diskStorage({
       destination: (req, file, cb) => {
@@ -2014,7 +2026,7 @@ Return JSON only.`,
       const ext = path.extname(file.originalname).toLowerCase();
       if (!allowed.includes(ext)) {
         // Mark the rejection so the route can explain instead of a generic 400
-        (req as any).fileRejectionReason = `"${file.originalname}" is a ${ext || "file"} — that format isn't supported.`;
+        (req as any).fileRejectionReason = `"${decodeUploadName(file.originalname)}" is a ${ext || "file"} — that format isn't supported.`;
       }
       cb(null, allowed.includes(ext));
     },
@@ -2065,11 +2077,12 @@ Return JSON only.`,
       const { category = "other", subcategory } = req.body;
       // Attribute the upload correctly: a broker session vs a seller token.
       const uploadedBy = req.session.brokerId ? "broker" : "seller";
+      const displayName = decodeUploadName(req.file.originalname);
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
         uploadedBy,
-        name: req.file.originalname,
-        originalName: req.file.originalname,
+        name: displayName,
+        originalName: displayName,
         category,
         subcategory: subcategory || null,
         fileUrl: `/uploads/docs/${req.file.filename}`,

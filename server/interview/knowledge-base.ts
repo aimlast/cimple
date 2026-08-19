@@ -370,7 +370,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // turns. Without this the model forgot its deferrals and never circled back.
   if ((kb.openDeferrals ?? []).length > 0) {
     parts.push(`## OPEN DEFERRALS (your outstanding items — durable ledger)`);
-    parts.push(`These topics were raised and set aside earlier in this interview. They are NOT resolved. Circle back when a natural opening appears; before wrapping up, either resolve each one or convert it into a broker follow-up task. When one is resolved, list its topic in reasoning.resolvedDeferrals.`);
+    parts.push(`These topics were raised and set aside earlier in THIS interview (the turn number shows when — never describe one as coming from a prior session). They are NOT resolved. A deferral only resolves when the information itself is obtained — creating a broker task or document request keeps it OPEN. Circle back when a natural opening appears: if the seller likely knows the answer but was hesitant (rather than the data living purely in a document), make ONE later conversational re-attempt with a lower-stakes reframe — especially if the seller invites it ("anything else?"). When one is resolved, list its topic in reasoning.resolvedDeferrals.`);
     for (const d of kb.openDeferrals!) {
       const where = d.whereInfoLives ? ` (info lives: ${d.whereInfoLives})` : "";
       const why = d.reason ? ` — ${d.reason}` : "";
