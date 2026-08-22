@@ -142,20 +142,21 @@ export function registerBuyerAuthRoutes(app: Express) {
       if (existing && existing.passwordHash) {
         return res.status(409).json({ error: "An account with this email already exists" });
       }
+      if (existing) {
+        // Broker-invited account that hasn't set a password yet. Claiming it
+        // here would let anyone who knows the email take over a buyer's deal
+        // access with zero proof of ownership — the set-password link (or a
+        // password-reset email, which proves inbox ownership) is the only way in.
+        return res.status(409).json({
+          error: "An invitation already exists for this email. Use the link from your broker's email, or request a password reset to receive a fresh link.",
+          code: "INVITED_ACCOUNT_EXISTS",
+        });
+      }
 
       const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
 
       let user: BuyerUser;
-      if (existing) {
-        // Was previously broker-invited; complete the account by setting password
-        user = (await storage.updateBuyerUser(existing.id, {
-          passwordHash,
-          name,
-          resetToken: null,
-          resetTokenExpiresAt: null,
-          lastLoginAt: new Date(),
-        } as any)) as BuyerUser;
-      } else {
+      {
         user = await storage.createBuyerUser({
           email: normalized,
           passwordHash,

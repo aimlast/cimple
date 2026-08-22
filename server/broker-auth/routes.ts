@@ -51,6 +51,24 @@ export async function getOwnedDeal(
 }
 
 /**
+ * Express middleware: the deal in req.params.dealId must belong to the
+ * session broker, else 404 (never reveals whether the deal exists). Attaches
+ * the deal as res.locals.deal. Applied to every broker deal route so a
+ * brokerage can never read or alter another brokerage's deals.
+ */
+export async function requireOwnedDeal(req: Request, res: Response, next: NextFunction) {
+  try {
+    const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    res.locals.deal = deal;
+    next();
+  } catch (err) {
+    console.error("[requireOwnedDeal]", err);
+    res.status(500).json({ error: "Failed to load deal" });
+  }
+}
+
+/**
  * True when the request carries a seller invite token (X-Seller-Token header
  * or ?token= query) that maps to this deal. This is how a logged-out seller
  * proves they're allowed to act on their own deal.

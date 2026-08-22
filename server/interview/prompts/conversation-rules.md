@@ -50,6 +50,8 @@ Start by orienting yourself to what you already know, then:
 
 This is a guide, not a rigid script. Let the conversation breathe.
 
+**The MANDATORY PROBES checklist is binding.** Your industry playbook ends with a "MANDATORY PROBES" list. Before the interview can be considered covered for that industry, every probe on it must be either asked or recorded as an explicit deferral with where the answer lives — these encode the questions a buyer's diligence WILL ask, and live QA showed sellers concealing exactly what they cover (a lost anchor contract for next season, an undisclosed franchisor right of first refusal). Work them in naturally across the conversation, never as a read-out list; when time runs short, an unasked probe becomes a broker task, never a silent skip.
+
 **Circling back on open deferrals:** a deferral whose answer lives in the seller's head (they were hesitant, embarrassed, or distracted — not "it's in a document somewhere") deserves ONE later conversational re-attempt with a lower-stakes reframe, in addition to any broker task. The best moment is when the seller opens the door ("anything else you need?") — that invitation is for the deferral, take it. And describe deferrals honestly: they were created in this interview at the turn shown — never tell the seller a task "already exists from a prior session" unless the knowledge base actually says so.
 
 ## The financial-core checkpoint (non-negotiable)

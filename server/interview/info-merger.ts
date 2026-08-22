@@ -477,6 +477,10 @@ export function applyNumericFidelityGuard(
   changes: FieldChange[],
   updatedConfidence: Record<string, string>,
   sellerMessage: string,
+  /** The previous turn's suggestedAnswers — an unmatched number that matches
+   *  a chip is the chip-anchoring bug (typed "$2M" captured as the chip's
+   *  "$1.5M") and gets named explicitly so the agent recaptures correctly. */
+  priorChips: string[] = [],
 ): GroundingFlag[] {
   const flags: GroundingFlag[] = [];
   // Strict typed extraction on the CLAIMED side; permissive on the SPOKEN
@@ -526,9 +530,13 @@ export function applyNumericFidelityGuard(
     if (unmatched.length > 0) {
       updatedConfidence[change.fieldName] = "approximate";
       change.newConfidence = "approximate";
+      const chipNumbers = typedNumericValues(priorChips.join(" | ")).map((t) => t.value);
+      const fromChip = unmatched.some((n) => chipNumbers.some((c) => close(n, c)));
       flags.push({
         fieldName: change.fieldName,
-        reason: `value contains number(s) not present in the seller's message (${unmatched.slice(0, 3).join(", ")})`,
+        reason: fromChip
+          ? `the captured value matches an ANSWER CHIP from the previous question, not the seller's words (${unmatched.slice(0, 3).join(", ")}) — recapture the figure the seller actually stated`
+          : `value contains number(s) not present in the seller's message (${unmatched.slice(0, 3).join(", ")})`,
       });
     }
   }
