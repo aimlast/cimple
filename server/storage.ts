@@ -33,7 +33,7 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, desc, sql, count, avg, sum, inArray } from "drizzle-orm";
+import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -61,6 +61,17 @@ export interface IStorage {
   updateDocument(id: string, updates: Partial<InsertDocument>): Promise<Document | undefined>;
   deleteDocument(id: string): Promise<void>;
   
+  // By-id getters (ownership checks)
+  getCimSection(id: string): Promise<CimSection | undefined>;
+  getBuyerQuestion(id: string): Promise<BuyerQuestion | undefined>;
+  getDealMember(id: string): Promise<DealMember | undefined>;
+  getDiscrepancy(id: string): Promise<Discrepancy | undefined>;
+  getFaq(id: string): Promise<FaqItem | undefined>;
+  getBuyerAccess(id: string): Promise<BuyerAccess | undefined>;
+  getSellerInvite(id: string): Promise<SellerInvite | undefined>;
+  getNotification(id: string): Promise<Notification | undefined>;
+  getIntegrationEmail(id: string): Promise<IntegrationEmail | undefined>;
+
   // Task operations
   createTask(task: InsertTask): Promise<Task>;
   getTask(id: string): Promise<Task | undefined>;
@@ -348,6 +359,15 @@ export class MemStorage implements IStorage {
   async getDocumentsByDeal(): Promise<Document[]> { return []; }
   async updateDocument(): Promise<Document | undefined> { return undefined; }
   async deleteDocument(): Promise<void> {}
+  async getCimSection(): Promise<CimSection | undefined> { return undefined; }
+  async getBuyerQuestion(): Promise<BuyerQuestion | undefined> { return undefined; }
+  async getDealMember(): Promise<DealMember | undefined> { return undefined; }
+  async getDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
+  async getFaq(): Promise<FaqItem | undefined> { return undefined; }
+  async getBuyerAccess(): Promise<BuyerAccess | undefined> { return undefined; }
+  async getSellerInvite(): Promise<SellerInvite | undefined> { return undefined; }
+  async getNotification(): Promise<Notification | undefined> { return undefined; }
+  async getIntegrationEmail(): Promise<IntegrationEmail | undefined> { return undefined; }
   async createTask(): Promise<Task> { throw new Error("Use DbStorage"); }
   async getTask(): Promise<Task | undefined> { return undefined; }
   async getTasksByDeal(): Promise<Task[]> { return []; }
@@ -861,9 +881,40 @@ export class DbStorage implements IStorage {
   }
 
   async getPublishedQuestions(dealId: string): Promise<BuyerQuestion[]> {
+    // Buyer-facing: ONLY published rows (this was identical to
+    // getQuestionsByDeal and leaked pending questions + broker drafts).
     return db.select().from(buyerQuestions)
-      .where(eq(buyerQuestions.dealId, dealId))
+      .where(and(eq(buyerQuestions.dealId, dealId), eq(buyerQuestions.isPublished, true)))
       .orderBy(buyerQuestions.createdAt);
+  }
+
+  // ── By-id getters used for ownership checks on by-id routes ──
+  async getCimSection(id: string): Promise<CimSection | undefined> {
+    const r = await db.select().from(cimSections).where(eq(cimSections.id, id)); return r[0];
+  }
+  async getBuyerQuestion(id: string): Promise<BuyerQuestion | undefined> {
+    const r = await db.select().from(buyerQuestions).where(eq(buyerQuestions.id, id)); return r[0];
+  }
+  async getDealMember(id: string): Promise<DealMember | undefined> {
+    const r = await db.select().from(dealMembers).where(eq(dealMembers.id, id)); return r[0];
+  }
+  async getDiscrepancy(id: string): Promise<Discrepancy | undefined> {
+    const r = await db.select().from(discrepancies).where(eq(discrepancies.id, id)); return r[0];
+  }
+  async getFaq(id: string): Promise<FaqItem | undefined> {
+    const r = await db.select().from(faqItems).where(eq(faqItems.id, id)); return r[0];
+  }
+  async getBuyerAccess(id: string): Promise<BuyerAccess | undefined> {
+    const r = await db.select().from(buyerAccess).where(eq(buyerAccess.id, id)); return r[0];
+  }
+  async getSellerInvite(id: string): Promise<SellerInvite | undefined> {
+    const r = await db.select().from(sellerInvites).where(eq(sellerInvites.id, id)); return r[0];
+  }
+  async getNotification(id: string): Promise<Notification | undefined> {
+    const r = await db.select().from(notifications).where(eq(notifications.id, id)); return r[0];
+  }
+  async getIntegrationEmail(id: string): Promise<IntegrationEmail | undefined> {
+    const r = await db.select().from(integrationEmails).where(eq(integrationEmails.id, id)); return r[0];
   }
 
   async getQuestionsByApprovalToken(token: string): Promise<BuyerQuestion | undefined> {

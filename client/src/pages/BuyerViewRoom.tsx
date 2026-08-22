@@ -109,7 +109,7 @@ function NdaGate({ deal, token, onAccepted }: { deal: Deal; token: string; onAcc
 }
 
 // ── Analytics hook ─────────────────────────────────────────────────────────
-function useAnalytics(dealId: string | undefined, accessId: string | undefined) {
+function useAnalytics(dealId: string | undefined, accessId: string | undefined, accessToken?: string) {
   const queueRef = useRef<object[]>([]);
   const flushTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -125,13 +125,14 @@ function useAnalytics(dealId: string | undefined, accessId: string | undefined) 
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          accessToken,
           events: batch.map(e => ({ ...e, buyerAccessId: accessId })),
         }),
       });
     } catch {
       // Non-blocking — analytics failure should never interrupt the viewer
     }
-  }, [dealId, accessId]);
+  }, [dealId, accessId, accessToken]);
 
   // Flush every 8 seconds + on unmount
   useEffect(() => {
@@ -499,6 +500,7 @@ export default function BuyerViewRoom() {
       <BuyerChatbot
         dealId={deal.id}
         buyerAccessId={access.id}
+        accessToken={token}
         businessName={deal.businessName}
         publishedQuestions={publishedQuestions}
       />

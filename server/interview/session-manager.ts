@@ -782,7 +782,15 @@ export async function processTurn(
   // NUMERIC-FIDELITY GUARD: a "confirmed" value must not contain numbers the
   // seller never said (observed: "$6,000 to $14,000" stored as "$4,000 to
   // $18,000" confirmed). Mismatches downgrade to approximate + reconcile.
-  const fidelityFlags = applyNumericFidelityGuard(changes, updatedConfidence, sellerMessage);
+  const priorChips = Array.isArray(sessionMeta._lastChips)
+    ? (sessionMeta._lastChips as string[])
+    : [];
+  const fidelityFlags = applyNumericFidelityGuard(
+    changes,
+    updatedConfidence,
+    sellerMessage,
+    priorChips,
+  );
   if (fidelityFlags.length > 0) {
     console.warn(
       `[session-manager] Numeric-fidelity guard downgraded ${fidelityFlags.length} field(s): ` +
@@ -923,6 +931,7 @@ export async function processTurn(
         _stopSignalCount: stopSignalCount,
         _checkpointStreak: checkpointStreak,
         _degradedTurns: degraded ? priorDegradedTurns + 1 : 0,
+        _lastChips: aiResponse.suggestedAnswers,
         _confidenceLevels: updatedConfidence,
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),

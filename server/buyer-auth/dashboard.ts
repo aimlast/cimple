@@ -129,14 +129,17 @@ export function registerBuyerDashboardRoutes(app: Express) {
           || extracted?.locationSite?.state
           || null;
 
+        // Buyers on teaser/full access see the BLIND CIM — the dashboard card
+        // must not reveal what the view room withholds (name, location, description).
+        const blind = !["loi", "due_diligence"].includes(String(access.accessLevel));
         dashboardDeals.push({
           dealId: deal.id,
-          businessName: deal.businessName,
+          businessName: blind ? ((deal as any).blindCodename || "Confidential Opportunity") : deal.businessName,
           industry: deal.industry || null,
           subIndustry: (deal as any).subIndustry || null,
           askingPrice: (deal as any).askingPrice || null,
-          location,
-          description: (deal as any).description || extracted?.executiveSummary || null,
+          location: blind ? null : location,
+          description: blind ? null : ((deal as any).description || extracted?.executiveSummary || null),
           brokerFirm,
           accessToken: access.accessToken,
           accessLevel: access.accessLevel,

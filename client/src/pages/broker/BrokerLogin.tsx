@@ -11,6 +11,9 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 export default function BrokerLogin() {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  // The reset flow gets its own field — it previously borrowed the login
+  // form's username box, which read as "nowhere to enter your username".
+  const [resetUsername, setResetUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"login" | "forgot" | "forgot-sent">("login");
   const queryClient = useQueryClient();
@@ -20,7 +23,7 @@ export default function BrokerLogin() {
       const res = await fetch("/api/broker-auth/request-reset", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username }),
+        body: JSON.stringify({ username: resetUsername.trim() }),
         credentials: "include",
       });
       if (!res.ok) {
@@ -134,38 +137,77 @@ export default function BrokerLogin() {
               {login.isPending ? "Signing in..." : "Sign in"}
             </button>
 
-            <button
-              type="button"
-              onClick={() => { setError(null); setMode("forgot"); }}
-              className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
-              data-testid="button-forgot-password"
-            >
-              Forgot password?
-            </button>
+            {mode === "login" && (
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  setResetUsername(username);
+                  setMode("forgot");
+                }}
+                className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+                data-testid="button-forgot-password"
+              >
+                Forgot password?
+              </button>
+            )}
           </form>
 
           {mode === "forgot" && (
             <div className="mt-4 pt-4 border-t border-border space-y-3">
-              <p className="text-xs text-muted-foreground">
-                Enter your username and we'll email you a reset link.
-              </p>
+              <div>
+                <label
+                  htmlFor="broker-reset-username"
+                  className="block text-xs font-medium text-muted-foreground mb-1.5"
+                >
+                  Username for the reset link
+                </label>
+                <input
+                  id="broker-reset-username"
+                  type="text"
+                  autoComplete="username"
+                  value={resetUsername}
+                  onChange={(e) => setResetUsername(e.target.value)}
+                  placeholder="your-username"
+                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+                  data-testid="input-reset-username"
+                />
+              </div>
               <button
                 onClick={() => requestReset.mutate()}
-                disabled={requestReset.isPending || !username.trim()}
+                disabled={requestReset.isPending || !resetUsername.trim()}
                 className="w-full h-9 rounded-md border border-teal/40 text-teal text-sm font-medium hover:bg-teal/5 transition-colors disabled:opacity-50"
                 data-testid="button-send-reset"
               >
                 {requestReset.isPending ? "Sending..." : "Email me a reset link"}
               </button>
+              <button
+                type="button"
+                onClick={() => { setError(null); setMode("login"); }}
+                className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+                data-testid="button-back-to-login"
+              >
+                Back to sign in
+              </button>
             </div>
           )}
 
           {mode === "forgot-sent" && (
-            <div className="mt-4 pt-4 border-t border-border">
+            <div className="mt-4 pt-4 border-t border-border space-y-3">
               <p className="text-xs text-muted-foreground">
-                If that account exists, a reset link is on its way. The link is
-                valid for one hour — check your inbox.
+                If an account exists for{" "}
+                <span className="text-foreground font-medium">{resetUsername.trim()}</span>, a
+                reset link is on its way. The link is valid for one hour — check
+                the inbox for that account&apos;s email.
               </p>
+              <button
+                type="button"
+                onClick={() => { setError(null); setMode("login"); }}
+                className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+                data-testid="button-back-to-login-sent"
+              >
+                Back to sign in
+              </button>
             </div>
           )}
         </div>

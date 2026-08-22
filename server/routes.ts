@@ -16,7 +16,7 @@ import { notify, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
-import { registerBrokerAuthRoutes, requireBroker, getOwnedDeal, canAccessDeal } from "./broker-auth/routes.js";
+import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser } from "@shared/schema";
@@ -181,6 +181,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/health", (_req, res) => {
     res.json({ ok: true });
   });
+
+  // Ownership check for by-id routes (documents, tasks, sections, members…):
+  // the entity's parent deal must belong to the session broker.
+  const ownsDeal = async (req: Request, dealId: string | null | undefined): Promise<boolean> =>
+    !!dealId && !!(await getOwnedDeal(dealId, req.session.brokerId));
+
+  // Broker's configured default buyer-link expiry (Settings → Deal Defaults),
+  // falling back to the 30-day security default. Previously saved but never read.
+  const brokerLinkExpiry = async (brokerId: string | undefined): Promise<Date> => {
+    let days = 30;
+    if (brokerId) {
+      const user = await storage.getUser(brokerId).catch(() => undefined);
+      const configured = Number((user?.settings as any)?.dealDefaults?.expirationDays);
+      if (Number.isFinite(configured) && configured >= 1 && configured <= 365) days = configured;
+    }
+    return new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+  };
 
   // Uploaded files live under UPLOADS_DIR — on Railway this is a persistent
   // volume (e.g. /data/uploads) so documents and logos survive redeploys.
@@ -1035,7 +1052,7 @@ Return JSON only.`,
   });
 
   // Outreach history for a deal — every email the broker has sent
-  app.get("/api/deals/:dealId/outreach-history", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/outreach-history", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const history = await storage.getDealOutreachByDeal(dealId);
@@ -1079,7 +1096,7 @@ Return JSON only.`,
   // =====================
 
   // Generate or refresh the seller communication profile
-  app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { generateSellerProfile } = await import("./interview/eq-profiler");
@@ -1094,7 +1111,7 @@ Return JSON only.`,
   });
 
   // Get the current seller profile
-  app.get("/api/deals/:dealId/seller-profile", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/seller-profile", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -1105,7 +1122,7 @@ Return JSON only.`,
   });
 
   // Broker overrides — update specific fields on the profile
-  app.patch("/api/deals/:dealId/seller-profile", requireBroker, async (req, res) => {
+  app.patch("/api/deals/:dealId/seller-profile", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -1128,7 +1145,7 @@ Return JSON only.`,
   // =====================
 
   // List all interview sessions for a deal (broker transcript view)
-  app.get("/api/deals/:dealId/sessions", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/sessions", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { interviewSessions: sessionsTable } = await import("@shared/schema");
@@ -1404,8 +1421,13 @@ Return JSON only.`,
 
   app.patch("/api/branding/:id", requireBroker, async (req, res) => {
     try {
+      const own = await storage.getBrandingByBroker(req.session.brokerId!);
+      if (!own || own.id !== req.params.id) {
+        return res.status(404).json({ error: "Branding settings not found" });
+      }
       const { insertBrandingSettingsSchema } = await import("@shared/schema");
-      const validatedData = insertBrandingSettingsSchema.partial().parse(req.body);
+      const { brokerId: _b, id: _i, ...brandingBody } = req.body || {};
+      const validatedData = insertBrandingSettingsSchema.partial().parse(brandingBody);
       const settings = await storage.updateBrandingSettings(req.params.id, validatedData);
       if (!settings) {
         return res.status(404).json({ error: "Branding settings not found" });
@@ -1584,15 +1606,20 @@ Return JSON only.`,
       // Stalled interviews (active sessions with no activity in 3+ days)
       const { db } = await import("./db");
       const { interviewSessions, dealDocumentRequirements, analyticsEvents: eventsTable } = await import("@shared/schema");
-      const { and, lt, gt, eq: eqOp, desc: descOp } = await import("drizzle-orm");
+      const { and, lt, gt, eq: eqOp, desc: descOp, inArray } = await import("drizzle-orm");
       const dealMap = new Map(allDeals.map((d) => [d.id, d.businessName]));
+      // Every query below is scoped to THIS broker's deals — they previously
+      // ran platform-wide and surfaced other brokerages' activity as "Unknown".
+      const ownDealIds = allDeals.map((d) => d.id);
+      const emptyScope = ownDealIds.length === 0;
 
       const threeDaysAgo = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
-      const stalledRows = await db
+      const stalledRows = emptyScope ? [] : await db
         .select()
         .from(interviewSessions)
         .where(
           and(
+            inArray(interviewSessions.dealId, ownDealIds),
             eqOp(interviewSessions.status, "active"),
             lt(interviewSessions.lastActivityAt, threeDaysAgo),
           ),
@@ -1606,7 +1633,7 @@ Return JSON only.`,
       }));
 
       // Document requirements — missing required docs per deal
-      const allReqs = await db.select().from(dealDocumentRequirements);
+      const allReqs = emptyScope ? [] : await db.select().from(dealDocumentRequirements).where(inArray(dealDocumentRequirements.dealId, ownDealIds));
       const missingByDeal = new Map<string, number>();
       for (const r of allReqs) {
         if (r.status === "missing" && r.isRequired) {
@@ -1632,10 +1659,10 @@ Return JSON only.`,
       }> = [];
 
       // Analytics events (buyer views, NDA signs)
-      const recentEvents = await db
+      const recentEvents = emptyScope ? [] : await db
         .select()
         .from(eventsTable)
-        .where(gt(eventsTable.createdAt, twoDaysAgo))
+        .where(and(inArray(eventsTable.dealId, ownDealIds), gt(eventsTable.createdAt, twoDaysAgo)))
         .orderBy(descOp(eventsTable.createdAt));
 
       for (const evt of recentEvents) {
@@ -1746,7 +1773,7 @@ Return JSON only.`,
   });
 
   // POST — broker adds a manual requirement
-  app.post("/api/deals/:dealId/document-requirements", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/document-requirements", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { insertDealDocumentRequirementSchema } = await import("@shared/schema");
       const validatedData = insertDealDocumentRequirementSchema.parse({
@@ -1787,7 +1814,7 @@ Return JSON only.`,
   });
 
   // DELETE — broker removes a requirement (only source: "manual")
-  app.delete("/api/deals/:dealId/document-requirements/:reqId", requireBroker, async (req, res) => {
+  app.delete("/api/deals/:dealId/document-requirements/:reqId", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const existing = await storage.getDocumentRequirement(req.params.reqId);
       if (!existing) {
@@ -1808,7 +1835,7 @@ Return JSON only.`,
   });
 
   // POST — trigger auto-population from industry intelligence
-  app.post("/api/deals/:dealId/document-requirements/populate", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/document-requirements/populate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) {
@@ -1941,7 +1968,7 @@ Return JSON only.`,
   // DOCUMENT ROUTES
   // =============================
   
-  app.get("/api/deals/:dealId/documents", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const documents = await storage.getDocumentsByDeal(req.params.dealId);
       res.json(documents);
@@ -1951,7 +1978,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/documents", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { insertDocumentSchema } = await import("@shared/schema");
       const validatedData = insertDocumentSchema.parse({
@@ -1971,6 +1998,8 @@ Return JSON only.`,
 
   app.patch("/api/documents/:id", requireBroker, async (req, res) => {
     try {
+      const existingDoc = await storage.getDocument(req.params.id);
+      if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
       const { insertDocumentSchema } = await import("@shared/schema");
       const validatedData = insertDocumentSchema.partial().parse(req.body);
       const document = await storage.updateDocument(req.params.id, validatedData);
@@ -1986,6 +2015,8 @@ Return JSON only.`,
 
   app.delete("/api/documents/:id", requireBroker, async (req, res) => {
     try {
+      const existingDoc = await storage.getDocument(req.params.id);
+      if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
       await storage.deleteDocument(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -2101,7 +2132,7 @@ Return JSON only.`,
   app.post("/api/documents/:id/parse", requireBroker, async (req, res) => {
     try {
       const doc = await storage.getDocument(req.params.id);
-      if (!doc) return res.status(404).json({ error: "Document not found" });
+      if (!doc || !(await ownsDeal(req, doc.dealId))) return res.status(404).json({ error: "Document not found" });
       const filePath = path.join(uploadsDir, (doc.fileUrl || "").replace(/^\/uploads\//, ""));
       parseDocumentAsync(doc.id, filePath, null, doc.category || "other", doc.subcategory || null, doc.dealId);
       res.json({ status: "parsing" });
@@ -2249,8 +2280,11 @@ Return JSON only.`,
     }
   });
 
-  app.delete("/api/integration-emails/:id", async (req, res) => {
+  app.delete("/api/integration-emails/:id", requireBroker, async (req, res) => {
     try {
+      const email = await storage.getIntegrationEmail(req.params.id);
+      const owned = email ? await getOwnedIntegration(email.integrationId, req.session.brokerId) : null;
+      if (!email || !owned) return res.status(404).json({ error: "Email not found" });
       await storage.deleteIntegrationEmail(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -2279,7 +2313,7 @@ Return JSON only.`,
   // =============================
 
   // Trigger a new financial analysis run (fire-and-forget)
-  app.post("/api/deals/:dealId/financial-analysis", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/financial-analysis", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -2299,7 +2333,7 @@ Return JSON only.`,
   });
 
   // Get the latest financial analysis for a deal
-  app.get("/api/deals/:dealId/financial-analysis", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/financial-analysis", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const analysis = await storage.getLatestFinancialAnalysis(req.params.dealId);
       if (!analysis) return res.status(404).json({ error: "No financial analysis found" });
@@ -2313,7 +2347,7 @@ Return JSON only.`,
   });
 
   // Get a specific financial analysis version
-  app.get("/api/deals/:dealId/financial-analysis/:id", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/financial-analysis/:id", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const analysis = await storage.getFinancialAnalysis(req.params.id);
       if (!analysis || analysis.dealId !== req.params.dealId) {
@@ -2328,7 +2362,7 @@ Return JSON only.`,
   });
 
   // Broker edits (notes, manual comps, addback adjustments, etc.)
-  app.patch("/api/deals/:dealId/financial-analysis/:id", requireBroker, async (req, res) => {
+  app.patch("/api/deals/:dealId/financial-analysis/:id", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const existing = await storage.getFinancialAnalysis(req.params.id);
       if (!existing || existing.dealId !== req.params.dealId) {
@@ -2361,7 +2395,7 @@ Return JSON only.`,
   });
 
   // Re-run analysis (creates a new version)
-  app.post("/api/deals/:dealId/financial-analysis/:id/rerun", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/financial-analysis/:id/rerun", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const existing = await storage.getFinancialAnalysis(req.params.id);
       if (!existing || existing.dealId !== req.params.dealId) {
@@ -2385,7 +2419,7 @@ Return JSON only.`,
   // =============================
 
   // Start addback verification for a deal
-  app.post("/api/deals/:dealId/addback-verification", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/addback-verification", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { workflow, financialAnalysisId } = req.body;
@@ -2437,7 +2471,7 @@ Return JSON only.`,
   });
 
   // Get latest addback verification for a deal
-  app.get("/api/deals/:dealId/addback-verification", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/addback-verification", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const verification = await storage.getAddbackVerificationByDeal(req.params.dealId);
       if (!verification) return res.status(404).json({ error: "No addback verification found" });
@@ -2449,7 +2483,7 @@ Return JSON only.`,
   });
 
   // Update addback verification (seller answers, manual edits, status)
-  app.patch("/api/deals/:dealId/addback-verification/:id", requireBroker, async (req, res) => {
+  app.patch("/api/deals/:dealId/addback-verification/:id", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const existing = await storage.getAddbackVerification(req.params.id);
       if (!existing || existing.dealId !== req.params.dealId) {
@@ -2471,7 +2505,7 @@ Return JSON only.`,
   });
 
   // Trigger AI analysis after documents uploaded
-  app.post("/api/deals/:dealId/addback-verification/:id/analyze", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/addback-verification/:id/analyze", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const verification = await storage.getAddbackVerification(req.params.id);
       if (!verification || verification.dealId !== req.params.dealId) {
@@ -2617,7 +2651,7 @@ Return JSON only.`,
   });
 
   // Seller confirms matches
-  app.post("/api/deals/:dealId/addback-verification/:id/confirm", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/addback-verification/:id/confirm", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const verification = await storage.getAddbackVerification(req.params.id);
       if (!verification || verification.dealId !== req.params.dealId) {
@@ -2645,7 +2679,7 @@ Return JSON only.`,
   // TASK ROUTES
   // =============================
 
-  app.get("/api/deals/:dealId/tasks", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/tasks", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const tasks = await storage.getTasksByDeal(req.params.dealId);
       res.json(tasks);
@@ -2655,7 +2689,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/tasks", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/tasks", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { insertTaskSchema } = await import("@shared/schema");
       const validatedData = insertTaskSchema.parse({
@@ -2675,6 +2709,8 @@ Return JSON only.`,
 
   app.patch("/api/tasks/:id", requireBroker, async (req, res) => {
     try {
+      const existingTask = await storage.getTask(req.params.id);
+      if (!existingTask || !(await ownsDeal(req, existingTask.dealId))) return res.status(404).json({ error: "Task not found" });
       const { insertTaskSchema } = await import("@shared/schema");
       const validatedData = insertTaskSchema.partial().parse(req.body);
       const task = await storage.updateTask(req.params.id, validatedData);
@@ -2690,6 +2726,8 @@ Return JSON only.`,
 
   app.delete("/api/tasks/:id", requireBroker, async (req, res) => {
     try {
+      const existingTask = await storage.getTask(req.params.id);
+      if (!existingTask || !(await ownsDeal(req, existingTask.dealId))) return res.status(404).json({ error: "Task not found" });
       await storage.deleteTask(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -3096,7 +3134,10 @@ Return JSON only.`,
 
   app.patch("/api/invites/:id", requireBroker, async (req, res) => {
     try {
-      const invite = await storage.updateSellerInvite(req.params.id, req.body);
+      const existingInvite = await storage.getSellerInvite(req.params.id);
+      if (!existingInvite || !(await ownsDeal(req, existingInvite.dealId))) return res.status(404).json({ error: "Invite not found" });
+      const { dealId: _d, token: _t, id: _i, ...inviteUpdates } = req.body || {};
+      const invite = await storage.updateSellerInvite(req.params.id, inviteUpdates);
       if (!invite) {
         return res.status(404).json({ error: "Invite not found" });
       }
@@ -3124,7 +3165,7 @@ Return JSON only.`,
   // BUYER ACCESS ROUTES
   // =============================
   
-  app.get("/api/deals/:dealId/buyers", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const buyers = await storage.getBuyerAccessByDeal(req.params.dealId);
       // Normalize response for frontend
@@ -3140,7 +3181,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/buyers", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const accessToken = crypto.randomUUID();
       const body = { ...req.body };
@@ -3155,7 +3196,7 @@ Return JSON only.`,
         buyerCompany: body.buyerCompany || null,
         // Security spec: links auto-expire after 30 days unless the broker
         // sets a different expiry (they can extend from the buyers panel).
-        expiresAt: body.expiresAt || new Date(Date.now() + 30 * 24 * 60 * 60 * 1000),
+        expiresAt: body.expiresAt || (await brokerLinkExpiry(req.session.brokerId)),
       };
       const access = await storage.createBuyerAccess(validatedData);
       res.json(access);
@@ -3228,13 +3269,35 @@ Return JSON only.`,
       // and viewCount drives the decision panel. These were never written
       // before, which silently disabled both features.
       const now = new Date();
+      // A "view" is a session, not a fetch: NDA refetches and the preparing
+      // poll hit this endpoint repeatedly and inflated viewCount.
+      const lastAt = access.lastAccessedAt ? new Date(access.lastAccessedAt).getTime() : 0;
+      const newSession = now.getTime() - lastAt > 30 * 60 * 1000;
       const viewStamp: Record<string, unknown> = {
         lastAccessedAt: now,
-        viewCount: (access.viewCount ?? 0) + 1,
+        viewCount: (access.viewCount ?? 0) + (newSession ? 1 : 0),
       };
       if (!access.firstViewedAt) viewStamp.firstViewedAt = now;
       await storage.updateBuyerAccess(access.id, viewStamp as any);
-      const freshAccess = { ...access, ...viewStamp };
+      const fullAccess = { ...access, ...viewStamp };
+      // Buyers receive only what the view room needs — never the broker's
+      // private notes, match scoring, or internal criteria.
+      const freshAccess = {
+        id: fullAccess.id,
+        dealId: fullAccess.dealId,
+        buyerEmail: fullAccess.buyerEmail,
+        buyerName: fullAccess.buyerName,
+        accessLevel: fullAccess.accessLevel,
+        ndaSigned: fullAccess.ndaSigned,
+        ndaSignedAt: fullAccess.ndaSignedAt,
+        canDownload: fullAccess.canDownload,
+        watermarkEnabled: fullAccess.watermarkEnabled,
+        firstViewedAt: fullAccess.firstViewedAt,
+        viewCount: fullAccess.viewCount,
+        decision: (fullAccess as any).decision ?? null,
+        decisionAt: (fullAccess as any).decisionAt ?? null,
+        expiresAt: fullAccess.expiresAt,
+      };
 
       // Determine CIM mode from buyer's access level
       const cimMode = (() => {
@@ -3355,6 +3418,9 @@ Return JSON only.`,
         ndaSignedAt: new Date(),
         ndaSignedIp: req.ip || req.socket.remoteAddress || null,
       } as any);
+      storage.createAnalyticsEvent({
+        dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,
+      } as any).catch(() => {});
 
       res.json({ success: true });
     } catch (error: any) {
@@ -3364,7 +3430,11 @@ Return JSON only.`,
 
   app.patch("/api/buyers/:id", requireBroker, async (req, res) => {
     try {
-      const access = await storage.updateBuyerAccess(req.params.id, req.body);
+      const existingAccess = await storage.getBuyerAccess(req.params.id);
+      if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
+      const { dealId: _d, accessToken: _t, id: _i, ...accessUpdates } = req.body || {};
+      if (typeof accessUpdates.expiresAt === "string") accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+      const access = await storage.updateBuyerAccess(req.params.id, accessUpdates);
       if (!access) {
         return res.status(404).json({ error: "Buyer access not found" });
       }
@@ -3512,6 +3582,9 @@ Return JSON only.`,
       if (secret) {
         const provided = req.headers["x-cron-secret"] || req.query.secret;
         if (provided !== secret) return res.status(401).json({ error: "Unauthorized" });
+      } else if (!req.session.brokerId) {
+        // No cron secret configured: only a logged-in broker may trigger it
+        return res.status(401).json({ error: "Unauthorized" });
       }
       const stats = await runDecisionReminders();
       res.json({ success: true, stats });
@@ -3535,7 +3608,7 @@ Return JSON only.`,
   });
 
   // CRM autocomplete search — returns multiple lightweight results
-  app.get("/api/deals/:dealId/buyer-search", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/buyer-search", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -3549,7 +3622,7 @@ Return JSON only.`,
   });
 
   // CRM deep prefill — single record, full Claude-parsed profile + files
-  app.post("/api/deals/:dealId/buyer-prefill", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/buyer-prefill", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -3564,7 +3637,7 @@ Return JSON only.`,
   });
 
   // List approval requests for a deal
-  app.get("/api/deals/:dealId/buyer-approvals", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/buyer-approvals", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const requests = await storage.getBuyerApprovalRequestsByDeal(req.params.dealId);
       res.json(requests);
@@ -3578,7 +3651,7 @@ Return JSON only.`,
   app.get("/api/buyer-approvals/:id", requireBroker, async (req, res) => {
     try {
       const request = await storage.getBuyerApprovalRequest(req.params.id);
-      if (!request) return res.status(404).json({ error: "Not found" });
+      if (!request || !(await ownsDeal(req, request.dealId))) return res.status(404).json({ error: "Not found" });
       res.json(request);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch buyer approval" });
@@ -3586,7 +3659,7 @@ Return JSON only.`,
   });
 
   // Submit a new buyer approval request
-  app.post("/api/deals/:dealId/buyer-approvals", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/buyer-approvals", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -3660,7 +3733,7 @@ Return JSON only.`,
   app.post("/api/buyer-approvals/:id/broker-review", requireBroker, async (req, res) => {
     try {
       const request = await storage.getBuyerApprovalRequest(req.params.id);
-      if (!request) return res.status(404).json({ error: "Not found" });
+      if (!request || !(await ownsDeal(req, request.dealId))) return res.status(404).json({ error: "Not found" });
 
       const { action, reviewerName, reviewerId, notes } = req.body || {};
       if (!["approve", "reject"].includes(action)) {
@@ -3820,7 +3893,7 @@ Return JSON only.`,
         buyerName: request.buyerName || null,
         buyerCompany: request.buyerCompany || null,
         accessLevel: "full",
-        expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000), // 30-day default per security spec
+        expiresAt: await brokerLinkExpiry(deal.brokerId ?? undefined), // broker's configured default (30 days unless changed)
       } as any);
 
       const updated = await storage.updateBuyerApprovalRequest(request.id, {
@@ -3897,6 +3970,8 @@ Return JSON only.`,
 
   app.delete("/api/buyer-access/:id", requireBroker, async (req, res) => {
     try {
+      const existingAccess = await storage.getBuyerAccess(req.params.id);
+      if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
       // Revoke access instead of hard delete
       const access = await storage.updateBuyerAccess(req.params.id, {
         revokedAt: new Date(),
@@ -3915,7 +3990,7 @@ Return JSON only.`,
   // CIM SECTION ROUTES
   // =============================
   
-  app.get("/api/deals/:dealId/sections", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const sections = await storage.getCimSectionsByDeal(req.params.dealId);
       res.json(sections);
@@ -3925,7 +4000,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/sections", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { insertCimSectionSchema } = await import("@shared/schema");
       const validatedData = insertCimSectionSchema.parse({
@@ -3945,7 +4020,10 @@ Return JSON only.`,
 
   app.patch("/api/sections/:id", requireBroker, async (req, res) => {
     try {
-      const section = await storage.updateCimSection(req.params.id, req.body);
+      const existingSection = await storage.getCimSection(req.params.id);
+      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
+      const { dealId: _d, id: _i, ...sectionUpdates } = req.body || {};
+      const section = await storage.updateCimSection(req.params.id, sectionUpdates);
       if (!section) {
         return res.status(404).json({ error: "Section not found" });
       }
@@ -3958,7 +4036,7 @@ Return JSON only.`,
 
   // ── CIM-SECTIONS ALIASES (used by CIMDesigner) ──
 
-  app.get("/api/deals/:dealId/cim-sections", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/cim-sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const sections = await storage.getCimSectionsByDeal(req.params.dealId);
       res.json(sections);
@@ -3967,7 +4045,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/cim-sections/reorder", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/cim-sections/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { orderedIds } = req.body;
       if (Array.isArray(orderedIds)) {
@@ -3985,11 +4063,23 @@ Return JSON only.`,
   // AI CONTENT GENERATION ROUTES
   // =============================
   
-  app.post("/api/deals/:dealId/generate-content", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/generate-content", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+
+      // Product rule: critical discrepancies block CIM generation until resolved.
+      // The client disabled the first "Generate" button but not "Regenerate";
+      // the server is now the authority.
+      const openCritical = (await storage.getDiscrepanciesByDeal(dealId))
+        .filter(d => d.severity === "critical" && d.status !== "resolved" && d.status !== "superseded");
+      if (openCritical.length > 0) {
+        return res.status(409).json({
+          error: `${openCritical.length} critical discrepanc${openCritical.length === 1 ? "y" : "ies"} must be resolved before generating the CIM`,
+          blockingDiscrepancies: openCritical.map(d => ({ id: d.id, field: d.field })),
+        });
+      }
 
       const { sectionKey } = req.body;
 
@@ -4109,7 +4199,7 @@ Return JSON only.`,
   });
 
   // Generate blind CIM (AI-powered redaction of all identifying info)
-  app.post("/api/deals/:dealId/generate-blind", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/generate-blind", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
@@ -4148,7 +4238,7 @@ Return JSON only.`,
   });
 
   // Generate DD (Due Diligence) enriched CIM
-  app.post("/api/deals/:dealId/generate-dd", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/generate-dd", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
@@ -4201,7 +4291,7 @@ Return JSON only.`,
   });
 
   // Get CIM section overrides for a specific mode
-  app.get("/api/deals/:dealId/cim-overrides/:mode", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/cim-overrides/:mode", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const overrides = await storage.getCimSectionOverrides(req.params.dealId, req.params.mode);
       res.json(overrides);
@@ -4211,7 +4301,7 @@ Return JSON only.`,
   });
 
   // Generate teaser
-  app.post("/api/deals/:dealId/generate-teaser", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/generate-teaser", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) {
@@ -4245,7 +4335,7 @@ Return JSON only.`,
   });
 
   // Flag missing info after interview
-  app.post("/api/deals/:dealId/flag-missing", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/flag-missing", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) {
@@ -4309,7 +4399,7 @@ Return JSON only.`,
   });
 
   // FAQ Routes
-  app.get("/api/deals/:dealId/faq", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/faq", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const faqs = await storage.getFaqsByDeal(req.params.dealId);
       res.json(faqs);
@@ -4319,7 +4409,7 @@ Return JSON only.`,
     }
   });
 
-  app.post("/api/deals/:dealId/faq", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/faq", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { question, answer } = req.body;
       if (!question || typeof question !== 'string' || !question.trim()) {
@@ -4343,7 +4433,10 @@ Return JSON only.`,
 
   app.patch("/api/faq/:id", requireBroker, async (req, res) => {
     try {
-      const faq = await storage.updateFaq(req.params.id, req.body);
+      const existingFaq = await storage.getFaq(req.params.id);
+      if (!existingFaq || !(await ownsDeal(req, existingFaq.dealId))) return res.status(404).json({ error: "FAQ not found" });
+      const { dealId: _d, id: _i, ...faqUpdates } = req.body || {};
+      const faq = await storage.updateFaq(req.params.id, faqUpdates);
       if (!faq) {
         return res.status(404).json({ error: "FAQ not found" });
       }
@@ -4356,6 +4449,8 @@ Return JSON only.`,
 
   app.delete("/api/faq/:id", requireBroker, async (req, res) => {
     try {
+      const existingFaq = await storage.getFaq(req.params.id);
+      if (!existingFaq || !(await ownsDeal(req, existingFaq.dealId))) return res.status(404).json({ error: "FAQ not found" });
       await storage.deleteFaq(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -4443,7 +4538,7 @@ Return JSON only.`,
   });
   
   // Get analytics events for a deal
-  app.get("/api/deals/:dealId/analytics", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/analytics", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const events = await storage.getAnalyticsByDeal(dealId);
@@ -4455,7 +4550,7 @@ Return JSON only.`,
   });
 
   // Computed analytics — aggregated server-side so we don't ship raw events to client
-  app.get("/api/deals/:dealId/analytics/computed", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/analytics/computed", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { matchBuyerToDeal } = await import("./matching/engine.js");
@@ -4468,12 +4563,13 @@ Return JSON only.`,
 
       // ── Section engagement ──────────────────────────────────────────────
       // Sum timeSpentSeconds from section_exit events, grouped by sectionKey
-      const sectionTime: Record<string, { totalSeconds: number; count: number; title: string }> = {};
+      const sectionTime: Record<string, { totalSeconds: number; count: number; title: string; viewers: Set<string> }> = {};
       for (const e of events) {
         if (e.eventType === "section_exit" && e.sectionKey && e.timeSpentSeconds) {
-          if (!sectionTime[e.sectionKey]) sectionTime[e.sectionKey] = { totalSeconds: 0, count: 0, title: e.sectionKey };
+          if (!sectionTime[e.sectionKey]) sectionTime[e.sectionKey] = { totalSeconds: 0, count: 0, title: e.sectionKey, viewers: new Set() };
           sectionTime[e.sectionKey].totalSeconds += e.timeSpentSeconds;
           sectionTime[e.sectionKey].count += 1;
+          if (e.buyerAccessId) sectionTime[e.sectionKey].viewers.add(e.buyerAccessId);
         }
       }
       const sectionEngagement = Object.entries(sectionTime)
@@ -4481,7 +4577,8 @@ Return JSON only.`,
           sectionKey: key,
           avgSeconds: Math.round(v.totalSeconds / v.count),
           totalSeconds: v.totalSeconds,
-          viewerCount: v.count,
+          // Unique buyers, not exit events (one buyer re-entering six times is one viewer)
+          viewerCount: v.viewers.size || v.count,
         }))
         .sort((a, b) => b.avgSeconds - a.avgSeconds);
 
@@ -4658,7 +4755,7 @@ Return JSON only.`,
   });
 
   // Activity timeline — chronological feed of buyer events
-  app.get("/api/deals/:dealId/analytics/timeline", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/analytics/timeline", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const limit = Math.min(Number(req.query.limit) || 50, 200);
@@ -4699,7 +4796,7 @@ Return JSON only.`,
   });
 
   // Per-deal analytics summary (lightweight — for embedding in deal detail page)
-  app.get("/api/deals/:dealId/analytics/summary", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/analytics/summary", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const [events, buyers, questions] = await Promise.all([
@@ -4799,7 +4896,7 @@ Return JSON only.`,
   });
 
   // Buyer engagement scoring (for buyer comparison)
-  app.get("/api/deals/:dealId/analytics/buyer-scores", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/analytics/buyer-scores", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const [events, buyers, questions] = await Promise.all([
@@ -4865,7 +4962,7 @@ Return JSON only.`,
   // ════════════════════════════════════════════════════════════
 
   // Run deep match scoring for all buyers on a deal
-  app.post("/api/deals/:dealId/match-buyers", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/match-buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
@@ -4940,6 +5037,8 @@ Return JSON only.`,
   app.patch("/api/buyers/:id/profile", requireBroker, async (req, res) => {
     try {
       const { id } = req.params;
+      const existingAccess = await storage.getBuyerAccess(id);
+      if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
       const { buyerType, prequalified, proofOfFunds, buyerNotes, buyerCriteria } = req.body;
       const updates: any = {};
       if (buyerType !== undefined) updates.buyerType = buyerType;
@@ -4996,8 +5095,12 @@ Return JSON only.`,
         })) : null,
       });
 
-      // Persist sections to DB — delete old layout sections first, then insert new ones
+      // Persist sections to DB — delete old layout sections first, then insert new ones.
+      // Blind/DD overrides point at the old section ids — clear them too, or the
+      // view room runs the redaction branch against nothing and serves the base CIM.
       await storage.deleteCimSectionsForDeal(dealId);
+      await storage.deleteCimSectionOverrides(dealId, "blind");
+      await storage.deleteCimSectionOverrides(dealId, "dd");
       for (const section of document.sections) {
         await storage.createCimSection({
           dealId,
@@ -5028,7 +5131,7 @@ Return JSON only.`,
   });
 
   // Get all CIM layout sections for a deal
-  app.get("/api/deals/:dealId/layout", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/layout", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const sections = await storage.getCimSectionsByDeal(dealId);
@@ -5042,10 +5145,15 @@ Return JSON only.`,
   app.patch("/api/cim-sections/:sectionId", requireBroker, async (req, res) => {
     try {
       const { sectionId } = req.params;
-      const { brokerEditedContent, layoutOverride, layoutData, isVisible, brokerApproved, sectionTitle } = req.body;
+      const existingSection = await storage.getCimSection(sectionId);
+      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
+      const { brokerEditedContent, layoutOverride, layoutData, layoutType, isVisible, sectionTitle } = req.body;
+      // The designer historically sent `isApproved`; the column is brokerApproved.
+      const brokerApproved = req.body.brokerApproved !== undefined ? req.body.brokerApproved : req.body.isApproved;
 
       const updated = await storage.updateCimSection(sectionId, {
         ...(brokerEditedContent !== undefined && { brokerEditedContent }),
+        ...(layoutType !== undefined && { layoutType }),
         ...(layoutOverride !== undefined && { layoutOverride }),
         ...(layoutData !== undefined && { layoutData }),
         ...(isVisible !== undefined && { isVisible }),
@@ -5059,7 +5167,7 @@ Return JSON only.`,
   });
 
   // Reorder sections
-  app.post("/api/deals/:dealId/layout/reorder", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/layout/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { order }: { order: Array<{ id: string; order: number }> } = req.body;
@@ -5077,7 +5185,7 @@ Return JSON only.`,
   // ════════════════════════════════════════════════════════════
 
   // Run discrepancy check
-  app.post("/api/deals/:dealId/run-discrepancy-check", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/run-discrepancy-check", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
@@ -5135,7 +5243,7 @@ Return JSON only.`,
   });
 
   // Get discrepancies for a deal
-  app.get("/api/deals/:dealId/discrepancies", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/discrepancies", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const discrepancies = await storage.getDiscrepanciesByDeal(req.params.dealId);
       res.json(discrepancies);
@@ -5147,6 +5255,8 @@ Return JSON only.`,
   // Update a discrepancy (resolve, respond, etc.)
   app.patch("/api/discrepancies/:id", requireBroker, async (req, res) => {
     try {
+      const existingDisc = await storage.getDiscrepancy(req.params.id);
+      if (!existingDisc || !(await ownsDeal(req, existingDisc.dealId))) return res.status(404).json({ error: "Discrepancy not found" });
       const { sellerResponse, brokerNotes, resolvedValue, status } = req.body;
       const updates: any = {};
       if (sellerResponse !== undefined) updates.sellerResponse = sellerResponse;
@@ -5171,7 +5281,7 @@ Return JSON only.`,
   // ════════════════════════════════════════════════════════════
 
   // Get all members for a deal (grouped by team)
-  app.get("/api/deals/:dealId/members", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/members", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const members = await storage.getDealMembers(req.params.dealId);
       res.json(members);
@@ -5181,7 +5291,7 @@ Return JSON only.`,
   });
 
   // Get members by team type
-  app.get("/api/deals/:dealId/members/:teamType", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/members/:teamType", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const members = await storage.getDealMembersByTeam(req.params.dealId, req.params.teamType);
       res.json(members);
@@ -5191,7 +5301,7 @@ Return JSON only.`,
   });
 
   // Add a member to a deal
-  app.post("/api/deals/:dealId/members", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/members", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const { email, name, phone, teamType, role, accessLevel } = req.body;
@@ -5233,12 +5343,20 @@ Return JSON only.`,
 
       // Send invite notification
       const teamLabel = teamType.charAt(0).toUpperCase() + teamType.slice(1);
+      // The member's inviteToken is not resolvable by any route (the old links
+      // were dead). Seller-team members get a real seller invite for the deal;
+      // broker/buyer team members land on their sign-in page.
+      let actionUrl = teamType === "buyer" ? "/buyer/login" : "/broker";
+      if (teamType === "seller") {
+        try {
+          const sellerInvite = await findOrCreateSellerInvite(dealId, email.trim().toLowerCase(), name || null);
+          actionUrl = `/seller/${sellerInvite.token}`;
+        } catch (e) { console.warn("[members] could not create seller invite for team member:", e); }
+      }
       await notify(dealId, "invite", {
         title: `You've been added to a deal`,
         body: `You've been added as ${roleConfig.label} (${teamLabel} team) for ${deal?.businessName || "a business"}. Click below to get started.`,
-        actionUrl: teamType === "buyer"
-          ? `/view/${inviteToken}`
-          : `/seller/${inviteToken}`,
+        actionUrl,
         businessName: deal?.businessName,
         specificMemberIds: [member.id],
       });
@@ -5253,7 +5371,13 @@ Return JSON only.`,
   // Update a member (role, permissions, notification prefs)
   app.patch("/api/members/:memberId", requireBroker, async (req, res) => {
     try {
-      const updated = await storage.updateDealMember(req.params.memberId, req.body);
+      const existingMember = await storage.getDealMember(req.params.memberId);
+      if (!existingMember || !(await ownsDeal(req, existingMember.dealId))) return res.status(404).json({ error: "Member not found" });
+      // Whitelist — the previous pass-through allowed mass-assignment of any column
+      const allowed = ["name", "phone", "role", "permissions", "accessLevel", "emailNotifications", "smsNotifications", "canDownload", "watermarkEnabled", "inviteStatus"] as const;
+      const memberUpdates: Record<string, unknown> = {};
+      for (const k of allowed) if (req.body?.[k] !== undefined) memberUpdates[k] = req.body[k];
+      const updated = await storage.updateDealMember(req.params.memberId, memberUpdates as any);
       if (!updated) return res.status(404).json({ error: "Member not found" });
       res.json(updated);
     } catch (error: any) {
@@ -5264,6 +5388,8 @@ Return JSON only.`,
   // Remove a member
   app.delete("/api/members/:memberId", requireBroker, async (req, res) => {
     try {
+      const existingMember = await storage.getDealMember(req.params.memberId);
+      if (!existingMember || !(await ownsDeal(req, existingMember.dealId))) return res.status(404).json({ error: "Member not found" });
       await storage.deleteDealMember(req.params.memberId);
       res.json({ success: true });
     } catch (error: any) {
@@ -5272,7 +5398,7 @@ Return JSON only.`,
   });
 
   // Get notifications for a deal
-  app.get("/api/deals/:dealId/notifications", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/notifications", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const notifs = await storage.getNotificationsByDeal(req.params.dealId);
       res.json(notifs);
@@ -5284,6 +5410,8 @@ Return JSON only.`,
   // Mark notification as read
   app.patch("/api/notifications/:id/read", requireBroker, async (req, res) => {
     try {
+      const existingNotif = await storage.getNotification(req.params.id);
+      if (!existingNotif || !(await ownsDeal(req, existingNotif.dealId))) return res.status(404).json({ error: "Notification not found" });
       await storage.markNotificationRead(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
@@ -5299,8 +5427,22 @@ Return JSON only.`,
   app.post("/api/deals/:dealId/questions", async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { question, buyerAccessId } = req.body;
+      const { question, accessToken } = req.body;
       if (!question?.trim()) return res.status(400).json({ error: "Question required" });
+
+      // The buyer proves access with their view-room token. Previously this
+      // endpoint was unauthenticated and answered from the UNREDACTED CIM —
+      // a blind-mode buyer could learn the business identity by asking.
+      const access = typeof accessToken === "string" ? await storage.getBuyerAccessByToken(accessToken) : undefined;
+      if (!access || access.dealId !== dealId || access.revokedAt) {
+        return res.status(401).json({ error: "A valid view-room link is required to ask questions" });
+      }
+      const buyerAccessId = access.id;
+      const chatMode = access.accessLevel === "due_diligence" ? "dd" : access.accessLevel === "loi" ? "normal" : "blind";
+      storage.createAnalyticsEvent({
+        dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
+        eventData: { question: String(question).slice(0, 200) },
+      } as any).catch(() => {});
 
       // ── Step 1: Check knowledge base — has a similar question been answered before? ──
       const publishedQs = await storage.getPublishedQuestions(dealId);
@@ -5354,11 +5496,25 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
         }
       }
 
-      // ── Step 2: Try to answer from CIM content ──
-      const sections = await storage.getCimSectionsByDeal(dealId);
-      const cimText = sections.map(s => `${s.sectionTitle}: ${s.brokerEditedContent || s.aiDraftContent || ""}`).join("\n\n");
+      // ── Step 2: Try to answer from CIM content — the SAME version the
+      // buyer is allowed to see. Blind buyers get the redacted overrides; if
+      // redaction hasn't run yet, escalate rather than leak identity.
+      const baseSections = await storage.getCimSectionsByDeal(dealId);
+      let answerSections = baseSections.map(s => ({ title: s.sectionTitle, body: s.brokerEditedContent || s.aiDraftContent || "" }));
+      if (chatMode !== "normal") {
+        const overrides = await storage.getCimSectionOverrides(dealId, chatMode);
+        if (overrides.length === 0 && chatMode === "blind") {
+          answerSections = [];
+        } else if (overrides.length > 0) {
+          answerSections = baseSections.map(s => {
+            const o = overrides.find(ov => ov.cimSectionId === String(s.id));
+            return { title: o ? "Section" : s.sectionTitle, body: o?.contentOverride || (chatMode === "blind" ? "" : (s.brokerEditedContent || s.aiDraftContent || "")) };
+          });
+        }
+      }
+      const cimText = answerSections.map(s => `${s.title}: ${s.body}`).join("\n\n");
 
-      const aiResponse = await anthropic.messages.create({
+      const aiResponse = cimText.trim().length === 0 ? { content: [] as any[] } : await anthropic.messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 500,
         system: `You are answering buyer questions about a business for sale based strictly on the CIM document provided.
@@ -5368,7 +5524,7 @@ Do not speculate or add information not in the CIM.`,
         messages: [{ role: "user", content: `CIM CONTENT:\n${cimText}\n\nBUYER QUESTION: ${question}` }],
       });
 
-      const aiAnswer = aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null;
+      const aiAnswer = cimText.trim().length === 0 ? null : (aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null);
       const needsEscalation = !aiAnswer || aiAnswer.trim() === "ESCALATE";
 
       const saved = await storage.createBuyerQuestion({
@@ -5410,6 +5566,9 @@ Do not speculate or add information not in the CIM.`,
   app.get("/api/deals/:dealId/questions/published", async (req, res) => {
     try {
       const { dealId } = req.params;
+      const tok = (req.headers["x-buyer-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : undefined);
+      const access = tok ? await storage.getBuyerAccessByToken(tok) : undefined;
+      if (!access || access.dealId !== dealId) return res.status(401).json({ error: "A valid view-room link is required" });
       const questions = await storage.getPublishedQuestions(dealId);
       res.json(questions);
     } catch (error: any) {
@@ -5418,7 +5577,7 @@ Do not speculate or add information not in the CIM.`,
   });
 
   // Get all questions for broker dashboard
-  app.get("/api/deals/:dealId/questions", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/questions", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const questions = await storage.getQuestionsByDeal(dealId);
@@ -5432,6 +5591,8 @@ Do not speculate or add information not in the CIM.`,
   app.patch("/api/questions/:questionId", requireBroker, async (req, res) => {
     try {
       const { questionId } = req.params;
+      const existingQ = await storage.getBuyerQuestion(questionId);
+      if (!existingQ || !(await ownsDeal(req, existingQ.dealId))) return res.status(404).json({ error: "Question not found" });
       const { brokerDraft, status, publishedAnswer, isPublished } = req.body;
 
       const updates: Record<string, any> = {};
@@ -5525,6 +5686,8 @@ Do not speculate or add information not in the CIM.`,
   app.post("/api/questions/:questionId/seller-approve", requireBroker, async (req, res) => {
     try {
       const { questionId } = req.params;
+      const existingQ = await storage.getBuyerQuestion(questionId);
+      if (!existingQ || !(await ownsDeal(req, existingQ.dealId))) return res.status(404).json({ error: "Question not found" });
       const { approved, revision } = req.body;
 
       if (approved) {
@@ -5558,7 +5721,7 @@ Do not speculate or add information not in the CIM.`,
   });
 
   // Get pending seller approval questions for a deal
-  app.get("/api/deals/:dealId/questions/pending-seller", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/questions/pending-seller", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const questions = await storage.getQuestionsByDeal(req.params.dealId);
       const pending = questions.filter(q => q.status === "pending_seller");
@@ -5595,10 +5758,19 @@ Do not speculate or add information not in the CIM.`,
       const ip = req.ip || req.socket.remoteAddress || null;
       const ua = req.headers["user-agent"] || null;
 
-      for (const event of events) {
+      // Authenticate with the buyer's view-room token; attribute every event
+      // to THAT access row (never a caller-supplied id); validate types; cap size.
+      const batchToken = (req.body as any)?.accessToken;
+      const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
+      if (!batchAccess || batchAccess.dealId !== dealId) return res.status(401).json({ error: "Invalid access token" });
+      const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
+      if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
+      const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
+
+      for (const event of accepted) {
         await storage.createAnalyticsEvent({
           dealId,
-          buyerAccessId: event.buyerAccessId || null,
+          buyerAccessId: batchAccess.id,
           eventType: event.eventType,
           sectionKey: event.sectionKey || null,
           timeSpentSeconds: event.timeSpentSeconds || null,

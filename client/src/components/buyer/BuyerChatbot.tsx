@@ -18,6 +18,8 @@ import {
 interface BuyerChatbotProps {
   dealId: string;
   buyerAccessId: string;
+  /** The buyer's view-room token — the server authenticates questions with it */
+  accessToken: string;
   businessName: string;
   publishedQuestions: BuyerQuestion[];
 }
@@ -33,6 +35,7 @@ interface ChatMessage {
 export function BuyerChatbot({
   dealId,
   buyerAccessId,
+  accessToken,
   businessName,
   publishedQuestions,
 }: BuyerChatbotProps) {
@@ -94,7 +97,7 @@ export function BuyerChatbot({
       const res = await fetch(`/api/deals/${dealId}/questions`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, buyerAccessId }),
+        body: JSON.stringify({ question, buyerAccessId, accessToken }),
       });
       if (!res.ok) throw new Error("Failed to submit");
       return res.json();

@@ -473,6 +473,19 @@ Why it matters: 24/7 emergency response capability is a key competitive advantag
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the renewal status of every recurring or seasonal contract for the UPCOMING season or year — snow and landscape maintenance agreements, property management contracts, and municipal maintenance contracts all turn over in the off-season, and a lost anchor client is invisible in trailing revenue; get client-by-client status (signed, verbally committed, at risk, or lost) for every client above 10% of revenue.
+- Ask who personally holds every operating licence — contractor and trade licences (ESA, TSSA, state contractor boards), pesticide applicator licences, and property-management licences (CMRAO, BCFSA, RECA, or the state broker licence) — and what happens to each on the owner's exit, because most are non-transferable and an unlicensed buyer cannot legally operate on day one.
+- Ask for the bonding picture beyond current capacity: any bond claim ever made, whether the owner personally indemnifies the surety, and whether the surety has been sounded out on supporting a new owner — a surety that walks post-close caps the buyer's biddable work overnight.
+- Ask for signed backlog AND the pending-bid pipeline separately, with expected award dates and completion timelines — buyers are buying future revenue, and a strong trailing year sitting on an empty pipeline is a collapsing business that historical statements will not show.
+- Ask which customers, managed-property owners, or referral sources (insurers and TPAs for restoration) exceed 20% of revenue, and whether each relationship is with the company or with the owner personally — concentration plus a personal relationship is the most common post-close revenue loss.
+- Ask whether any contract contains a change-of-ownership or termination-on-sale clause — property management agreements, insurer preferred-vendor programs, government contracts, and prequalifications frequently let the counterparty walk when the business is sold, and sellers almost never re-read these clauses before listing.
+- Ask who estimates and prices work, and who holds the master licences, journeyperson tickets, and IICRC certifications the business operates under, and whether each of those people intends to stay — estimating dependency on the owner is the most common existential gap in construction sales and is rarely volunteered.
+- Ask directly for the compliance record a buyer's diligence will pull anyway: EMR and workers'-compensation claims history, any WSIB/WorkSafeBC/OSHA or environmental orders, construction liens filed in the last 5 years, and open or historical slip-and-fall claims on serviced properties (snow) — undisclosed history found later reprices or kills the deal.
+- Ask for the hidden balance-sheet items sellers forget: outstanding and disputed holdbacks, warranty obligations on completed projects, seasonal contract revenue billed but not yet earned, and — for property management — trust account balances and their regulatory compliance status.
+- Ask about labour exposure that transfers with the business: collective-agreement expiry dates and pension trust obligations if unionized, reliance on seasonal foreign workers (H-2B or equivalent visa programs), and any subcontractor whose departure would halt delivery.
+
 # 2. HEALTHCARE
 
 ## Sub-industries covered:
@@ -1001,6 +1014,19 @@ Why it matters: Pharmacy revenue is increasingly coming from clinical services r
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask each practitioner's forward intentions by name — whether any physician, dentist, therapist, pharmacist, or key technologist plans to leave, retire, relocate, or cut hours in the next 1-2 years — and what share of total production the seller personally generates, because revenue follows practitioners out the door and trailing financials cannot show a departure that has not happened yet.
+- Ask which billing credentials transfer and which require re-application — OHIP/MSP billing numbers (held by physicians, never by clinics), Medicare/Medicaid enrollment, private-insurer panel credentialing (60-120 days to re-credential in the US), DEA registration, PBM contracts, and ODB enrollment — and how long the buyer's revenue gap would run while re-credentialing completes.
+- Ask whether ownership rules restrict who can buy — physician-, dentist-, and pharmacist-only ownership rules in most Canadian provinces, and CPOM laws in many US states — because a restricted buyer pool or a required MSO/DSO structure changes the entire transaction and must surface before the deal is marketed.
+- Ask whether the facility's own licence and accreditation survive a sale — IHF licences (often non-transferable in Ontario), IQMH/CLIA/CAP accreditation, home-care Service Accountability Agreements, Certificate of Need approvals — because a facility that cannot bill on day one has no revenue regardless of its patient base.
+- Ask directly for the regulatory and audit history diligence will find: College or medical-board complaints (open or resolved), past billing audits and any billing practices that would not survive one, infection-control (IPAC) inspection findings, and whether anyone performs procedures beyond their legal scope — for example, aestheticians injecting in a med spa.
+- Ask the renewal date and change-of-ownership terms of every government funding agreement and institutional contract — MOH program funding, Ontario Health/LHIN home-care contracts, EAP contracts, hospital service agreements — these are often the largest revenue line and frequently require reapplication by a new owner rather than transferring.
+- Ask where patients actually come from and how concentrated that flow is — dominant payer share, top referring physicians (labs and imaging), EAP relationships (therapy), a single hearing-aid manufacturer partnership (audiology) — and whether each referral relationship is personal to the seller or institutional to the business.
+- Ask for the pre-sold and undelivered service liability: med spa treatment packages and memberships paid but not yet delivered, dental treatment plans mid-course, hearing-aid warranty and follow-up obligations — these are real debts of the business that rarely appear on seller-prepared statements.
+- Ask which single credential holder the operation legally cannot run without — the Medical Director (med spa), the pharmacist-in-charge, a sole radiologist or lab technologist — and whether a written agreement retains them through transition, since their exit shuts down the highest-margin services immediately.
+- Ask who owns the patient records and what EMR data migration a sale triggers, and whether the premises are medically zoned with any landlord approval rights over an ownership change — data-ownership and premises problems surface at closing, when they are most expensive to fix.
+
 # 3. RESTAURANTS / FOOD SERVICE
 
 ## Sub-industries covered:
@@ -1290,6 +1316,19 @@ Why it matters: Catering companies with strong corporate retainers and venue par
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the remaining lease term, renewal options, and whether the landlord has been approached about assignment — a strong P&L behind a short or non-assignable lease is nearly unsellable, and demolition or redevelopment clauses hide in amendments the seller may not have re-read.
+- Ask whether the liquor license transfers with the business or requires a fresh application, confirm its class (Food Primary vs Liquor Primary, beer/wine vs full spirits, patio endorsement), and probe for any violations, warnings, or conditions in the regulator's file (AGCO, LCRB, AGLC, or the state ABC/SLA/TABC) — the buyer's lawyer will pull that file, so surface it first.
+- For franchise units, ask the remaining franchise term, the transfer fee and consent process, whether the franchisor holds a right of first refusal, and whether any remodel or reimage mandate is pending — each of these can block, delay, or reprice a sale, and none appears in trailing financials.
+- Ask what share of revenue flows through delivery platforms, at what commission rates, and whether those platform accounts and listings transfer to a buyer — for ghost kitchens and delivery-heavy operators the platform is the storefront, and commissions are often buried in COGS.
+- Ask for the health inspection history over the last three years — scores, closures, critical violations, and any outstanding orders — these records are public (DineSafe, NYC letter grades, regional health units) and a buyer's diligence will find them whether or not the seller volunteers them.
+- Ask whether recipes, prep procedures, and supplier specs are documented and who besides the owner or head chef could run the kitchen tomorrow — undocumented menu IP walking out with a departing chef is the classic key-person failure in this industry.
+- For catering, events-driven bars, and any business taking bookings, ask the signed forward pipeline for the UPCOMING season, the deposit liabilities held against future events, and the renewal status of corporate retainers and preferred-venue agreements — seasonal books rebuild every year, and a quiet non-renewal is invisible in trailing revenue.
+- For food manufacturers and CPG, ask the review and renewal dates for each retail listing and the audit status of every facility certification (SQF, BRC, HACCP, Organic, Kosher/Halal; CFIA or FDA standing) — shelf space does not automatically transfer with ownership, and a lapsed certification can delist products overnight.
+- Ask about staffing composition and any Temporary Foreign Worker or visa-dependent employees with their permit expiry dates, plus tip-pooling and scheduling compliance — a work permit that will not renew is a scheduled future labour loss the buyer inherits.
+- Ask the age and expected replacement timeline of hoods, fire suppression, refrigeration, and fryers, plus grease trap compliance status — equipment that "still works" but is due for replacement within the next couple of years is deferred capital the buyer will price into the deal.
+
 # 4. MANUFACTURING
 
 ## Sub-industries covered:
@@ -1483,6 +1522,19 @@ Why it matters: The commercial printing industry has experienced significant str
 ---
 
 ---
+
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the expiry date of every top-customer contract and whether any customer has signaled a re-bid, dual-sourcing move, order reduction, or program end-of-life — concentration risk lives in the forward book, not trailing revenue, and buyers will demand customer calls or retention escrows if the answers are vague.
+- Ask the current backlog value, its cancellation terms, and how it compares to the same point last year — a thinning backlog is the earliest signal of decline and never shows in trailing statements.
+- Ask the audit and renewal dates for every quality and welding certification (ISO 9001, AS9100, IATF 16949; CWB/AWS and CISC/AISC for fabricators), whether any is held by an individual rather than the company, and whether any work falls under export-control regimes (ITAR/EAR in the US, controlled goods in Canada) — a lapsed or non-transferable certification severs exactly the customers that require it, and export controls restrict who is even permitted to buy.
+- Ask which raw materials have a single qualified source, the lead times to qualify a replacement, and whether supplier pricing contracts are expiring or fully market-exposed — a single-source failure stops the line, and buyers will map every one in diligence.
+- Ask which dies, molds, fixtures, and tooling are customer-owned versus company-owned and whether that ownership is documented — tooling disputes surface at closing and can strip claimed assets out of the deal.
+- Ask which employees are genuinely irreplaceable — CNC programmers, tool-and-die makers, key engineers, the estimator in a job shop — along with their retirement horizon, any TFW or visa dependencies, and the expiry date of any union collective agreement — key-person and CBA timing risks transfer to the buyer on day one.
+- Ask whether key customer relationships, quoting, and pricing decisions rest with the owner personally — in custom and job-shop manufacturing the owner often is the sales function, and buyers discount heavily when the order flow depends on one person's phone.
+- Ask about environmental permits and history — air and water approvals (ECAs in Ontario, Title V/NPDES in the US), hazardous waste generator status, dust collection and VOC compliance in woodworking and finishing operations, and any known or suspected contamination — the buyer's Phase I environmental assessment will find what the seller does not disclose.
+- Ask which machines are within a few years of end-of-life or carry long replacement lead times, what is leased or financed versus owned outright, and what deferred maintenance exists on the facility (roof, electrical capacity, three-phase power) — "it still runs" is not a capital plan, and the buyer will build one.
+- For printing and packaging, ask the three-year revenue trend by segment — commercial print vs packaging vs labels and specialty — and what has been invested in digital and specialty capability — commercial print is in structural decline, and buyers will scrutinize that trend line before anything else.
 
 # 5. PROFESSIONAL SERVICES FIRMS
 
@@ -1906,6 +1958,19 @@ Why it matters: Temporary staffing is recurring revenue with thin margins but hi
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the renewal status of every top-ten client relationship for the NEXT 12 months — retainers or MSAs up for renewal, in renegotiation, out to RFP, or where the client has signalled a change — because trailing revenue looks identical whether the anchor client is staying or already walking.
+- Ask whether client agreements (engagement letters, managed-services contracts, retainers, MSAs, agency-of-record deals) contain change-of-control, assignment, or consent-to-transfer clauses — professional-services revenue only transfers if the paper does, and buyers will read every contract.
+- Ask what percentage of revenue sits with clients who deal personally with the owner rather than the firm, and what transition or earn-out structure the seller envisions — client loyalty to a departing principal is this sector's single biggest value leak, and it is worst where the owner is both rainmaker and lead service provider (accounting, architecture, wealth management).
+- Ask which senior fee-earners (partners, associates, senior technicians, account directors) have signed non-solicit or non-compete agreements, whether any are near retirement or have signalled departure, and whether they know about the sale — an unprotected departing biller can lawfully take their book with them.
+- Ask which firm-level authorizations the business operates under — Public Accounting Licence (accounting), Certificate of Authorization / Certificate of Practice (engineering, architecture), law-society professional corporation status, temporary-help-agency registration (staffing), CIRO/securities or SEC/FINRA registration (wealth management) — and whether each transfers on a share or asset sale or requires fresh application; the deal can close with the firm legally unable to practise.
+- Ask who legally owns the book of business and the client files — advisor versus dealer in wealth management, owner personally versus the firm elsewhere — and what client consent is required to move accounts, because an owner who cannot convey the book has nothing to sell.
+- Ask for the complete history of professional-body complaints, discipline, trust-account audit findings, E&O claims, and incidents reported to insurers but not yet resolved, across ALL licensed staff — buyers' diligence pulls regulator and insurer records the seller did not volunteer.
+- Ask for gross client churn (clients lost, counted before replacements) rather than net retention, and the margin trend on recurring revenue versus rising tooling and labour costs — MSPs and agencies routinely replace churned MRR before month-end so the reported retention number hides the leak.
+- Ask about outcome-based work in flight — contingency cases (legal), success-fee or performance-fee engagements (agencies, advisory) — and how fees earned but unbilled at closing will be split, because unresolved WIP economics are a standard post-close dispute.
+- Ask which deliverables depend on subcontractors, freelancers, or vendor partnerships (Microsoft or Cisco partner tiers, media-buying relationships, ATS and RMM/PSA platforms) and whether those relationships and tier levels survive a change of ownership — a partner-tier downgrade or a critical freelancer walking strands the revenue attached to them.
+
 # 6. AUTOMOTIVE
 
 ## Sub-industries covered:
@@ -2205,6 +2270,19 @@ Why it matters: Floor plan financing is a revolving credit facility secured agai
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the renewal date and current status of every fleet account, DRP agreement, and dealership reconditioning or fleet-detailing contract for the UPCOMING period — these are relationship-driven, often personal to the owner, and a non-renewing anchor account is invisible in trailing revenue.
+- Ask whether DRP agreements and OEM certifications (collision programs, brand service certifications, I-CAR Gold Class) are held in the company's name and what the insurer or manufacturer requires on a change of ownership — if they demand reapplication, the buyer's revenue pipeline can vanish the day after closing.
+- Ask directly about underground storage tanks (current, decommissioned, or suspected), spill or contamination history, documented disposal records for oil, coolant, solvents, and filters, and paint-booth air-quality permits and VOC compliance — environmental liability is the #1 hidden liability in automotive deals and every lender will order an environmental assessment that finds what the seller didn't disclose.
+- Ask whether the shop or dealer registration (OMVIC/AMVIC/VSA in Canada; state repair, dealer, BAR, smog-check, or safety-inspection-station licences in the US) transfers to a new owner or requires fresh application, and whether there is ANY complaint, discipline, or bond-claim history on the licence — dealer registrations are typically non-transferable and a discipline record can block the buyer's approval.
+- Ask (dealerships) who the floor-plan lender is, whether the facility will continue for a new owner, and whether any units are worth less than what is owed on them — if the floor plan doesn't carry over, the buyer must fund the entire inventory at closing, and aged or underwater units are a hidden hole in the balance sheet.
+- Ask which certifications live with individual technicians (Red Seal/ASE, I-CAR, EV high-voltage, refrigerant handling), whether those technicians know about the sale and are expected to stay, and whether any have non-compete or retention agreements — the certifications, and often the fleet relationships, leave with the person.
+- Ask (car washes) the active membership count, GROSS monthly churn, and how many members are on promotional or discounted pricing cohorts — promo cohorts inflate the membership count and churn spikes when the discount rolls off, so the recurring revenue a buyer is paying for may already be decaying.
+- Ask the age, condition, deferred maintenance, and lease or lien status of every major piece of equipment (lifts, wash tunnel, frame equipment, paint booth, ADAS calibration rigs) plus the age profile and return/consignment terms of parts inventory — deferred capex and obsolete parts stock are a purchase-price fight in every automotive transaction.
+- Ask whether the business can service hybrids and EVs and perform ADAS calibration in-house or must subcontract it — this is forward obsolescence risk that trailing financials cannot show, and buyers increasingly price it.
+- Ask the remaining lease term, renewal options, and any landlord demolition or redevelopment clauses on the site, along with municipal water/sewer discharge agreements where applicable — automotive businesses are location businesses, and a short lease, a landlord with redevelopment plans, or a missing discharge permit can kill transferability outright.
+
 # 7. RETAIL
 
 ## Sub-industries covered:
@@ -2463,6 +2541,19 @@ Why it matters: Cannabis retail licenses are tightly controlled in Canada and in
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the remaining lease term, renewal options, and whether the lease requires landlord consent or triggers any clause on a change of ownership — plus co-tenancy and demolition/redevelopment provisions — because a retail business that cannot keep its location transfers nothing.
+- Ask whether a franchise agreement governs the store and, if so, probe every transfer term — franchisor consent requirements, transfer fees, right-of-first-refusal, remaining term vs renewal conditions, and required buyer training — because a franchisor can block or pre-empt the entire sale.
+- Ask the transferability status and expected approval timeline of every regulated permission the store depends on — liquor license and its standalone quota value (LCBO/AGLC/LCRB or state board), cannabis retail license (AGCO/state approval, personal vs corporate holder), lottery terminal, ATM, fuel supply, and EBT agreements for convenience stores — because none of these transfer automatically and each can stall or kill closing.
+- Ask for the complete compliance history — liquor, tobacco, vape, and cannabis violations, warnings, or suspensions, including ones the seller considers resolved — because the buyer's license check with the regulator will surface the record regardless of what the seller volunteers.
+- Ask what the seller knows is changing in the trade area over the next 12-24 months — competitor openings (especially cannabis market saturation), anchor tenant departures, landlord redevelopment plans, road construction, or pending regulatory changes such as expanded alcohol retail — because trailing revenue is blind to all of it.
+- Ask the seller to split inventory into current saleable stock, aged stock (12+ months), consignment goods, and open purchase orders or commitments that transfer with the business — because inventory quoted at original cost routinely overstates what the buyer actually receives.
+- Ask the terms of every key supplier arrangement — exclusive distribution rights, minimum purchase requirements, rebate programs — and whether each survives a change of ownership, because an exclusive that lapses at closing converts a hidden asset into a hole.
+- Ask what percentage of annual revenue lands in the peak season and whether the UPCOMING season's orders, bookings, or holiday inventory commitments are already placed — seasonal books turn over in the off-season and a weak forward position is invisible in trailing numbers.
+- Ask how many hours the owner works in the store and which revenue depends on the owner personally — regulars who come for the owner, the owner's buying and merchandising expertise — because personal goodwill that walks out at closing is not transferable revenue.
+- Ask what portion of online revenue flows through third-party marketplace accounts (Amazon, Etsy) vs owned channels (Shopify, WooCommerce), and whether those accounts, their seller ratings, and the social media handles can legally transfer — marketplace accounts and their review history often cannot be sold with the business.
+
 # 8. WHOLESALE AND DISTRIBUTION
 
 ## Sub-industries covered:
@@ -2588,6 +2679,19 @@ Why it matters: Pharmaceutical distribution licenses are issued to specific enti
 ---
 
 ---
+
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask, for EVERY supplier and distribution agreement, whether it contains assignment, change-of-control, termination-on-sale, or right-of-first-refusal provisions — this is the single most important diligence item in distribution, because exclusivity that the supplier can revoke at closing guts the value of the business.
+- Ask the expiry date and renewal status of every key supplier AND customer contract over the coming 12-24 months, and whether any renewal negotiation is underway, stalled, or being avoided — a contract quietly running out is invisible in trailing revenue until it is gone.
+- Ask whether exclusivity and supply arrangements are documented in written agreements held by the company — not handshake understandings, and not agreements held by the owner personally — because undocumented or personally-held rights do not transfer and must be resolved before going to market.
+- Ask the top-10 customer revenue shares and, for each major account, whether the customer has recently reduced orders, issued an RFP, been acquired, or signaled a supplier review — distribution customers can switch quickly, and a pending defection is the risk trailing financials hide best.
+- Ask which salespeople hold the personal relationships with major customers, whether each has a signed non-compete and non-solicit, and honestly whether their accounts would follow them out the door — an unprotected rainmaker is a customer-retention time bomb for the buyer.
+- Ask the minimum purchase obligations under every supply agreement and how much profit depends on supplier volume rebates — a post-sale dip in volume can simultaneously trigger penalties and erase rebate income the P&L presents as durable margin.
+- Ask, per sub-industry, who holds the required licenses and certifications and whether a buyer must reapply: food distribution (HACCP/SQF/BRC/GFSI certification status, last audit result, CFIA or FDA facility registration — losing a certification loses the customers that require it); pharmaceutical/medical (drug establishment or state distributor license, DEA or Health Canada controlled-substance authorization, and the realistic reapplication timeline).
+- Ask for the full incident history a buyer's regulator search will find — product recalls, food safety incidents, cold-chain temperature excursions, and outstanding CFIA/FDA/inspection findings over the last five years — including events the seller considers closed.
+- Ask the inventory turn rate by category and what portion of inventory is slow-moving, obsolete, or damaged but still carried at full cost — inventory is usually part of the price, and overstated stock is one of the most common post-LOI price fights.
+- Ask whether any supplier cost increases have not yet been passed through to customers and whether any supplier or customer pricing renegotiations are pending — margin compression already in motion will land on the buyer, not in the trailing statements.
 
 # 9. TRANSPORTATION AND LOGISTICS
 
@@ -2856,6 +2960,19 @@ Why it matters: Moving companies generate a disproportionate number of consumer 
 ---
 
 ---
+
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the renewal status of every major contract for the UPCOMING cycle — customer freight contracts, dedicated lanes, scheduled courier routes, and 3PL warehouse agreements — including renewal dates, whether any lane or account is currently out for rebid, and any termination or change-of-ownership provisions; trailing revenue looks identical whether next year's freight is secured or already awarded to a competitor.
+- Ask what share of revenue comes from the single largest shipper, platform, or contract (a courier's anchor e-commerce or medical account, a 3PL's anchor tenant, a trucking company's top lane) and whether those relationships sit with the company, with the owner personally, or with individual agents or dispatchers — concentrated revenue that follows a person or a platform is not the buyer's revenue.
+- Ask whether every operating authority is held in the company's name and survives a sale — MC/DOT number or CVOR for carriers, freight broker authority and the required broker bond, household-goods or passenger authority for movers and charter operators — and whether the authority history shows any revocation or suspension; authority in the owner's personal name is a hard transferability blocker.
+- Ask for the current safety record (FMCSA SMS/CSA scores, CVOR abstract, or the provincial/state equivalent) plus any open audits, out-of-service orders, or enforcement letters — buyers and their insurers pull these public records on day one, and a deteriorating score raises insurance costs long before it triggers suspension.
+- Ask when the commercial auto and cargo policies renew, what the loss-run history shows, and whether any insurer has ever non-renewed or materially re-rated the company — a pending non-renewal can make the business uninsurable for a buyer and is invisible in the P&L until it lands.
+- Ask what proportion of drivers, couriers, and brokerage agents are independent contractors, whether the written agreements would survive reclassification scrutiny (AB5-style tests in the US, ESA/CRA scrutiny in Canada), and what the back-pay and benefits exposure would be if they were reclassified — this is the largest hidden liability in owner-operator and gig-delivery models.
+- Ask the age profile of every power unit and trailer, the replacement capital required over the next 24 months, and any emissions deadlines that shrink the usable fleet (CARB rules for any lane touching California) — trailing EBITDA looks healthy right up until half the tractors need replacing.
+- Ask which equipment, trailer, and facility leases require lender or lessor consent to assign, and which expire or reprice within the buyer's first year — trailer leases and 3PL warehouse leases are the most common closing pinch points and carry fixed obligations the buyer inherits.
+- Ask movers and passenger operators specifically for their consumer complaint and enforcement history (BBB, state AG, provincial consumer protection ministry) and their cargo/damage claims record — buyers will find these public records, and an undisclosed pattern of complaints threatens both reputation and license renewability.
+- Ask about the status and renewal of every cross-border enrollment — CTPAT, CSA, FAST cards, IFTA — and any CBP or CBSA violations or holds; cross-border authority is a separate asset that can be suspended independently of domestic operations, and re-establishing it takes months.
 
 # 10. WELLNESS, FITNESS, AND LIFESTYLE
 
@@ -3234,6 +3351,19 @@ Why it matters: Regulatory status of alternative health practitioners varies wid
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask for the total deferred-service liability in dollars — outstanding prepaid annual memberships, unused class packages and credits, and gift card balances — because the cash has already been collected and spent, and the buyer inherits the delivery obligation that trailing revenue completely hides.
+- Ask for the NET member or client trend and monthly churn over the trailing 12 months, and the renewal calendar for annual prepaid contracts — sellers quote gross sign-ups that mask a shrinking base, and a wall of prepaid renewals concentrates the revenue risk into one upcoming window the buyer walks into.
+- Ask whether any member or client contracts contain change-of-ownership cancellation rights — the sale itself can trigger a wave of penalty-free cancellations, and this clause is routinely undisclosed until a buyer's contract review finds it.
+- Ask, by name, which instructors, therapists, artists, or stylists generate a disproportionate share of revenue, whether clients book the person or the brand, and what written agreements (non-solicit, notice period, revenue split) exist — in yoga studios, spas, tattoo shops, and salons the revenue walks out the door with the person, and this is the single most important transferability question in the section.
+- Ask whether the selling owner personally teaches, treats, or serves clients, what share of revenue is attached to their own client book or reputation-driven programs (including any teacher-training programs accredited under their credentials), and whether they will stay through transition and sign a non-compete — an owner who IS the brand takes the business with them.
+- Ask how every service provider is engaged — employee, commission, chair/booth renter, or contractor trainer — and whether those arrangements survive employment-classification scrutiny; quantify the reclassification exposure, because a chair-rental salon is a facility business while an employee salon owns its client relationships, and the buyer must know which one they are buying.
+- Ask for the health inspection and compliance history — most recent inspection outcome, any open orders, and the sub-industry specifics buyers will check: nail salon ventilation and chemical handling, tattoo autoclave testing and sterilization records, tanning equipment compliance orders and exposure to minor-use bans — a violation history creates compliance costs that trailing financials never show.
+- Ask which regulated practitioners (RMTs under CMTO or state massage boards, naturopaths, acupuncturists, TCM practitioners) are in good standing and enrolled for direct insurance billing — replacement practitioners must re-enroll with each insurer after a sale, creating a revenue gap on insurance-funded services that the buyer will only discover after closing.
+- Ask about the lease's remaining term, renewal options, personal guarantee, landlord consent to assignment, and any exclusive-use clause protecting against a competing operator in the same plaza — plus the rent burden relative to revenue — because a wellness business rarely survives an unplanned relocation.
+- Ask the age, financing status, and 24-month replacement needs of the equipment base — cardio and strength fleet, tanning beds and lamp replacement cycles, spa and treatment equipment — and whether any financing or lease obligations transfer; end-of-life equipment and undisclosed equipment debt directly reduce what a buyer will pay.
+
 # 11. EDUCATION
 
 ## Sub-industries covered:
@@ -3584,6 +3714,19 @@ Why it matters: Authorized testing site agreements (Pearson VUE, Prometric) prov
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask for CONFIRMED re-enrollment for the upcoming academic year or term — signed re-enrollment contracts, deposits paid, and course/camp registrations versus the same date last year — because education revenue books in the off-season and a coming enrollment cliff is invisible in trailing financials.
+- Ask whether every government designation or approval survives a change of owner — DLI status and SEVP/I-20 authority for language schools, private career college (PCCA) or state vocational registration, MTO/BDE approval for driving schools, Pearson VUE/Prometric testing-site agreements, private-school registration and accreditation standing — and the realistic re-application timeline, because most are issued to the operator, not the business.
+- Ask the expiry and renewal status of every government funding contract and eligibility the school depends on — LINC contracts, provincial per-student funding (e.g., BC Group 1-2 schools), OSAP/Title IV student-aid eligibility, charitable status implications of a sale — because a funding lapse under a new owner collapses enrollment even where trailing revenue looks healthy.
+- If franchised (Kumon, Sylvan, Oxford Learning, Mathnasium, or any licensed curriculum): ask the remaining term, renewal terms, transfer fee, franchisor consent requirements, and whether the franchisor holds a right of first refusal over a sale — a ROFR discovered late can kill a signed deal.
+- Ask about student-source and channel concentration with pending policy risk: which countries international students come from, which recruitment agents drive enrollment (and whether agent agreements are with the company or the owner personally), and whether announced study-permit caps or visa policy changes threaten the NEXT intake rather than the last one.
+- Probe instructor and key-person walk-away risk: which teachers, tutors, or trainers have personal student or client followings, whether non-compete/non-solicit agreements exist, whether key trainers are tied to specific corporate accounts, and — for e-learning — whether the owner's face, voice, or personal brand IS the content and what survives their exit.
+- Ask for the full regulatory and complaint history: any probation, conditions, suspensions, ministry/state inspections with findings, or outstanding student complaints — resolved or not — because a buyer's diligence will pull this record and an undisclosed history costs more than the finding itself.
+- Ask about prepaid-tuition and deferred obligations: session packages and courses sold but not yet delivered, refund exposure, and outstanding financial-aid or bursary commitments — cash already banked against services a buyer must still fund and deliver.
+- Confirm current Vulnerable Sector / criminal background checks are on file for EVERY staff member and contractor working with minors — a new owner who cannot demonstrate this on day one faces immediate parent attrition and regulatory exposure.
+- Ask lease, zoning, and facility exposure: term remaining and renewal options, whether the premises are zoned for educational use, noise or use restrictions, and near-term capital or deferred-maintenance requirements — a school cannot relocate without losing its catchment enrollment.
+
 # 12. CHILDCARE AND ENTERTAINMENT
 
 ## Sub-industries covered:
@@ -3818,6 +3961,19 @@ Why it matters: Bowling lane equipment (particularly pinsetters) is expensive an
 
 ---
 
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the childcare license transfer mechanics up front: whether the license is issued to the operator or the facility, whether a sale triggers a new-operator application (ministry/state approval, inspections, background checks, policy review), and the realistic approval timeline — the license IS the business and an approval gap means closed doors.
+- Ask the status and transferability of every subsidy and funding agreement: CWELCC/$10-a-day agreement dates with the municipality or CMSM (or state CCDF/QRIS enrollment), the fee caps and wage obligations attached, and what re-application by a new operator involves — losing subsidy funding while still bound by fee caps can make a centre temporarily unviable.
+- Ask for FORWARD enrollment commitments, not just current headcount: confirmed fall/September registrations, camp and after-school bookings for the COMING season, and a verifiable waitlist (names and dates, not anecdote) versus the same point last year — childcare and camp books turn over annually and a soft coming intake is invisible in trailing revenue.
+- Probe qualified-staff continuity: which RECE/certified ECE staff the regulated ratios depend on, whether anyone counted as qualified is still in the process of certifying, post-sale flight risk, and ongoing wage commitments under subsidy programs — losing one qualified educator can force an enrollment cut the day a ratio breaks.
+- Ask the insurance renewal OUTLOOK, not just current coverage: next renewal date, whether the carrier has signalled non-renewal, new exclusions, or a premium jump, and any open liability claims — carriers are exiting trampoline parks and high-activity venues, and this year's premium understates what a buyer will pay.
+- Ask for the complete incident and inspection record: reportable incidents, licensing violations and non-compliance findings, outstanding safety orders (fire marshal, TSSA/amusement-device regulators, municipal inspectors), and the injury history — buyers will pull the public licensing and inspection record, and any surprise there destroys trust.
+- Ask about forward bookings and season commitments: parties and corporate events on the books for the coming months versus the same window last year, and — for bowling alleys — which leagues have COMMITTED for the upcoming season, because league revenue renews annually and a lapsed anchor league is invisible in trailing numbers.
+- Ask the capital-replacement horizon by equipment class: pinsetter and scoring-system age and expected replacement timing, play structure and trampoline equipment age with the date of the last third-party inspection, and the escape-room refresh cycle (stale rooms bleed repeat bookings and reviews) — deferred equipment spend is the classic hidden liability in this sector.
+- Ask about revenue-share and licensed relationships behind the P&L: arcade games placed by a third-party operator (contract terms, revenue split, termination rights), and any franchised or licensed venue/room concepts including transfer fees, franchisor consent, and rights of first refusal — outside parties can control more of the revenue than the financials show.
+- Where alcohol is served (bowling, FEC lounges), ask the liquor license type and its transfer process; and confirm liability waivers have had legal review within the last two years with a verifiable collection and storage system — an unenforceable or missing waiver is an unpriced liability.
+
 # 13. ADVERTISING, MEDIA, AND EVENTS
 
 ## Sub-industries covered:
@@ -4025,6 +4181,19 @@ Why it matters: Non-conforming billboard locations are often the most valuable a
 ---
 
 ---
+
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask for the forward booking pipeline for the NEXT 12-18 months — signed contracts, event dates, and dollar values — separately from trailing revenue, because event, venue, and studio books turn over constantly and a thin upcoming calendar is invisible in last year's numbers.
+- Ask the renewal status of every recurring client arrangement — corporate event retainers, annual owned events, PR retainers, OOH advertiser contracts — including any client who has signaled non-renewal, gone to RFP, or is renewing at reduced scope; a lost anchor retainer surfaces in diligence long before it surfaces in the P&L.
+- Ask the total deposit liability held for future events and where those funds sit (segregated vs operating account), plus whether any large booking carries a cancellation right triggered by a change of ownership — deposits are unearned obligations the buyer inherits, not just cash on hand.
+- Ask which client and media relationships are personal to the owner — clients who book the individual rather than the brand, journalist and producer contacts held only by the principal, an Instagram or portfolio following on the owner's personal account — and whether staff who hold client relationships are under non-solicitation agreements; key-person dependency is the #1 risk across this entire group.
+- For venues: ask the lease term and renewal options (or ownership status), assembly-occupancy zoning, licensed capacity, noise and hours-of-operation restrictions, neighbour complaint history, and the transferability of the liquor licence with the provincial or state liquor authority — any one of these can cap the event calendar or block the transfer outright.
+- For out-of-home inventory: ask, structure by structure, permit status, which faces are legal non-conforming (grandfathered under old zoning), the ground-lease term and renewal date for each location, and any outstanding municipal orders — a grandfathered billboard that cannot be rebuilt is both the most valuable asset and a standing removal risk.
+- Ask about every exclusive or preferred arrangement — exclusive caterer and bar-service deals at venues, preferred-supplier pricing, exclusive venue lists, referral fees and commissions received — whether each is documented in writing and whether it survives a change of ownership.
+- Ask concentration on both sides of the book: the largest client, advertiser, or single annual event as a share of revenue, and any single venue, vendor, or media partner the business could not operate without.
+- For print and digital media: ask forward advertiser commitments and the subscription trend, not just trailing revenue — how many contracted advertisers are confirmed for the next cycle, which have cut spend, and whether third-party audited audience numbers (BPA/AAM) support the rate card; the decline trajectory is routinely understated by sellers.
+- Ask who owns the creative IP — copyright in client work and archives, mastheads, branded or owned event properties — and whether every contractor signed an IP assignment, because unclear IP ownership buried in client contracts is a recurring diligence surprise.
 
 # 14. TECHNOLOGY AND ONLINE BUSINESS
 
@@ -4461,3 +4630,16 @@ Why it matters: Product safety certifications (UL, CSA, FCC) are issued to the c
 
 *Total sub-industries: 70+*
 *Jurisdictions covered: Ontario (primary), British Columbia, Alberta, United States (federal + California, Florida, Texas, New York, and other key states)*
+
+
+## MANDATORY PROBES — ask each one, or record an explicit deferral. These are not optional; a missed probe here is a missed deal risk.
+- Ask the renewal status of every material contract for the NEXT 12 months — enterprise SaaS accounts, agency retainers, maintenance and support contracts, distribution agreements — and specifically whether any customer has signaled non-renewal, a downgrade, or is running an RFP; churn that has already been telegraphed is invisible in trailing MRR.
+- Ask for churned MRR and logo churn over the trailing 12 months separately from new MRR, plus Net Revenue Retention — sellers routinely quote gross growth, and the gap between gross and net is where buyer trust collapses in diligence.
+- Ask which contracts contain change-of-control, assignment, or consent clauses — enterprise customer agreements, registrar and reseller agreements, 3PL and contract-manufacturing agreements, exclusive distribution deals — because a single required third-party consent can stall or kill a closing.
+- Ask about platform account health and transferability wherever a platform sits between the business and its revenue: Amazon seller account standing and any policy strikes (the account itself cannot be transferred), App Store and Google Play warnings or rejections, Google algorithm-update history for content sites, and ad-account status — a healthy revenue line can sit one policy decision from zero.
+- Ask whether every contractor who touched the codebase, content, or designs signed an IP assignment agreement, and whether an open-source licence review (GPL/AGPL) has been done — missing assignments and copyleft components are the most common IP surprises in technology diligence.
+- Ask the bus factor directly: who can deploy, maintain, and access admin credentials for the product and infrastructure, whether the codebase is documented well enough for a new developer to take over, and whether key technical staff have written employment agreements — a sole irreplaceable developer is a transferability blocker, not a detail.
+- Ask the security and privacy compliance history explicitly: any breaches or incidents (disclosed or not), current SOC 2 / ISO 27001 status and renewal dates, and verified — not assumed — compliance with PIPEDA and Quebec Law 25 in Canada, GDPR for any EU users, and CCPA and other state laws in the US; the buyer's technical audit will find whatever the seller hasn't said.
+- Ask the trajectory of infrastructure and platform costs and any pending forced changes — cloud spend growth versus revenue growth, deprecations or pricing changes in critical third-party APIs, platform migrations underway — because hidden cost inflation and forced rewrites are liabilities that trailing margins conceal.
+- For e-commerce and hardware: ask about single-source suppliers and contract manufacturers, outstanding minimum-order or purchase commitments, and whether safety certifications (UL, CSA, FCC, CE) are current and held in the company's name, including what re-certification a new owner would trigger — a lapsed or non-transferable certification stops sales entirely.
+- Ask for leading indicators, not just trailing revenue: last-90-day traffic versus the TTM average and AI Overviews / zero-click impact for content sites, the signed-but-not-started project pipeline for agencies and dev shops, and supply- and demand-side churn for marketplaces — the forward book is where a concealed decline shows first.

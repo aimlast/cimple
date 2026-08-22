@@ -636,6 +636,15 @@ export function buildSectionCoverage(
 
     const populatedCount = fields.filter((f) => f.value !== null).length;
     const totalCount = fields.length;
+    // Richness weighting: the mapped fields are alternatives, not a quota —
+    // one substantial value (a full lease description with term, rate, and
+    // options) covers its section better than three stubs. A rich field
+    // counts double so exhaustively-answered sections stop reading "partial"
+    // (QA-observed: three fully-detailed leases stuck at partial all run).
+    const effectiveCount = fields.reduce(
+      (n, f) => n + (f.value === null ? 0 : f.value.length >= 120 ? 2 : 1),
+      0,
+    );
 
     const coreFields = SECTION_CORE_FIELDS[section.key];
     const coreMissing =
@@ -645,7 +654,7 @@ export function buildSectionCoverage(
     let status: SectionCoverage["status"];
     if (totalCount === 0 || populatedCount === 0 || coreMissing) {
       status = "missing";
-    } else if (populatedCount >= totalCount * 0.6) {
+    } else if (effectiveCount >= totalCount * 0.6) {
       status = "well_covered";
     } else {
       status = "partial";
