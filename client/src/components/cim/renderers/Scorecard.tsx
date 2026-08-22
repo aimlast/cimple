@@ -6,6 +6,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface ScorecardItem {
   label: string;
@@ -47,7 +48,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
 
   if (items.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   return (
@@ -70,7 +71,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
                 <div className="flex-1 min-w-0">
                   <p className="text-sm font-medium text-foreground leading-snug">{item.label}</p>
                   {item.description && (
-                    <p className="text-2xs text-muted-foreground mt-0.5">{item.description}</p>
+                    <p className="text-2xs text-muted-foreground mt-0.5">{renderInline(item.description, `d${i}`)}</p>
                   )}
                 </div>
                 <span className={cn("text-sm font-semibold tabular-nums flex-shrink-0", scoreTextColor(pct))}>

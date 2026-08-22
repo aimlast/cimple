@@ -12,6 +12,9 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import {
+  Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
+} from "@/components/ui/select";
+import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
@@ -104,6 +107,18 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
       setMemberToRemove(null);
     },
     onError: (e: Error) => toast({ title: "Couldn't remove member", description: e.message, variant: "destructive" }),
+  });
+
+  // Roles were fixed at invite time — the server validates the new role
+  // against the member's team and carries its permissions across.
+  const changeRole = useMutation({
+    mutationFn: ({ id, role }: { id: string; role: string }) =>
+      requestJson<DealMember>("PATCH", `/api/members/${id}`, { role }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
+      toast({ title: "Role updated" });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't change role", description: e.message, variant: "destructive" }),
   });
 
   const toggleNotification = useMutation({
@@ -272,6 +287,7 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
             {teamMembers.map((member) => {
               const roleConfig = (roles as any)[member.role] as { label: string; permissions: string[] } | undefined;
               const isToggling = toggleNotification.isPending && toggleNotification.variables?.id === member.id;
+              const isChangingRole = changeRole.isPending && changeRole.variables?.id === member.id;
               return (
                 <div
                   key={member.id}
@@ -280,9 +296,29 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
                       <p className="text-xs font-medium truncate">{member.name || member.email}</p>
-                      <Badge variant="outline" className="text-[9px] h-4 px-1 shrink-0">
-                        {roleConfig?.label || member.role}
-                      </Badge>
+                      {/* Inline role editor — styled as the badge it replaces */}
+                      <Select
+                        value={member.role}
+                        disabled={isChangingRole}
+                        onValueChange={(role) => {
+                          if (role !== member.role) changeRole.mutate({ id: member.id, role });
+                        }}
+                      >
+                        <SelectTrigger
+                          className="h-4 w-auto shrink-0 gap-0.5 rounded-md border-border px-1 py-0 text-[9px] font-semibold bg-transparent [&>svg]:h-2.5 [&>svg]:w-2.5"
+                          aria-label={`Role for ${member.name || member.email}`}
+                          title="Change role"
+                        >
+                          <SelectValue>{roleConfig?.label || member.role}</SelectValue>
+                        </SelectTrigger>
+                        <SelectContent>
+                          {Object.entries(roles).map(([key, val]) => (
+                            <SelectItem key={key} value={key} className="text-xs">
+                              {val.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
                     <div className="flex items-center gap-2 mt-0.5">
                       <span className="text-[10px] text-muted-foreground truncate flex items-center gap-0.5">

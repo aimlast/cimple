@@ -29,6 +29,7 @@ import { ScorecardRenderer }          from "./renderers/Scorecard";
 import { CoverPageRenderer }          from "./renderers/CoverPage";
 import { DividerRenderer }            from "./renderers/Divider";
 import { WaterfallChartRenderer }     from "./renderers/WaterfallChart";
+import { ProseFallback, sanitizeLayoutData } from "./richText";
 
 interface CimSectionRendererProps {
   section: CimSection;
@@ -40,7 +41,12 @@ interface CimSectionRendererProps {
 export function CimSectionRenderer({ section, branding, brokerMode = false }: CimSectionRendererProps) {
   if (!section.isVisible && !brokerMode) return null;
 
-  const layoutData = section.layoutData as any || {};
+  // Prose fields keep their markup (renderers run them through renderInline /
+  // renderProse); every other string is flattened so a chart label or metric
+  // value never shows a literal "**", "[[dd]]" or "[DD]".
+  const layoutData = sanitizeLayoutData((section.layoutData as any) || {});
+  // Broker edits win over the AI draft. Prose renderers also prefer this over
+  // layoutData.body — see editableText.ts for the rule.
   const content = section.brokerEditedContent || section.aiDraftContent || "";
 
   const rendererProps = { layoutData, content, branding, section };
@@ -115,7 +121,7 @@ function UnknownLayoutFallback({ section, content }: { section: CimSection; cont
   return (
     <div className="rounded-lg border border-border bg-muted/30 p-5">
       {content ? (
-        <p className="text-sm leading-relaxed whitespace-pre-wrap max-w-prose">{content}</p>
+        <ProseFallback content={content} />
       ) : (
         <pre className="text-xs text-muted-foreground overflow-auto">
           {JSON.stringify(section.layoutData, null, 2)}

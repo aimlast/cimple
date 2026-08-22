@@ -250,18 +250,84 @@ export interface NotifyOptions {
   specificMemberIds?: string[];
 }
 
+export interface NotifyResult {
+  /** How many people were addressed (members, or the seller-invite fallback). */
+  recipients: number;
+  /** How many emails the provider accepted (0 when RESEND_API_KEY is absent). */
+  emailsSent: number;
+  /** Where the recipients came from. */
+  via: "members" | "seller_invite" | "none";
+}
+
+const NO_RECIPIENTS: NotifyResult = { recipients: 0, emailsSent: 0, via: "none" };
+
+/**
+ * Seller-facing events must reach the seller even when nobody on the deal
+ * team has been added with a seller role yet — the invited seller is a
+ * sellerInvites row, not a dealMembers row, until the broker builds the
+ * team. Email the deal's seller invite(s) directly and record the
+ * notification against the invite so the broker's log shows it went out.
+ */
+async function notifySellerInviteFallback(
+  dealId: string,
+  eventType: string,
+  opts: NotifyOptions,
+): Promise<NotifyResult> {
+  const invites = await storage.getSellerInvitesByDealId(dealId);
+  const now = Date.now();
+  const seen = new Set<string>();
+  const targets = invites.filter((inv) => {
+    const email = inv.sellerEmail?.trim().toLowerCase();
+    if (!email || seen.has(email)) return false;
+    // Only addresses the broker actually sent an invite to — a pending row
+    // (typed but never sent, or later corrected) must never receive mail.
+    if (inv.status !== "sent" && inv.status !== "accepted") return false;
+    if (inv.expiresAt && inv.expiresAt.getTime() < now && inv.status !== "accepted") return false;
+    seen.add(email);
+    return true;
+  });
+  if (targets.length === 0) return NO_RECIPIENTS;
+
+  let emailsSent = 0;
+  const html = buildEmailHtml({ ...opts });
+  for (const inv of targets) {
+    const email = inv.sellerEmail!.trim();
+    const emailSent = await sendEmail(email, opts.title, html);
+    if (emailSent) emailsSent++;
+    await storage.createNotification({
+      dealId,
+      recipientId: inv.id,
+      recipientEmail: email,
+      recipientPhone: null,
+      type: eventType,
+      title: opts.title,
+      body: opts.body,
+      actionUrl: opts.actionUrl || null,
+      metadata: { ...(opts.metadata || {}), fallbackRecipient: "seller_invite", sellerInviteId: inv.id },
+      emailSent,
+      emailSentAt: emailSent ? new Date() : null,
+      smsSent: false,
+      smsSentAt: null,
+    });
+  }
+  console.log(`[notify] ${eventType}: no seller team member — emailed ${targets.length} seller invite(s) instead`);
+  return { recipients: targets.length, emailsSent, via: "seller_invite" };
+}
+
 /**
  * Send notifications for a deal event.
  *
  * Automatically routes to the right team members based on NOTIFICATION_ROUTING.
  * Sends email and/or SMS based on each member's preferences.
+ * Resolves with who was reached so callers can tell the broker when nobody was.
  */
 export async function notify(
   dealId: string,
   eventType: string,
   opts: NotifyOptions,
-): Promise<void> {
+): Promise<NotifyResult> {
   try {
+    let sellerRouted = false;
     let recipients: DealMember[] = [];
 
     if (opts.specificMemberIds?.length) {
@@ -273,8 +339,9 @@ export async function notify(
       const routing = NOTIFICATION_ROUTING[eventType];
       if (!routing) {
         console.warn(`[notify] No routing for event type: ${eventType}`);
-        return;
+        return NO_RECIPIENTS;
       }
+      sellerRouted = routing.teams.includes("seller");
 
       const allMembers = await storage.getDealMembers(dealId);
       recipients = allMembers.filter(m => {
@@ -286,8 +353,12 @@ export async function notify(
     }
 
     if (recipients.length === 0) {
+      if (sellerRouted) {
+        const fallback = await notifySellerInviteFallback(dealId, eventType, opts);
+        if (fallback.recipients > 0) return fallback;
+      }
       console.log(`[notify] No recipients for ${eventType} on deal ${dealId}`);
-      return;
+      return NO_RECIPIENTS;
     }
 
     // Broker user lookups are shared across recipients of this dispatch.
@@ -295,7 +366,7 @@ export async function notify(
 
     // Send in parallel
     const results = await Promise.allSettled(
-      recipients.map(async (member) => {
+      recipients.map(async (member): Promise<boolean> => {
         let emailSent = false;
         let smsSent = false;
         let mutedByPreference = false;
@@ -335,12 +406,16 @@ export async function notify(
           smsSent,
           smsSentAt: smsSent ? new Date() : null,
         });
+        return emailSent;
       }),
     );
 
     const sent = results.filter(r => r.status === "fulfilled").length;
+    const emailsSent = results.filter(r => r.status === "fulfilled" && r.value === true).length;
     console.log(`[notify] ${eventType}: ${sent}/${recipients.length} recipients notified`);
+    return { recipients: recipients.length, emailsSent, via: "members" };
   } catch (err) {
     console.error(`[notify] Error dispatching ${eventType}:`, err);
+    return NO_RECIPIENTS;
   }
 }

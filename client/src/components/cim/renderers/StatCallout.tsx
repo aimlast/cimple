@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface SecondaryStat {
   label: string;
@@ -34,7 +35,7 @@ export function StatCalloutRenderer({ layoutData, content, branding, section }: 
   const accentHex = data.accentColor || branding.accentHex || branding.primaryHex || "#2dc88e";
 
   if (!data.primaryValue) {
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   return (
@@ -78,7 +79,7 @@ export function StatCalloutRenderer({ layoutData, content, branding, section }: 
         {/* Description */}
         {data.description && (
           <p className="text-sm text-muted-foreground mt-5 max-w-lg mx-auto leading-relaxed">
-            {data.description}
+            {renderInline(data.description, "desc")}
           </p>
         )}
       </div>

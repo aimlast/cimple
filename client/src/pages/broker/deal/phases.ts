@@ -62,7 +62,10 @@ export const PHASES = [
     short: "Phase 4",
     intro: "The AI designs the visual CIM; you approve the layout, then the seller signs off.",
     items: (deal: Deal): PhaseItem[] => [
-      { label: "Design generated", actor: "auto", done: !!deal.cimDesignData },
+      // The layout engine stamps cimLayoutGeneratedAt; cimDesignData is the
+      // legacy field. Phase4Center checks the same pair — keep them in sync
+      // or the stepper reads "2/3" with every row ticked.
+      { label: "Design generated", actor: "auto", done: !!deal.cimLayoutGeneratedAt || !!deal.cimDesignData },
       { label: "Broker approved", actor: "broker", done: !!deal.designApprovedByBroker },
       { label: "Seller approved", actor: "seller", done: !!deal.designApprovedBySeller },
     ],

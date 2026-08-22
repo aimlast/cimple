@@ -29,20 +29,20 @@ export function Screen1Heart({ onReady }: Screen1Props) {
   const [step, setStep] = useState(0);
   useEffect(() => {
     if (wordsVisible >= words.length && step === 0) {
-      // Headline done → pause, then show supporting text
-      const t = setTimeout(() => setStep(1), 400);
+      // Headline done → short beat, then show supporting text
+      const t = setTimeout(() => setStep(1), 150);
       return () => clearTimeout(t);
     }
     if (step === 1) {
-      const t = setTimeout(() => setStep(2), 600);
+      const t = setTimeout(() => setStep(2), 200);
       return () => clearTimeout(t);
     }
     if (step === 2) {
-      const t = setTimeout(() => setStep(3), 500);
+      const t = setTimeout(() => setStep(3), 200);
       return () => clearTimeout(t);
     }
     if (step === 3) {
-      const t = setTimeout(() => onReady(), 300);
+      const t = setTimeout(() => onReady(), 150);
       return () => clearTimeout(t);
     }
   }, [wordsVisible, step, words.length, onReady]);
@@ -50,10 +50,17 @@ export function Screen1Heart({ onReady }: Screen1Props) {
   return (
     <div className="flex flex-col items-center justify-center h-full px-6 max-w-2xl mx-auto text-center">
       {/* Headline — word by word */}
-      <h1 className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight">
+      {/* Each word is its own inline-block span for the animation, which a
+          screen reader runs together as one word — read the full headline
+          from the heading itself and hide the animated fragments. */}
+      <h1
+        className="text-3xl sm:text-4xl md:text-5xl font-bold tracking-tight leading-tight"
+        aria-label={headline}
+      >
         {words.map((word, i) => (
           <motion.span
             key={i}
+            aria-hidden="true"
             className="inline-block mr-[0.3em]"
             initial={{ opacity: 0, y: 8 }}
             animate={i < wordsVisible ? { opacity: 1, y: 0 } : {}}

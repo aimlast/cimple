@@ -7,6 +7,8 @@ import { Component, type ReactNode } from "react";
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline, renderProse } from "../richText";
+import { findProseColumnIndex } from "../editableText";
 
 /** Error boundary that catches render crashes in sub-renderers */
 class ColumnErrorBoundary extends Component<
@@ -118,7 +120,7 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
           {lines.map((line, i) => (
             <li key={i} className="flex items-start gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-teal flex-shrink-0 mt-1.5" />
-              <span className="text-sm text-foreground/80 leading-relaxed">{line.replace(/^[-•*]\s*/, "")}</span>
+              <span className="text-sm text-foreground/80 leading-relaxed">{renderInline(line.replace(/^\s*[-•*·–]\s*/, ""), `li${i}`)}</span>
             </li>
           ))}
         </ul>
@@ -138,8 +140,8 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
         <div className="space-y-2">
           {pairs.map((pair, i) => (
             <div key={i} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0">
-              <span className="text-xs text-muted-foreground">{pair.label}</span>
-              <span className="text-sm font-semibold tabular-nums text-foreground">{pair.value}</span>
+              <span className="text-xs text-muted-foreground">{renderInline(pair.label, `ml${i}`)}</span>
+              <span className="text-sm font-semibold tabular-nums text-foreground">{renderInline(pair.value, `mv${i}`)}</span>
             </div>
           ))}
         </div>
@@ -155,10 +157,8 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
           {col.title}
         </p>
       )}
-      <div className="space-y-2">
-        {textContent.split("\n\n").filter(Boolean).map((para, i) => (
-          <p key={i} className="text-sm text-foreground/80 leading-relaxed">{para}</p>
-        ))}
+      <div className="text-foreground/80">
+        {renderProse(textContent, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
       </div>
     </div>
   );
@@ -169,11 +169,20 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
 
   if (!data.left && !data.right) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
-  const left = data.left || { content: "", layoutType: "prose" };
-  const right = data.right || { content: "", layoutType: "prose" };
+  let left = data.left || { content: "", layoutType: "prose" };
+  let right = data.right || { content: "", layoutType: "prose" };
+
+  // A broker edit replaces the narrative column (see editableText.ts). If
+  // neither column is prose, the edit is shown above the columns so it is
+  // never silently dropped.
+  const edited = section.brokerEditedContent || "";
+  const proseIdx = edited ? findProseColumnIndex(data as Record<string, unknown>) : -1;
+  if (edited && proseIdx === 0) left = { ...left, content: edited };
+  if (edited && proseIdx === 1) right = { ...right, content: edited };
+  const editedAbove = edited && proseIdx === -1;
 
   return (
     <div>
@@ -181,6 +190,11 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
         <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
           {data.title}
         </h3>
+      )}
+      {editedAbove && (
+        <div className="mb-6 max-w-prose text-foreground/80">
+          {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
+        </div>
       )}
       <div className="grid grid-cols-2 gap-8">
         <div>

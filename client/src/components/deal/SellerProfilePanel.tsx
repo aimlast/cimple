@@ -383,6 +383,12 @@ export function SellerProfilePanel({ dealId }: SellerProfilePanelProps) {
             const value =
               profile[field.key as keyof SellerCommunicationProfile] as string;
             const isEditing = editingField === field.key;
+            // The AI writes free text ("direct", "very high"); the option
+            // list is Title Case. Match case-insensitively so the Select
+            // shows the current trait instead of rendering blank.
+            const selected = field.options.find(
+              (opt) => opt.toLowerCase() === String(value ?? "").trim().toLowerCase(),
+            );
 
             if (isEditing) {
               return (
@@ -391,13 +397,17 @@ export function SellerProfilePanel({ dealId }: SellerProfilePanelProps) {
                   className="inline-flex items-center gap-1.5"
                 >
                   <Select
-                    defaultValue={value}
+                    value={selected}
+                    defaultOpen
                     onValueChange={(val) => {
                       patch.mutate({ [field.key]: val });
                     }}
                   >
-                    <SelectTrigger className="h-7 text-xs w-auto min-w-[120px] bg-muted border-border">
-                      <SelectValue />
+                    <SelectTrigger
+                      className="h-7 text-xs w-auto min-w-[120px] bg-muted border-border"
+                      aria-label={`${field.label}`}
+                    >
+                      <SelectValue placeholder={value || `Choose ${field.label.toLowerCase()}`} />
                     </SelectTrigger>
                     <SelectContent>
                       {field.options.map((opt) => (

@@ -23,7 +23,7 @@ const GOOD_CHAIN = [
   "Buyers already understand the business",
   "Better buyer vetting by your broker",
   "More qualified, serious buyers",
-  "Less questions, shorter due diligence",
+  "Fewer questions, shorter due diligence",
   "Stronger offers",
   "Faster close",
 ];
@@ -43,7 +43,7 @@ export function Screen3Comparison({ onReady }: Screen3Props) {
         }
         return prev + 1;
       });
-    }, 350);
+    }, 150);
     return () => clearInterval(interval);
   }, []);
 
@@ -59,9 +59,9 @@ export function Screen3Comparison({ onReady }: Screen3Props) {
             }
             return prev + 1;
           });
-        }, 350);
+        }, 150);
         return () => clearInterval(interval);
-      }, 300);
+      }, 150);
       return () => clearTimeout(t);
     }
   }, [badVisible]);
@@ -69,8 +69,8 @@ export function Screen3Comparison({ onReady }: Screen3Props) {
   // Glow + ready after good chain done
   useEffect(() => {
     if (goodVisible >= GOOD_CHAIN.length) {
-      const t1 = setTimeout(() => setShowGlow(true), 200);
-      const t2 = setTimeout(() => onReady(), 500);
+      const t1 = setTimeout(() => setShowGlow(true), 150);
+      const t2 = setTimeout(() => onReady(), 300);
       return () => {
         clearTimeout(t1);
         clearTimeout(t2);

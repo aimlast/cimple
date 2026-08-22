@@ -80,28 +80,27 @@ export function AppSidebar() {
   // Start collapsed
   useEffect(() => { setOpenRef.current(false); }, []);
 
-  // Attach native DOM hover listeners directly on the sidebar element.
+  // Hover-to-expand. These are passed as React props on <Sidebar> rather
+  // than native listeners bound once on mount: below the md breakpoint the
+  // desktop sidebar element does not exist (a closed Sheet renders nothing),
+  // so a one-time querySelector found no element when the app first mounted
+  // narrow and hover stayed dead after the window was widened. Props follow
+  // the element through every mount/unmount. On mobile the Sheet swallows
+  // them (it is not a DOM node), which is the behaviour we want.
+  const onHoverStart = () => {
+    if (cooldownRef.current) return;
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
+    expandTimer.current = setTimeout(() => setOpenRef.current(true), 150);
+  };
+  const onHoverEnd = () => {
+    if (expandTimer.current) clearTimeout(expandTimer.current);
+    collapseTimer.current = setTimeout(() => setOpenRef.current(false), 200);
+  };
 
-  useEffect(() => {
-    const el = document.querySelector('[data-slot="sidebar"]') as HTMLElement | null;
-    if (!el) return;
-
-    const onEnter = () => {
-      if (cooldownRef.current) return;
-      if (collapseTimer.current) clearTimeout(collapseTimer.current);
-      expandTimer.current = setTimeout(() => setOpenRef.current(true), 150);
-    };
-    const onLeave = () => {
-      if (expandTimer.current) clearTimeout(expandTimer.current);
-      collapseTimer.current = setTimeout(() => setOpenRef.current(false), 200);
-    };
-
-    el.addEventListener("mouseenter", onEnter);
-    el.addEventListener("mouseleave", onLeave);
-    return () => {
-      el.removeEventListener("mouseenter", onEnter);
-      el.removeEventListener("mouseleave", onLeave);
-    };
+  // Drop any pending expand/collapse timer on unmount.
+  useEffect(() => () => {
+    if (expandTimer.current) clearTimeout(expandTimer.current);
+    if (collapseTimer.current) clearTimeout(collapseTimer.current);
   }, []);
 
   const isActive = (href: string) => isNavActive(href, location);
@@ -110,6 +109,8 @@ export function AppSidebar() {
     <Sidebar
       className="border-r border-sidebar-border bg-sidebar"
       collapsible="icon"
+      onMouseEnter={onHoverStart}
+      onMouseLeave={onHoverEnd}
     >
       {/* ── Logo ── */}
       <SidebarHeader className="border-b border-sidebar-border px-3 py-3 group-data-[collapsible=icon]:px-0 group-data-[collapsible=icon]:py-3">

@@ -31,12 +31,12 @@ export function Screen4Tutorial({ onReady }: Screen4Props) {
   const [visible, setVisible] = useState(0);
 
   useEffect(() => {
-    // Stagger tips in — start after headline lands (0.5s)
+    // Stagger tips in (150ms apart) — start after headline lands (0.3s)
     const timers = TIPS.map((_, i) =>
-      setTimeout(() => setVisible((prev) => prev + 1), 500 + i * 500),
+      setTimeout(() => setVisible((prev) => prev + 1), 300 + i * 150),
     );
     // Fire ready after all tips are visible
-    const readyTimer = setTimeout(() => onReady(), 500 + TIPS.length * 500 + 300);
+    const readyTimer = setTimeout(() => onReady(), 300 + TIPS.length * 150 + 200);
     return () => {
       timers.forEach(clearTimeout);
       clearTimeout(readyTimer);

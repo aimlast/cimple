@@ -16,6 +16,7 @@ import { cn } from "@/lib/utils";
 import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback } from "../richText";
 
 interface PieDataPoint {
   name: string;
@@ -106,7 +107,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
   if (rawData.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const primaryColor = branding.primaryHex || "#2dc88e";

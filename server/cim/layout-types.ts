@@ -50,7 +50,8 @@ export interface CoverPageData {
   location?: string;
   askingPrice?: string;
   revenue?: string;
-  ebitda?: string;
+  ebitda?: string;          // the earnings figure shown on the cover
+  earningsLabel?: "SDE" | "EBITDA" | "Adjusted EBITDA" | string; // what `ebitda` actually is — must match the knowledge base
   preparedBy?: string;      // broker firm name
   preparedByLogo?: string;  // broker logo URL
   businessLogo?: string;

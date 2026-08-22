@@ -16,6 +16,7 @@ import {
 import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback } from "../richText";
 
 interface SeriesConfig {
   key: string;
@@ -81,7 +82,7 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
 
   if (chartData.length === 0 || series.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const primaryColor = branding.primaryHex || "#2dc88e";

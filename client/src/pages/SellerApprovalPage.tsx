@@ -32,6 +32,10 @@ export default function SellerApprovalPage() {
   const { token } = useParams<{ token: string }>();
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState("");
+  // Send-back is two-step: reveal an optional note first. The server relays
+  // `revision` to the broker as the seller's note on a send-back.
+  const [sendingBack, setSendingBack] = useState(false);
+  const [note, setNote] = useState("");
   const [done, setDone] = useState<"approved" | "rejected" | null>(null);
   // Surfaced inline under the action buttons when the submit fails — the
   // seller must always know whether their approval was recorded.
@@ -188,45 +192,94 @@ export default function SellerApprovalPage() {
             </div>
 
             {/* Actions */}
-            <div className="flex flex-wrap gap-2 pt-2">
-              <Button
-                className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 gap-1.5"
-                onClick={() => submit.mutate({
-                  approved: true,
-                  rev: editing ? revision : undefined,
-                })}
-                disabled={submit.isPending || (editing && !revision.trim())}
-              >
-                {submit.isPending ? (
-                  <Loader2 className="h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="h-4 w-4" />
-                )}
-                {editing ? "Approve revised answer" : "Approve & publish"}
-              </Button>
+            {sendingBack ? (
+              <div className="space-y-2 pt-2">
+                <label htmlFor="send-back-note" className="text-xs text-muted-foreground">
+                  What should your broker change? (optional)
+                </label>
+                <Textarea
+                  id="send-back-note"
+                  value={note}
+                  onChange={(e) => setNote(e.target.value)}
+                  className="text-sm min-h-[80px] resize-none"
+                  placeholder="e.g. That revenue figure is last year's — please update it."
+                  autoFocus
+                />
+                <div className="flex flex-wrap gap-2">
+                  <Button
+                    variant="outline"
+                    className="flex-1 gap-1.5 text-red-400 hover:text-red-500 hover:border-red-500/30"
+                    onClick={() => submit.mutate({ approved: false, rev: note.trim() || undefined })}
+                    disabled={submit.isPending}
+                    data-testid="button-confirm-send-back"
+                  >
+                    {submit.isPending ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="h-4 w-4" />
+                    )}
+                    Send back to broker
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setSendingBack(false); setNote(""); }}
+                    disabled={submit.isPending}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-wrap gap-2 pt-2">
+                <Button
+                  className="flex-1 bg-emerald-600 text-white hover:bg-emerald-700 gap-1.5"
+                  onClick={() => submit.mutate({
+                    approved: true,
+                    rev: editing ? revision : undefined,
+                  })}
+                  disabled={submit.isPending || (editing && !revision.trim())}
+                >
+                  {submit.isPending ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="h-4 w-4" />
+                  )}
+                  {editing ? "Approve revised answer" : "Approve & publish"}
+                </Button>
 
-              {!editing && (
+                {editing ? (
+                  <Button
+                    variant="ghost"
+                    onClick={() => { setEditing(false); setRevision(""); }}
+                    disabled={submit.isPending}
+                    data-testid="button-cancel-edit"
+                  >
+                    Cancel
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    className="gap-1.5"
+                    onClick={() => {
+                      setEditing(true);
+                      setRevision(draftAnswer);
+                    }}
+                  >
+                    <Edit3 className="h-4 w-4" /> Edit
+                  </Button>
+                )}
+
                 <Button
                   variant="outline"
-                  className="gap-1.5"
-                  onClick={() => {
-                    setEditing(true);
-                    setRevision(draftAnswer);
-                  }}
+                  className="gap-1.5 text-red-400 hover:text-red-500 hover:border-red-500/30"
+                  onClick={() => setSendingBack(true)}
+                  disabled={submit.isPending}
+                  data-testid="button-send-back"
                 >
-                  <Edit3 className="h-4 w-4" /> Edit
+                  <XCircle className="h-4 w-4" /> Send back
                 </Button>
-              )}
-
-              <Button
-                variant="outline"
-                className="gap-1.5 text-red-400 hover:text-red-500 hover:border-red-500/30"
-                onClick={() => submit.mutate({ approved: false })}
-                disabled={submit.isPending}
-              >
-                <XCircle className="h-4 w-4" /> Send back
-              </Button>
-            </div>
+              </div>
+            )}
 
             {submitError && (
               <p className="text-xs text-red-400 leading-relaxed" role="alert">

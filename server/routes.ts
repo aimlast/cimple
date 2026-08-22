@@ -6,8 +6,9 @@ import fs from "fs";
 import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { startOrResumeSession, processTurn, getSessionHistory } from "./interview";
-import { generateCimLayout } from "./cim/layout-engine.js";
+import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf } from "./interview";
+import { generateCimLayout, regenerateCimSection } from "./cim/layout-engine.js";
+import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
 import { extractTextFromFile } from "./documents/parser.js";
@@ -16,9 +17,11 @@ import { notify, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
-import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal } from "./broker-auth/routes.js";
+import { removeDocumentFields, typedNumericValues } from "./interview/info-merger";
+import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
+import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement } from "@shared/schema";
 
 const anthropic = new Anthropic({
@@ -187,6 +190,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
   const ownsDeal = async (req: Request, dealId: string | null | undefined): Promise<boolean> =>
     !!dealId && !!(await getOwnedDeal(dealId, req.session.brokerId));
 
+  // Product rule: unresolved CRITICAL discrepancies block every CIM-producing
+  // step (content, layout, publish). "ask_seller" counts as handled.
+  const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
+  const blockingCriticalDiscrepancies = async (dealId: string) =>
+    (await storage.getDiscrepanciesByDeal(dealId)).filter(
+      (d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status),
+    );
+  const discrepancyBlockResponse = (res: Response, open: { id: string; field: string }[], verb: string) =>
+    res.status(409).json({
+      error: `${open.length} critical discrepanc${open.length === 1 ? "y" : "ies"} must be resolved before ${verb}`,
+      blockingDiscrepancies: open.map((d) => ({ id: d.id, field: d.field })),
+    });
+
   // Broker's configured default buyer-link expiry (Settings → Deal Defaults),
   // falling back to the 30-day security default. Previously saved but never read.
   const brokerLinkExpiry = async (brokerId: string | undefined): Promise<Date> => {
@@ -247,7 +263,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const q = String(req.query.q || "");
       if (q.length < 2) return res.json({ results: [] });
-      const users = await storage.searchBuyerUsers(q);
+      const users = await storage.searchBuyerUsers(q, req.session.brokerId!);
       res.json({
         results: users.map(u => ({
           id: u.id,
@@ -466,7 +482,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           background: null,
           liquidFunds: body.liquidFunds ?? null,
           hasProofOfFunds: body.hasProofOfFunds ?? false,
-          profileCompletionPct: 0,
+          profileCompletionPct: 0, // placeholder — storage.createBuyerUser derives the real value
           emailVerified: false,
           source: "broker_invited",
           invitedByBroker: body.brokerId,
@@ -630,7 +646,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               background: null,
               liquidFunds,
               hasProofOfFunds,
-              profileCompletionPct: 0,
+              profileCompletionPct: 0, // placeholder — storage.createBuyerUser derives the real value
               emailVerified: false,
               source: "broker_invited",
               invitedByBroker: body.brokerId,
@@ -860,17 +876,41 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const brokerCompany = (branding as any)?.companyName || "your broker";
 
       const extracted: any = (deal as any).extractedInfo || {};
+      // PRE-NDA outreach must be blind-safe: no business name, no city, no
+      // exact figures (observed leak: "Harbourline Dental Group… Kitchener…
+      // $2M revenue, $628K SDE" in a cold email). Bands + region only.
+      const band = (raw: unknown): string | null => {
+        const n = typeof raw === "string" ? typedNumericValues(raw).find((t) => t.kind === "currency")?.value : null;
+        if (!n) return null;
+        if (n < 500_000) return "under $500K";
+        if (n < 1_000_000) return "$500K–$1M";
+        if (n < 2_000_000) return "$1M–$2M";
+        if (n < 5_000_000) return "$2M–$5M";
+        if (n < 10_000_000) return "$5M–$10M";
+        return "$10M+";
+      };
+      const regionOf = (loc: unknown): string | null => {
+        const text = typeof loc === "string" ? loc : loc && typeof loc === "object" ? Object.values(loc as Record<string, unknown>).filter((v) => typeof v === "string").join(" ") : "";
+        const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming";
+        const m = new RegExp("\\b(Ontario|Quebec|British Columbia|Alberta|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Newfoundland|Prince Edward Island|" + US_STATES + "|\\bON\\b|\\bQC\\b|\\bBC\\b|\\bAB\\b|\\bMB\\b|\\bSK\\b|\\bNS\\b|\\bNB\\b|\\bNL\\b|\\bPE\\b)").exec(text);
+        const map: Record<string, string> = { ON: "Ontario", QC: "Quebec", BC: "British Columbia", AB: "Alberta", MB: "Manitoba", SK: "Saskatchewan", NS: "Nova Scotia", NB: "New Brunswick", NL: "Newfoundland", PE: "Prince Edward Island" };
+        return m ? (map[m[1]] ?? m[1]) : null;
+      };
+      const yearsBand = (raw: unknown): string | null => {
+        const n = typeof raw === "string" ? parseInt((raw.match(/\d+/) || [""])[0], 10) : NaN;
+        if (!Number.isFinite(n)) return null;
+        return n >= 20 ? "20+ years established" : n >= 10 ? "10+ years established" : n >= 5 ? "5+ years established" : null;
+      };
+      const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
+      const brokerName = brokerUser?.name || "Your broker";
       const dealSummary = {
-        businessName: deal.businessName,
+        codename: (deal as any).blindCodename || "a confidential opportunity",
         industry: deal.industry,
         subIndustry: (deal as any).subIndustry,
-        askingPrice: (deal as any).askingPrice,
-        revenue: extracted.annualRevenue,
-        ebitda: extracted.ebitda || extracted.adjustedEbitda,
-        sde: extracted.sde,
-        location: extracted.locationSite || extracted.location,
-        description: extracted.executiveSummary || (deal as any).description,
-        yearsOperating: extracted.yearsOperating,
+        region: regionOf(extracted.locationSite || extracted.location || (deal as any).location),
+        revenueBand: band(extracted.annualRevenue),
+        sdeBand: band(extracted.sde),
+        tenure: yearsBand(extracted.yearsOperating),
       };
 
       // Draft each email in parallel
@@ -888,14 +928,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable.
-        let subject = `New opportunity: ${deal.businessName} (${deal.industry})`;
+        let subject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
         let body = "";
 
         try {
           const aiResp = await anthropic.messages.create({
             model: "claude-sonnet-4-5",
             max_tokens: 600,
-            system: `You are an M&A broker drafting a personalised, low-pressure outreach email to a qualified buyer about a new business-for-sale opportunity. The tone is professional, warm, and concise — not salesy. Always include a clear, no-pressure invitation to learn more. The broker reviews and sends, so you're drafting on their behalf, but they will edit. Return ONLY a JSON object: {"subject": "...", "body": "..."}.`,
+            system: `You are an M&A broker drafting a personalised, low-pressure outreach email to a qualified buyer about a new business-for-sale opportunity. This email goes out BEFORE an NDA: it must be impossible to identify the business from it. Never state the business name, owner, street, city, or exact figures — refer to it by its codename or "a ${deal.industry} business", use only the region and the ranges provided. The tone is professional, warm, and concise — not salesy. Always include a clear, no-pressure invitation to learn more. Return ONLY a JSON object: {"subject": "...", "body": "..."}.`,
             messages: [{
               role: "user",
               content: `Draft an outreach email for this buyer about this deal.
@@ -914,12 +954,13 @@ Requirements:
 - Subject line: under 70 chars, mentions the industry and a key signal (size, location, or growth)
 - Body: 4–6 short paragraphs max, ~150 words
 - Reference 1–2 specific things from the buyer's profile (their target industry/location/buyer type)
-- Mention 2–3 deal highlights (revenue, growth, location, size)
-- Include a clear next-step invitation: "If you'd like a closer look, just reply and I'll set up secure access to the full overview"
-- DO NOT include the asking price unless it's clearly listed
+- Mention 2–3 deal highlights using ONLY the bands/region given (e.g. "revenue in the $1M–$2M range", "10+ years established", "${dealSummary.region || "the region"}")
+- NEVER name the business, the city, the owner, or any exact dollar figure — this is pre-NDA
+- Include a clear next-step invitation: "If you'd like a closer look, just reply and I'll set up secure access to the full confidential overview"
+- DO NOT include an asking price
 - DO NOT make up financial figures
 - DO NOT promise exclusivity or discounts
-- Sign off as the broker (use placeholder "[Broker name]")
+- Sign off as "${brokerName}" of ${brokerCompany} — never a placeholder
 
 Return JSON only.`,
             }],
@@ -932,7 +973,7 @@ Return JSON only.`,
         } catch (aiErr) {
           console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
           // Deterministic fallback
-          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because ${deal.businessName} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenue ? `• Revenue: ${dealSummary.revenue}\n` : ""}${dealSummary.location ? `• Location: ${dealSummary.location}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n[Broker name]\n${brokerCompany}`;
+          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}\n${brokerCompany}`;
         }
 
         return {
@@ -1115,7 +1156,18 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      res.json(deal.sellerProfile || null);
+      const profile = (deal.sellerProfile as Record<string, any> | null) || null;
+      // Notes saved before the PATCH fix below landed one level too deep
+      // (brokerOverrides.brokerOverrides.brokerNotes). Lift them on read so
+      // the broker still sees what they wrote; the next save stores them flat.
+      const nested = profile?.brokerOverrides?.brokerOverrides;
+      if (profile && nested?.brokerNotes && !profile.brokerOverrides?.brokerNotes) {
+        return res.json({
+          ...profile,
+          brokerOverrides: { ...profile.brokerOverrides, brokerNotes: nested.brokerNotes },
+        });
+      }
+      res.json(profile);
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
@@ -1128,11 +1180,30 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
       const existingProfile = (deal.sellerProfile as Record<string, any>) || {};
-      const overrides = req.body;
+      const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, any>;
+
+      // The client sends either flat profile fields ({ communicationStyle: "..." })
+      // or a { brokerOverrides: { brokerNotes } } wrapper for broker-only fields.
+      // Spreading the wrapper straight into brokerOverrides nested it one level
+      // too deep (brokerOverrides.brokerOverrides.brokerNotes), so notes vanished
+      // on reload. Unwrap it and merge at the correct level; also drop any
+      // stale nested copy left behind by earlier saves.
+      const { brokerOverrides: wrapped, ...fieldOverrides } = body;
+      const { brokerOverrides: _staleNested, ...priorOverrides } =
+        (existingProfile.brokerOverrides && typeof existingProfile.brokerOverrides === "object"
+          ? existingProfile.brokerOverrides
+          : {}) as Record<string, any>;
+      const { brokerOverrides: _nestedInWrapper, ...wrappedOverrides } =
+        (wrapped && typeof wrapped === "object" ? wrapped : {}) as Record<string, any>;
 
       // Merge overrides into existing profile, tracking what the broker changed
-      const brokerOverrides = { ...(existingProfile.brokerOverrides || {}), ...overrides, updatedAt: new Date().toISOString() };
-      const updatedProfile = { ...existingProfile, ...overrides, brokerOverrides };
+      const brokerOverrides = {
+        ...priorOverrides,
+        ...fieldOverrides,
+        ...wrappedOverrides,
+        updatedAt: new Date().toISOString(),
+      };
+      const updatedProfile = { ...existingProfile, ...fieldOverrides, brokerOverrides };
 
       await storage.updateDeal(req.params.dealId, { sellerProfile: updatedProfile } as any);
       res.json(updatedProfile);
@@ -1219,7 +1290,9 @@ Return JSON only.`,
         return res.status(400).json({ error: "Session ID is required" });
       }
 
-      const result = await processTurn(dealId, sessionId, message);
+      const result = await processTurn(dealId, sessionId, message, undefined, {
+        correctionOf: parseCorrectionOf(req.body.correctionOf),
+      });
       res.json(result);
     } catch (error: any) {
       console.error("Interview message error:", error);
@@ -1253,8 +1326,12 @@ Return JSON only.`,
       const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
 
       try {
-        const result = await processTurn(dealId, sessionId, message, (chunk) =>
-          send({ type: "delta", text: chunk }),
+        const result = await processTurn(
+          dealId,
+          sessionId,
+          message,
+          (chunk) => send({ type: "delta", text: chunk }),
+          { correctionOf: parseCorrectionOf(req.body.correctionOf) },
         );
         send({ type: "done", result });
       } catch (err: any) {
@@ -1825,9 +1902,11 @@ Return JSON only.`,
       }
 
       if (updates.status !== undefined) {
+        // A seller may link an upload or take their own upload back off a
+        // row; only the broker verifies.
         const validStatuses = isBrokerSession
           ? ["missing", "uploaded", "verified"]
-          : ["uploaded"];
+          : ["missing", "uploaded"];
         if (typeof updates.status !== "string" || !validStatuses.includes(updates.status)) {
           return res.status(400).json({ error: `Invalid status. Expected one of: ${validStatuses.join(", ")}` });
         }
@@ -1835,8 +1914,20 @@ Return JSON only.`,
       if (updates.uploadedFileId !== undefined && updates.uploadedFileId !== null && typeof updates.uploadedFileId !== "string") {
         return res.status(400).json({ error: "uploadedFileId must be a string" });
       }
+      // A linked file must be one of this deal's documents — a seller token
+      // must not be able to point a checklist row at another deal's upload.
+      let linkedDoc: Awaited<ReturnType<typeof storage.getDocument>> | undefined;
+      if (typeof updates.uploadedFileId === "string") {
+        linkedDoc = await storage.getDocument(updates.uploadedFileId);
+        if (!linkedDoc || linkedDoc.dealId !== req.params.dealId) {
+          return res.status(400).json({ error: "uploadedFileId must reference a document on this deal" });
+        }
+      }
       if (!isBrokerSession && updates.uploadedBy !== undefined) {
         updates.uploadedBy = "seller";
+      }
+      if (!isBrokerSession && existing.status === "verified" && (updates.status !== undefined || updates.uploadedFileId !== undefined)) {
+        return res.status(409).json({ error: "Your broker has already verified this document — ask them before changing it" });
       }
 
       if (updates.uploadedAt !== undefined && updates.uploadedAt !== null) {
@@ -1850,7 +1941,10 @@ Return JSON only.`,
       if (updates.status === "uploaded" && updates.uploadedAt === undefined) {
         updates.uploadedAt = new Date();
       }
-      if (updates.status === "missing" && isBrokerSession) {
+      if (!isBrokerSession && updates.status === "missing" && existing.uploadedBy && existing.uploadedBy !== "seller") {
+        return res.status(403).json({ error: "Your broker attached this document — ask them to change it" });
+      }
+      if (updates.status === "missing") {
         updates.uploadedAt = null;
         updates.uploadedFileId = null;
         updates.uploadedBy = null;
@@ -1864,6 +1958,33 @@ Return JSON only.`,
         req.params.reqId,
         updates as Partial<InsertDealDocumentRequirement>,
       );
+
+      // Linking a file that was uploaded without a category gives it the
+      // row's category so the broker's list shows "financials", not "other".
+      if (linkedDoc && (linkedDoc.category === "other" || !linkedDoc.category)) {
+        const { docCategoryForRequirement } = await import("./documents/requirements");
+        const derived = docCategoryForRequirement(existing.category);
+        if (derived !== "other") {
+          await storage.updateDocument(linkedDoc.id, { category: derived } as any).catch(() => {});
+        }
+      }
+
+      // A seller removing or replacing their own upload takes the old file
+      // with it — they have no other way to get a mistaken upload off the
+      // deal. Broker uploads are never touched from the seller side.
+      const previousFileId = existing.uploadedFileId;
+      const unlinkedBySeller =
+        !isBrokerSession &&
+        previousFileId &&
+        (updates.status === "missing" || (typeof updates.uploadedFileId === "string" && updates.uploadedFileId !== previousFileId));
+      if (unlinkedBySeller) {
+        const previous = await storage.getDocument(previousFileId);
+        if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
+          const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
+          await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] seller unlink cleanup failed:", e));
+        }
+      }
+
       res.json(requirement);
     } catch (error: any) {
       console.error("Error updating document requirement:", error);
@@ -1987,14 +2108,45 @@ Return JSON only.`,
       }
 
       const validatedData = insertDealSchema.partial().parse(allowedBody);
+      // Every step that moves a CIM toward buyers is gated on unresolved
+      // critical discrepancies — not just generation. Without this, a CIM
+      // with open critical conflicts could be approved, advanced to design
+      // and published while only the Generate button was locked.
+      const dealPatch = validatedData as Record<string, unknown>;
+      const gatedVerb =
+        dealPatch.isLive === true ? "publishing the CIM"
+        : dealPatch.phase === "phase4_design_finalization" ? "advancing to Design & Finalization"
+        : dealPatch.contentApprovedByBroker === true || dealPatch.contentApprovedBySeller === true ? "approving the content"
+        : dealPatch.designApprovedByBroker === true || dealPatch.designApprovedBySeller === true ? "approving the design"
+        : null;
+      if (gatedVerb) {
+        const openCritical = await blockingCriticalDiscrepancies(req.params.id);
+        if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, gatedVerb);
+      }
+      // A seller finishing the intake wizard completes the questionnaire
+      // step — this flag drove broker checklists but was never set. The
+      // wizard autosaves each step; only the final save carries
+      // employeeChart, so a half-finished intake doesn't read as "done".
+      if (
+        !req.session.brokerId &&
+        allowedBody.questionnaireData && typeof allowedBody.questionnaireData === "object" &&
+        allowedBody.employeeChart !== undefined
+      ) {
+        const filled = Object.values(allowedBody.questionnaireData as Record<string, unknown>).some((v) => typeof v === "string" ? v.trim() !== "" : !!v);
+        if (filled) (validatedData as any).sqCompleted = true;
+      }
       // NDA lifecycle is server-stamped: trust the server clock on sign,
       // clear the signature details on undo.
       if (validatedData.ndaSigned === true && !validatedData.ndaSignedAt) {
         validatedData.ndaSignedAt = new Date();
+        // Signed through this endpoint = the broker marked it manually; the
+        // seller e-sign route stamps "seller" itself.
+        (validatedData as any).ndaSignedBy = "broker";
       } else if (validatedData.ndaSigned === false) {
         validatedData.ndaSignedAt = null;
         validatedData.ndaSignerName = null;
         validatedData.ndaSignedIp = null;
+        (validatedData as any).ndaSignedBy = null;
       }
       const deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
@@ -2076,6 +2228,16 @@ Return JSON only.`,
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
       await storage.deleteDocument(req.params.id);
+      // The dialog promises "any data extracted from it will be removed" —
+      // honour it via field provenance.
+      try {
+        const dealRow = await storage.getDeal(existingDoc.dealId);
+        if (dealRow) {
+          const { info, removed } = removeDocumentFields((dealRow.extractedInfo as Record<string, unknown>) || {}, existingDoc.id);
+          if (removed.length > 0) await storage.updateDeal(existingDoc.dealId, { extractedInfo: info } as any);
+          return res.json({ success: true, removedFields: removed });
+        }
+      } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting document:", error);
@@ -2143,7 +2305,7 @@ Return JSON only.`,
       } as any);
       const deal = await storage.getDeal(dealId);
       if (deal) {
-        const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted);
+        const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted, docId);
         await storage.updateDeal(dealId, { extractedInfo: merged } as any);
       }
     } catch (err) {
@@ -2165,10 +2327,45 @@ Return JSON only.`,
           error: (req as any).fileRejectionReason || "No file uploaded",
         });
       }
-      const { category = "other", subcategory } = req.body;
-      // Attribute the upload correctly: a broker session vs a seller token.
-      const uploadedBy = req.session.brokerId ? "broker" : "seller";
-      const displayName = decodeUploadName(req.file.originalname);
+      const { subcategory } = req.body;
+      const rawTitle = typeof req.body.title === "string" ? req.body.title.trim() : "";
+      const requirementId =
+        typeof req.body.requirementId === "string" && req.body.requirementId.trim() ? req.body.requirementId.trim() : undefined;
+      // Attribute the upload by the credential that carried it, not by
+      // whatever session cookie happens to be in the browser: the seller
+      // pages always send X-Seller-Token, so a broker previewing the seller
+      // view (or a seller whose browser also holds a broker session) is
+      // still a seller upload. canAccessDeal already admitted the request.
+      const viaSellerToken = await sellerTokenMatchesDeal(req, req.params.dealId);
+      const uploadedBy: "broker" | "seller" = viaSellerToken ? "seller" : "broker";
+
+      // An explicit checklist row decides the parser category (a seller's
+      // checklist upload used to land as "other" and parse with the wrong
+      // prompt). Sellers may not replace a row the broker has verified.
+      const { docCategoryForRequirement, linkUploadToRequirement } = await import("./documents/requirements");
+      let targetRequirement: Awaited<ReturnType<typeof storage.getDocumentRequirement>> | undefined;
+      if (requirementId) {
+        targetRequirement = await storage.getDocumentRequirement(requirementId);
+        if (!targetRequirement || targetRequirement.dealId !== req.params.dealId) {
+          fs.unlink(req.file.path, () => {});
+          return res.status(400).json({ error: "That checklist item doesn't belong to this deal" });
+        }
+        if (uploadedBy === "seller" && targetRequirement.status === "verified") {
+          fs.unlink(req.file.path, () => {});
+          return res.status(409).json({ error: "Your broker has already verified this document — ask them before replacing it" });
+        }
+      }
+      const requestedCategory = typeof req.body.category === "string" && req.body.category.trim() ? req.body.category.trim() : "";
+      const category =
+        requestedCategory && requestedCategory !== "other"
+          ? requestedCategory
+          : targetRequirement
+            ? docCategoryForRequirement(targetRequirement.category)
+            : requestedCategory || "other";
+
+      // Pasted text carries its own title; keep it verbatim as the display
+      // name. Only the on-disk filename (doc_<ts>.ext) needs sanitising.
+      const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
         uploadedBy,
@@ -2179,8 +2376,30 @@ Return JSON only.`,
         fileUrl: `/uploads/docs/${req.file.filename}`,
         status: "pending",
       } as any);
+
+      // Credit the upload against the checklist: the explicit row when one
+      // was chosen, otherwise the best unambiguous keyword match (so a
+      // broker dropping "2023 P&L.pdf" counts toward the financials row).
+      // When the seller replaces their own earlier upload, that file goes.
+      const previousFileId = targetRequirement?.uploadedFileId ?? null;
+      const linkedRequirement = await linkUploadToRequirement({
+        dealId: req.params.dealId,
+        docId: doc.id,
+        fileName: displayName,
+        docCategory: category,
+        uploadedBy,
+        requirementId,
+      });
+      if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
+        const previous = await storage.getDocument(previousFileId);
+        if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
+          const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
+          await deleteDocumentAndProvenance(previous.id).catch((e) => console.warn("[documents] replace cleanup failed:", e));
+        }
+      }
+
       parseDocumentAsync(doc.id, req.file.path, req.file.mimetype, category, subcategory || null, req.params.dealId);
-      res.json(doc);
+      res.json({ ...doc, linkedRequirement });
     } catch (error: any) {
       console.error("Upload error:", error);
       res.status(500).json({ error: "Upload failed" });
@@ -2224,7 +2443,8 @@ Return JSON only.`,
   app.get("/api/integrations", requireBroker, async (req, res) => {
     try {
       const list = await storage.getIntegrationsByBroker(req.session.brokerId!);
-      res.json(list);
+      // Never ship stored OAuth/API tokens to the browser
+      res.json(list.map(({ accessToken: _a, refreshToken: _r, ...rest }) => rest));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch integrations" });
     }
@@ -2432,6 +2652,32 @@ Return JSON only.`,
     }
   });
 
+  // List every analysis version for the deal (newest first) — drives the
+  // version switcher so a re-run never makes the previous run unreachable.
+  // Registered before "/:id" so the literal segment is not captured as an id.
+  app.get("/api/deals/:dealId/financial-analysis/versions", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const rows = await storage.getFinancialAnalysesByDeal(req.params.dealId);
+      const versions = await Promise.all(
+        rows.map(async (row) => {
+          const reconciled = await reconcileStaleRunningAnalysis(row);
+          return {
+            id: reconciled.id,
+            version: reconciled.version,
+            status: reconciled.status,
+            createdAt: reconciled.createdAt,
+            updatedAt: reconciled.updatedAt,
+            brokerReviewedAt: reconciled.brokerReviewedAt,
+          };
+        }),
+      );
+      res.json(versions);
+    } catch (error: any) {
+      console.error("Error listing financial analysis versions:", error);
+      res.status(500).json({ error: "Failed to list financial analysis versions" });
+    }
+  });
+
   // Get a specific financial analysis version
   app.get("/api/deals/:dealId/financial-analysis/:id", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
@@ -2465,6 +2711,48 @@ Return JSON only.`,
       for (const field of allowedFields) {
         if (req.body[field] !== undefined) {
           updates[field] = req.body[field];
+        }
+      }
+
+      // Mark broker decisions so a re-run can carry them into the next version
+      // (see financial/analyzer carryForwardBrokerEdits). The client sends whole
+      // blobs; diffing against the stored row is the only place that knows
+      // which change was the broker's rather than the AI's.
+      const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
+      const stored = normalizeFinancialAnalysisRow(existing);
+      for (const tableField of ["reclassifiedPnl", "reclassifiedBalanceSheet", "reclassifiedCashFlow"] as const) {
+        const incoming = updates[tableField];
+        const prior = stored[tableField] as { rows?: Array<{ id: string; category: string; categoryOverride?: boolean }> } | null;
+        if (!incoming || !Array.isArray(incoming.rows) || !prior?.rows) continue;
+        const priorById = new Map(prior.rows.map((r) => [r.id, r]));
+        incoming.rows = incoming.rows.map((row: any) => {
+          if (!row || typeof row !== "object") return row;
+          const before = priorById.get(row.id);
+          if (before && (before.categoryOverride || before.category !== row.category)) {
+            return { ...row, categoryOverride: true };
+          }
+          return row;
+        });
+      }
+      if (updates.normalization && typeof updates.normalization === "object") {
+        const incoming = updates.normalization as { metric?: string; metricOverride?: boolean; addbacks?: any[] };
+        const prior = stored.normalization as { metric?: string; metricOverride?: boolean; addbacks?: Array<{ id: string; approved: boolean; approvedOverride?: boolean; custom?: boolean }> } | null;
+        if (prior) {
+          if (prior.metricOverride || (prior.metric && incoming.metric && prior.metric !== incoming.metric)) {
+            incoming.metricOverride = true;
+          }
+          const priorById = new Map((prior.addbacks ?? []).map((a) => [a.id, a]));
+          if (Array.isArray(incoming.addbacks)) {
+            incoming.addbacks = incoming.addbacks.map((ab: any) => {
+              if (!ab || typeof ab !== "object") return ab;
+              const before = priorById.get(ab.id);
+              const custom = ab.custom === true || before?.custom === true || (typeof ab.id === "string" && ab.id.startsWith("custom_"));
+              const approvedOverride = before
+                ? before.approvedOverride === true || before.approved !== ab.approved
+                : false;
+              return { ...ab, ...(custom ? { custom: true } : {}), ...(approvedOverride ? { approvedOverride: true } : {}) };
+            });
+          }
         }
       }
 
@@ -2616,18 +2904,39 @@ Return JSON only.`,
     const fa = await storage.getFinancialAnalysis(financialAnalysisId);
     if (!fa || fa.dealId !== dealId || !fa.normalization) return [];
     const norm = fa.normalization as any;
-    return (norm.addbacks || []).map((a: any) => ({
-      id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
-      label: a.label || "",
-      description: a.description || "",
-      category: a.category || "other",
-      annualAmount: Object.values(a.amounts || {}).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) / Math.max(Object.keys(a.amounts || {}).length, 1),
-      yearAmounts: a.amounts || {},
-      verificationStatus: "unverified",
-      matchedTransactions: [],
-      sellerNotes: null,
-      aiNotes: null,
-    }));
+    // The headline amount is the LATEST year's figure, not a multi-year
+    // average — a $28,000 one-time renovation in 2024 is a $28,000 addback,
+    // not $9,333. Years with no value for this addback are ignored; the full
+    // per-year array is kept alongside for the matcher.
+    const orderedYears: string[] = Array.isArray(norm.years) && norm.years.length > 0
+      ? norm.years.map(String)
+      : [];
+    return (norm.addbacks || []).map((a: any) => {
+      const amounts: Record<string, number> = {};
+      for (const [year, v] of Object.entries(a.amounts || {})) {
+        const n = Number(v);
+        if (Number.isFinite(n)) amounts[year] = n;
+      }
+      const years = Object.keys(amounts).sort(
+        (x, y) => (orderedYears.indexOf(x) === -1 || orderedYears.indexOf(y) === -1
+          ? x.localeCompare(y)
+          : orderedYears.indexOf(x) - orderedYears.indexOf(y)),
+      );
+      const latestWithValue = [...years].reverse().find((y) => amounts[y] !== 0) ?? years[years.length - 1];
+      return {
+        id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
+        label: a.label || "",
+        description: a.description || "",
+        category: a.category || "other",
+        annualAmount: latestWithValue ? amounts[latestWithValue] : 0,
+        amountYear: latestWithValue ?? null,
+        yearAmounts: amounts,
+        verificationStatus: "unverified",
+        matchedTransactions: [],
+        sellerNotes: null,
+        aiNotes: null,
+      };
+    });
   }
 
   // Start addback verification for a deal
@@ -2805,7 +3114,23 @@ Return JSON only.`,
               ? "quickbooks"
               : "gl";
             const parsed = await parseTransactionData(doc.extractedText, sourceType as any, doc.id);
-            allTransactions = allTransactions.concat(parsed);
+            if (parsed.length === 0) {
+              console.warn(`[addback-verification] No transactions could be read from "${doc.name}" (${doc.id}, ${sourceType}, ${doc.extractedText.length} chars)`);
+            }
+            allTransactions = allTransactions.concat(parsed.map((t) => ({ ...t, documentId: doc.id })));
+          }
+
+          // Nothing parsed from any source is a failure the broker must see —
+          // not a silent "No Match" on every addback. sourceDocumentIds records
+          // which documents were checked so the UI can name them.
+          if (allTransactions.length === 0) {
+            console.error(`[addback-verification] 0 transactions parsed across ${sourceDocs.length} document(s): ${sourceDocs.map((d) => d.name).join(", ")}`);
+            await storage.updateAddbackVerification(req.params.id, {
+              status: "failed",
+              addbacks: verification.addbacks as any,
+              sourceDocumentIds: sourceDocs.map((d) => d.id),
+            });
+            return;
           }
 
           let updatedAddbacks: any[];
@@ -3135,7 +3460,9 @@ Return JSON only.`,
       if (!sellerEmail) return res.status(400).json({ error: "Seller email is required" });
       if (!ndaText) return res.status(400).json({ error: "Agreement text is required" });
 
-      await storage.updateDeal(deal.id, { ndaText } as any);
+      // Record the pending-signature state so the broker can see it went
+      // out (and to whom) instead of guessing and double-sending.
+      await storage.updateDeal(deal.id, { ndaText, ndaSentAt: new Date(), ndaSentTo: sellerEmail } as any);
 
       // Reuse the seller's existing invite token so one link identity covers
       // the whole engagement; create one if the seller was never invited.
@@ -3186,6 +3513,12 @@ Return JSON only.`,
         ndaSigned: !!deal.ndaSigned,
         ndaSignedAt: deal.ndaSignedAt,
         signerName: deal.ndaSignerName || null,
+        // "broker" when marked signed manually, "seller" when e-signed here.
+        // Legacy rows predate the column: a signer name means seller e-sign.
+        signedBy: (deal as any).ndaSignedBy || (deal.ndaSignerName ? "seller" : deal.ndaSigned ? "broker" : null),
+        // The same token is the seller's portal link (findOrCreateSellerInvite
+        // reuses it), so the page can send them back to their portal.
+        sellerPortalPath: `/seller/${invite.token}`,
       });
     } catch (error: any) {
       console.error("Error loading NDA:", error);
@@ -3219,6 +3552,7 @@ Return JSON only.`,
         ndaSignedAt: new Date(),
         ndaSignerName: signerName,
         ndaSignedIp: req.ip || null,
+        ndaSignedBy: "seller",
       } as any);
 
       // Let the broker know — best-effort, never blocks the signature.
@@ -3360,14 +3694,21 @@ Return JSON only.`,
           requiredUploaded: uploadedRequired,
           percentage: docPct,
           totalUploaded: allDocs.length,
-          requirements: docReqs.map((r) => ({
-            id: r.id,
-            name: r.documentName,
-            category: r.category,
-            isRequired: r.isRequired,
-            status: r.status,
-            notes: r.notes,
-          })),
+          requirements: docReqs.map((r) => {
+            const linked = r.uploadedFileId ? allDocs.find((d) => d.id === r.uploadedFileId) : undefined;
+            return {
+              id: r.id,
+              name: r.documentName,
+              category: r.category,
+              isRequired: r.isRequired,
+              status: r.status,
+              notes: r.notes,
+              uploadedFileId: linked?.id ?? null,
+              uploadedFileName: linked?.name ?? null,
+              uploadedBy: r.uploadedBy ?? null,
+              uploadedAt: r.uploadedAt ?? null,
+            };
+          }),
         },
         pendingApprovals: pendingSeller.length,
         broker: broker ? { name: broker.name || broker.username, email: broker.email } : null,
@@ -3434,15 +3775,32 @@ Return JSON only.`,
       if (body.expiresAt && typeof body.expiresAt === 'string') {
         body.expiresAt = new Date(body.expiresAt);
       }
+      const buyerEmail = typeof body.buyerEmail === "string" ? body.buyerEmail.trim().toLowerCase() : "";
+      if (!buyerEmail || !buyerEmail.includes("@")) {
+        return res.status(400).json({ error: "A valid buyer email is required" });
+      }
+      const expiresAt = body.expiresAt instanceof Date && !isNaN(body.expiresAt.getTime())
+        ? body.expiresAt
+        : await brokerLinkExpiry(req.session.brokerId);
+      // Link to the buyer's Cimple account when one exists for this email —
+      // the same identity rule the approval flow uses. Without it the Buyers
+      // page showed dealCount 0 / no activity for a buyer who had signed the
+      // NDA and made a decision. Never creates an account or sends email.
+      // Link only an account that has proven it owns the inbox — self-signup
+      // is unverified, so an attacker registering the buyer's address must
+      // never inherit a link the broker meant to hand over personally.
+      const foundAccount = await storage.getBuyerUserByEmail(buyerEmail);
+      const existingAccount = foundAccount?.emailVerified ? foundAccount : undefined;
       const validatedData = {
         dealId: req.params.dealId,
+        buyerUserId: existingAccount?.id ?? null,
         accessToken,
-        buyerEmail: body.buyerEmail,
-        buyerName: body.buyerName || null,
-        buyerCompany: body.buyerCompany || null,
+        buyerEmail,
+        buyerName: body.buyerName || existingAccount?.name || null,
+        buyerCompany: body.buyerCompany || existingAccount?.company || null,
         // Security spec: links auto-expire after 30 days unless the broker
         // sets a different expiry (they can extend from the buyers panel).
-        expiresAt: body.expiresAt || (await brokerLinkExpiry(req.session.brokerId)),
+        expiresAt,
       };
       const access = await storage.createBuyerAccess(validatedData);
       res.json(access);
@@ -3591,9 +3949,11 @@ Return JSON only.`,
         });
       }
 
+      // Q&A feed: published answers plus this buyer's own pending questions
+      // (whitelisted fields — never the seller-approval token or broker draft).
       const [baseSections, publishedQuestions] = await Promise.all([
         storage.getCimSectionsByDeal(deal.id),
-        storage.getPublishedQuestions(deal.id),
+        buildBuyerQuestionFeed(deal.id, access.id),
       ]);
 
       // Apply redaction/enrichment overrides for non-normal modes
@@ -3623,8 +3983,10 @@ Return JSON only.`,
               ...s,
               sectionTitle,
               layoutData: override.layoutData || s.layoutData,
-              aiDraftContent: override.contentOverride || s.aiDraftContent,
-              brokerEditedContent: override.contentOverride || s.brokerEditedContent,
+              // Blind: the override IS the content. Falling back to the base
+              // draft/broker edit would serve un-redacted prose to a pre-NDA buyer.
+              aiDraftContent: override.contentOverride || (blindMode ? null : s.aiDraftContent),
+              brokerEditedContent: override.contentOverride || (blindMode ? null : s.brokerEditedContent),
             };
           });
         } else if (blindMode) {
@@ -3713,6 +4075,17 @@ Return JSON only.`,
       const deal = await storage.getDeal(access.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
+      // Every decision (including "need more time") lands in the analytics
+      // stream so it shows up in the broker's activity timeline.
+      const recordDecisionEvent = (d: string) =>
+        storage.createAnalyticsEvent({
+          dealId: deal.id,
+          buyerAccessId: access.id,
+          eventType: "decision",
+          sectionKey: null,
+          eventData: { decision: d, nextStep: nextStep || null },
+        } as any).catch(() => {});
+
       // "Need more time" isn't a terminal decision — it resets the reminder
       // clock (fresh day-3/6/8 cycle) and leaves the buyer under review.
       if (decision === "need_more_time") {
@@ -3722,6 +4095,7 @@ Return JSON only.`,
           firstViewedAt: new Date(),
           reminderStage: "none",
         } as any);
+        await recordDecisionEvent("need_more_time");
         return res.json({ success: true, decision: "need_more_time" });
       }
 
@@ -3733,6 +4107,7 @@ Return JSON only.`,
         decisionAt: new Date(),
         crmSyncStatus: "pending",
       } as any);
+      await recordDecisionEvent(decision);
 
       // Try CRM sync (gracefully handles not_configured)
       let syncResult = await syncDealToCrm(deal, decision);
@@ -3912,8 +4287,19 @@ Return JSON only.`,
 
       const body = req.body || {};
       const category = body.category || "other";
-      const riskLevel = body.riskLevel || riskLevelForCategory(category);
       const isCompetitor = body.isCompetitor ?? (category === "direct_competitor" || category === "indirect_competitor");
+      // Risk is the highest of: the category's baseline (or an explicit
+      // override), competitor flag → high, no proof of funds → medium. It
+      // used to derive from category alone, so a competitor-flagged family
+      // office still showed "low".
+      const RISK_RANK: Record<string, number> = { low: 0, medium: 1, high: 2 };
+      const requested = typeof body.riskLevel === "string" && body.riskLevel in RISK_RANK ? body.riskLevel : null;
+      const hasProofOfFunds = !!(body.financialCapability && body.financialCapability.hasProofOfFunds);
+      const riskLevel = ([
+        requested || riskLevelForCategory(category),
+        isCompetitor ? "high" : "low",
+        hasProofOfFunds ? "low" : "medium",
+      ] as Array<"high" | "medium" | "low">).reduce((a, b) => (RISK_RANK[b] > RISK_RANK[a] ? b : a));
       const sellerReviewToken = crypto.randomUUID();
 
       const validated = insertBuyerApprovalRequestSchema.parse({
@@ -4323,19 +4709,99 @@ Return JSON only.`,
       // forever. When the interview ends, session-manager flips ask_seller →
       // seller_responded so the broker reviews the transcript before generating.
       // OverviewTab's generationBlocked mirrors this exact status list.
-      const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
-      const openCritical = (await storage.getDiscrepanciesByDeal(dealId))
-        .filter(d => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
-      if (openCritical.length > 0) {
-        return res.status(409).json({
-          error: `${openCritical.length} critical discrepanc${openCritical.length === 1 ? "y" : "ies"} must be resolved before generating the CIM`,
-          blockingDiscrepancies: openCritical.map(d => ({ id: d.id, field: d.field })),
+      const openCritical = await blockingCriticalDiscrepancies(dealId);
+      if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the CIM");
+
+      const { sectionKey, sectionId } = req.body;
+
+      // ── Single-section regeneration (visual CIM) ──
+      // Rebuilds one stored section through the layout engine with the rest
+      // of the document as context. Nothing else is touched; the section's
+      // blind/DD overrides are dropped because they described the old content.
+      if (sectionId) {
+        const target = await storage.getCimSection(String(sectionId));
+        if (!target || target.dealId !== dealId) {
+          return res.status(404).json({ error: "Section not found" });
+        }
+        const existingSections = await storage.getCimSectionsByDeal(dealId);
+        const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
+        const extractedInfo = { ...(deal.extractedInfo as Record<string, unknown> || {}) };
+        for (const d of resolvedDiscrepancies) {
+          if (d.resolvedValue && d.field) extractedInfo[d.field] = d.resolvedValue;
+        }
+        const branding = await storage.getBrandingByBroker(deal.brokerId);
+        const refs = existingSections.map(s => ({
+          sectionKey: s.sectionKey,
+          sectionTitle: s.sectionTitle,
+          order: s.order,
+          layoutType: s.layoutType,
+          tags: s.tags,
+          aiLayoutReasoning: s.aiLayoutReasoning,
+        }));
+        const regenerated = await regenerateCimSection(
+          {
+            dealId,
+            businessName: deal.businessName,
+            industry: deal.industry,
+            askingPrice: deal.askingPrice,
+            extractedInfo,
+            scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
+            questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
+            operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
+            employeeChart: (deal.employeeChart as unknown[]) || null,
+            cimContent: (deal.cimContent as Record<string, string>) || null,
+            brokerBranding: branding ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor } : null,
+          },
+          refs,
+          refs.find(r => r.sectionKey === target.sectionKey)!,
+          { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
+        );
+        const updatedSection = await storage.updateCimSection(String(target.id), {
+          layoutData: regenerated.layoutData as any,
+          aiDraftContent: regenerated.aiDraftContent || null,
+          brokerEditedContent: null,
+          brokerApproved: false,
         });
+        // The section's overrides now describe content that no longer exists.
+        // DD: drop it (a DD buyer is allowed to see the base section). Blind:
+        // NEVER leave a gap — the view room serves the base section when an
+        // override is missing, which would show a blind buyer the real name.
+        // Re-redact the new section under the existing codename; if that
+        // fails, keep the stale (still redacted) overrides in place.
+        const blindOverrides = await storage.getCimSectionOverrides(dealId, "blind");
+        const hadBlind = blindOverrides.some(o => o.cimSectionId === String(target.id));
+        if (hadBlind && updatedSection) {
+          try {
+            const { generateBlindOverrides } = await import("./cim/redaction-engine");
+            const { overrides: reblinded } = await generateBlindOverrides([updatedSection], {
+              businessName: deal.businessName,
+              industry: deal.industry,
+              extractedInfo: deal.extractedInfo as Record<string, any> | null,
+            }, { codename: (deal as any).blindCodename });
+            await storage.deleteCimSectionOverridesForSection(String(target.id));
+            for (const o of reblinded) {
+              await storage.createCimSectionOverride({
+                dealId,
+                cimSectionId: o.cimSectionId,
+                mode: "blind",
+                layoutData: o.layoutData,
+                contentOverride: o.contentOverride,
+              });
+            }
+          } catch (err) {
+            console.error(`[generate-content] Re-redaction failed for section ${target.id}; keeping stale overrides:`, err);
+          }
+        } else {
+          await storage.deleteCimSectionOverridesForSection(String(target.id));
+        }
+        if (regenerated.aiDraftContent) {
+          const existingContent = (deal.cimContent as Record<string, string>) || {};
+          await storage.updateDeal(deal.id, { cimContent: { ...existingContent, [target.sectionKey]: regenerated.aiDraftContent } });
+        }
+        return res.json({ success: true, section: updatedSection });
       }
 
-      const { sectionKey } = req.body;
-
-      // ── Single-section regeneration ──
+      // ── Single-section regeneration (legacy text keys) ──
       if (sectionKey) {
         const businessName = deal.businessName || "The Business";
         const industry = deal.industry || "a specialized industry";
@@ -5022,7 +5488,7 @@ Return JSON only.`,
 
       // Filter to meaningful events only (not heat_map_sample which is noise)
       const meaningful = events
-        .filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt"].includes(e.eventType))
+        .filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt", "decision"].includes(e.eventType))
         .sort((a, b) => new Date(b.createdAt!).getTime() - new Date(a.createdAt!).getTime())
         .slice(offset, offset + limit);
 
@@ -5036,11 +5502,13 @@ Return JSON only.`,
           sectionKey: e.sectionKey,
           scrollDepthPercent: e.scrollDepthPercent,
           timeSpentSeconds: e.timeSpentSeconds,
+          // Decision events carry { decision, nextStep } so the feed can say which
+          eventData: e.eventType === "decision" ? (e.eventData ?? null) : null,
           createdAt: e.createdAt,
         };
       });
 
-      res.json({ timeline, total: events.filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt"].includes(e.eventType)).length });
+      res.json({ timeline, total: events.filter(e => ["view", "nda_signed", "section_enter", "scroll_depth", "question_asked", "download_attempt", "decision"].includes(e.eventType)).length });
     } catch (error: any) {
       console.error("Error getting timeline:", error);
       res.status(500).json({ error: "Failed to get timeline" });
@@ -5164,7 +5632,11 @@ Return JSON only.`,
         const sectionsViewed = new Set(buyerEvents.filter(e => e.eventType === "section_enter" && e.sectionKey).map(e => e.sectionKey)).size;
         const maxScroll = Math.max(0, ...buyerEvents.filter(e => e.eventType === "scroll_depth").map(e => e.scrollDepthPercent ?? 0));
         const questionCount = questions.filter(q => q.buyerAccessId === buyer.id).length;
-        const viewCount = buyerEvents.filter(e => e.eventType === "view").length;
+        // Sessions, not fetches — the same deduped count the Buyers tab shows
+        // (buyerAccess.viewCount is stamped once per 30-minute session). Raw
+        // view events only back-fill records from before the stamp existed.
+        const rawViews = buyerEvents.filter(e => e.eventType === "view").length;
+        const viewCount = buyer.viewCount != null && buyer.viewCount > 0 ? buyer.viewCount : rawViews;
         const ndaSigned = !!buyer.ndaSignedAt;
 
         // Engagement score (0-100): weighted composite
@@ -5297,7 +5769,18 @@ Return JSON only.`,
       if (prequalified !== undefined) updates.prequalified = prequalified;
       if (proofOfFunds !== undefined) updates.proofOfFunds = proofOfFunds;
       if (buyerNotes !== undefined) updates.buyerNotes = buyerNotes;
-      if (buyerCriteria !== undefined) updates.buyerCriteria = buyerCriteria;
+      if (buyerCriteria !== undefined) {
+        updates.buyerCriteria = buyerCriteria;
+        // A stored match score describes the *previous* criteria. Once the
+        // criteria change it is stale, so clear it until the broker re-runs
+        // the match rather than showing a number that no longer applies.
+        const before = JSON.stringify(existingAccess.buyerCriteria ?? {});
+        const after = JSON.stringify(buyerCriteria ?? {});
+        if (before !== after) {
+          updates.matchScore = null;
+          updates.matchBreakdown = null;
+        }
+      }
 
       const updated = await storage.updateBuyerAccess(id, updates);
       if (!updated) return res.status(404).json({ error: "Buyer not found" });
@@ -5318,6 +5801,8 @@ Return JSON only.`,
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const openCritical = await blockingCriticalDiscrepancies(dealId);
+      if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the layout");
 
       const [branding, insights] = await Promise.all([
         storage.getBrandingByBroker(deal.brokerId),
@@ -5450,8 +5935,12 @@ Return JSON only.`,
         return res.status(400).json({ error: "No processed documents to cross-reference. Upload and process documents first." });
       }
 
-      const { runDiscrepancyCheck } = await import("./cim/discrepancy-engine");
-      const items = await runDiscrepancyCheck(
+      // Every discrepancy already on the deal: resolved ones must not come
+      // back under a new name; open ones get refreshed in place, not duplicated.
+      const existing = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
+
+      const { runDiscrepancyCheck, isSameDiscrepancy } = await import("./cim/discrepancy-engine");
+      const { items, clearedIds } = await runDiscrepancyCheck(
         {
           id: dealId,
           businessName: deal.businessName,
@@ -5466,28 +5955,59 @@ Return JSON only.`,
           extractedText: d.extractedText,
           extractedData: d.extractedData,
         })),
+        existing,
       );
 
-      // Store discrepancies
+      const settled = existing.filter((d) => d.status === "resolved" || d.status === "accepted");
+      const unsettled = existing.filter((d) => d.status !== "resolved" && d.status !== "accepted");
+      const touched = new Set<string>();
       const created = [];
+      let refreshedCount = 0;
       for (const item of items) {
-        const disc = await storage.createDiscrepancy({
-          dealId,
-          field: item.field,
+        const referenced = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
+        if ((referenced && settled.includes(referenced)) || settled.some((d) => isSameDiscrepancy(item, d))) continue;
+
+        const openMatch = referenced && unsettled.includes(referenced)
+          ? referenced
+          : unsettled.find((d) => !touched.has(d.id) && isSameDiscrepancy(item, d));
+        const values = {
           interviewValue: item.interviewValue,
           documentValue: item.documentValue,
-          documentId: item.documentId,
-          documentName: item.documentName,
+          documentId: item.documentId || null,
+          documentName: item.documentName || null,
           severity: item.severity,
           category: item.category,
           aiExplanation: item.aiExplanation,
           suggestedResolution: item.suggestedResolution,
-          status: "open",
-        });
+        };
+        if (openMatch) {
+          touched.add(openMatch.id);
+          // Keep the broker's routing/status and the original field name; refresh the evidence.
+          await storage.updateDiscrepancy(openMatch.id, values);
+          refreshedCount++;
+          continue;
+        }
+        const disc = await storage.createDiscrepancy({ dealId, field: item.field, ...values, status: "open" });
         created.push(disc);
       }
 
-      res.json({ success: true, count: created.length, discrepancies: created });
+      // Open rows the model explicitly re-evaluated and found consistent.
+      // Rows the broker routed to the seller stay with the seller.
+      let clearedCount = 0;
+      for (const id of clearedIds) {
+        const row = existing.find((d) => d.id === id);
+        if (!row || touched.has(id) || (row.status !== "open" && row.status !== "seller_responded")) continue;
+        await storage.updateDiscrepancy(id, { status: "superseded" });
+        clearedCount++;
+      }
+
+      res.json({
+        success: true,
+        count: created.length,
+        refreshed: refreshedCount,
+        cleared: clearedCount,
+        discrepancies: created,
+      });
     } catch (error: any) {
       console.error("Error running discrepancy check:", error);
       res.status(500).json({ error: error.message || "Discrepancy check failed" });
@@ -5633,6 +6153,16 @@ Return JSON only.`,
       const allowed = ["name", "phone", "role", "permissions", "accessLevel", "emailNotifications", "smsNotifications", "canDownload", "watermarkEnabled", "inviteStatus"] as const;
       const memberUpdates: Record<string, unknown> = {};
       for (const k of allowed) if (req.body?.[k] !== undefined) memberUpdates[k] = req.body[k];
+      // A role change must be a real role for this member's team, and it
+      // carries that role's permissions with it (unless the caller set
+      // permissions explicitly) — otherwise the badge changes but the
+      // member keeps the old role's access.
+      if (memberUpdates.role !== undefined) {
+        const teamRoles = (TEAM_ROLES as any)[existingMember.teamType];
+        const roleConfig = teamRoles?.[String(memberUpdates.role)];
+        if (!roleConfig) return res.status(400).json({ error: "Invalid role for this team" });
+        if (memberUpdates.permissions === undefined) memberUpdates.permissions = roleConfig.permissions;
+      }
       const updated = await storage.updateDealMember(req.params.memberId, memberUpdates as any);
       if (!updated) return res.status(404).json({ error: "Member not found" });
       res.json(updated);
@@ -5690,7 +6220,7 @@ Return JSON only.`,
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
       // a blind-mode buyer could learn the business identity by asking.
       const access = typeof accessToken === "string" ? await storage.getBuyerAccessByToken(accessToken) : undefined;
-      if (!access || access.dealId !== dealId || access.revokedAt) {
+      if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) {
         return res.status(401).json({ error: "A valid view-room link is required to ask questions" });
       }
       const buyerAccessId = access.id;
@@ -5755,20 +6285,39 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // ── Step 2: Try to answer from CIM content — the SAME version the
       // buyer is allowed to see. Blind buyers get the redacted overrides; if
       // redaction hasn't run yet, escalate rather than leak identity.
-      const baseSections = await storage.getCimSectionsByDeal(dealId);
-      let answerSections = baseSections.map(s => ({ title: s.sectionTitle, body: s.brokerEditedContent || s.aiDraftContent || "" }));
+      // Only sections the buyer can actually see. Structured layoutData
+      // (metric grids, location cards, financial tables, two-column blocks)
+      // carries most of the facts in a bespoke CIM, so it is flattened into
+      // the context alongside the prose — otherwise "what is the monthly
+      // rent?" escalated even though the Facility section shows it.
+      const baseSections = (await storage.getCimSectionsByDeal(dealId)).filter(s => s.isVisible !== false);
+      let answerSections: AnswerSection[] = baseSections.map(s => ({
+        title: s.sectionTitle,
+        body: s.brokerEditedContent || s.aiDraftContent || "",
+        layoutType: s.layoutType,
+        layoutData: s.layoutData,
+      }));
       if (chatMode !== "normal") {
         const overrides = await storage.getCimSectionOverrides(dealId, chatMode);
         if (overrides.length === 0 && chatMode === "blind") {
           answerSections = [];
         } else if (overrides.length > 0) {
+          const blind = chatMode === "blind";
           answerSections = baseSections.map(s => {
             const o = overrides.find(ov => ov.cimSectionId === String(s.id));
-            return { title: o ? "Section" : s.sectionTitle, body: o?.contentOverride || (chatMode === "blind" ? "" : (s.brokerEditedContent || s.aiDraftContent || "")) };
+            return {
+              title: o ? "Section" : s.sectionTitle,
+              body: o?.contentOverride || (blind ? "" : (s.brokerEditedContent || s.aiDraftContent || "")),
+              layoutType: s.layoutType,
+              // Same rule as the prose: a blind buyer only ever gets the
+              // redacted override's data, never the un-redacted base.
+              layoutData: o?.layoutData || (blind ? null : s.layoutData),
+            };
           });
         }
       }
-      const cimText = answerSections.map(s => `${s.title}: ${s.body}`).join("\n\n");
+      // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
+      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
 
       const aiResponse = cimText.trim().length === 0 ? { content: [] as any[] } : await anthropic.messages.create({
         model: "claude-sonnet-4-5",
@@ -5810,7 +6359,7 @@ Do not speculate or add information not in the CIM.`,
         answer: needsEscalation ? null : aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
         message: needsEscalation
-          ? "Great question — your broker will respond shortly."
+          ? "Forwarded to your broker."
           : aiAnswer,
       });
     } catch (error: any) {
@@ -5824,9 +6373,10 @@ Do not speculate or add information not in the CIM.`,
       const { dealId } = req.params;
       const tok = (req.headers["x-buyer-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : undefined);
       const access = tok ? await storage.getBuyerAccessByToken(tok) : undefined;
-      if (!access || access.dealId !== dealId) return res.status(401).json({ error: "A valid view-room link is required" });
-      const questions = await storage.getPublishedQuestions(dealId);
-      res.json(questions);
+      if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) return res.status(401).json({ error: "A valid view-room link is required" });
+      // Published answers plus this buyer's own pending questions, so the
+      // chat survives a reload and the poll can pick up the broker's answer.
+      res.json(await buildBuyerQuestionFeed(dealId, access.id));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to get questions" });
     }
@@ -5864,15 +6414,27 @@ Do not speculate or add information not in the CIM.`,
 
       const updated = await storage.updateBuyerQuestion(questionId, updates as any);
 
-      // Auto-notify seller team when question needs approval
+      // Notify the seller when a question needs approval. Awaited so the
+      // broker learns whether anyone actually received the link — when the
+      // seller team has no owner/representative, notify() falls back to the
+      // seller invite email; if even that is missing, the response says so
+      // and the broker must share the approval link by hand.
+      let sellerNotified: boolean | undefined;
+      let sellerNotifiedVia: string | undefined;
       if (status === "pending_seller" && updated) {
         const deal = await storage.getDeal(updated.dealId);
-        notify(updated.dealId, "qa_needs_approval", {
-          title: "A buyer question needs your approval",
-          body: `Question: "${updated.question.slice(0, 100)}${updated.question.length > 100 ? "..." : ""}"`,
-          actionUrl: `/approve/${updated.sellerApprovalToken}`,
-          businessName: deal?.businessName,
-        }).catch(() => {}); // fire-and-forget
+        try {
+          const result = await notify(updated.dealId, "qa_needs_approval", {
+            title: "A buyer question needs your approval",
+            body: `Question: "${updated.question.slice(0, 100)}${updated.question.length > 100 ? "..." : ""}"`,
+            actionUrl: `/approve/${updated.sellerApprovalToken}`,
+            businessName: deal?.businessName,
+          });
+          sellerNotified = result.recipients > 0;
+          sellerNotifiedVia = result.via;
+        } catch {
+          sellerNotified = false;
+        }
       }
 
       res.json({
@@ -5880,6 +6442,8 @@ Do not speculate or add information not in the CIM.`,
         approvalLink: updated?.sellerApprovalToken
           ? `/approve/${updated.sellerApprovalToken}`
           : undefined,
+        sellerNotified,
+        sellerNotifiedVia,
       });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update question" });

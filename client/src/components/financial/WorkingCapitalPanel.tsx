@@ -1,5 +1,6 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Minus } from "lucide-react";
+import { AnalyzerNotes } from "@/components/financial/ReclassifiedTable";
 
 /* ──────────────────────────────────────────────
    Types
@@ -14,11 +15,20 @@ export interface WorkingCapitalData {
   currentLiabilities: WorkingCapitalItem[];
   netWorkingCapital: number;
   pegAmount?: number | null;
+  targetNwc?: number | null;
+  asOfPeriod?: string;
+  /** Analyzer notes — e.g. "No balance sheet data provided". */
+  notes?: string[];
 }
 
 interface WorkingCapitalPanelProps {
   data: WorkingCapitalData | null;
+  /** True once the analysis finished — switches the empty state from "run it" to "nothing found". */
+  analysisComplete?: boolean;
 }
+
+const NO_BALANCE_SHEET_MESSAGE =
+  "No balance sheet was found in the uploaded documents, so working capital could not be calculated. Upload a balance sheet on the Overview tab and re-run the analysis.";
 
 /* ──────────────────────────────────────────────
    Formatting
@@ -38,29 +48,42 @@ function formatAmount(val: number | undefined | null): string {
 /* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
-export function WorkingCapitalPanel({ data }: WorkingCapitalPanelProps) {
-  if (!data) {
+export function WorkingCapitalPanel({ data, analysisComplete }: WorkingCapitalPanelProps) {
+  const notes = data?.notes ?? [];
+  const hasFigures =
+    !!data &&
+    ((data.currentAssets?.length ?? 0) > 0 ||
+      (data.currentLiabilities?.length ?? 0) > 0 ||
+      (data.netWorkingCapital ?? 0) !== 0);
+
+  // Either no analysis yet, or the analysis ran and found no balance sheet —
+  // say which, and show whatever the analyzer noted instead of a bare "$0".
+  if (!data || !hasFigures) {
     return (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Working Capital</CardTitle>
         </CardHeader>
-        <CardContent>
+        <CardContent className="space-y-3">
           <p className="text-sm text-muted-foreground text-center py-8">
-            No working capital data. Run the analysis first.
+            {analysisComplete || data ? NO_BALANCE_SHEET_MESSAGE : "No working capital data. Run the analysis first."}
           </p>
+          <AnalyzerNotes notes={notes} />
         </CardContent>
       </Card>
     );
   }
 
-  const { currentAssets, currentLiabilities, netWorkingCapital, pegAmount } = data;
+  const { currentAssets, currentLiabilities, netWorkingCapital, pegAmount, asOfPeriod } = data;
 
   const totalAssets = currentAssets.reduce((sum, item) => sum + item.amount, 0);
   const totalLiabilities = currentLiabilities.reduce((sum, item) => sum + item.amount, 0);
 
   return (
     <div className="space-y-4">
+      {asOfPeriod && (
+        <p className="text-xs text-muted-foreground px-1">As of {asOfPeriod}</p>
+      )}
       <div className="grid grid-cols-2 gap-4">
         {/* Current Assets */}
         <Card>
@@ -169,6 +192,8 @@ export function WorkingCapitalPanel({ data }: WorkingCapitalPanelProps) {
           </table>
         </CardContent>
       </Card>
+
+      <AnalyzerNotes notes={notes} />
     </div>
   );
 }

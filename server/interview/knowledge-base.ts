@@ -695,6 +695,13 @@ function parseLocation(deal: Deal, questionnaireData: Record<string, unknown> | 
     }
   }
 
+  // Broker-entered location from deal creation ("Calgary, AB") — available
+  // before the seller has answered anything, so jurisdiction-specific
+  // questions load from the first turn.
+  if (deal.location && deal.location.trim()) {
+    return { country: null, stateProvince: null, municipality: null, raw: deal.location.trim() };
+  }
+
   // Try extractedInfo
   const extractedInfo = deal.extractedInfo as Partial<ExtractedInfo> | null;
   if (extractedInfo?.locations) {

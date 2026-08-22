@@ -59,11 +59,20 @@ export default function NewDeal() {
 
   const [businessName, setBusinessName] = useState("");
   const [industry, setIndustry] = useState("");
+  const [subIndustry, setSubIndustry] = useState("");
+  const [location, setLocationField] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [description, setDescription] = useState("");
 
   const createDealMutation = useMutation({
-    mutationFn: async (data: { businessName: string; industry: string; websiteUrl?: string; description?: string }) => {
+    mutationFn: async (data: {
+      businessName: string;
+      industry: string;
+      subIndustry?: string;
+      location?: string;
+      websiteUrl?: string;
+      description?: string;
+    }) => {
       const response = await fetch("/api/deals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -109,6 +118,8 @@ export default function NewDeal() {
     createDealMutation.mutate({
       businessName: businessName.trim(),
       industry,
+      subIndustry: subIndustry.trim() || undefined,
+      location: location.trim() || undefined,
       websiteUrl: normalizeWebsiteUrl(websiteUrl),
       description: description.trim() || undefined,
     });
@@ -177,6 +188,42 @@ export default function NewDeal() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+
+            {/* The interview agent loads industry- and jurisdiction-specific
+                question areas from these two fields — "Healthcare" alone
+                can't tell a dental practice from a physio clinic, and
+                permits/licensing depend on the province or state. */}
+            <div className="space-y-1.5">
+              <Label htmlFor="subIndustry" className="text-sm font-medium">
+                Sub-industry / specialty
+              </Label>
+              <Input
+                id="subIndustry"
+                placeholder="e.g., Dental practice, HVAC contractor, Pizza restaurant"
+                value={subIndustry}
+                onChange={(e) => setSubIndustry(e.target.value)}
+                className="h-9 bg-card border-border"
+                data-testid="input-sub-industry"
+              />
+            </div>
+
+            <div className="space-y-1.5">
+              <Label htmlFor="location" className="text-sm font-medium">
+                Location
+              </Label>
+              <Input
+                id="location"
+                placeholder="City, Province/State — e.g., Calgary, AB"
+                value={location}
+                onChange={(e) => setLocationField(e.target.value)}
+                className="h-9 bg-card border-border"
+                autoComplete="off"
+                data-testid="input-location"
+              />
+              <p className="text-xs text-muted-foreground/60 leading-snug">
+                Drives the permits, licensing, and compliance questions the AI asks.
+              </p>
             </div>
           </div>
 

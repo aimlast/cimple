@@ -63,7 +63,7 @@ type SystemBlock = {
   cache_control?: { type: "ephemeral" };
 };
 
-export async function generateCimLayout(params: {
+export interface CimLayoutParams {
   dealId: string;
   businessName: string;
   industry: string;
@@ -79,18 +79,25 @@ export async function generateCimLayout(params: {
     primaryColor?: string;
   } | null;
   engagementInsights?: EngagementInsightInput[] | null;
-}): Promise<CimDocument> {
+}
 
+/**
+ * Shared, cached prefix: identical bytes for the manifest call and every
+ * section call, so Anthropic's prompt cache serves it after the first call.
+ */
+function buildSharedSystem(params: CimLayoutParams): SystemBlock {
   const knowledgeBase = buildKnowledgeBase(params);
-  const warnings: string[] = [];
-
-  // Shared, cached prefix: identical bytes for the manifest call and every
-  // section call, so Anthropic's prompt cache serves it after the first call.
-  const sharedSystem: SystemBlock = {
+  return {
     type: "text",
     text: `${DESIGN_AGENT_RULES}\n\n# DEAL KNOWLEDGE BASE\n\n${knowledgeBase}`,
     cache_control: { type: "ephemeral" },
   };
+}
+
+export async function generateCimLayout(params: CimLayoutParams): Promise<CimDocument> {
+
+  const warnings: string[] = [];
+  const sharedSystem = buildSharedSystem(params);
 
   // ── Phase 1: plan the document ─────────────────────────────────────────
   const manifest = await generateManifest(sharedSystem);
@@ -141,6 +148,59 @@ export async function generateCimLayout(params: {
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
+}
+
+/** The subset of a stored section needed to rebuild one of its siblings. */
+export interface ExistingSectionRef {
+  sectionKey: string;
+  sectionTitle: string;
+  order: number;
+  layoutType: string;
+  tags?: unknown;
+  aiLayoutReasoning?: string | null;
+}
+
+/**
+ * regenerateCimSection
+ *
+ * Rebuilds ONE section of an existing CIM with the same knowledge base and
+ * the current document as sibling context, leaving every other section
+ * untouched. Used by the per-section "Regenerate" action — "Regenerate All"
+ * is the only thing that should ever rebuild the whole document.
+ *
+ * Throws if the section could not be generated (the caller keeps the old
+ * section) — a regenerate must never silently replace content with a
+ * placeholder.
+ */
+export async function regenerateCimSection(
+  params: CimLayoutParams,
+  existing: ExistingSectionRef[],
+  target: ExistingSectionRef,
+  options: { layoutType?: string; brief?: string } = {},
+): Promise<CimLayoutSection> {
+  const sharedSystem = buildSharedSystem(params);
+  const manifest: ManifestEntry[] = [...existing]
+    .sort((a, b) => a.order - b.order)
+    .map((s) => ({
+      sectionKey: s.sectionKey,
+      sectionTitle: s.sectionTitle,
+      order: s.order,
+      layoutType: s.sectionKey === target.sectionKey && options.layoutType ? options.layoutType : s.layoutType,
+      tags: Array.isArray(s.tags) ? (s.tags as string[]) : [],
+      aiLayoutReasoning: s.aiLayoutReasoning || "",
+      contentBrief: s.sectionKey === target.sectionKey
+        ? (options.brief || `Rebuild "${s.sectionTitle}" from the knowledge base with the same scope it has today.`)
+        : `${s.sectionTitle}${Array.isArray(s.tags) && s.tags.length ? ` (${(s.tags as string[]).join(", ")})` : ""}`,
+    }));
+  const entry = manifest.find((m) => m.sectionKey === target.sectionKey);
+  if (!entry) throw new Error("Section is not part of the current CIM.");
+
+  const warnings: string[] = [];
+  const section = await generateSection(sharedSystem, entry, manifest, warnings);
+  if (warnings.length > 0) {
+    throw new Error("The section could not be regenerated. The existing version was kept — please try again.");
+  }
+  return section;
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────
@@ -328,7 +388,8 @@ You are NOT generating a template. You are generating a bespoke document for thi
 
 LAYOUT TYPES AND THEIR layoutData SHAPE:
 
-cover_page: { businessName, tagline?, industry?, location?, askingPrice?, revenue?, ebitda?, preparedBy?, date?, confidentialLabel? }
+cover_page: { businessName, tagline?, industry?, location?, askingPrice?, revenue?, ebitda?, earningsLabel?, preparedBy?, date?, confidentialLabel? }
+— ebitda holds the headline earnings figure; earningsLabel says what it is ("SDE", "EBITDA", "Adjusted EBITDA") and MUST match the figure. Never put an SDE number under an EBITDA label. Put only the number in ebitda (e.g. "$628,000"), the name in earningsLabel.
 
 metric_grid: { metrics: [{label, value, unit?, trend?, delta?, highlight?, footnote?}], columns?: 2|3|4, title? }
 — Use for: KPIs, key financial figures, key operational metrics, snapshot stats
@@ -423,7 +484,14 @@ DOCUMENT STRUCTURE RULES:
 9. Every major claim should be supported by a visual where possible
 10. The reason_for_sale and transition details should ALWAYS use prose_highlight — this is personal
 
-11. If BUYER ENGAGEMENT DATA is provided in the knowledge base, use it to favour layout types that have historically held buyer attention for similar content in this industry. All else being equal, prefer the layout type with higher avg_time_seconds for a given section type.`;
+11. If BUYER ENGAGEMENT DATA is provided in the knowledge base, use it to favour layout types that have historically held buyer attention for similar content in this industry. All else being equal, prefer the layout type with higher avg_time_seconds for a given section type.
+
+CONTENT STYLE RULES (every string in layoutData and aiDraftContent):
+12. PLAIN TEXT ONLY. No markdown of any kind: no **bold**, no # headings, no inline "•" bullet runs, no "- " list markers inside a prose string. Emphasis comes from the layout (highlight flags, pull quotes, callout titles), and lists come from the list-shaped layouts (callout_list, numbered_list, two_column "list" columns, highlights[]). Paragraphs are separated by a blank line.
+13. ONE SET OF NUMBERS. Revenue, SDE, EBITDA, asking price and headcount must be identical in every section where they appear — copy the figures from CANONICAL FIGURES in the knowledge base verbatim (same rounding, same currency). Never derive a second value for the same metric in another section.
+14. SDE IS NOT EBITDA. Label every earnings figure with what it is. If the knowledge base gives SDE, say SDE everywhere (cover earningsLabel, metric labels, table row labels, chart titles). Only say EBITDA when the figure is EBITDA.
+15. JURISDICTION. Regulators, licences, permits, taxes and compliance bodies must belong to the business's actual jurisdiction in the knowledge base (country → province/state → municipality). Use the real body's name (e.g. an Ontario dental practice answers to the RCDSO, not a "State Dental Board"). If the jurisdiction is unknown, describe the requirement generically ("provincial/state dental regulator") rather than guessing a country.
+16. icon_stat_row and metric_grid values carry their unit: put "%" / "yrs" / currency in the value string or the unit field — a bare "94" for a retention rate is wrong.`;
 
 /**
  * buildKnowledgeBase
@@ -435,6 +503,21 @@ function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): st
   parts.push(`BUSINESS: ${params.businessName}`);
   parts.push(`INDUSTRY: ${params.industry}`);
   if (params.askingPrice) parts.push(`ASKING PRICE: ${params.askingPrice}`);
+
+  // Canonical figures + jurisdiction are pulled out and named explicitly so
+  // every section copies the same number and the right regulator (rules
+  // 13–15). The scan is by key pattern because the interview agent's keys
+  // are bespoke per deal.
+  const canonical = collectCanonicalFigures(params);
+  if (canonical.length > 0) {
+    parts.push("\nCANONICAL FIGURES (copy these exact values everywhere they appear):");
+    for (const line of canonical) parts.push(line);
+  }
+  const jurisdiction = collectJurisdiction(params);
+  if (jurisdiction.length > 0) {
+    parts.push("\nJURISDICTION (all regulatory / licensing references must match):");
+    for (const line of jurisdiction) parts.push(line);
+  }
 
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     parts.push("\n--- INTERVIEW DATA ---");
@@ -517,4 +600,56 @@ function formatKey(key: string): string {
     .replace(/_/g, " ")
     .trim()
     .replace(/^\w/, c => c.toUpperCase());
+}
+
+const FIGURE_PATTERNS: Array<{ label: string; test: RegExp }> = [
+  { label: "Revenue", test: /^(annual)?revenue$|^revenue(ttm|lastyear|current|annual)?$|^(ttm|trailing)revenue$|^grossrevenue$|^sales$/i },
+  { label: "SDE", test: /^sde$|sellerdiscretionary|^adjustedsde$|^normalizedsde$/i },
+  { label: "EBITDA", test: /^ebitda$|^adjustedebitda$|^normalizedebitda$/i },
+  { label: "Net income", test: /^netincome$|^netprofit$/i },
+  { label: "Headcount", test: /^(employee|staff|head)count$|^numberofemployees$|^employees$|^fte$/i },
+];
+
+function isScalar(v: unknown): v is string | number {
+  return (typeof v === "string" && v.trim().length > 0 && v.length < 80) || typeof v === "number";
+}
+
+function collectCanonicalFigures(params: CimLayoutParams): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const sources: Array<Record<string, unknown> | null | undefined> = [params.extractedInfo, params.questionnaireData];
+  for (const src of sources) {
+    if (!src) continue;
+    for (const [key, value] of Object.entries(src)) {
+      if (key.startsWith("_") || !isScalar(value)) continue;
+      const bare = key.replace(/[^a-z]/gi, "");
+      const hit = FIGURE_PATTERNS.find((p) => p.test.test(bare));
+      if (!hit || seen.has(hit.label)) continue;
+      seen.add(hit.label);
+      out.push(`${hit.label}: ${value}${hit.label === "SDE" ? "  (this is SDE — label it SDE, not EBITDA)" : ""}`);
+    }
+  }
+  if (params.askingPrice && !seen.has("Asking price")) out.push(`Asking price: ${params.askingPrice}`);
+  return out;
+}
+
+const JURISDICTION_KEYS = /^(country|province|state|stateprovince|region|city|municipality|location|locations|headquarters|hq|address|jurisdiction)$/i;
+
+function collectJurisdiction(params: CimLayoutParams): string[] {
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const sources: Array<Record<string, unknown> | null | undefined> = [params.questionnaireData, params.extractedInfo, params.scrapedData];
+  for (const src of sources) {
+    if (!src) continue;
+    for (const [key, value] of Object.entries(src)) {
+      if (key.startsWith("_") || !isScalar(value)) continue;
+      const bare = key.replace(/[^a-z]/gi, "");
+      if (!JURISDICTION_KEYS.test(bare)) continue;
+      const label = formatKey(key);
+      if (seen.has(label.toLowerCase())) continue;
+      seen.add(label.toLowerCase());
+      out.push(`${label}: ${value}`);
+    }
+  }
+  return out;
 }

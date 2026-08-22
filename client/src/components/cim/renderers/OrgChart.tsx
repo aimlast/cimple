@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface OrgNode {
   id: string;
@@ -79,7 +80,7 @@ function NodeCard({ node }: { node: TreeNode }) {
       </div>
       {/* Notes */}
       {node.notes && (
-        <p className="text-2xs text-muted-foreground/60 mt-1 leading-snug">{node.notes}</p>
+        <p className="text-2xs text-muted-foreground/60 mt-1 leading-snug">{renderInline(node.notes, "notes")}</p>
       )}
     </div>
   );
@@ -131,7 +132,7 @@ export function OrgChartRenderer({ layoutData, content, branding, section }: Ren
 
   if (nodes.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const tree = buildTree(nodes);

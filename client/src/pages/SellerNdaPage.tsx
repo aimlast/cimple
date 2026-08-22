@@ -7,7 +7,7 @@
  * One page, one action, done.
  */
 import { useState } from "react";
-import { useParams } from "wouter";
+import { useParams, Link } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,10 @@ interface NdaData {
   ndaSigned: boolean;
   ndaSignedAt: string | null;
   signerName: string | null;
+  /** "seller" = e-signed on this page; "broker" = broker marked it signed. */
+  signedBy: "seller" | "broker" | null;
+  /** The seller's portal path — same token, so the seller can carry on. */
+  sellerPortalPath: string | null;
 }
 
 function formatSignedDate(iso: string | null): string {
@@ -116,16 +120,27 @@ export default function SellerNdaPage() {
   const signedAt = justSigned?.at ?? (data.ndaSigned ? data.ndaSignedAt : null);
   if (signedName || data.ndaSigned || justSigned) {
     const dateLabel = formatSignedDate(signedAt);
+    // A broker marking the NDA signed (handled outside Cimple) is not a seller
+    // e-signature — don't attribute it to the seller or say they were notified.
+    const brokerRecorded = !justSigned && data.signedBy === "broker" && !data.signerName;
+    const portalPath = data.sellerPortalPath || (token ? `/seller/${token}` : null);
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
         <div className="max-w-sm text-center space-y-3">
           <CheckCircle2 className="h-10 w-10 mx-auto text-emerald-400" />
-          <h2 className="text-lg font-semibold">Agreement signed</h2>
+          <h2 className="text-lg font-semibold">
+            {brokerRecorded ? "Agreement on file" : "Agreement signed"}
+          </h2>
           <p className="text-sm text-muted-foreground">
-            Signed by {signedName || "the seller"}
-            {dateLabel ? ` on ${dateLabel}` : ""}. No further action is needed —
-            your broker has been notified.
+            {brokerRecorded
+              ? `Your broker recorded this agreement as signed${dateLabel ? ` on ${dateLabel}` : ""}. No signature is needed here.`
+              : `Signed by ${signedName || "the seller"}${dateLabel ? ` on ${dateLabel}` : ""}. No further action is needed — your broker has been notified.`}
           </p>
+          {portalPath && (
+            <Button asChild variant="outline" size="sm" className="mt-2">
+              <Link href={portalPath}>Continue to your seller portal</Link>
+            </Button>
+          )}
         </div>
       </div>
     );

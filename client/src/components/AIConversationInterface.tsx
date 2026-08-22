@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw } from "lucide-react";
+import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -20,6 +20,9 @@ interface TurnResult {
   message: string;
   whyItMatters?: string;
   suggestedAnswers: string[];
+  /** The messages exactly as the server persisted them this turn — adopted
+   *  so the live view (timestamps, rationale, chips) matches a reload. */
+  turnMessages?: { user?: ConversationMessage; ai: ConversationMessage };
   sessionId: string;
   captured: {
     total: number;
@@ -51,6 +54,19 @@ interface AIConversationInterfaceProps {
   onComplete?: () => void | Promise<void>;
 }
 
+/** The opening AI message as persisted (authoritative timestamp + rationale),
+ *  with a client-side fallback for a server that doesn't echo it back. */
+function openingMessageFrom(result: TurnResult): ConversationMessage {
+  return (
+    result.turnMessages?.ai ?? {
+      role: "ai",
+      content: result.message,
+      timestamp: new Date().toISOString(),
+      ...(result.whyItMatters ? { whyItMatters: result.whyItMatters } : {}),
+    }
+  );
+}
+
 export function AIConversationInterface({
   dealId,
   businessName,
@@ -80,8 +96,10 @@ export function AIConversationInterface({
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
-  // Buyer-rationale per AI message, keyed by message timestamp
-  const [whyByTs, setWhyByTs] = useState<Record<string, string>>({});
+  // Set while the seller is correcting an earlier answer via "Edit" — the
+  // composer holds their rewrite and sending flags the message as a
+  // correction of this one (rather than a fresh answer to the latest question).
+  const [editing, setEditing] = useState<{ timestamp: string; content: string } | null>(null);
   // Two-stage thinking indicator — after a few seconds the label reassures
   const [slowThinking, setSlowThinking] = useState(false);
   // True once the AI reply has started streaming in — swaps the thinking dots
@@ -89,8 +107,14 @@ export function AIConversationInterface({
   const [isStreaming, setIsStreaming] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
   const recognitionRef = useRef<any>(null);
   const preRecordingInputRef = useRef("");
+  // What the composer held before "Edit" replaced it — restored on Cancel.
+  const preEditInputRef = useRef("");
+  // False until the first scroll-to-bottom after the transcript mounts, so a
+  // restored conversation jumps straight to its last message.
+  const initialScrollDoneRef = useRef(false);
   const inputRef = useRef("");
   const { toast } = useToast();
 
@@ -127,22 +151,23 @@ export function AIConversationInterface({
           });
           if (cancelled) return;
           if (historyRes.ok) {
-            const history = await historyRes.json();
+            const history: { messages?: ConversationMessage[]; status?: string } =
+              await historyRes.json();
             if (history.messages && history.messages.length > 0) {
+              // Resume — rationale and chips ride on the stored messages, so
+              // the transcript comes back exactly as the seller left it.
               setMessages(history.messages);
-              // Don't show suggestions when resuming — context is already established
+              const last = history.messages[history.messages.length - 1];
+              if (history.status !== "completed" && last.role === "ai") {
+                // The question is still pending — re-offer its chips.
+                // `result.suggestedAnswers` covers sessions persisted before
+                // chips were stored on the message.
+                setSuggestedAnswers(last.suggestedAnswers ?? result.suggestedAnswers ?? []);
+              }
             } else {
               // New session — just the opening message
-              const ts = new Date().toISOString();
-              setMessages([{
-                role: "ai",
-                content: result.message,
-                timestamp: ts,
-              }]);
+              setMessages([openingMessageFrom(result)]);
               setSuggestedAnswers(result.suggestedAnswers || []);
-              if (result.whyItMatters) {
-                setWhyByTs({ [ts]: result.whyItMatters });
-              }
             }
 
             if (history.status === "completed") {
@@ -151,10 +176,8 @@ export function AIConversationInterface({
           } else {
             // History is a nice-to-have — fall back to the opening message so
             // the seller can still talk rather than seeing an empty screen.
-            const ts = new Date().toISOString();
-            setMessages([{ role: "ai", content: result.message, timestamp: ts }]);
+            setMessages([openingMessageFrom(result)]);
             setSuggestedAnswers(result.suggestedAnswers || []);
-            if (result.whyItMatters) setWhyByTs({ [ts]: result.whyItMatters });
           }
         }
 
@@ -186,14 +209,23 @@ export function AIConversationInterface({
     setStartError(null);
     setMessages([]);
     setSuggestedAnswers([]);
+    setEditing(null);
     setSessionId(null);
+    initialScrollDoneRef.current = false;
     setStartAttempt((n) => n + 1);
   }, []);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to the newest message. This has to wait for the transcript
+  // to mount: while the session is still starting, the end marker isn't
+  // rendered, so a restore used to set the messages and then land at the
+  // top. The first pass jumps instantly — smoothly sliding through a long
+  // restored transcript reads as the page running away.
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages, isLoading]);
+    if (isStarting || !messagesEndRef.current) return;
+    const behavior: ScrollBehavior = initialScrollDoneRef.current ? "smooth" : "auto";
+    initialScrollDoneRef.current = true;
+    messagesEndRef.current.scrollIntoView({ behavior, block: "end" });
+  }, [messages, isLoading, isStarting]);
 
   // Escalate the thinking label after a few seconds so long Opus turns
   // read as "still with you" rather than frozen.
@@ -311,11 +343,20 @@ export function AIConversationInterface({
     const cleanedInput = input.replace(/\u200B/g, "").trim();
     if (!cleanedInput) return;
 
+    // A message sent from the editing banner is a correction of that earlier
+    // answer \u2014 both the transcript and the agent treat it as an update.
+    const correction = editing;
+    setEditing(null);
+    preEditInputRef.current = "";
+
     // Add user message to UI immediately
     const userMessage: ConversationMessage = {
       role: "user",
       content: cleanedInput,
       timestamp: new Date().toISOString(),
+      ...(correction
+        ? { correctionOf: { timestamp: correction.timestamp, content: correction.content } }
+        : {}),
     };
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
@@ -352,7 +393,11 @@ export function AIConversationInterface({
       const res = await fetch(`/api/interview/${dealId}/message/stream`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ message: cleanedInput, sessionId }),
+        body: JSON.stringify({
+          message: cleanedInput,
+          sessionId,
+          ...(userMessage.correctionOf ? { correctionOf: userMessage.correctionOf } : {}),
+        }),
         signal: controller.signal,
       });
 
@@ -391,14 +436,32 @@ export function AIConversationInterface({
 
       if (streamError) throw new Error(streamError);
       if (!result) throw new Error("No response received");
+      const finalResult: TurnResult = result;
 
-      // The done result is authoritative — set the bubble to its final message
-      // (identical to the streamed text on the happy path; corrects it if the
-      // server's governance/recovery produced a different message).
-      setBubble(result.message);
-      if (result.whyItMatters) {
-        setWhyByTs((prev) => ({ ...prev, [aiTs]: result!.whyItMatters! }));
-      }
+      // The done result is authoritative — swap in the messages exactly as the
+      // server persisted them (timestamps, rationale, chips), so what the
+      // seller sees now is what a reload restores. The AI text is identical
+      // to the streamed text on the happy path; this also corrects it if the
+      // server's governance/recovery produced a different message.
+      ensureBubble();
+      const userTs = userMessage.timestamp;
+      setMessages((prev) =>
+        prev.map((m) => {
+          if (m.role === "user" && m.timestamp === userTs && finalResult.turnMessages?.user) {
+            return finalResult.turnMessages.user;
+          }
+          if (m.role === "ai" && m.timestamp === aiTs) {
+            return (
+              finalResult.turnMessages?.ai ?? {
+                ...m,
+                content: finalResult.message,
+                ...(finalResult.whyItMatters ? { whyItMatters: finalResult.whyItMatters } : {}),
+              }
+            );
+          }
+          return m;
+        }),
+      );
       if (!result.shouldEnd) {
         setSuggestedAnswers(result.suggestedAnswers || []);
       }
@@ -418,15 +481,37 @@ export function AIConversationInterface({
       } else {
         setMessages((prev) => [...prev, { role: "ai", content: errText, timestamp: aiTs }]);
       }
-      // Restore the seller's text so they don't have to retype it
+      // Restore the seller's text so they don't have to retype it — and the
+      // editing state, so a re-send still lands as a correction.
       setInput(cleanedInput);
       inputRef.current = cleanedInput;
+      if (correction) setEditing(correction);
     } finally {
       setAbortController(null);
       setIsLoading(false);
       setIsStreaming(false);
     }
-  }, [input, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
+  }, [input, editing, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
+
+  // "Edit" on an earlier answer loads it into the composer; the banner above
+  // the composer names what's being corrected and offers Cancel.
+  const beginEdit = useCallback((message: ConversationMessage) => {
+    if (!editing) preEditInputRef.current = inputRef.current;
+    setEditing({ timestamp: message.timestamp, content: message.content });
+    setSelectedAnswer(null);
+    setInput(message.content);
+    inputRef.current = message.content;
+    requestAnimationFrame(() => textareaRef.current?.focus());
+  }, [editing]);
+
+  const cancelEdit = useCallback(() => {
+    if (!editing) return;
+    setEditing(null);
+    const restored = preEditInputRef.current;
+    preEditInputRef.current = "";
+    setInput(restored);
+    inputRef.current = restored;
+  }, [editing]);
 
   const handleCancel = useCallback(() => {
     if (abortController) {
@@ -489,8 +574,16 @@ export function AIConversationInterface({
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       handleSend();
+    } else if (e.key === "Escape" && editing) {
+      e.preventDefault();
+      cancelEdit();
     }
   };
+
+  // Earlier answers that a later message corrected — dimmed in the transcript
+  const correctedTimestamps = new Set(
+    messages.flatMap((m) => (m.correctionOf?.timestamp ? [m.correctionOf.timestamp] : [])),
+  );
 
   // Starting state
   if (isStarting) {
@@ -548,13 +641,13 @@ export function AIConversationInterface({
             role={message.role}
             content={message.content}
             timestamp={message.timestamp}
-            whyItMatters={message.role === "ai" ? whyByTs[message.timestamp] : undefined}
+            whyItMatters={message.role === "ai" ? message.whyItMatters : undefined}
+            correctionOf={message.role === "user" ? message.correctionOf : undefined}
+            superseded={message.role === "user" && correctedTimestamps.has(message.timestamp)}
+            isEditing={message.role === "user" && editing?.timestamp === message.timestamp}
             onEdit={
               message.role === "user" && !isFinished && !isLoading
-                ? (content) => {
-                    setInput(content);
-                    inputRef.current = content;
-                  }
+                ? () => beginEdit(message)
                 : undefined
             }
           />
@@ -612,10 +705,33 @@ export function AIConversationInterface({
               </div>
             )}
 
+            {/* Editing banner — names the answer being corrected, offers Cancel */}
+            {editing && (
+              <div
+                className="max-w-3xl mx-auto mb-2.5 flex items-center gap-2 rounded-md border border-teal/30 bg-teal/8 px-3 py-1.5 text-xs"
+                data-testid="status-editing-answer"
+              >
+                <Pencil className="h-3 w-3 text-teal shrink-0" />
+                <span className="font-medium text-foreground shrink-0">Editing your earlier answer</span>
+                <span className="text-muted-foreground truncate min-w-0">“{editing.content}”</span>
+                <button
+                  type="button"
+                  onClick={cancelEdit}
+                  className="ml-auto shrink-0 inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+                  data-testid="button-cancel-edit"
+                >
+                  <X className="h-3 w-3" />
+                  Cancel
+                </button>
+              </div>
+            )}
+
             {/* Suggested answer chips — single-select: picking one fills the
                 composer (editable before sending); picking another replaces it.
-                Multi-select produced nonsense like "One. Three." */}
-            {suggestedAnswers.length > 0 && !isLoading && (
+                Multi-select produced nonsense like "One. Three." Hidden while
+                editing: the chips answer the current question, not the one
+                being corrected. */}
+            {suggestedAnswers.length > 0 && !isLoading && !editing && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
                 {suggestedAnswers.map((answer, idx) => {
                   const isSelected = selectedAnswer === idx;
@@ -646,6 +762,7 @@ export function AIConversationInterface({
 
             <div className="max-w-3xl mx-auto flex gap-2">
               <Textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
                 onKeyDown={handleKeyDown}
@@ -654,9 +771,11 @@ export function AIConversationInterface({
                     ? "Listening... speak now"
                     : isLoading
                       ? "Waiting..."
-                      : suggestedAnswers.length > 0
-                        ? "Pick an option above or type your own response..."
-                        : "Your response..."
+                      : editing
+                        ? "Type your corrected answer..."
+                        : suggestedAnswers.length > 0
+                          ? "Pick an option above or type your own response..."
+                          : "Your response..."
                 }
                 className="resize-none min-h-[56px] text-sm"
                 disabled={isLoading}
@@ -699,7 +818,9 @@ export function AIConversationInterface({
 
             <div className="max-w-3xl mx-auto mt-1.5 flex justify-between items-center">
               <span className="text-[10px] text-muted-foreground/60">
-                Enter to send · Shift+Enter for a new line · Progress saves automatically
+                {editing
+                  ? "Enter to send your correction · Esc to cancel"
+                  : "Enter to send · Shift+Enter for a new line · Progress saves automatically"}
               </span>
               <Button
                 variant="ghost"

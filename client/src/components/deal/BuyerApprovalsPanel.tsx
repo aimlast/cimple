@@ -32,7 +32,7 @@ import { PanelError } from "@/components/deal/PanelError";
 import { useToast } from "@/hooks/use-toast";
 import {
   UserPlus, Loader2, Search, Building2, Mail, Phone, Shield,
-  CheckCircle2, XCircle, Clock, Users, AlertCircle, Sparkles,
+  CheckCircle2, XCircle, Clock, Users, AlertCircle, Sparkles, Copy,
 } from "lucide-react";
 
 interface BuyerCategory { value: string; label: string; description: string; riskLevel: string }
@@ -176,6 +176,18 @@ function Section({
   onReview: (r: ApprovalRequest) => void;
   showReviewBtn?: boolean;
 }) {
+  const { toast } = useToast();
+  // The seller review link is emailed on approval, but the broker had no way
+  // to re-share it from the "With seller" card when that email went astray.
+  const copySellerLink = async (token: string) => {
+    const url = `${window.location.origin}/review/${token}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      toast({ title: "Seller review link copied" });
+    } catch {
+      toast({ title: "Copy failed — link:", description: url });
+    }
+  };
   return (
     <div>
       <div className="text-xs uppercase tracking-wide text-muted-foreground mb-2">{title}</div>
@@ -219,6 +231,17 @@ function Section({
                     {showReviewBtn && (
                       <Button size="sm" variant="outline" onClick={() => onReview(r)}>
                         Review
+                      </Button>
+                    )}
+                    {r.status === "pending_seller_review" && r.sellerReviewToken && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs gap-1.5 text-muted-foreground"
+                        onClick={() => copySellerLink(r.sellerReviewToken!)}
+                        data-testid={`button-copy-seller-review-link-${r.id}`}
+                      >
+                        <Copy className="h-3 w-3" /> Copy seller link
                       </Button>
                     )}
                   </div>
@@ -601,6 +624,9 @@ function SubmitDialog({
             <Checkbox id="comp" checked={form.isCompetitor} onCheckedChange={(v) => update("isCompetitor", !!v)} />
             <Label htmlFor="comp" className="text-xs">Competitor or competitor-adjacent</Label>
           </div>
+          <p className="text-2xs text-muted-foreground -mt-2">
+            Risk is the highest of: category baseline, competitor → high, no proof of funds → medium.
+          </p>
           {form.isCompetitor && (
             <Textarea
               placeholder="Competitor details..."

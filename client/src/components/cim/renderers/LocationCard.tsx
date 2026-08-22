@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface Location {
   label?: string;
@@ -65,7 +66,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
 
   if (locations.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const gridClass = locations.length === 1
@@ -114,7 +115,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
             {/* Notes */}
             {loc.notes && (
               <p className="text-2xs text-muted-foreground mt-2 pt-2 border-t border-border/30 leading-snug">
-                {loc.notes}
+                {renderInline(loc.notes, "notes")}
               </p>
             )}
           </div>

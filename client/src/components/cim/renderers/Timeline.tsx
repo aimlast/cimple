@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface TimelineEvent {
   date?: string;
@@ -33,7 +34,7 @@ export function TimelineRenderer({ layoutData, content, branding, section }: Ren
 
   if (events.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   return (
@@ -94,7 +95,7 @@ export function TimelineRenderer({ layoutData, content, branding, section }: Ren
                   </div>
                   {event.description && (
                     <p className="text-xs text-muted-foreground mt-1.5 leading-relaxed max-w-lg">
-                      {event.description}
+                      {renderInline(event.description, `ev${i}`)}
                     </p>
                   )}
                 </div>

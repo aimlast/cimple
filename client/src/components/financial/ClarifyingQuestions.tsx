@@ -20,6 +20,8 @@ export interface ClarifyingQuestion {
   status: "pending" | "answered" | "dismissed" | "routed_to_seller";
   /** Set by the server when routed — the ask_seller discrepancy the interview reads. */
   discrepancyId?: string;
+  /** Set by a re-run that carried this question over from an earlier analysis version. */
+  carriedFromVersion?: number;
 }
 
 /** The subset of a discrepancy row the cards need to reflect real routing state. */
@@ -259,6 +261,14 @@ function QuestionCard({
                   {question.status === "dismissed" && (
                     <Badge className="bg-muted text-muted-foreground border-0 text-2xs">Dismissed</Badge>
                   )}
+                  {question.carriedFromVersion !== undefined && (
+                    <Badge
+                      className="bg-muted text-muted-foreground border-0 text-2xs"
+                      title="Carried over from an earlier analysis version — answers and routing are kept across re-runs"
+                    >
+                      From v{question.carriedFromVersion}
+                    </Badge>
+                  )}
                   {routing === "with_seller" && (
                     <Badge className="bg-blue-500/10 text-blue-400 border-0 text-2xs gap-0.5">
                       <Send className="h-2.5 w-2.5" /> Asked in seller interview
@@ -318,6 +328,20 @@ function QuestionCard({
                   <p className="text-xs text-amber-400 mt-2">
                     This question was taken back from the seller interview. Answer it here, dismiss it, or send it to the interview again.
                   </p>
+                )}
+
+                {/* Dismissed by mistake — put it back in the pending list */}
+                {question.status === "dismissed" && onUpdate && (
+                  <div className="mt-3">
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 text-xs text-muted-foreground gap-1"
+                      onClick={() => updateQuestion({ status: "pending" })}
+                    >
+                      <Undo2 className="h-3 w-3" /> Restore
+                    </Button>
+                  </div>
                 )}
 
                 {/* Actions */}

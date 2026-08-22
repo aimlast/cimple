@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Pencil, Check, X } from "lucide-react";
+import { Pencil, Check, X, Info } from "lucide-react";
 
 /* ──────────────────────────────────────────────
    Types
@@ -13,11 +13,15 @@ export interface FinancialRow {
   name: string;
   category: string;
   values: Record<string, number>; // year/period -> amount
+  /** Broker reclassified this row — carried into the next analysis version. */
+  categoryOverride?: boolean;
 }
 
 export interface ReclassifiedTableData {
   years: string[];
   rows: FinancialRow[];
+  /** Analyzer notes (source mix, reconciliation warnings). */
+  notes?: string[];
 }
 
 interface ReclassifiedTableProps {
@@ -27,6 +31,12 @@ interface ReclassifiedTableProps {
   /** "pnl" (default) computes a Net Income total; "balance" groups balance-sheet categories. */
   mode?: "pnl" | "balance";
   onUpdate?: (updated: ReclassifiedTableData) => void;
+  /**
+   * Shown when there are no rows. Defaults to "run the analysis"; pass a
+   * different message once the analysis has completed without this statement
+   * (e.g. no balance sheet in the uploaded documents).
+   */
+  emptyMessage?: string;
 }
 
 /* ──────────────────────────────────────────────
@@ -84,7 +94,7 @@ function amountColor(val: number | undefined | null, isTotal = false): string {
 /* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
-export function ReclassifiedTable({ data, title = "Income Statement", years: yearsProp, mode = "pnl", onUpdate }: ReclassifiedTableProps) {
+export function ReclassifiedTable({ data, title = "Income Statement", years: yearsProp, mode = "pnl", onUpdate, emptyMessage }: ReclassifiedTableProps) {
   const [editingRowId, setEditingRowId] = useState<string | null>(null);
   const [editCategory, setEditCategory] = useState<string>("");
 
@@ -155,6 +165,7 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
   };
 
   if (!data || rows.length === 0) {
+    const notes = data?.notes ?? [];
     return (
       <Card>
         <CardHeader>
@@ -162,12 +173,15 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground text-center py-8">
-            No data available. Run the financial analysis to populate this table.
+            {emptyMessage ?? "No data available. Run the financial analysis to populate this table."}
           </p>
+          {notes.length > 0 && <AnalyzerNotes notes={notes} />}
         </CardContent>
       </Card>
     );
   }
+
+  const notes = data.notes ?? [];
 
   return (
     <Card>
@@ -175,6 +189,11 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
         <CardTitle className="text-base">{title}</CardTitle>
       </CardHeader>
       <CardContent className="p-0">
+        {notes.length > 0 && (
+          <div className="px-4 pb-3">
+            <AnalyzerNotes notes={notes} />
+          </div>
+        )}
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
@@ -236,6 +255,23 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
 }
 
 /* ──────────────────────────────────────────────
+   Analyzer notes — source mix, reconciliation warnings
+─────────────────────────────────────────────── */
+export function AnalyzerNotes({ notes }: { notes: string[] }) {
+  if (notes.length === 0) return null;
+  return (
+    <div className="rounded-md border border-amber-500/20 bg-amber-500/5 px-3 py-2 flex items-start gap-2">
+      <Info className="h-3.5 w-3.5 text-amber-400 shrink-0 mt-0.5" />
+      <ul className="space-y-1 text-xs text-muted-foreground min-w-0">
+        {notes.map((note, i) => (
+          <li key={i} className="leading-relaxed">{note}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/* ──────────────────────────────────────────────
    Category group sub-component
 ─────────────────────────────────────────────── */
 interface CategoryGroupProps {
@@ -283,6 +319,9 @@ function CategoryGroup({
         <tr key={row.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors group">
           <td className="px-4 py-2 pl-8 text-xs">
             {row.name}
+            {row.categoryOverride && (
+              <span className="ml-2 text-2xs text-teal/80" title="Reclassified by you — kept on re-run">edited</span>
+            )}
           </td>
           {years.map(year => (
             <td key={year} className={`text-right px-4 py-2 text-xs tabular-nums ${amountColor(row.values[year])}`}>
@@ -310,6 +349,7 @@ function CategoryGroup({
                     variant="ghost"
                     className="h-6 w-6 p-0"
                     onClick={() => onSaveCategory(row.id, editCategory)}
+                    aria-label={`Save category for ${row.name}`}
                   >
                     <Check className="h-3 w-3 text-success" />
                   </Button>
@@ -318,6 +358,7 @@ function CategoryGroup({
                     variant="ghost"
                     className="h-6 w-6 p-0"
                     onClick={onCancelEditing}
+                    aria-label="Cancel reclassification"
                   >
                     <X className="h-3 w-3 text-muted-foreground" />
                   </Button>

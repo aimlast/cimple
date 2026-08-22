@@ -7,8 +7,8 @@ interface Screen2Props {
 }
 
 const PULSE_COUNT = 3;
-const PULSE_DURATION = 1.6;
-const PULSE_INTERVAL = 0.9; // seconds between each pulse start
+const PULSE_DURATION = 1.0;
+const PULSE_INTERVAL = 0.45; // seconds between each pulse start
 
 // Pipe path in a 200x80 viewBox — straight line
 const PIPE_PATH = "M 0,40 L 200,40";
@@ -19,7 +19,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
   const [cimVisualsCount, setCimVisualsCount] = useState(0);
 
   useEffect(() => {
-    const t = setTimeout(() => setStep(1), 600);
+    const t = setTimeout(() => setStep(1), 300);
     return () => clearTimeout(t);
   }, []);
 
@@ -35,7 +35,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
       // All done → advance
       const done = setTimeout(
         () => setStep(2),
-        ((PULSE_COUNT - 1) * PULSE_INTERVAL + PULSE_DURATION) * 1000 + 400,
+        ((PULSE_COUNT - 1) * PULSE_INTERVAL + PULSE_DURATION) * 1000 + 200,
       );
       return () => {
         timers.forEach(clearTimeout);
@@ -48,7 +48,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
   useEffect(() => {
     if (step === 2) {
       const timers = Array.from({ length: CIM_VISUAL_COUNT }, (_, i) =>
-        setTimeout(() => setCimVisualsCount((p) => p + 1), i * 300 + 200),
+        setTimeout(() => setCimVisualsCount((p) => p + 1), i * 150 + 100),
       );
       return () => timers.forEach(clearTimeout);
     }
@@ -57,7 +57,7 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
   // All visuals shown → pause, then collapse into CIM + sparkles
   useEffect(() => {
     if (cimVisualsCount >= CIM_VISUAL_COUNT && step === 2) {
-      const t = setTimeout(() => setStep(3), 800);
+      const t = setTimeout(() => setStep(3), 400);
       return () => clearTimeout(t);
     }
   }, [cimVisualsCount, step]);
@@ -65,11 +65,11 @@ export function Screen2Knowledge({ onReady }: Screen2Props) {
   // Step 3: visuals collapse in, sparkles appear → then ready
   useEffect(() => {
     if (step === 3) {
-      const t = setTimeout(() => setStep(4), 1200);
+      const t = setTimeout(() => setStep(4), 700);
       return () => clearTimeout(t);
     }
     if (step === 4) {
-      const t = setTimeout(() => onReady(), 500);
+      const t = setTimeout(() => onReady(), 200);
       return () => clearTimeout(t);
     }
   }, [step, onReady]);

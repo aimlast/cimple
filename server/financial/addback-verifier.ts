@@ -11,8 +11,200 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { parseJsonLoose } from "./shape";
 
 const anthropic = new Anthropic({ timeout: 600_000 });
+
+/**
+ * Every AI call here must return a bare JSON array, but Claude routinely wraps
+ * it in ```json fences or a one-line preamble. JSON.parse on the raw text used
+ * to fail silently and return [] — a clean GL export became "0 transactions"
+ * and every addback "No Match". Parse loosely, and when it still is not an
+ * array say so in the log with enough context to debug.
+ */
+function parseAiArray(content: string, what: string): any[] | null {
+  try {
+    const parsed = parseJsonLoose(content);
+    if (Array.isArray(parsed)) return parsed;
+    // Some responses wrap the array in an object ({ "transactions": [...] })
+    if (parsed && typeof parsed === "object") {
+      const firstArray = Object.values(parsed as Record<string, unknown>).find(Array.isArray);
+      if (firstArray) return firstArray as any[];
+    }
+    console.error(`[addback-verifier] ${what}: AI response was JSON but not an array (got ${typeof parsed})`);
+    return null;
+  } catch (err: any) {
+    console.error(`[addback-verifier] ${what}: could not parse AI response — ${err?.message ?? err}. First 200 chars: ${JSON.stringify((content || "").slice(0, 200))}`);
+    return null;
+  }
+}
+
+// ── Direct CSV / tab-delimited fast path ──
+
+const CATEGORY_KEYWORDS: Array<[RegExp, string]> = [
+  [/payroll|salary|salaries|wage|wages|cpp|ei |employer|benefit/i, "payroll"],
+  [/rent|lease|occupancy/i, "rent"],
+  [/hydro|electric|gas bill|water|utilit|internet|phone|telecom/i, "utilities"],
+  [/insurance|wsib|premium/i, "insurance"],
+  [/legal|accounting|bookkeep|consult|professional|cpa|lawyer/i, "professional_fees"],
+  [/owner|shareholder|draw|dividend|management fee/i, "owner_draw"],
+  [/travel|flight|hotel|airfare|mileage/i, "travel"],
+  [/meal|restaurant|entertain|coffee/i, "meals"],
+  [/vehicle|auto|fuel|car |truck|parking/i, "vehicle"],
+  [/supplies|office|stationery|software|subscription/i, "supplies"],
+  [/deprec|amortiz/i, "depreciation"],
+  [/interest|loan|bank charge|finance charge/i, "interest"],
+  [/tax|hst|gst|cra|irs/i, "taxes"],
+  [/sales|revenue|income|deposit|invoice/i, "revenue"],
+];
+
+function guessCategory(...texts: string[]): string {
+  const joined = texts.join(" ");
+  for (const [re, category] of CATEGORY_KEYWORDS) {
+    if (re.test(joined)) return category;
+  }
+  return "other";
+}
+
+function splitDelimited(line: string, delimiter: string): string[] {
+  const out: string[] = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') { cur += '"'; i++; }
+      else inQuotes = !inQuotes;
+    } else if (ch === delimiter && !inQuotes) {
+      out.push(cur.trim());
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur.trim());
+  return out;
+}
+
+function parseMoney(raw: string | undefined): number | null {
+  if (raw === undefined) return null;
+  let s = raw.trim();
+  if (!s || s === "-" || s === "—") return null;
+  let negative = false;
+  if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
+  if (s.endsWith("-")) { negative = true; s = s.slice(0, -1); }
+  if (s.startsWith("-")) { negative = true; s = s.slice(1); }
+  s = s.replace(/^(cr|dr)\s*/i, "").replace(/[$€£,\s]/g, "").replace(/(cad|usd)$/i, "");
+  if (!/^\d+(\.\d+)?$/.test(s)) return null;
+  const n = Number(s);
+  if (!Number.isFinite(n)) return null;
+  return negative ? -n : n;
+}
+
+function normalizeDate(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s) return "";
+  const iso = s.match(/^(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})/);
+  if (iso) return `${iso[1]}-${iso[2].padStart(2, "0")}-${iso[3].padStart(2, "0")}`;
+  const parsed = new Date(s);
+  if (!Number.isNaN(parsed.getTime())) return parsed.toISOString().slice(0, 10);
+  // Unparseable and no digits at all ("Total", "Opening balance") — not a date
+  return /\d/.test(s) ? s : "";
+}
+
+interface ColumnMap {
+  date: number;
+  description: number;
+  amount: number;
+  debit: number;
+  credit: number;
+  account: number;
+}
+
+function detectColumns(headers: string[]): ColumnMap | null {
+  const lower = headers.map((h) => h.toLowerCase().trim());
+  const date = lower.findIndex((h) => /(^|\b)(date|posted|posting)(\b|$)/.test(h) || h === "dt");
+  const description = lower.findIndex((h) => /description|memo|payee|narrative|particulars|details|^name$|vendor|merchant/.test(h));
+  const debit = lower.findIndex((h) => /^debit|\bdebit\b|withdrawal|^dr$|money out|payment/.test(h));
+  const credit = lower.findIndex((h) => /^credit|\bcredit\b|deposit|^cr$|money in|receipt/.test(h));
+  const amount = lower.findIndex((h) => /^amount|\bamount\b|^total$|^value$|net amount/.test(h) && !/balance/.test(h));
+  const account = lower.findIndex((h) => /account|category|^class$|^split$|gl code|g\/l|ledger/.test(h) && !/^account ?(no|number|#)/.test(h));
+  if (date === -1 || (amount === -1 && debit === -1 && credit === -1)) return null;
+  return { date, description, amount, debit, credit, account };
+}
+
+/**
+ * Parse a CSV / TSV general ledger, bank export, or QuickBooks detail report
+ * directly — no model call. Handles quoted fields, Debit/Credit split columns,
+ * "(1,234.00)" negatives, and multi-sheet workbook text (each sheet's header
+ * row is re-detected). Returns [] when no usable header row is found so the
+ * caller can fall back to the AI parser.
+ */
+export function parseTransactionsFromCsv(
+  text: string,
+  sourceType: "gl" | "bank" | "quickbooks",
+  documentId: string,
+): ParsedTransaction[] {
+  void documentId;
+  const lines = (text || "").split(/\r?\n/);
+  const out: ParsedTransaction[] = [];
+  let columns: ColumnMap | null = null;
+  let delimiter = ",";
+
+  const pickDelimiter = (line: string) => {
+    const counts: Array<[string, number]> = [
+      ["\t", (line.match(/\t/g) || []).length],
+      [",", (line.match(/,/g) || []).length],
+      [";", (line.match(/;/g) || []).length],
+      ["|", (line.match(/\|/g) || []).length],
+    ];
+    counts.sort((a, b) => b[1] - a[1]);
+    return counts[0][1] > 0 ? counts[0][0] : ",";
+  };
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    if (/^---\s*sheet:/i.test(line)) { columns = null; continue; }
+
+    if (!columns) {
+      const d = pickDelimiter(line);
+      const headers = splitDelimited(line, d);
+      if (headers.length >= 2) {
+        const detected = detectColumns(headers);
+        if (detected) { columns = detected; delimiter = d; }
+      }
+      continue;
+    }
+
+    const fields = splitDelimited(line, delimiter);
+    if (fields.length < 2) continue;
+
+    let amount: number | null = null;
+    if (columns.amount !== -1) amount = parseMoney(fields[columns.amount]);
+    if (amount === null && (columns.debit !== -1 || columns.credit !== -1)) {
+      const debit = columns.debit !== -1 ? parseMoney(fields[columns.debit]) : null;
+      const credit = columns.credit !== -1 ? parseMoney(fields[columns.credit]) : null;
+      if (debit !== null || credit !== null) amount = (debit ?? 0) - (credit ?? 0);
+    }
+    if (amount === null) continue; // header repeat, subtotal, or blank amount
+
+    const date = normalizeDate(fields[columns.date] ?? "");
+    if (!date) continue;
+    const description = columns.description !== -1 ? fields[columns.description] ?? "" : "";
+    const account = columns.account !== -1 ? fields[columns.account] ?? "" : "";
+    out.push({
+      date,
+      description,
+      amount,
+      account,
+      category: guessCategory(account, description),
+      source: sourceType,
+      rawLine: line.slice(0, 300),
+    });
+  }
+  return out;
+}
 
 // ── Types ──
 
@@ -72,12 +264,19 @@ export async function parseTransactionData(
   sourceType: "gl" | "bank" | "quickbooks",
   documentId: string,
 ): Promise<ParsedTransaction[]> {
+  // Fast path: CSV / TSV exports parse deterministically — no model, no
+  // fence-stripping, no truncation. Fall back to the AI parser only when the
+  // text has no recognisable Date/Amount header (PDF bank statements, etc.).
+  const direct = parseTransactionsFromCsv(text, sourceType, documentId);
+  if (direct.length >= 3) return direct;
+
   // Truncate very large texts to stay within context limits
   const truncated = text.length > 80000 ? text.slice(0, 80000) + "\n[TRUNCATED]" : text;
 
   const response = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
     max_tokens: 8000,
+    temperature: 0,
     system: `You are a financial data extraction specialist. Parse the provided ${sourceType === "gl" ? "General Ledger export" : sourceType === "bank" ? "bank statement" : "QuickBooks report"} into structured transaction data.
 
 Extract every transaction with:
@@ -98,11 +297,11 @@ Return ONLY a valid JSON array. No markdown, no explanation. If you cannot parse
   });
 
   const content = (response.content[0] as { type: string; text: string }).text;
-
-  try {
-    const parsed = JSON.parse(content);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.map((t: any) => ({
+  const parsed = parseAiArray(content, `parseTransactionData(${sourceType}, doc ${documentId})`);
+  if (!parsed) return [];
+  return parsed
+    .filter((t: any) => t && typeof t === "object")
+    .map((t: any) => ({
       date: t.date || "",
       description: t.description || "",
       amount: Number(t.amount) || 0,
@@ -111,10 +310,6 @@ Return ONLY a valid JSON array. No markdown, no explanation. If you cannot parse
       source: sourceType,
       rawLine: t.rawLine || "",
     }));
-  } catch {
-    console.error("Failed to parse transaction data from AI response");
-    return [];
-  }
 }
 
 // ── 2. Match addbacks to transactions ──
@@ -188,11 +383,18 @@ Return ONLY a valid JSON array of results, one per addback. Each result:
   });
 
   const content = (response.content[0] as { type: string; text: string }).text;
+  const results = parseAiArray(content, "matchAddbacksToTransactions");
+  if (!results) {
+    return addbacks.map((a) => ({
+      addbackId: a.id,
+      verificationStatus: "no_match" as const,
+      matchedTransactions: [],
+      totalMatchedAmount: 0,
+      aiNotes: "AI matching failed — manual review required.",
+    }));
+  }
 
-  try {
-    const results = JSON.parse(content);
-    if (!Array.isArray(results)) return [];
-
+  {
     return results.map((r: any) => ({
       addbackId: r.addbackId,
       verificationStatus: r.verificationStatus || "no_match",
@@ -206,21 +408,13 @@ Return ONLY a valid JSON array of results, one per addback. Each result:
             amount: t.amount,
             account: t.account,
             source: t.source,
-            documentId,
+            // Transactions parsed from several uploads carry their own document id
+            documentId: (t as ParsedTransaction & { documentId?: string }).documentId || documentId,
             confidence: r.confidence ?? 0.7,
           };
         }),
       totalMatchedAmount: r.totalMatchedAmount || 0,
       aiNotes: r.aiNotes || "",
-    }));
-  } catch {
-    console.error("Failed to parse match results from AI response");
-    return addbacks.map((a) => ({
-      addbackId: a.id,
-      verificationStatus: "no_match" as const,
-      matchedTransactions: [],
-      totalMatchedAmount: 0,
-      aiNotes: "AI matching failed — manual review required.",
     }));
   }
 }
@@ -286,11 +480,10 @@ Return ONLY a valid JSON array. Each item:
   });
 
   const content = (response.content[0] as { type: string; text: string }).text;
+  const results = parseAiArray(content, "identifyAddbacksFromTransactions");
+  if (!results) return [];
 
-  try {
-    const results = JSON.parse(content);
-    if (!Array.isArray(results)) return [];
-
+  {
     return results.map((r: any) => ({
       id: r.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
       label: r.label || "Unknown addback",
@@ -314,9 +507,6 @@ Return ONLY a valid JSON array. Each item:
         }),
       aiNotes: r.aiNotes || "",
     }));
-  } catch {
-    console.error("Failed to parse identified addbacks from AI response");
-    return [];
   }
 }
 
@@ -401,11 +591,11 @@ ${gaps.length > 0 ? gaps.join("\n") : "(none)"}`,
   });
 
   const content = (response.content[0] as { type: string; text: string }).text;
-
-  try {
-    const results = JSON.parse(content);
-    if (!Array.isArray(results)) return [];
-    return results.map((q: any) => ({
+  const results = parseAiArray(content, "generateSellerQuestions");
+  if (!results) return [];
+  return results
+    .filter((q: any) => q && typeof q === "object" && q.question)
+    .map((q: any) => ({
       id: q.id || `q_${Math.random().toString(36).slice(2, 8)}`,
       question: q.question || "",
       context: q.context || "",
@@ -418,8 +608,4 @@ ${gaps.length > 0 ? gaps.join("\n") : "(none)"}`,
       answer: null,
       status: "pending" as const,
     }));
-  } catch {
-    console.error("Failed to parse seller questions from AI response");
-    return [];
-  }
 }

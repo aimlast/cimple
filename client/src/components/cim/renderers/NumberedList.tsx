@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface ListItem {
   title: string;
@@ -31,7 +32,7 @@ export function NumberedListRenderer({ layoutData, content, branding, section }:
 
   if (items.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   return (
@@ -56,9 +57,9 @@ export function NumberedListRenderer({ layoutData, content, branding, section }:
             </div>
             {/* Content */}
             <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-foreground leading-snug">{item.title}</p>
+              <p className="text-sm font-semibold text-foreground leading-snug">{renderInline(item.title, `t${i}`)}</p>
               {item.description && (
-                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
+                <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{renderInline(item.description, `d${i}`)}</p>
               )}
             </div>
           </div>

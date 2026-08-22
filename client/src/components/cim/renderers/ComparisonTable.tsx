@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback } from "../richText";
 
 interface ComparisonRow {
   label: string;
@@ -33,7 +34,7 @@ export function ComparisonTableRenderer({ layoutData, content, branding, section
 
   if (rows.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   return (

@@ -29,11 +29,19 @@ import {
   integrations, integrationEmails, financialAnalyses, addbackVerifications,
   cimSectionOverrides, discrepancies,
   dealMembers, notifications, buyerApprovalRequests, buyerUsers, brokerBuyerContacts, dealOutreach,
-  dealDocumentRequirements
+  dealDocumentRequirements,
+  calculateBuyerProfileCompletion
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
 import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+
+// Buyer profile fields that feed calculateBuyerProfileCompletion — an update
+// touching any of these recomputes profileCompletionPct (see updateBuyerUser).
+const PROFILE_COMPLETION_FIELDS: Array<keyof BuyerUser> = [
+  "name", "phone", "company", "title", "buyerType", "background",
+  "liquidFunds", "targetIndustries", "targetLocations", "buyerCriteria",
+];
 
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
@@ -170,6 +178,8 @@ export interface IStorage {
   createCimSectionOverride(data: InsertCimSectionOverride): Promise<CimSectionOverride>;
   getCimSectionOverrides(dealId: string, mode: string): Promise<CimSectionOverride[]>;
   deleteCimSectionOverrides(dealId: string, mode: string): Promise<void>;
+  /** Drop every mode's override for one section (after a per-section regenerate — they describe content that no longer exists). */
+  deleteCimSectionOverridesForSection(cimSectionId: string): Promise<void>;
 
   // Discrepancies
   createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy>;
@@ -205,8 +215,9 @@ export interface IStorage {
   getBuyerUserByEmail(email: string): Promise<BuyerUser | undefined>;
   getBuyerUserByResetToken(token: string): Promise<BuyerUser | undefined>;
   updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined>;
-  searchBuyerUsers(query: string): Promise<BuyerUser[]>;
+  searchBuyerUsers(query: string, brokerId: string): Promise<BuyerUser[]>;
   getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]>;
+  linkBuyerAccessToBuyerUsers(brokerId: string): Promise<number>;
 
   // Deal outreach (broker-controlled buyer notifications)
   createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach>;
@@ -434,6 +445,7 @@ export class MemStorage implements IStorage {
   async createCimSectionOverride(): Promise<CimSectionOverride> { throw new Error("Use DbStorage"); }
   async getCimSectionOverrides(): Promise<CimSectionOverride[]> { return []; }
   async deleteCimSectionOverrides(): Promise<void> {}
+  async deleteCimSectionOverridesForSection(): Promise<void> {}
   async createDiscrepancy(): Promise<Discrepancy> { throw new Error("Use DbStorage"); }
   async getDiscrepanciesByDeal(): Promise<Discrepancy[]> { return []; }
   async updateDiscrepancy(): Promise<Discrepancy | undefined> { return undefined; }
@@ -467,6 +479,7 @@ export class MemStorage implements IStorage {
   async updateBuyerUser(): Promise<BuyerUser | undefined> { return undefined; }
   async searchBuyerUsers(): Promise<BuyerUser[]> { return []; }
   async getBuyerAccessByBuyerUser(): Promise<any[]> { return []; }
+  async linkBuyerAccessToBuyerUsers(): Promise<number> { return 0; }
 
   // Deal outreach (stubs — DbStorage is the real implementation)
   async createDealOutreach(): Promise<DealOutreach> { throw new Error("Not implemented"); }
@@ -474,6 +487,13 @@ export class MemStorage implements IStorage {
   async getDealOutreachByDeal(): Promise<DealOutreach[]> { return []; }
   async getDealOutreachForBuyer(): Promise<DealOutreach[]> { return []; }
   async updateDealOutreach(): Promise<DealOutreach | undefined> { return undefined; }
+
+  // Document requirements (stubs — DbStorage is the real implementation)
+  async createDocumentRequirement(): Promise<DealDocumentRequirement> { throw new Error("Use DbStorage"); }
+  async getDocumentRequirement(): Promise<DealDocumentRequirement | undefined> { return undefined; }
+  async getDocumentRequirementsByDeal(): Promise<DealDocumentRequirement[]> { return []; }
+  async updateDocumentRequirement(): Promise<DealDocumentRequirement | undefined> { return undefined; }
+  async deleteDocumentRequirement(): Promise<void> {}
 }
 
 export class DbStorage implements IStorage {
@@ -1142,6 +1162,11 @@ export class DbStorage implements IStorage {
       ));
   }
 
+  async deleteCimSectionOverridesForSection(cimSectionId: string): Promise<void> {
+    await db.delete(cimSectionOverrides)
+      .where(eq(cimSectionOverrides.cimSectionId, cimSectionId));
+  }
+
   // ── Discrepancies ──
 
   async createDiscrepancy(data: InsertDiscrepancy): Promise<Discrepancy> {
@@ -1287,7 +1312,11 @@ export class DbStorage implements IStorage {
 
   // ── Buyer users (accounts) ─────────────────────────────────────────
   async createBuyerUser(data: InsertBuyerUser): Promise<BuyerUser> {
-    const result = await db.insert(buyerUsers).values(data as any).returning();
+    // Profile completion is derived, never trusted from the caller — the
+    // broker add/import paths used to hardcode 0, so every manually added
+    // buyer showed "Profile 0%" regardless of how much was filled in.
+    const profileCompletionPct = calculateBuyerProfileCompletion(data as Partial<BuyerUser>);
+    const result = await db.insert(buyerUsers).values({ ...data, profileCompletionPct } as any).returning();
     return result[0];
   }
 
@@ -1307,19 +1336,36 @@ export class DbStorage implements IStorage {
   }
 
   async updateBuyerUser(id: string, updates: Partial<BuyerUser>): Promise<BuyerUser | undefined> {
+    // Keep profileCompletionPct in step with the profile fields it's derived
+    // from, whichever path writes them (buyer editor, broker add, CSV, invite).
+    const touchesProfile = PROFILE_COMPLETION_FIELDS.some((f) => f in updates);
+    let profilePatch: { profileCompletionPct?: number } = {};
+    if (touchesProfile) {
+      const current = await this.getBuyerUser(id);
+      if (current) {
+        profilePatch = { profileCompletionPct: calculateBuyerProfileCompletion({ ...current, ...updates }) };
+      }
+    }
     const result = await db.update(buyerUsers)
-      .set({ ...updates, updatedAt: new Date() })
+      .set({ ...updates, ...profilePatch, updatedAt: new Date() })
       .where(eq(buyerUsers.id, id))
       .returning();
     return result[0];
   }
 
-  async searchBuyerUsers(query: string): Promise<BuyerUser[]> {
+  async searchBuyerUsers(query: string, brokerId: string): Promise<BuyerUser[]> {
     const q = query.trim().toLowerCase();
-    if (q.length < 2) return [];
-    // Case-insensitive partial match on email OR name
+    if (q.length < 2 || !brokerId) return [];
+    // Tenant-scoped: only buyers this brokerage already knows — their own
+    // contact list, or buyers granted access to one of their deals. The
+    // previous platform-wide search returned other brokerages' buyer PII.
     const result = await db.select().from(buyerUsers).where(
-      sql`LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`}`
+      sql`(LOWER(${buyerUsers.email}) LIKE ${`%${q}%`} OR LOWER(${buyerUsers.name}) LIKE ${`%${q}%`})
+        AND (
+          ${buyerUsers.id} IN (SELECT ${brokerBuyerContacts.buyerUserId} FROM ${brokerBuyerContacts} WHERE ${brokerBuyerContacts.brokerId} = ${brokerId})
+          OR ${buyerUsers.id} IN (SELECT ${buyerAccess.buyerUserId} FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId} AND ${buyerAccess.buyerUserId} IS NOT NULL)
+          OR LOWER(${buyerUsers.email}) IN (SELECT LOWER(${buyerAccess.buyerEmail}) FROM ${buyerAccess} JOIN ${deals} ON ${deals.id} = ${buyerAccess.dealId} WHERE ${deals.brokerId} = ${brokerId})
+        )`
     );
     return result;
   }
@@ -1328,6 +1374,29 @@ export class DbStorage implements IStorage {
     return db.select().from(buyerAccess)
       .where(eq(buyerAccess.buyerUserId, buyerUserId))
       .orderBy(desc(buyerAccess.lastAccessedAt));
+  }
+
+  /**
+   * Backfill: attach unlinked buyer_access rows on this broker's deals to the
+   * buyer account with the same email. Direct "grant access" used to leave
+   * buyerUserId null, so the Buyers page showed dealCount 0 / no activity for
+   * buyers who had signed the NDA and made a decision. Same identity rule the
+   * approval flow uses (email match). Idempotent; returns rows linked.
+   */
+  async linkBuyerAccessToBuyerUsers(brokerId: string): Promise<number> {
+    if (!brokerId) return 0;
+    const result = await db.execute(sql`
+      UPDATE ${buyerAccess} AS ba
+      SET buyer_user_id = bu.id
+      FROM ${buyerUsers} AS bu, ${deals} AS d
+      WHERE ba.buyer_user_id IS NULL
+        AND ba.deal_id = d.id
+        AND d.broker_id = ${brokerId}
+        AND LOWER(ba.buyer_email) = LOWER(bu.email)
+        AND bu.email_verified = true
+    `);
+    // postgres-js exposes affected rows as `count`; node-pg style is `rowCount`.
+    return Number((result as any)?.count ?? (result as any)?.rowCount ?? 0);
   }
 
   // ── Broker buyer contacts (broker's personal contact list) ────────
@@ -1382,6 +1451,12 @@ export class DbStorage implements IStorage {
     dealCount: number;
     lastActivityAt: Date | null;
   }>> {
+    // Step 0: attach any still-unlinked access rows (direct grants made before
+    // the create route linked accounts) so deal counts / activity are right.
+    await this.linkBuyerAccessToBuyerUsers(brokerId).catch((err) => {
+      console.error("[buyers] access→account backfill failed:", err);
+    });
+
     // Step 1: broker's deals
     const brokerDeals = await db.select({ id: deals.id }).from(deals).where(eq(deals.brokerId, brokerId));
     const brokerDealIds = brokerDeals.map(d => d.id);
@@ -1433,6 +1508,20 @@ export class DbStorage implements IStorage {
     const buyers = await db.select().from(buyerUsers).where(
       sql`${buyerUsers.id} IN (${sql.join(buyerIds.map(id => sql`${id}`), sql`, `)})`
     );
+
+    // Backfill: rows created while the add/import routes hardcoded 0% carry a
+    // stale profileCompletionPct. Reconcile lazily so the list is right now
+    // and the stored value catches up.
+    for (const b of buyers) {
+      const expected = calculateBuyerProfileCompletion(b);
+      if ((b.profileCompletionPct ?? 0) !== expected) {
+        b.profileCompletionPct = expected;
+        db.update(buyerUsers)
+          .set({ profileCompletionPct: expected })
+          .where(eq(buyerUsers.id, b.id))
+          .catch((err) => console.error("[buyers] profile completion backfill failed:", err));
+      }
+    }
 
     return buyers.map(b => {
       const stats = seen.get(b.id)!;
