@@ -31,7 +31,7 @@ const PROSE_KEYS = new Set([
   "ownerDependency",
 ]);
 
-const LEGACY_DD_TAG = /\[DD\]\s*/g;
+const LEGACY_DD_TAG = /\[DD(?::\s*[^\]]*)?\]\s*/g;
 const DD_MARK = /\[\[\/?dd\]\]/g;
 
 /** Remove every DD sentinel and legacy tag — for any consumer that wants plain text (chatbot, search). */

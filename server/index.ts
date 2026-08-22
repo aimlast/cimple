@@ -255,13 +255,19 @@ app.use((req, res, next) => {
     shuttingDown = true;
     log(`${signal} received — shutting down`);
     server.close(() => process.exit(0));
-    // Node 18.2+: drop keep-alive/idle sockets so close() can complete
-    if (typeof (server as any).closeAllConnections === "function") {
-      (server as any).closeAllConnections();
+    // Node 18.2+: drop idle keep-alive sockets now so close() can complete,
+    // but let in-flight responses (a 25 s interview turn whose DB write has
+    // already committed) finish — severing them produced a 502 for a turn
+    // the server had actually completed.
+    if (typeof (server as any).closeIdleConnections === "function") {
+      (server as any).closeIdleConnections();
     }
-    sessionPool.end().catch(() => {});
     // Hard exit inside Railway's grace window no matter what
-    setTimeout(() => process.exit(0), 2000).unref();
+    setTimeout(() => {
+      if (typeof (server as any).closeAllConnections === "function") (server as any).closeAllConnections();
+      sessionPool.end().catch(() => {});
+      process.exit(0);
+    }, 5000).unref();
   };
   process.on("SIGTERM", () => shutdown("SIGTERM"));
   process.on("SIGINT", () => shutdown("SIGINT"));
