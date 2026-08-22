@@ -43,6 +43,9 @@ export const deals = pgTable("deals", {
   businessName: text("business_name").notNull(),
   industry: text("industry").notNull(),
   subIndustry: text("sub_industry"),
+  // "City, Province/State" as entered by the broker — the interview agent
+  // keys jurisdiction-specific questions (permits, licensing) off this.
+  location: text("location"),
   description: text("description"),
   
   // Deal lifecycle phase
@@ -58,6 +61,12 @@ export const deals = pgTable("deals", {
   ndaText: text("nda_text"),
   ndaSignerName: text("nda_signer_name"),
   ndaSignedIp: text("nda_signed_ip"),
+  // Who recorded the signature: "seller" (e-signed via /sign-nda) or
+  // "broker" (marked signed manually). Drives the signed-state copy.
+  ndaSignedBy: text("nda_signed_by"),
+  // Pending e-signature state — lets the broker see it went out and to whom.
+  ndaSentAt: timestamp("nda_sent_at"),
+  ndaSentTo: text("nda_sent_to"),
   sqCompleted: boolean("sq_completed").default(false),
   valuationCompleted: boolean("valuation_completed").default(false),
   askingPrice: text("asking_price"),
@@ -120,6 +129,7 @@ export const insertDealSchema = createInsertSchema(deals, {
   // Timestamps arrive as ISO strings over JSON; without coercion drizzle-zod
   // uses strict z.date() and any PATCH containing one of these fields 400s.
   ndaSignedAt: z.coerce.date().nullable().optional(),
+  ndaSentAt: z.coerce.date().nullable().optional(),
   scrapedAt: z.coerce.date().nullable().optional(),
   cimLayoutGeneratedAt: z.coerce.date().nullable().optional(),
 }).omit({
@@ -853,6 +863,18 @@ export const conversationMessageSchema = z.object({
   role: z.enum(["ai", "user"]),
   content: z.string(),
   timestamp: z.string(),
+  /** AI turns: buyer-rationale behind "Why we ask this". Persisted with the
+   *  message so it survives a reload of the interview. */
+  whyItMatters: z.string().optional(),
+  /** AI turns: the answer chips offered with the question. Persisted so a
+   *  resumed session shows them again for the still-pending question. */
+  suggestedAnswers: z.array(z.string()).optional(),
+  /** Seller turns: set when this message corrects an earlier answer (the
+   *  "Edit" flow). Carries the earlier message's timestamp + text so the
+   *  transcript can link the two and the agent knows it is an update. */
+  correctionOf: z
+    .object({ timestamp: z.string().optional(), content: z.string() })
+    .optional(),
 });
 
 export const extractedInfoSchema = z.object({

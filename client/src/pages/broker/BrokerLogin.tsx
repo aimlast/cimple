@@ -100,118 +100,146 @@ export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
           </p>
         </div>
 
+        {/*
+          The card shows exactly one panel at a time. The reset panel used to
+          render underneath the still-visible sign-in form, which read as two
+          competing forms on one card; now each mode replaces the previous one,
+          mirroring the buyer auth card.
+        */}
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
-          <h1 className="text-lg font-semibold mb-4">Sign in</h1>
-          {notice && (
-            <p
-              className="text-xs text-amber-500/90 bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-2 mb-4"
-              role="status"
-              data-testid="text-login-notice"
-            >
-              {notice}
-            </p>
+          {mode === "login" && (
+            <>
+              <h1 className="text-lg font-semibold mb-4">Sign in</h1>
+              {notice && (
+                <p
+                  className="text-xs text-amber-500/90 bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-2 mb-4"
+                  role="status"
+                  data-testid="text-login-notice"
+                >
+                  {notice}
+                </p>
+              )}
+              <form onSubmit={submit} className="space-y-4">
+                <div>
+                  <label htmlFor="broker-username" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                    Username
+                  </label>
+                  <input
+                    id="broker-username"
+                    type="text"
+                    autoComplete="username"
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+                    data-testid="input-broker-username"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="broker-password" className="block text-xs font-medium text-muted-foreground mb-1.5">
+                    Password
+                  </label>
+                  <input
+                    id="broker-password"
+                    type="password"
+                    autoComplete="current-password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+                    data-testid="input-broker-password"
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-xs text-destructive" data-testid="text-login-error">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={login.isPending || !username.trim() || !password}
+                  className="w-full h-9 rounded-md bg-teal text-teal-foreground text-sm font-medium hover:bg-teal/90 transition-colors disabled:opacity-50"
+                  data-testid="button-broker-signin"
+                >
+                  {login.isPending ? "Signing in..." : "Sign in"}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setError(null);
+                    setResetUsername(username);
+                    setMode("forgot");
+                  }}
+                  className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+                  data-testid="button-forgot-password"
+                >
+                  Forgot password?
+                </button>
+              </form>
+            </>
           )}
-          <form onSubmit={submit} className="space-y-4">
-            <div>
-              <label htmlFor="broker-username" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Username
-              </label>
-              <input
-                id="broker-username"
-                type="text"
-                autoComplete="username"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
-                data-testid="input-broker-username"
-              />
-            </div>
-            <div>
-              <label htmlFor="broker-password" className="block text-xs font-medium text-muted-foreground mb-1.5">
-                Password
-              </label>
-              <input
-                id="broker-password"
-                type="password"
-                autoComplete="current-password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
-                data-testid="input-broker-password"
-              />
-            </div>
-
-            {error && (
-              <p className="text-xs text-destructive" data-testid="text-login-error">{error}</p>
-            )}
-
-            <button
-              type="submit"
-              disabled={login.isPending || !username.trim() || !password}
-              className="w-full h-9 rounded-md bg-teal text-teal-foreground text-sm font-medium hover:bg-teal/90 transition-colors disabled:opacity-50"
-              data-testid="button-broker-signin"
-            >
-              {login.isPending ? "Signing in..." : "Sign in"}
-            </button>
-
-            {mode === "login" && (
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  setResetUsername(username);
-                  setMode("forgot");
-                }}
-                className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
-                data-testid="button-forgot-password"
-              >
-                Forgot password?
-              </button>
-            )}
-          </form>
 
           {mode === "forgot" && (
-            <div className="mt-4 pt-4 border-t border-border space-y-3">
-              <div>
-                <label
-                  htmlFor="broker-reset-username"
-                  className="block text-xs font-medium text-muted-foreground mb-1.5"
+            <>
+              <h1 className="text-lg font-semibold mb-1">Reset password</h1>
+              <p className="text-xs text-muted-foreground mb-4">
+                Enter your username and we&apos;ll email a reset link to the
+                address on that account.
+              </p>
+              <form
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  if (resetUsername.trim()) requestReset.mutate();
+                }}
+                className="space-y-4"
+              >
+                <div>
+                  <label
+                    htmlFor="broker-reset-username"
+                    className="block text-xs font-medium text-muted-foreground mb-1.5"
+                  >
+                    Username
+                  </label>
+                  <input
+                    id="broker-reset-username"
+                    type="text"
+                    autoComplete="username"
+                    value={resetUsername}
+                    onChange={(e) => setResetUsername(e.target.value)}
+                    placeholder="your-username"
+                    autoFocus
+                    className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
+                    data-testid="input-reset-username"
+                  />
+                </div>
+
+                {error && (
+                  <p className="text-xs text-destructive" data-testid="text-reset-error">{error}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={requestReset.isPending || !resetUsername.trim()}
+                  className="w-full h-9 rounded-md bg-teal text-teal-foreground text-sm font-medium hover:bg-teal/90 transition-colors disabled:opacity-50"
+                  data-testid="button-send-reset"
                 >
-                  Username for the reset link
-                </label>
-                <input
-                  id="broker-reset-username"
-                  type="text"
-                  autoComplete="username"
-                  value={resetUsername}
-                  onChange={(e) => setResetUsername(e.target.value)}
-                  placeholder="your-username"
-                  className="w-full h-9 px-3 rounded-md border border-input bg-background text-sm focus:outline-none focus:ring-2 focus:ring-teal/40"
-                  data-testid="input-reset-username"
-                />
-              </div>
-              <button
-                onClick={() => requestReset.mutate()}
-                disabled={requestReset.isPending || !resetUsername.trim()}
-                className="w-full h-9 rounded-md border border-teal/40 text-teal text-sm font-medium hover:bg-teal/5 transition-colors disabled:opacity-50"
-                data-testid="button-send-reset"
-              >
-                {requestReset.isPending ? "Sending..." : "Email me a reset link"}
-              </button>
-              <button
-                type="button"
-                onClick={() => { setError(null); setMode("login"); }}
-                className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
-                data-testid="button-back-to-login"
-              >
-                Back to sign in
-              </button>
-            </div>
+                  {requestReset.isPending ? "Sending..." : "Email me a reset link"}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setError(null); setMode("login"); }}
+                  className="w-full text-center text-xs text-muted-foreground hover:text-teal transition-colors"
+                  data-testid="button-back-to-login"
+                >
+                  Back to sign in
+                </button>
+              </form>
+            </>
           )}
 
           {mode === "forgot-sent" && (
-            <div className="mt-4 pt-4 border-t border-border space-y-3">
-              <p className="text-xs text-muted-foreground">
+            <div className="space-y-4">
+              <h1 className="text-lg font-semibold">Check your email</h1>
+              <p className="text-xs text-muted-foreground leading-relaxed" role="status">
                 If an account exists for{" "}
                 <span className="text-foreground font-medium">{resetUsername.trim()}</span>, a
                 reset link is on its way. The link is valid for one hour — check
@@ -227,7 +255,6 @@ export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
               </button>
             </div>
           )}
-
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground mt-4">

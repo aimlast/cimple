@@ -19,6 +19,12 @@ export interface UiFinancialRow {
   name: string;
   category: string; // ReclassifiedTable category values ("Revenue", "COGS", ...)
   values: Record<string, number>; // year -> amount
+  /**
+   * Set server-side when the broker reclassified this row (PATCH diff). Rows
+   * with an override are carried forward by name into the next analysis
+   * version so a re-run never silently undoes a broker decision.
+   */
+  categoryOverride?: boolean;
 }
 
 export interface UiReclassifiedTable {
@@ -37,6 +43,10 @@ export interface UiAddback {
   /** "sde" addbacks only apply to SDE (owner-specific); "ebitda" apply to both. */
   type?: "sde" | "ebitda";
   confidence?: "high" | "medium" | "low";
+  /** Broker-added addback (not from the AI). Carried forward across re-runs. */
+  custom?: boolean;
+  /** Broker toggled approval (PATCH diff). Carried forward by label across re-runs. */
+  approvedOverride?: boolean;
 }
 
 export interface UiNormalization {
@@ -45,6 +55,8 @@ export interface UiNormalization {
   netIncome: Record<string, number>;
   addbacks: UiAddback[];
   notes?: string[];
+  /** Broker chose the base metric (PATCH diff). Carried forward across re-runs. */
+  metricOverride?: boolean;
 }
 
 export interface UiWorkingCapitalItem {
@@ -71,6 +83,12 @@ export interface UiClarifyingQuestion {
   status: "pending" | "answered" | "dismissed" | "routed_to_seller";
   /** Set when routed to the seller interview — the ask_seller discrepancy id. */
   discrepancyId?: string;
+  /**
+   * Set when a re-run carried this question over from an earlier analysis
+   * version (answered / dismissed / routed questions are never dropped, so a
+   * routed ask_seller discrepancy always has a Questions card to take it back from).
+   */
+  carriedFromVersion?: number;
 }
 
 export interface UiInsight {
@@ -178,6 +196,7 @@ export function coerceReclassifiedTable(
         name: String(r.name ?? r.label),
         category: r.category ? String(r.category) : mapCat(""),
         values: numberMap(r.values ?? r.amounts),
+        ...(r.categoryOverride === true ? { categoryOverride: true } : {}),
       }));
     if (rows.length === 0) return null;
     const inferredYears = years.length > 0
@@ -241,6 +260,8 @@ export function coerceNormalization(raw: any): UiNormalization | null {
         approved: typeof a.approved === "boolean" ? a.approved : confidence !== "low",
         type,
         confidence,
+        ...(a.custom === true || (typeof a.id === "string" && a.id.startsWith("custom_")) ? { custom: true } : {}),
+        ...(a.approvedOverride === true ? { approvedOverride: true } : {}),
       };
     });
 
@@ -252,7 +273,70 @@ export function coerceNormalization(raw: any): UiNormalization | null {
     netIncome,
     addbacks,
     notes: Array.isArray(raw.notes) ? raw.notes.map(String) : undefined,
+    ...(raw.metricOverride === true ? { metricOverride: true } : {}),
   };
+}
+
+// ── Net income reconciliation (P&L rows vs reported net income) ──
+
+/**
+ * Net income as the Income Statement tab computes it: Revenue + Other Income
+ * minus the absolute value of every other non-Excluded category. Mirrors
+ * ReclassifiedTable.grandTotals exactly so the server and UI never disagree.
+ */
+export function computePnlNetIncome(table: UiReclassifiedTable | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!table || !Array.isArray(table.rows)) return out;
+  const years = table.years?.length
+    ? table.years
+    : Array.from(new Set(table.rows.flatMap((r) => Object.keys(r.values || {}))));
+  for (const year of years) {
+    const byCategory: Record<string, number> = {};
+    for (const row of table.rows) {
+      const v = row.values?.[year];
+      if (v === undefined || v === null) continue;
+      byCategory[row.category] = (byCategory[row.category] ?? 0) + v;
+    }
+    let total = 0;
+    for (const [cat, sum] of Object.entries(byCategory)) {
+      if (cat === "Revenue" || cat === "Other Income") total += sum;
+      else if (cat !== "Excluded") total -= Math.abs(sum);
+    }
+    out[year] = total;
+  }
+  return out;
+}
+
+export interface NetIncomeMismatch {
+  year: string;
+  reclassified: number;
+  reported: number;
+  delta: number;
+}
+
+/**
+ * Compare the reclassified P&L's computed net income with the normalization
+ * schedule's reported net income. A carve-out that added a "one-time" row
+ * without reducing its parent shows up here as a delta equal to the carve-out.
+ * Tolerance: 0.5% of |reported| or $100, whichever is larger (rounding).
+ */
+export function findNetIncomeMismatches(
+  pnl: UiReclassifiedTable | null | undefined,
+  normalization: UiNormalization | null | undefined,
+): NetIncomeMismatch[] {
+  if (!pnl || !normalization?.netIncome) return [];
+  const computed = computePnlNetIncome(pnl);
+  const out: NetIncomeMismatch[] = [];
+  for (const [year, reported] of Object.entries(normalization.netIncome)) {
+    const reclassified = computed[year];
+    if (reclassified === undefined || !Number.isFinite(reported)) continue;
+    const delta = reclassified - reported;
+    const tolerance = Math.max(100, Math.abs(reported) * 0.005);
+    if (Math.abs(delta) > tolerance) {
+      out.push({ year, reclassified: Math.round(reclassified), reported: Math.round(reported), delta: Math.round(delta) });
+    }
+  }
+  return out.sort((a, b) => a.year.localeCompare(b.year));
 }
 
 /**
@@ -354,6 +438,7 @@ export function coerceClarifyingQuestions(raw: any): UiClarifyingQuestion[] | nu
         status: ["pending", "answered", "dismissed", "routed_to_seller"].includes(q.status)
           ? q.status
           : "pending",
+        ...(typeof q.carriedFromVersion === "number" ? { carriedFromVersion: q.carriedFromVersion } : {}),
       };
     });
   return out.length > 0 ? out : null;
@@ -444,7 +529,8 @@ export function normalizeFinancialAnalysisRow<T extends Record<string, any>>(row
  * Strips markdown fences and trims to the outermost {...} or [...].
  */
 export function parseJsonLoose<T = any>(text: string): T {
-  const cleaned = text.replace(/```json\n?/g, "").replace(/```\n?/g, "").trim();
+  // Fences arrive as ```json, ```JSON, ```javascript, or bare ``` — strip all of them.
+  const cleaned = (text || "").replace(/```[a-zA-Z]*\r?\n?/g, "").trim();
   try {
     return JSON.parse(cleaned) as T;
   } catch {

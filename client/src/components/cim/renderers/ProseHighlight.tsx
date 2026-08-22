@@ -1,10 +1,15 @@
 /**
  * ProseHighlight renderer
  * Left: prose body. Right: pull quote + highlights (if present).
+ *
+ * Body resolution: brokerEditedContent → layoutData.body → content. The
+ * broker's saved edit must always win over the AI's layoutData.body, or a
+ * "Section saved" toast lies while buyers keep reading the old text.
  */
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { renderInline, renderProse, stripMarkup } from "../richText";
 
 interface ProseHighlightLayoutData {
   body?: string;
@@ -23,7 +28,7 @@ interface RendererProps {
 export function ProseHighlightRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: ProseHighlightLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
-  const body = data.body || content || "";
+  const body = section.brokerEditedContent || data.body || content || "";
   const hasRight = !!(data.pullQuote || (data.highlights && data.highlights.length > 0));
 
   if (!body && !hasRight) return null;
@@ -34,16 +39,12 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
       <div className={cn("flex-1 min-w-0", hasRight ? "max-w-[60%]" : "max-w-prose")}>
         {data.subheading && (
           <p className="text-xs font-semibold text-teal uppercase tracking-widest mb-3">
-            {data.subheading}
+            {stripMarkup(data.subheading)}
           </p>
         )}
         {body && (
           <div className="prose prose-sm max-w-none text-foreground/80 leading-relaxed">
-            {body.split("\n\n").map((para, i) => (
-              <p key={i} className="text-sm leading-[1.7] mb-3 last:mb-0">
-                {para}
-              </p>
-            ))}
+            {renderProse(body)}
           </div>
         )}
       </div>
@@ -54,7 +55,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
           {data.pullQuote && (
             <div className="relative pl-4 border-l-2 border-teal">
               <p className="text-base font-medium text-foreground/90 leading-snug italic">
-                &ldquo;{data.pullQuote}&rdquo;
+                &ldquo;{renderInline(data.pullQuote, "pq")}&rdquo;
               </p>
             </div>
           )}
@@ -63,7 +64,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
               {data.highlights.map((hl, i) => (
                 <div key={i} className="flex items-start gap-2.5">
                   <div className="w-1.5 h-1.5 rounded-full bg-teal flex-shrink-0 mt-1.5" />
-                  <p className="text-xs text-foreground/75 leading-relaxed">{hl}</p>
+                  <p className="text-xs text-foreground/75 leading-relaxed">{renderInline(hl, `hl${i}`)}</p>
                 </div>
               ))}
             </div>

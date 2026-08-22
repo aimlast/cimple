@@ -5,9 +5,11 @@
  * business quality, deal structure, and growth criteria. AI-powered
  * matching scores buyers against the full deal knowledge base.
  */
-import { useState } from "react";
+import { Component, useState, type ErrorInfo, type ReactNode } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
+import { PanelError } from "@/components/deal/PanelError";
+import { useToast } from "@/hooks/use-toast";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
@@ -130,7 +132,8 @@ function scoreColor(score: number): string {
 }
 
 function scoreBadge(score: number | null, noCriteria?: boolean): { label: string; color: string } {
-  if (noCriteria || score === null) return { label: "No criteria set", color: "bg-muted/50 text-muted-foreground/60 border-border" };
+  if (noCriteria) return { label: "No criteria set", color: "bg-muted/50 text-muted-foreground/60 border-border" };
+  if (score === null) return { label: "Not scored", color: "bg-muted/50 text-muted-foreground/60 border-border" };
   if (score >= 75) return { label: "Strong match", color: "bg-emerald-500/15 text-emerald-400 border-emerald-500/30" };
   if (score >= 55) return { label: "Good match", color: "bg-teal/15 text-teal border-teal/30" };
   if (score >= 35) return { label: "Moderate", color: "bg-amber-500/15 text-amber-400 border-amber-500/30" };
@@ -145,34 +148,96 @@ function DetailIcon({ score, max }: { score: number; max: number }) {
   return <XCircle className="h-3 w-3 text-red-400 shrink-0" />;
 }
 
+/** Radix Select forbids empty-string item values; this sentinel means "Any". */
+const ANY_VALUE = "__any";
+
+function hasCriteria(criteria: unknown): boolean {
+  return !!criteria && typeof criteria === "object" && Object.keys(criteria as object).length > 0;
+}
+
+// ── Render-error boundary ────────────────────────────────────────────────────
+// A render error anywhere in this panel (or its criteria dialog) used to
+// unmount the whole SPA because no boundary sat between it and the router.
+// Contain it here so the rest of the deal page keeps working.
+class MatchingErrorBoundary extends Component<{ children: ReactNode }, { failed: boolean }> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  componentDidCatch(error: Error, info: ErrorInfo) {
+    console.error("[BuyerMatchingPanel] render error:", error, info.componentStack);
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <PanelError what="buyer matching" onRetry={() => this.setState({ failed: false })} />;
+    }
+    return this.props.children;
+  }
+}
+
 // ── Main Panel ───────────────────────────────────────────────────────────────
 export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
+  return (
+    <MatchingErrorBoundary>
+      <BuyerMatchingPanelInner dealId={dealId} />
+    </MatchingErrorBoundary>
+  );
+}
+
+function BuyerMatchingPanelInner({ dealId }: { dealId: string }) {
+  const { toast } = useToast();
   const [editingBuyer, setEditingBuyer] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
 
+  const buyersKey = ["/api/deals", dealId, "buyers"] as const;
   const { data: buyers } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "buyers"],
+    queryKey: buyersKey,
     enabled: !!dealId,
   });
 
+  // The buyers query is the single source of truth for scores. The match
+  // endpoint persists matchScore/matchBreakdown on each buyerAccess row, so
+  // after a run we (1) write the returned scores straight into the cached
+  // rows so the panel updates instantly, then (2) refetch so the rows reflect
+  // exactly what the server stored. Keeping a separate "fresh results" copy
+  // let the panel drift from the rows and show "—" after a successful run.
   const runMatching = useMutation({
     mutationFn: async () => {
       const res = await apiRequest("POST", `/api/deals/${dealId}/match-buyers`);
       return res.json() as Promise<MatchResult[]>;
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "buyers"] });
+    onSuccess: async (results) => {
+      const byId = new Map(results.map((r) => [r.buyerId, r]));
+      queryClient.setQueryData<any[]>(buyersKey, (old) =>
+        old?.map((row) => {
+          const r = byId.get(row.id);
+          if (!r) return row;
+          return {
+            ...row,
+            matchScore: r.noCriteria ? null : r.matchScore,
+            matchBreakdown: r.noCriteria ? null : r.breakdown,
+          };
+        }),
+      );
+      await queryClient.invalidateQueries({ queryKey: buyersKey });
+      const scored = results.filter((r) => !r.noCriteria).length;
+      toast({
+        description: scored === 0
+          ? "No buyers have criteria set yet — add criteria to score them."
+          : `Scored ${scored} buyer${scored === 1 ? "" : "s"}.`,
+      });
+    },
+    onError: (e: Error) => {
+      toast({ variant: "destructive", description: e.message || "Match run failed. Try again." });
     },
   });
 
-  const results = runMatching.data;
   const activeBuyers = (buyers || []).filter((b: any) => !b.revokedAt);
 
-  // Use either fresh match results or existing stored scores
-  // Enrich match results with decision data from buyers list (even when
-  // using fresh match results from /match-buyers).
-  const buyerById = new Map<string, any>(activeBuyers.map((b: any) => [b.id, b]));
-  const baseDisplay: MatchResult[] = results || activeBuyers.map((b: any) => ({
+  const displayData: MatchResult[] = activeBuyers.map((b: any) => ({
     buyerId: b.id,
     buyerName: b.buyerName || "Unknown",
     buyerEmail: b.buyerEmail,
@@ -180,21 +245,17 @@ export function BuyerMatchingPanel({ dealId }: { dealId: string }) {
     buyerType: b.buyerType,
     prequalified: b.prequalified,
     proofOfFunds: b.proofOfFunds,
-    matchScore: b.matchScore,
-    breakdown: b.matchBreakdown as MatchBreakdown | null,
-    noCriteria: !b.buyerCriteria || Object.keys(b.buyerCriteria || {}).length === 0,
+    matchScore: typeof b.matchScore === "number" ? b.matchScore : null,
+    breakdown: (b.matchBreakdown as MatchBreakdown | null) ?? null,
+    // A stored score means criteria existed when it was computed — don't
+    // flash "No criteria set" while a refetch is still bringing criteria in.
+    noCriteria: !hasCriteria(b.buyerCriteria) && b.matchScore == null,
+    decision: b.decision || "under_review",
+    decisionNextStep: b.decisionNextStep || null,
+    decisionReason: b.decisionReason || null,
+    decisionAt: b.decisionAt || null,
+    crmSyncStatus: b.crmSyncStatus || null,
   }));
-  const displayData: MatchResult[] = baseDisplay.map((m) => {
-    const b = buyerById.get(m.buyerId);
-    return {
-      ...m,
-      decision: b?.decision || "under_review",
-      decisionNextStep: b?.decisionNextStep || null,
-      decisionReason: b?.decisionReason || null,
-      decisionAt: b?.decisionAt || null,
-      crmSyncStatus: b?.crmSyncStatus || null,
-    };
-  });
 
   const sorted = [...displayData].sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
 
@@ -539,10 +600,13 @@ function BuyerCriteriaDialog({ dealId, buyer, onClose }: { dealId: string; buyer
                     return (
                       <div key={fieldKey} className="space-y-0.5">
                         <Label className="text-2xs text-muted-foreground">{def.label}</Label>
-                        <Select value={value || ""} onValueChange={v => update(fieldKey, v)}>
+                        <Select
+                          value={value || ANY_VALUE}
+                          onValueChange={v => update(fieldKey, v === ANY_VALUE ? "" : v)}
+                        >
                           <SelectTrigger className="h-7 text-xs"><SelectValue placeholder="Any" /></SelectTrigger>
                           <SelectContent>
-                            <SelectItem value="">Any</SelectItem>
+                            <SelectItem value={ANY_VALUE}>Any</SelectItem>
                             {(def.options as readonly string[]).map(opt => (
                               <SelectItem key={opt} value={opt}>{opt.replace(/_/g, " ")}</SelectItem>
                             ))}

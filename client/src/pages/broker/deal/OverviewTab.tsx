@@ -71,6 +71,8 @@ import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
+import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
+import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
@@ -82,6 +84,14 @@ import type {
   Discrepancy,
 } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
+
+// A document is "in flight" from upload until the parser writes a terminal
+// status; the document lists poll while any row is in this state.
+const isDocProcessing = (d: { status?: string | null }) =>
+  d.status === "pending" || d.status === "parsing";
+const DOC_POLL_MS = 2500;
+const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
+const stripExt = (name?: string | null) => (name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
 
 /* ═══════════════════════════════════════════
    SHARED HELPERS
@@ -116,6 +126,24 @@ class ApiError extends Error {
     this.name = "ApiError";
     this.status = status;
     this.body = body;
+  }
+}
+
+/**
+ * Copy with feedback. A failed clipboard write (blocked permission, insecure
+ * context) must never be silent — the fallback toast carries the text so the
+ * broker can still grab it by hand.
+ */
+async function copyWithFeedback(
+  toast: ReturnType<typeof useToast>["toast"],
+  text: string,
+  title = "Link copied",
+) {
+  try {
+    await navigator.clipboard.writeText(text);
+    toast({ title });
+  } catch {
+    toast({ title: "Copy failed — link:", description: text });
   }
 }
 
@@ -217,24 +245,40 @@ function DocumentUploadCard({
       if (!r.ok) throw new Error("Failed to load documents");
       return r.json();
     },
+    // Poll while anything is still parsing so status badges flip on their
+    // own instead of waiting for a manual reload.
+    refetchInterval: (query) =>
+      query.state.data?.some(isDocProcessing) ? DOC_POLL_MS : false,
   });
+
+  // When a document finishes parsing, the deal's extractedInfo changed too —
+  // refresh it so coverage and the interview pick up the new fields.
+  const processingIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    const stillProcessing = new Set(docs.filter(isDocProcessing).map((d) => d.id));
+    const finished = Array.from(processingIdsRef.current).some((id) => !stillProcessing.has(id));
+    processingIdsRef.current = stillProcessing;
+    if (finished) queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+  }, [docs, dealId]);
 
   const uploadDoc = useMutation({
     mutationFn: async () => {
-      // Pasted text becomes a plain .txt upload — same pipeline, zero server changes.
+      // Pasted text becomes a plain .txt upload — same pipeline. The title
+      // travels separately so the document keeps it verbatim ("—", commas
+      // and all); only the File name is sanitised for the wire.
+      const title = pasteTitle.trim();
+      const safeFileName =
+        title.replace(/[^a-zA-Z0-9-_ ]/g, " ").replace(/\s+/g, " ").trim() || "call-transcript";
       const file =
         uploadTab === "paste"
-          ? new File(
-              [pasteText],
-              `${(pasteTitle.trim() || "call-transcript").replace(/[^a-zA-Z0-9-_ ]/g, "")}.txt`,
-              { type: "text/plain" },
-            )
+          ? new File([pasteText], `${safeFileName}.txt`, { type: "text/plain" })
           : docFile;
       if (!file || (uploadTab === "paste" && !pasteText.trim()))
         throw new Error(uploadTab === "paste" ? "Nothing pasted" : "No file selected");
       const formData = new FormData();
       formData.append("file", file);
       formData.append("category", docCategory);
+      if (uploadTab === "paste" && title) formData.append("title", title);
       const r = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
         body: formData,
@@ -331,7 +375,7 @@ function DocumentUploadCard({
                     }`}
                   >
                     <FileText className="h-2.5 w-2.5" />
-                    {d.name?.split(".")[0]?.slice(0, 15) || "doc"}
+                    {stripExt(d.name).slice(0, 15) || "doc"}
                   </span>
                 ))}
                 {docs.length > 5 && (
@@ -467,20 +511,28 @@ function IntegrationPromptCard({
 }: {
   onOpenTranscripts: () => void;
 }) {
-  // Single shared card. It used to be mounted once per phase with per-phase
-  // dismissal keys — treat any legacy key as dismissed.
-  const [dismissed, setDismissed] = useState(() =>
-    ["shared", "phase1", "phase2"].some(
-      (k) =>
-        localStorage.getItem(`cimple_integration_prompt_${k}`) === "dismissed",
-    ),
-  );
+  const { dealId } = useDeal();
+  // Dismissal is per deal — "Skip for now" on one deal must not hide the
+  // card on every other deal. Older builds wrote one global key (shared /
+  // phase1 / phase2); clear it so only the per-deal choice counts.
+  const storageKey = `cimple_integration_prompt_${dealId}`;
+  const readDismissed = () => {
+    for (const k of ["shared", "phase1", "phase2"]) {
+      localStorage.removeItem(`cimple_integration_prompt_${k}`);
+    }
+    return localStorage.getItem(storageKey) === "dismissed";
+  };
+  const [dismissed, setDismissed] = useState(readDismissed);
+  useEffect(() => {
+    setDismissed(readDismissed());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [storageKey]);
   const [, setLocation] = useLocation();
 
   if (dismissed) return null;
 
   const dismiss = () => {
-    localStorage.setItem("cimple_integration_prompt_shared", "dismissed");
+    localStorage.setItem(storageKey, "dismissed");
     setDismissed(true);
   };
 
@@ -634,14 +686,9 @@ The undersigned agrees that:
 
 Signed electronically via the Cimple platform.`;
 
-  const copyInviteLink = async () => {
+  const copyInviteLink = () => {
     if (!inviteUrl) return;
-    try {
-      await navigator.clipboard.writeText(inviteUrl);
-      toast({ title: "Invite link copied" });
-    } catch {
-      toast({ title: "Copy failed — link:", description: inviteUrl });
-    }
+    return copyWithFeedback(toast, inviteUrl, "Invite link copied");
   };
 
   const update = useMutation({
@@ -823,17 +870,21 @@ Signed electronically via the Cimple platform.`;
       key: "nda",
       label: "NDA",
       desc: deal.ndaSigned
-        ? `Signed${deal.ndaSignerName ? ` by ${deal.ndaSignerName}` : ""}${deal.ndaSignedAt ? ` on ${new Date(deal.ndaSignedAt).toLocaleDateString()}` : ""}`
-        : "Send it for e-signature through Cimple, or handle it your usual way and mark it signed.",
+        ? deal.ndaSignedBy === "broker" && !deal.ndaSignerName
+          ? `Marked as signed${deal.ndaSignedAt ? ` on ${new Date(deal.ndaSignedAt).toLocaleDateString()}` : ""}`
+          : `Signed${deal.ndaSignerName ? ` by ${deal.ndaSignerName}` : ""}${deal.ndaSignedAt ? ` on ${new Date(deal.ndaSignedAt).toLocaleDateString()}` : ""}`
+        : deal.ndaSentAt
+          ? `Sent${deal.ndaSentTo ? ` to ${deal.ndaSentTo}` : ""} on ${new Date(deal.ndaSentAt).toLocaleDateString()} — awaiting signature`
+          : "Send it for e-signature through Cimple, or handle it your usual way and mark it signed.",
       who: "broker",
       done: !!deal.ndaSigned,
       testId: "button-send-nda",
       action: () => {
-        setNdaEmail(activeInvite?.sellerEmail || "");
+        setNdaEmail(deal.ndaSentTo || activeInvite?.sellerEmail || "");
         setNdaText(deal.ndaText || defaultNdaText);
         setNdaOpen(true);
       },
-      actionLabel: "Send for E-Signature",
+      actionLabel: deal.ndaSentAt ? "Re-send" : "Send for E-Signature",
       secondaryAction: () => update.mutate({ ndaSigned: true }),
       secondaryLabel: "Mark as Signed",
       undo: () => update.mutate({ ndaSigned: false } as Partial<Deal>),
@@ -843,8 +894,10 @@ Signed electronically via the Cimple platform.`;
       label: "Seller Questionnaire",
       desc: deal.questionnaireData
         ? "Completed by the seller"
-        : "The seller fills this in from their invite link — it completes automatically.",
-      who: "seller",
+        : deal.sqCompleted
+          ? "Received outside Cimple — marked by you"
+          : "The seller fills this in from their invite link — it completes automatically.",
+      who: deal.sqCompleted && !deal.questionnaireData ? "broker" : "seller",
       done: !!deal.questionnaireData || !!deal.sqCompleted,
       testId: "button-mark-questionnaire-complete",
       secondaryAction: () => update.mutate({ sqCompleted: true }),
@@ -858,7 +911,11 @@ Signed electronically via the Cimple platform.`;
     {
       key: "valuation",
       label: "Valuation",
-      desc: "Optional here — finish it any time before generating the CIM.",
+      desc: deal.valuationCompleted
+        ? deal.askingPrice
+          ? `Asking price ${deal.askingPrice}`
+          : "Completed — no asking price entered"
+        : "Optional here — finish it any time before generating the CIM.",
       who: "broker",
       optional: true,
       done: !!deal.valuationCompleted,
@@ -926,7 +983,9 @@ Signed electronically via the Cimple platform.`;
                 >
                   {step.label}
                 </p>
-                <ActorBadge who={step.who} />
+                {/* "Waiting on seller" is only true while the step is open —
+                    a received questionnaire is not waiting on anyone. */}
+                {!step.done && <ActorBadge who={step.who} />}
                 {step.optional && !step.done && (
                   <span className="text-2xs text-muted-foreground/60">
                     optional
@@ -1039,12 +1098,8 @@ Signed electronically via the Cimple platform.`;
                     size="sm"
                     variant="outline"
                     className="h-9 shrink-0 gap-1.5"
-                    onClick={() => {
-                      navigator.clipboard
-                        .writeText(inviteResult.url)
-                        .then(() => toast({ title: "Link copied" }))
-                        .catch(() => {});
-                    }}
+                    onClick={() => copyWithFeedback(toast, inviteResult.url)}
+                    data-testid="button-copy-invite-link-dialog"
                   >
                     <Copy className="h-3.5 w-3.5" /> Copy
                   </Button>
@@ -1254,7 +1309,7 @@ function Phase2Center() {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
         title: "Scrape complete",
-        description: `${result.fieldCount} fields found — tap "View scraped data" to review them.`,
+        description: `${plural(result.fieldCount, "field")} found — tap "View scraped data" to review ${result.fieldCount === 1 ? "it" : "them"}.`,
       });
     },
     onError: (err: Error) => {
@@ -1327,12 +1382,7 @@ function Phase2Center() {
                   size="sm"
                   variant="outline"
                   className="h-7 text-xs gap-1.5"
-                  onClick={() => {
-                    navigator.clipboard
-                      .writeText(inviteUrl!)
-                      .then(() => toast({ title: "Invite link copied" }))
-                      .catch(() => toast({ title: "Link", description: inviteUrl! }));
-                  }}
+                  onClick={() => copyWithFeedback(toast, inviteUrl!, "Invite link copied")}
                 >
                   <Copy className="h-3 w-3" /> Copy invite link
                 </Button>
@@ -1366,7 +1416,7 @@ function Phase2Center() {
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {isScraped
-                ? `${scrapedFieldCount} fields found via ${scrapeSource === "website_and_internet" ? "website + internet search" : scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
+                ? `${plural(scrapedFieldCount, "field")} found via ${scrapeSource === "website_and_internet" ? "website + internet search" : scrapeSource === "internet_search" ? "internet search" : "website"} on ${scrapedDate} — AI will verify with seller during interview`
                 : "Pulls publicly available info from the business website or internet before the interview starts."}
             </p>
             {!isScraped && (
@@ -1437,7 +1487,7 @@ function Phase2Center() {
           <DialogHeader>
             <DialogTitle>Scraped public data</DialogTitle>
             <DialogDescription>
-              {scrapedFieldCount} fields found
+              {plural(scrapedFieldCount, "field")} found
               {scrapedDate ? ` on ${scrapedDate}` : ""} —{" "}
               <span className="text-amber-600">
                 unverified: the AI confirms each item with the seller during
@@ -1544,6 +1594,47 @@ function Phase2Center() {
   );
 }
 
+/**
+ * Unresolved critical discrepancies lock every CIM-producing step — generate,
+ * approve, advance to design, publish. The server enforces the same rule with
+ * a 409 on the deal PATCH and the generate endpoints; this mirrors it so the
+ * buttons explain themselves instead of failing.
+ *
+ * Mirrors the server's status list exactly: only "open" and "seller_responded"
+ * block. "ask_seller" is routed to the interview and counts as handled (the
+ * interview hands it back as seller_responded when it ends, which re-blocks
+ * until the broker resolves it).
+ */
+function useDiscrepancyGate(dealId: string) {
+  const {
+    data: discrepancyList = [],
+    error: discrepanciesError,
+    refetch: refetchDiscrepancies,
+  } = useQuery<Discrepancy[]>({
+    queryKey: ["/api/deals", dealId, "discrepancies"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load discrepancies");
+      return r.json();
+    },
+  });
+  const criticalUnresolved = discrepancyList.filter(
+    (d) =>
+      d.severity === "critical" &&
+      (d.status === "open" || d.status === "seller_responded"),
+  );
+  // If the gate itself couldn't load we can't prove it's clear — block, and
+  // say so, rather than letting a failed fetch unlock the step.
+  const blocked = criticalUnresolved.length > 0 || !!discrepanciesError;
+  const reasonFor = (verb: string): string | null =>
+    discrepanciesError
+      ? "Couldn't load discrepancies — this step stays locked until they load."
+      : criticalUnresolved.length > 0
+        ? `Resolve ${criticalUnresolved.length} critical discrepanc${criticalUnresolved.length === 1 ? "y" : "ies"} before ${verb}.`
+        : null;
+  return { discrepancyList, criticalUnresolved, discrepanciesError, refetchDiscrepancies, blocked, reasonFor };
+}
+
 /* ═══════════════════════════════════════════
    PHASE 3 CENTER — Content Creation
 ═══════════════════════════════════════════ */
@@ -1552,7 +1643,12 @@ function Phase3Center() {
   const { toast } = useToast();
   const cimContent = deal.cimContent as Record<string, string> | null;
   const [editingSection, setEditingSection] = useState<string | null>(null);
+  // Prose layouts edit a text draft (→ brokerEditedContent); structured
+  // layouts edit their layoutData (→ layoutData). See editableText.ts.
+  const [editMode, setEditMode] = useState<"text" | "data">("text");
   const [editDraft, setEditDraft] = useState("");
+  const [dataDraft, setDataDraft] = useState<Record<string, any>>({});
+  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
 
   // Throws on failure: returning [] here would drop the broker into the
   // "nothing generated yet" branch with a live Generate button — a loading
@@ -1584,34 +1680,12 @@ function Phase3Center() {
   const hasVisualSections = cimSections.length > 0;
 
   const {
-    data: discrepancyList = [],
-    error: discrepanciesError,
-    refetch: refetchDiscrepancies,
-  } = useQuery<Discrepancy[]>({
-    queryKey: ["/api/deals", dealId, "discrepancies"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/discrepancies`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load discrepancies");
-      return r.json();
-    },
-  });
-  // Mirrors the server's 409 gate on generate-content exactly: only "open"
-  // and "seller_responded" block. "ask_seller" is routed to the interview and
-  // counts as handled (the interview hands it back as seller_responded when
-  // it ends, which re-blocks until the broker resolves it).
-  const criticalUnresolved = discrepancyList.filter(
-    (d) =>
-      d.severity === "critical" &&
-      (d.status === "open" || d.status === "seller_responded"),
-  );
-  // If the gate itself couldn't load we can't prove it's clear — block, and
-  // say so, rather than letting a failed fetch unlock generation.
-  const generationBlocked = criticalUnresolved.length > 0 || !!discrepanciesError;
-  const blockReason = discrepanciesError
-    ? "Couldn't load discrepancies — generation stays locked until they load."
-    : criticalUnresolved.length > 0
-      ? `Resolve ${criticalUnresolved.length} critical discrepanc${criticalUnresolved.length === 1 ? "y" : "ies"} before generating.`
-      : null;
+    discrepanciesError,
+    refetchDiscrepancies,
+    blocked: generationBlocked,
+    reasonFor,
+  } = useDiscrepancyGate(dealId);
+  const blockReason = reasonFor("generating");
 
   const extractedCount = Object.keys(
     (deal.extractedInfo as object) || {},
@@ -1675,11 +1749,11 @@ function Phase3Center() {
   });
 
   const saveEdit = useMutation({
-    mutationFn: ({ sectionId, content }: { sectionId: string; content: string }) =>
+    mutationFn: ({ sectionId, patch }: { sectionId: string; patch: { brokerEditedContent?: string; layoutData?: Record<string, any> } }) =>
       apiJson(
         "PATCH",
         `/api/cim-sections/${sectionId}`,
-        { brokerEditedContent: content },
+        patch,
         "Couldn't save the section",
       ),
     onSuccess: () => {
@@ -1696,6 +1770,40 @@ function Phase3Center() {
         variant: "destructive",
       }),
   });
+
+  // Per-section regenerate: rebuilds ONE section through the layout engine
+  // (POST generate-content { sectionId }); everything else is untouched.
+  const regenerateSection = useMutation({
+    mutationFn: (sectionId: string) =>
+      apiJson(
+        "POST",
+        `/api/deals/${dealId}/generate-content`,
+        { sectionId },
+        "Couldn't regenerate the section",
+      ),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Section regenerated" });
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Regenerate failed",
+        description: e.message,
+        variant: "destructive",
+      }),
+  });
+
+  const startEdit = (section: CimSection) => {
+    setEditingSection(String(section.id));
+    if (isTextEditableLayout(section.layoutType)) {
+      setEditMode("text");
+      setEditDraft(getEditableText(section));
+    } else {
+      setEditMode("data");
+      setDataDraft(((section.layoutData as Record<string, any> | null) ?? {}));
+    }
+  };
 
   const approve = useMutation({
     mutationFn: (role: "broker" | "seller") =>
@@ -1866,7 +1974,11 @@ function Phase3Center() {
                 size="sm"
                 className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
                 onClick={() => advancePhase.mutate("phase4_design_finalization")}
-                disabled={advancePhase.isPending}
+                // Approvals and the move to Design share the generate gate —
+                // a CIM with open critical conflicts must not get closer to
+                // buyers. The server 409s on the same condition.
+                disabled={advancePhase.isPending || generationBlocked}
+                title={reasonFor("advancing to Design") ?? undefined}
                 data-testid="button-advance-phase-4"
               >
                 Advance to Design <ChevronRight className="h-3.5 w-3.5" />
@@ -1878,7 +1990,9 @@ function Phase3Center() {
               variant="outline"
               className="h-8 text-xs"
               onClick={() => approve.mutate("seller")}
-              disabled={approve.isPending}
+              disabled={approve.isPending || generationBlocked}
+              title={reasonFor("approving") ?? undefined}
+              data-testid="button-content-approve-seller"
             >
               Approve as Seller
             </Button>
@@ -1888,7 +2002,9 @@ function Phase3Center() {
               variant="outline"
               className="h-8 text-xs"
               onClick={() => approve.mutate("broker")}
-              disabled={approve.isPending}
+              disabled={approve.isPending || generationBlocked}
+              title={reasonFor("approving") ?? undefined}
+              data-testid="button-content-approve-broker"
             >
               Approve as Broker
             </Button>
@@ -1897,7 +2013,9 @@ function Phase3Center() {
             variant="ghost"
             size="sm"
             className="h-8 text-xs text-muted-foreground gap-1.5"
-            onClick={() => generate.mutate()}
+            // Destructive: rebuilds every section and discards edits,
+            // approvals and the Blind/DD versions — always confirm first.
+            onClick={() => setRegenConfirmOpen(true)}
             // Same gate as the first Generate button — critical discrepancies
             // block every generation, not just the first.
             disabled={generate.isPending || generationBlocked}
@@ -1911,6 +2029,41 @@ function Phase3Center() {
           </Button>
         </div>
       </div>
+
+      <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate the entire CIM?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  This rebuilds every section from scratch. The following will be
+                  permanently discarded and cannot be undone:
+                </p>
+                <ul className="list-disc pl-5 space-y-1">
+                  <li>All edited section content and data</li>
+                  <li>Section approvals, hidden/visible choices and custom order</li>
+                  <li>Any generated Blind and DD versions</li>
+                </ul>
+                <p>To redo one section, hover it and choose Regenerate instead.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep current CIM</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => {
+                setRegenConfirmOpen(false);
+                generate.mutate();
+              }}
+              data-testid="button-regenerate-confirm"
+            >
+              Discard and regenerate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {/* The message above says "resolve N critical discrepancies" — give the
           broker the panel to resolve them (or take one back from the seller)
@@ -1927,23 +2080,35 @@ function Phase3Center() {
         <div className="space-y-6 rounded-lg border border-border bg-card/50 p-6">
           {cimSections.map((section) => {
             const isEditing = editingSection === String(section.id);
+            const textEditable = isTextEditableLayout(section.layoutType);
+            const dataEditable = isStructuredLayout(section.layoutType);
+            const isRegenerating =
+              regenerateSection.isPending && regenerateSection.variables === String(section.id);
             return (
               <div key={section.id} className="group relative">
                 {!isEditing && (
                   <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
-                    <button
-                      onClick={() => {
-                        setEditingSection(String(section.id));
-                        setEditDraft(
-                          section.brokerEditedContent ||
-                            section.aiDraftContent ||
-                            "",
-                        );
-                      }}
-                      className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm"
-                    >
-                      <Pencil className="h-3 w-3" /> Edit text
-                    </button>
+                    {(textEditable || dataEditable) && (
+                      <button
+                        onClick={() => startEdit(section)}
+                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm"
+                        data-testid={`button-edit-section-${section.sectionKey}`}
+                      >
+                        <Pencil className="h-3 w-3" /> {textEditable ? "Edit text" : "Edit data"}
+                      </button>
+                    )}
+                    {section.layoutType !== "cover_page" && section.layoutType !== "divider" && (
+                      <button
+                        onClick={() => regenerateSection.mutate(String(section.id))}
+                        disabled={regenerateSection.isPending || generationBlocked}
+                        title={blockReason ?? "Rebuild only this section from the knowledge base"}
+                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm disabled:opacity-50"
+                        data-testid={`button-regenerate-section-${section.sectionKey}`}
+                      >
+                        <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
+                        {isRegenerating ? "Regenerating…" : "Regenerate"}
+                      </button>
+                    )}
                   </div>
                 )}
 
@@ -1957,12 +2122,18 @@ function Phase3Center() {
                         {section.layoutType}
                       </span>
                     </div>
-                    <Textarea
-                      value={editDraft}
-                      onChange={(e) => setEditDraft(e.target.value)}
-                      className="resize-none text-sm min-h-[140px] font-normal"
-                      autoFocus
-                    />
+                    {editMode === "text" ? (
+                      <Textarea
+                        value={editDraft}
+                        onChange={(e) => setEditDraft(e.target.value)}
+                        className="resize-none text-sm min-h-[140px] font-normal"
+                        autoFocus
+                      />
+                    ) : (
+                      <div className="max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
+                        <StructuredDataEditor value={dataDraft} onChange={setDataDraft} />
+                      </div>
+                    )}
                     <div className="flex items-center gap-2">
                       <Button
                         size="sm"
@@ -1970,7 +2141,9 @@ function Phase3Center() {
                         onClick={() =>
                           saveEdit.mutate({
                             sectionId: String(section.id),
-                            content: editDraft,
+                            patch: editMode === "text"
+                              ? { brokerEditedContent: editDraft }
+                              : { layoutData: dataDraft },
                           })
                         }
                         disabled={saveEdit.isPending}
@@ -2044,6 +2217,14 @@ function Phase4Center() {
   const { deal, dealId } = useDeal();
   const { toast } = useToast();
   const [, navigate] = useLocation();
+  // Same gate as Phase 3: design approvals and Publish stay locked while a
+  // critical discrepancy is unresolved (the server 409s on the same rule).
+  const {
+    discrepanciesError,
+    refetchDiscrepancies,
+    blocked: publishBlocked,
+    reasonFor,
+  } = useDiscrepancyGate(dealId);
 
   const publish = useMutation({
     mutationFn: () =>
@@ -2101,6 +2282,18 @@ function Phase4Center() {
           Open CIM Designer
         </Button>
       </div>
+      {publishBlocked && (
+        <div className="space-y-3">
+          <p className="text-xs text-red-400" data-testid="text-publish-blocked">
+            {reasonFor("approving or publishing")}
+          </p>
+          {discrepanciesError ? (
+            <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
+          ) : (
+            <DiscrepancyPanel dealId={dealId} />
+          )}
+        </div>
+      )}
       <div className="grid gap-3">
         {[
           {
@@ -2141,7 +2334,8 @@ function Phase4Center() {
                 variant="outline"
                 className="h-7 text-xs shrink-0"
                 onClick={() => designApprove.mutate(item.action!)}
-                disabled={designApprove.isPending}
+                disabled={designApprove.isPending || publishBlocked}
+                title={reasonFor("approving the design") ?? undefined}
                 data-testid={`button-design-approve-${item.action}`}
               >
                 Approve as {item.action === "broker" ? "Broker" : "Seller"}
@@ -2166,7 +2360,9 @@ function Phase4Center() {
               size="sm"
               className="bg-teal text-teal-foreground hover:bg-teal/90"
               onClick={() => publish.mutate()}
-              disabled={publish.isPending}
+              disabled={publish.isPending || publishBlocked}
+              title={reasonFor("publishing") ?? undefined}
+              data-testid="button-publish-cim"
             >
               Publish CIM
             </Button>
@@ -2204,6 +2400,8 @@ function DocumentTable() {
       if (!r.ok) throw new Error("Failed to load documents");
       return r.json();
     },
+    refetchInterval: (query) =>
+      query.state.data?.some(isDocProcessing) ? DOC_POLL_MS : false,
   });
 
   const deleteDoc = useMutation({

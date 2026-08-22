@@ -257,3 +257,130 @@ export async function populateDocumentRequirements(
 export function getSupportedIndustries(): string[] {
   return Object.keys(INDUSTRY_DOCS);
 }
+
+// ─── Linking uploads to checklist rows ────────────────────────────────
+//
+// Checklist categories (financial / tax / legal / compliance / operational)
+// are finer-grained than the document categories the parser understands
+// (financials / legal / operations / marketing / transcripts / other). When
+// an upload is matched to a checklist row we derive the parser category from
+// the row so extraction runs with the right prompt instead of "other".
+
+const REQUIREMENT_TO_DOC_CATEGORY: Record<string, string> = {
+  financial: "financials",
+  tax: "financials",
+  legal: "legal",
+  compliance: "legal",
+  operational: "operations",
+};
+
+export function docCategoryForRequirement(requirementCategory: string): string {
+  return REQUIREMENT_TO_DOC_CATEGORY[requirementCategory] ?? "other";
+}
+
+const NAME_STOPWORDS = new Set([
+  "the", "and", "for", "years", "year", "months", "month", "current", "key",
+  "list", "summary", "report", "copy", "copies", "pdf", "final", "draft",
+]);
+
+function keywords(value: string): string[] {
+  return value
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+}
+
+// How brokers and accountants actually name the files, mapped onto the
+// words the checklist rows use. Applied to the file name only.
+const FILE_ALIASES: Array<[RegExp, string[]]> = [
+  [/\b(p\s*&\s*l|pnl|p\s*and\s*l|profit\s*(and|&)\s*loss|income\s*statement)s?\b/i, ["financial", "statements"]],
+  [/\b(t1|t2|1120s?|1040|1065|tax\s*return)s?\b/i, ["tax", "returns"]],
+  [/\b(ar|a\/r|a\.r\.|receivables?)\b/i, ["accounts", "receivable"]],
+];
+
+function fileKeywords(fileName: string): Set<string> {
+  const words = new Set(keywords(fileName));
+  for (const [pattern, extra] of FILE_ALIASES) {
+    if (pattern.test(fileName)) extra.forEach((w) => words.add(w));
+  }
+  return words;
+}
+
+interface LinkableRequirement {
+  id: string;
+  documentName: string;
+  category: string;
+  status: string;
+  sortOrder?: number | null;
+}
+
+/**
+ * Best-effort match of an uploaded file to an open checklist row by the
+ * words in the row's name, gated by category so a "statement" never lands
+ * on a legal row. Returns nothing when the match is ambiguous — a wrong
+ * credit is worse than no credit.
+ */
+export function findMatchingRequirement<T extends LinkableRequirement>(
+  requirements: T[],
+  fileName: string,
+  docCategory: string,
+): T | undefined {
+  // Transcripts and marketing collateral are never checklist items.
+  if (docCategory === "transcripts" || docCategory === "marketing") return undefined;
+  const fileWords = fileKeywords(fileName);
+  if (fileWords.size === 0) return undefined;
+
+  const candidates = requirements.filter((r) => {
+    if (r.status !== "missing") return false;
+    if (docCategory === "other") return true;
+    return docCategoryForRequirement(r.category) === docCategory;
+  });
+
+  const scored = candidates
+    .map((r) => {
+      const words = keywords(r.documentName);
+      const hits = words.filter((w) => fileWords.has(w)).length;
+      return { r, hits, total: words.length };
+    })
+    .filter((s) => s.hits > 0)
+    .sort((a, b) => b.hits - a.hits || (a.r.sortOrder ?? 0) - (b.r.sortOrder ?? 0));
+
+  const [best, second] = scored;
+  if (!best) return undefined;
+  // A single shared word ("statements") matching two rows is a coin flip.
+  if (second && second.hits === best.hits && best.hits < 2) return undefined;
+  return best.r;
+}
+
+/**
+ * Link an upload to a specific checklist row (explicit requirementId) or to
+ * the best keyword match when none was given. Returns the linked row, or
+ * null when nothing matched. Never throws — a failed link must not fail
+ * the upload that triggered it.
+ */
+export async function linkUploadToRequirement(opts: {
+  dealId: string;
+  docId: string;
+  fileName: string;
+  docCategory: string;
+  uploadedBy: "broker" | "seller";
+  requirementId?: string;
+}): Promise<{ id: string; documentName: string; category: string } | null> {
+  try {
+    const requirements = await storage.getDocumentRequirementsByDeal(opts.dealId);
+    const target = opts.requirementId
+      ? requirements.find((r) => r.id === opts.requirementId)
+      : findMatchingRequirement(requirements, opts.fileName, opts.docCategory);
+    if (!target) return null;
+    await storage.updateDocumentRequirement(target.id, {
+      status: "uploaded",
+      uploadedFileId: opts.docId,
+      uploadedBy: opts.uploadedBy,
+      uploadedAt: new Date(),
+    });
+    return { id: target.id, documentName: target.documentName, category: target.category };
+  } catch (err) {
+    console.warn(`[documents] could not link upload ${opts.docId} to a checklist row:`, err);
+    return null;
+  }
+}

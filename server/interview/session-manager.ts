@@ -26,6 +26,10 @@ import {
   canonicalFieldName,
   applyGroundingGuard,
   applyNumericFidelityGuard,
+  setFieldSource,
+  getFieldSources,
+  sourceAllowsOverwrite,
+  recordAlternate,
   numbersMateriallyConflict,
   typedNumericValues,
   HIGH_STAKES_FIELDS,
@@ -48,6 +52,31 @@ import { runInterviewLearningLoop } from "./learning-loop";
 // Types
 // =====================
 
+/** A seller message that corrects an earlier answer (the "Edit" flow). */
+export type CorrectionOf = NonNullable<ConversationMessage["correctionOf"]>;
+
+/** Validates a client-supplied correctionOf payload; anything malformed is
+ *  treated as "not a correction" rather than rejected. */
+export function parseCorrectionOf(raw: unknown): CorrectionOf | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const { content, timestamp } = raw as Record<string, unknown>;
+  if (typeof content !== "string" || !content.trim()) return undefined;
+  return {
+    content: content.slice(0, 4000),
+    ...(typeof timestamp === "string" ? { timestamp } : {}),
+  };
+}
+
+/** What the model sees for a seller turn. A correction is framed explicitly so
+ *  the agent updates the earlier fact instead of reading the text as a fresh
+ *  answer to its latest question. Guards and detectors keep the raw text. */
+function modelFacingUserContent(content: string, correctionOf?: CorrectionOf): string {
+  if (!correctionOf) return content;
+  const prior = correctionOf.content.replace(/\s+/g, " ").trim();
+  const quoted = prior.length > 240 ? `${prior.slice(0, 240)}…` : prior;
+  return `[Correcting my earlier answer "${quoted}"] ${content}`;
+}
+
 export interface TurnResult {
   /** The message to display to the seller */
   message: string;
@@ -55,6 +84,10 @@ export interface TurnResult {
   whyItMatters?: string;
   /** Pre-populated answer options the seller can click to respond */
   suggestedAnswers: string[];
+  /** The messages exactly as persisted this turn (authoritative timestamps,
+   *  rationale, chips). The client adopts these so the live view matches
+   *  what a reload restores. `user` is absent on the opening turn. */
+  turnMessages?: { user?: ConversationMessage; ai: ConversationMessage };
   /** Session ID (for subsequent turns) */
   sessionId: string;
   /** Summary of what was captured this turn */
@@ -166,6 +199,15 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       }
 
       const lastAiMessage = [...messages].reverse().find((m) => m.role === "ai");
+      // The question is still pending when the transcript ends on the AI's
+      // turn — restore its chips (and rationale) instead of dropping them.
+      // `_lastChips` is the fallback for sessions persisted before chips were
+      // stored on the message itself.
+      const pendingQuestion =
+        messages[messages.length - 1]?.role === "ai" ? messages[messages.length - 1] : undefined;
+      const pendingChips =
+        pendingQuestion?.suggestedAnswers ??
+        (Array.isArray(sessionMeta._lastChips) ? (sessionMeta._lastChips as string[]) : []);
 
       // Deferrals come from the durable ledger; _deferredTopics is the legacy
       // fallback for sessions persisted before the ledger existed.
@@ -176,7 +218,8 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
 
       return {
         message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
-        suggestedAnswers: [],
+        whyItMatters: pendingQuestion?.whyItMatters,
+        suggestedAnswers: pendingChips,
         sessionId: session.id,
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
         sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
@@ -233,6 +276,8 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     role: "ai",
     content: openingResult.message,
     timestamp: new Date().toISOString(),
+    ...(openingResult.whyItMatters ? { whyItMatters: openingResult.whyItMatters } : {}),
+    suggestedAnswers: openingResult.suggestedAnswers || [],
   };
 
   // Confidence map from the most recent prior session (if any) — confirmed
@@ -322,6 +367,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     message: openingResult.message,
     whyItMatters: openingResult.whyItMatters,
     suggestedAnswers: openingResult.suggestedAnswers,
+    turnMessages: { ai: aiMessage },
     sessionId: session.id,
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
     sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
@@ -341,7 +387,17 @@ export async function processTurn(
   /** Optional: stream the AI message text to the caller as it's generated.
    *  Purely a display channel — the returned TurnResult is authoritative. */
   onDelta?: (chunk: string) => void,
+  opts: {
+    /** Set when the seller is correcting an earlier answer via "Edit". */
+    correctionOf?: CorrectionOf;
+  } = {},
 ): Promise<TurnResult> {
+  // The seller's message is timestamped when it arrives, not when the AI
+  // finishes replying — otherwise a reload shifts every answer later by the
+  // model's thinking time.
+  const receivedAt = new Date().toISOString();
+  const { correctionOf } = opts;
+
   // Load everything
   const deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
@@ -390,7 +446,7 @@ export async function processTurn(
   for (const msg of existingMessages) {
     apiMessages.push({
       role: msg.role === "ai" ? "assistant" : "user",
-      content: msg.content,
+      content: msg.role === "user" ? modelFacingUserContent(msg.content, msg.correctionOf) : msg.content,
     });
   }
 
@@ -405,7 +461,7 @@ export async function processTurn(
   }
 
   // Add the new seller message
-  apiMessages.push({ role: "user", content: sellerMessage });
+  apiMessages.push({ role: "user", content: modelFacingUserContent(sellerMessage, correctionOf) });
 
   // Build the system prompt with current knowledge base
   const systemBlocks = await buildInterviewSystemBlocks(kb);
@@ -894,9 +950,35 @@ export async function processTurn(
     }
   }
 
-  // Save to deal
+  // Provenance: everything the interview wrote this turn is the seller's own
+  // word — the highest authority, never to be displaced by a document.
+  for (const c of changes) setFieldSource(merged as Record<string, unknown>, c.fieldName, { source: "interview" });
+
+  // Save to deal — re-read first. A document can finish parsing during the
+  // 10–30 s model call; writing our stale snapshot back would erase its
+  // fields and their provenance. Apply only what THIS turn changed.
+  const snapshot = (deal.extractedInfo as Record<string, unknown>) || {};
+  const mergedRec = merged as Record<string, unknown>;
+  const freshDeal = await storage.getDeal(dealId);
+  const freshInfo = (freshDeal?.extractedInfo as Record<string, unknown>) || snapshot;
+  const toSave: Record<string, unknown> = { ...freshInfo };
+  const changedKeys = new Set<string>();
+  for (const k of Array.from(new Set([...Object.keys(snapshot), ...Object.keys(mergedRec)]))) {
+    if (k === "_fieldSources" || k === "_fieldAlternates") continue;
+    if (JSON.stringify(snapshot[k]) !== JSON.stringify(mergedRec[k])) changedKeys.add(k);
+  }
+  for (const k of Array.from(changedKeys)) {
+    if (mergedRec[k] === undefined) delete toSave[k]; else toSave[k] = mergedRec[k];
+  }
+  const turnSources = getFieldSources(mergedRec);
+  const savedSources = { ...getFieldSources(freshInfo) };
+  for (const k of Array.from(changedKeys)) { if (turnSources[k]) savedSources[k] = turnSources[k]; else if (!(k in mergedRec)) delete savedSources[k]; }
+  toSave._fieldSources = savedSources;
+  const freshAlts = (freshInfo._fieldAlternates as Record<string, unknown> | undefined) || {};
+  const turnAlts = (mergedRec._fieldAlternates as Record<string, unknown> | undefined) || {};
+  if (Object.keys(freshAlts).length || Object.keys(turnAlts).length) toSave._fieldAlternates = { ...freshAlts, ...turnAlts };
   await storage.updateDeal(dealId, {
-    extractedInfo: merged,
+    extractedInfo: toSave,
   });
 
   // Create any tasks
@@ -917,10 +999,23 @@ export async function processTurn(
   }
 
   // Update session
+  const storedUserMessage: ConversationMessage = {
+    role: "user",
+    content: sellerMessage,
+    timestamp: receivedAt,
+    ...(correctionOf ? { correctionOf } : {}),
+  };
+  const storedAiMessage: ConversationMessage = {
+    role: "ai",
+    content: aiResponse.message,
+    timestamp: new Date().toISOString(),
+    ...(aiResponse.whyItMatters ? { whyItMatters: aiResponse.whyItMatters } : {}),
+    suggestedAnswers: aiResponse.suggestedAnswers || [],
+  };
   const updatedMessages: ConversationMessage[] = [
     ...existingMessages,
-    { role: "user", content: sellerMessage, timestamp: new Date().toISOString() },
-    { role: "ai", content: aiResponse.message, timestamp: new Date().toISOString() },
+    storedUserMessage,
+    storedAiMessage,
   ];
 
   const questionsAsked = (session.questionsAsked ?? 0) + 1;
@@ -986,6 +1081,7 @@ export async function processTurn(
     message: aiResponse.message,
     whyItMatters: aiResponse.whyItMatters,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
+    turnMessages: { user: storedUserMessage, ai: storedAiMessage },
     sessionId,
     captured: {
       ...countExtractedFields(updatedDeal!),
@@ -1204,8 +1300,17 @@ function seedExtractedInfoFromQuestionnaire(deal: {
     const key = canonicalFieldName(rawKey);
     if (!KNOWN_EXTRACTED_FIELDS.has(key)) continue;
     const current = seeded[key];
-    if (current !== null && current !== undefined && current !== "") continue;
+    const empty = current === null || current === undefined || current === "";
+    // The seller's own typed answer outranks anything a model read from a
+    // document (observed: a transcript's "Dr. Lee" blocked the intake's
+    // "Dr. Rao" for the whole deal) — but never the seller's interview words.
+    if (!empty) {
+      if (!sourceAllowsOverwrite(seeded, key, "questionnaire")) continue;
+      if (String(current) === rawValue.trim()) continue;
+      recordAlternate(seeded, key, current, getFieldSources(seeded)[key] ?? { source: "document" });
+    }
     seeded[key] = rawValue.trim();
+    setFieldSource(seeded, key, { source: "questionnaire" });
     added = true;
   }
 

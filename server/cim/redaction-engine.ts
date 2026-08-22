@@ -29,6 +29,10 @@ export async function generateBlindOverrides(
     industry?: string | null;
     extractedInfo?: Record<string, any> | null;
   },
+  options: {
+    /** Reuse the deal's existing codename when re-redacting a subset of sections. */
+    codename?: string | null;
+  } = {},
 ): Promise<{ codename: string; overrides: RedactionResult[] }> {
   // Build a mapping of known identifiers to help the AI
   const extractedInfo = deal.extractedInfo || {};
@@ -46,7 +50,7 @@ export async function generateBlindOverrides(
     "Project Maple", "Project Horizon", "Project Summit", "Project Coastal",
     "Project Pinnacle", "Project Meridian", "Project Evergreen", "Project Atlas",
   ];
-  const codename = codenames[Math.floor(Math.random() * codenames.length)];
+  const codename = options.codename || codenames[Math.floor(Math.random() * codenames.length)];
 
   const overrides: RedactionResult[] = [];
 

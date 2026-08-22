@@ -14,7 +14,7 @@
  *   other       → general extraction
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { canonicalFieldName } from "../interview/info-merger";
+import { canonicalFieldName, setFieldSource, getFieldSources, sourceAllowsOverwrite, recordAlternate } from "../interview/info-merger";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -229,25 +229,52 @@ const LEASE_COMPOSITE_PARTS: Array<{ key: string; label: string }> = [
  */
 export function mergeExtractedData(
   existing: Record<string, unknown>,
-  incoming: ExtractedDocumentData
+  incoming: ExtractedDocumentData,
+  /** The document asserting these values — recorded per field so the
+   *  seller's words outrank it and deleting the document removes its facts. */
+  documentId?: string,
 ): Record<string, unknown> {
   const merged = { ...existing };
+  const src = { source: "document" as const, ...(documentId ? { documentId } : {}) };
 
   const mergeValue = (key: string, value: unknown) => {
-    if (key === "revenueByYear" && typeof value === "object") {
-      // Deep merge revenue-by-year maps
-      merged[key] = { ...(merged[key] as Record<string, string> || {}), ...value as Record<string, string> };
-    } else if (!merged[key]) {
-      // Only set if not already present
-      merged[key] = value;
-    } else {
-      // Existing value present — append new info as addendum if different
-      const existing_str = String(merged[key]);
-      const new_str = String(value);
-      if (!existing_str.includes(new_str)) {
-        merged[key] = existing_str + "\n" + new_str;
+    const current = merged[key];
+    if (key === "revenueByYear") {
+      // Deep merge ONLY when both sides are maps — spreading a string
+      // produced a character-indexed object that broke buyer matching.
+      const curIsObj = !!current && typeof current === "object" && !Array.isArray(current);
+      const incObj = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : null;
+      if (current && !curIsObj) { recordAlternate(merged, key, value, src); return; } // seller's own text stands
+      if (!incObj) { if (!current) { merged[key] = value; setFieldSource(merged, key, src); } else recordAlternate(merged, key, value, src); return; }
+      // Per-year contributors: never overwrite a year already on file; each
+      // year remembers its document so deleting one P&L removes only its years.
+      const curObj = curIsObj ? { ...(current as Record<string, string>) } : {};
+      const prevSrc = getFieldSources(merged)[key];
+      const years: Record<string, string> = { ...(prevSrc?.years || {}) };
+      for (const [y, v] of Object.entries(incObj)) {
+        if (curObj[y] === undefined || curObj[y] === "") { curObj[y] = v; if (documentId) years[y] = documentId; }
+        else if (String(curObj[y]) !== String(v)) recordAlternate(merged, `${key}.${y}`, v, src);
       }
+      merged[key] = curObj;
+      setFieldSource(merged, key, { ...src, documentId: prevSrc?.documentId ?? documentId, ...(Object.keys(years).length ? { years } : {}) });
+      return;
     }
+    const empty = current === null || current === undefined || current === "";
+    if (empty) {
+      merged[key] = value;
+      setFieldSource(merged, key, src);
+      return;
+    }
+    // One canonical value per field. A document never displaces the seller's
+    // own words, and two documents never get glued together with newlines —
+    // the loser is kept as an alternate for the discrepancy engine.
+    if (String(current) === String(value)) return;
+    if (sourceAllowsOverwrite(merged, key, "document") && getFieldSources(merged)[key]?.source === "document") {
+      // Same-authority (document vs document): keep the first, note the other.
+      recordAlternate(merged, key, value, src);
+      return;
+    }
+    recordAlternate(merged, key, value, src);
   };
 
   for (const [key, value] of Object.entries(incoming)) {

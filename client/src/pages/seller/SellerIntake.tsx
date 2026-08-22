@@ -35,6 +35,7 @@ import {
   CheckCircle2,
   FileText,
   Loader2,
+  X,
 } from "lucide-react";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
@@ -60,6 +61,8 @@ interface Employee {
 
 interface BusinessBasics {
   yearsInBusiness: string;
+  /** "City, Province/State" — the interview keys jurisdiction questions off this. */
+  location: string;
   numberOfLocations: string;
   ownershipStructure: string;
   reasonForSelling: string;
@@ -68,6 +71,7 @@ interface BusinessBasics {
 
 const EMPTY_BASICS: BusinessBasics = {
   yearsInBusiness: "",
+  location: "",
   numberOfLocations: "1",
   ownershipStructure: "",
   reasonForSelling: "",
@@ -84,8 +88,23 @@ const EMPTY_SYSTEMS: SystemInfo = {
 
 const EMPTY_EMPLOYEE: Employee = { name: "", role: "", yearsWithCompany: "", keyPerson: false };
 
+/** One step's worth of intake — each step autosaves its own slice. */
+interface IntakePatch {
+  questionnaireData?: BusinessBasics;
+  operationalSystems?: SystemInfo;
+  employeeChart?: Employee[];
+  /** Step autosaves stay quiet; only the final save toasts. */
+  silent?: boolean;
+}
+
 const str = (v: unknown, fallback = ""): string =>
   v === null || v === undefined ? fallback : String(v);
+
+/** "a, b and c" for the required-field hint. */
+const joinList = (items: string[]): string =>
+  items.length <= 1
+    ? items.join("")
+    : `${items.slice(0, -1).join(", ")} and ${items[items.length - 1]}`;
 
 /** Seed the intake form from whatever the deal already holds so a returning
  *  seller never sees blank fields (and never PATCHes blanks over real data). */
@@ -94,6 +113,7 @@ function seedBasics(raw: unknown): BusinessBasics | null {
   const q = raw as Record<string, unknown>;
   return {
     yearsInBusiness: str(q.yearsInBusiness),
+    location: str(q.location),
     numberOfLocations: str(q.numberOfLocations, "1"),
     ownershipStructure: str(q.ownershipStructure),
     reasonForSelling: str(q.reasonForSelling),
@@ -183,11 +203,19 @@ export default function SellerIntake() {
     const basics = seedBasics(deal.questionnaireData);
     const sys = seedSystems(deal.operationalSystems);
     const emps = seedEmployees(deal.employeeChart);
-    if (basics) setBusinessBasics(basics);
+    // The broker enters the location when opening the deal — prefill it so
+    // the seller confirms it rather than retyping it.
+    const seededBasics: BusinessBasics = basics ?? { ...EMPTY_BASICS };
+    if (!seededBasics.location && deal.location) seededBasics.location = str(deal.location);
+    setBusinessBasics(seededBasics);
     if (sys) setSystems(sys);
     if (emps) setEmployees(emps);
 
-    const intakeDone = !!basics;
+    // Every step autosaves, so a reload resumes at the first unsaved step.
+    // The Key People step is the final save (an empty list is still an
+    // array) — that, or a finished conversation, marks the intake complete.
+    const employeesSaved = Array.isArray(deal.employeeChart);
+    const intakeDone = !!basics && ((!!sys && employeesSaved) || !!deal.interviewCompleted);
     if (isEditIntent) {
       // Explicit edit intent (progress page's "Edit business details") —
       // open the wizard on the first editable step regardless of status.
@@ -198,6 +226,10 @@ export default function SellerIntake() {
       setLocation(`/seller/${token}/progress`);
     } else if (intakeDone) {
       setCurrentSection("interview");
+    } else if (basics && sys) {
+      setCurrentSection("employees");
+    } else if (basics) {
+      setCurrentSection("systems");
     }
   }, [inviteData, token, setLocation, isEditIntent]);
 
@@ -206,11 +238,7 @@ export default function SellerIntake() {
   const returnToProgressAfterSave = isEditIntent && !!inviteData?.deal?.interviewCompleted;
 
   const saveQuestionnaireMutation = useMutation({
-    mutationFn: async (data: {
-      questionnaireData: any;
-      operationalSystems: any;
-      employeeChart: any;
-    }) => {
+    mutationFn: async ({ silent: _silent, ...data }: IntakePatch) => {
       if (!inviteData?.deal?.id) throw new Error("No deal found");
       // The invite token authenticates the seller — the deal PATCH endpoint
       // only accepts intake fields from a token that maps to this deal.
@@ -229,13 +257,15 @@ export default function SellerIntake() {
       }
       return res;
     },
-    onSuccess: () => {
+    onSuccess: (_, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/invites", token] });
       queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
-      toast({
-        title: "Information Saved",
-        description: "Your business details have been saved successfully.",
-      });
+      if (!vars.silent) {
+        toast({
+          title: "Information Saved",
+          description: "Your business details have been saved successfully.",
+        });
+      }
     },
     onError: (err: Error) => {
       toast({
@@ -258,19 +288,50 @@ export default function SellerIntake() {
   const currentIndex = sections.findIndex((s) => s.id === currentSection);
   const progress = (currentIndex / (sections.length - 1)) * 100;
 
+  // Inline hint under the step's fields — the broker genuinely needs these
+  // three to start, and a blank step silently advancing lost real answers.
+  const [stepError, setStepError] = useState<string | null>(null);
+
+  const persist = async (patch: IntakePatch): Promise<boolean> => {
+    try {
+      await saveQuestionnaireMutation.mutateAsync(patch);
+      return true;
+    } catch {
+      // onError already surfaced the server message — stay on this step
+      // so nothing is lost and the seller can retry.
+      return false;
+    }
+  };
+
+  const missingBasics = (): string[] => {
+    const missing: string[] = [];
+    if (!businessBasics.yearsInBusiness.trim()) missing.push("years in business");
+    if (!businessBasics.location.trim()) missing.push("location");
+    if (!businessBasics.reasonForSelling.trim()) missing.push("reason for selling");
+    return missing;
+  };
+
   const goNext = async () => {
-    if (currentSection === "employees") {
-      try {
-        await saveQuestionnaireMutation.mutateAsync({
-          questionnaireData: businessBasics,
-          operationalSystems: systems,
-          employeeChart: employees.filter((e) => e.name.trim() !== ""),
-        });
-      } catch {
-        // onError already surfaced the server message — stay on this step
-        // so nothing is lost and the seller can retry.
+    setStepError(null);
+    // Each step saves its own slice as the seller goes — before this,
+    // nothing reached the server until Key People, so a reload on step 2
+    // threw away everything typed on step 1.
+    if (currentSection === "business-basics") {
+      const missing = missingBasics();
+      if (missing.length > 0) {
+        setStepError(`Add your ${joinList(missing)} to continue.`);
         return;
       }
+      if (!(await persist({ questionnaireData: businessBasics, silent: true }))) return;
+    } else if (currentSection === "systems") {
+      if (!(await persist({ operationalSystems: systems, silent: true }))) return;
+    } else if (currentSection === "employees") {
+      const saved = await persist({
+        questionnaireData: businessBasics,
+        operationalSystems: systems,
+        employeeChart: employees.filter((e) => e.name.trim() !== ""),
+      });
+      if (!saved) return;
       if (returnToProgressAfterSave) {
         setLocation(`/seller/${token}/progress`);
         return;
@@ -464,13 +525,17 @@ export default function SellerIntake() {
                   Business Basics
                 </CardTitle>
                 <CardDescription>
-                  Help us understand the fundamentals of your business
+                  Help us understand the fundamentals of your business. Your
+                  answers save as you go.
                 </CardDescription>
               </CardHeader>
               <CardContent className="space-y-6">
                 <div className="grid gap-4 sm:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="yearsInBusiness">Years in Business</Label>
+                    <Label htmlFor="yearsInBusiness">
+                      Years in Business
+                      <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/70">required</span>
+                    </Label>
                     <Input
                       id="yearsInBusiness"
                       placeholder="e.g., 15"
@@ -504,6 +569,30 @@ export default function SellerIntake() {
                 </div>
 
                 <div className="space-y-2">
+                  <Label htmlFor="location">
+                    Where is the business located?
+                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/70">required</span>
+                  </Label>
+                  <Input
+                    id="location"
+                    placeholder="City, Province/State — e.g., Calgary, AB"
+                    value={businessBasics.location}
+                    onChange={(e) =>
+                      setBusinessBasics({
+                        ...businessBasics,
+                        location: e.target.value,
+                      })
+                    }
+                    autoComplete="off"
+                    data-testid="input-location"
+                  />
+                  <p className="text-xs text-muted-foreground">
+                    Permits, licensing, and compliance questions depend on where
+                    you operate.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
                   <Label htmlFor="ownershipStructure">
                     Ownership Structure
                   </Label>
@@ -522,7 +611,10 @@ export default function SellerIntake() {
                 </div>
 
                 <div className="space-y-2">
-                  <Label htmlFor="reasonForSelling">Reason for Selling</Label>
+                  <Label htmlFor="reasonForSelling">
+                    Reason for Selling
+                    <span className="ml-1.5 text-[10px] font-normal text-muted-foreground/70">required</span>
+                  </Label>
                   <Textarea
                     id="reasonForSelling"
                     placeholder="Why are you looking to sell your business?"
@@ -555,6 +647,12 @@ export default function SellerIntake() {
                   />
                 </div>
 
+                {stepError && (
+                  <p className="text-xs text-destructive" role="alert" data-testid="text-step-error">
+                    {stepError}
+                  </p>
+                )}
+
                 <div className="flex gap-3">
                   <Button
                     variant="outline"
@@ -567,10 +665,20 @@ export default function SellerIntake() {
                   <Button
                     className="flex-1 bg-teal text-teal-foreground hover:bg-teal/90"
                     onClick={goNext}
+                    disabled={saveQuestionnaireMutation.isPending}
                     data-testid="button-next"
                   >
-                    Continue
-                    <ArrowRight className="h-4 w-4 ml-2" />
+                    {saveQuestionnaireMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        Continue
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardContent>
@@ -661,18 +769,24 @@ export default function SellerIntake() {
                   {systems.other.length > 0 && (
                     <div className="flex flex-wrap gap-2">
                       {systems.other.map((sys, idx) => (
-                        <Badge
-                          key={idx}
-                          variant="secondary"
-                          className="cursor-pointer"
-                          onClick={() =>
-                            setSystems({
-                              ...systems,
-                              other: systems.other.filter((_, i) => i !== idx),
-                            })
-                          }
-                        >
-                          {sys} ×
+                        <Badge key={idx} variant="secondary" className="gap-1 pr-1">
+                          {sys}
+                          {/* A real button: the old "×" was a span — unreachable
+                              by keyboard and unnamed for screen readers. */}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${sys}`}
+                            className="rounded p-0.5 hover:bg-foreground/10 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                            onClick={() =>
+                              setSystems({
+                                ...systems,
+                                other: systems.other.filter((_, i) => i !== idx),
+                              })
+                            }
+                            data-testid={`button-remove-system-${idx}`}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
                         </Badge>
                       ))}
                     </div>
@@ -691,10 +805,20 @@ export default function SellerIntake() {
                   <Button
                     className="flex-1 bg-teal text-teal-foreground hover:bg-teal/90"
                     onClick={goNext}
+                    disabled={saveQuestionnaireMutation.isPending}
                     data-testid="button-next"
                   >
-                    Continue
-                    <ArrowRight className="h-4 w-4 ml-2" />
+                    {saveQuestionnaireMutation.isPending ? (
+                      <>
+                        <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                        Saving...
+                      </>
+                    ) : (
+                      <>
+                        Continue
+                        <ArrowRight className="h-4 w-4 ml-2" />
+                      </>
+                    )}
                   </Button>
                 </div>
               </CardContent>

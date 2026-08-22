@@ -582,3 +582,108 @@ function getShouldOverwrite(
   // New data is same or higher confidence — overwrite
   return newRank >= existingRank;
 }
+
+
+// ── Field provenance ───────────────────────────────────────────────────
+// Who asserted each extractedInfo value. Lives under an underscore key so it
+// is excluded from every CIM/analysis path. Authority: interview (the seller
+// said it) > questionnaire (the seller typed it) > document (a model read it).
+// Without this, a transcript's guess landed first and the seller's own intake
+// answer was silently ignored; documents appended onto each other with
+// newlines; and deleting a document left its facts behind.
+export type FieldSourceKind = "interview" | "questionnaire" | "document";
+export interface FieldSource {
+  source: FieldSourceKind;
+  documentId?: string;
+  /** Map fields (revenueByYear): which document asserted each sub-key. */
+  years?: Record<string, string>;
+}
+export const FIELD_SOURCES_KEY = "_fieldSources";
+export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
+const SOURCE_RANK: Record<FieldSourceKind, number> = { interview: 3, questionnaire: 2, document: 1 };
+
+export function getFieldSources(info: Record<string, unknown>): Record<string, FieldSource> {
+  const raw = info[FIELD_SOURCES_KEY];
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, FieldSource>) : {};
+}
+export function setFieldSource(info: Record<string, unknown>, key: string, src: FieldSource): void {
+  info[FIELD_SOURCES_KEY] = { ...getFieldSources(info), [key]: src };
+}
+/** True when an incoming write of kind `incoming` may replace the current value of `key`. */
+export function sourceAllowsOverwrite(info: Record<string, unknown>, key: string, incoming: FieldSourceKind): boolean {
+  const cur = getFieldSources(info)[key];
+  // Untracked legacy value (captured before provenance existed): it was most
+  // likely the seller's own interview answer, so only a fresh interview
+  // statement may replace it — never a document, never the older intake form.
+  if (!cur) return incoming === "interview";
+  return SOURCE_RANK[incoming] >= SOURCE_RANK[cur.source];
+}
+/** Records a value that lost the precedence contest so nothing is silently discarded. */
+export function recordAlternate(info: Record<string, unknown>, key: string, value: unknown, src: FieldSource): void {
+  const raw = info[FIELD_ALTERNATES_KEY];
+  const alts = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown[]>) } : {};
+  const list = Array.isArray(alts[key]) ? [...(alts[key] as unknown[])] : [];
+  const serialized = typeof value === "string" ? value : JSON.stringify(value);
+  if (!list.some((a) => (a as { value?: string }).value === serialized)) list.push({ value: serialized, ...src });
+  alts[key] = list;
+  info[FIELD_ALTERNATES_KEY] = alts;
+}
+/** Removes every field (and alternate) that a deleted document asserted. */
+export function removeDocumentFields(info: Record<string, unknown>, documentId: string): { info: Record<string, unknown>; removed: string[] } {
+  const out = { ...info };
+  const sources = getFieldSources(out);
+  const removed: string[] = [];
+  for (const [key, src] of Object.entries(sources)) {
+    if (src.source !== "document") continue;
+    // Map field with per-sub-key contributors: strip only this document's years
+    if (src.years && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
+      const map = { ...(out[key] as Record<string, unknown>) };
+      const years = { ...src.years };
+      let touched = false;
+      for (const [y, docId] of Object.entries(years)) {
+        if (docId === documentId) { delete map[y]; delete years[y]; touched = true; }
+      }
+      if (!touched) continue;
+      if (Object.keys(map).length === 0) { delete out[key]; delete sources[key]; removed.push(key); }
+      else {
+        out[key] = map;
+        const remaining = Object.values(years);
+        sources[key] = { source: "document", documentId: remaining[0], years };
+        removed.push(`${key}:${documentId}`);
+      }
+      continue;
+    }
+    if (src.documentId === documentId) {
+      delete out[key];
+      delete sources[key];
+      removed.push(key);
+    }
+  }
+  out[FIELD_SOURCES_KEY] = sources;
+  const rawAlts = out[FIELD_ALTERNATES_KEY];
+  if (rawAlts && typeof rawAlts === "object" && !Array.isArray(rawAlts)) {
+    const alts: Record<string, unknown[]> = {};
+    for (const [k, list] of Object.entries(rawAlts as Record<string, unknown[]>)) {
+      const kept = (Array.isArray(list) ? list : []).filter((a) => (a as { documentId?: string }).documentId !== documentId);
+      if (kept.length > 0) alts[k] = kept;
+    }
+    // Promote the best surviving alternate for every field this delete
+    // emptied, so a second P&L's revenue figure steps in instead of the
+    // field going blank and the interview re-asking it.
+    for (const key of removed) {
+      if (key.includes(":") || out[key] !== undefined) continue;
+      const list = alts[key] as Array<{ value: string; source: FieldSourceKind; documentId?: string }> | undefined;
+      if (!list || list.length === 0) continue;
+      const best = [...list].sort((a, b) => (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0))[0];
+      let value: unknown = best.value;
+      if (typeof value === "string" && /^[\[{]/.test(value)) { try { value = JSON.parse(value); } catch { /* keep string */ } }
+      out[key] = value;
+      sources[key] = { source: best.source, ...(best.documentId ? { documentId: best.documentId } : {}) };
+      alts[key] = list.filter((a) => a !== best);
+      if ((alts[key] as unknown[]).length === 0) delete alts[key];
+    }
+    out[FIELD_SOURCES_KEY] = sources;
+    out[FIELD_ALTERNATES_KEY] = alts;
+  }
+  return { info: out, removed };
+}

@@ -19,6 +19,7 @@ import {
 import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback } from "../richText";
 
 interface WaterfallItem {
   label: string;
@@ -182,7 +183,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
 
   if (items.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const waterfallData = buildWaterfallData(items);

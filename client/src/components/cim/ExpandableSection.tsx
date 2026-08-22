@@ -14,6 +14,7 @@ import type { CimSection } from "@shared/schema";
 import type { CimBranding } from "./CimBrandingContext";
 import { CimSectionRenderer } from "./CimSectionRenderer";
 import { FinancialToggle } from "./FinancialToggle";
+import { renderInline, stripMarkup } from "./richText";
 
 interface ExpandableSectionProps {
   section: CimSection;
@@ -137,7 +138,7 @@ export function ExpandableSection({
     onToggle?.(section.sectionKey, next);
   };
 
-  const summaryText = config.summary || autoSummary(section);
+  const summaryText = config.summary ? stripMarkup(config.summary) : autoSummary(section);
 
   return (
     <div className="cim-expandable-section">
@@ -306,7 +307,8 @@ function SummaryPreview({
 
   // Prose: show first paragraph or pull quote
   if (section.layoutType === "prose_highlight") {
-    const body = layoutData.body || "";
+    // Same resolution as the full renderer: a broker edit wins over layoutData.body.
+    const body = section.brokerEditedContent || layoutData.body || section.aiDraftContent || "";
     const pullQuote = layoutData.pullQuote;
     const firstPara = body.split("\n\n")[0] || body.slice(0, 200);
 
@@ -317,11 +319,11 @@ function SummaryPreview({
             className="border-l-3 pl-4 py-1 mb-4 text-sm italic text-foreground/80"
             style={{ borderColor: branding.primaryHex }}
           >
-            {pullQuote}
+            {renderInline(pullQuote, "pq")}
           </blockquote>
         )}
         <p className="text-sm text-foreground/80 leading-relaxed">
-          {firstPara}
+          {renderInline(firstPara, "sum")}
           {body.length > firstPara.length && (
             <span className="text-muted-foreground/50">...</span>
           )}

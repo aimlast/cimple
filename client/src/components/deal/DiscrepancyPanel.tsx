@@ -294,15 +294,18 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
             }`}
           >
             <CardContent className="py-3 px-4">
-              {/* Header */}
-              <div
-                className="flex items-center justify-between cursor-pointer"
+              {/* Header — a real button so it is keyboard-reachable and announces its state */}
+              <button
+                type="button"
+                className="w-full flex items-center justify-between text-left rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                 onClick={() => setExpandedId(isExpanded ? null : disc.id)}
+                aria-expanded={isExpanded}
+                aria-controls={`discrepancy-${disc.id}`}
               >
                 <div className="flex items-center gap-2">
-                  {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
-                    : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />}
-                  <Icon className={`h-3.5 w-3.5 ${config.color.split(" ")[1]}`} />
+                  {isExpanded ? <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                    : <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />}
+                  <Icon className={`h-3.5 w-3.5 ${config.color.split(" ")[1]}`} aria-hidden="true" />
                   <Badge className={config.color}>{config.label}</Badge>
                   <Badge variant="outline" className="text-2xs">{CATEGORY_LABELS[disc.category] || disc.category}</Badge>
                   {isFinancial && !sourceFilter && (
@@ -317,14 +320,14 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                     </Badge>
                   )}
                   {disc.status === "resolved" && (
-                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" />
+                    <CheckCircle2 className="h-3.5 w-3.5 text-emerald-400" aria-label="Resolved" />
                   )}
                 </div>
-              </div>
+              </button>
 
               {/* Expanded details */}
               {isExpanded && (
-                <div className="mt-3 pl-6 space-y-3">
+                <div id={`discrepancy-${disc.id}`} className="mt-3 pl-6 space-y-3">
                   {/* Value comparison (or a single context block for a routed question) */}
                   {isQuestion ? (
                     <div className="rounded bg-muted/30 p-2.5">

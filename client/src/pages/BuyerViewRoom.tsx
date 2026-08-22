@@ -17,14 +17,14 @@ import {
   Building, Clock, Lock, AlertCircle, FileText,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Deal, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
+import type { Deal, CimSection, BrandingSettings } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
-import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
+import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
@@ -54,7 +54,8 @@ interface ViewData {
   access: ViewAccess;
   deal: Deal;
   sections: CimSection[];
-  publishedQuestions: BuyerQuestion[];
+  /** Published Q&A plus this buyer's own pending questions (whitelisted) */
+  publishedQuestions: BuyerQuestionFeedItem[];
   branding: BrandingSettings | null;
   /** True when the server is withholding CIM content until the NDA is signed */
   ndaGate?: boolean;
@@ -242,19 +243,28 @@ function useAnalytics(dealId: string | undefined, accessId: string | undefined, 
     return () => window.removeEventListener("mousemove", handler);
   }, [enqueue]);
 
-  // Scroll depth
+  // Scroll depth. The room scrolls inside the BuyerLayout container
+  // (h-screen overflow-auto), not the window, so listen in the capture
+  // phase and measure whichever element actually scrolled — as long as it
+  // contains the CIM (ignores the chat panel's own scroll area).
   const lastDepth = useRef(0);
   useEffect(() => {
-    const handler = () => {
-      const doc = document.documentElement;
-      const depth = Math.round((window.scrollY / (doc.scrollHeight - doc.clientHeight)) * 100);
+    const handler = (e: Event) => {
+      const content = document.querySelector("[data-cim-content]");
+      const target = e.target;
+      const el = target instanceof HTMLElement ? target : document.documentElement;
+      if (content && !el.contains(content)) return;
+      const scrollTop = el === document.documentElement ? (window.scrollY || el.scrollTop) : el.scrollTop;
+      const range = el.scrollHeight - el.clientHeight;
+      if (range <= 0) return;
+      const depth = Math.round((scrollTop / range) * 100);
       if (depth > lastDepth.current + 5) {
         lastDepth.current = depth;
         enqueue({ eventType: "scroll_depth", scrollDepthPercent: depth });
       }
     };
-    window.addEventListener("scroll", handler, { passive: true });
-    return () => window.removeEventListener("scroll", handler);
+    document.addEventListener("scroll", handler, { passive: true, capture: true });
+    return () => document.removeEventListener("scroll", handler, true);
   }, [enqueue]);
 
   return { attachObserver, enqueue };
@@ -429,7 +439,7 @@ export default function BuyerViewRoom() {
         />
       )}
 
-      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8">
+      <div className="max-w-6xl mx-auto px-4 sm:px-6 py-8" data-cim-content>
         <div className="flex gap-8">
 
           {/* ── Left TOC ────────────────────────────────────────────────────── */}
@@ -482,7 +492,10 @@ export default function BuyerViewRoom() {
                  App chrome around it (header, TOC, decision panel) keeps app tokens. */
               <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
                 {visibleSections.map(section => (
-                  <div key={section.id} id={`section-${section.id}`}>
+                  /* scroll-mt clears the sticky header + section strip so
+                     nav clicks, "See …" links and TOC anchors land the
+                     heading below the chrome instead of under it. */
+                  <div key={section.id} id={`section-${section.id}`} className="scroll-mt-24">
                     <SectionBoundary sectionTitle={section.sectionTitle}>
                     <ExpandableSection
                       section={section}
@@ -514,7 +527,7 @@ export default function BuyerViewRoom() {
               // Legacy text fallback — same theme-locked paper sheet
               <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
                 {legacySections.map(section => (
-                  <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key}>
+                  <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key} className="scroll-mt-20">
                     <h2 className="text-xl font-bold tracking-tight mb-4" style={{ color: brandingCtx.headingColor }}>
                       {section.title}
                     </h2>
@@ -557,7 +570,7 @@ export default function BuyerViewRoom() {
         buyerAccessId={access.id}
         accessToken={token!}
         businessName={deal.businessName}
-        publishedQuestions={publishedQuestions}
+        questionFeed={publishedQuestions}
       />
 
       {/* ── Footer ──────────────────────────────────────────────────────────── */}

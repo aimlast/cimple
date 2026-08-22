@@ -12,12 +12,12 @@ import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import type { AddbackVerification as AddbackVerificationType } from "@shared/schema";
+import type { AddbackVerification as AddbackVerificationType, Document } from "@shared/schema";
 import {
   Upload, Loader2, CheckCircle2, XCircle, AlertTriangle,
   HelpCircle, ChevronDown, ChevronRight, FileText, Search,
   ShieldCheck, MessageSquare, ArrowLeft, Plus, X, Lightbulb,
-  ListFilter, Check, RotateCcw,
+  ListFilter, Check, RotateCcw, Undo2,
 } from "lucide-react";
 
 /** apiRequest throws "<status>: <body>" — surface the server's own error message when the body is JSON. */
@@ -57,9 +57,14 @@ interface AddbackItem {
   label: string;
   description: string;
   category: string;
+  /** Latest-year amount (the headline figure). Per-year values live in yearAmounts. */
   annualAmount: number;
+  /** Which year annualAmount comes from, when seeded from the analysis. */
+  amountYear?: string | null;
   yearAmounts: Record<string, number>;
   verificationStatus: "unverified" | "matched" | "seller_confirmed" | "disputed" | "no_match";
+  /** Status before Confirm / Dispute — lets the broker undo a misclick. */
+  previousStatus?: "unverified" | "matched" | "no_match";
   matchedTransactions: Array<{
     date: string;
     description: string;
@@ -206,7 +211,7 @@ function TransactionBrowser({
           <ListFilter className="h-4 w-4 text-teal" />
           <p className="text-sm font-medium">Find transactions for: <span className="text-teal">{addbackLabel}</span></p>
         </div>
-        <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-1">
+        <button type="button" onClick={onClose} className="text-muted-foreground hover:text-foreground p-1" aria-label="Close transaction search">
           <X className="h-3.5 w-3.5" />
         </button>
       </div>
@@ -350,7 +355,7 @@ function AiHintInput({
           <Lightbulb className="h-3.5 w-3.5 text-teal" />
           <p className="text-xs font-medium">Help the AI find "{addbackLabel}"</p>
         </div>
-        <button onClick={() => setIsOpen(false)} className="text-muted-foreground hover:text-foreground p-0.5">
+        <button type="button" onClick={() => setIsOpen(false)} className="text-muted-foreground hover:text-foreground p-0.5" aria-label="Close hint">
           <X className="h-3 w-3" />
         </button>
       </div>
@@ -413,6 +418,18 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
     },
     refetchInterval: (query) =>
       query.state.data?.status === "analyzing" ? 4000 : false,
+  });
+
+  // Document names — used to say WHICH uploads were checked when parsing
+  // finds no transactions (shares the deal's documents cache key).
+  const { data: documents = [] } = useQuery<Document[]>({
+    queryKey: ["/api/deals", dealId, "documents"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/documents`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load documents");
+      return r.json();
+    },
+    enabled: verification?.status === "failed",
   });
 
   // Start verification
@@ -519,17 +536,23 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   const addbacks = (verification?.addbacks as AddbackItem[] | null) || [];
   const questions = (verification?.sellerQuestions as SellerQuestion[] | null) || [];
 
-  // Stats
+  // Stats — every figure derives from the per-addback status so the summary
+  // can never claim more than the cards show (a disputed addback is not
+  // "verified", and a confirmation without linked transactions is not "proof").
   const stats = useMemo(() => {
     const total = addbacks.length;
-    const confirmed = addbacks.filter((a) => a.verificationStatus === "seller_confirmed").length;
+    const confirmedItems = addbacks.filter((a) => a.verificationStatus === "seller_confirmed");
+    const confirmed = confirmedItems.length;
+    const disputed = addbacks.filter((a) => a.verificationStatus === "disputed").length;
     const matched = addbacks.filter((a) => a.verificationStatus === "matched").length;
     const unmatched = addbacks.filter((a) => a.verificationStatus === "no_match").length;
+    const withProof = confirmedItems.filter((a) => (a.matchedTransactions?.length ?? 0) > 0).length;
     const totalAmount = addbacks.reduce((s, a) => s + (a.annualAmount || 0), 0);
+    const confirmedAmount = confirmedItems.reduce((s, a) => s + (a.annualAmount || 0), 0);
     const verifiedAmount = addbacks
       .filter((a) => a.verificationStatus === "seller_confirmed" || a.verificationStatus === "matched")
       .reduce((s, a) => s + (a.annualAmount || 0), 0);
-    return { total, confirmed, matched, unmatched, totalAmount, verifiedAmount };
+    return { total, confirmed, disputed, matched, unmatched, withProof, totalAmount, confirmedAmount, verifiedAmount };
   }, [addbacks]);
 
   // Parse uploaded transactions for the browser
@@ -565,11 +588,16 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
     [addbacks, updateVerification],
   );
 
+  const priorStatus = (ab: AddbackItem): AddbackItem["previousStatus"] =>
+    ab.verificationStatus === "seller_confirmed" || ab.verificationStatus === "disputed"
+      ? ab.previousStatus
+      : ab.verificationStatus;
+
   // Confirm single addback
   const handleConfirm = (addbackId: string) => {
     const updated = addbacks.map((ab) =>
       ab.id === addbackId
-        ? { ...ab, verificationStatus: "seller_confirmed" as const, sellerNotes: sellerNotes[addbackId] || ab.sellerNotes }
+        ? { ...ab, previousStatus: priorStatus(ab), verificationStatus: "seller_confirmed" as const, sellerNotes: sellerNotes[addbackId] || ab.sellerNotes }
         : ab,
     );
     updateVerification.mutate({ addbacks: updated as any });
@@ -579,9 +607,19 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   const handleDispute = (addbackId: string) => {
     const updated = addbacks.map((ab) =>
       ab.id === addbackId
-        ? { ...ab, verificationStatus: "disputed" as const, sellerNotes: sellerNotes[addbackId] || ab.sellerNotes }
+        ? { ...ab, previousStatus: priorStatus(ab), verificationStatus: "disputed" as const, sellerNotes: sellerNotes[addbackId] || ab.sellerNotes }
         : ab,
     );
+    updateVerification.mutate({ addbacks: updated as any });
+  };
+
+  // Undo a confirm / dispute — back to the pre-decision status
+  const handleUndo = (addbackId: string) => {
+    const updated = addbacks.map((ab) => {
+      if (ab.id !== addbackId) return ab;
+      const fallback = (ab.matchedTransactions?.length ?? 0) > 0 ? "matched" : "no_match";
+      return { ...ab, verificationStatus: ab.previousStatus ?? fallback, previousStatus: undefined };
+    });
     updateVerification.mutate({ addbacks: updated as any });
   };
 
@@ -803,7 +841,10 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                     </Badge>
                     <span>{ab.label}</span>
                   </div>
-                  <span className="font-mono text-xs">{fmtCurrency(ab.annualAmount)}</span>
+                  <span className="font-mono text-xs">
+                    {fmtCurrency(ab.annualAmount)}
+                    {ab.amountYear && <span className="text-muted-foreground ml-1">· {ab.amountYear}</span>}
+                  </span>
                 </div>
               ))}
             </CardContent>
@@ -825,7 +866,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
             </div>
             <div className="flex flex-col items-center gap-2">
               <p className="text-2xs text-muted-foreground">
-                Upload documents via the Documents tab, then return here to run the analysis.
+                Upload documents in the Documents section of the Overview tab, then return here to run the analysis.
               </p>
               <Button
                 className="bg-teal text-teal-foreground hover:bg-teal/90 gap-2"
@@ -878,6 +919,10 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
 
   // ── Failed ──
   if (verification.status === "failed") {
+    // sourceDocumentIds is set when documents were found but no transactions
+    // could be read from them — a different problem from "nothing uploaded".
+    const checkedIds = (verification.sourceDocumentIds as string[] | null) ?? [];
+    const checkedNames = checkedIds.map((id) => documents.find((d) => d.id === id)?.name).filter(Boolean) as string[];
     return (
       <div className="space-y-4">
         <div className="flex items-center justify-between gap-3">
@@ -898,11 +943,27 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
           <CardContent className="py-8 text-center space-y-4">
             <XCircle className="h-8 w-8 text-destructive mx-auto" />
             <div>
-              <p className="text-sm font-medium mb-1">Analysis failed</p>
-              <p className="text-xs text-muted-foreground max-w-md mx-auto">
-                Could not find processed financial documents. Please upload and process GL exports,
-                bank statements, or QuickBooks reports first, then try again.
+              <p className="text-sm font-medium mb-1">
+                {checkedIds.length > 0 ? "No transactions could be read" : "No transaction documents found"}
               </p>
+              {checkedIds.length > 0 ? (
+                <div className="text-xs text-muted-foreground max-w-md mx-auto space-y-1.5">
+                  <p>
+                    Checked {checkedIds.length} document{checkedIds.length !== 1 ? "s" : ""}
+                    {checkedNames.length > 0 ? ` (${checkedNames.join(", ")})` : ""} but could not read any transactions from
+                    {checkedIds.length !== 1 ? " them" : " it"}.
+                  </p>
+                  <p>
+                    Transaction exports need Date, Description, and Amount (or Debit/Credit) columns — a CSV export from
+                    QuickBooks or your bank works best. Upload one in the Documents section of the Overview tab, then retry.
+                  </p>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground max-w-md mx-auto">
+                  Upload a GL export, bank statement, or QuickBooks report in the Documents section of the
+                  Overview tab, wait for it to finish processing, then retry.
+                </p>
+              )}
             </div>
             <Button
               variant="outline"
@@ -938,15 +999,40 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
         </div>
         {dialogs}
 
-        <Card className="bg-card/50 border-emerald-500/20">
+        <Card className={`bg-card/50 ${stats.disputed > 0 ? "border-amber-500/20" : "border-emerald-500/20"}`}>
           <CardContent className="py-6">
             <div className="flex items-center gap-3 mb-4">
-              <CheckCircle2 className="h-5 w-5 text-emerald-400" />
+              {stats.disputed > 0
+                ? <AlertTriangle className="h-5 w-5 text-amber-400" />
+                : <CheckCircle2 className="h-5 w-5 text-emerald-400" />}
               <div>
-                <p className="text-sm font-medium">All addbacks verified</p>
-                <p className="text-xs text-muted-foreground">
-                  {stats.confirmed} confirmed with transaction-level proof
+                <p className="text-sm font-medium">
+                  {stats.disputed > 0
+                    ? `${stats.confirmed} confirmed, ${stats.disputed} disputed`
+                    : `All ${stats.total} addback${stats.total !== 1 ? "s" : ""} confirmed`}
                 </p>
+                <p className="text-xs text-muted-foreground">
+                  {stats.withProof > 0
+                    ? `${stats.withProof} of ${stats.confirmed} confirmed with transaction-level proof`
+                    : stats.confirmed > 0
+                    ? "Confirmed by the seller without linked transactions"
+                    : "Nothing confirmed"}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-3 gap-3 mb-4">
+              <div className="rounded-lg bg-emerald-500/5 p-3 text-center">
+                <p className="text-lg font-semibold text-emerald-400">{stats.confirmed}</p>
+                <p className="text-2xs text-muted-foreground">Confirmed</p>
+              </div>
+              <div className="rounded-lg bg-red-500/5 p-3 text-center">
+                <p className="text-lg font-semibold text-red-400">{stats.disputed}</p>
+                <p className="text-2xs text-muted-foreground">Disputed</p>
+              </div>
+              <div className="rounded-lg bg-blue-500/5 p-3 text-center">
+                <p className="text-lg font-semibold text-blue-400">{stats.withProof}</p>
+                <p className="text-2xs text-muted-foreground">With transaction proof</p>
               </div>
             </div>
 
@@ -954,29 +1040,42 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
               {addbacks.map((ab) => {
                 const statusCfg = STATUS_ICONS[ab.verificationStatus] || STATUS_ICONS.unverified;
                 const Icon = statusCfg.icon;
+                const isDisputed = ab.verificationStatus === "disputed";
+                const txCount = ab.matchedTransactions?.length || 0;
                 return (
                   <div key={ab.id} className="flex items-center justify-between py-2 px-3 rounded bg-muted/30 text-sm">
                     <div className="flex items-center gap-2">
-                      <Icon className={`h-3.5 w-3.5 ${statusCfg.color}`} />
+                      <Icon className={`h-3.5 w-3.5 ${statusCfg.color}`} aria-label={statusCfg.label} />
                       <Badge className={CATEGORY_LABELS[ab.category]?.color || CATEGORY_LABELS.other.color}>
                         {CATEGORY_LABELS[ab.category]?.label || ab.category}
                       </Badge>
-                      <span>{ab.label}</span>
+                      <span className={isDisputed ? "text-muted-foreground" : ""}>{ab.label}</span>
+                      {isDisputed && <span className="text-2xs text-red-400">Disputed</span>}
                     </div>
                     <div className="flex items-center gap-3">
                       <span className="text-2xs text-muted-foreground">
-                        {ab.matchedTransactions?.length || 0} transactions
+                        {txCount > 0 ? `${txCount} transaction${txCount !== 1 ? "s" : ""}` : "no linked transactions"}
                       </span>
-                      <span className="font-mono text-xs">{fmtCurrency(ab.annualAmount)}</span>
+                      <span className={`font-mono text-xs ${isDisputed ? "line-through text-muted-foreground" : ""}`}>
+                        {fmtCurrency(ab.annualAmount)}
+                      </span>
                     </div>
                   </div>
                 );
               })}
             </div>
 
-            <div className="mt-4 pt-3 border-t border-border/50 flex justify-between items-center text-sm">
-              <span className="text-muted-foreground">Total verified addbacks</span>
-              <span className="font-mono font-medium">{fmtCurrency(stats.totalAmount)}</span>
+            <div className="mt-4 pt-3 border-t border-border/50 space-y-1 text-sm">
+              <div className="flex justify-between items-center">
+                <span className="text-muted-foreground">Total confirmed addbacks</span>
+                <span className="font-mono font-medium">{fmtCurrency(stats.confirmedAmount)}</span>
+              </div>
+              {stats.disputed > 0 && (
+                <div className="flex justify-between items-center text-xs">
+                  <span className="text-muted-foreground">Excluded (disputed)</span>
+                  <span className="font-mono text-muted-foreground">{fmtCurrency(stats.totalAmount - stats.confirmedAmount)}</span>
+                </div>
+              )}
             </div>
           </CardContent>
         </Card>
@@ -1022,7 +1121,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       {dialogs}
 
       {/* Summary bar */}
-      <div className="grid grid-cols-4 gap-3">
+      <div className="grid grid-cols-5 gap-3">
         <div className="rounded-lg bg-muted/30 p-3 text-center">
           <p className="text-lg font-semibold">{stats.total}</p>
           <p className="text-2xs text-muted-foreground">Total Addbacks</p>
@@ -1030,6 +1129,10 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
         <div className="rounded-lg bg-emerald-500/5 p-3 text-center">
           <p className="text-lg font-semibold text-emerald-400">{stats.confirmed}</p>
           <p className="text-2xs text-muted-foreground">Confirmed</p>
+        </div>
+        <div className="rounded-lg bg-red-500/5 p-3 text-center">
+          <p className="text-lg font-semibold text-red-400">{stats.disputed}</p>
+          <p className="text-2xs text-muted-foreground">Disputed</p>
         </div>
         <div className="rounded-lg bg-blue-500/5 p-3 text-center">
           <p className="text-lg font-semibold text-blue-400">{stats.matched}</p>
@@ -1073,18 +1176,21 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
               }`}
             >
               <CardContent className="py-3 px-4">
-                {/* Header row */}
-                <div
-                  className="flex items-center justify-between cursor-pointer"
+                {/* Header row — a real button so it is keyboard-reachable and announces its state */}
+                <button
+                  type="button"
+                  className="w-full flex items-center justify-between text-left rounded-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   onClick={() => setExpandedAddback(isExpanded ? null : ab.id)}
+                  aria-expanded={isExpanded}
+                  aria-controls={`addback-${ab.id}`}
                 >
                   <div className="flex items-center gap-2">
                     {isExpanded ? (
-                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     ) : (
-                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" />
+                      <ChevronRight className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                     )}
-                    <Icon className={`h-3.5 w-3.5 ${statusCfg.color}`} />
+                    <Icon className={`h-3.5 w-3.5 ${statusCfg.color}`} aria-hidden="true" />
                     <Badge className={CATEGORY_LABELS[ab.category]?.color || CATEGORY_LABELS.other.color}>
                       {CATEGORY_LABELS[ab.category]?.label || ab.category}
                     </Badge>
@@ -1092,13 +1198,22 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                   </div>
                   <div className="flex items-center gap-3">
                     <span className="text-2xs text-muted-foreground">{statusCfg.label}</span>
-                    <span className="font-mono text-sm">{fmtCurrency(ab.annualAmount)}</span>
+                    <span className="font-mono text-sm">
+                      {fmtCurrency(ab.annualAmount)}
+                      {ab.amountYear && <span className="text-2xs text-muted-foreground ml-1">{ab.amountYear}</span>}
+                    </span>
                   </div>
-                </div>
+                </button>
 
                 {/* Expanded details */}
                 {isExpanded && (
-                  <div className="mt-3 pl-6 space-y-3">
+                  <div id={`addback-${ab.id}`} className="mt-3 pl-6 space-y-3">
+                    {/* Per-year amounts when the headline is one year of several */}
+                    {Object.keys(ab.yearAmounts || {}).length > 1 && (
+                      <p className="text-2xs text-muted-foreground font-mono">
+                        {Object.entries(ab.yearAmounts).map(([y, v]) => `${y}: ${fmtCurrency(v)}`).join(" · ")}
+                      </p>
+                    )}
                     {/* Description */}
                     {ab.description && (
                       <p className="text-xs text-muted-foreground">{ab.description}</p>
@@ -1137,13 +1252,14 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                       </div>
                     )}
 
-                    {/* No match help */}
+                    {/* No match help — only mention controls that actually render below */}
                     {ab.verificationStatus === "no_match" && (
                       <div className="rounded bg-amber-500/5 border border-amber-500/20 p-3 text-xs">
                         <p className="font-medium text-amber-400 mb-1">No matching transactions found</p>
                         <p className="text-muted-foreground">
-                          If this addback is valid, add a note explaining where the supporting documentation can be found,
-                          or upload additional transaction records. You can also search transactions manually or give the AI a hint below.
+                          {allTransactions.length > 0
+                            ? "Search the parsed transactions manually or give the AI a hint below. If the support lives elsewhere, add a note saying where and confirm."
+                            : "No transaction data was read from the uploaded documents. Upload a GL export, QuickBooks detail report, or bank statement in the Documents section of the Overview tab and re-analyze — or add a note saying where the support lives and confirm."}
                         </p>
                       </div>
                     )}
@@ -1212,6 +1328,18 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
                     {/* Already confirmed/disputed */}
                     {ab.sellerNotes && !isActionable && (
                       <p className="text-xs text-muted-foreground italic">Seller note: {ab.sellerNotes}</p>
+                    )}
+                    {!isActionable && (
+                      <Button
+                        size="sm"
+                        variant="ghost"
+                        className="h-7 text-xs gap-1 text-muted-foreground"
+                        onClick={() => handleUndo(ab.id)}
+                        disabled={updateVerification.isPending}
+                      >
+                        <Undo2 className="h-3 w-3" />
+                        {ab.verificationStatus === "disputed" ? "Undo dispute" : "Undo confirmation"}
+                      </Button>
                     )}
                   </div>
                 )}

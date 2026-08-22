@@ -1,10 +1,11 @@
+import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
   CheckCircle2, Clock, Loader2, AlertCircle, FileText,
   TrendingUp, TrendingDown, Minus, DollarSign
 } from "lucide-react";
-import type { FinancialAnalysis } from "@shared/schema";
+import type { FinancialAnalysis, Document } from "@shared/schema";
 
 interface FinancialOverviewProps {
   analysis: FinancialAnalysis | null;
@@ -37,6 +38,19 @@ function TrendIcon({ current, previous }: { current?: number; previous?: number 
 }
 
 export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) {
+  // Resolve source document ids to their filenames (shares the deal's
+  // documents cache key, so this is free once the Overview tab has loaded).
+  const { data: documents = [] } = useQuery<Document[]>({
+    queryKey: ["/api/deals", dealId, "documents"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/documents`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load documents");
+      return r.json();
+    },
+    enabled: !!analysis && Array.isArray(analysis.sourceDocumentIds) && (analysis.sourceDocumentIds as string[]).length > 0,
+  });
+  const docNameById = new Map(documents.map((d) => [d.id, d.name]));
+
   if (!analysis) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
@@ -181,13 +195,18 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
           </CardHeader>
           <CardContent>
             <div className="space-y-1.5">
-              {sourceDocIds.map((docId, i) => (
-                <div key={docId} className="flex items-center gap-2 text-xs text-muted-foreground">
-                  <FileText className="h-3.5 w-3.5 shrink-0" />
-                  <span className="truncate">Document {i + 1}</span>
-                  <span className="text-2xs text-muted-foreground/50 ml-auto font-mono">{docId.slice(0, 8)}</span>
-                </div>
-              ))}
+              {sourceDocIds.map((docId, i) => {
+                const name = docNameById.get(docId);
+                return (
+                  <div key={docId} className="flex items-center gap-2 text-xs text-muted-foreground">
+                    <FileText className="h-3.5 w-3.5 shrink-0" />
+                    <span className="truncate text-foreground/90">{name ?? `Document ${i + 1}`}</span>
+                    {!name && (
+                      <span className="text-2xs text-muted-foreground/50 ml-auto font-mono" title={docId}>{docId.slice(0, 8)}</span>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CardContent>
         </Card>

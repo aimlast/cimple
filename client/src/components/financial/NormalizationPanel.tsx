@@ -6,8 +6,9 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import {
-  Plus, Check, X, TrendingUp, TrendingDown, Minus
+  Plus, Check, X, TrendingUp, TrendingDown, Minus, Trash2
 } from "lucide-react";
+import { AnalyzerNotes } from "@/components/financial/ReclassifiedTable";
 
 /* ──────────────────────────────────────────────
    Types
@@ -22,6 +23,10 @@ export interface Addback {
   /** "sde" addbacks are owner-specific and only apply to SDE; "ebitda" apply to both. */
   type?: "sde" | "ebitda";
   confidence?: "high" | "medium" | "low";
+  /** Broker-added (not from the AI). Deletable; carried across re-runs. */
+  custom?: boolean;
+  /** Broker toggled approval — carried across re-runs. */
+  approvedOverride?: boolean;
 }
 
 export interface NormalizationData {
@@ -29,7 +34,12 @@ export interface NormalizationData {
   years: string[];
   netIncome: Record<string, number>; // year -> net income
   addbacks: Addback[];
+  /** Analyzer notes (reconciliation warnings, assumptions). */
+  notes?: string[];
+  metricOverride?: boolean;
 }
+
+const isCustomAddback = (ab: Addback) => ab.custom === true || ab.id.startsWith("custom_");
 
 interface NormalizationPanelProps {
   data: NormalizationData | null;
@@ -150,6 +160,7 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
       category: "other",
       amounts,
       approved: true,
+      custom: true,
     };
     onUpdate({ ...data, addbacks: [...addbacks, newAddback] });
     setNewLabel("");
@@ -158,8 +169,17 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
     setShowAddForm(false);
   };
 
+  // Remove a broker-added addback (AI addbacks are excluded via the toggle, never deleted)
+  const deleteCustomAddback = (addbackId: string) => {
+    if (!onUpdate) return;
+    onUpdate({ ...data, addbacks: addbacks.filter(a => a.id !== addbackId) });
+  };
+
+  const notes = data.notes ?? [];
+
   return (
     <div className="space-y-4">
+      {notes.length > 0 && <AnalyzerNotes notes={notes} />}
       {/* Metric toggle */}
       <Card>
         <CardContent className="p-4">
@@ -265,6 +285,11 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                               SDE only
                             </Badge>
                           )}
+                          {isCustomAddback(ab) && (
+                            <Badge className="bg-teal/10 text-teal border-0 text-2xs shrink-0">
+                              Added by you
+                            </Badge>
+                          )}
                           <Badge className={`${catCfg.color} text-2xs shrink-0`}>
                             {catCfg.label}
                           </Badge>
@@ -279,16 +304,33 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                       ))}
                       {onUpdate && (
                         <td className="text-center px-3 py-2.5">
-                          <button
-                            onClick={() => toggleApproval(ab.id)}
-                            className={`inline-flex items-center justify-center h-6 w-6 rounded-full transition-colors ${
-                              ab.approved
-                                ? "bg-success/10 text-success hover:bg-success/20"
-                                : "bg-muted text-muted-foreground hover:bg-muted/80"
-                            }`}
-                          >
-                            {ab.approved ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
-                          </button>
+                          <div className="inline-flex items-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => toggleApproval(ab.id)}
+                              aria-pressed={ab.approved}
+                              aria-label={ab.approved ? `Exclude ${ab.label} from ${metricLabel}` : `Include ${ab.label} in ${metricLabel}`}
+                              title={ab.approved ? "Included — click to exclude" : "Excluded — click to include"}
+                              className={`inline-flex items-center justify-center h-6 w-6 rounded-full transition-colors ${
+                                ab.approved
+                                  ? "bg-success/10 text-success hover:bg-success/20"
+                                  : "bg-muted text-muted-foreground hover:bg-muted/80"
+                              }`}
+                            >
+                              {ab.approved ? <Check className="h-3 w-3" /> : <X className="h-3 w-3" />}
+                            </button>
+                            {isCustomAddback(ab) && (
+                              <button
+                                type="button"
+                                onClick={() => deleteCustomAddback(ab.id)}
+                                aria-label={`Delete ${ab.label}`}
+                                title="Delete this addback"
+                                className="inline-flex items-center justify-center h-6 w-6 rounded-full text-muted-foreground hover:text-red-400 hover:bg-red-500/10 transition-colors"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                              </button>
+                            )}
+                          </div>
                         </td>
                       )}
                     </tr>
@@ -341,7 +383,7 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                           >
                             <Check className="h-3 w-3 text-success" />
                           </Button>
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setShowAddForm(false)}>
+                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setShowAddForm(false)} aria-label="Cancel new addback">
                             <X className="h-3 w-3 text-muted-foreground" />
                           </Button>
                         </div>

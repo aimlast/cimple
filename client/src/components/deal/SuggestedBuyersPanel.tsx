@@ -213,14 +213,22 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   });
 
   // ── Derived ──────────────────────────────────────────────────────────────
-  const visibleBuyers = useMemo(() => {
-    if (!data) return [];
-    return data.suggested.filter(b => {
-      if (b.alreadyHasAccess) return false; // never re-suggest
-      if (!showContacted && b.alreadyContacted) return false;
-      return true;
-    });
-  }, [data, showContacted]);
+  // Candidates = everyone who could still be contacted (buyers who already
+  // have access are never re-suggested). The contacted toggle filters within
+  // that set, so it must stay reachable even when it hides every row —
+  // otherwise contacted buyers could never be revisited.
+  const candidates = useMemo(
+    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess),
+    [data],
+  );
+  const contactedCandidates = useMemo(
+    () => candidates.filter(b => b.alreadyContacted),
+    [candidates],
+  );
+  const visibleBuyers = useMemo(
+    () => candidates.filter(b => showContacted || !b.alreadyContacted),
+    [candidates, showContacted],
+  );
 
   const stats = useMemo(() => {
     if (!data) return { total: 0, hot: 0, warm: 0, contacted: 0 };
@@ -295,14 +303,19 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
         <StatPill label="Contacted" value={stats.contacted} accent="text-muted-foreground" />
       </div>
 
-      {/* Selection controls */}
-      {visibleBuyers.length > 0 && (
+      {/* Selection controls — shown whenever there is anyone to contact or
+          revisit, so the contacted toggle never disappears */}
+      {candidates.length > 0 && (
         <div className="flex items-center justify-between gap-2 px-1">
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
-              {selected.size > 0 ? `${selected.size} selected` : "Select buyers to draft outreach"}
+              {selected.size > 0
+                ? `${selected.size} selected`
+                : visibleBuyers.length > 0
+                  ? "Select buyers to draft outreach"
+                  : `${contactedCandidates.length} contacted`}
             </span>
-            {selected.size === 0 && (
+            {selected.size === 0 && visibleBuyers.length > 0 && (
               <>
                 <Button variant="ghost" size="sm" className="h-6 text-xs" onClick={() => selectAllTopN(5)}>
                   Top 5
@@ -344,10 +357,45 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
         <Card>
           <CardContent className="py-8 text-center">
             <Target className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">No suggested buyers yet</p>
-            <p className="text-xs text-muted-foreground/70 mt-1">
-              Add buyers to your contact list to see ranked suggestions for this deal.
-            </p>
+            {candidates.length === 0 ? (
+              (data?.suggested.length ?? 0) > 0 ? (
+                <>
+                  <p className="text-sm text-muted-foreground" data-testid="text-all-have-access">
+                    Every candidate already has access to this deal
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Add more buyers to your contact list to see new suggestions.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-sm text-muted-foreground" data-testid="text-no-candidates">
+                    No suggested buyers yet
+                  </p>
+                  <p className="text-xs text-muted-foreground/70 mt-1">
+                    Add buyers to your contact list to see ranked suggestions for this deal.
+                  </p>
+                </>
+              )
+            ) : (
+              <>
+                <p className="text-sm text-muted-foreground" data-testid="text-all-contacted">
+                  All {contactedCandidates.length} candidate{contactedCandidates.length === 1 ? "" : "s"} contacted
+                </p>
+                <p className="text-xs text-muted-foreground/70 mt-1">
+                  Sent emails are listed in outreach history below.
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="mt-3"
+                  onClick={() => setShowContacted(true)}
+                  data-testid="button-show-contacted"
+                >
+                  Show contacted buyers
+                </Button>
+              </>
+            )}
           </CardContent>
         </Card>
       ) : (

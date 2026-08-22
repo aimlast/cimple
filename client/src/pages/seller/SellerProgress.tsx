@@ -139,6 +139,7 @@ export default function SellerProgress() {
     return (
       <SellerOnboarding
         token={token!}
+        replay
         onComplete={() => setShowOnboarding(false)}
       />
     );

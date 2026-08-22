@@ -10,6 +10,7 @@ import {
 } from "lucide-react";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface CalloutItem {
   title: string;
@@ -50,20 +51,37 @@ function TealDot() {
   return <div className="w-2 h-2 rounded-full bg-teal flex-shrink-0 mt-1.5" />;
 }
 
+/** "94" + "%" → "94%", "12" + "years" → "12 years"; a value that already carries the unit is left alone. */
+function formatStatValue(value: unknown, unit: unknown): string {
+  if (value == null || value === "") return "";
+  const v = String(value).trim();
+  const u = typeof unit === "string" ? unit.trim() : "";
+  if (!u || v.toLowerCase().endsWith(u.toLowerCase())) return v;
+  const tight = /^[%‰°×x]$/.test(u);
+  return tight ? `${v}${u}` : `${v} ${u}`;
+}
+
 export function CalloutListRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: CalloutListLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   // The AI sometimes emits `stats: [{label, value, description}]` for
   // icon_stat_row sections instead of `items` — normalize at render time so
   // the section is never silently blank. (Render-side only; no schema change.)
+  // The stat's number (with its unit — "94%", "12 yrs") is the headline; the
+  // label and any description sit underneath. Dropping `unit` here is how
+  // "Patient Base 94" shipped without its "%".
   const rawStats = (data as any).stats;
   const statItems: CalloutItem[] = Array.isArray(rawStats)
     ? rawStats
-        .filter((s: any) => s && (s.label || s.value))
-        .map((s: any) => ({
-          title: s.label || s.value,
-          description: [s.label ? s.value : null, s.description].filter(Boolean).join(" — "),
-        }))
+        .filter((s: any) => s && (s.label || s.value != null))
+        .map((s: any) => {
+          const value = formatStatValue(s.value, s.unit);
+          return {
+            title: value || String(s.label ?? ""),
+            description: [value ? s.label : null, s.description].filter(Boolean).join(" — "),
+            icon: s.icon,
+          };
+        })
     : [];
   const items = data.items && data.items.length > 0 ? data.items : statItems;
 
@@ -72,7 +90,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
 
   if (items.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const cols = data.columns || (isIconStatRow ? 4 : items.length > 4 ? 2 : 1);
@@ -105,9 +123,9 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
                 <div className="w-2.5 h-2.5 rounded-full bg-teal" />
               )}
               <div>
-                <p className="text-base font-semibold text-foreground leading-tight">{item.title}</p>
+                <p className="text-base font-semibold text-foreground leading-tight">{renderInline(item.title, `t${i}`)}</p>
                 {item.description && (
-                  <p className="text-xs text-muted-foreground mt-0.5">{item.description}</p>
+                  <p className="text-xs text-muted-foreground mt-0.5">{renderInline(item.description, `d${i}`)}</p>
                 )}
               </div>
               {item.badge && (
@@ -157,7 +175,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
                       "text-sm leading-snug",
                       item.highlight ? "font-semibold text-foreground" : "font-medium text-foreground/90"
                     )}>
-                      {item.title}
+                      {renderInline(item.title, `t${i}`)}
                     </p>
                     {item.badge && (
                       <span className="text-2xs px-2 py-0.5 rounded-full bg-teal-muted text-teal-muted-foreground font-medium">
@@ -166,7 +184,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
                     )}
                   </div>
                   {item.description && (
-                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{item.description}</p>
+                    <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{renderInline(item.description, `d${i}`)}</p>
                   )}
                 </div>
               </div>
@@ -205,7 +223,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
                   "text-sm",
                   item.highlight ? "font-semibold text-foreground" : "font-medium text-foreground/80"
                 )}>
-                  {item.title}
+                  {renderInline(item.title, `t${i}`)}
                 </p>
                 {item.badge && (
                   <span className="text-2xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground font-medium">
@@ -214,7 +232,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
                 )}
               </div>
               {item.description && (
-                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{item.description}</p>
+                <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">{renderInline(item.description, `d${i}`)}</p>
               )}
             </div>
           </div>

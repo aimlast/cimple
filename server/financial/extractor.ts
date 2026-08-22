@@ -54,6 +54,9 @@ export async function extractFinancialData(
   const stream = anthropic.messages.stream({
     model: "claude-sonnet-4-5",
     max_tokens: 16000,
+    // Extraction is transcription, not judgement — the same document must
+    // yield the same line items on every run.
+    temperature: 0,
     messages: [
       {
         role: "user",

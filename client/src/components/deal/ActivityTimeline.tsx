@@ -18,7 +18,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { PanelError } from "@/components/deal/PanelError";
 import {
   Eye, FileSignature, BookOpen, ArrowDown, MessageSquare,
-  Download, Clock, ChevronDown, Loader2,
+  Download, Clock, ChevronDown, Loader2, CheckCircle2,
 } from "lucide-react";
 
 interface TimelineEvent {
@@ -29,8 +29,16 @@ interface TimelineEvent {
   sectionKey: string | null;
   scrollDepthPercent: number | null;
   timeSpentSeconds: number | null;
+  /** Present on `decision` events: which decision the buyer shared */
+  eventData?: { decision?: string; nextStep?: string | null } | null;
   createdAt: string;
 }
+
+const DECISION_LABELS: Record<string, string> = {
+  interested: "Interested",
+  not_interested: "Not interested",
+  need_more_time: "Needs more time",
+};
 
 interface TimelinePage {
   timeline: TimelineEvent[];
@@ -46,6 +54,7 @@ const EVENT_CONFIG: Record<string, { icon: typeof Eye; label: string; color: str
   scroll_depth:     { icon: ArrowDown,       label: "Scrolled to",      color: "text-muted-foreground" },
   question_asked:   { icon: MessageSquare,   label: "Asked question",   color: "text-amber-400" },
   download_attempt: { icon: Download,        label: "Download attempt", color: "text-red-400" },
+  decision:         { icon: CheckCircle2,    label: "Shared decision",  color: "text-teal" },
 };
 
 function fmtSection(key: string): string {
@@ -157,6 +166,8 @@ export function ActivityTimeline({ dealId }: { dealId: string }) {
               detail = fmtSection(event.sectionKey);
             } else if (event.eventType === "scroll_depth" && event.scrollDepthPercent != null) {
               detail = `${event.scrollDepthPercent}%`;
+            } else if (event.eventType === "decision" && event.eventData?.decision) {
+              detail = DECISION_LABELS[event.eventData.decision] || fmtSection(event.eventData.decision);
             }
 
             return (

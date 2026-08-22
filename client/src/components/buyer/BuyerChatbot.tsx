@@ -3,22 +3,44 @@
  *
  * Buyers can ask questions about the business. The AI answers immediately
  * from CIM content. If it can't, the question escalates to the broker,
- * then the seller for approval. Published Q&A from prior buyers also shows.
+ * then the seller for approval.
  *
- * While any question is waiting on the broker, the widget polls the
- * published Q&A feed so the answer lands in the open session instead of
- * only appearing on the next page load.
+ * The seeded history is the buyer's full feed: published Q&A (theirs and
+ * other buyers', labelled by ownership) plus their own questions still
+ * waiting on the broker — so a reload never loses a pending question.
+ *
+ * While any question is waiting on the broker, the widget polls the feed
+ * so the answer lands in the open session instead of only appearing on
+ * the next page load.
  */
 import { useState, useRef, useEffect } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
-import type { BuyerQuestion } from "@shared/schema";
 import {
   MessageCircle, X, Send, Loader2, Bot,
   HelpCircle, Clock, CheckCircle2,
 } from "lucide-react";
+
+/**
+ * One item of the buyer-facing Q&A feed (GET /api/view/:token →
+ * publishedQuestions, GET /api/deals/:dealId/questions/published).
+ * Whitelisted server shape — never the raw buyerQuestions row.
+ */
+export interface BuyerQuestionFeedItem {
+  id: string;
+  question: string;
+  /** pending_ai | pending_broker | pending_seller | published | declined */
+  status: string;
+  isPublished: boolean;
+  aiAnswer: string | null;
+  publishedAnswer: string | null;
+  createdAt: string | Date;
+  updatedAt: string | Date;
+  /** True when this buyer asked the question */
+  isMine: boolean;
+}
 
 interface BuyerChatbotProps {
   dealId: string;
@@ -26,68 +48,105 @@ interface BuyerChatbotProps {
   /** The buyer's view-room token — the server authenticates questions with it */
   accessToken: string;
   businessName: string;
-  publishedQuestions: BuyerQuestion[];
+  questionFeed: BuyerQuestionFeedItem[];
 }
 
 interface ChatMessage {
   id: string;
   role: "buyer" | "ai" | "system";
   content: string;
-  status?: "published" | "pending_broker" | "pending_seller" | "answered";
+  status?: "published" | "pending_broker" | "pending_seller" | "answered" | "declined";
   /** Server-side question id — lets us pair an escalated question with its later answer */
   questionId?: string;
+  /** Who asked a seeded question — other buyers' questions get a caption */
+  origin?: "mine" | "other";
   timestamp: Date;
 }
 
 /** How often to check for a broker answer while a question is outstanding */
 const ANSWER_POLL_MS = 30_000;
 
-export function BuyerChatbot({
-  dealId,
-  buyerAccessId,
-  accessToken,
-  businessName,
-  publishedQuestions,
-}: BuyerChatbotProps) {
-  const { toast } = useToast();
-  const [isOpen, setIsOpen] = useState(false);
-  const [input, setInput] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>(() => {
-    const initial: ChatMessage[] = [];
+const PENDING_TEXT = "Forwarded to your broker.";
+const DECLINED_TEXT = "Your broker wasn't able to answer this one.";
 
-    // Welcome message
-    initial.push({
-      id: "welcome",
-      role: "system",
-      content: `Welcome! I can answer questions about ${businessName} based on the CIM. If I can't answer from the document, your question will be forwarded to the broker.`,
-      timestamp: new Date(),
-    });
+function isPendingStatus(status: string | undefined): boolean {
+  return status === "pending_broker" || status === "pending_seller" || status === "pending_ai";
+}
 
-    // Seed with published Q&A from previous buyers
-    for (const q of publishedQuestions) {
-      initial.push({
+/** Build the initial chat history (and the set of still-pending ids) from the feed. */
+function seedFromFeed(feed: BuyerQuestionFeedItem[], businessName: string) {
+  const messages: ChatMessage[] = [{
+    id: "welcome",
+    role: "system",
+    content: `Ask anything about ${businessName}. Answers come from the CIM; anything it doesn't cover goes to your broker.`,
+    timestamp: new Date(),
+  }];
+  const pendingIds: string[] = [];
+
+  for (const q of feed) {
+    const asked = new Date(q.createdAt);
+    if (q.isPublished) {
+      messages.push({
         id: `pq-${q.id}`,
         role: "buyer",
         content: q.question,
         status: "published",
         questionId: q.id,
-        timestamp: new Date(q.createdAt),
+        origin: q.isMine ? "mine" : "other",
+        timestamp: asked,
       });
-      initial.push({
+      messages.push({
         id: `pa-${q.id}`,
         role: "ai",
         content: q.publishedAnswer || q.aiAnswer || "",
         status: "published",
         questionId: q.id,
-        timestamp: new Date(q.createdAt),
+        timestamp: asked,
       });
+      continue;
     }
+    if (!q.isMine) continue;
 
-    return initial;
-  });
+    // The buyer's own unanswered question — keep it in the thread with its
+    // waiting state so it doesn't silently vanish on reload.
+    messages.push({
+      id: `pq-${q.id}`,
+      role: "buyer",
+      content: q.question,
+      questionId: q.id,
+      origin: "mine",
+      timestamp: asked,
+    });
+    const declined = q.status === "declined";
+    messages.push({
+      id: `ps-${q.id}`,
+      role: "system",
+      content: declined ? DECLINED_TEXT : PENDING_TEXT,
+      status: declined ? "declined" : "pending_broker",
+      questionId: q.id,
+      timestamp: asked,
+    });
+    if (!declined) pendingIds.push(q.id);
+  }
+
+  return { messages, pendingIds };
+}
+
+export function BuyerChatbot({
+  dealId,
+  buyerAccessId,
+  accessToken,
+  businessName,
+  questionFeed,
+}: BuyerChatbotProps) {
+  const { toast } = useToast();
+  const [isOpen, setIsOpen] = useState(false);
+  const [input, setInput] = useState("");
+  const [seed] = useState(() => seedFromFeed(questionFeed, businessName));
+  const [messages, setMessages] = useState<ChatMessage[]>(seed.messages);
   const [unreadCount, setUnreadCount] = useState(0);
   // Question ids still waiting on the broker — drives the answer poll
-  const [pendingIds, setPendingIds] = useState<string[]>([]);
+  const [pendingIds, setPendingIds] = useState<string[]>(seed.pendingIds);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -126,22 +185,24 @@ export function BuyerChatbot({
         id: `b-${Date.now()}`,
         role: "buyer",
         content: question,
+        origin: "mine",
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, buyerMsg]);
       setInput("");
     },
     onSuccess: (data) => {
+      const pending = isPendingStatus(data.status);
       const aiMsg: ChatMessage = {
         id: `a-${data.id}`,
         role: data.status === "published" ? "ai" : "system",
-        content: data.message,
+        content: pending ? PENDING_TEXT : data.message,
         status: data.status,
         questionId: data.id,
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, aiMsg]);
-      if (data.status === "pending_broker" || data.status === "pending_seller") {
+      if (pending) {
         setPendingIds(prev => (prev.includes(data.id) ? prev : [...prev, data.id]));
       }
 
@@ -163,7 +224,7 @@ export function BuyerChatbot({
 
   // ── Poll for broker answers while any question is outstanding ──────────
   const hasPending = pendingIds.length > 0;
-  const answerPoll = useQuery<BuyerQuestion[]>({
+  const answerPoll = useQuery<BuyerQuestionFeedItem[]>({
     queryKey: ["/api/deals", dealId, "questions", "published", accessToken],
     enabled: hasPending,
     refetchInterval: hasPending ? ANSWER_POLL_MS : false,
@@ -181,19 +242,23 @@ export function BuyerChatbot({
   });
 
   useEffect(() => {
-    const published = answerPoll.data;
-    if (!published || pendingIds.length === 0) return;
-    const answered = published.filter(
-      q => pendingIds.includes(q.id) && (q.publishedAnswer || q.aiAnswer),
+    const feed = answerPoll.data;
+    if (!feed || pendingIds.length === 0) return;
+    const answered = feed.filter(
+      q => pendingIds.includes(q.id) && q.isPublished && (q.publishedAnswer || q.aiAnswer),
     );
-    if (answered.length === 0) return;
+    const declined = feed.filter(q => pendingIds.includes(q.id) && q.status === "declined");
+    if (answered.length === 0 && declined.length === 0) return;
 
     setMessages(prev => {
-      const next = prev.map(m =>
-        m.questionId && m.status !== "published" && answered.some(a => a.id === m.questionId)
-          ? { ...m, status: "answered" as const }
-          : m,
-      );
+      const next = prev.map(m => {
+        if (!m.questionId || m.status === "published") return m;
+        if (answered.some(a => a.id === m.questionId)) return { ...m, status: "answered" as const };
+        if (m.role === "system" && declined.some(d => d.id === m.questionId)) {
+          return { ...m, status: "declined" as const, content: DECLINED_TEXT };
+        }
+        return m;
+      });
       for (const a of answered) {
         if (next.some(m => m.id === `pa-${a.id}`)) continue;
         next.push({
@@ -207,8 +272,9 @@ export function BuyerChatbot({
       }
       return next;
     });
-    setPendingIds(prev => prev.filter(id => !answered.some(a => a.id === id)));
-    if (!isOpen) setUnreadCount(prev => prev + answered.length);
+    const resolved = new Set([...answered, ...declined].map(q => q.id));
+    setPendingIds(prev => prev.filter(id => !resolved.has(id)));
+    if (!isOpen && answered.length > 0) setUnreadCount(prev => prev + answered.length);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerPoll.data]);
 
@@ -225,8 +291,9 @@ export function BuyerChatbot({
     }
   };
 
-  // Filter out the seeded published Q&A for the "prior answers" section
-  const priorCount = publishedQuestions.length;
+  // Header counts: answers from other buyers vs. this buyer's open questions
+  const othersAnswered = questionFeed.filter(q => q.isPublished && !q.isMine).length;
+  const awaitingCount = pendingIds.length;
 
   return (
     <>
@@ -275,13 +342,24 @@ export function BuyerChatbot({
             </button>
           </div>
 
-          {/* Prior Q&A count badge */}
-          {priorCount > 0 && (
-            <div className="px-4 py-2 border-b border-border bg-muted/30 flex items-center gap-2">
-              <Badge variant="outline" className="text-[10px] h-5">
-                {priorCount} prior {priorCount === 1 ? "answer" : "answers"}
-              </Badge>
-              <span className="text-[10px] text-muted-foreground">from previous buyers</span>
+          {/* Feed summary — labelled by ownership */}
+          {(othersAnswered > 0 || awaitingCount > 0) && (
+            <div className="px-4 py-2 border-b border-border bg-muted/30 flex flex-wrap items-center gap-x-3 gap-y-1" data-testid="chat-feed-summary">
+              {othersAnswered > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <Badge variant="outline" className="text-[10px] h-5">
+                    {othersAnswered} {othersAnswered === 1 ? "answer" : "answers"}
+                  </Badge>
+                  <span className="text-[10px] text-muted-foreground">from other buyers</span>
+                </span>
+              )}
+              {awaitingCount > 0 && (
+                <span className="flex items-center gap-1.5">
+                  <Badge variant="outline" className="text-[10px] h-5 border-teal/30 text-teal">
+                    {awaitingCount} awaiting your broker
+                  </Badge>
+                </span>
+              )}
             </div>
           )}
 
@@ -302,34 +380,36 @@ export function BuyerChatbot({
                   </div>
                 )}
 
-                {/* Bubble */}
-                <div className={`max-w-[85%] rounded-xl px-3 py-2 text-sm leading-relaxed ${
-                  msg.role === "buyer"
-                    ? "bg-teal text-teal-foreground rounded-br-sm"
-                    : msg.role === "ai"
-                    ? "bg-card border border-border rounded-bl-sm"
-                    : "bg-muted/50 text-muted-foreground text-xs italic rounded-bl-sm"
-                }`}>
-                  {msg.content}
-                  {(msg.status === "pending_broker" || msg.status === "pending_seller") && (
-                    <div className="mt-1.5 space-y-0.5 text-[10px] opacity-80">
-                      <div className="flex items-center gap-1">
+                {/* Bubble (+ ownership caption for other buyers' questions) */}
+                <div className={`max-w-[85%] flex flex-col ${msg.role === "buyer" ? "items-end" : "items-start"}`}>
+                  {msg.role === "buyer" && msg.origin === "other" && (
+                    <span className="text-[10px] text-muted-foreground/70 mb-0.5 px-1">Another buyer asked</span>
+                  )}
+                  <div className={`rounded-xl px-3 py-2 text-sm leading-relaxed ${
+                    msg.role === "buyer"
+                      ? msg.origin === "other"
+                        ? "bg-muted text-foreground rounded-br-sm"
+                        : "bg-teal text-teal-foreground rounded-br-sm"
+                      : msg.role === "ai"
+                      ? "bg-card border border-border rounded-bl-sm"
+                      : "bg-muted/50 text-muted-foreground text-xs italic rounded-bl-sm"
+                  }`}>
+                    {msg.content}
+                    {(msg.status === "pending_broker" || msg.status === "pending_seller") && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[10px] not-italic opacity-80" data-testid="chat-awaiting-broker">
                         <Clock className="h-2.5 w-2.5" />
-                        Forwarded to your broker
-                      </div>
-                      <div className="not-italic opacity-80">
                         {answerPoll.isError
-                          ? "We couldn't check for the answer just now — we'll keep trying, and it will also be here the next time you open this CIM."
-                          : "The answer will appear here as soon as it's ready (we check every 30 seconds), and the next time you open this CIM."}
+                          ? "Awaiting your broker — couldn't check just now, will retry"
+                          : "Awaiting your broker — the answer appears here when ready"}
                       </div>
-                    </div>
-                  )}
-                  {msg.status === "answered" && (
-                    <div className="mt-1.5 flex items-center gap-1 text-[10px] opacity-80">
-                      <CheckCircle2 className="h-2.5 w-2.5" />
-                      Your broker has answered — see below
-                    </div>
-                  )}
+                    )}
+                    {msg.status === "answered" && (
+                      <div className="mt-1.5 flex items-center gap-1 text-[10px] not-italic opacity-80">
+                        <CheckCircle2 className="h-2.5 w-2.5" />
+                        Answered — see below
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
             ))}

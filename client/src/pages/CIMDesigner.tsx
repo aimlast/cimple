@@ -10,7 +10,7 @@
  * Normal version, and there is no endpoint to edit an override directly. The
  * inspector never writes redacted/enriched text back into the base section.
  */
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -35,6 +35,9 @@ import { useToast } from "@/hooks/use-toast";
 import type { Deal, CimSection, CimSectionOverride, BrandingSettings } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
+import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
+import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
+import { stripMarkup } from "@/components/cim/richText";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { useLocation } from "wouter";
 
@@ -74,6 +77,20 @@ function isNotFound(err: unknown): boolean {
   return err instanceof Error && /^404:/.test(err.message);
 }
 
+/** Session gone (logged out elsewhere, expired). Retrying can never fix this. */
+function isUnauthorized(err: unknown): boolean {
+  return err instanceof Error && /^401:/.test(err.message);
+}
+
+/**
+ * Hand control back to BrokerAuthGate: invalidating the cached /me probe
+ * makes the gate re-check the session and render the sign-in form in place,
+ * so the broker lands straight back on this deal after signing in.
+ */
+function requestSignIn(qc: ReturnType<typeof useQueryClient>) {
+  qc.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
+}
+
 export default function CIMDesigner() {
   const params = useParams<{ dealId?: string; id?: string }>();
   const dealId = params.dealId || params.id || "";
@@ -84,6 +101,9 @@ export default function CIMDesigner() {
   const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
   const [editedContent, setEditedContent] = useState<string>("");
   const [contentDirty, setContentDirty] = useState(false);
+  // Structured layouts are edited through their layoutData (see editableText.ts).
+  const [dataDraft, setDataDraft] = useState<Record<string, any>>({});
+  const [dataDirty, setDataDirty] = useState(false);
   const [previewMode, setPreviewMode] = useState<PreviewMode>("normal");
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
 
@@ -117,6 +137,13 @@ export default function CIMDesigner() {
     queryFn: () => apiRequest("GET", `/api/deals/${dealId}/cim-overrides/${previewMode}`).then(r => r.json()),
     enabled: !!dealId && previewMode !== "normal",
   });
+
+  // A 401 on any designer query means the session is gone. Don't offer a
+  // Retry that loops — hand off to the auth gate, which shows sign-in here.
+  const sessionLost = isUnauthorized(dealError) || isUnauthorized(sectionsError) || isUnauthorized(overridesError);
+  useEffect(() => {
+    if (sessionLost) requestSignIn(qc);
+  }, [sessionLost, qc]);
 
   // ── Derived ───────────────────────────────────────────────────────────────
   const selectedSection = sections.find(s => s.id === selectedSectionId) ?? null;
@@ -168,8 +195,9 @@ export default function CIMDesigner() {
           ...s,
           sectionTitle,
           layoutData: override.layoutData || s.layoutData,
-          aiDraftContent: override.contentOverride || s.aiDraftContent,
-          brokerEditedContent: override.contentOverride || s.brokerEditedContent,
+          // Blind preview must mirror the view route: never fall back to un-redacted base text
+          aiDraftContent: override.contentOverride || (previewMode === "blind" ? null : s.aiDraftContent),
+          brokerEditedContent: override.contentOverride || (previewMode === "blind" ? null : s.brokerEditedContent),
         };
       });
 
@@ -259,17 +287,52 @@ export default function CIMDesigner() {
     }),
   });
 
+  // Per-section regenerate: rebuilds ONE section through the layout engine;
+  // the rest of the document (and its approvals) is untouched.
+  const regenerateSection = useMutation({
+    mutationFn: (sectionId: string) =>
+      apiRequest("POST", `/api/deals/${dealId}/generate-content`, { sectionId }).then(r => r.json()),
+    onSuccess: (_result, sectionId) => {
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides"] });
+      qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      if (selectedSectionId === sectionId) {
+        setEditedContent("");
+        setContentDirty(false);
+        setDataDirty(false);
+      }
+      toast({ title: "Section regenerated", description: "Blind version re-redacted automatically. Regenerate DD if you use it." });
+    },
+    onError: (e: unknown) => toast({
+      title: "Regenerate failed",
+      description: apiErrorMessage(e, "The section could not be regenerated. The existing version was kept."),
+      variant: "destructive",
+    }),
+  });
+
   // ── Section selection ─────────────────────────────────────────────────────
   // Always seed the editor from the BASE section, never the override-merged
   // preview copy — otherwise a save in blind/dd mode would write redacted text
-  // into the Normal CIM.
+  // into the Normal CIM. The text seed is what the renderer shows (broker
+  // edit → layoutData.body → AI draft), so editing starts from the live text.
   const selectSection = useCallback((sectionId: string) => {
     const base = sections.find(s => s.id === sectionId);
     if (!base) return;
     setSelectedSectionId(base.id);
-    setEditedContent(base.brokerEditedContent || base.aiDraftContent || "");
+    setEditedContent(getEditableText(base));
     setContentDirty(false);
+    setDataDraft(((base.layoutData as Record<string, any> | null) ?? {}));
+    setDataDirty(false);
   }, [sections]);
+
+  // After a regenerate (or any refetch) the selected section's stored data
+  // changes underneath a clean editor — re-seed so the inspector matches.
+  useEffect(() => {
+    if (!selectedSection) return;
+    if (!contentDirty) setEditedContent(getEditableText(selectedSection));
+    if (!dataDirty) setDataDraft(((selectedSection.layoutData as Record<string, any> | null) ?? {}));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedSection?.updatedAt, selectedSection?.id]);
 
   // ── Content save ──────────────────────────────────────────────────────────
   const saveContent = () => {
@@ -280,6 +343,19 @@ export default function CIMDesigner() {
         onSuccess: () => {
           setContentDirty(false);
           toast({ title: "Content saved" });
+        },
+      },
+    );
+  };
+
+  const saveData = () => {
+    if (!selectedSection || isReadOnlyMode) return;
+    updateSection.mutate(
+      { id: selectedSection.id, layoutData: dataDraft },
+      {
+        onSuccess: () => {
+          setDataDirty(false);
+          toast({ title: "Section data saved" });
         },
       },
     );
@@ -309,6 +385,24 @@ export default function CIMDesigner() {
     return (
       <div className="h-screen flex items-center justify-center">
         <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (dealIsError && isUnauthorized(dealError)) {
+    // The auth gate is already re-checking the session (effect above) and
+    // will swap in the sign-in form. Until it does, say what happened and
+    // offer the one action that helps — never a Retry that loops.
+    return (
+      <div className="h-screen flex flex-col items-center justify-center text-center p-8 gap-3">
+        <Lock className="h-8 w-8 text-muted-foreground" />
+        <p className="text-sm font-medium">Your session has ended</p>
+        <p className="text-xs text-muted-foreground max-w-sm">
+          Sign in again to keep working on this CIM — you'll come straight back here.
+        </p>
+        <Button size="sm" className="mt-2 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => requestSignIn(qc)}>
+          Sign in
+        </Button>
       </div>
     );
   }
@@ -574,7 +668,8 @@ export default function CIMDesigner() {
                 // In blind/dd the editor shows what the buyer sees, read-only.
                 displayContent={
                   isReadOnlyMode && selectedPreviewSection
-                    ? (selectedPreviewSection.brokerEditedContent || selectedPreviewSection.aiDraftContent || "")
+                    // DD text carries [[dd]] highlight sentinels for the renderer — plain here.
+                    ? stripMarkup(selectedPreviewSection.brokerEditedContent || selectedPreviewSection.aiDraftContent || "")
                     : editedContent
                 }
                 displayTitle={
@@ -585,9 +680,18 @@ export default function CIMDesigner() {
                 contentDirty={contentDirty}
                 onContentChange={(v) => { setEditedContent(v); setContentDirty(true); }}
                 onSaveContent={saveContent}
+                dataDraft={dataDraft}
+                dataDirty={dataDirty}
+                onDataChange={(v) => { setDataDraft(v); setDataDirty(true); }}
+                onSaveData={saveData}
                 onUpdate={(patch) => updateSection.mutate({ id: selectedSection.id, ...patch })}
+                onRegenerate={() => regenerateSection.mutate(selectedSection.id)}
+                isRegenerating={regenerateSection.isPending && regenerateSection.variables === selectedSection.id}
                 onSwitchToNormal={() => setPreviewMode("normal")}
                 isSaving={updateSection.isPending}
+                // Reasoning is written against the real business; in Blind
+                // preview run it through the same codename substitution.
+                redactText={redactTitle}
               />
             ) : (
               <div className="flex flex-col items-center justify-center h-full text-center p-6">
@@ -824,19 +928,31 @@ interface SectionInspectorProps {
   contentDirty: boolean;
   onContentChange: (v: string) => void;
   onSaveContent: () => void;
+  dataDraft: Record<string, any>;
+  dataDirty: boolean;
+  onDataChange: (v: Record<string, any>) => void;
+  onSaveData: () => void;
   onUpdate: (patch: Record<string, unknown>) => void;
+  onRegenerate: () => void;
+  isRegenerating: boolean;
   onSwitchToNormal: () => void;
   isSaving: boolean;
+  redactText: (t: string) => string;
 }
 
 function SectionInspector({
   section, previewMode, displayContent, displayTitle, contentDirty,
-  onContentChange, onSaveContent, onUpdate, onSwitchToNormal, isSaving,
+  onContentChange, onSaveContent, dataDraft, dataDirty, onDataChange, onSaveData,
+  onUpdate, onRegenerate, isRegenerating, onSwitchToNormal, isSaving, redactText,
 }: SectionInspectorProps) {
   const approved = !!section.brokerApproved;
-  const reasoning = section.aiLayoutReasoning ?? undefined;
+  const rawReasoning = section.aiLayoutReasoning ?? undefined;
+  const reasoning = rawReasoning && previewMode === "blind" ? redactText(rawReasoning) : rawReasoning;
   const readOnly = previewMode !== "normal";
   const modeLabel = previewMode === "blind" ? "Blind" : "DD";
+  const textEditable = isTextEditableLayout(section.layoutType);
+  const dataEditable = isStructuredLayout(section.layoutType);
+  const canRegenerate = section.layoutType !== "cover_page" && section.layoutType !== "divider";
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -873,10 +989,16 @@ function SectionInspector({
               <div className="flex items-center gap-1.5 mb-1.5">
                 <Lightbulb className="h-3 w-3 text-amber-400" />
                 <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">AI Reasoning</span>
+                <Badge variant="outline" className="text-[9px] h-4 ml-auto">internal</Badge>
               </div>
               <p className="text-[11px] text-muted-foreground leading-relaxed bg-muted/40 rounded p-2">
                 {reasoning}
               </p>
+              {previewMode === "blind" && (
+                <p className="text-[10px] text-muted-foreground/70 mt-1 leading-snug">
+                  Broker-only note — never shown to buyers and not part of the redacted version.
+                </p>
+              )}
             </div>
           )}
 
@@ -913,35 +1035,60 @@ function SectionInspector({
 
           <Separator />
 
-          {/* Content editor */}
-          <div>
-            <div className="flex items-center justify-between mb-1.5">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                {readOnly ? `${modeLabel} Content (read-only)` : "Content"}
-              </p>
-              {!readOnly && section.brokerEditedContent && (
-                <Badge variant="outline" className="text-[9px] h-4">edited</Badge>
+          {/* Content editor — free text for prose layouts, a data form for
+              structured ones. A textarea on a metric grid would save text no
+              renderer shows (see editableText.ts). */}
+          {(textEditable || readOnly) && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
+                  {readOnly ? `${modeLabel} Content (read-only)` : "Content"}
+                </p>
+                {!readOnly && section.brokerEditedContent && (
+                  <Badge variant="outline" className="text-[9px] h-4">edited</Badge>
+                )}
+              </div>
+              <Textarea
+                value={displayContent}
+                readOnly={readOnly}
+                onChange={e => { if (!readOnly) onContentChange(e.target.value); }}
+                className={`text-xs min-h-[140px] resize-none leading-relaxed ${readOnly ? "opacity-70 cursor-default" : ""}`}
+                placeholder={readOnly ? `No ${modeLabel} content for this section.` : "Section content..."}
+              />
+              {!readOnly && contentDirty && (
+                <Button
+                  size="sm"
+                  className="w-full mt-2 h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
+                  onClick={onSaveContent}
+                  disabled={isSaving}
+                >
+                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
+                  Save Content
+                </Button>
               )}
             </div>
-            <Textarea
-              value={displayContent}
-              readOnly={readOnly}
-              onChange={e => { if (!readOnly) onContentChange(e.target.value); }}
-              className={`text-xs min-h-[140px] resize-none font-mono leading-relaxed ${readOnly ? "opacity-70 cursor-default" : ""}`}
-              placeholder={readOnly ? `No ${modeLabel} content for this section.` : "Section content..."}
-            />
-            {!readOnly && contentDirty && (
-              <Button
-                size="sm"
-                className="w-full mt-2 h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
-                onClick={onSaveContent}
-                disabled={isSaving}
-              >
-                {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
-                Save Content
-              </Button>
-            )}
-          </div>
+          )}
+
+          {!readOnly && dataEditable && (
+            <div>
+              <div className="flex items-center justify-between mb-1.5">
+                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Section data</p>
+                {dataDirty && <Badge variant="outline" className="text-[9px] h-4">unsaved</Badge>}
+              </div>
+              <StructuredDataEditor value={dataDraft} onChange={onDataChange} compact />
+              {dataDirty && (
+                <Button
+                  size="sm"
+                  className="w-full mt-2 h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
+                  onClick={onSaveData}
+                  disabled={isSaving}
+                >
+                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
+                  Save Data
+                </Button>
+              )}
+            </div>
+          )}
 
           <Separator />
 
@@ -975,6 +1122,20 @@ function SectionInspector({
               {section.isVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
               {section.isVisible ? "Hide from CIM" : "Show in CIM"}
             </Button>
+
+            {canRegenerate && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full h-7 text-xs gap-1.5"
+                onClick={onRegenerate}
+                disabled={readOnly || isSaving || isRegenerating}
+                title="Rebuild only this section from the knowledge base. Other sections are untouched."
+              >
+                {isRegenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
+                {isRegenerating ? "Regenerating…" : "Regenerate This Section"}
+              </Button>
+            )}
           </div>
 
         </div>

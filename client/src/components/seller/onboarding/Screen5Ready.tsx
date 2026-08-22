@@ -9,7 +9,7 @@ interface Screen5Props {
 
 export function Screen5Ready({ onStart, onReady }: Screen5Props) {
   useEffect(() => {
-    const t = setTimeout(() => onReady(), 800);
+    const t = setTimeout(() => onReady(), 400);
     return () => clearTimeout(t);
   }, [onReady]);
 

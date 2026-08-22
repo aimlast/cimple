@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface Metric {
   label: string;
@@ -54,7 +55,7 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
 
   if (metrics.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const gridClass = {
@@ -118,7 +119,7 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
 
             {/* Footnote */}
             {metric.footnote && (
-              <p className="text-2xs text-muted-foreground/60 mt-2 leading-snug">{metric.footnote}</p>
+              <p className="text-2xs text-muted-foreground/60 mt-2 leading-snug">{renderInline(metric.footnote, `fn${i}`)}</p>
             )}
           </div>
         ))}

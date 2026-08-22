@@ -34,10 +34,10 @@ export function ConnectedContent({
       const el = document.getElementById(`section-${target.id}`);
       if (!el) return;
 
-      // Smooth scroll
-      const yOffset = -90;
-      const y = el.getBoundingClientRect().top + window.scrollY + yOffset;
-      window.scrollTo({ top: y, behavior: "smooth" });
+      // scrollIntoView scrolls whichever ancestor actually scrolls (the
+      // view room lives inside an overflow-auto layout container, where
+      // window.scrollTo is a no-op). Header offset comes from `scroll-mt-*`.
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
 
       // Brief highlight pulse
       el.classList.add("ring-2", "ring-teal/30", "rounded-lg");

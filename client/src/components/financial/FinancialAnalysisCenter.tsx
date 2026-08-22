@@ -3,10 +3,25 @@ import { useQuery, useMutation } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
 import { PanelError } from "@/components/deal/PanelError";
 import type { FinancialAnalysis, Discrepancy } from "@shared/schema";
+
+/** One row of GET /financial-analysis/versions. */
+interface AnalysisVersionSummary {
+  id: string;
+  version: number;
+  status: string;
+  createdAt: string | null;
+  updatedAt: string | null;
+  brokerReviewedAt: string | null;
+}
 
 /** apiRequest throws "<status>: <body>" — surface the server's own error message when the body is JSON. */
 function apiErrorMessage(err: unknown, fallback: string): string {
@@ -67,10 +82,14 @@ const STATUS_BADGE: Record<string, { label: string; color: string }> = {
 export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCenterProps) {
   const { toast } = useToast();
   const [tab, setTab] = useState("overview");
+  // Re-run needs an explicit confirmation — it starts a new version.
+  const [rerunOpen, setRerunOpen] = useState(false);
+  // A specific earlier version the broker chose to view (null = latest).
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
 
   // Fetch latest financial analysis; poll while a run is in progress
   const {
-    data: analysis,
+    data: latestAnalysis,
     isLoading,
     error: analysisError,
     refetch: refetchAnalysis,
@@ -86,7 +105,32 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       query.state.data?.status === "running" ? 4000 : false,
   });
 
-  const analysisStatus = analysis?.status;
+  // Every version on the deal — the switcher. A re-run must never make the
+  // previous run (and the broker's edits in it) unreachable.
+  const { data: versions = [] } = useQuery<AnalysisVersionSummary[]>({
+    queryKey: ["/api/deals", dealId, "financial-analysis", "versions"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/financial-analysis/versions`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load versions");
+      return r.json();
+    },
+    enabled: !!latestAnalysis,
+  });
+
+  // The version being viewed when it is not the latest one
+  const viewingOlder = !!selectedVersionId && selectedVersionId !== latestAnalysis?.id;
+  const { data: selectedAnalysis } = useQuery<FinancialAnalysis>({
+    queryKey: ["/api/deals", dealId, "financial-analysis", "version", selectedVersionId],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/financial-analysis/${selectedVersionId}`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load version");
+      return r.json();
+    },
+    enabled: viewingOlder,
+  });
+
+  const analysis = viewingOlder ? (selectedAnalysis ?? latestAnalysis) : latestAnalysis;
+  const analysisStatus = latestAnalysis?.status;
 
   // Financial-analysis discrepancies (cross-source conflicts) — drives the
   // routing banner. Shares the cache key with DiscrepancyPanel. Polls while a
@@ -131,6 +175,8 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       return r.json();
     },
     onSuccess: () => {
+      setRerunOpen(false);
+      setSelectedVersionId(null);
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
       toast({ title: "Analysis started", description: "Analyzing all documents, tax returns, and deal knowledge. This can take a couple of minutes." });
@@ -328,42 +374,107 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
 
   const isRunning = analysis.status === "running";
   const isFailed = analysis.status === "failed";
+  const latestIsRunning = latestAnalysis?.status === "running";
+  const analysisComplete = analysis.status === "completed" || analysis.status === "reviewed";
+  const latestVersion = latestAnalysis?.version ?? analysis.version;
+  const versionLabel = (v: AnalysisVersionSummary) => {
+    const status = (STATUS_BADGE[v.status] || STATUS_BADGE.draft).label;
+    const when = v.createdAt ? new Date(v.createdAt).toLocaleDateString() : "";
+    return `v${v.version}${v.id === latestAnalysis?.id ? " (latest)" : ""} · ${status}${when ? ` · ${when}` : ""}`;
+  };
 
   // Analysis exists — show tabbed interface
   return (
     <div className="space-y-4">
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
+      <div className="flex items-center justify-between gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           {onBack && (
-            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
+            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors" aria-label="Back">
               <ArrowLeft className="h-4 w-4" />
             </button>
           )}
-          <div>
+          <div className="min-w-0">
             <h2 className="text-lg font-semibold tracking-tight">Financial Analysis</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Version {analysis.version}
-            </p>
+            {versions.length > 1 ? (
+              <Select
+                value={analysis.id}
+                onValueChange={(id) => setSelectedVersionId(id === latestAnalysis?.id ? null : id)}
+              >
+                <SelectTrigger className="h-7 text-xs w-auto min-w-[200px] mt-0.5 border-border/60 bg-transparent px-2" aria-label="Analysis version">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {versions.map((v) => (
+                    <SelectItem key={v.id} value={v.id} className="text-xs">
+                      {versionLabel(v)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-sm text-muted-foreground mt-0.5">
+                Version {analysis.version}
+              </p>
+            )}
           </div>
           {statusCfg && (
             <Badge className={statusCfg.color}>{statusCfg.label}</Badge>
           )}
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs gap-1.5"
-          onClick={() => runAnalysis.mutate()}
-          disabled={runAnalysis.isPending || isRunning}
-        >
-          {runAnalysis.isPending || isRunning ? (
-            <><Loader2 className="h-3 w-3 animate-spin" /> Running...</>
-          ) : (
-            <><RefreshCw className="h-3 w-3" /> Re-run Analysis</>
+        <div className="flex items-center gap-2 shrink-0">
+          {viewingOlder && (
+            <Button size="sm" variant="ghost" className="h-8 text-xs" onClick={() => setSelectedVersionId(null)}>
+              View latest (v{latestVersion})
+            </Button>
           )}
-        </Button>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs gap-1.5"
+            onClick={() => setRerunOpen(true)}
+            disabled={runAnalysis.isPending || latestIsRunning}
+          >
+            {runAnalysis.isPending || latestIsRunning ? (
+              <><Loader2 className="h-3 w-3 animate-spin" /> Running...</>
+            ) : (
+              <><RefreshCw className="h-3 w-3" /> Re-run Analysis</>
+            )}
+          </Button>
+        </div>
       </div>
+
+      {/* Re-run confirmation — same pattern as the Designer's Regenerate Layout */}
+      <AlertDialog open={rerunOpen} onOpenChange={(open) => { if (!runAnalysis.isPending) setRerunOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Re-run the financial analysis?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This creates version {latestVersion + 1} from the current documents, tax returns, and deal knowledge.
+              Your reclassifications, custom addbacks, approval toggles, and answered, dismissed, or routed
+              questions are carried into the new version. Version {latestVersion} stays available in the version menu.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={runAnalysis.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              disabled={runAnalysis.isPending}
+              onClick={(e) => { e.preventDefault(); runAnalysis.mutate(); }}
+            >
+              {runAnalysis.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Re-run
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Viewing an earlier version */}
+      {viewingOlder && (
+        <div className="rounded-lg border border-border/60 bg-muted/20 px-4 py-2.5 text-xs text-muted-foreground">
+          Viewing version {analysis.version}. Edits here are saved to this version only; the latest is v{latestVersion}.
+        </div>
+      )}
 
       {/* Running banner */}
       {isRunning && (
@@ -392,7 +503,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
             size="sm"
             variant="outline"
             className="h-7 text-xs gap-1 shrink-0"
-            onClick={() => runAnalysis.mutate()}
+            onClick={() => setRerunOpen(true)}
             disabled={runAnalysis.isPending}
           >
             <RefreshCw className="h-3 w-3" /> Retry
@@ -531,6 +642,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
             title="Reclassified Balance Sheet"
             mode="balance"
             onUpdate={handleBsUpdate}
+            emptyMessage={analysisComplete
+              ? "No balance sheet was found in the uploaded documents. Upload one on the Overview tab and re-run the analysis."
+              : undefined}
           />
         </TabsContent>
 
@@ -542,7 +656,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
         </TabsContent>
 
         <TabsContent value="working-capital">
-          <WorkingCapitalPanel data={wcData} />
+          <WorkingCapitalPanel data={wcData} analysisComplete={analysisComplete} />
         </TabsContent>
 
         <TabsContent value="discrepancies">

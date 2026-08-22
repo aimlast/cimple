@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { ProseFallback, renderInline } from "../richText";
 
 interface TableRow {
   label: string;
@@ -37,7 +38,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
 
   if (rows.length === 0) {
     if (!content) return null;
-    return <p className="text-sm text-foreground/70 leading-relaxed">{content}</p>;
+    return <ProseFallback content={content} />;
   }
 
   const colCount = Math.max(headers.length, ...rows.map((r) => (r.values?.length || 0) + 1));
@@ -139,7 +140,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
         <div className="mt-3 space-y-1">
           {data.footnotes.map((fn, i) => (
             <p key={i} className="text-2xs text-muted-foreground leading-snug">
-              {fn}
+              {renderInline(fn, `fn${i}`)}
             </p>
           ))}
         </div>

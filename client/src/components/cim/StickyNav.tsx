@@ -81,10 +81,18 @@ export function StickyNav({ sections, onNavigate }: StickyNavProps) {
   // Show/hide nav based on cover page visibility
   useEffect(() => {
     if (!coverSection) {
-      // No cover page — show nav immediately after a small scroll
-      const handler = () => setVisible(window.scrollY > 120);
-      window.addEventListener("scroll", handler, { passive: true });
-      return () => window.removeEventListener("scroll", handler);
+      // No cover page — show nav once the first section reaches the chrome.
+      // The viewer scrolls inside a layout container, not the window, so
+      // listen in the capture phase and measure the section's position
+      // rather than window.scrollY (which never changes there).
+      const first = navSections[0];
+      const handler = () => {
+        const firstEl = first ? document.getElementById(`section-${first.id}`) : null;
+        setVisible(firstEl ? firstEl.getBoundingClientRect().top < 140 : false);
+      };
+      document.addEventListener("scroll", handler, { passive: true, capture: true });
+      handler();
+      return () => document.removeEventListener("scroll", handler, true);
     }
 
     const coverEl = document.getElementById(`section-${coverSection.id}`);
@@ -100,7 +108,7 @@ export function StickyNav({ sections, onNavigate }: StickyNavProps) {
 
     observer.observe(coverEl);
     return () => observer.disconnect();
-  }, [coverSection?.id]);
+  }, [coverSection?.id, navSections[0]?.id]);
 
   // Close mobile menu on outside click
   useEffect(() => {
@@ -119,10 +127,11 @@ export function StickyNav({ sections, onNavigate }: StickyNavProps) {
       const el = document.getElementById(`section-${section.id}`);
       if (!el) return;
 
-      // Smooth scroll with offset for sticky header
-      const yOffset = -90;
-      const y = el.getBoundingClientRect().top + window.scrollY + yOffset;
-      window.scrollTo({ top: y, behavior: "smooth" });
+      // scrollIntoView scrolls whichever ancestor actually scrolls (the
+      // view room lives inside an overflow-auto layout container, where
+      // window.scrollTo is a no-op). The sticky header/strip offset comes
+      // from `scroll-mt-*` on the section wrapper.
+      el.scrollIntoView({ behavior: "smooth", block: "start" });
 
       setActiveSection(section.sectionKey);
       setMobileOpen(false);

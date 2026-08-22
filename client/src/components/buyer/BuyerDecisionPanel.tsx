@@ -22,6 +22,7 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from "@/components/ui/dialog";
 import { CheckCircle2, XCircle, Clock, Loader2, ThumbsUp, ThumbsDown } from "lucide-react";
+import { useToast } from "@/hooks/use-toast";
 
 const NEXT_STEPS = [
   { value: "seller_call", label: "Introductory call with the seller" },
@@ -63,20 +64,36 @@ export function BuyerDecisionPanel({ token, currentDecision, businessName, viewC
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [snoozed, setSnoozed] = useState(false);
+  const { toast } = useToast();
 
   // "Need more time" — resets the reminder clock server-side and hides the
-  // panel for this session. Not a terminal decision.
+  // panel for this session. Not a terminal decision. The buyer gets an
+  // explicit confirmation either way so the click never feels swallowed.
   async function needMoreTime() {
     setSubmitting(true);
     try {
-      await fetch(`/api/view/${token}/decision`, {
+      const res = await fetch(`/api/view/${token}/decision`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ decision: "need_more_time" }),
       });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "Couldn't save that");
+      }
       setSnoozed(true);
-    } catch {
-      setSnoozed(true); // hide anyway — this action must never trap the buyer
+      toast({
+        title: "No rush",
+        description: "We'll check back with you in a few days.",
+      });
+    } catch (err: any) {
+      // Leave the panel in place so the buyer can try again or choose
+      // another option — nothing here blocks the document itself.
+      toast({
+        title: "Couldn't save that",
+        description: err?.message || "Please try again in a moment.",
+        variant: "destructive",
+      });
     } finally {
       setSubmitting(false);
     }

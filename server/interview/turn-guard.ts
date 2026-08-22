@@ -652,16 +652,26 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
 const FILLER_OPENER_RE =
   /\b(got it|noted|understood|makes sense|perfect|great|excellent|wonderful|fantastic|awesome|good to (know|hear)|glad to hear|thanks? (for|so much)|appreciate (you|that|the|it)|helpful (context|detail|to know)|that'?s (helpful|useful|clear|good|great|solid|strong|healthy|impressive|a (solid|strong|healthy|good|nice|great)|exactly|really)|that (is|sounds|seems) (like )?(a )?(solid|strong|healthy|good|great|nice|impressive|meaningful)|sounds (good|great|like a)|solid (foundation|number|position|base)|strong (position|foundation|number|signal)|healthy (margin|number|spread|sign)|impressive|buyers? (love|like|want|appreciate|will (love|appreciate|like|value))|from a buyer'?s (perspective|standpoint|point of view)|the kind of (thing|stuff|detail|number|signal|answer)|exactly the kind|what buyers|a good sign|good sign|nice (to see|spread|mix)|love to see|congrat)/i;
 const KEEP_OPENER_RE =
-  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(hard|difficult|tough|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
+  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|i had|down as|correct(ed|ion)|updat(ed|ing) (that|it)|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(hard|difficult|tough|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
 
 /**
  * Splits off leading sentences. A "sentence" ends at . ! ? or an em-dash
  * clause break followed by whitespace.
  */
+const ABBREVIATION_RE = /\b(Dr|Mr|Mrs|Ms|Jr|Sr|St|No|vs|Inc|Ltd|Co|Corp|approx|est|e\.g|i\.e)\.$/i;
 function leadingSentence(text: string): { head: string; rest: string } | null {
-  const m = /^([^.!?\n]{3,220}?[.!?])\s+(?=\S)/.exec(text);
-  if (!m) return null;
-  return { head: m[1], rest: text.slice(m[0].length) };
+  // Walk sentence terminators; skip abbreviations ("Dr. Rao") and decimals ("1.5")
+  const re = /[.!?](?=\s+\S)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const head = text.slice(0, m.index + 1);
+    if (head.length < 3 || head.length > 240) { if (head.length > 240) return null; continue; }
+    if (ABBREVIATION_RE.test(head)) continue;
+    if (/\d\.$/.test(head) && /^\s*\d/.test(text.slice(m.index + 1))) continue;
+    const rest = text.slice(m.index + 1).replace(/^\s+/, "");
+    return { head, rest };
+  }
+  return null;
 }
 
 /**
@@ -679,6 +689,7 @@ export function stripFillerPreamble(message: string): string {
     if (head.includes("?")) break;                // the opener IS a question
     if (KEEP_OPENER_RE.test(head)) break;         // clarifying / reconciling / empathy
     if (!FILLER_OPENER_RE.test(head)) break;      // not recognisably filler
+    if (!/^[A-Z"'(]/.test(rest.trim())) break;    // would leave a mid-sentence fragment
     current = rest.trim();
   }
   if (current === message.trim()) return message;

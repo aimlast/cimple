@@ -20,6 +20,7 @@ import {
   FileText,
   RefreshCw,
   Upload,
+  X,
 } from "lucide-react";
 
 interface DocRequirement {
@@ -29,6 +30,16 @@ interface DocRequirement {
   isRequired: boolean;
   status: "missing" | "uploaded" | "verified";
   notes: string | null;
+  uploadedFileId?: string | null;
+  uploadedFileName?: string | null;
+  uploadedBy?: "broker" | "seller" | null;
+  uploadedAt?: string | null;
+}
+
+interface UploadedDoc {
+  id: string;
+  name: string;
+  linkedRequirement?: { id: string; documentName: string; category: string } | null;
 }
 
 interface SellerProgressData {
@@ -58,6 +69,7 @@ export default function SellerDocuments() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [uploadingFor, setUploadingFor] = useState<string | null>(null);
+  const [confirmRemoveId, setConfirmRemoveId] = useState<string | null>(null);
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(
     new Set(CATEGORY_ORDER),
   );
@@ -93,34 +105,37 @@ export default function SellerDocuments() {
   // refetching only progress left an invite-query error stuck on screen.
   const retryLoad = () => Promise.all([refetchInvite(), refetchProgress()]);
 
+  const sellerHeaders = (): Record<string, string> => (token ? { "X-Seller-Token": token } : {});
+  const refreshProgress = () =>
+    queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
+
   // Upload mutation
   const uploadMutation = useMutation({
     mutationFn: async ({ file, requirementId }: { file: File; requirementId?: string }) => {
       if (!dealId) throw new Error("No deal ID");
 
-      // 1. Upload the file
+      // 1. Upload the file. Naming the checklist row lets the server link
+      //    it, derive the document category from it, and replace an earlier
+      //    upload of ours on the same row in one step.
       const formData = new FormData();
       formData.append("file", file);
+      if (requirementId) formData.append("requirementId", requirementId);
       const uploadRes = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
-        headers: token ? { "X-Seller-Token": token } : {},
+        headers: sellerHeaders(),
         body: formData,
       });
       if (!uploadRes.ok) {
         const body = await uploadRes.json().catch(() => ({}));
         throw new Error(body.error || `"${file.name}" could not be uploaded`);
       }
-      const doc = await uploadRes.json();
+      const doc = (await uploadRes.json()) as UploadedDoc;
 
-      // 2. If matching a requirement, link them. The server stamps uploadedAt
-      // itself when the row flips to "uploaded".
-      if (requirementId) {
+      // 2. Explicit link only if the server didn't already do it.
+      if (requirementId && !doc.linkedRequirement) {
         const patchRes = await fetch(`/api/deals/${dealId}/document-requirements/${requirementId}`, {
           method: "PATCH",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { "X-Seller-Token": token } : {}),
-          },
+          headers: { "Content-Type": "application/json", ...sellerHeaders() },
           body: JSON.stringify({
             status: "uploaded",
             uploadedFileId: doc.id,
@@ -136,11 +151,22 @@ export default function SellerDocuments() {
         }
       }
 
-      return doc;
+      const matchedName =
+        doc.linkedRequirement?.documentName ??
+        (requirementId
+          ? progress?.documents.requirements.find((r) => r.id === requirementId)?.name
+          : undefined);
+      return { doc, file, matchedName };
     },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
+    onSuccess: ({ file, matchedName }) => {
+      refreshProgress();
       setUploadingFor(null);
+      toast({
+        title: "Uploaded",
+        description: matchedName
+          ? `"${file.name}" now covers "${matchedName}". Your broker will review it.`
+          : `"${file.name}" is saved for your broker to review.`,
+      });
     },
     onError: (err: Error) => {
       setUploadingFor(null);
@@ -152,6 +178,38 @@ export default function SellerDocuments() {
         description: err.message + " Accepted formats: PDF, Excel, Word, PowerPoint, CSV, text — up to 20MB.",
         variant: "destructive",
       });
+    },
+  });
+
+  // Taking a file back off a row. The server deletes our own upload with it;
+  // a broker's file is only unlinked.
+  const removeMutation = useMutation({
+    mutationFn: async (req: DocRequirement) => {
+      if (!dealId) throw new Error("No deal ID");
+      const res = await fetch(`/api/deals/${dealId}/document-requirements/${req.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...sellerHeaders() },
+        body: JSON.stringify({ status: "missing" }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Couldn't remove "${req.uploadedFileName ?? "the file"}"`);
+      }
+      return req;
+    },
+    onSuccess: (req) => {
+      refreshProgress();
+      setConfirmRemoveId(null);
+      toast({
+        title: "Removed",
+        description: req.uploadedFileName
+          ? `"${req.uploadedFileName}" is off "${req.name}". Upload a replacement when ready.`
+          : `"${req.name}" is open again.`,
+      });
+    },
+    onError: (err: Error) => {
+      setConfirmRemoveId(null);
+      toast({ title: "Couldn't remove", description: err.message, variant: "destructive" });
     },
   });
 
@@ -411,12 +469,21 @@ export default function SellerDocuments() {
                               <span className="text-xs text-destructive ml-1.5">Required</span>
                             )}
                           </p>
+                          {req.status !== "missing" && req.uploadedFileName && (
+                            <p className="text-xs text-muted-foreground mt-0.5 truncate flex items-center gap-1">
+                              <FileText className="h-3 w-3 shrink-0" />
+                              <span className="truncate">{req.uploadedFileName}</span>
+                              {req.uploadedBy === "broker" && (
+                                <span className="shrink-0 text-muted-foreground/60">· added by your broker</span>
+                              )}
+                            </p>
+                          )}
                           {req.notes && (
                             <p className="text-xs text-muted-foreground mt-0.5 truncate">{req.notes}</p>
                           )}
                         </div>
                       </div>
-                      <div className="shrink-0">
+                      <div className="shrink-0 flex items-center gap-3">
                         {req.status === "missing" ? (
                           <button
                             className="text-xs text-teal hover:underline flex items-center gap-1"
@@ -429,7 +496,49 @@ export default function SellerDocuments() {
                             Upload
                           </button>
                         ) : req.status === "uploaded" ? (
-                          <span className="text-xs text-amber-500">Pending review</span>
+                          confirmRemoveId === req.id ? (
+                            <>
+                              <span className="text-xs text-muted-foreground">Remove this file?</span>
+                              <button
+                                className="text-xs text-destructive hover:underline disabled:opacity-50"
+                                disabled={removeMutation.isPending}
+                                onClick={() => removeMutation.mutate(req)}
+                                data-testid={`button-confirm-remove-${req.id}`}
+                              >
+                                Remove
+                              </button>
+                              <button
+                                className="text-xs text-muted-foreground hover:underline"
+                                onClick={() => setConfirmRemoveId(null)}
+                              >
+                                Keep
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <span className="text-xs text-amber-500">Pending review</span>
+                              <button
+                                className="text-xs text-teal hover:underline flex items-center gap-1"
+                                onClick={() => {
+                                  setUploadingFor(req.id);
+                                  fileInputRef.current?.click();
+                                }}
+                                data-testid={`button-replace-${req.id}`}
+                              >
+                                <RefreshCw className="h-3 w-3" />
+                                Replace
+                              </button>
+                              <button
+                                className="text-xs text-muted-foreground hover:text-destructive flex items-center gap-1"
+                                onClick={() => setConfirmRemoveId(req.id)}
+                                aria-label={`Remove ${req.uploadedFileName ?? "file"}`}
+                                data-testid={`button-remove-${req.id}`}
+                              >
+                                <X className="h-3 w-3" />
+                                Remove
+                              </button>
+                            </>
+                          )
                         ) : (
                           <span className="text-xs text-teal">Verified</span>
                         )}

@@ -14,7 +14,13 @@ import {
 } from "@/components/ui/accordion";
 import { Mail, LifeBuoy } from "lucide-react";
 
-const SUPPORT_EMAIL = "aim.kitabi@gmail.com";
+/**
+ * Support mailbox shown to brokers. Configurable at build time via
+ * VITE_SUPPORT_EMAIL (Vite inlines it); defaults to the same address the
+ * cimple.ca landing page publishes. Never a personal inbox.
+ */
+const SUPPORT_EMAIL: string =
+  (import.meta.env.VITE_SUPPORT_EMAIL as string | undefined)?.trim() || "support@cimple.ca";
 
 const FAQ: Array<{ q: string; a: string }> = [
   {

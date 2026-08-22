@@ -27,6 +27,7 @@ import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
+import { getFieldSources, FIELD_SOURCES_KEY, FIELD_ALTERNATES_KEY } from "../interview/info-merger";
 
 export async function reprocessDealDocuments(
   dealId: string,
@@ -103,27 +104,39 @@ export async function reprocessDealDocuments(
   // Claude calls run in bounded-parallel batches; merging happens afterwards
   // in stable document order so precedence stays deterministic.
   const BATCH_SIZE = 4;
-  const results: (ExtractedDocumentData | null)[] = [];
+  const results: { id: string; data: ExtractedDocumentData | null }[] = [];
   for (let i = 0; i < documents.length; i += BATCH_SIZE) {
     const batch = documents.slice(i, i + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map(extractForDoc))));
+    results.push(...(await Promise.all(batch.map(async (d) => ({ id: d.id, data: await extractForDoc(d) })))));
   }
-  for (const extracted of results) {
-    if (extracted) {
-      docsMerged = mergeExtractedData(docsMerged, extracted);
+  for (const { id, data } of results) {
+    if (data) {
+      docsMerged = mergeExtractedData(docsMerged, data, id);
       documentsReprocessed++;
     }
   }
 
-  // 3) Overlay the deal's existing extractedInfo — interview answers,
-  //    questionnaire seeds, and prior confirmations win on collision.
+  // 3) Overlay the deal's existing extractedInfo. The seller's own words
+  //    (interview, questionnaire) and untracked legacy values win; values
+  //    recorded as document-derived are refreshed from the re-extraction so
+  //    stale facts don't survive, and provenance maps are merged, not clobbered.
   const existing = (deal.extractedInfo as Record<string, unknown> | null) || {};
+  const existingSources = getFieldSources(existing);
   const rebuilt: Record<string, unknown> = { ...docsMerged };
+  const rebuiltSources = { ...getFieldSources(docsMerged) };
   for (const [key, value] of Object.entries(existing)) {
-    if (value !== null && value !== undefined && value !== "") {
-      rebuilt[key] = value;
-    }
+    if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY) continue;
+    if (value === null || value === undefined || value === "") continue;
+    const src = existingSources[key];
+    if (src?.source === "document" && rebuilt[key] !== undefined) continue; // fresh extraction wins
+    rebuilt[key] = value;
+    if (src) rebuiltSources[key] = src;
+    else delete rebuiltSources[key]; // legacy value stays untracked (seller-authored by default)
   }
+  rebuilt[FIELD_SOURCES_KEY] = rebuiltSources;
+  const existingAlts = (existing[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
+  const rebuiltAlts = (docsMerged[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
+  rebuilt[FIELD_ALTERNATES_KEY] = { ...existingAlts, ...rebuiltAlts };
 
   await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);
 
