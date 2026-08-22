@@ -42,7 +42,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ## What is already built
 
 ### Hardening pass (2026-07-08) — read this first
-- **Broker auth + multi-tenancy**: every broker endpoint requires a session and scopes by `session.brokerId`; deal ownership is checked on read/write/delete. Dev/demo escape: `ENABLE_DEV_SWITCHER=true` enables `/api/dev/role-tokens`, `/api/dev/login-as-{broker,buyer}` and the role switcher (all 404 otherwise). The frontend never auto-logs-in in production: the sign-in form probes `/api/dev/role-tokens` on mount and, only when it answers 200, shows an explicit "Continue as demo broker" button (POST `/api/dev/login-as-broker`). When the switcher is off, the demo account signs in with its `broker_demo` username/password like any other broker. (Local `vite` dev builds still auto-attempt the dev login inside BrokerAuthGate for a zero-login loop.)
+- **Broker auth + multi-tenancy**: every broker endpoint requires a session and scopes by `session.brokerId`; deal ownership is checked on read/write/delete. There is no dev/demo escape: the former `/api/dev/*` role-switcher endpoints and the auto-login were removed (2026-08-21). Every broker, including the shared demo account, signs in with a username and password; the demo account is isolated by the same per-broker scoping as any other.
 - **View room integrity**: NDA is enforced server-side (sections withheld until signed when `deal.ndaRequired`); buyers receive a whitelisted deal payload (never `extractedInfo`/notes); teaser/full access levels serve the Blind CIM with auto-generation of redaction overrides on first view; new links expire in 30 days; `firstViewedAt`/`viewCount` are stamped on every view (drives the decision panel + day-3/6/8 reminder pipeline).
 - **CIM layout engine is two-phase**: a manifest call plans sections, then each section generates in parallel batches with a shared cached prefix — immune to the old 16K-token truncation. Failures degrade to editable placeholders and surface in `document.warnings` + the broker toast.
 - **Interview upgrades**: industry knowledge is sliced per deal + prompt-cached (~12K tokens vs ~62K); completion is governed (min-turn floor, critical-section coverage, seller stop always wins); malformed output recovers gracefully; intake answers seed extractedInfo (never re-ask); `whyItMatters` buyer-rationale per question; Enter-to-send UI with edit-previous-answer.
@@ -64,7 +64,6 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - Analytics event tracking (page views, scroll depth, heat maps, time-on-page)
 - RoleContext (`client/src/contexts/RoleContext.tsx`): holds current user role (`broker | seller | buyer`), set by layout components. No dealId/token — those come from `useParams()`
 - DealContext (`client/src/contexts/DealContext.tsx`): provides deal data to DealShell tab components without prop drilling
-- Dev Role Switcher (`client/src/components/dev/RoleSwitcher.tsx`): floating pill in dev mode for switching between broker/seller/buyer. Tree-shakes from production builds. Sources tokens from `/api/dev/role-tokens`
 
 ### AI Interview System (fully rebuilt — adaptive, not a fixed sequence)
 - Multi-turn conversational interview via Claude Opus 4.5
@@ -392,7 +391,6 @@ Polish all flows, responsive design, error states, loading states.
 | `ANTHROPIC_API_KEY` | Claude API access | Yes |
 | `SESSION_SECRET` | Express session encryption | Yes (hard-fail in production if missing) |
 | `UPLOADS_DIR` | Persistent uploads root (Railway volume `/data/uploads`) | Prod yes (falls back to `public/uploads`) |
-| `ENABLE_DEV_SWITCHER` | Enables `/api/dev/*` role-switcher endpoints in production (demos) | No (dev endpoints off in prod by default) |
 | `RESEND_API_KEY` | Email delivery via Resend | No (falls back to console) |
 | `RESEND_FROM_EMAIL` | Sender address | No (defaults to notifications@cimple.app) |
 | `TWILIO_ACCOUNT_SID` | SMS delivery via Twilio | No (falls back to console) |
