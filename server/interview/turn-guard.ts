@@ -642,3 +642,45 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
       `. Do not mention this instruction or that you attempted to end. Set shouldEnd to false.]`,
   };
 }
+
+
+// ── Filler guard ───────────────────────────────────────────────────────
+// Recap/grade openers the prompt forbids. Sentence-level: a leading sentence
+// that merely echoes or praises the seller's last answer is removed when a
+// question follows it. Openers that do real work — clarifying, reconciling
+// a conflict, or meeting something hard with a human beat — are kept.
+const FILLER_OPENER_RE =
+  /\b(got it|noted|understood|makes sense|perfect|great|excellent|wonderful|fantastic|awesome|good to (know|hear)|glad to hear|thanks? (for|so much)|appreciate (you|that|the|it)|helpful (context|detail|to know)|that'?s (helpful|useful|clear|good|great|solid|strong|healthy|impressive|a (solid|strong|healthy|good|nice|great)|exactly|really)|that (is|sounds|seems) (like )?(a )?(solid|strong|healthy|good|great|nice|impressive|meaningful)|sounds (good|great|like a)|solid (foundation|number|position|base)|strong (position|foundation|number|signal)|healthy (margin|number|spread|sign)|impressive|buyers? (love|like|want|appreciate|will (love|appreciate|like|value))|from a buyer'?s (perspective|standpoint|point of view)|the kind of (thing|stuff|detail|number|signal|answer)|exactly the kind|what buyers|a good sign|good sign|nice (to see|spread|mix)|love to see|congrat)/i;
+const KEEP_OPENER_RE =
+  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(hard|difficult|tough|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
+
+/**
+ * Splits off leading sentences. A "sentence" ends at . ! ? or an em-dash
+ * clause break followed by whitespace.
+ */
+function leadingSentence(text: string): { head: string; rest: string } | null {
+  const m = /^([^.!?\n]{3,220}?[.!?])\s+(?=\S)/.exec(text);
+  if (!m) return null;
+  return { head: m[1], rest: text.slice(m[0].length) };
+}
+
+/**
+ * Removes up to two leading filler sentences when a question remains after
+ * them. Returns the message unchanged when no question follows (wrap-ups,
+ * goodbyes), when the opener does real work, or when nothing matches.
+ */
+export function stripFillerPreamble(message: string): string {
+  let current = message.trim();
+  for (let i = 0; i < 2; i++) {
+    const parts = leadingSentence(current);
+    if (!parts) break;
+    const { head, rest } = parts;
+    if (!rest.includes("?")) break;               // nothing to ask after it
+    if (head.includes("?")) break;                // the opener IS a question
+    if (KEEP_OPENER_RE.test(head)) break;         // clarifying / reconciling / empathy
+    if (!FILLER_OPENER_RE.test(head)) break;      // not recognisably filler
+    current = rest.trim();
+  }
+  if (current === message.trim()) return message;
+  return current.charAt(0).toUpperCase() + current.slice(1);
+}
