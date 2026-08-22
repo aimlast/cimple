@@ -19,10 +19,7 @@ see the sign-in screen in place — deep links survive login. If the session
 check itself fails (500 / network), the gate shows a "Couldn't verify your
 session — Retry" panel and never renders the app without a session.
 
-**Dev auto-login is local-dev only.** The gate attempts
-`POST /api/dev/login-as-broker` only when `import.meta.env.DEV` is true, and
-never right after an explicit Log out. Production builds — including deploys
-with `ENABLE_DEV_SWITCHER=true` — always show the real sign-in screen.
+**There is no automatic or passwordless sign-in.** Every broker — including the shared demo account — signs in with a username and password. (The former dev role-switcher and `/api/dev/*` endpoints were removed on 2026-08-21.)
 
 | Path | Component | Description |
 |---|---|---|
@@ -136,9 +133,6 @@ Every layout's `<Switch>` ends in the shared `NotFound` page
 (`client/src/pages/not-found.tsx`), which is theme-aware and offers a
 role-appropriate way back (broker → dashboard/deals, seller → their progress
 page when a token is in the URL, buyer → dashboard/sign-in).
-
-The dev `RoleSwitcher` pill is mounted only when `import.meta.env.DEV` and is
-tree-shaken from production builds.
 
 ## Legacy Redirects
 

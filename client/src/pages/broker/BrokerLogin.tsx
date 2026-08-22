@@ -5,14 +5,8 @@
  * no session exists (so deep links survive login), and by the standalone
  * /broker/login route that Log out lands on. Mirrors the buyer auth card
  * styling.
- *
- * Demo entry: on mount the form probes GET /api/dev/role-tokens. That route
- * only answers 200 when the server's dev switcher is on (local dev, or
- * ENABLE_DEV_SWITCHER=true on a deploy) — otherwise it 404s and the
- * "Continue as demo broker" button never renders. There is no automatic
- * demo login; the broker has to click it.
  */
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
 interface BrokerLoginProps {
@@ -37,43 +31,7 @@ export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
   const [resetUsername, setResetUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"login" | "forgot" | "forgot-sent">("login");
-  // Whether the server's dev switcher is on. Probed once on mount; the
-  // demo button only renders after a 200 — a 404 (the normal production
-  // state) or a network failure leaves it hidden.
-  const [demoAvailable, setDemoAvailable] = useState(false);
   const queryClient = useQueryClient();
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/dev/role-tokens", { credentials: "include" })
-      .then((res) => {
-        if (!cancelled && res.status === 200) setDemoAvailable(true);
-      })
-      .catch(() => {
-        /* unreachable server — same as disabled */
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const demoLogin = useMutation({
-    mutationFn: async () => {
-      const res = await fetch("/api/dev/login-as-broker", {
-        method: "POST",
-        credentials: "include",
-      });
-      if (!res.ok) throw await errorFromResponse(res, "Demo sign in failed");
-      return res.json();
-    },
-    onSuccess: () => {
-      setError(null);
-      // The auth gate / login page re-queries /me and swaps in the app
-      queryClient.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
   const requestReset = useMutation({
     mutationFn: async () => {
       const res = await fetch("/api/broker-auth/request-reset", {
@@ -270,25 +228,6 @@ export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
             </div>
           )}
 
-          {demoAvailable && (
-            <div className="mt-4 pt-4 border-t border-border space-y-2">
-              <button
-                type="button"
-                onClick={() => {
-                  setError(null);
-                  demoLogin.mutate();
-                }}
-                disabled={demoLogin.isPending || login.isPending}
-                className="w-full h-9 rounded-md border border-teal/40 text-teal text-sm font-medium hover:bg-teal/5 transition-colors disabled:opacity-50"
-                data-testid="button-demo-broker"
-              >
-                {demoLogin.isPending ? "Opening demo workspace..." : "Continue as demo broker"}
-              </button>
-              <p className="text-center text-[11px] text-muted-foreground">
-                Demo access is on for this deployment — no password needed.
-              </p>
-            </div>
-          )}
         </div>
 
         <p className="text-center text-[11px] text-muted-foreground mt-4">

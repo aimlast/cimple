@@ -10,7 +10,6 @@ import { AlertCircle } from "lucide-react";
 import { AppSidebar, BrokerMobileHeader, BROKER_LOGGED_OUT_KEY } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { RoleProvider, useSetLayoutRole } from "@/contexts/RoleContext";
-import { RoleSwitcher } from "@/components/dev/RoleSwitcher";
 import NotFound from "@/pages/not-found";
 import BrokerDashboard from "@/pages/BrokerDashboard";
 import ActiveCIMs from "@/pages/ActiveCIMs";
@@ -177,40 +176,21 @@ function AuthError({ message, onRetry, retrying }: { message: string; onRetry: (
  * BrokerAuthGate — broker pages require a broker session.
  *
  * Order of attempts: (1) existing session via /api/broker-auth/me,
- * (2) LOCAL DEV ONLY: one `/api/dev/login-as-broker` attempt so the dev loop
- * stays zero-login — never in a production build, and never right after an
- * explicit logout, (3) the sign-in screen, rendered in place so the deep
- * link survives login.
+ * (2) the sign-in screen, rendered in place so the deep link survives
+ * login. There is no automatic or passwordless sign-in in any environment.
  *
  * Any non-401 failure of /me (500, network) shows a retry panel — the app
  * is never rendered without a verified session.
  */
 export function BrokerAuthGate({ children }: { children: React.ReactNode }) {
   const { data: me, isLoading, isError, error, refetch, isFetching } = useQuery(BROKER_ME_QUERY);
-  const [devAttempt, setDevAttempt] = useState<"idle" | "pending" | "done">("idle");
 
-  useEffect(() => {
-    if (!import.meta.env.DEV) return;
-    if (isLoading || isError || me !== null || devAttempt !== "idle") return;
-    // Respect an explicit logout — the developer asked for the sign-in screen.
-    if (sessionStorage.getItem(BROKER_LOGGED_OUT_KEY)) {
-      setDevAttempt("done");
-      return;
-    }
-    setDevAttempt("pending");
-    fetch("/api/dev/login-as-broker", { method: "POST", credentials: "include" })
-      .then((r) => (r.ok ? refetch() : undefined))
-      .catch(() => {})
-      .finally(() => setDevAttempt("done"));
-  }, [isLoading, isError, me, devAttempt, refetch]);
-
-  // A verified session clears the logout marker so the next dev reload can
-  // auto-login again.
+  // A verified session clears the explicit-logout marker.
   useEffect(() => {
     if (me?.user) sessionStorage.removeItem(BROKER_LOGGED_OUT_KEY);
   }, [me]);
 
-  if (isLoading || devAttempt === "pending") return <AuthPending />;
+  if (isLoading) return <AuthPending />;
   if (isError) {
     return (
       <AuthError
@@ -336,8 +316,6 @@ export default function App() {
           <RoleProvider>
             <WouterRouter>
               <AppContent />
-              {/* Dev-only — returns null (and tree-shakes) in production builds */}
-              {import.meta.env.DEV && <RoleSwitcher />}
             </WouterRouter>
           </RoleProvider>
           <Toaster />
