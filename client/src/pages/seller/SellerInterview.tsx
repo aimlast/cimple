@@ -12,12 +12,17 @@ import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import { Interview } from "@/components/shared/Interview";
 import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
-import { Loader2 } from "lucide-react";
+import { Loader2, CheckCircle2, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
 
 export default function SellerInterview() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  // A seller who already finished the interview lands on a completion card
+  // instead of silently starting a fresh session (observed: the fullscreen
+  // route skipped the card and opened a new conversation).
+  const [continueRequested, setContinueRequested] = useState(false);
 
   const { data: inviteData, isLoading, error } = useQuery<{
     invite: any;
@@ -60,6 +65,26 @@ export default function SellerInterview() {
         token={token!}
         onComplete={() => setOnboardingDismissed(true)}
       />
+    );
+  }
+
+  if (inviteData.deal.interviewCompleted && !continueRequested) {
+    return (
+      <div className="h-screen flex items-center justify-center p-4">
+        <div className="max-w-sm w-full text-center space-y-4">
+          <CheckCircle2 className="h-8 w-8 mx-auto text-primary" />
+          <h2 className="text-lg font-semibold">Your conversation is complete</h2>
+          <p className="text-sm text-muted-foreground">
+            Everything you shared is saved. You can add more detail any time — the conversation picks up from what you've already covered.
+          </p>
+          <div className="flex flex-col gap-2">
+            <Button onClick={() => setContinueRequested(true)}>Add more detail</Button>
+            <Button variant="ghost" onClick={() => setLocation(`/seller/${token}/progress`)}>
+              <ArrowLeft className="h-4 w-4 mr-2" /> Back to progress
+            </Button>
+          </div>
+        </div>
+      </div>
     );
   }
 
