@@ -301,10 +301,12 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                     <td className="px-4 py-3 pl-6">
                       <div className="space-y-1.5">
                         <Input
-                          placeholder="Addback name"
+                          placeholder="Addback name (required)"
                           value={newLabel}
                           onChange={e => setNewLabel(e.target.value)}
+                          onKeyDown={e => { if (e.key === "Enter") addCustomAddback(); }}
                           className="h-7 text-xs"
+                          autoFocus
                         />
                         <Input
                           placeholder="Description (optional)"
@@ -328,7 +330,15 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                     {onUpdate && (
                       <td className="text-center px-3 py-3">
                         <div className="flex items-center gap-1 justify-center">
-                          <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={addCustomAddback}>
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-6 w-6 p-0"
+                            onClick={addCustomAddback}
+                            disabled={!newLabel.trim()}
+                            title={newLabel.trim() ? "Save addback" : "Enter an addback name first"}
+                            aria-label="Save addback"
+                          >
                             <Check className="h-3 w-3 text-success" />
                           </Button>
                           <Button size="sm" variant="ghost" className="h-6 w-6 p-0" onClick={() => setShowAddForm(false)}>

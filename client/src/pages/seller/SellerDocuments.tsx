@@ -9,15 +9,17 @@ import { useState, useRef, useCallback } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
+import { Button } from "@/components/ui/button";
 import {
+  AlertCircle,
   ArrowLeft,
   Check,
   ChevronDown,
   ChevronRight,
   Clock,
   FileText,
+  RefreshCw,
   Upload,
-  X,
 } from "lucide-react";
 
 interface DocRequirement {
@@ -61,7 +63,11 @@ export default function SellerDocuments() {
   );
 
   // Get invite data for dealId
-  const { data: inviteData } = useQuery<{ invite: any; deal: any }>({
+  const {
+    data: inviteData,
+    isLoading: isLoadingInvite,
+    error: inviteError,
+  } = useQuery<{ invite: any; deal: any }>({
     queryKey: ["/api/invites", token],
     enabled: !!token,
   });
@@ -69,10 +75,16 @@ export default function SellerDocuments() {
   const { toast } = useToast();
 
   // Get progress data with document requirements
-  const { data: progress, isLoading } = useQuery<SellerProgressData>({
+  const {
+    data: progress,
+    isLoading: isLoadingProgress,
+    error: progressError,
+    refetch: refetchProgress,
+  } = useQuery<SellerProgressData>({
     queryKey: [`/api/seller/${token}/progress`],
     enabled: !!token,
   });
+  const isLoading = isLoadingInvite || isLoadingProgress;
 
   // Upload mutation
   const uploadMutation = useMutation({
@@ -93,9 +105,10 @@ export default function SellerDocuments() {
       }
       const doc = await uploadRes.json();
 
-      // 2. If matching a requirement, link them
+      // 2. If matching a requirement, link them. The server stamps uploadedAt
+      // itself when the row flips to "uploaded".
       if (requirementId) {
-        await fetch(`/api/deals/${dealId}/document-requirements/${requirementId}`, {
+        const patchRes = await fetch(`/api/deals/${dealId}/document-requirements/${requirementId}`, {
           method: "PATCH",
           headers: {
             "Content-Type": "application/json",
@@ -105,9 +118,15 @@ export default function SellerDocuments() {
             status: "uploaded",
             uploadedFileId: doc.id,
             uploadedBy: "seller",
-            uploadedAt: new Date().toISOString(),
           }),
         });
+        if (!patchRes.ok) {
+          const body = await patchRes.json().catch(() => ({}));
+          throw new Error(
+            body.error ||
+              `"${file.name}" was uploaded but could not be matched to the checklist item`,
+          );
+        }
       }
 
       return doc;
@@ -118,6 +137,8 @@ export default function SellerDocuments() {
     },
     onError: (err: Error) => {
       setUploadingFor(null);
+      // Refresh so a file that landed but failed to link still shows up.
+      queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
       // Silent-failure fix: unsupported/oversized files used to just vanish
       toast({
         title: "Upload failed",
@@ -191,8 +212,51 @@ export default function SellerDocuments() {
     );
   }
 
-  const requirements = progress?.documents?.requirements || [];
-  const docs = progress?.documents;
+  // Error states — distinct from "no requirements yet". A 404 means the
+  // invite link itself is bad; anything else is transient and retryable.
+  const loadError = inviteError || progressError;
+  if (!token || loadError || !inviteData?.deal || !progress) {
+    const isInvalidLink =
+      !token ||
+      (loadError instanceof Error && /^404:/.test(loadError.message)) ||
+      (!loadError && !inviteData?.deal);
+    return (
+      <div className="p-6 max-w-3xl mx-auto">
+        <div className="rounded-lg border border-border bg-card p-8 text-center space-y-3">
+          <AlertCircle className="h-8 w-8 mx-auto text-destructive/70" />
+          {isInvalidLink ? (
+            <>
+              <h2 className="text-lg font-semibold">Invalid invite link</h2>
+              <p className="text-sm text-muted-foreground">
+                This invite link is not valid or has expired. Contact your broker for a new link.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold">Couldn't load your document checklist</h2>
+              <p className="text-sm text-muted-foreground">
+                {loadError instanceof Error
+                  ? loadError.message.replace(/^\d{3}:\s*/, "")
+                  : "Something went wrong while loading."}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => refetchProgress()}
+                data-testid="button-retry-documents"
+              >
+                <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                Try again
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  const requirements = progress.documents?.requirements || [];
+  const docs = progress.documents;
 
   // Group by category
   const grouped = CATEGORY_ORDER.map((cat) => ({
@@ -272,7 +336,12 @@ export default function SellerDocuments() {
           className="hidden"
           multiple
           accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt,.md"
-          onChange={(e) => handleFileSelect(e.target.files, uploadingFor || undefined)}
+          onChange={(e) => {
+            handleFileSelect(e.target.files, uploadingFor || undefined);
+            // Reset so re-selecting the same file (retry, or assigning it to
+            // a second checklist row) fires onChange again.
+            e.target.value = "";
+          }}
         />
       </div>
 

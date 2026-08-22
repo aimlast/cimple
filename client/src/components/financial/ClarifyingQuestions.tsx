@@ -3,8 +3,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import type { Discrepancy } from "@shared/schema";
 import {
-  AlertTriangle, AlertCircle, Info, Check, X, Send, ChevronDown, ChevronUp
+  AlertTriangle, AlertCircle, Info, Check, X, Send, ChevronDown, ChevronUp, Loader2, Undo2
 } from "lucide-react";
 
 /* ──────────────────────────────────────────────
@@ -17,11 +18,66 @@ export interface ClarifyingQuestion {
   context?: string;
   answer?: string;
   status: "pending" | "answered" | "dismissed" | "routed_to_seller";
+  /** Set by the server when routed — the ask_seller discrepancy the interview reads. */
+  discrepancyId?: string;
 }
+
+/** The subset of a discrepancy row the cards need to reflect real routing state. */
+export type LinkedDiscrepancy = Pick<Discrepancy, "id" | "status" | "resolvedValue" | "sellerResponse">;
 
 interface ClarifyingQuestionsProps {
   questions: ClarifyingQuestion[] | null;
   onUpdate?: (updated: ClarifyingQuestion[]) => void;
+  /**
+   * Routes a question to the AI seller interview. This must go through the
+   * server (it creates an ask_seller discrepancy the interview actually reads);
+   * flipping the status locally would only paint a misleading badge. When this
+   * is not provided the Route button is hidden rather than faked.
+   */
+  onRouteToSeller?: (question: ClarifyingQuestion) => void;
+  /** Id of the question currently being routed (shows a spinner on that card). */
+  routingQuestionId?: string | null;
+  /**
+   * The deal's discrepancies. A routed question is linked to one by
+   * `discrepancyId`; its live status (ask_seller / resolved / un-routed) is what
+   * the card shows, so the badge never claims "asked in interview" after the
+   * broker resolved or took it back in the Discrepancies tab.
+   */
+  discrepancies?: LinkedDiscrepancy[];
+}
+
+/* ──────────────────────────────────────────────
+   Routing state — derived from the linked discrepancy
+─────────────────────────────────────────────── */
+type RoutedState = "with_seller" | "answered" | "unrouted";
+
+function routedState(q: ClarifyingQuestion, linked: LinkedDiscrepancy | undefined): RoutedState | null {
+  if (q.status !== "routed_to_seller") return null;
+  if (!linked) return "with_seller";
+  if (linked.status === "resolved" || linked.status === "accepted") return "answered";
+  if (linked.status === "open" || linked.status === "seller_responded") return "unrouted";
+  return "with_seller";
+}
+
+function indexLinked(discrepancies?: LinkedDiscrepancy[]): Record<string, LinkedDiscrepancy> {
+  const map: Record<string, LinkedDiscrepancy> = {};
+  for (const d of discrepancies ?? []) map[d.id] = d;
+  return map;
+}
+
+/** Still needs the broker: pending, or routed and then taken back from the interview. */
+function needsAction(q: ClarifyingQuestion, linked: LinkedDiscrepancy | undefined): boolean {
+  return q.status === "pending" || routedState(q, linked) === "unrouted";
+}
+
+/** Count used by the Questions tab badge — same rule as the "Pending" group below. */
+export function countPendingQuestions(
+  questions: ClarifyingQuestion[] | null | undefined,
+  discrepancies?: LinkedDiscrepancy[],
+): number {
+  if (!questions) return 0;
+  const map = indexLinked(discrepancies);
+  return questions.filter((q) => needsAction(q, q.discrepancyId ? map[q.discrepancyId] : undefined)).length;
 }
 
 /* ──────────────────────────────────────────────
@@ -36,7 +92,13 @@ const SEVERITY: Record<string, { icon: React.ElementType; color: string; bg: str
 /* ──────────────────────────────────────────────
    Component
 ─────────────────────────────────────────────── */
-export function ClarifyingQuestions({ questions, onUpdate }: ClarifyingQuestionsProps) {
+export function ClarifyingQuestions({
+  questions,
+  onUpdate,
+  onRouteToSeller,
+  routingQuestionId,
+  discrepancies,
+}: ClarifyingQuestionsProps) {
   if (!questions || questions.length === 0) {
     return (
       <Card>
@@ -52,8 +114,11 @@ export function ClarifyingQuestions({ questions, onUpdate }: ClarifyingQuestions
     );
   }
 
-  const pending = questions.filter(q => q.status === "pending");
-  const resolved = questions.filter(q => q.status !== "pending");
+  const linkedById = indexLinked(discrepancies);
+  const linkedFor = (q: ClarifyingQuestion) => (q.discrepancyId ? linkedById[q.discrepancyId] : undefined);
+
+  const pending = questions.filter(q => needsAction(q, linkedFor(q)));
+  const resolved = questions.filter(q => !needsAction(q, linkedFor(q)));
 
   return (
     <div className="space-y-4">
@@ -95,7 +160,15 @@ export function ClarifyingQuestions({ questions, onUpdate }: ClarifyingQuestions
             Pending
           </p>
           {pending.map(q => (
-            <QuestionCard key={q.id} question={q} questions={questions} onUpdate={onUpdate} />
+            <QuestionCard
+              key={q.id}
+              question={q}
+              questions={questions}
+              linked={linkedFor(q)}
+              onUpdate={onUpdate}
+              onRouteToSeller={onRouteToSeller}
+              isRouting={routingQuestionId === q.id}
+            />
           ))}
         </div>
       )}
@@ -107,7 +180,15 @@ export function ClarifyingQuestions({ questions, onUpdate }: ClarifyingQuestions
             Resolved
           </p>
           {resolved.map(q => (
-            <QuestionCard key={q.id} question={q} questions={questions} onUpdate={onUpdate} />
+            <QuestionCard
+              key={q.id}
+              question={q}
+              questions={questions}
+              linked={linkedFor(q)}
+              onUpdate={onUpdate}
+              onRouteToSeller={onRouteToSeller}
+              isRouting={routingQuestionId === q.id}
+            />
           ))}
         </div>
       )}
@@ -121,19 +202,27 @@ export function ClarifyingQuestions({ questions, onUpdate }: ClarifyingQuestions
 function QuestionCard({
   question,
   questions,
+  linked,
   onUpdate,
+  onRouteToSeller,
+  isRouting,
 }: {
   question: ClarifyingQuestion;
   questions: ClarifyingQuestion[];
+  linked?: LinkedDiscrepancy;
   onUpdate?: (updated: ClarifyingQuestion[]) => void;
+  onRouteToSeller?: (question: ClarifyingQuestion) => void;
+  isRouting?: boolean;
 }) {
+  const routing = routedState(question, linked);
+  const isActionable = needsAction(question, linked);
+
   const [answerText, setAnswerText] = useState("");
   const [showAnswer, setShowAnswer] = useState(false);
-  const [expanded, setExpanded] = useState(question.status === "pending");
+  const [expanded, setExpanded] = useState(isActionable);
 
   const sev = SEVERITY[question.severity] || SEVERITY.low;
   const SevIcon = sev.icon;
-  const isPending = question.status === "pending";
 
   const updateQuestion = (updates: Partial<ClarifyingQuestion>) => {
     if (!onUpdate) return;
@@ -151,7 +240,7 @@ function QuestionCard({
   };
 
   return (
-    <Card className={`${isPending ? "" : "opacity-70"}`}>
+    <Card className={`${isActionable ? "" : "opacity-70"}`}>
       <CardContent className="p-4">
         <div className="flex items-start gap-3">
           <SevIcon className={`h-4 w-4 ${sev.color} mt-0.5 shrink-0`} />
@@ -160,7 +249,7 @@ function QuestionCard({
             {/* Header */}
             <div className="flex items-start justify-between gap-2">
               <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
+                <div className="flex items-center gap-2 mb-1 flex-wrap">
                   <Badge className={`${sev.bg} ${sev.color} text-2xs`}>{sev.label}</Badge>
                   {question.status === "answered" && (
                     <Badge className="bg-success/10 text-success border-0 text-2xs gap-0.5">
@@ -170,9 +259,19 @@ function QuestionCard({
                   {question.status === "dismissed" && (
                     <Badge className="bg-muted text-muted-foreground border-0 text-2xs">Dismissed</Badge>
                   )}
-                  {question.status === "routed_to_seller" && (
+                  {routing === "with_seller" && (
                     <Badge className="bg-blue-500/10 text-blue-400 border-0 text-2xs gap-0.5">
-                      <Send className="h-2.5 w-2.5" /> Sent to Seller
+                      <Send className="h-2.5 w-2.5" /> Asked in seller interview
+                    </Badge>
+                  )}
+                  {routing === "answered" && (
+                    <Badge className="bg-success/10 text-success border-0 text-2xs gap-0.5">
+                      <Check className="h-2.5 w-2.5" /> Answered via interview
+                    </Badge>
+                  )}
+                  {routing === "unrouted" && (
+                    <Badge className="bg-amber-500/10 text-amber-400 border-0 text-2xs gap-0.5">
+                      <Undo2 className="h-2.5 w-2.5" /> Taken back from interview
                     </Badge>
                   )}
                 </div>
@@ -181,6 +280,7 @@ function QuestionCard({
               <button
                 onClick={() => setExpanded(!expanded)}
                 className="text-muted-foreground/50 hover:text-muted-foreground p-0.5 shrink-0"
+                aria-label={expanded ? "Collapse question" : "Expand question"}
               >
                 {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
               </button>
@@ -195,7 +295,7 @@ function QuestionCard({
                   </p>
                 )}
 
-                {/* Answer */}
+                {/* Answer typed by the broker */}
                 {question.answer && (
                   <div className="mt-2 bg-success/5 border border-success/20 rounded px-3 py-2">
                     <p className="text-xs text-success/80 font-medium mb-0.5">Answer</p>
@@ -203,8 +303,25 @@ function QuestionCard({
                   </div>
                 )}
 
+                {/* Answer captured through the interview / Discrepancies tab */}
+                {!question.answer && routing === "answered" && (
+                  <div className="mt-2 bg-success/5 border border-success/20 rounded px-3 py-2">
+                    <p className="text-xs text-success/80 font-medium mb-0.5">Answer from the seller interview</p>
+                    <p className="text-xs">{linked?.resolvedValue || "Resolved"}</p>
+                    {linked?.sellerResponse && (
+                      <p className="text-2xs text-muted-foreground mt-1">{linked.sellerResponse}</p>
+                    )}
+                  </div>
+                )}
+
+                {routing === "unrouted" && (
+                  <p className="text-xs text-amber-400 mt-2">
+                    This question was taken back from the seller interview. Answer it here, dismiss it, or send it to the interview again.
+                  </p>
+                )}
+
                 {/* Actions */}
-                {isPending && onUpdate && (
+                {isActionable && onUpdate && (
                   <div className="mt-3">
                     {showAnswer ? (
                       <div className="space-y-2">
@@ -234,7 +351,7 @@ function QuestionCard({
                         </div>
                       </div>
                     ) : (
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 flex-wrap">
                         <Button
                           size="sm"
                           variant="outline"
@@ -251,14 +368,18 @@ function QuestionCard({
                         >
                           <X className="h-3 w-3" /> Dismiss
                         </Button>
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          className="h-7 text-xs text-muted-foreground gap-1"
-                          onClick={() => updateQuestion({ status: "routed_to_seller" })}
-                        >
-                          <Send className="h-3 w-3" /> Route to Seller
-                        </Button>
+                        {onRouteToSeller && (
+                          <Button
+                            size="sm"
+                            variant="ghost"
+                            className="h-7 text-xs text-muted-foreground gap-1"
+                            onClick={() => onRouteToSeller(question)}
+                            disabled={isRouting}
+                          >
+                            {isRouting ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                            {routing === "unrouted" ? "Ask seller again" : "Ask seller in interview"}
+                          </Button>
+                        )}
                       </div>
                     )}
                   </div>

@@ -15,9 +15,11 @@ import { Textarea } from "@/components/ui/textarea";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
+import { useToast } from "@/hooks/use-toast";
+import { readErrorBody } from "./shared";
 import {
   CheckCircle2, XCircle, Loader2, AlertCircle, Shield, Building2,
-  User, Mail, Phone, Linkedin, ExternalLink, DollarSign, Users, FileText,
+  User, Mail, Phone, Linkedin, ExternalLink, DollarSign, Users,
 } from "lucide-react";
 
 interface BuyerPartner {
@@ -59,14 +61,19 @@ interface ApprovalRequest {
   competitorDetails?: string | null;
   ndaSigned?: boolean;
   ndaNotes?: string | null;
+  /** pending_seller_review | approved_by_seller | access_granted | rejected | ... */
   status: string;
   submittedByName?: string | null;
+  sellerReviewedBy?: string | null;
+  sellerReviewedAt?: string | null;
 }
 
 interface ReviewData {
   request: ApprovalRequest;
   deal: { id: string; businessName: string } | null;
   branding: any;
+  /** Optional server hint; we also derive it from request.status */
+  alreadyReviewed?: boolean;
 }
 
 const RISK_COLORS: Record<string, string> = {
@@ -75,11 +82,14 @@ const RISK_COLORS: Record<string, string> = {
   low: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
 };
 
+type Decision = "approve" | "reject";
+
 export default function BuyerApprovalReviewPage() {
   const { token } = useParams<{ token: string }>();
+  const { toast } = useToast();
   const [reviewerName, setReviewerName] = useState("");
   const [notes, setNotes] = useState("");
-  const [done, setDone] = useState<"approve" | "reject" | null>(null);
+  const [done, setDone] = useState<Decision | null>(null);
   const [showRejectUi, setShowRejectUi] = useState(false);
 
   const { data, isLoading, error } = useQuery<ReviewData>({
@@ -88,7 +98,7 @@ export default function BuyerApprovalReviewPage() {
     queryFn: async () => {
       const res = await fetch(`/api/buyer-approval-review/${token}`);
       if (!res.ok) {
-        const body = await res.json();
+        const body = await readErrorBody(res);
         throw new Error(body.error || "Invalid link");
       }
       return res.json();
@@ -96,16 +106,31 @@ export default function BuyerApprovalReviewPage() {
   });
 
   const submit = useMutation({
-    mutationFn: async ({ action }: { action: "approve" | "reject" }) => {
+    mutationFn: async ({ action }: { action: Decision }) => {
       const res = await fetch(`/api/buyer-approval-review/${token}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action, reviewerName, notes }),
       });
-      if (!res.ok) throw new Error("Failed to submit");
+      if (!res.ok) {
+        const body = await readErrorBody(res);
+        throw new Error(
+          body.error
+            || (action === "approve"
+              ? "Could not approve this buyer. Please try again."
+              : "Could not record your decision. Please try again."),
+        );
+      }
       return res.json();
     },
     onSuccess: (_d, vars) => setDone(vars.action),
+    onError: (e: Error, vars) => {
+      toast({
+        title: vars.action === "approve" ? "Approval failed" : "Decline failed",
+        description: e.message,
+        variant: "destructive",
+      });
+    },
   });
 
   if (isLoading) {
@@ -120,7 +145,7 @@ export default function BuyerApprovalReviewPage() {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-6">
         <Card className="max-w-md w-full">
-          <CardContent className="p-8 text-center space-y-3">
+          <CardContent className="p-8 text-center space-y-3" data-testid="approval-review-error">
             <AlertCircle className="h-10 w-10 text-destructive mx-auto" />
             <h2 className="text-xl font-semibold">Link unavailable</h2>
             <p className="text-sm text-muted-foreground">
@@ -132,28 +157,55 @@ export default function BuyerApprovalReviewPage() {
     );
   }
 
-  if (done) {
+  // A link that has already been decided (seller re-opens the approval
+  // email) renders the decided state instead of a live form whose submit
+  // the server would reject.
+  const alreadyDecided: Decision | null = (() => {
+    const status = data.request.status;
+    if (status === "pending_seller_review" && !data.alreadyReviewed) return null;
+    if (status === "rejected" || status === "declined") return "reject";
+    return "approve";
+  })();
+  const outcome: Decision | null = done ?? alreadyDecided;
+
+  if (outcome) {
+    const justNow = done !== null;
+    const reviewedAt = data.request.sellerReviewedAt
+      ? new Date(data.request.sellerReviewedAt).toLocaleDateString()
+      : null;
     return (
       <div className="min-h-screen flex items-center justify-center bg-background p-6">
         <Card className="max-w-md w-full">
-          <CardContent className="p-8 text-center space-y-3">
-            {done === "approve" ? (
+          <CardContent className="p-8 text-center space-y-3" data-testid="approval-review-done">
+            {outcome === "approve" ? (
               <>
                 <CheckCircle2 className="h-12 w-12 text-emerald-500 mx-auto" />
-                <h2 className="text-2xl font-semibold">Buyer approved</h2>
+                <h2 className="text-2xl font-semibold">
+                  {justNow ? "Buyer approved" : "Already approved"}
+                </h2>
                 <p className="text-sm text-muted-foreground">
-                  {data.request.buyerName} has been granted access to the CIM. An invite email
-                  has been sent and both brokers have been notified.
+                  {justNow
+                    ? `${data.request.buyerName} has been granted access to the CIM. An invite email has been sent and both brokers have been notified.`
+                    : `You already approved ${data.request.buyerName}${reviewedAt ? ` on ${reviewedAt}` : ""}. They have been granted access to the CIM and no further action is needed.`}
                 </p>
               </>
             ) : (
               <>
                 <XCircle className="h-12 w-12 text-muted-foreground mx-auto" />
-                <h2 className="text-2xl font-semibold">Buyer declined</h2>
+                <h2 className="text-2xl font-semibold">
+                  {justNow ? "Buyer declined" : "Already declined"}
+                </h2>
                 <p className="text-sm text-muted-foreground">
-                  Your brokers have been notified. This buyer will not receive access.
+                  {justNow
+                    ? "Your brokers have been notified. This buyer will not receive access."
+                    : `You already declined ${data.request.buyerName}${reviewedAt ? ` on ${reviewedAt}` : ""}. This buyer will not receive access.`}
                 </p>
               </>
+            )}
+            {!justNow && (
+              <p className="text-xs text-muted-foreground/70">
+                Changed your mind? Contact your broker — decisions can't be reversed from this link.
+              </p>
             )}
           </CardContent>
         </Card>
@@ -164,6 +216,7 @@ export default function BuyerApprovalReviewPage() {
   const r = data.request;
   const fc = r.financialCapability;
   const partners = r.partners || [];
+  const submitError = submit.error ? (submit.error as Error).message : null;
 
   return (
     <div className="min-h-screen bg-background">
@@ -207,7 +260,7 @@ export default function BuyerApprovalReviewPage() {
               </div>
               <div className="flex flex-col items-end gap-1">
                 <Badge variant="outline" className="capitalize">
-                  {r.category.replace(/_/g, " ")}
+                  {(r.category || "buyer").replace(/_/g, " ")}
                 </Badge>
                 <Badge className={RISK_COLORS[r.riskLevel] || ""}>
                   {r.riskLevel} risk
@@ -309,6 +362,7 @@ export default function BuyerApprovalReviewPage() {
               placeholder="Your name (optional)"
               value={reviewerName}
               onChange={(e) => setReviewerName(e.target.value)}
+              data-testid="input-reviewer-name"
             />
             {showRejectUi && (
               <Textarea
@@ -316,6 +370,7 @@ export default function BuyerApprovalReviewPage() {
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
                 rows={3}
+                data-testid="input-decline-notes"
               />
             )}
             <div className="flex gap-3">
@@ -325,6 +380,7 @@ export default function BuyerApprovalReviewPage() {
                     onClick={() => submit.mutate({ action: "approve" })}
                     disabled={submit.isPending}
                     className="flex-1"
+                    data-testid="button-approve-buyer"
                   >
                     {submit.isPending && submit.variables?.action === "approve" ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -337,6 +393,7 @@ export default function BuyerApprovalReviewPage() {
                     variant="outline"
                     onClick={() => setShowRejectUi(true)}
                     disabled={submit.isPending}
+                    data-testid="button-decline-buyer"
                   >
                     Decline
                   </Button>
@@ -348,6 +405,7 @@ export default function BuyerApprovalReviewPage() {
                     onClick={() => submit.mutate({ action: "reject" })}
                     disabled={submit.isPending}
                     className="flex-1"
+                    data-testid="button-confirm-decline"
                   >
                     {submit.isPending ? (
                       <Loader2 className="h-4 w-4 animate-spin mr-2" />
@@ -356,12 +414,22 @@ export default function BuyerApprovalReviewPage() {
                     )}
                     Confirm decline
                   </Button>
-                  <Button variant="outline" onClick={() => setShowRejectUi(false)}>
+                  <Button variant="outline" onClick={() => setShowRejectUi(false)} disabled={submit.isPending}>
                     Cancel
                   </Button>
                 </>
               )}
             </div>
+            {submitError && (
+              <div
+                className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+                role="alert"
+                data-testid="text-submit-error"
+              >
+                <AlertCircle className="h-3.5 w-3.5 mt-px shrink-0" />
+                <span>{submitError}</span>
+              </div>
+            )}
             <p className="text-xs text-muted-foreground">
               Approving will send the buyer a secure CIM link (they'll sign an NDA before accessing).
               Both brokers will be CC'd on the invite.

@@ -19,7 +19,56 @@
  */
 import { storage } from "../storage";
 import { NOTIFICATION_ROUTING } from "@shared/schema";
-import type { DealMember } from "@shared/schema";
+import type { DealMember, User } from "@shared/schema";
+
+// ── Broker notification preferences ─────────────────────────────────────
+//
+// Brokers manage email preferences on Settings → Notifications. Each switch
+// there maps to one or more real NOTIFICATION_ROUTING events that route to
+// the broker team. Keep this table in sync with client/src/pages/Settings.tsx
+// (NOTIFICATION_PREFERENCES). Events not listed here (team invites, seller-
+// and buyer-facing events) are never muted by a broker preference.
+export const BROKER_EVENT_PREFERENCE: Record<string, string> = {
+  buyer_question: "buyerQuestions",
+  buyer_decision_interested: "buyerDecisions",
+  buyer_decision_not_interested: "buyerDecisions",
+  buyer_decision_lapsed: "buyerDecisions",
+  buyer_approval_requested: "buyerApprovals",
+  buyer_approval_seller_approved: "buyerApprovals",
+  buyer_approval_rejected: "buyerApprovals",
+};
+
+/**
+ * Resolve whether a broker-team member has muted email for this event.
+ * Only broker-team members whose email matches a broker user account carry
+ * preferences; everyone else defaults to "send". A preference that was never
+ * saved (undefined) also means "send".
+ */
+async function isEmailMutedByPreference(
+  member: DealMember,
+  eventType: string,
+  cache: Map<string, User | null>,
+): Promise<boolean> {
+  if (member.teamType !== "broker" || !member.email) return false;
+  const prefKey = BROKER_EVENT_PREFERENCE[eventType];
+  if (!prefKey) return false;
+
+  const emailKey = member.email.trim().toLowerCase();
+  let user = cache.get(emailKey);
+  if (user === undefined) {
+    try {
+      user = (await storage.getUserByEmail(emailKey)) ?? null;
+    } catch (err) {
+      console.warn(`[notify] Could not load preferences for ${emailKey}:`, err);
+      user = null;
+    }
+    cache.set(emailKey, user);
+  }
+  if (!user || user.role !== "broker") return false;
+
+  const prefs = (user.settings as { notifications?: Record<string, unknown> } | null)?.notifications;
+  return prefs?.[prefKey] === false;
+}
 
 // ── Email provider (Resend) ──────────────────────────────────────────────
 
@@ -241,16 +290,25 @@ export async function notify(
       return;
     }
 
+    // Broker user lookups are shared across recipients of this dispatch.
+    const userCache = new Map<string, User | null>();
+
     // Send in parallel
     const results = await Promise.allSettled(
       recipients.map(async (member) => {
         let emailSent = false;
         let smsSent = false;
+        let mutedByPreference = false;
 
-        // Email
+        // Email — honors the broker's Settings → Notifications preferences
         if (member.emailNotifications && member.email) {
-          const html = buildEmailHtml({ ...opts });
-          emailSent = await sendEmail(member.email, opts.title, html);
+          mutedByPreference = await isEmailMutedByPreference(member, eventType, userCache);
+          if (mutedByPreference) {
+            console.log(`[notify:email] Muted by preference (${BROKER_EVENT_PREFERENCE[eventType]}) → ${member.email}: ${eventType}`);
+          } else {
+            const html = buildEmailHtml({ ...opts });
+            emailSent = await sendEmail(member.email, opts.title, html);
+          }
         }
 
         // SMS
@@ -269,7 +327,9 @@ export async function notify(
           title: opts.title,
           body: opts.body,
           actionUrl: opts.actionUrl || null,
-          metadata: opts.metadata || {},
+          metadata: mutedByPreference
+            ? { ...(opts.metadata || {}), emailMutedByPreference: true }
+            : (opts.metadata || {}),
           emailSent,
           emailSentAt: emailSent ? new Date() : null,
           smsSent,

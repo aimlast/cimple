@@ -8,7 +8,7 @@
  * The interview step embeds AIConversationInterface inline. Sellers can
  * also resume the interview fullscreen at /seller/:token/interview.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -53,6 +53,82 @@ interface Employee {
   keyPerson: boolean;
 }
 
+interface BusinessBasics {
+  yearsInBusiness: string;
+  numberOfLocations: string;
+  ownershipStructure: string;
+  reasonForSelling: string;
+  transitionAvailability: string;
+}
+
+const EMPTY_BASICS: BusinessBasics = {
+  yearsInBusiness: "",
+  numberOfLocations: "1",
+  ownershipStructure: "",
+  reasonForSelling: "",
+  transitionAvailability: "",
+};
+
+const EMPTY_SYSTEMS: SystemInfo = {
+  accounting: "",
+  crm: "",
+  pos: "",
+  erp: "",
+  other: [],
+};
+
+const EMPTY_EMPLOYEE: Employee = { name: "", role: "", yearsWithCompany: "", keyPerson: false };
+
+const str = (v: unknown, fallback = ""): string =>
+  v === null || v === undefined ? fallback : String(v);
+
+/** Seed the intake form from whatever the deal already holds so a returning
+ *  seller never sees blank fields (and never PATCHes blanks over real data). */
+function seedBasics(raw: unknown): BusinessBasics | null {
+  if (!raw || typeof raw !== "object") return null;
+  const q = raw as Record<string, unknown>;
+  return {
+    yearsInBusiness: str(q.yearsInBusiness),
+    numberOfLocations: str(q.numberOfLocations, "1"),
+    ownershipStructure: str(q.ownershipStructure),
+    reasonForSelling: str(q.reasonForSelling),
+    transitionAvailability: str(q.transitionAvailability),
+  };
+}
+
+function seedSystems(raw: unknown): SystemInfo | null {
+  if (!raw || typeof raw !== "object") return null;
+  const s = raw as Record<string, unknown>;
+  return {
+    accounting: str(s.accounting),
+    crm: str(s.crm),
+    pos: str(s.pos),
+    erp: str(s.erp),
+    other: Array.isArray(s.other) ? s.other.map((o) => str(o)).filter(Boolean) : [],
+  };
+}
+
+function seedEmployees(raw: unknown): Employee[] | null {
+  if (!Array.isArray(raw)) return null;
+  const list = raw
+    .filter((e) => e && typeof e === "object")
+    .map((e) => {
+      const emp = e as Record<string, unknown>;
+      return {
+        name: str(emp.name),
+        role: str(emp.role),
+        yearsWithCompany: str(emp.yearsWithCompany),
+        keyPerson: emp.keyPerson === true,
+      };
+    });
+  return list.length > 0 ? list : null;
+}
+
+interface SellerProgressSummary {
+  currentStep: "intake" | "interview" | "documents" | "review";
+  documents: { requiredTotal: number; requiredUploaded: number; percentage: number };
+}
+
 export default function SellerIntake() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
@@ -60,25 +136,11 @@ export default function SellerIntake() {
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const { toast } = useToast();
 
-  const [businessBasics, setBusinessBasics] = useState({
-    yearsInBusiness: "",
-    numberOfLocations: "1",
-    ownershipStructure: "",
-    reasonForSelling: "",
-    transitionAvailability: "",
-  });
+  const [businessBasics, setBusinessBasics] = useState<BusinessBasics>(EMPTY_BASICS);
 
-  const [systems, setSystems] = useState<SystemInfo>({
-    accounting: "",
-    crm: "",
-    pos: "",
-    erp: "",
-    other: [],
-  });
+  const [systems, setSystems] = useState<SystemInfo>(EMPTY_SYSTEMS);
 
-  const [employees, setEmployees] = useState<Employee[]>([
-    { name: "", role: "", yearsWithCompany: "", keyPerson: false },
-  ]);
+  const [employees, setEmployees] = useState<Employee[]>([{ ...EMPTY_EMPLOYEE }]);
 
   const [otherSystem, setOtherSystem] = useState("");
 
@@ -93,6 +155,40 @@ export default function SellerIntake() {
     queryKey: ["/api/invites", token],
     enabled: !!token,
   });
+
+  // Document/step status — only needed once the conversation is done, to
+  // route the seller onward (documents vs progress) instead of a dead end.
+  const { data: progressData } = useQuery<SellerProgressSummary>({
+    queryKey: [`/api/seller/${token}/progress`],
+    enabled: !!token && currentSection === "complete",
+  });
+
+  // Seed the form from the invite payload exactly once per page load, and
+  // resume at the right step. The invite email links to /seller/:token, so
+  // every return visit lands here — without this a seller saw blank fields
+  // and clicking through overwrote their saved answers with empty values.
+  const seededRef = useRef(false);
+  useEffect(() => {
+    if (seededRef.current || !inviteData?.deal) return;
+    seededRef.current = true;
+    const deal = inviteData.deal;
+
+    const basics = seedBasics(deal.questionnaireData);
+    const sys = seedSystems(deal.operationalSystems);
+    const emps = seedEmployees(deal.employeeChart);
+    if (basics) setBusinessBasics(basics);
+    if (sys) setSystems(sys);
+    if (emps) setEmployees(emps);
+
+    const intakeDone = !!basics;
+    if (intakeDone && deal.interviewCompleted) {
+      // Intake and conversation both done — the progress page is the right
+      // home (it routes to documents / review and lets them revisit the chat).
+      setLocation(`/seller/${token}/progress`);
+    } else if (intakeDone) {
+      setCurrentSection("interview");
+    }
+  }, [inviteData, token, setLocation]);
 
   const saveQuestionnaireMutation = useMutation({
     mutationFn: async (data: {
@@ -112,20 +208,24 @@ export default function SellerIntake() {
         body: JSON.stringify(data),
         credentials: "include",
       });
-      if (!res.ok) throw new Error(`${res.status}: ${await res.text()}`);
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Failed to save your information (${res.status})`);
+      }
       return res;
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/invites", token] });
+      queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] });
       toast({
         title: "Information Saved",
         description: "Your business details have been saved successfully.",
       });
     },
-    onError: () => {
+    onError: (err: Error) => {
       toast({
-        title: "Error",
-        description: "Failed to save your information. Please try again.",
+        title: "Couldn't save your information",
+        description: err.message || "Please try again.",
         variant: "destructive",
       });
     },
@@ -145,11 +245,17 @@ export default function SellerIntake() {
 
   const goNext = async () => {
     if (currentSection === "employees") {
-      await saveQuestionnaireMutation.mutateAsync({
-        questionnaireData: businessBasics,
-        operationalSystems: systems,
-        employeeChart: employees.filter((e) => e.name.trim() !== ""),
-      });
+      try {
+        await saveQuestionnaireMutation.mutateAsync({
+          questionnaireData: businessBasics,
+          operationalSystems: systems,
+          employeeChart: employees.filter((e) => e.name.trim() !== ""),
+        });
+      } catch {
+        // onError already surfaced the server message — stay on this step
+        // so nothing is lost and the seller can retry.
+        return;
+      }
     }
     const nextIndex = currentIndex + 1;
     if (nextIndex < sections.length) {
@@ -165,10 +271,7 @@ export default function SellerIntake() {
   };
 
   const addEmployee = () => {
-    setEmployees([
-      ...employees,
-      { name: "", role: "", yearsWithCompany: "", keyPerson: false },
-    ]);
+    setEmployees([...employees, { ...EMPTY_EMPLOYEE }]);
   };
 
   const updateEmployee = (
@@ -720,19 +823,34 @@ export default function SellerIntake() {
                     <MessageCircle className="h-5 w-5" />
                     Business Overview
                   </CardTitle>
-                  <CardDescription>
-                    Tell us about your business naturally — our AI advisor will
-                    guide the conversation
+                  <CardDescription className="flex flex-wrap items-center gap-x-2">
+                    <span>
+                      Tell us about your business naturally — our AI advisor will
+                      guide the conversation
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => setCurrentSection("business-basics")}
+                      className="text-xs text-teal hover:underline"
+                      data-testid="button-edit-business-info"
+                    >
+                      Edit your business details
+                    </button>
                   </CardDescription>
                 </CardHeader>
                 <CardContent className="h-[calc(100%-80px)]">
+                  {/* The invite token authenticates every interview call
+                      (start / stream / history / end) — without it a real
+                      seller gets 401 on the core step. */}
                   <AIConversationInterface
-                    dealId={inviteData.deal.id}
+                    dealId={String(inviteData.deal.id)}
                     businessName={inviteData.deal.businessName}
-                    onComplete={() => {
-                      queryClient.invalidateQueries({
-                        queryKey: ["/api/invites", token],
-                      });
+                    sellerToken={token!}
+                    onComplete={async () => {
+                      await Promise.all([
+                        queryClient.invalidateQueries({ queryKey: ["/api/invites", token] }),
+                        queryClient.invalidateQueries({ queryKey: [`/api/seller/${token}/progress`] }),
+                      ]);
                       setCurrentSection("complete");
                     }}
                   />
@@ -741,43 +859,99 @@ export default function SellerIntake() {
             </>
           )}
 
-          {currentSection === "complete" && (
-            <Card className="max-w-md mx-auto">
-              <CardContent className="p-8 text-center space-y-6">
-                <div className="h-12 w-12 rounded-full bg-success/15 flex items-center justify-center mx-auto">
-                  <CheckCircle2 className="h-6 w-6 text-success" />
-                </div>
-                <div className="space-y-2">
-                  <h1 className="text-xl font-semibold">All done!</h1>
-                  <p className="text-sm text-muted-foreground">
-                    Your information has been submitted successfully.
-                  </p>
-                </div>
+          {currentSection === "complete" && (() => {
+            const docs = progressData?.documents;
+            const docsOutstanding =
+              !!docs && docs.requiredTotal > 0 && docs.requiredUploaded < docs.requiredTotal;
+            const remaining = docs ? docs.requiredTotal - docs.requiredUploaded : 0;
+            return (
+              <Card className="max-w-md mx-auto">
+                <CardContent className="p-8 text-center space-y-6">
+                  <div className="h-12 w-12 rounded-full bg-success/15 flex items-center justify-center mx-auto">
+                    <CheckCircle2 className="h-6 w-6 text-success" />
+                  </div>
+                  <div className="space-y-2">
+                    <h1 className="text-xl font-semibold">
+                      {docsOutstanding ? "Overview complete" : "All done!"}
+                    </h1>
+                    <p className="text-sm text-muted-foreground">
+                      {docsOutstanding
+                        ? `Your conversation has been saved. One more step — your broker still needs ${remaining} ${remaining === 1 ? "document" : "documents"} from you.`
+                        : "Your information has been submitted successfully."}
+                    </p>
+                  </div>
 
-                <div className="rounded-lg border border-border divide-y divide-border text-left">
-                  {[
-                    "Your broker will review the information you provided",
-                    "They may reach out for any clarifications",
-                    "Your CIM will be drafted and shared with you for approval",
-                  ].map((item) => (
-                    <div
-                      key={item}
-                      className="flex items-start gap-3 px-4 py-3"
-                    >
-                      <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
-                      <span className="text-sm text-muted-foreground">
-                        {item}
-                      </span>
-                    </div>
-                  ))}
-                </div>
+                  <div className="rounded-lg border border-border divide-y divide-border text-left">
+                    {(docsOutstanding
+                      ? [
+                          "Upload the documents on your checklist",
+                          "Your broker will review everything you provided",
+                          "Your CIM will be drafted and shared with you for approval",
+                        ]
+                      : [
+                          "Your broker will review the information you provided",
+                          "They may reach out for any clarifications",
+                          "Your CIM will be drafted and shared with you for approval",
+                        ]
+                    ).map((item, idx) => (
+                      <div
+                        key={item}
+                        className="flex items-start gap-3 px-4 py-3"
+                      >
+                        {docsOutstanding && idx === 0 ? (
+                          <Upload className="h-4 w-4 text-teal mt-0.5 shrink-0" />
+                        ) : (
+                          <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+                        )}
+                        <span className="text-sm text-muted-foreground">
+                          {item}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
 
-                <p className="text-xs text-muted-foreground/60">
-                  You can close this window. Your broker will be in touch.
-                </p>
-              </CardContent>
-            </Card>
-          )}
+                  <div className="space-y-2">
+                    {docsOutstanding ? (
+                      <>
+                        <Button
+                          className="w-full bg-teal text-teal-foreground hover:bg-teal/90 gap-2"
+                          onClick={() => setLocation(`/seller/${token}/documents`)}
+                          data-testid="button-go-documents"
+                        >
+                          <Upload className="h-4 w-4" />
+                          Upload your documents
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          className="w-full"
+                          onClick={() => setLocation(`/seller/${token}/progress`)}
+                          data-testid="button-go-progress"
+                        >
+                          View your progress
+                          <ArrowRight className="h-4 w-4 ml-2" />
+                        </Button>
+                      </>
+                    ) : (
+                      <Button
+                        className="w-full bg-teal text-teal-foreground hover:bg-teal/90 gap-2"
+                        onClick={() => setLocation(`/seller/${token}/progress`)}
+                        data-testid="button-go-progress"
+                      >
+                        <FileText className="h-4 w-4" />
+                        View your progress
+                      </Button>
+                    )}
+                  </div>
+
+                  {!docsOutstanding && (
+                    <p className="text-xs text-muted-foreground/60">
+                      You can close this window. Your broker will be in touch.
+                    </p>
+                  )}
+                </CardContent>
+              </Card>
+            );
+          })()}
         </div>
       </div>
     </div>

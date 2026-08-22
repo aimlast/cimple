@@ -19,7 +19,7 @@ import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -1805,7 +1805,61 @@ Return JSON only.`,
       if (existing.dealId !== req.params.dealId) {
         return res.status(403).json({ error: "Requirement does not belong to this deal" });
       }
-      const requirement = await storage.updateDocumentRequirement(req.params.reqId, req.body);
+
+      // Whitelist patchable fields. A broker session may edit the checklist
+      // row itself; a seller token may only link an upload. Timestamps arrive
+      // from the client as ISO strings — coerce into Date before they reach
+      // drizzle's timestamp column (which calls .toISOString() on the value).
+      const body = (req.body ?? {}) as Record<string, unknown>;
+      const isBrokerSession = !!req.session.brokerId;
+      const allowedKeys = isBrokerSession
+        ? ["status", "uploadedFileId", "uploadedBy", "uploadedAt", "notes", "isRequired", "documentName", "category", "sortOrder"]
+        : ["status", "uploadedFileId", "uploadedBy"];
+      const updates: Record<string, unknown> = {};
+      for (const key of allowedKeys) {
+        if (body[key] !== undefined) updates[key] = body[key];
+      }
+
+      if (updates.status !== undefined) {
+        const validStatuses = isBrokerSession
+          ? ["missing", "uploaded", "verified"]
+          : ["uploaded"];
+        if (typeof updates.status !== "string" || !validStatuses.includes(updates.status)) {
+          return res.status(400).json({ error: `Invalid status. Expected one of: ${validStatuses.join(", ")}` });
+        }
+      }
+      if (updates.uploadedFileId !== undefined && updates.uploadedFileId !== null && typeof updates.uploadedFileId !== "string") {
+        return res.status(400).json({ error: "uploadedFileId must be a string" });
+      }
+      if (!isBrokerSession && updates.uploadedBy !== undefined) {
+        updates.uploadedBy = "seller";
+      }
+
+      if (updates.uploadedAt !== undefined && updates.uploadedAt !== null) {
+        const parsed = new Date(updates.uploadedAt as string | number | Date);
+        if (Number.isNaN(parsed.getTime())) {
+          return res.status(400).json({ error: "uploadedAt must be a valid date" });
+        }
+        updates.uploadedAt = parsed;
+      }
+      // Stamp the upload time server-side whenever a row transitions to uploaded.
+      if (updates.status === "uploaded" && updates.uploadedAt === undefined) {
+        updates.uploadedAt = new Date();
+      }
+      if (updates.status === "missing" && isBrokerSession) {
+        updates.uploadedAt = null;
+        updates.uploadedFileId = null;
+        updates.uploadedBy = null;
+      }
+
+      if (Object.keys(updates).length === 0) {
+        return res.status(400).json({ error: "No updatable fields provided" });
+      }
+
+      const requirement = await storage.updateDocumentRequirement(
+        req.params.reqId,
+        updates as Partial<InsertDealDocumentRequirement>,
+      );
       res.json(requirement);
     } catch (error: any) {
       console.error("Error updating document requirement:", error);
@@ -2432,8 +2486,13 @@ Return JSON only.`,
         return res.status(404).json({ error: "Financial analysis not found" });
       }
 
-      const questions = Array.isArray(existing.clarifyingQuestions)
-        ? (existing.clarifyingQuestions as any[])
+      // Match against the same normalized shape the client was served (legacy
+      // rows without ids/status get deterministic ids from the coercer), and
+      // persist that normalized list below so ids stay stable from here on.
+      const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
+      const normalizedRow = normalizeFinancialAnalysisRow(existing);
+      const questions = Array.isArray(normalizedRow.clarifyingQuestions)
+        ? (normalizedRow.clarifyingQuestions as any[])
         : [];
       const question = questions.find((q) => q && q.id === req.params.questionId);
       if (!question) return res.status(404).json({ error: "Clarifying question not found" });
@@ -5397,6 +5456,10 @@ Return JSON only.`,
       const existingDisc = await storage.getDiscrepancy(req.params.id);
       if (!existingDisc || !(await ownsDeal(req, existingDisc.dealId))) return res.status(404).json({ error: "Discrepancy not found" });
       const { sellerResponse, brokerNotes, resolvedValue, status } = req.body;
+      const DISCREPANCY_STATUSES = new Set(["open", "seller_responded", "resolved", "accepted", "ask_seller", "superseded"]);
+      if (status !== undefined && !DISCREPANCY_STATUSES.has(String(status))) {
+        return res.status(400).json({ error: `Invalid status "${status}"` });
+      }
       const updates: any = {};
       if (sellerResponse !== undefined) updates.sellerResponse = sellerResponse;
       if (brokerNotes !== undefined) updates.brokerNotes = brokerNotes;
@@ -5814,6 +5877,22 @@ Do not speculate or add information not in the CIM.`,
           sellerApproved: false,
           status: "pending_broker",
         } as any);
+        // The broker must hear about a send-back — the pending_seller
+        // transition notifies, but a rejection silently reappeared as a new
+        // escalation with no reason attached.
+        try {
+          const dealForNotify = await storage.getDeal(question.dealId);
+          await notify(question.dealId, "buyer_question", {
+            title: "Seller sent a Q&A answer back for revision",
+            body:
+              `The seller asked for changes to the answer for: "${String(question.question).slice(0, 120)}"` +
+              (revision ? ` — their note: "${String(revision).slice(0, 200)}"` : ""),
+            actionUrl: `/deal/${question.dealId}/qa`,
+            businessName: dealForNotify?.businessName,
+          });
+        } catch (e) {
+          console.warn("[approve] send-back notification failed:", e);
+        }
         res.json({ success: true, status: "sent_back" });
       }
     } catch (error: any) {

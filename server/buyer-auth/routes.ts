@@ -216,10 +216,10 @@ export function registerBuyerAuthRoutes(app: Express) {
 
   // LOGOUT
   app.post("/api/buyer-auth/logout", (req, res) => {
-    req.session.destroy(() => {
-      res.clearCookie("connect.sid");
-      res.json({ success: true });
-    });
+    // Clear only the buyer identity — destroying the whole session would also
+    // sign out a broker logged in from the same browser (broker logout mirrors this).
+    delete req.session.buyerId;
+    req.session.save(() => res.json({ success: true }));
   });
 
   // CURRENT USER

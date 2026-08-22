@@ -17,21 +17,74 @@ import {
   Palette, 
   Settings2, 
   Link2, 
-  Users, 
   Shield,
   Mail,
   Building,
-  ExternalLink,
-  CheckCircle,
   AlertCircle,
-  Upload,
   X,
-  Image
+  Image,
+  RefreshCw,
+  MessageSquare,
+  Gavel,
+  UserCheck,
 } from "lucide-react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest } from "@/lib/queryClient";
 import type { BrandingSettings } from "@shared/schema";
+
+/**
+ * Broker email preferences. Every switch here controls real events — the
+ * `key` is what server/notifications/service.ts (BROKER_EVENT_PREFERENCE)
+ * reads before emailing a broker-team member, and `events` lists the
+ * NOTIFICATION_ROUTING event types it covers. Keep both files in sync.
+ */
+type NotificationPrefKey = "buyerQuestions" | "buyerDecisions" | "buyerApprovals";
+const NOTIFICATION_PREFERENCES: Array<{
+  key: NotificationPrefKey;
+  title: string;
+  description: string;
+  icon: typeof Mail;
+  events: string[];
+}> = [
+  {
+    key: "buyerQuestions",
+    title: "Buyer questions",
+    description: "A buyer asks something in the view room that the Q&A assistant couldn't answer and needs your reply.",
+    icon: MessageSquare,
+    events: ["buyer_question"],
+  },
+  {
+    key: "buyerDecisions",
+    title: "Buyer decisions",
+    description: "A buyer marks themselves interested or not interested, or their decision lapses after the reminder sequence.",
+    icon: Gavel,
+    events: ["buyer_decision_interested", "buyer_decision_not_interested", "buyer_decision_lapsed"],
+  },
+  {
+    key: "buyerApprovals",
+    title: "Buyer approval workflow",
+    description: "A buyer is submitted for review, the seller approves them, or a submission is rejected.",
+    icon: UserCheck,
+    events: ["buyer_approval_requested", "buyer_approval_seller_approved", "buyer_approval_rejected"],
+  },
+];
+const DEFAULT_NOTIFICATION_PREFS: Record<NotificationPrefKey, boolean> = {
+  buyerQuestions: true,
+  buyerDecisions: true,
+  buyerApprovals: true,
+};
+
+/** Pull the server's `error` message out of a failed response. */
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const body = await res.json();
+    if (body?.error) return String(body.error);
+    if (body?.message) return String(body.message);
+  } catch {
+    // non-JSON body
+  }
+  return `${fallback} (${res.status})`;
+}
 
 function ColorInput({ label, value, onChange, testId }: { label: string; value: string; onChange: (v: string) => void; testId: string }) {
   const isValidHsl = (hsl: string) => {
@@ -111,7 +164,13 @@ export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
-  const { data: brandingSettings, isLoading } = useQuery<BrandingSettings>({
+  const {
+    data: brandingSettings,
+    isLoading,
+    error: brandingError,
+    refetch: refetchBranding,
+    isFetching: brandingFetching,
+  } = useQuery<BrandingSettings | null>({
     queryKey: ["/api/branding"],
   });
 
@@ -136,25 +195,38 @@ export default function Settings() {
   const [firmEmail, setFirmEmail] = useState("");
   const [firmPhone, setFirmPhone] = useState("");
 
-  const [emailNewBuyer, setEmailNewBuyer] = useState(true);
-  const [emailBuyerViews, setEmailBuyerViews] = useState(true);
-  const [emailPhaseComplete, setEmailPhaseComplete] = useState(true);
-  const [emailWeeklyDigest, setEmailWeeklyDigest] = useState(false);
+  const [notificationPrefs, setNotificationPrefs] =
+    useState<Record<NotificationPrefKey, boolean>>(DEFAULT_NOTIFICATION_PREFS);
 
   const [defaultExpiration, setDefaultExpiration] = useState("30");
-  const [requireNda, setRequireNda] = useState(true);
-  const [autoAdvancePhase, setAutoAdvancePhase] = useState(false);
 
   // Broker workspace prefs (firm info, notifications, deal defaults) —
   // persisted on the user row via /api/broker-auth/settings.
-  const { data: brokerSettings } = useQuery<{ settings: Record<string, any> }>({
+  const {
+    data: brokerSettings,
+    error: settingsError,
+    refetch: refetchSettings,
+    isFetching: settingsFetching,
+  } = useQuery<{ settings: Record<string, any> }>({
     queryKey: ["/api/broker-auth/settings"],
     queryFn: async () => {
       const r = await fetch("/api/broker-auth/settings", { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load settings");
+      if (!r.ok) throw new Error(await readErrorMessage(r, "Failed to load settings"));
       return r.json();
     },
   });
+
+  // Notification emails go to the broker account's email (set when the
+  // account was created). Shown read-only so the broker knows where they land.
+  const { data: me } = useQuery<{ user: { email: string | null; username: string } }>({
+    queryKey: ["/api/broker-auth/me"],
+    queryFn: async () => {
+      const r = await fetch("/api/broker-auth/me", { credentials: "include" });
+      if (!r.ok) throw new Error(await readErrorMessage(r, "Failed to load account"));
+      return r.json();
+    },
+  });
+  const accountEmail = me?.user?.email ?? null;
 
   useEffect(() => {
     const s = brokerSettings?.settings;
@@ -162,15 +234,14 @@ export default function Settings() {
     if (s.firmName !== undefined) setFirmName(s.firmName);
     if (s.firmEmail !== undefined) setFirmEmail(s.firmEmail);
     if (s.firmPhone !== undefined) setFirmPhone(s.firmPhone);
-    const n = s.notifications ?? {};
-    if (n.newBuyer !== undefined) setEmailNewBuyer(n.newBuyer);
-    if (n.buyerViews !== undefined) setEmailBuyerViews(n.buyerViews);
-    if (n.phaseComplete !== undefined) setEmailPhaseComplete(n.phaseComplete);
-    if (n.weeklyDigest !== undefined) setEmailWeeklyDigest(n.weeklyDigest);
+    const n = (s.notifications ?? {}) as Partial<Record<NotificationPrefKey, boolean>>;
+    setNotificationPrefs({
+      buyerQuestions: n.buyerQuestions ?? DEFAULT_NOTIFICATION_PREFS.buyerQuestions,
+      buyerDecisions: n.buyerDecisions ?? DEFAULT_NOTIFICATION_PREFS.buyerDecisions,
+      buyerApprovals: n.buyerApprovals ?? DEFAULT_NOTIFICATION_PREFS.buyerApprovals,
+    });
     const d = s.dealDefaults ?? {};
     if (d.expirationDays !== undefined) setDefaultExpiration(String(d.expirationDays));
-    if (d.requireNda !== undefined) setRequireNda(d.requireNda);
-    if (d.autoAdvancePhase !== undefined) setAutoAdvancePhase(d.autoAdvancePhase);
   }, [brokerSettings]);
 
   const [pwDialogOpen, setPwDialogOpen] = useState(false);
@@ -209,13 +280,16 @@ export default function Settings() {
         credentials: "include",
         body: JSON.stringify(patch),
       });
-      if (!r.ok) throw new Error("Failed to save settings");
+      if (!r.ok) throw new Error(await readErrorMessage(r, "Failed to save settings"));
       return r.json();
     },
-    onError: () =>
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/broker-auth/settings"] });
+    },
+    onError: (e: Error) =>
       toast({
         title: "Save failed",
-        description: "Your settings could not be saved. Please try again.",
+        description: e.message || "Your settings could not be saved. Please try again.",
         variant: "destructive",
       }),
   });
@@ -241,11 +315,17 @@ export default function Settings() {
 
   const saveBrandingMutation = useMutation({
     mutationFn: async (data: any) => {
-      if (brandingSettings?.id) {
-        return apiRequest("PATCH", `/api/branding/${brandingSettings.id}`, data);
-      } else {
-        return apiRequest("POST", "/api/branding", data);
-      }
+      const [method, url] = brandingSettings?.id
+        ? ["PATCH", `/api/branding/${brandingSettings.id}`]
+        : ["POST", "/api/branding"];
+      const r = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(data),
+      });
+      if (!r.ok) throw new Error(await readErrorMessage(r, "Failed to save branding"));
+      return r.json();
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/branding"] });
@@ -290,12 +370,10 @@ export default function Settings() {
           const res = await fetch("/api/upload-logo", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
+            credentials: "include",
             body: JSON.stringify({ data: base64, filename: file.name }),
           });
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error || "Upload failed");
-          }
+          if (!res.ok) throw new Error(await readErrorMessage(res, "Upload failed"));
           const { url } = await res.json();
           setLogoUrl(url);
           toast({ title: "Logo Uploaded", description: "Your logo has been uploaded successfully." });
@@ -311,9 +389,11 @@ export default function Settings() {
     }
   };
 
+  // Cleared fields are sent as explicit nulls: the PATCH is a partial update,
+  // so an omitted (undefined) key would silently keep the old value.
   const handleSaveBranding = () => {
     saveBrandingMutation.mutate({
-      companyName: companyName || undefined,
+      companyName: companyName.trim() || null,
       primaryColor: normalizeHslColor(primaryColor),
       accentColor: normalizeHslColor(accentColor),
       backgroundColor: normalizeHslColor(backgroundColor),
@@ -321,12 +401,12 @@ export default function Settings() {
       textColor: normalizeHslColor(textColor),
       headingFont,
       bodyFont,
-      logoUrl: logoUrl || undefined,
+      logoUrl: logoUrl.trim() || null,
       spacing,
       borderRadius,
-      disclaimer: disclaimer || undefined,
-      headerTemplate: headerTemplate || undefined,
-      footerTemplate: footerTemplate || undefined,
+      disclaimer: disclaimer.trim() || null,
+      headerTemplate: headerTemplate.trim() || null,
+      footerTemplate: footerTemplate.trim() || null,
     });
   };
 
@@ -339,15 +419,8 @@ export default function Settings() {
 
   const handleSaveNotifications = () => {
     saveSettings.mutate(
-      {
-        notifications: {
-          newBuyer: emailNewBuyer,
-          buyerViews: emailBuyerViews,
-          phaseComplete: emailPhaseComplete,
-          weeklyDigest: emailWeeklyDigest,
-        },
-      },
-      { onSuccess: () => toast({ title: "Notifications saved", description: "Your notification preferences have been updated." }) },
+      { notifications: { ...notificationPrefs } },
+      { onSuccess: () => toast({ title: "Notifications saved", description: "Your email preferences now apply to every deal you're on." }) },
     );
   };
 
@@ -356,13 +429,18 @@ export default function Settings() {
       {
         dealDefaults: {
           expirationDays: parseInt(defaultExpiration, 10) || 30,
-          requireNda,
-          autoAdvancePhase,
         },
       },
-      { onSuccess: () => toast({ title: "Defaults saved", description: "Your deal defaults have been updated." }) },
+      { onSuccess: () => toast({ title: "Defaults saved", description: "New buyer links will use this expiration." }) },
     );
   };
+
+  const loadError = brandingError || settingsError;
+  const retryLoad = () => {
+    if (brandingError) refetchBranding();
+    if (settingsError) refetchSettings();
+  };
+  const retrying = brandingFetching || settingsFetching;
 
   if (isLoading) {
     return (
@@ -370,6 +448,45 @@ export default function Settings() {
         <div className="text-center space-y-2">
           <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal mx-auto"></div>
           <p className="text-sm text-muted-foreground">Loading settings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // A failed load must not look like a blank form — saving on top of
+  // unknown state could create a duplicate branding row or wipe prefs.
+  if (loadError) {
+    return (
+      <div className="px-6 pt-6 pb-12 max-w-5xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-xl font-semibold tracking-tight">Settings</h1>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Manage your account, preferences, and platform settings
+          </p>
+        </div>
+        <div
+          className="rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center"
+          role="alert"
+          data-testid="settings-error"
+        >
+          <AlertCircle className="h-6 w-6 text-destructive mx-auto mb-3" />
+          <p className="text-sm font-medium text-foreground">Couldn't load your settings</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+            {loadError instanceof Error && loadError.message
+              ? loadError.message
+              : "The server didn't respond. Check your connection and try again."}
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={retryLoad}
+            disabled={retrying}
+            className="mt-5"
+            data-testid="button-retry-settings"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? "animate-spin" : ""}`} />
+            {retrying ? "Retrying..." : "Retry"}
+          </Button>
         </div>
       </div>
     );
@@ -519,9 +636,14 @@ export default function Settings() {
           </Dialog>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveAccount} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-account">
+            <Button
+              onClick={handleSaveAccount}
+              disabled={saveSettings.isPending}
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              data-testid="button-save-account"
+            >
               <Save className="h-4 w-4 mr-2" />
-              Save Account Settings
+              {saveSettings.isPending ? "Saving..." : "Save Account Settings"}
             </Button>
           </div>
         </TabsContent>
@@ -533,63 +655,56 @@ export default function Settings() {
                 <Mail className="h-5 w-5" />
                 Email Notifications
               </CardTitle>
-              <CardDescription>Choose when to receive email notifications</CardDescription>
+              <CardDescription>
+                Choose which deal events email you. These apply on every deal where you're on the
+                broker team
+                {accountEmail ? (
+                  <> and go to <span className="font-medium text-foreground">{accountEmail}</span>.</>
+                ) : (
+                  <>. Your account has no email on file, so nothing can be delivered until one is added — contact support.</>
+                )}
+              </CardDescription>
             </CardHeader>
             <CardContent className="space-y-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">New Buyer Access</p>
-                  <p className="text-sm text-muted-foreground">When a buyer is invited to view a CIM</p>
+              {NOTIFICATION_PREFERENCES.map((pref, i) => (
+                <div key={pref.key}>
+                  {i > 0 && <Separator className="mb-6" />}
+                  <div className="flex items-center justify-between gap-4">
+                    <div className="flex items-start gap-3 min-w-0">
+                      <span className="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-teal-muted text-teal">
+                        <pref.icon className="h-4 w-4" />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="font-medium">{pref.title}</p>
+                        <p className="text-sm text-muted-foreground">{pref.description}</p>
+                      </div>
+                    </div>
+                    <Switch
+                      checked={notificationPrefs[pref.key]}
+                      onCheckedChange={(v) => setNotificationPrefs((prev) => ({ ...prev, [pref.key]: v }))}
+                      aria-label={pref.title}
+                      data-testid={`switch-email-${pref.key}`}
+                    />
+                  </div>
                 </div>
-                <Switch
-                  checked={emailNewBuyer}
-                  onCheckedChange={setEmailNewBuyer}
-                  data-testid="switch-email-new-buyer"
-                />
-              </div>
+              ))}
               <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Buyer Views CIM</p>
-                  <p className="text-sm text-muted-foreground">When a buyer opens or views a CIM</p>
-                </div>
-                <Switch
-                  checked={emailBuyerViews}
-                  onCheckedChange={setEmailBuyerViews}
-                  data-testid="switch-email-buyer-views"
-                />
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Phase Completion</p>
-                  <p className="text-sm text-muted-foreground">When a deal moves to the next phase</p>
-                </div>
-                <Switch
-                  checked={emailPhaseComplete}
-                  onCheckedChange={setEmailPhaseComplete}
-                  data-testid="switch-email-phase-complete"
-                />
-              </div>
-              <Separator />
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-medium">Weekly Digest</p>
-                  <p className="text-sm text-muted-foreground">Summary of all activity across your deals</p>
-                </div>
-                <Switch
-                  checked={emailWeeklyDigest}
-                  onCheckedChange={setEmailWeeklyDigest}
-                  data-testid="switch-email-weekly-digest"
-                />
-              </div>
+              <p className="text-xs text-muted-foreground">
+                Team invites and seller- or buyer-facing emails aren't affected by these switches. Per-deal
+                email and SMS toggles for each team member live on the deal's Team tab.
+              </p>
             </CardContent>
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveNotifications} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-notifications">
+            <Button
+              onClick={handleSaveNotifications}
+              disabled={saveSettings.isPending}
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              data-testid="button-save-notifications"
+            >
               <Save className="h-4 w-4 mr-2" />
-              Save Notification Settings
+              {saveSettings.isPending ? "Saving..." : "Save Notification Settings"}
             </Button>
           </div>
         </TabsContent>
@@ -832,6 +947,24 @@ export default function Settings() {
 
           <Card>
             <CardHeader>
+              <CardTitle>Page Header</CardTitle>
+              <CardDescription>Text that appears at the top of every page in the CIM/CBO</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Input
+                value={headerTemplate}
+                onChange={(e) => setHeaderTemplate(e.target.value)}
+                placeholder="e.g. Confidential Business Overview | {businessName}"
+                data-testid="input-header-template"
+              />
+              <p className="text-xs text-muted-foreground mt-2">
+                Use {"{businessName}"} to insert the business name dynamically
+              </p>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
               <CardTitle>Page Footer</CardTitle>
               <CardDescription>Text that appears at the bottom of every page in the CIM/CBO</CardDescription>
             </CardHeader>
@@ -886,44 +1019,50 @@ export default function Settings() {
                   </SelectContent>
                 </Select>
                 <p className="text-xs text-muted-foreground">
-                  Default expiration period for buyer access links
+                  Applies to every new buyer access link you create. Existing links keep their
+                  current expiry — extend them from the deal's Buyers tab.
                 </p>
               </div>
               <Separator />
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-4 opacity-70">
                 <div>
-                  <p className="font-medium">Require NDA Before Phase 2</p>
+                  <p className="font-medium flex items-center gap-2">
+                    Require NDA Before Phase 2
+                    <Badge variant="outline" className="text-2xs font-normal">Coming soon</Badge>
+                  </p>
                   <p className="text-sm text-muted-foreground">
-                    Require NDA to be signed before starting platform intake
+                    Will pre-set "NDA required" on every new deal. Today, set it per deal when you
+                    create one.
                   </p>
                 </div>
-                <Switch
-                  checked={requireNda}
-                  onCheckedChange={setRequireNda}
-                  data-testid="switch-require-nda"
-                />
+                <Switch checked={false} disabled aria-label="Require NDA before Phase 2 (coming soon)" data-testid="switch-require-nda" />
               </div>
               <Separator />
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-4 opacity-70">
                 <div>
-                  <p className="font-medium">Auto-Advance Phases</p>
+                  <p className="font-medium flex items-center gap-2">
+                    Auto-Advance Phases
+                    <Badge variant="outline" className="text-2xs font-normal">Coming soon</Badge>
+                  </p>
                   <p className="text-sm text-muted-foreground">
-                    Automatically advance to next phase when requirements are met
+                    Will move deals to the next phase automatically once requirements are met. Today,
+                    you advance each phase from the deal's Overview.
                   </p>
                 </div>
-                <Switch
-                  checked={autoAdvancePhase}
-                  onCheckedChange={setAutoAdvancePhase}
-                  data-testid="switch-auto-advance"
-                />
+                <Switch checked={false} disabled aria-label="Auto-advance phases (coming soon)" data-testid="switch-auto-advance" />
               </div>
             </CardContent>
           </Card>
 
           <div className="flex justify-end">
-            <Button onClick={handleSaveDefaults} className="bg-teal text-teal-foreground hover:bg-teal/90" data-testid="button-save-defaults">
+            <Button
+              onClick={handleSaveDefaults}
+              disabled={saveSettings.isPending}
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              data-testid="button-save-defaults"
+            >
               <Save className="h-4 w-4 mr-2" />
-              Save Default Settings
+              {saveSettings.isPending ? "Saving..." : "Save Default Settings"}
             </Button>
           </div>
         </TabsContent>

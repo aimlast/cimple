@@ -11,13 +11,17 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { TEAM_ROLES } from "@shared/schema";
 import type { DealMember } from "@shared/schema";
 import {
-  Users, UserPlus, Mail, Phone, Shield, ChevronDown,
-  ChevronRight, Trash2, Copy, Bell, BellOff, Loader2,
+  Users, UserPlus, Mail, Phone, ChevronDown,
+  ChevronRight, Trash2, Loader2,
   Briefcase, Building, ShoppingCart,
 } from "lucide-react";
 
@@ -33,59 +37,102 @@ const TEAM_CONFIG = {
 
 type TeamType = keyof typeof TEAM_CONFIG;
 
+/**
+ * Plain fetch wrapper that surfaces the server's `{ error }` message.
+ * (apiRequest throws "409: {...json...}" before a caller can read the body,
+ * which is how duplicate-member errors used to render as raw JSON.)
+ */
+async function requestJson<T = unknown>(method: string, url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let message = res.status === 401
+      ? "Your session has expired — please sign in again."
+      : `Request failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = String(data.error);
+    } catch {
+      // non-JSON error body — keep the status-based message
+    }
+    throw new Error(message);
+  }
+  if (res.status === 204) return undefined as T;
+  return res.json();
+}
+
+function fmtDate(d: string | Date | null | undefined): string {
+  if (!d) return "";
+  return new Date(d).toLocaleDateString();
+}
+
 export function TeamPanel({ dealId }: TeamPanelProps) {
   const { toast } = useToast();
   const [expandedTeam, setExpandedTeam] = useState<TeamType | null>("broker");
   const [addingTo, setAddingTo] = useState<TeamType | null>(null);
   const [newMember, setNewMember] = useState({ email: "", name: "", phone: "", role: "" });
+  const [formError, setFormError] = useState<string | null>(null);
+  const [memberToRemove, setMemberToRemove] = useState<DealMember | null>(null);
 
   const { data: members = [], isLoading, error: loadError, refetch } = useQuery<DealMember[]>({
     queryKey: ["/api/deals", dealId, "members"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/members`);
-      if (!r.ok) throw new Error("Failed to load team members");
-      return r.json();
-    },
+    queryFn: () => requestJson<DealMember[]>("GET", `/api/deals/${dealId}/members`),
   });
 
   const addMember = useMutation({
-    mutationFn: async (data: { email: string; name: string; phone: string; teamType: string; role: string }) => {
-      const r = await apiRequest("POST", `/api/deals/${dealId}/members`, data);
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error || "Failed to add");
-      }
-      return r.json();
-    },
+    mutationFn: (data: { email: string; name: string; phone: string; teamType: string; role: string }) =>
+      requestJson<DealMember>("POST", `/api/deals/${dealId}/members`, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
       toast({ title: "Member added", description: "Invite notification sent." });
       setAddingTo(null);
       setNewMember({ email: "", name: "", phone: "", role: "" });
+      setFormError(null);
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: Error) => toast({ title: "Couldn't add member", description: e.message, variant: "destructive" }),
   });
 
   const removeMember = useMutation({
-    mutationFn: async (id: string) => {
-      const r = await apiRequest("DELETE", `/api/members/${id}`);
-      if (!r.ok) throw new Error("Failed");
-    },
+    mutationFn: (id: string) => requestJson("DELETE", `/api/members/${id}`),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
       toast({ title: "Member removed" });
+      setMemberToRemove(null);
     },
+    onError: (e: Error) => toast({ title: "Couldn't remove member", description: e.message, variant: "destructive" }),
   });
 
   const toggleNotification = useMutation({
-    mutationFn: async ({ id, field, value }: { id: string; field: string; value: boolean }) => {
-      const r = await apiRequest("PATCH", `/api/members/${id}`, { [field]: value });
-      if (!r.ok) throw new Error("Failed");
-    },
+    mutationFn: ({ id, field, value }: { id: string; field: "emailNotifications" | "smsNotifications"; value: boolean }) =>
+      requestJson<DealMember>("PATCH", `/api/members/${id}`, { [field]: value }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
     },
+    onError: (e: Error) => toast({ title: "Couldn't update notifications", description: e.message, variant: "destructive" }),
   });
+
+  const submitNewMember = (teamType: TeamType) => {
+    if (!newMember.email.trim()) {
+      setFormError("Enter an email address for this member.");
+      return;
+    }
+    if (!newMember.role) {
+      setFormError("Select a role for this member.");
+      return;
+    }
+    setFormError(null);
+    addMember.mutate({
+      email: newMember.email,
+      name: newMember.name,
+      phone: newMember.phone,
+      teamType,
+      role: newMember.role,
+    });
+  };
 
   // Group members by team
   const teams: Record<TeamType, DealMember[]> = {
@@ -115,27 +162,31 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
 
     return (
       <div key={teamType}>
-        {/* Team header */}
-        <button
-          className="w-full flex items-center justify-between py-2 px-1 hover:bg-muted/30 rounded transition-colors"
-          onClick={() => setExpandedTeam(isExpanded ? null : teamType)}
-        >
-          <div className="flex items-center gap-2">
+        {/* Team header — the expand toggle and the Add button are siblings
+            (a <button> nested inside a <button> is invalid DOM and breaks
+            keyboard / screen-reader semantics). */}
+        <div className="flex items-center justify-between py-1 px-1 hover:bg-muted/30 rounded transition-colors">
+          <button
+            type="button"
+            className="flex flex-1 items-center gap-2 py-1 text-left rounded focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-expanded={isExpanded}
+            onClick={() => setExpandedTeam(isExpanded ? null : teamType)}
+          >
             {isExpanded ? <ChevronDown className="h-3 w-3 text-muted-foreground" />
               : <ChevronRight className="h-3 w-3 text-muted-foreground" />}
             <Icon className={`h-3.5 w-3.5 ${config.color}`} />
             <span className="text-xs font-semibold">{config.label}</span>
             <Badge variant="outline" className="text-[9px] h-4 px-1.5">{teamMembers.length}</Badge>
-          </div>
+          </button>
           <Button
             size="sm"
             variant="ghost"
             className="h-6 text-[10px] gap-1 px-1.5"
-            onClick={(e) => { e.stopPropagation(); setAddingTo(teamType); setExpandedTeam(teamType); }}
+            onClick={() => { setAddingTo(teamType); setExpandedTeam(teamType); setFormError(null); }}
           >
             <UserPlus className="h-2.5 w-2.5" /> Add
           </Button>
-        </button>
+        </div>
 
         {isExpanded && (
           <div className="pl-5 space-y-1.5 pb-2">
@@ -146,12 +197,15 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                   <div className="grid grid-cols-2 gap-1.5">
                     <Input
                       placeholder="Email *"
+                      type="email"
+                      aria-label="Email (required)"
                       className="h-7 text-xs"
                       value={newMember.email}
-                      onChange={(e) => setNewMember({ ...newMember, email: e.target.value })}
+                      onChange={(e) => { setNewMember({ ...newMember, email: e.target.value }); setFormError(null); }}
                     />
                     <Input
                       placeholder="Name"
+                      aria-label="Name"
                       className="h-7 text-xs"
                       value={newMember.name}
                       onChange={(e) => setNewMember({ ...newMember, name: e.target.value })}
@@ -159,37 +213,41 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                   </div>
                   <Input
                     placeholder="Phone (for SMS notifications)"
+                    aria-label="Phone"
                     className="h-7 text-xs"
                     value={newMember.phone}
                     onChange={(e) => setNewMember({ ...newMember, phone: e.target.value })}
                   />
-                  <div className="flex flex-wrap gap-1">
-                    {Object.entries(roles).map(([key, val]) => (
-                      <button
-                        key={key}
-                        className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${
-                          newMember.role === key
-                            ? "bg-teal/10 border-teal text-teal"
-                            : "border-border text-muted-foreground hover:border-foreground/30"
-                        }`}
-                        onClick={() => setNewMember({ ...newMember, role: key })}
-                      >
-                        {val.label}
-                      </button>
-                    ))}
+                  <div className="space-y-1">
+                    <p className="text-[10px] font-medium text-muted-foreground">Role *</p>
+                    <div className="flex flex-wrap gap-1" role="radiogroup" aria-label="Role">
+                      {Object.entries(roles).map(([key, val]) => (
+                        <button
+                          key={key}
+                          type="button"
+                          role="radio"
+                          aria-checked={newMember.role === key}
+                          className={`text-[10px] px-2 py-1 rounded-md border transition-colors ${
+                            newMember.role === key
+                              ? "bg-teal/10 border-teal text-teal"
+                              : "border-border text-muted-foreground hover:border-foreground/30"
+                          }`}
+                          onClick={() => { setNewMember({ ...newMember, role: key }); setFormError(null); }}
+                        >
+                          {val.label}
+                        </button>
+                      ))}
+                    </div>
                   </div>
+                  {formError && (
+                    <p className="text-[10px] text-destructive" role="alert">{formError}</p>
+                  )}
                   <div className="flex gap-1.5">
                     <Button
                       size="sm"
                       className="h-7 text-xs flex-1 bg-teal text-teal-foreground hover:bg-teal/90"
-                      disabled={!newMember.email.trim() || !newMember.role || addMember.isPending}
-                      onClick={() => addMember.mutate({
-                        email: newMember.email,
-                        name: newMember.name,
-                        phone: newMember.phone,
-                        teamType,
-                        role: newMember.role,
-                      })}
+                      disabled={addMember.isPending}
+                      onClick={() => submitNewMember(teamType)}
                     >
                       {addMember.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : "Add & notify"}
                     </Button>
@@ -197,7 +255,7 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                       size="sm"
                       variant="ghost"
                       className="h-7 text-xs"
-                      onClick={() => setAddingTo(null)}
+                      onClick={() => { setAddingTo(null); setFormError(null); }}
                     >
                       Cancel
                     </Button>
@@ -213,10 +271,11 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
 
             {teamMembers.map((member) => {
               const roleConfig = (roles as any)[member.role] as { label: string; permissions: string[] } | undefined;
+              const isToggling = toggleNotification.isPending && toggleNotification.variables?.id === member.id;
               return (
                 <div
                   key={member.id}
-                  className="flex items-center gap-2 p-2 rounded-md bg-card border border-border group"
+                  className="flex items-center gap-2 p-2 rounded-md bg-card border border-border"
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
@@ -237,10 +296,14 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                     </div>
                   </div>
 
-                  {/* Notification toggles */}
-                  <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                  {/* Notification toggles — always visible so they work on touch devices */}
+                  <div className="flex items-center gap-0.5">
                     <button
-                      className={`h-5 w-5 rounded flex items-center justify-center ${
+                      type="button"
+                      disabled={isToggling}
+                      aria-pressed={!!member.emailNotifications}
+                      aria-label={member.emailNotifications ? "Turn email notifications off" : "Turn email notifications on"}
+                      className={`h-6 w-6 rounded flex items-center justify-center transition-colors hover:bg-muted disabled:opacity-50 ${
                         member.emailNotifications ? "text-teal" : "text-muted-foreground/40"
                       }`}
                       title={member.emailNotifications ? "Email notifications on" : "Email notifications off"}
@@ -248,10 +311,14 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                         id: member.id, field: "emailNotifications", value: !member.emailNotifications,
                       })}
                     >
-                      <Mail className="h-2.5 w-2.5" />
+                      <Mail className="h-3 w-3" />
                     </button>
                     <button
-                      className={`h-5 w-5 rounded flex items-center justify-center ${
+                      type="button"
+                      disabled={isToggling}
+                      aria-pressed={!!member.smsNotifications}
+                      aria-label={member.smsNotifications ? "Turn SMS notifications off" : "Turn SMS notifications on"}
+                      className={`h-6 w-6 rounded flex items-center justify-center transition-colors hover:bg-muted disabled:opacity-50 ${
                         member.smsNotifications ? "text-teal" : "text-muted-foreground/40"
                       }`}
                       title={member.smsNotifications ? "SMS notifications on" : "SMS notifications off"}
@@ -259,25 +326,27 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
                         id: member.id, field: "smsNotifications", value: !member.smsNotifications,
                       })}
                     >
-                      <Phone className="h-2.5 w-2.5" />
+                      <Phone className="h-3 w-3" />
                     </button>
                     <button
-                      className="h-5 w-5 rounded flex items-center justify-center text-muted-foreground/40 hover:text-red-400"
-                      onClick={() => removeMember.mutate(member.id)}
+                      type="button"
+                      aria-label={`Remove ${member.name || member.email} from the ${config.label.toLowerCase()}`}
+                      className="h-6 w-6 rounded flex items-center justify-center text-muted-foreground/40 hover:text-red-400 hover:bg-muted transition-colors"
+                      title="Remove member"
+                      onClick={() => setMemberToRemove(member)}
                     >
-                      <Trash2 className="h-2.5 w-2.5" />
+                      <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
 
-                  {/* Status indicator */}
-                  <div className="shrink-0">
-                    {member.inviteStatus === "accepted" ? (
-                      <span className="h-2 w-2 rounded-full bg-emerald-400 block" title="Active" />
-                    ) : member.inviteStatus === "sent" ? (
-                      <span className="h-2 w-2 rounded-full bg-amber-400 block" title="Invite sent" />
-                    ) : (
-                      <span className="h-2 w-2 rounded-full bg-muted-foreground/30 block" title="Pending" />
-                    )}
+                  {/* Invite status — only the state that can actually occur.
+                      No accept flow sets dealMembers.acceptedAt yet, so an
+                      "Active" state would never render; show the factual
+                      invite date instead of a status that can't change. */}
+                  <div className="shrink-0 text-[10px] text-muted-foreground/70 tabular-nums whitespace-nowrap">
+                    {member.invitedAt
+                      ? <span title={`Invite sent ${fmtDate(member.invitedAt)}`}>Invited {fmtDate(member.invitedAt)}</span>
+                      : <span>Invited</span>}
                   </div>
                 </div>
               );
@@ -297,6 +366,38 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
       </div>
 
       {(["broker", "seller", "buyer"] as const).map(renderTeam)}
+
+      {/* Confirm before a hard delete — the server removes the row permanently */}
+      <AlertDialog
+        open={!!memberToRemove}
+        onOpenChange={(open) => { if (!open && !removeMember.isPending) setMemberToRemove(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Remove {memberToRemove?.name || memberToRemove?.email} from the{" "}
+              {memberToRemove ? TEAM_CONFIG[memberToRemove.teamType as TeamType]?.label.toLowerCase() ?? "deal team" : "deal team"}?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              They will stop receiving notifications for this deal immediately. This cannot be undone —
+              you would need to invite them again.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={removeMember.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={removeMember.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (memberToRemove) removeMember.mutate(memberToRemove.id);
+              }}
+            >
+              {removeMember.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Remove"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

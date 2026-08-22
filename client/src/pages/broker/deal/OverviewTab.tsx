@@ -5,12 +5,12 @@
  * document upload/table, website scrape card, integration prompts,
  * and deal analytics summary.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -30,6 +30,16 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   CheckCircle2,
   Circle,
@@ -93,16 +103,85 @@ function ActorBadge({ who }: { who: "broker" | "seller" | "auto" }) {
   );
 }
 
+/**
+ * Error carrying the server's parsed `{ error, ... }` body. Mutations throw
+ * this so every onError toast can show the real reason (e.g. the 409
+ * discrepancy block on generate-content) instead of a raw "500: {...}" string.
+ */
+class ApiError extends Error {
+  status: number;
+  body: Record<string, any> | null;
+  constructor(message: string, status: number, body: Record<string, any> | null) {
+    super(message);
+    this.name = "ApiError";
+    this.status = status;
+    this.body = body;
+  }
+}
+
+/** JSON request that resolves to the parsed body and throws ApiError on !ok. */
+async function apiJson<T = any>(
+  method: string,
+  url: string,
+  data?: unknown,
+  fallback = "Request failed",
+): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: data !== undefined ? { "Content-Type": "application/json" } : {},
+    body: data !== undefined ? JSON.stringify(data) : undefined,
+    credentials: "include",
+  });
+  const text = await res.text();
+  let body: Record<string, any> | null = null;
+  if (text) {
+    try {
+      body = JSON.parse(text);
+    } catch {
+      body = null;
+    }
+  }
+  if (!res.ok) {
+    const message =
+      body && typeof body.error === "string"
+        ? body.error
+        : res.status === 401
+          ? "Your session has expired — please sign in again."
+          : `${fallback} (${res.status})`;
+    throw new ApiError(message, res.status, body);
+  }
+  return (body ?? {}) as T;
+}
+
 /** The deal's seller invites — one secure link per seller for the whole flow. */
 function useInvites(dealId: string) {
   return useQuery<SellerInvite[]>({
     queryKey: ["/api/deals", dealId, "invites"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/invites`);
-      if (!r.ok) return [];
+      const r = await fetch(`/api/deals/${dealId}/invites`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load seller invites");
       return r.json();
     },
   });
+}
+
+/**
+ * The invite that actually represents the seller. The list arrives
+ * newest-first, and sending the NDA to a different address (e.g. the seller's
+ * attorney) creates a second invite — so `invites[0]` silently switched the
+ * status card and "Copy invite link" to the wrong person. Prefer the invite
+ * furthest along (opened > emailed > created), earliest on ties.
+ */
+function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
+  if (invites.length === 0) return undefined;
+  const oldestFirst = [...invites].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+  return (
+    oldestFirst.find((i) => !!i.acceptedAt) ??
+    oldestFirst.find((i) => !!i.sentAt) ??
+    oldestFirst[0]
+  );
 }
 
 /* ═══════════════════════════════════════════
@@ -158,9 +237,29 @@ function DocumentUploadCard({
       const r = await fetch(`/api/deals/${dealId}/documents/upload`, {
         method: "POST",
         body: formData,
+        credentials: "include",
       });
-      if (!r.ok) throw new Error("Upload failed");
-      return r.json();
+      // Multipart request, so apiJson doesn't apply — but the toast must
+      // still say why the server rejected it (type, size, session...).
+      const text = await r.text();
+      let body: Record<string, any> | null = null;
+      try {
+        body = text ? JSON.parse(text) : null;
+      } catch {
+        body = null;
+      }
+      if (!r.ok) {
+        throw new ApiError(
+          body && typeof body.error === "string"
+            ? body.error
+            : r.status === 401
+              ? "Your session has expired — please sign in again."
+              : `Upload failed (${r.status})`,
+          r.status,
+          body,
+        );
+      }
+      return body ?? {};
     },
     onSuccess: () => {
       queryClient.invalidateQueries({
@@ -199,6 +298,24 @@ function DocumentUploadCard({
               Upload financials, P&L, tax returns, leases, and other key
               documents. The AI will extract structured data automatically.
             </p>
+            {/* A failed list fetch must not read as "nothing uploaded yet". */}
+            {docsError && (
+              <div
+                className="mt-2 flex items-center gap-2 text-xs text-red-400"
+                role="alert"
+                data-testid="text-documents-load-error"
+              >
+                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+                <span>Couldn't load your documents.</span>
+                <button
+                  type="button"
+                  onClick={() => refetchDocs()}
+                  className="underline underline-offset-2 hover:text-foreground"
+                >
+                  Retry
+                </button>
+              </div>
+            )}
             {docs.length > 0 && (
               <div className="mt-2 flex flex-wrap gap-1.5">
                 {docs.slice(0, 5).map((d: any) => (
@@ -493,8 +610,12 @@ function Phase1Center() {
   const [ndaEmail, setNdaEmail] = useState("");
   const [ndaText, setNdaText] = useState("");
 
-  const { data: invites = [] } = useInvites(dealId);
-  const activeInvite = invites[0];
+  const {
+    data: invites = [],
+    error: invitesError,
+    refetch: refetchInvites,
+  } = useInvites(dealId);
+  const activeInvite = pickPrimaryInvite(invites);
   const inviteUrl = activeInvite
     ? `${window.location.origin}/seller/${activeInvite.token}`
     : null;
@@ -523,10 +644,8 @@ Signed electronically via the Cimple platform.`;
   };
 
   const update = useMutation({
-    mutationFn: async (data: Partial<Deal>) => {
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, data);
-      return r.json();
-    },
+    mutationFn: (data: Partial<Deal>) =>
+      apiJson("PATCH", `/api/deals/${dealId}`, data, "Couldn't update the deal"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({ title: "Updated" });
@@ -541,10 +660,8 @@ Signed electronically via the Cimple platform.`;
   });
 
   const invite = useMutation({
-    mutationFn: async (data: { sellerEmail: string; sellerName: string }) => {
-      const r = await apiRequest("POST", `/api/deals/${dealId}/invites`, data);
-      return r.json();
-    },
+    mutationFn: (data: { sellerEmail: string; sellerName: string }) =>
+      apiJson("POST", `/api/deals/${dealId}/invites`, data, "Couldn't send the invite"),
     onSuccess: (data) => {
       const url =
         data.inviteUrl || `${window.location.origin}/seller/${data.token}`;
@@ -570,10 +687,8 @@ Signed electronically via the Cimple platform.`;
   });
 
   const sendNda = useMutation({
-    mutationFn: async (data: { sellerEmail: string; ndaText: string }) => {
-      const r = await apiRequest("POST", `/api/deals/${dealId}/nda/send`, data);
-      return r.json();
-    },
+    mutationFn: (data: { sellerEmail: string; ndaText: string }) =>
+      apiJson("POST", `/api/deals/${dealId}/nda/send`, data, "Couldn't send the NDA"),
     onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       queryClient.invalidateQueries({
@@ -780,6 +895,11 @@ Signed electronically via the Cimple platform.`;
           their questionnaire, documents, and the AI interview.
         </p>
       </div>
+
+      {/* A failed invites fetch must not masquerade as "no seller invited". */}
+      {invitesError && (
+        <PanelError what="seller invite status" onRetry={() => refetchInvites()} />
+      )}
 
       {steps.map((step) => (
         <div
@@ -1087,8 +1207,8 @@ function Phase2Center() {
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
   const [showScraped, setShowScraped] = useState(false);
 
-  const { data: invites = [] } = useInvites(dealId);
-  const activeInvite = invites[0];
+  const { data: invites = [], error: invitesError } = useInvites(dealId);
+  const activeInvite = pickPrimaryInvite(invites);
   const inviteUrl = activeInvite
     ? `${window.location.origin}/seller/${activeInvite.token}`
     : null;
@@ -1097,32 +1217,38 @@ function Phase2Center() {
   // finished the interview had no visible way to reach the Generate CIM step
   // (it lived inside the collapsed Phase 3 accordion).
   const advanceToContent = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
-        phase: "phase3_content_creation",
-      });
-      return r.json();
-    },
+    mutationFn: () =>
+      apiJson(
+        "PATCH",
+        `/api/deals/${dealId}`,
+        { phase: "phase3_content_creation" },
+        "Couldn't advance the deal",
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+      toast({ title: "Moved to Content Creation" });
+    },
+    onError: (err: Error) => {
+      toast({
+        title: "Couldn't advance to Content Creation",
+        description: err.message,
+        variant: "destructive",
+      });
     },
   });
 
   const scrapeMutation = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("POST", `/api/deals/${dealId}/scrape`, {
-        websiteUrl: websiteInput.trim() || undefined,
-      });
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error || "Scrape failed");
-      }
-      return r.json() as Promise<{
+    mutationFn: () =>
+      apiJson<{
         fieldsExtracted: string[];
         fieldCount: number;
         source: string;
-      }>;
-    },
+      }>(
+        "POST",
+        `/api/deals/${dealId}/scrape`,
+        { websiteUrl: websiteInput.trim() || undefined },
+        "Scrape failed",
+      ),
     onSuccess: (result) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
@@ -1190,7 +1316,9 @@ function Phase2Center() {
                   ? activeInvite.acceptedAt
                     ? "Seller opened their link and is working through onboarding."
                     : `Invite ${activeInvite.sentAt ? "emailed" : "created"}${activeInvite.sellerEmail ? ` for ${activeInvite.sellerEmail}` : ""} — waiting on the seller to start.`
-                  : "No seller invited yet — invite them from Phase 1 to unlock onboarding."}
+                  : invitesError
+                    ? "Couldn't load the seller's invite status — retry from Phase 1."
+                    : "No seller invited yet — invite them from Phase 1 to unlock onboarding."}
             </p>
             {activeInvite && !deal.questionnaireData && (
               <div className="flex flex-wrap items-center gap-2 mt-2">
@@ -1425,11 +1553,18 @@ function Phase3Center() {
   const [editingSection, setEditingSection] = useState<string | null>(null);
   const [editDraft, setEditDraft] = useState("");
 
-  const { data: cimSections = [] } = useQuery<CimSection[]>({
+  // Throws on failure: returning [] here would drop the broker into the
+  // "nothing generated yet" branch with a live Generate button — a loading
+  // error must never look like an empty CIM.
+  const {
+    data: cimSections = [],
+    error: sectionsError,
+    refetch: refetchSections,
+  } = useQuery<CimSection[]>({
     queryKey: ["/api/deals", dealId, "cim-sections"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/cim-sections`);
-      if (!r.ok) return [];
+      const r = await fetch(`/api/deals/${dealId}/cim-sections`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load CIM sections");
       return r.json();
     },
   });
@@ -1447,17 +1582,34 @@ function Phase3Center() {
   const branding = buildBranding(brandingSettings, deal);
   const hasVisualSections = cimSections.length > 0;
 
-  const { data: discrepancyList = [] } = useQuery<Discrepancy[]>({
+  const {
+    data: discrepancyList = [],
+    error: discrepanciesError,
+    refetch: refetchDiscrepancies,
+  } = useQuery<Discrepancy[]>({
     queryKey: ["/api/deals", dealId, "discrepancies"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/discrepancies`);
-      if (!r.ok) return [];
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load discrepancies");
       return r.json();
     },
   });
+  // Mirrors the server's 409 gate on generate-content exactly: anything not
+  // resolved/superseded (open, ask_seller, seller_responded) still blocks.
   const criticalUnresolved = discrepancyList.filter(
-    (d) => d.severity === "critical" && d.status === "open",
+    (d) =>
+      d.severity === "critical" &&
+      d.status !== "resolved" &&
+      d.status !== "superseded",
   );
+  // If the gate itself couldn't load we can't prove it's clear — block, and
+  // say so, rather than letting a failed fetch unlock generation.
+  const generationBlocked = criticalUnresolved.length > 0 || !!discrepanciesError;
+  const blockReason = discrepanciesError
+    ? "Couldn't load discrepancies — generation stays locked until they load."
+    : criticalUnresolved.length > 0
+      ? `Resolve ${criticalUnresolved.length} critical discrepanc${criticalUnresolved.length === 1 ? "y" : "ies"} before generating.`
+      : null;
 
   const extractedCount = Object.keys(
     (deal.extractedInfo as object) || {},
@@ -1468,18 +1620,14 @@ function Phase3Center() {
   const totalDataFields = extractedCount + scrapedCount;
 
   const generate = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest(
+    mutationFn: () =>
+      apiJson<{ sectionCount?: number; warnings?: string[] }>(
         "POST",
         `/api/deals/${dealId}/generate-content`,
-      );
-      if (!r.ok) {
-        const e = await r.json();
-        throw new Error(e.error);
-      }
-      return r.json();
-    },
-    onSuccess: (data: { sectionCount?: number; warnings?: string[] }) => {
+        undefined,
+        "CIM generation failed",
+      ),
+    onSuccess: (data) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       queryClient.invalidateQueries({
         queryKey: ["/api/deals", dealId, "cim-sections"],
@@ -1500,31 +1648,38 @@ function Phase3Center() {
         });
       }
     },
-    onError: (e: Error) =>
+    onError: (e: Error) => {
+      // The server is the authority on the discrepancy gate. If it 409s
+      // (e.g. a discrepancy was opened since this page loaded), name the
+      // blocking fields and refresh the list so the UI locks too.
+      const blocking =
+        e instanceof ApiError && e.status === 409
+          ? ((e.body?.blockingDiscrepancies ?? []) as { id: string; field: string }[])
+          : null;
+      if (blocking) {
+        queryClient.invalidateQueries({
+          queryKey: ["/api/deals", dealId, "discrepancies"],
+        });
+      }
       toast({
-        title: "Generation failed",
-        description: e.message,
+        title: blocking ? "CIM generation blocked" : "Generation failed",
+        description:
+          blocking && blocking.length > 0
+            ? `${e.message}. Blocking: ${blocking.map((b) => b.field).join(", ")}.`
+            : e.message,
         variant: "destructive",
-      }),
+      });
+    },
   });
 
   const saveEdit = useMutation({
-    mutationFn: async ({
-      sectionId,
-      content,
-    }: {
-      sectionId: string;
-      content: string;
-    }) => {
-      const r = await apiRequest("PATCH", `/api/cim-sections/${sectionId}`, {
-        brokerEditedContent: content,
-      });
-      if (!r.ok) {
-        const e = await r.json();
-        throw new Error(e.error);
-      }
-      return r.json();
-    },
+    mutationFn: ({ sectionId, content }: { sectionId: string; content: string }) =>
+      apiJson(
+        "PATCH",
+        `/api/cim-sections/${sectionId}`,
+        { brokerEditedContent: content },
+        "Couldn't save the section",
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: ["/api/deals", dealId, "cim-sections"],
@@ -1541,27 +1696,32 @@ function Phase3Center() {
   });
 
   const approve = useMutation({
-    mutationFn: async (role: "broker" | "seller") => {
-      const data =
+    mutationFn: (role: "broker" | "seller") =>
+      apiJson(
+        "PATCH",
+        `/api/deals/${dealId}`,
         role === "broker"
           ? { contentApprovedByBroker: true }
-          : { contentApprovedBySeller: true };
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, data);
-      return r.json();
-    },
+          : { contentApprovedBySeller: true },
+        "Couldn't record the approval",
+      ),
     onSuccess: (_, role) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
         title: `${role === "broker" ? "Broker" : "Seller"} approval recorded`,
       });
     },
+    onError: (e: Error, role) =>
+      toast({
+        title: `${role === "broker" ? "Broker" : "Seller"} approval failed`,
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const advancePhase = useMutation({
-    mutationFn: async (phase: string) => {
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, { phase });
-      return r.json();
-    },
+    mutationFn: (phase: string) =>
+      apiJson("PATCH", `/api/deals/${dealId}`, { phase }, "Couldn't advance the deal"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({ title: "Moved to Design & Finalization" });
@@ -1580,6 +1740,22 @@ function Phase3Center() {
         <p className="text-xs text-muted-foreground/60 mt-1">
           Complete the AI interview in Phase 2 before generating content.
         </p>
+      </div>
+    );
+  }
+
+  // Without the sections list we can't tell "not generated yet" from "failed
+  // to load" — and the former branch offers a Generate button that would
+  // wipe and rebuild an existing CIM. Show the error instead.
+  if (sectionsError) {
+    return (
+      <div className="space-y-4">
+        <div>
+          <h2 className="text-lg font-semibold tracking-tight">
+            Phase 3 — Content Creation
+          </h2>
+        </div>
+        <PanelError what="CIM sections" onRetry={() => refetchSections()} />
       </div>
     );
   }
@@ -1619,7 +1795,11 @@ function Phase3Center() {
           </div>
         </div>
 
-        <DiscrepancyPanel dealId={dealId} />
+        {discrepanciesError ? (
+          <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
+        ) : (
+          <DiscrepancyPanel dealId={dealId} />
+        )}
 
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-5 text-center">
           <Wand2 className="h-6 w-6 text-teal/60 mx-auto mb-3" />
@@ -1629,17 +1809,16 @@ function Phase3Center() {
             charts, infographics, financial tables, and dynamic layouts — not
             just text.
           </p>
-          {criticalUnresolved.length > 0 && (
-            <p className="text-xs text-red-400 mb-3">
-              Resolve {criticalUnresolved.length} critical discrepanc
-              {criticalUnresolved.length === 1 ? "y" : "ies"} above before
-              generating.
+          {blockReason && (
+            <p className="text-xs text-red-400 mb-3" data-testid="text-generate-blocked">
+              {blockReason}
             </p>
           )}
           <Button
             className="bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={() => generate.mutate()}
-            disabled={generate.isPending || criticalUnresolved.length > 0}
+            disabled={generate.isPending || generationBlocked}
+            title={blockReason ?? undefined}
             data-testid="button-generate-content"
           >
             {generate.isPending ? (
@@ -1664,8 +1843,15 @@ function Phase3Center() {
             CIM Preview
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
-            {cimSections.length} sections · Click any section to edit
+            {hasVisualSections
+              ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Click any section to edit`
+              : "Legacy text CIM — regenerate to enable visual editing"}
           </p>
+          {blockReason && (
+            <p className="text-xs text-red-400 mt-1" data-testid="text-regenerate-blocked">
+              {blockReason.replace(/before generating\.$/, "before regenerating.")}
+            </p>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
@@ -1710,7 +1896,10 @@ function Phase3Center() {
             size="sm"
             className="h-8 text-xs text-muted-foreground gap-1.5"
             onClick={() => generate.mutate()}
-            disabled={generate.isPending}
+            // Same gate as the first Generate button — critical discrepancies
+            // block every generation, not just the first.
+            disabled={generate.isPending || generationBlocked}
+            title={blockReason ?? undefined}
             data-testid="button-regenerate-content"
           >
             <RefreshCw
@@ -1844,12 +2033,8 @@ function Phase4Center() {
   const [, navigate] = useLocation();
 
   const publish = useMutation({
-    mutationFn: async () => {
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, {
-        isLive: true,
-      });
-      return r.json();
-    },
+    mutationFn: () =>
+      apiJson("PATCH", `/api/deals/${dealId}`, { isLive: true }, "Couldn't publish the CIM"),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({
@@ -1857,17 +2042,24 @@ function Phase4Center() {
         description: "Now live for invited buyers.",
       });
     },
+    onError: (e: Error) =>
+      toast({
+        title: "Publish failed",
+        description: e.message,
+        variant: "destructive",
+      }),
   });
 
   const designApprove = useMutation({
-    mutationFn: async (role: "broker" | "seller") => {
-      const data =
+    mutationFn: (role: "broker" | "seller") =>
+      apiJson(
+        "PATCH",
+        `/api/deals/${dealId}`,
         role === "broker"
           ? { designApprovedByBroker: true }
-          : { designApprovedBySeller: true };
-      const r = await apiRequest("PATCH", `/api/deals/${dealId}`, data);
-      return r.json();
-    },
+          : { designApprovedBySeller: true },
+        "Couldn't record the approval",
+      ),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({ title: "Design approved" });
@@ -1987,6 +2179,10 @@ function Phase4Center() {
 ═══════════════════════════════════════════ */
 function DocumentTable() {
   const { dealId } = useDeal();
+  const { toast } = useToast();
+  // Deletion is permanent and the trash icon only appears on hover — always
+  // confirm before removing an uploaded financial document.
+  const [pendingDelete, setPendingDelete] = useState<DocType | null>(null);
 
   const { data: documents = [], error: docsError, refetch: refetchDocs } = useQuery<DocType[]>({
     queryKey: ["/api/deals", dealId, "documents"],
@@ -1998,12 +2194,20 @@ function DocumentTable() {
   });
 
   const deleteDoc = useMutation({
-    mutationFn: async (id: string) => {
-      await apiRequest("DELETE", `/api/documents/${id}`);
-    },
-    onSuccess: () =>
+    mutationFn: (doc: DocType) =>
+      apiJson("DELETE", `/api/documents/${doc.id}`, undefined, "Couldn't delete the document"),
+    onSuccess: (_, doc) => {
       queryClient.invalidateQueries({
         queryKey: ["/api/deals", dealId, "documents"],
+      });
+      setPendingDelete(null);
+      toast({ title: "Document deleted", description: doc.name });
+    },
+    onError: (e: Error) =>
+      toast({
+        title: "Delete failed",
+        description: e.message,
+        variant: "destructive",
       }),
   });
 
@@ -2063,8 +2267,10 @@ function DocumentTable() {
                 </td>
                 <td className="px-4 py-2.5">
                   <button
-                    onClick={() => deleteDoc.mutate(doc.id)}
-                    className="opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-destructive transition-all"
+                    onClick={() => setPendingDelete(doc)}
+                    className="opacity-0 group-hover:opacity-100 focus-visible:opacity-100 text-muted-foreground hover:text-destructive transition-all"
+                    aria-label={`Delete ${doc.name}`}
+                    data-testid={`button-delete-document-${doc.id}`}
                   >
                     <Trash2 className="h-3.5 w-3.5" />
                   </button>
@@ -2074,6 +2280,46 @@ function DocumentTable() {
           </tbody>
         </table>
       </div>
+
+      <AlertDialog
+        open={!!pendingDelete}
+        onOpenChange={(open) => {
+          if (!open && !deleteDoc.isPending) setPendingDelete(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete this document?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingDelete?.name
+                ? `"${pendingDelete.name}" and any data extracted from it will be permanently removed from this deal. This cannot be undone.`
+                : "This document will be permanently removed from this deal. This cannot be undone."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteDoc.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={deleteDoc.isPending}
+              onClick={(e) => {
+                // Keep the dialog open while the request runs so a failure
+                // can be shown in place.
+                e.preventDefault();
+                if (pendingDelete) deleteDoc.mutate(pendingDelete);
+              }}
+              data-testid="button-confirm-delete-document"
+            >
+              {deleteDoc.isPending ? (
+                <>
+                  <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" /> Deleting...
+                </>
+              ) : (
+                "Delete"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -2081,11 +2327,43 @@ function DocumentTable() {
 /* ═══════════════════════════════════════════
    OVERVIEW TAB — Phase accordion + documents
 ═══════════════════════════════════════════ */
-export function OverviewTab() {
+/** A request (from the DealShell header stepper) to open and scroll to a phase. */
+export interface PhaseFocus {
+  key: string;
+  /** Changes on every click so re-clicking the same phase re-scrolls. */
+  nonce: number;
+}
+
+export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } = {}) {
   const { deal, dealId } = useDeal();
   const [expandedPhases, setExpandedPhases] = useState<Set<string>>(
     new Set(),
   );
+  // Header stepper → expand the target phase, then scroll once it has
+  // rendered. Runs here (not on a timer in DealShell) so it also works when
+  // the click navigated from another tab and this component mounted later.
+  const pendingScrollRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!phaseFocus) return;
+    pendingScrollRef.current = phaseFocus.key;
+    setExpandedPhases((prev) => {
+      if (prev.has(phaseFocus.key)) return prev;
+      const next = new Set(prev);
+      next.add(phaseFocus.key);
+      return next;
+    });
+  }, [phaseFocus]);
+  useEffect(() => {
+    const key = pendingScrollRef.current;
+    if (!key) return;
+    // Wait for the card to actually be open (current phase is always open)
+    // so we scroll to the expanded content, not a collapsed header.
+    if (deal.phase !== key && !expandedPhases.has(key)) return;
+    const el = document.getElementById(`phase-section-${key}`);
+    if (!el) return;
+    pendingScrollRef.current = null;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
   // Set by the Calls tile to pop the shared upload dialog pre-configured.
   const [uploadSignal, setUploadSignal] = useState<{
     category: string;
@@ -2093,7 +2371,7 @@ export function OverviewTab() {
     nonce: number;
   } | null>(null);
 
-  const { data: invites = [] } = useInvites(dealId);
+  const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
 
   const phaseComponents: Record<string, React.ReactNode> = {
@@ -2118,7 +2396,11 @@ export function OverviewTab() {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
         const isExpanded = isCurrentPhase || expandedPhases.has(phase.key);
-        const items = phase.items(deal, { invited: invites.length > 0 });
+        // On a failed invites fetch, fall back to questionnaire evidence
+        // (phases.ts) rather than asserting "not invited".
+        const items = phase.items(deal, {
+          invited: invitesError ? undefined : invites.length > 0,
+        });
         const required = items.filter((i) => !i.optional);
         const doneCount = required.filter((i) => i.done).length;
 

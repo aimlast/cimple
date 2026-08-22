@@ -1,11 +1,26 @@
-import { useState } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PanelError } from "@/components/deal/PanelError";
 import type { FinancialAnalysis, Discrepancy } from "@shared/schema";
+
+/** apiRequest throws "<status>: <body>" — surface the server's own error message when the body is JSON. */
+function apiErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const body = raw.replace(/^\d{3}:\s*/, "");
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+    if (parsed && typeof parsed.message === "string") return parsed.message;
+  } catch {
+    /* not a JSON body */
+  }
+  return body || fallback;
+}
 
 import { FinancialOverview } from "@/components/financial/FinancialOverview";
 import { ReclassifiedTable } from "@/components/financial/ReclassifiedTable";
@@ -14,7 +29,7 @@ import { NormalizationPanel } from "@/components/financial/NormalizationPanel";
 import type { NormalizationData } from "@/components/financial/NormalizationPanel";
 import { WorkingCapitalPanel } from "@/components/financial/WorkingCapitalPanel";
 import type { WorkingCapitalData } from "@/components/financial/WorkingCapitalPanel";
-import { ClarifyingQuestions } from "@/components/financial/ClarifyingQuestions";
+import { ClarifyingQuestions, countPendingQuestions } from "@/components/financial/ClarifyingQuestions";
 import type { ClarifyingQuestion } from "@/components/financial/ClarifyingQuestions";
 import { InsightsPanel } from "@/components/financial/InsightsPanel";
 import type { InsightsData } from "@/components/financial/InsightsPanel";
@@ -54,10 +69,15 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
   const [tab, setTab] = useState("overview");
 
   // Fetch latest financial analysis; poll while a run is in progress
-  const { data: analysis, isLoading } = useQuery<FinancialAnalysis | null>({
+  const {
+    data: analysis,
+    isLoading,
+    error: analysisError,
+    refetch: refetchAnalysis,
+  } = useQuery<FinancialAnalysis | null>({
     queryKey: ["/api/deals", dealId, "financial-analysis"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/financial-analysis`);
+      const r = await fetch(`/api/deals/${dealId}/financial-analysis`, { credentials: "include" });
       if (r.status === 404) return null;
       if (!r.ok) throw new Error("Failed to fetch");
       return r.json();
@@ -66,16 +86,36 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       query.state.data?.status === "running" ? 4000 : false,
   });
 
+  const analysisStatus = analysis?.status;
+
   // Financial-analysis discrepancies (cross-source conflicts) — drives the
-  // routing banner. Shares the cache key with DiscrepancyPanel.
-  const { data: allDiscrepancies = [] } = useQuery<Discrepancy[]>({
+  // routing banner. Shares the cache key with DiscrepancyPanel. Polls while a
+  // run is in progress because the analyzer persists new rows mid-run.
+  const {
+    data: allDiscrepancies = [],
+    error: discError,
+    refetch: refetchDisc,
+  } = useQuery<Discrepancy[]>({
     queryKey: ["/api/deals", dealId, "discrepancies"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/discrepancies`);
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load discrepancies");
       return r.json();
     },
+    refetchInterval: analysisStatus === "running" ? 4000 : false,
   });
+
+  // When a run finishes (running → completed/failed), the analyzer has just
+  // written fresh discrepancies — refetch so the banner and tab badge reflect
+  // the new run instead of the pre-run state.
+  const prevStatusRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const prev = prevStatusRef.current;
+    if (prev === "running" && analysisStatus && analysisStatus !== "running") {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
+    }
+    prevStatusRef.current = analysisStatus;
+  }, [analysisStatus, dealId]);
   const finDiscrepancies = allDiscrepancies.filter(
     (d) => d.source === "financial_analysis" && d.status !== "superseded",
   );
@@ -92,10 +132,11 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
       toast({ title: "Analysis started", description: "Analyzing all documents, tax returns, and deal knowledge. This can take a couple of minutes." });
     },
-    onError: (err: Error) => {
-      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Could not start analysis", description: apiErrorMessage(err, "Failed to start financial analysis"), variant: "destructive" });
     },
   });
 
@@ -110,8 +151,33 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
       toast({ title: "Updated" });
     },
-    onError: (err: Error) => {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Update failed", description: apiErrorMessage(err, "Failed to update financial analysis"), variant: "destructive" });
+    },
+  });
+
+  // Route a clarifying question to the seller interview. Goes through the
+  // server so an ask_seller discrepancy is created — the interview knowledge
+  // base reads those; a local status flip would reach no one.
+  const routeToSeller = useMutation({
+    mutationFn: async (question: ClarifyingQuestion) => {
+      if (!analysis?.id) throw new Error("No analysis to update");
+      const r = await apiRequest(
+        "POST",
+        `/api/deals/${dealId}/financial-analysis/${analysis.id}/questions/${encodeURIComponent(question.id)}/route-to-seller`,
+      );
+      return r.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
+      toast({
+        title: "Routed to seller interview",
+        description: "The AI interview will raise this with the seller naturally and capture their answer.",
+      });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Could not route to seller", description: apiErrorMessage(err, "Failed to route question to the seller interview"), variant: "destructive" });
     },
   });
 
@@ -122,6 +188,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
   const wcData = analysis?.workingCapital as WorkingCapitalData | null;
   const questionsData = analysis?.clarifyingQuestions as ClarifyingQuestion[] | null;
   const insightsData = analysis?.insights as InsightsData | null;
+  // Same rule the Questions tab uses for its "Pending" group (includes routed
+  // questions the broker took back from the interview).
+  const pendingQuestionCount = countPendingQuestions(questionsData, allDiscrepancies);
 
   // Handlers for editable sub-components
   const handlePnlUpdate = (updated: ReclassifiedTableData) => {
@@ -148,6 +217,12 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
       </div>
     );
+  }
+
+  // A failed fetch must never look like "no analysis yet" — the CTA below
+  // would tempt the broker into starting a duplicate run.
+  if (analysisError) {
+    return <PanelError what="the financial analysis" onRetry={() => refetchAnalysis()} />;
   }
 
   // No analysis yet — show CTA
@@ -269,8 +344,21 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
         </div>
       )}
 
+      {/* Discrepancies failed to load — say so rather than silently showing "no discrepancies" */}
+      {discError && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-2.5 flex items-center gap-3">
+          <AlertTriangle className="h-4 w-4 text-amber-400 shrink-0" />
+          <p className="text-xs text-muted-foreground flex-1 min-w-0">
+            Couldn't load discrepancies. The routing summary and the Discrepancies tab count may be out of date.
+          </p>
+          <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => refetchDisc()}>
+            Retry
+          </Button>
+        </div>
+      )}
+
       {/* Discrepancy routing banner */}
-      {!isRunning && finDiscrepancies.length > 0 && (
+      {!isRunning && !discError && finDiscrepancies.length > 0 && (
         unrouted.length > 0 ? (
           <div className={`rounded-lg border px-4 py-3 flex items-center gap-3 ${
             unroutedCritical.length > 0
@@ -355,9 +443,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           </TabsTrigger>
           <TabsTrigger value="questions" className="text-xs gap-1.5 data-[state=active]:bg-background">
             <HelpCircle className="h-3 w-3" /> Questions
-            {questionsData && questionsData.filter(q => q.status === "pending").length > 0 && (
+            {pendingQuestionCount > 0 && (
               <span className="ml-1 h-4 min-w-[1rem] rounded-full bg-amber-500/20 text-amber-400 text-2xs font-medium flex items-center justify-center px-1">
-                {questionsData.filter(q => q.status === "pending").length}
+                {pendingQuestionCount}
               </span>
             )}
           </TabsTrigger>
@@ -413,6 +501,9 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
           <ClarifyingQuestions
             questions={questionsData}
             onUpdate={handleQuestionsUpdate}
+            onRouteToSeller={(q) => routeToSeller.mutate(q)}
+            routingQuestionId={routeToSeller.isPending ? routeToSeller.variables?.id ?? null : null}
+            discrepancies={allDiscrepancies}
           />
         </TabsContent>
 

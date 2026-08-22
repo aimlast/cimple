@@ -4,13 +4,17 @@ import { useLocation } from "wouter";
 import { useToast } from "@/hooks/use-toast";
 import {
   Mail, Database, Phone, Video, ArrowRight,
-  CheckCircle2, Circle, ExternalLink, Plug, X, Plus, Trash2,
-  FileText, Loader2,
+  CheckCircle2, Circle, Plug,
+  FileText, Loader2, AlertTriangle, RefreshCw,
 } from "lucide-react";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter,
   DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -159,9 +163,13 @@ function StatusBadge({ status }: { status: IntegrationStatus }) {
 function IntegrationCardComponent({
   card,
   onConnect,
+  onDisconnect,
+  disconnecting,
 }: {
   card: IntegrationCard;
   onConnect: (provider: string) => void;
+  onDisconnect: (card: IntegrationCard) => void;
+  disconnecting: boolean;
 }) {
   const Icon = card.icon;
   const [, navigate] = useLocation();
@@ -222,10 +230,12 @@ function IntegrationCardComponent({
         </button>
       ) : isConnected ? (
         <button
-          onClick={() => onConnect(card.provider)}
-          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors"
+          onClick={() => onDisconnect(card)}
+          disabled={disconnecting}
+          className="w-full py-2 px-3 rounded-lg text-xs font-medium bg-destructive/10 text-destructive hover:bg-destructive/20 transition-colors flex items-center justify-center gap-1.5 disabled:opacity-60 disabled:cursor-not-allowed"
         >
-          Disconnect
+          {disconnecting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+          {disconnecting ? "Disconnecting…" : "Disconnect"}
         </button>
       ) : (
         <button
@@ -244,16 +254,27 @@ export default function Integrations() {
   const { toast } = useToast();
   const [activeCategory, setActiveCategory] = useState<"all" | "email" | "crm" | "calls">("all");
 
-  const { data: connectedIntegrations = [] } = useQuery<any[]>({
+  const {
+    data: connectedIntegrations = [],
+    isLoading: integrationsLoading,
+    isError: integrationsIsError,
+    error: integrationsError,
+    refetch: refetchIntegrations,
+  } = useQuery<any[]>({
     queryKey: ["/api/integrations"],
     queryFn: async () => {
-      try {
-        const res = await fetch("/api/integrations");
-        if (!res.ok) return [];
-        return res.json();
-      } catch {
-        return [];
+      const res = await fetch("/api/integrations", { credentials: "include" });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        const err = new Error(
+          res.status === 401
+            ? "Your session has expired. Sign in again to see your connected tools."
+            : body.error || `Could not load integrations (${res.status}).`,
+        );
+        (err as any).status = res.status;
+        throw err;
       }
+      return res.json();
     },
   });
 
@@ -298,6 +319,40 @@ export default function Integrations() {
     },
   });
 
+  // Disconnect: confirmed via AlertDialog, errors surfaced via toast
+  const [disconnectTarget, setDisconnectTarget] = useState<IntegrationCard | null>(null);
+
+  const disconnectIntegration = useMutation({
+    mutationFn: async (integrationId: string) => {
+      const res = await fetch(`/api/integrations/${integrationId}`, {
+        method: "DELETE",
+        credentials: "include",
+      });
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || `Could not disconnect (${res.status}).`);
+      }
+      return body;
+    },
+    onSuccess: (_data, _id) => {
+      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
+      const name = disconnectTarget?.name ?? "Integration";
+      setDisconnectTarget(null);
+      toast({
+        title: `${name} disconnected`,
+        description: "Deal stages will no longer sync and buyer prefill is turned off.",
+      });
+    },
+    onError: (err) => {
+      setDisconnectTarget(null);
+      toast({
+        title: "Could not disconnect",
+        description: err instanceof Error ? err.message : "The server returned an error.",
+        variant: "destructive",
+      });
+    },
+  });
+
   // Providers that are genuinely not connectable yet. Gmail/Outlook stay here
   // until OAuth credentials exist — a live Connect button that always 501s
   // reads as a dead click, so they get the honest Coming Soon treatment.
@@ -318,14 +373,12 @@ export default function Integrations() {
 
   const filteredCards = activeCategory === "all" ? cards : cards.filter((c) => c.category === activeCategory);
 
-  const handleConnect = async (provider: string) => {
-    const existing = connectedIntegrations.find((i: any) => i.provider === provider && i.status === "connected");
-    if (existing) {
-      // Disconnect
-      await fetch(`/api/integrations/${existing.id}`, { method: "DELETE" });
-      queryClient.invalidateQueries({ queryKey: ["/api/integrations"] });
-      return;
-    }
+  // "Available" means connectable or usable today — Coming Soon cards are
+  // neither, so they must not inflate the count.
+  const availableCount = cards.filter((c) => c.status === "disconnected" || c.status === "available").length;
+  const comingSoonCount = cards.filter((c) => c.status === "coming_soon").length;
+
+  const handleConnect = (provider: string) => {
     // Pipedrive connects via an API token dialog — no OAuth round-trip needed.
     if (provider === "pipedrive") {
       setPipedriveToken("");
@@ -366,18 +419,56 @@ export default function Integrations() {
         {/* Stats bar */}
         <div className="flex items-center gap-6 mb-6 pb-6 border-b border-border">
           <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-4 w-4 text-success" />
+            {integrationsLoading ? (
+              <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+            ) : (
+              <CheckCircle2 className="h-4 w-4 text-success" />
+            )}
             <span className="text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">{connectedProviders.size}</span> connected
+              <span className="font-semibold text-foreground">
+                {integrationsLoading ? "…" : connectedProviders.size}
+              </span> connected
             </span>
           </div>
           <div className="flex items-center gap-2">
             <Circle className="h-4 w-4 text-muted-foreground/40" />
             <span className="text-sm text-muted-foreground">
-              <span className="font-semibold text-foreground">{INTEGRATION_CATALOG.length - connectedProviders.size}</span> available
+              <span className="font-semibold text-foreground">{availableCount}</span> available
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-sm text-muted-foreground">
+              <span className="font-semibold text-foreground">{comingSoonCount}</span> coming soon
             </span>
           </div>
         </div>
+
+        {/* Load error — connected status is unknown, so say so instead of
+            silently rendering every card as Not Connected. */}
+        {integrationsIsError && (
+          <div
+            role="alert"
+            className="mb-6 p-4 rounded-lg border border-destructive/30 bg-destructive/5 flex items-start gap-3"
+          >
+            <AlertTriangle className="h-4 w-4 text-destructive mt-0.5 shrink-0" />
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-foreground">Couldn't load your connected integrations</p>
+              <p className="text-xs text-muted-foreground mt-0.5 leading-relaxed">
+                {integrationsError instanceof Error ? integrationsError.message : "The server returned an error."}{" "}
+                Connection status shown below may be out of date.
+              </p>
+            </div>
+            {(integrationsError as any)?.status === 401 ? (
+              <Button size="sm" variant="outline" onClick={() => window.location.reload()}>
+                Sign in again
+              </Button>
+            ) : (
+              <Button size="sm" variant="outline" onClick={() => refetchIntegrations()}>
+                <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
+              </Button>
+            )}
+          </div>
+        )}
 
         {/* Category tabs */}
         <div className="flex items-center gap-1 mb-6">
@@ -422,6 +513,8 @@ export default function Integrations() {
               key={card.id}
               card={card}
               onConnect={handleConnect}
+              onDisconnect={(c) => setDisconnectTarget(c)}
+              disconnecting={disconnectIntegration.isPending && disconnectIntegration.variables === card.connectedId}
             />
           ))}
         </div>
@@ -537,6 +630,42 @@ export default function Integrations() {
           </form>
         </DialogContent>
       </Dialog>
+
+      {/* Disconnect confirmation */}
+      <AlertDialog
+        open={!!disconnectTarget}
+        onOpenChange={(open) => { if (!open && !disconnectIntegration.isPending) setDisconnectTarget(null); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Disconnect {disconnectTarget?.name ?? "this integration"}?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {disconnectTarget?.provider === "pipedrive"
+                ? "Deal stages will stop syncing to Pipedrive and buyer submissions will no longer prefill from your contacts. Deals already in progress keep their current data. You can reconnect at any time with your API token."
+                : "Cimple will stop reading data from this account. You can reconnect at any time."}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={disconnectIntegration.isPending}>Keep connected</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              disabled={disconnectIntegration.isPending || !disconnectTarget?.connectedId}
+              onClick={(e) => {
+                e.preventDefault();
+                if (disconnectTarget?.connectedId) disconnectIntegration.mutate(disconnectTarget.connectedId);
+              }}
+            >
+              {disconnectIntegration.isPending ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin mr-1.5" /> Disconnecting…
+                </>
+              ) : (
+                "Disconnect"
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

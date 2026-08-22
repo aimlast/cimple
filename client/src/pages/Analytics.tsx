@@ -16,19 +16,20 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Badge } from "@/components/ui/badge";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Progress } from "@/components/ui/progress";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip as RTooltip,
   ResponsiveContainer, Cell,
 } from "recharts";
 import {
   Eye, Clock, TrendingUp, Users, FileText, MousePointer,
-  BarChart3, Calendar, Scroll, Building, Flame, Activity,
-  FileSignature, MessageSquare, ExternalLink, UserCheck, ShieldCheck, Target,
+  BarChart3, Scroll, Building, Flame, Activity,
+  ExternalLink, UserCheck, ShieldCheck, Target, AlertTriangle, RotateCw,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
 import type { Deal, BuyerAccess } from "@shared/schema";
+import { queryClient } from "@/lib/queryClient";
+import { PanelError } from "@/components/deal/PanelError";
 import { BuyerComparison } from "@/components/deal/BuyerComparison";
 import { ActivityTimeline } from "@/components/deal/ActivityTimeline";
 
@@ -108,10 +109,12 @@ interface AnalyticsSummary {
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────
+// avgTimeSpent is a SQL AVG, so `s` can be fractional — round the seconds
+// remainder or the stat card prints "1m 23.4s".
 function fmt(s: number): string {
   if (!s) return "0s";
   if (s < 60) return `${Math.round(s)}s`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ${s % 60}s`;
+  if (s < 3600) return `${Math.floor(s / 60)}m ${Math.round(s % 60)}s`;
   return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m`;
 }
 
@@ -121,6 +124,46 @@ function fmtDate(d: string | Date | null): string {
 }
 
 const TEAL = "hsl(162 65% 38%)";
+
+/**
+ * Fetch JSON from a broker endpoint, surfacing the server's `{ error }`
+ * message. On 401 the cached auth check is invalidated so BrokerAuthGate
+ * re-renders the sign-in screen instead of this page showing zeros.
+ */
+async function fetchJson<T>(url: string, fallback: string): Promise<T> {
+  const res = await fetch(url, { credentials: "include" });
+  if (!res.ok) {
+    if (res.status === 401) {
+      queryClient.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
+      throw new Error("Your session has expired — please sign in again.");
+    }
+    let message = `${fallback} (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = String(data.error);
+    } catch {
+      // non-JSON error body
+    }
+    throw new Error(message);
+  }
+  return res.json();
+}
+
+/** Compact inline error row for places where the full PanelError is too tall. */
+function InlineError({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return (
+    <div
+      role="alert"
+      className="flex items-center gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs"
+    >
+      <AlertTriangle className="h-3.5 w-3.5 text-amber-500/80 shrink-0" />
+      <span className="flex-1 min-w-0 truncate">{message}</span>
+      <Button variant="outline" size="sm" className="h-6 text-[11px] gap-1" onClick={onRetry}>
+        <RotateCw className="h-3 w-3" /> Retry
+      </Button>
+    </div>
+  );
+}
 
 // ── Heat map cell ──────────────────────────────────────────────────────────
 function HeatMapViz({ heatGrid }: { heatGrid: HeatGrid }) {
@@ -139,7 +182,7 @@ function HeatMapViz({ heatGrid }: { heatGrid: HeatGrid }) {
 
   return (
     <div className="space-y-3">
-      <p className="text-xs text-muted-foreground">{total.toLocaleString()} mouse events recorded</p>
+      <p className="text-xs text-muted-foreground">{total.toLocaleString()} cursor samples recorded</p>
       <div
         className="w-full rounded-lg overflow-hidden border border-border"
         style={{ aspectRatio: `${cols / rows}` }}
@@ -288,18 +331,17 @@ export default function Analytics() {
   // auto-default below never fights a manual choice.
   const userPickedDeal = useRef(false);
 
-  const { data: deals, isLoading: dealsLoading } = useQuery<Deal[]>({
+  const {
+    data: deals, isLoading: dealsLoading, isError: dealsError, refetch: refetchDeals,
+  } = useQuery<Deal[]>({
     queryKey: ["/api/deals"],
+    queryFn: () => fetchJson<Deal[]>("/api/deals", "Couldn't load your deals"),
   });
 
   // Same query DealsComparisonTable uses — React Query dedupes the fetch.
   const { data: comparison } = useQuery<DealComparison[]>({
     queryKey: ["/api/analytics/deals-comparison"],
-    queryFn: async () => {
-      const res = await fetch("/api/analytics/deals-comparison");
-      if (!res.ok) throw new Error();
-      return res.json();
-    },
+    queryFn: () => fetchJson<DealComparison[]>("/api/analytics/deals-comparison", "Couldn't load deal comparison"),
   });
 
   // Default to the most-viewed deal so the per-deal tabs (Buyer Activity,
@@ -321,30 +363,37 @@ export default function Analytics() {
     }
   }, [selectedDealId, activeTab]);
 
-  const { data: summary, isLoading: summaryLoading } = useQuery<AnalyticsSummary>({
+  const {
+    data: summary, isLoading: summaryLoading, isError: summaryError,
+    error: summaryErr, refetch: refetchSummary,
+  } = useQuery<AnalyticsSummary>({
     queryKey: ["/api/analytics/summary", selectedDealId],
-    queryFn: async () => {
+    queryFn: () => {
       const url = selectedDealId === "all"
         ? "/api/analytics/summary"
         : `/api/analytics/summary?dealId=${selectedDealId}`;
-      const res = await fetch(url);
-      if (!res.ok) throw new Error();
-      return res.json();
+      return fetchJson<AnalyticsSummary>(url, "Couldn't load engagement summary");
     },
   });
 
-  const { data: computed, isLoading: computedLoading } = useQuery<ComputedAnalytics>({
+  const {
+    data: computed, isLoading: computedLoading, isError: computedError, refetch: refetchComputed,
+  } = useQuery<ComputedAnalytics>({
     queryKey: ["/api/deals", selectedDealId, "analytics/computed"],
     enabled: selectedDealId !== "all",
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${selectedDealId}/analytics/computed`);
-      if (!res.ok) throw new Error();
-      return res.json();
-    },
+    queryFn: () => fetchJson<ComputedAnalytics>(
+      `/api/deals/${selectedDealId}/analytics/computed`,
+      "Couldn't load deal analytics",
+    ),
   });
 
   const selectedDeal = deals?.find(d => d.id === selectedDealId);
   const isLoading = dealsLoading || summaryLoading;
+  // Per-deal tabs share one query; this renders the same distinct error state
+  // in each so a failed request never masquerades as "no data yet".
+  const computedErrorState = (what: string) => (
+    <PanelError what={what} onRetry={() => refetchComputed()} />
+  );
 
   // Recent views chart data from summary
   const recentViews = summary?.recentViews ?? [];
@@ -384,6 +433,13 @@ export default function Analytics() {
         </div>
       </div>
 
+      {dealsError && (
+        <InlineError
+          message="Couldn't load your deals list — the CIM picker above may be incomplete."
+          onRetry={() => refetchDeals()}
+        />
+      )}
+
       {/* Deal banner */}
       {selectedDeal && (
         <Card className="bg-muted/20">
@@ -396,23 +452,29 @@ export default function Analytics() {
               </p>
             </div>
             <Badge variant="outline" className="shrink-0 text-xs">
-              {computed?.buyerBreakdown.length ?? 0} buyers
+              {computed ? `${computed.buyerBreakdown.length} buyers` : computedError ? "buyers: unavailable" : "…"}
             </Badge>
           </CardContent>
         </Card>
       )}
 
       {/* ── Stat cards ────────────────────────────────────────────────────── */}
+      {summaryError && (
+        <InlineError
+          message={(summaryErr as Error | null)?.message || "Couldn't load engagement summary"}
+          onRetry={() => refetchSummary()}
+        />
+      )}
       <div className="grid gap-4 grid-cols-2 lg:grid-cols-4">
         {(
           [
-            { label: "Total Views", value: summary?.totalViews ?? 0, icon: Eye, sub: "Document opens" },
-            { label: "Unique Buyers", value: summary?.uniqueBuyers ?? 0, icon: Users, sub: "Who viewed the CIM" },
-            { label: "Avg. Time", value: fmt(summary?.avgTimeSpent ?? 0), icon: Clock, sub: "Per session" },
-            { label: "Total Time", value: fmt(summary?.totalTimeSpent ?? 0), icon: TrendingUp, sub: "All sessions" },
+            { label: "Total Views", value: summary?.totalViews ?? 0, icon: Eye, sub: "CIM opens (one per visit)" },
+            { label: "Unique Buyers", value: summary?.uniqueBuyers ?? 0, icon: Users, sub: "Distinct buyers who opened it" },
+            { label: "Avg. Time", value: fmt(summary?.avgTimeSpent ?? 0), icon: Clock, sub: "Per section read" },
+            { label: "Total Time", value: fmt(summary?.totalTimeSpent ?? 0), icon: TrendingUp, sub: "Across all section reads" },
           ] as const
         ).map(({ label, value, icon: Icon, sub }) => (
-          <Card key={label}>
+          <Card key={label} className={summaryError ? "border-amber-500/30" : undefined}>
             <CardHeader className="flex flex-row items-center justify-between pb-1 pt-4 px-4">
               <CardTitle className="text-xs font-medium text-muted-foreground">{label}</CardTitle>
               <Icon className="h-4 w-4 text-muted-foreground/40" />
@@ -420,9 +482,11 @@ export default function Analytics() {
             <CardContent className="px-4 pb-4">
               {isLoading
                 ? <Skeleton className="h-8 w-20" />
-                : <div className="text-3xl font-bold tabular-nums leading-none">{value}</div>
+                : summaryError
+                  ? <div className="text-3xl font-bold tabular-nums leading-none text-muted-foreground/40" title="Unavailable — the summary failed to load">—</div>
+                  : <div className="text-3xl font-bold tabular-nums leading-none">{value}</div>
               }
-              <p className="text-xs text-muted-foreground mt-1">{sub}</p>
+              <p className="text-xs text-muted-foreground mt-1">{summaryError ? "Unavailable" : sub}</p>
             </CardContent>
           </Card>
         ))}
@@ -466,7 +530,11 @@ export default function Analytics() {
               <CardTitle className="text-sm">Views — Last 30 days</CardTitle>
             </CardHeader>
             <CardContent>
-              {recentViews.length > 0 ? (
+              {summaryLoading ? (
+                <Skeleton className="h-28 w-full" />
+              ) : summaryError ? (
+                <PanelError what="the views chart" onRetry={() => refetchSummary()} />
+              ) : recentViews.length > 0 ? (
                 <>
                   <div className="flex items-end gap-0.5 h-28">
                     {recentViews.map((day, i) => {
@@ -497,6 +565,7 @@ export default function Analytics() {
             </CardContent>
           </Card>
 
+          {selectedDealId !== "all" && computedError && computedErrorState("qualified interest")}
           {selectedDealId !== "all" && computed && (
             <QualifiedInterestCard buyers={computed.buyerBreakdown} />
           )}
@@ -515,11 +584,13 @@ export default function Analytics() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Per-buyer breakdown</CardTitle>
-              <CardDescription>Time spent, sections reached, scroll depth, questions asked</CardDescription>
+              <CardDescription>Time in sections, distinct sections opened, deepest scroll, and questions asked</CardDescription>
             </CardHeader>
             <CardContent className="p-0">
               {computedLoading ? (
                 <div className="p-6 space-y-3">{[...Array(3)].map((_, i) => <Skeleton key={i} className="h-10" />)}</div>
+              ) : computedError ? (
+                <div className="p-6">{computedErrorState("buyer activity")}</div>
               ) : (computed?.buyerBreakdown.length ?? 0) === 0 ? (
                 <div className="py-12 text-center">
                   <Users className="h-8 w-8 mx-auto mb-3 opacity-20" />
@@ -639,11 +710,15 @@ export default function Analytics() {
           <Card>
             <CardHeader>
               <CardTitle className="text-sm">Section engagement — avg time spent</CardTitle>
-              <CardDescription>Based on section_exit events. Longer bars = buyers read more carefully.</CardDescription>
+              <CardDescription>
+                Average time per read, measured when a buyer leaves a section. Buyer counts are unique buyers, not visits. Longer bars = read more carefully.
+              </CardDescription>
             </CardHeader>
             <CardContent>
               {computedLoading ? (
                 <div className="space-y-3">{[...Array(6)].map((_, i) => <Skeleton key={i} className="h-8" />)}</div>
+              ) : computedError ? (
+                computedErrorState("section engagement")
               ) : (computed?.sectionEngagement.length ?? 0) === 0 ? (
                 <div className="py-12 text-center">
                   <FileText className="h-8 w-8 mx-auto mb-3 opacity-20" />
@@ -662,7 +737,7 @@ export default function Analytics() {
                             {s.sectionKey.replace(/([A-Z])/g, " $1").replace(/_/g, " ")}
                           </span>
                           <span className="text-muted-foreground tabular-nums">
-                            {fmt(s.avgSeconds)} avg · {s.viewerCount} viewers
+                            {fmt(s.avgSeconds)} avg · {s.viewerCount} {s.viewerCount === 1 ? "buyer" : "buyers"}
                           </span>
                         </div>
                         <div className="h-2 bg-muted rounded-full overflow-hidden">
@@ -689,13 +764,15 @@ export default function Analytics() {
                 Mouse heat map
               </CardTitle>
               <CardDescription>
-                Aggregate of where buyers move their cursor. Bright areas = high attention.
+                Aggregate of sampled cursor positions across every buyer visit. Bright areas = high attention.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {computedLoading
                 ? <Skeleton className="w-full h-48" />
-                : <HeatMapViz heatGrid={computed?.heatGrid ?? { grid: [], cols: 20, rows: 10, total: 0 }} />
+                : computedError
+                  ? computedErrorState("the heat map")
+                  : <HeatMapViz heatGrid={computed?.heatGrid ?? { grid: [], cols: 20, rows: 10, total: 0 }} />
               }
             </CardContent>
           </Card>
@@ -710,12 +787,14 @@ export default function Analytics() {
                 Scroll depth distribution
               </CardTitle>
               <CardDescription>
-                How far into the CIM buyers scroll. Drop-off is where bars get shorter.
+                Scroll checkpoints recorded as buyers move through the CIM, grouped by depth. Drop-off is where bars get shorter.
               </CardDescription>
             </CardHeader>
             <CardContent>
               {computedLoading ? (
                 <Skeleton className="w-full h-48" />
+              ) : computedError ? (
+                computedErrorState("scroll depth")
               ) : (computed?.scrollDistribution.some(d => d.count > 0)) ? (
                 <ResponsiveContainer width="100%" height={200}>
                   <BarChart data={computed!.scrollDistribution} barSize={20}>
@@ -728,8 +807,8 @@ export default function Analytics() {
                     />
                     <YAxis hide />
                     <RTooltip
-                      formatter={(v: number) => [v, "sessions"]}
-                      labelFormatter={l => `At ${l}% scroll`}
+                      formatter={(v: number) => [v, "scroll checkpoints"]}
+                      labelFormatter={l => `At ${l}% depth`}
                       contentStyle={{ fontSize: 12, borderRadius: 6 }}
                     />
                     <Bar dataKey="count" radius={[3, 3, 0, 0]}>
@@ -757,7 +836,7 @@ export default function Analytics() {
                 return (
                   <p className="text-xs text-muted-foreground mt-3">
                     {total > 0
-                      ? `${Math.round((reached75 / total) * 100)}% of sessions reached 75% scroll depth`
+                      ? `${Math.round((reached75 / total) * 100)}% of scroll checkpoints were recorded at 75% depth or deeper`
                       : ""}
                   </p>
                 );
@@ -793,7 +872,7 @@ export default function Analytics() {
                 Activity timeline
               </CardTitle>
               <CardDescription>
-                Chronological feed of buyer actions — who viewed what, when.
+                Chronological feed of buyer actions — CIM opens, NDA signatures, section reads, scroll milestones, and questions asked.
               </CardDescription>
             </CardHeader>
             <CardContent>
@@ -824,13 +903,9 @@ interface DealComparison {
 
 function DealsComparisonTable() {
   const [, setLocation] = useLocation();
-  const { data: deals, isLoading } = useQuery<DealComparison[]>({
+  const { data: deals, isLoading, isError, refetch } = useQuery<DealComparison[]>({
     queryKey: ["/api/analytics/deals-comparison"],
-    queryFn: async () => {
-      const res = await fetch("/api/analytics/deals-comparison");
-      if (!res.ok) throw new Error();
-      return res.json();
-    },
+    queryFn: () => fetchJson<DealComparison[]>("/api/analytics/deals-comparison", "Couldn't load deal comparison"),
   });
 
   if (isLoading) {
@@ -838,6 +913,17 @@ function DealsComparisonTable() {
       <Card>
         <CardContent className="p-6 space-y-3">
           {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-12" />)}
+        </CardContent>
+      </Card>
+    );
+  }
+
+  // Distinct from the "no deals with activity yet" empty state below.
+  if (isError) {
+    return (
+      <Card>
+        <CardContent className="p-4">
+          <PanelError what="the deal comparison" onRetry={() => refetch()} />
         </CardContent>
       </Card>
     );

@@ -1,13 +1,11 @@
 import { useState } from "react";
-import { Link, useLocation } from "wouter";
-import { useQuery, useMutation } from "@tanstack/react-query";
-import { Plus, Search, ArrowRight, Clock, AlertCircle, CheckCircle2, Zap, Radio } from "lucide-react";
+import { Link, useLocation, useSearch } from "wouter";
+import { useQuery } from "@tanstack/react-query";
+import {
+  Plus, Search, ArrowRight, Clock, AlertCircle, CheckCircle2, Zap, Radio, X, RefreshCw, Building2,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
 import { formatDistanceToNow } from "date-fns";
 import type { Deal } from "@shared/schema";
 
@@ -22,9 +20,25 @@ const PHASES = [
 /* ─── Derive deal urgency + contextual line ─── */
 type DealUrgency = "action" | "progress" | "waiting" | "live";
 
-function getDealMeta(deal: Deal): { urgency: DealUrgency; statusLine: string; ctaLabel: string } {
+/**
+ * CTA labels use navigation phrasing ("Open to publish") and each one links
+ * to the surface where that action actually lives — the card never pretends
+ * to perform the action itself.
+ */
+interface DealMeta {
+  urgency: DealUrgency;
+  statusLine: string;
+  cta: { label: string; href: string };
+}
+
+function getDealMeta(deal: Deal): DealMeta {
+  const overview = `/deal/${deal.id}/overview`;
+  const designer = `/deal/${deal.id}/design`;
+  const interview = `/deal/${deal.id}/interview`;
+  const buyers = `/deal/${deal.id}/buyers`;
+
   if (deal.isLive) {
-    return { urgency: "live", statusLine: "Live — shared with buyers", ctaLabel: "View CIM" };
+    return { urgency: "live", statusLine: "Live — shared with buyers", cta: { label: "Open buyers", href: buyers } };
   }
   const lastActivity = deal.updatedAt
     ? formatDistanceToNow(new Date(deal.updatedAt), { addSuffix: true })
@@ -32,44 +46,41 @@ function getDealMeta(deal: Deal): { urgency: DealUrgency; statusLine: string; ct
 
   switch (deal.phase) {
     case "phase1_info_collection": {
-      if (!deal.ndaSigned) return { urgency: "action",   statusLine: "NDA not yet signed",                         ctaLabel: "Open Deal" };
-      if (!deal.sqCompleted) return { urgency: "waiting", statusLine: `Awaiting questionnaire · ${lastActivity}`,  ctaLabel: "Open Deal" };
-      if (!deal.valuationCompleted) return { urgency: "action", statusLine: "Valuation pending",                   ctaLabel: "Open Deal" };
-      return { urgency: "action", statusLine: "Phase 1 complete — advance to intake",                              ctaLabel: "Advance"   };
+      if (!deal.ndaSigned) return { urgency: "action",   statusLine: "NDA not yet signed",                        cta: { label: "Open deal", href: overview } };
+      if (!deal.sqCompleted) return { urgency: "waiting", statusLine: `Awaiting questionnaire · ${lastActivity}`, cta: { label: "Open deal", href: overview } };
+      if (!deal.valuationCompleted) return { urgency: "action", statusLine: "Valuation pending",                  cta: { label: "Open deal", href: overview } };
+      return { urgency: "action", statusLine: "Phase 1 complete — advance to intake",                             cta: { label: "Open to advance", href: overview } };
     }
     case "phase2_platform_intake": {
-      if (!deal.interviewCompleted) return { urgency: "action",   statusLine: "AI interview not started",          ctaLabel: "Start Interview" };
-      return { urgency: "progress", statusLine: `Interview complete · ${lastActivity}`,                            ctaLabel: "Open Deal" };
+      if (!deal.interviewCompleted) return { urgency: "action",   statusLine: "AI interview not started",         cta: { label: "Start interview", href: interview } };
+      return { urgency: "progress", statusLine: `Interview complete · ${lastActivity}`,                           cta: { label: "Open deal", href: overview } };
     }
     case "phase3_content_creation": {
-      if (!deal.cimContent) return { urgency: "action",           statusLine: "CIM content not yet generated",     ctaLabel: "Generate Content" };
-      if (!deal.contentApprovedByBroker) return { urgency: "action", statusLine: "Awaiting your review",           ctaLabel: "Review CIM" };
-      if (!deal.contentApprovedBySeller) return { urgency: "waiting", statusLine: `Awaiting seller approval · ${lastActivity}`, ctaLabel: "Open Deal" };
-      return { urgency: "progress", statusLine: "Content approved — ready for design",                             ctaLabel: "Open Deal" };
+      if (!deal.cimContent) return { urgency: "action",           statusLine: "CIM content not yet generated",    cta: { label: "Open to generate", href: overview } };
+      if (!deal.contentApprovedByBroker) return { urgency: "action", statusLine: "Awaiting your review",          cta: { label: "Open to review", href: overview } };
+      if (!deal.contentApprovedBySeller) return { urgency: "waiting", statusLine: `Awaiting seller approval · ${lastActivity}`, cta: { label: "Open deal", href: overview } };
+      return { urgency: "progress", statusLine: "Content approved — ready for design",                            cta: { label: "Open designer", href: designer } };
     }
     case "phase4_design_finalization": {
-      if (!deal.designApprovedByBroker) return { urgency: "action",  statusLine: "Design needs your approval",     ctaLabel: "Review Design" };
-      if (!deal.designApprovedBySeller) return { urgency: "waiting", statusLine: "Awaiting seller sign-off",       ctaLabel: "Open Deal" };
-      return { urgency: "action", statusLine: "Ready to publish live",                                             ctaLabel: "Publish CIM" };
+      if (!deal.designApprovedByBroker) return { urgency: "action",  statusLine: "Design needs your approval",    cta: { label: "Open designer", href: designer } };
+      if (!deal.designApprovedBySeller) return { urgency: "waiting", statusLine: "Awaiting seller sign-off",      cta: { label: "Open deal", href: overview } };
+      return { urgency: "action", statusLine: "Ready to publish live",                                            cta: { label: "Open to publish", href: overview } };
     }
     default:
-      return { urgency: "waiting", statusLine: `Updated ${lastActivity}`, ctaLabel: "Open Deal" };
+      return { urgency: "waiting", statusLine: `Updated ${lastActivity}`, cta: { label: "Open deal", href: overview } };
   }
 }
 
 /* ─── Deal card ─── */
 function DealCard({ deal }: { deal: Deal }) {
   const [, setLocation] = useLocation();
-  const { urgency, statusLine, ctaLabel } = getDealMeta(deal);
+  const { urgency, statusLine, cta } = getDealMeta(deal);
   const phase = PHASES.find(p => p.key === deal.phase);
 
   const handleCTA = (e: React.MouseEvent) => {
     e.preventDefault();
-    if (ctaLabel === "Start Interview") {
-      setLocation(`/deal/${deal.id}/interview`);
-    } else {
-      setLocation(`/deal/${deal.id}`);
-    }
+    e.stopPropagation();
+    setLocation(cta.href);
   };
 
   /* Status line colour — teal for action, muted otherwise */
@@ -129,6 +140,7 @@ function DealCard({ deal }: { deal: Deal }) {
           className={`
             shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md
             translate-x-1 opacity-0 group-hover:translate-x-0 group-hover:opacity-100
+            focus-visible:translate-x-0 focus-visible:opacity-100
             transition-all duration-150
             ${urgency === "action" || urgency === "live"
               ? "bg-teal/10 text-teal hover:bg-teal/15"
@@ -137,7 +149,7 @@ function DealCard({ deal }: { deal: Deal }) {
           `}
           data-testid={`deal-cta-${deal.id}`}
         >
-          {ctaLabel}
+          {cta.label}
           <ArrowRight className="h-3 w-3" />
         </button>
       </div>
@@ -165,14 +177,23 @@ function DealGroup({ label, icon, deals }: { label: string; icon: React.ReactNod
 export default function ActiveCIMs() {
   const [search, setSearch] = useState("");
   const [, setLocation] = useLocation();
-  const { toast } = useToast();
 
-  const { data: deals = [], isLoading } = useQuery<Deal[]>({ queryKey: ["/api/deals"] });
+  // `?phase=` comes from the dashboard pipeline cells (and the stat cells
+  // below). Only known phase keys are honored; anything else is ignored.
+  const searchString = useSearch();
+  const requestedPhase = new URLSearchParams(searchString).get("phase");
+  const phaseFilter = PHASES.find(p => p.key === requestedPhase) ?? null;
+  const setPhaseFilter = (key: string | null) =>
+    setLocation(key ? `/broker/deals?phase=${encodeURIComponent(key)}` : "/broker/deals", { replace: true });
 
-  const filteredDeals = deals.filter(d =>
-    d.businessName.toLowerCase().includes(search.toLowerCase()) ||
-    d.industry?.toLowerCase().includes(search.toLowerCase())
-  );
+  const { data: deals = [], isLoading, error, refetch, isFetching } = useQuery<Deal[]>({ queryKey: ["/api/deals"] });
+
+  const filteredDeals = deals.filter(d => {
+    if (phaseFilter && d.phase !== phaseFilter.key) return false;
+    const q = search.toLowerCase();
+    if (!q) return true;
+    return d.businessName.toLowerCase().includes(q) || (d.industry?.toLowerCase().includes(q) ?? false);
+  });
 
   const actionDeals   = filteredDeals.filter(d => getDealMeta(d).urgency === "action");
   const progressDeals = filteredDeals.filter(d => getDealMeta(d).urgency === "progress");
@@ -185,6 +206,7 @@ export default function ActiveCIMs() {
   }));
   const liveCount  = deals.filter(d => d.isLive).length;
   const totalDeals = deals.length;
+  const isFiltering = !!search || !!phaseFilter;
 
   return (
     <div className="flex flex-col h-full min-h-screen">
@@ -215,22 +237,34 @@ export default function ActiveCIMs() {
           </div>
         </div>
 
-        {/* Pipeline stats */}
+        {/* Pipeline stats — clicking a phase filters the list */}
         <div className="flex items-end gap-0 overflow-x-auto">
-          {phaseCounts.map((p, i) => (
-            <div
-              key={p.key}
-              className="flex flex-col shrink-0 pr-6 mr-6 border-r border-border last:border-0 last:mr-0"
-            >
-              <span className="text-[10px] font-semibold text-muted-foreground/60 uppercase tracking-[0.1em] mb-1">
-                {p.short}
-              </span>
-              <span className="text-3xl font-bold tabular-nums leading-none text-foreground">
-                {p.count}
-              </span>
-              <span className="text-[11px] text-muted-foreground/60 mt-1.5">{p.label}</span>
-            </div>
-          ))}
+          {phaseCounts.map((p) => {
+            const active = phaseFilter?.key === p.key;
+            return (
+              <button
+                key={p.key}
+                type="button"
+                onClick={() => setPhaseFilter(active ? null : p.key)}
+                aria-pressed={active}
+                title={active ? "Clear phase filter" : `Show only ${p.short} deals`}
+                className={`
+                  flex flex-col items-start shrink-0 pr-6 mr-6 border-r border-border last:border-0 last:mr-0
+                  text-left rounded-sm transition-colors
+                  ${active ? "" : "hover:opacity-80"}
+                `}
+                data-testid={`stat-phase-${p.key}`}
+              >
+                <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 ${active ? "text-teal" : "text-muted-foreground/60"}`}>
+                  {p.short}
+                </span>
+                <span className={`text-3xl font-bold tabular-nums leading-none ${active ? "text-teal" : "text-foreground"}`}>
+                  {p.count}
+                </span>
+                <span className="text-[11px] text-muted-foreground/60 mt-1.5">{p.label}</span>
+              </button>
+            );
+          })}
 
           {/* Divider */}
           <div className="w-px self-stretch bg-border mx-2 shrink-0" />
@@ -249,8 +283,8 @@ export default function ActiveCIMs() {
       </div>
 
       {/* ── Search & filter bar ── */}
-      <div className="px-6 py-3 border-b border-border flex items-center gap-3">
-        <div className="relative flex-1 max-w-sm">
+      <div className="px-6 py-3 border-b border-border flex items-center gap-3 flex-wrap">
+        <div className="relative flex-1 max-w-sm min-w-[200px]">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
           <Input
             placeholder="Search deals..."
@@ -260,8 +294,22 @@ export default function ActiveCIMs() {
             data-testid="input-search"
           />
         </div>
-        {/* Result count when searching */}
-        {search && (
+
+        {/* Active phase filter chip — clearable */}
+        {phaseFilter && (
+          <button
+            type="button"
+            onClick={() => setPhaseFilter(null)}
+            className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-1.5 rounded-full bg-teal/10 text-teal text-xs font-medium hover:bg-teal/15 transition-colors"
+            data-testid="chip-phase-filter"
+          >
+            {phaseFilter.short} · {phaseFilter.label}
+            <X className="h-3 w-3" />
+          </button>
+        )}
+
+        {/* Result count when filtering */}
+        {isFiltering && !isLoading && !error && (
           <span className="text-xs text-muted-foreground shrink-0">
             {filteredDeals.length} result{filteredDeals.length !== 1 ? "s" : ""}
           </span>
@@ -276,8 +324,19 @@ export default function ActiveCIMs() {
               <div key={i} className="h-[58px] rounded-sm bg-muted/40 animate-pulse" />
             ))}
           </div>
+        ) : error ? (
+          <ErrorState
+            message={error instanceof Error ? error.message : undefined}
+            retrying={isFetching}
+            onRetry={() => refetch()}
+          />
         ) : filteredDeals.length === 0 ? (
-          <EmptyState searching={!!search} onNewDeal={() => setLocation("/broker/new-deal")} />
+          <EmptyState
+            searching={!!search}
+            phaseLabel={phaseFilter ? `${phaseFilter.short} · ${phaseFilter.label}` : null}
+            onClearPhase={() => setPhaseFilter(null)}
+            onNewDeal={() => setLocation("/broker/new-deal")}
+          />
         ) : (
           <div>
             {actionDeals.length > 0 && (
@@ -311,28 +370,72 @@ export default function ActiveCIMs() {
           </div>
         )}
       </div>
+    </div>
+  );
+}
 
-      {/* ── Invite seller dialog ── */}
+/* ─── Error state — distinct from "no deals" ─── */
+function ErrorState({ message, retrying, onRetry }: { message?: string; retrying: boolean; onRetry: () => void }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center px-6" role="alert" data-testid="deals-error">
+      <div className="h-11 w-11 rounded-xl bg-destructive/10 border border-destructive/20 flex items-center justify-center mb-4">
+        <AlertCircle className="h-5 w-5 text-destructive" />
+      </div>
+      <p className="text-sm font-medium text-foreground mb-1">Couldn't load your deals</p>
+      <p className="text-xs text-muted-foreground max-w-[280px]">
+        {message || "The server didn't respond. Check your connection and try again."}
+      </p>
+      <Button
+        size="sm"
+        variant="outline"
+        onClick={onRetry}
+        disabled={retrying}
+        className="mt-5"
+        data-testid="button-retry-deals"
+      >
+        <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? "animate-spin" : ""}`} />
+        {retrying ? "Retrying..." : "Retry"}
+      </Button>
     </div>
   );
 }
 
 /* ─── Empty state ─── */
-function EmptyState({ searching, onNewDeal }: { searching: boolean; onNewDeal: () => void }) {
+function EmptyState({
+  searching,
+  phaseLabel,
+  onClearPhase,
+  onNewDeal,
+}: {
+  searching: boolean;
+  phaseLabel: string | null;
+  onClearPhase: () => void;
+  onNewDeal: () => void;
+}) {
+  const filtering = searching || !!phaseLabel;
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center px-6">
       <div className="h-11 w-11 rounded-xl bg-teal/8 border border-teal/15 flex items-center justify-center mb-4">
         <Building2 className="h-5 w-5 text-teal/50" />
       </div>
       <p className="text-sm font-medium text-foreground mb-1">
-        {searching ? "No matching deals" : "No deals yet"}
+        {phaseLabel && !searching
+          ? `No deals in ${phaseLabel}`
+          : filtering ? "No matching deals" : "No deals yet"}
       </p>
-      <p className="text-xs text-muted-foreground max-w-[220px]">
-        {searching
-          ? "Try a different search term"
-          : "Create your first deal to start the CIM process"}
+      <p className="text-xs text-muted-foreground max-w-[240px]">
+        {phaseLabel && !searching
+          ? "Nothing is sitting in this phase right now."
+          : filtering
+            ? "Try a different search term or clear the filter."
+            : "Create your first deal to start the CIM process"}
       </p>
-      {!searching && (
+      {phaseLabel ? (
+        <Button size="sm" variant="outline" onClick={onClearPhase} className="mt-5" data-testid="button-clear-phase-filter">
+          <X className="h-3.5 w-3.5 mr-1.5" />
+          Show all deals
+        </Button>
+      ) : !searching ? (
         <Button
           size="sm"
           onClick={onNewDeal}
@@ -341,9 +444,7 @@ function EmptyState({ searching, onNewDeal }: { searching: boolean; onNewDeal: (
           <Plus className="h-3.5 w-3.5 mr-1.5" />
           New Deal
         </Button>
-      )}
+      ) : null}
     </div>
   );
 }
-
-import { Building2 } from "lucide-react";

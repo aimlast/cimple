@@ -25,6 +25,12 @@ import {
 import { Checkbox } from "@/components/ui/checkbox";
 import { Label } from "@/components/ui/label";
 import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { PanelError } from "@/components/deal/PanelError";
+import { useToast } from "@/hooks/use-toast";
+import {
   UserPlus, Loader2, Search, Building2, Mail, Phone, Shield,
   CheckCircle2, XCircle, Clock, Users, AlertCircle, Sparkles,
 } from "lucide-react";
@@ -32,13 +38,22 @@ import {
 interface BuyerCategory { value: string; label: string; description: string; riskLevel: string }
 interface BuyerSearchResult { id: string; name: string; email?: string; phone?: string; company?: string; source: string }
 // Existing buyer accounts on the platform — returned by /api/buyer-users/search
+// as { results: [...] } (see server/routes.ts). `title` is not part of that
+// payload today, so it's optional here.
 interface ExistingBuyerAccount {
   id: string;
   name: string;
   email: string;
   company: string | null;
-  title: string | null;
+  phone?: string | null;
+  title?: string | null;
   profileCompletionPct: number;
+}
+
+/** Read the server's JSON error body, falling back to a readable default. */
+async function readError(res: Response, fallback: string): Promise<string> {
+  const body = await res.json().catch(() => null);
+  return (body && typeof body.error === "string" && body.error) || fallback;
 }
 
 interface ApprovalRequest {
@@ -75,11 +90,11 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
   const [submitOpen, setSubmitOpen] = useState(false);
   const [reviewing, setReviewing] = useState<ApprovalRequest | null>(null);
 
-  const { data: requests = [], isLoading } = useQuery<ApprovalRequest[]>({
+  const { data: requests = [], isLoading, error: loadError, refetch } = useQuery<ApprovalRequest[]>({
     queryKey: [`/api/deals/${dealId}/buyer-approvals`],
     queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/buyer-approvals`);
-      if (!res.ok) throw new Error("Failed to load approvals");
+      const res = await fetch(`/api/deals/${dealId}/buyer-approvals`, { credentials: "include" });
+      if (!res.ok) throw new Error(await readError(res, "Failed to load approvals"));
       return res.json();
     },
   });
@@ -107,6 +122,8 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
         <div className="flex justify-center py-8">
           <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
         </div>
+      ) : loadError ? (
+        <PanelError what="buyer approvals" onRetry={() => refetch()} />
       ) : requests.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
@@ -262,6 +279,7 @@ function SubmitDialog({
   onClose: () => void;
   onSubmitted: () => void;
 }) {
+  const { toast } = useToast();
   const [form, setForm] = useState<FormState>(EMPTY_FORM);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchResults, setSearchResults] = useState<BuyerSearchResult[]>([]);
@@ -269,6 +287,10 @@ function SubmitDialog({
   const [searching, setSearching] = useState(false);
   const [prefilling, setPrefilling] = useState(false);
   const [crmFiles, setCrmFiles] = useState<any[]>([]);
+  // Shown under the search bar when a CRM deep-prefill comes back empty or
+  // errors — the basics are still seeded from the clicked result so the
+  // broker never stares at a silently blank form.
+  const [prefillNote, setPrefillNote] = useState<string | null>(null);
 
   const { data: categories = [] } = useQuery<BuyerCategory[]>({
     queryKey: ["/api/buyer-categories"],
@@ -288,14 +310,15 @@ function SubmitDialog({
       setSearching(true);
       try {
         const [accountsRes, crmRes] = await Promise.all([
-          fetch(`/api/buyer-users/search?q=${encodeURIComponent(searchQuery)}`)
-            .then(r => r.ok ? r.json() : { users: [] })
-            .catch(() => ({ users: [] })),
-          fetch(`/api/deals/${dealId}/buyer-search?q=${encodeURIComponent(searchQuery)}`)
+          fetch(`/api/buyer-users/search?q=${encodeURIComponent(searchQuery)}`, { credentials: "include" })
+            .then(r => r.ok ? r.json() : { results: [] })
+            .catch(() => ({ results: [] })),
+          fetch(`/api/deals/${dealId}/buyer-search?q=${encodeURIComponent(searchQuery)}`, { credentials: "include" })
             .then(r => r.ok ? r.json() : { results: [] })
             .catch(() => ({ results: [] })),
         ]);
-        setExistingAccounts(accountsRes.users || []);
+        // GET /api/buyer-users/search returns { results: [...] }
+        setExistingAccounts(accountsRes.results || []);
         setSearchResults(crmRes.results || []);
       } finally {
         setSearching(false);
@@ -309,11 +332,13 @@ function SubmitDialog({
   const handleSelectExistingAccount = (acct: ExistingBuyerAccount) => {
     setSearchResults([]);
     setExistingAccounts([]);
+    setPrefillNote(null);
     setSearchQuery(acct.name);
     setForm(prev => ({
       ...prev,
       buyerName: acct.name,
       buyerEmail: acct.email,
+      buyerPhone: acct.phone ?? prev.buyerPhone,
       buyerCompany: acct.company ?? "",
       buyerTitle: acct.title ?? "",
       crmSource: "cimple_account",
@@ -321,16 +346,35 @@ function SubmitDialog({
     }));
   };
 
+  // Always seed the basics from the clicked CRM row so a failed deep-prefill
+  // still leaves the broker with name/email/phone/company filled in.
+  const seedBasicsFromResult = (result: BuyerSearchResult) =>
+    setForm(prev => ({
+      ...prev,
+      buyerName: result.name || prev.buyerName,
+      buyerEmail: result.email || prev.buyerEmail,
+      buyerPhone: result.phone || prev.buyerPhone,
+      buyerCompany: result.company || prev.buyerCompany,
+    }));
+
   const handleSelectResult = async (result: BuyerSearchResult) => {
     setPrefilling(true);
+    setPrefillNote(null);
     setSearchResults([]);
+    setExistingAccounts([]);
     setSearchQuery(result.name);
+    seedBasicsFromResult(result);
     try {
       const res = await fetch(`/api/deals/${dealId}/buyer-prefill`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ query: result.email || result.name, recordId: result.id }),
       });
+      if (!res.ok) {
+        setPrefillNote(`${await readError(res, "CRM prefill failed")} — basic details were filled from the search result.`);
+        return;
+      }
       const data = await res.json();
       if (data.found && data.fields) {
         const f = data.fields;
@@ -358,9 +402,15 @@ function SubmitDialog({
           crmRawData: data.rawData,
         }));
         setCrmFiles(data.files || []);
+      } else {
+        const warning: string | undefined = Array.isArray(data.warnings) ? data.warnings[0] : undefined;
+        setPrefillNote(
+          `${warning || "No detailed CRM record was found for this contact"} — basic details were filled from the search result.`,
+        );
       }
     } catch (e) {
       console.error("Prefill failed", e);
+      setPrefillNote("Couldn't reach the CRM — basic details were filled from the search result.");
     } finally {
       setPrefilling(false);
     }
@@ -371,6 +421,7 @@ function SubmitDialog({
       const res = await fetch(`/api/deals/${dealId}/buyer-approvals`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({
           ...form,
           financialCapability: {
@@ -383,18 +434,19 @@ function SubmitDialog({
           partners: [],
         }),
       });
-      if (!res.ok) {
-        const err = await res.json();
-        throw new Error(err.error || "Failed to submit");
-      }
+      if (!res.ok) throw new Error(await readError(res, "Failed to submit"));
       return res.json();
     },
     onSuccess: () => {
       setForm(EMPTY_FORM);
       setSearchQuery("");
       setCrmFiles([]);
+      setPrefillNote(null);
+      toast({ title: "Buyer submitted", description: "The request is now in your review queue." });
       onSubmitted();
     },
+    onError: (e: Error) =>
+      toast({ title: "Couldn't submit buyer", description: e.message, variant: "destructive" }),
   });
 
   const update = <K extends keyof FormState>(key: K, val: FormState[K]) =>
@@ -479,6 +531,12 @@ function SubmitDialog({
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <Sparkles className="h-3 w-3 animate-pulse" />
                 Reading CRM record and parsing with AI...
+              </div>
+            )}
+            {!prefilling && prefillNote && (
+              <div className="flex items-start gap-1.5 text-xs text-amber-500" role="status">
+                <AlertCircle className="h-3 w-3 mt-0.5 shrink-0" />
+                <span>{prefillNote}</span>
               </div>
             )}
             {form.crmSource && (
@@ -604,20 +662,37 @@ function Field({
 function ReviewDialog({
   request, onClose, onDone,
 }: { request: ApprovalRequest; onClose: () => void; onDone: () => void }) {
+  const { toast } = useToast();
   const [notes, setNotes] = useState("");
+  // Rejection is terminal and notifies the deal team — confirm before firing.
+  const [confirmReject, setConfirmReject] = useState(false);
 
   const review = useMutation({
     mutationFn: async (action: "approve" | "reject") => {
       const res = await fetch(`/api/buyer-approvals/${request.id}/broker-review`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        credentials: "include",
         body: JSON.stringify({ action, notes }),
       });
-      if (!res.ok) throw new Error("Review failed");
+      if (!res.ok) throw new Error(await readError(res, "Review failed"));
       return res.json();
     },
-    onSuccess: onDone,
+    onSuccess: (_, action) => {
+      toast({
+        title: action === "approve" ? "Sent to seller for review" : "Buyer rejected",
+        description:
+          action === "approve"
+            ? `${request.buyerName} now needs the seller's sign-off before getting CIM access.`
+            : `${request.buyerName} will not be granted access.`,
+      });
+      onDone();
+    },
+    onError: (e: Error) =>
+      toast({ title: "Couldn't record review", description: e.message, variant: "destructive" }),
   });
+  // Which action is in flight — so each button can show its own spinner.
+  const pendingAction = review.isPending ? review.variables : null;
 
   return (
     <Dialog open onOpenChange={onClose}>
@@ -649,16 +724,52 @@ function ReviewDialog({
             onChange={(e) => setNotes(e.target.value)}
             rows={3}
           />
+          {review.error && (
+            <div className="text-xs text-red-400" role="alert">
+              {(review.error as Error).message}
+            </div>
+          )}
         </div>
         <DialogFooter>
-          <Button variant="outline" onClick={() => review.mutate("reject")} disabled={review.isPending}>
+          <Button variant="outline" onClick={() => setConfirmReject(true)} disabled={review.isPending}>
+            {pendingAction === "reject" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
             Reject
           </Button>
           <Button onClick={() => review.mutate("approve")} disabled={review.isPending}>
-            {review.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+            {pendingAction === "approve" && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
             Approve & send to seller
           </Button>
         </DialogFooter>
+
+        <AlertDialog open={confirmReject} onOpenChange={(open) => { if (!open) setConfirmReject(false); }}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Reject {request.buyerName}?</AlertDialogTitle>
+              <AlertDialogDescription>
+                This closes the request, notifies your deal team, and the buyer will not be
+                granted CIM access. To reconsider later you'd need to submit them again.
+                {notes.trim() ? " Your review notes will be recorded as the reason." : ""}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={review.isPending}>Cancel</AlertDialogCancel>
+              <AlertDialogAction
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                disabled={review.isPending}
+                onClick={(e) => {
+                  e.preventDefault();
+                  review.mutate("reject", { onSettled: () => setConfirmReject(false) });
+                }}
+              >
+                {pendingAction === "reject" ? (
+                  <><Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />Rejecting…</>
+                ) : (
+                  <><XCircle className="h-3.5 w-3.5 mr-1.5" />Reject buyer</>
+                )}
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </DialogContent>
     </Dialog>
   );
