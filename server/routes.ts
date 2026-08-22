@@ -1811,7 +1811,11 @@ Return JSON only.`,
       // from the client as ISO strings — coerce into Date before they reach
       // drizzle's timestamp column (which calls .toISOString() on the value).
       const body = (req.body ?? {}) as Record<string, unknown>;
-      const isBrokerSession = !!req.session.brokerId;
+      // "Broker" here means the broker who OWNS this deal. canAccessDeal also
+      // admits a seller token, so a broker session opening another firm's
+      // seller link must get the seller allowlist, not the checklist editor.
+      const isBrokerSession =
+        !!req.session.brokerId && !!(await getOwnedDeal(req.params.dealId, req.session.brokerId));
       const allowedKeys = isBrokerSession
         ? ["status", "uploadedFileId", "uploadedBy", "uploadedAt", "notes", "isRequired", "documentName", "category", "sortOrder"]
         : ["status", "uploadedFileId", "uploadedBy"];
@@ -2389,11 +2393,36 @@ Return JSON only.`,
     }
   });
 
+  // A "running" row nobody has touched in 15 minutes is a crashed run (server
+  // restart mid-analysis, a throw the analyzer's catch never saw, …). Serve it
+  // as failed — with a note — so the client stops polling and re-enables
+  // Re-run, and persist that so the row doesn't flip back on the next fetch.
+  // A genuinely slow run that later finishes still overwrites this with
+  // "completed", so nothing is lost.
+  const STALE_ANALYSIS_MS = 15 * 60 * 1000;
+  const reconcileStaleRunningAnalysis = async <
+    T extends { id: string; status: string; createdAt: Date | null; updatedAt: Date | null; aiReasoning: string | null },
+  >(row: T): Promise<T> => {
+    if (row.status !== "running") return row;
+    const touched = Math.max(
+      row.updatedAt ? new Date(row.updatedAt).getTime() : 0,
+      row.createdAt ? new Date(row.createdAt).getTime() : 0,
+    );
+    if (!touched || Date.now() - touched < STALE_ANALYSIS_MS) return row;
+    const aiReasoning =
+      "Analysis did not finish — it was still marked as running after 15 minutes, which usually means the server restarted mid-run. Re-run the analysis.";
+    await storage.updateFinancialAnalysis(row.id, { status: "failed", aiReasoning }).catch((err: any) => {
+      console.error(`Could not mark stale financial analysis ${row.id} as failed:`, err);
+    });
+    return { ...row, status: "failed", aiReasoning };
+  };
+
   // Get the latest financial analysis for a deal
   app.get("/api/deals/:dealId/financial-analysis", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const analysis = await storage.getLatestFinancialAnalysis(req.params.dealId);
-      if (!analysis) return res.status(404).json({ error: "No financial analysis found" });
+      const latest = await storage.getLatestFinancialAnalysis(req.params.dealId);
+      if (!latest) return res.status(404).json({ error: "No financial analysis found" });
+      const analysis = await reconcileStaleRunningAnalysis(latest);
       // Convert legacy-shaped rows so they render in the UI (see financial/shape.ts)
       const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
       res.json(normalizeFinancialAnalysisRow(analysis));
@@ -2406,10 +2435,11 @@ Return JSON only.`,
   // Get a specific financial analysis version
   app.get("/api/deals/:dealId/financial-analysis/:id", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const analysis = await storage.getFinancialAnalysis(req.params.id);
-      if (!analysis || analysis.dealId !== req.params.dealId) {
+      const row = await storage.getFinancialAnalysis(req.params.id);
+      if (!row || row.dealId !== req.params.dealId) {
         return res.status(404).json({ error: "Financial analysis not found" });
       }
+      const analysis = await reconcileStaleRunningAnalysis(row);
       const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
       res.json(normalizeFinancialAnalysisRow(analysis));
     } catch (error: any) {
@@ -2509,6 +2539,24 @@ Return JSON only.`,
         : undefined;
       if (discrepancy && (discrepancy.dealId !== req.params.dealId || discrepancy.status === "superseded")) {
         discrepancy = undefined;
+      }
+
+      // Second idempotency layer: the question text is what becomes the
+      // discrepancy's `field`. A question re-routed after a stale client copy
+      // dropped its discrepancyId (or re-issued with a fresh id by a re-run)
+      // must reuse the live routed row, not create a duplicate the interview
+      // would then raise twice. Compare the same sliced text the create path
+      // stores, normalized for whitespace and case.
+      const normalizeField = (s: unknown) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
+      const routedField = normalizeField(String(question.question).slice(0, 200));
+      if (!discrepancy) {
+        const existingRouted = (await storage.getDiscrepanciesByDeal(req.params.dealId)).find(
+          (d) =>
+            d.source === "financial_analysis" &&
+            d.status === "ask_seller" &&
+            normalizeField(d.field) === routedField,
+        );
+        if (existingRouted) discrepancy = existingRouted;
       }
 
       if (!discrepancy) {
@@ -4267,11 +4315,17 @@ Return JSON only.`,
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      // Product rule: critical discrepancies block CIM generation until resolved.
+      // Product rule: critical discrepancies block CIM generation until handled.
       // The client disabled the first "Generate" button but not "Regenerate";
-      // the server is now the authority.
+      // the server is now the authority. Only "open" and "seller_responded"
+      // block. "ask_seller" means the broker routed it to the seller interview,
+      // which counts as handled — otherwise a routed critical locked generation
+      // forever. When the interview ends, session-manager flips ask_seller →
+      // seller_responded so the broker reviews the transcript before generating.
+      // OverviewTab's generationBlocked mirrors this exact status list.
+      const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
       const openCritical = (await storage.getDiscrepanciesByDeal(dealId))
-        .filter(d => d.severity === "critical" && d.status !== "resolved" && d.status !== "superseded");
+        .filter(d => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
       if (openCritical.length > 0) {
         return res.status(409).json({
           error: `${openCritical.length} critical discrepanc${openCritical.length === 1 ? "y" : "ies"} must be resolved before generating the CIM`,

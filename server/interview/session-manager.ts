@@ -947,6 +947,16 @@ export async function processTurn(
       ...(deal.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
 
+    // Close the loop on discrepancies the broker routed to this interview
+    // (status ask_seller): they were on the agent's agenda, so hand them back
+    // to the broker as seller_responded. generate-content's critical gate
+    // ignores ask_seller but blocks on seller_responded, so a routed critical
+    // re-locks the CIM until the broker reviews the transcript and resolves —
+    // nothing is silently accepted, and nothing stays "with the seller" forever.
+    await markRoutedDiscrepanciesRaised(dealId).catch((err) => {
+      console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+    });
+
     // Fire-and-forget: analyze the completed interview for learning insights
     runInterviewLearningLoop(dealId, sessionId).catch((err) => {
       console.error(`[session-manager] Learning loop failed for session ${sessionId}:`, err);
@@ -976,6 +986,23 @@ export async function processTurn(
     shouldEnd: aiResponse.shouldEnd,
     endReason: aiResponse.endReason,
   };
+}
+
+/**
+ * Flips every ask_seller discrepancy on the deal to seller_responded with a
+ * note pointing the broker at the transcript. Called when an interview ends.
+ * Returns the number of rows updated.
+ */
+async function markRoutedDiscrepanciesRaised(dealId: string): Promise<number> {
+  const routed = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "ask_seller");
+  if (routed.length === 0) return 0;
+  const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
+  const sellerResponse = `Raised with the seller in the AI interview on ${date} — review the transcript and resolve`;
+  for (const d of routed) {
+    await storage.updateDiscrepancy(d.id, { status: "seller_responded", sellerResponse });
+  }
+  console.log(`[session-manager] Handed ${routed.length} routed discrepanc${routed.length === 1 ? "y" : "ies"} back to the broker for deal ${dealId}`);
+  return routed.length;
 }
 
 /**

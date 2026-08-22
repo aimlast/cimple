@@ -16,6 +16,7 @@ import {
   FileText,
   Mail,
   MessageSquare,
+  Pencil,
   PlayCircle,
   RefreshCw,
   Upload,
@@ -126,6 +127,10 @@ export default function SellerProgress() {
   }
 
   const { currentStep, steps, interview, documents, pendingApprovals, broker } = data;
+  // Business Basics / Systems / Key People stay editable after intake — the
+  // intake page redirects completed sellers to progress unless ?edit=1.
+  const intakeComplete =
+    steps.some((s) => s.id === "intake" && s.status === "completed") || currentStep !== "intake";
   const overallPct = Math.round(
     steps.reduce((sum, s) => sum + (s.status === "completed" ? 100 : (s.pct || 0)), 0) / steps.length,
   );
@@ -284,7 +289,7 @@ export default function SellerProgress() {
       </div>
 
       {/* Quick links — conversation is always available */}
-      <div className="grid grid-cols-2 gap-3">
+      <div className={`grid grid-cols-2 gap-3 ${intakeComplete ? "sm:grid-cols-3" : ""}`}>
         <Link href={`/seller/${token}/interview`}>
           <div className="rounded-lg border border-border bg-card p-4 hover:border-teal/30 transition-colors cursor-pointer group">
             <div className="flex items-center justify-between">
@@ -313,6 +318,22 @@ export default function SellerProgress() {
             </div>
           </div>
         </Link>
+        {intakeComplete && (
+          <Link href={`/seller/${token}?edit=1`}>
+            <div
+              className="rounded-lg border border-border bg-card p-4 hover:border-teal/30 transition-colors cursor-pointer group"
+              data-testid="link-edit-business-details"
+            >
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Pencil className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm">Edit business details</span>
+                </div>
+                <ChevronRight className="h-4 w-4 text-muted-foreground/30 group-hover:text-teal/50" />
+              </div>
+            </div>
+          </Link>
+        )}
       </div>
 
       {/* Replay introduction */}

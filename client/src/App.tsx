@@ -227,22 +227,23 @@ export function BrokerAuthGate({ children }: { children: React.ReactNode }) {
 /**
  * /broker/login — explicit sign-in page reachable logged-out (Log out lands
  * here). Already-authenticated brokers are sent to the dashboard.
+ *
+ * Unlike BrokerAuthGate, a non-401 failure of the /me probe (500, network)
+ * does NOT block this page: nothing session-scoped renders here, so the
+ * broker still gets the sign-in form, with a small notice that the existing
+ * session couldn't be checked. A successful login invalidates /me, which
+ * re-runs the probe and redirects when it comes back clean.
  */
 function BrokerLoginPage() {
   useSetLayoutRole("broker");
-  const { data: me, isLoading, isError, error, refetch, isFetching } = useQuery(BROKER_ME_QUERY);
+  const { data: me, isLoading, isError } = useQuery(BROKER_ME_QUERY);
   if (isLoading) return <AuthPending />;
-  if (isError) {
-    return (
-      <AuthError
-        message={(error as Error)?.message || "The server could not be reached."}
-        onRetry={() => refetch()}
-        retrying={isFetching}
-      />
-    );
-  }
   if (me?.user) return <Redirect to="/broker" />;
-  return <BrokerLogin />;
+  return (
+    <BrokerLogin
+      notice={isError ? "We couldn't verify an existing session — sign in below." : undefined}
+    />
+  );
 }
 
 function BrokerLayout() {

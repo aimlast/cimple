@@ -27,7 +27,7 @@ export function BuyerAuthCard({ children }: { children: React.ReactNode }) {
           <div
             className="h-6 w-24 mx-auto"
             style={{
-              backgroundColor: "hsl(162, 65%, 38%)",
+              backgroundColor: "hsl(42, 26%, 92%)",
               WebkitMaskImage: "url('/cimple-text.png')",
               WebkitMaskSize: "contain",
               WebkitMaskRepeat: "no-repeat",
@@ -217,7 +217,7 @@ export function BuyerNav() {
             <div
               className="h-4 w-16"
               style={{
-                backgroundColor: "hsl(162, 65%, 38%)",
+                backgroundColor: "hsl(42, 26%, 92%)",
                 WebkitMaskImage: "url('/cimple-text.png')",
                 WebkitMaskSize: "contain",
                 WebkitMaskRepeat: "no-repeat",
