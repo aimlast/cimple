@@ -719,7 +719,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Suggested buyers for a deal — runs match engine + composite scoring
   // against the broker's full buyer contact list, ranked.
-  app.get("/api/deals/:dealId/suggested-buyers", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/suggested-buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
@@ -844,7 +844,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Draft outreach emails for selected buyers (AI-generated, never sent automatically).
   // Returns drafts in-memory; the broker reviews and edits before calling /send-outreach.
-  app.post("/api/deals/:dealId/draft-outreach", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/draft-outreach", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const schema = z.object({
@@ -957,7 +957,7 @@ Return JSON only.`,
 
   // Send approved outreach — broker has reviewed and edited; now actually
   // dispatch via Resend and record in dealOutreach.
-  app.post("/api/deals/:dealId/send-outreach", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/send-outreach", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const schema = z.object({
@@ -2141,7 +2141,7 @@ Return JSON only.`,
     }
   });
 
-  app.get("/api/deals/:dealId/extracted-info", requireBroker, async (req, res) => {
+  app.get("/api/deals/:dealId/extracted-info", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -2318,14 +2318,17 @@ Return JSON only.`,
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      // Fire-and-forget: start analysis in background
-      const { runFinancialAnalysis } = await import("./financial/analyzer");
-      runFinancialAnalysis(req.params.dealId, storage).catch((err: any) => {
+      // Create the "running" placeholder BEFORE responding so the client's
+      // invalidation refetch always sees the new version and starts polling.
+      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
+
+      // Fire-and-forget: the heavy work runs in the background
+      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
         console.error("Background financial analysis failed:", err);
       });
 
-      // Return immediately — client can poll GET for status
-      res.json({ message: "Financial analysis started", dealId: req.params.dealId });
+      res.json({ message: "Financial analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
       console.error("Error starting financial analysis:", error);
       res.status(500).json({ error: "Failed to start financial analysis" });
@@ -2402,21 +2405,123 @@ Return JSON only.`,
         return res.status(404).json({ error: "Financial analysis not found" });
       }
 
-      const { runFinancialAnalysis } = await import("./financial/analyzer");
-      runFinancialAnalysis(req.params.dealId, storage).catch((err: any) => {
+      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
+      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
         console.error("Background financial re-analysis failed:", err);
       });
 
-      res.json({ message: "Financial re-analysis started", dealId: req.params.dealId });
+      res.json({ message: "Financial re-analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
       console.error("Error re-running financial analysis:", error);
       res.status(500).json({ error: "Failed to re-run financial analysis" });
     }
   });
 
+  // Route a clarifying question to the seller interview.
+  //
+  // Previously the client only flipped the question's status to
+  // "routed_to_seller" inside the clarifyingQuestions blob — nothing consumed
+  // that. The interview knowledge base reads discrepancies with status
+  // "ask_seller", so routing now creates a real discrepancies row (source
+  // "financial_analysis") and links it back to the question.
+  app.post("/api/deals/:dealId/financial-analysis/:id/questions/:questionId/route-to-seller", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const existing = await storage.getFinancialAnalysis(req.params.id);
+      if (!existing || existing.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Financial analysis not found" });
+      }
+
+      const questions = Array.isArray(existing.clarifyingQuestions)
+        ? (existing.clarifyingQuestions as any[])
+        : [];
+      const question = questions.find((q) => q && q.id === req.params.questionId);
+      if (!question) return res.status(404).json({ error: "Clarifying question not found" });
+      if (!question.question || typeof question.question !== "string") {
+        return res.status(400).json({ error: "Question has no text to route" });
+      }
+      if (question.status === "answered" || question.status === "dismissed") {
+        return res.status(409).json({ error: `Question is already ${question.status}` });
+      }
+
+      // Idempotent: if this question already has a live routed discrepancy, reuse it
+      let discrepancy = question.discrepancyId
+        ? await storage.getDiscrepancy(question.discrepancyId)
+        : undefined;
+      if (discrepancy && (discrepancy.dealId !== req.params.dealId || discrepancy.status === "superseded")) {
+        discrepancy = undefined;
+      }
+
+      if (!discrepancy) {
+        // "high" maps to "significant" (not "critical") on purpose: an unanswered
+        // question should not block CIM generation the way a critical value conflict does.
+        const severity = question.severity === "low" ? "minor" : "significant";
+        const context = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
+        discrepancy = await storage.createDiscrepancy({
+          dealId: req.params.dealId,
+          field: String(question.question).slice(0, 200),
+          interviewValue: context,
+          documentValue: null,
+          documentId: null,
+          documentName: null,
+          severity,
+          category: "financial",
+          source: "financial_analysis",
+          aiExplanation: context
+            ? `Clarifying question from the financial analysis. ${context}`
+            : "Clarifying question raised by the financial analysis.",
+          suggestedResolution: "Ask the seller to clarify during the interview and capture their answer as the confirmed value.",
+          status: "ask_seller",
+        });
+      } else if (discrepancy.status !== "ask_seller") {
+        discrepancy = (await storage.updateDiscrepancy(discrepancy.id, { status: "ask_seller" })) || discrepancy;
+      }
+
+      const updatedQuestions = questions.map((q) =>
+        q && q.id === req.params.questionId
+          ? { ...q, status: "routed_to_seller", discrepancyId: discrepancy!.id }
+          : q,
+      );
+      const updated = await storage.updateFinancialAnalysis(req.params.id, {
+        clarifyingQuestions: updatedQuestions,
+      });
+
+      res.json({ analysis: updated, discrepancy });
+    } catch (error: any) {
+      console.error("Error routing clarifying question to seller:", error);
+      res.status(500).json({ error: "Failed to route question to the seller interview" });
+    }
+  });
+
   // =============================
   // ADDBACK VERIFICATION ROUTES
   // =============================
+
+  const ADDBACK_VERIFICATION_STATUSES = ["pending_documents", "analyzing", "pending_seller_review", "verified", "failed"];
+
+  /** Seed the initial addback list for a workflow ("provided" pulls from the financial analysis). */
+  async function seedAddbacksForWorkflow(
+    workflow: "provided" | "from_scratch",
+    financialAnalysisId: string | null | undefined,
+    dealId: string,
+  ): Promise<any[]> {
+    if (workflow !== "provided" || !financialAnalysisId) return [];
+    const fa = await storage.getFinancialAnalysis(financialAnalysisId);
+    if (!fa || fa.dealId !== dealId || !fa.normalization) return [];
+    const norm = fa.normalization as any;
+    return (norm.addbacks || []).map((a: any) => ({
+      id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
+      label: a.label || "",
+      description: a.description || "",
+      category: a.category || "other",
+      annualAmount: Object.values(a.amounts || {}).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) / Math.max(Object.keys(a.amounts || {}).length, 1),
+      yearAmounts: a.amounts || {},
+      verificationStatus: "unverified",
+      matchedTransactions: [],
+      sellerNotes: null,
+      aiNotes: null,
+    }));
+  }
 
   // Start addback verification for a deal
   app.post("/api/deals/:dealId/addback-verification", requireBroker, requireOwnedDeal, async (req, res) => {
@@ -2431,26 +2536,17 @@ Return JSON only.`,
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      // If workflow is "provided", pull addbacks from financial analysis
-      let initialAddbacks: any[] = [];
-      if (workflow === "provided" && financialAnalysisId) {
-        const fa = await storage.getFinancialAnalysis(financialAnalysisId);
-        if (fa?.normalization) {
-          const norm = fa.normalization as any;
-          initialAddbacks = (norm.addbacks || []).map((a: any) => ({
-            id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
-            label: a.label || "",
-            description: a.description || "",
-            category: a.category || "other",
-            annualAmount: Object.values(a.amounts || {}).reduce((sum: number, v: any) => sum + (Number(v) || 0), 0) / Math.max(Object.keys(a.amounts || {}).length, 1),
-            yearAmounts: a.amounts || {},
-            verificationStatus: "unverified",
-            matchedTransactions: [],
-            sellerNotes: null,
-            aiNotes: null,
-          }));
-        }
+      // Guard against accidental duplicates: the newest row by updatedAt shadows
+      // all others, so a second POST would silently hide prior seller confirmations.
+      const current = await storage.getAddbackVerificationByDeal(dealId);
+      if (current) {
+        return res.status(409).json({
+          error: "An addback verification already exists for this deal. Use 'Start over' to switch workflow.",
+          verification: current,
+        });
       }
+
+      const initialAddbacks = await seedAddbacksForWorkflow(workflow, financialAnalysisId, dealId);
 
       const verification = await storage.createAddbackVerification({
         dealId,
@@ -2493,7 +2589,12 @@ Return JSON only.`,
       const updates: any = {};
       if (req.body.addbacks !== undefined) updates.addbacks = req.body.addbacks;
       if (req.body.sellerQuestions !== undefined) updates.sellerQuestions = req.body.sellerQuestions;
-      if (req.body.status !== undefined) updates.status = req.body.status;
+      if (req.body.status !== undefined) {
+        if (!ADDBACK_VERIFICATION_STATUSES.includes(req.body.status)) {
+          return res.status(400).json({ error: `status must be one of: ${ADDBACK_VERIFICATION_STATUSES.join(", ")}` });
+        }
+        updates.status = req.body.status;
+      }
       if (req.body.sourceDocumentIds !== undefined) updates.sourceDocumentIds = req.body.sourceDocumentIds;
 
       const updated = await storage.updateAddbackVerification(req.params.id, updates);
@@ -2501,6 +2602,44 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("Error updating addback verification:", error);
       res.status(500).json({ error: "Failed to update addback verification" });
+    }
+  });
+
+  // Start over / switch workflow. Resets the existing row in place (never
+  // creates a second row — the newest row by updatedAt is the one the UI
+  // shows, so duplicates would hide prior work). Re-seeds addbacks for the
+  // chosen workflow and clears analysis output.
+  app.post("/api/deals/:dealId/addback-verification/:id/reset", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const existing = await storage.getAddbackVerification(req.params.id);
+      if (!existing || existing.dealId !== req.params.dealId) {
+        return res.status(404).json({ error: "Addback verification not found" });
+      }
+
+      const { workflow, financialAnalysisId } = req.body || {};
+      if (!workflow || !["provided", "from_scratch"].includes(workflow)) {
+        return res.status(400).json({ error: "workflow must be 'provided' or 'from_scratch'" });
+      }
+      if (existing.status === "analyzing") {
+        return res.status(409).json({ error: "Analysis is still running. Wait for it to finish before starting over." });
+      }
+
+      const faId = financialAnalysisId || existing.financialAnalysisId || null;
+      const addbacks = await seedAddbacksForWorkflow(workflow, faId, req.params.dealId);
+
+      const updated = await storage.updateAddbackVerification(req.params.id, {
+        workflow,
+        financialAnalysisId: faId,
+        status: "pending_documents",
+        addbacks,
+        uploadedTransactionData: null,
+        sellerQuestions: [],
+        sourceDocumentIds: [],
+      });
+      res.json(updated);
+    } catch (error: any) {
+      console.error("Error resetting addback verification:", error);
+      res.status(500).json({ error: "Failed to reset addback verification" });
     }
   });
 
@@ -5061,7 +5200,7 @@ Return JSON only.`,
   // ════════════════════════════════════════════════════════════
 
   // Generate bespoke CIM layout for a deal
-  app.post("/api/deals/:dealId/generate-layout", requireBroker, async (req, res) => {
+  app.post("/api/deals/:dealId/generate-layout", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
       const deal = await storage.getDeal(dealId);
