@@ -1168,7 +1168,7 @@ async function generateOpeningMessage(
   } else if (hasQuestionnaireData && hasDocuments) {
     openingInstruction = `This is the start of the interview. The seller already completed a questionnaire and uploaded documents. One sentence saying you've read them (no inventory of what they contain), then your first question — aimed where the questionnaire was thin. Three sentences maximum, no explanation of the process.`;
   } else if (hasQuestionnaireData) {
-    openingInstruction = `This is the start of the interview. The seller completed a questionnaire. One sentence saying you've read it, then your first question building on it. Three sentences maximum, no explanation of the process.`;
+    openingInstruction = `This is the start of the interview. The seller completed a questionnaire. One sentence saying you've read it (no inventory of what it contains — do not restate its figures or names), then your first question aimed where it was thin. Three sentences maximum, no explanation of the process.`;
   } else {
     openingInstruction = `This is the start of the interview and you have little background. One sentence of welcome that says what this is for (the document buyers will read about their business), then one broad opening question: what the business does, how long it has operated, and where. Three sentences maximum.`;
   }

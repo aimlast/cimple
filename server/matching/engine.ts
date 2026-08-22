@@ -110,24 +110,31 @@ export interface MatchBreakdown {
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
+// Take the FIRST figure in a string. Stripping every non-digit turned a
+// multi-year value like "$2,013,000 (2025); $2,202,520 (2024)" into 2e16 and
+// zeroed every range score.
+function firstNumber(val: string | number | undefined | null): number | null {
+  if (val === null || val === undefined || val === "") return null;
+  if (typeof val === "number") return Number.isFinite(val) ? val : null;
+  const m = String(val).match(/-?\d[\d,]*(?:\.\d+)?\s*([MmKk])?(?![\d,])/);
+  if (!m) return null;
+  let num = parseFloat(m[0].replace(/[,\sMmKk]/g, ""));
+  if (isNaN(num)) return null;
+  const suffix = (m[1] || "").toLowerCase();
+  if (suffix === "m") num *= 1_000_000;
+  else if (suffix === "k") num *= 1_000;
+  return num;
+}
 function parseCurrency(val: string | undefined | null): number | null {
-  if (!val) return null;
-  const cleaned = String(val).replace(/[^0-9.-]/g, "");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+  return firstNumber(val);
 }
 
 function parsePercent(val: string | undefined | null): number | null {
-  if (!val) return null;
-  const cleaned = String(val).replace(/[^0-9.-]/g, "");
-  const num = parseFloat(cleaned);
-  return isNaN(num) ? null : num;
+  return firstNumber(val);
 }
 
 function parseNum(val: string | undefined | null): number | null {
-  if (!val) return null;
-  const num = parseFloat(String(val).replace(/[^0-9.-]/g, ""));
-  return isNaN(num) ? null : num;
+  return firstNumber(val);
 }
 
 function rangeScore(value: number, min: number | null, max: number | null): { score: number; note: string } {

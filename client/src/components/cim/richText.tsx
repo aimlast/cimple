@@ -30,7 +30,7 @@ const PROSE_KEYS = new Set([
   "ownerDependency",
 ]);
 
-const LEGACY_DD_TAG = /\[DD\]\s*/g;
+const LEGACY_DD_TAG = /\[DD(?::\s*[^\]]*)?\]\s*/g;
 const DD_MARK = /\[\[\/?dd\]\]/g;
 const BOLD = /\*\*(.+?)\*\*|__(.+?)__/g;
 const INLINE_BULLET = /\s+[•·]\s+/;

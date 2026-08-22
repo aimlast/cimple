@@ -873,7 +873,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
       const branding = await storage.getBrandingByBroker(deal.brokerId);
-      const brokerCompany = (branding as any)?.companyName || "your broker";
+      const brokerCompany = (branding as any)?.companyName || "";
 
       const extracted: any = (deal as any).extractedInfo || {};
       // PRE-NDA outreach must be blind-safe: no business name, no city, no
@@ -946,7 +946,7 @@ ${JSON.stringify(dealSummary, null, 2)}
 BUYER PROFILE:
 ${JSON.stringify(buyerProfile, null, 2)}
 
-BROKER FIRM: ${brokerCompany}
+BROKER FIRM: ${brokerCompany || "(none — sign with the broker's name only)"}
 
 ${template ? `BROKER NOTES / TEMPLATE GUIDANCE:\n${template}` : ""}
 
@@ -960,7 +960,7 @@ Requirements:
 - DO NOT include an asking price
 - DO NOT make up financial figures
 - DO NOT promise exclusivity or discounts
-- Sign off as "${brokerName}" of ${brokerCompany} — never a placeholder
+- Sign off as "${brokerName}"${brokerCompany ? ` of ${brokerCompany}` : ""} — never a placeholder
 
 Return JSON only.`,
             }],
@@ -973,7 +973,7 @@ Return JSON only.`,
         } catch (aiErr) {
           console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
           // Deterministic fallback
-          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}\n${brokerCompany}`;
+          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
         }
 
         return {
@@ -2456,7 +2456,8 @@ Return JSON only.`,
         ...req.body,
         brokerId: req.session.brokerId,
       });
-      res.json(integration);
+      const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
+      res.json(safe);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to create integration" });
     }
@@ -2516,7 +2517,8 @@ Return JSON only.`,
       if (!owned) return res.status(404).json({ error: "Integration not found" });
       const integration = await storage.updateIntegration(req.params.id, req.body);
       if (!integration) return res.status(404).json({ error: "Integration not found" });
-      res.json(integration);
+      const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
+      res.json(safe);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update integration" });
     }
@@ -4008,7 +4010,23 @@ Return JSON only.`,
         // a due-diligence buyer has already earned full-identity access.
       }
 
-      res.json({ access: freshAccess, deal: publicDeal, sections, publishedQuestions, branding: branding ?? null, cimMode });
+      // Buyers get only what the renderer needs. The raw cimSections row
+      // carries aiLayoutReasoning (internal AI notes that name the owners),
+      // seller edits, finalContent, approval flags — none of which may reach
+      // a blind-mode buyer, and none of which the view room renders.
+      const toBuyerSection = (sec: any) => ({
+        id: sec.id,
+        dealId: sec.dealId,
+        sectionKey: sec.sectionKey,
+        sectionTitle: sec.sectionTitle,
+        order: sec.order,
+        layoutType: sec.layoutType,
+        layoutData: sec.layoutData,
+        aiDraftContent: sec.aiDraftContent,
+        brokerEditedContent: sec.brokerEditedContent,
+        isVisible: sec.isVisible,
+      });
+      res.json({ access: freshAccess, deal: publicDeal, sections: sections.map(toBuyerSection), publishedQuestions, branding: branding ?? null, cimMode });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
