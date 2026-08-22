@@ -6,12 +6,14 @@
  * starts a session, so we land straight on the dashboard.
  */
 import { useState } from "react";
-import { useParams, useLocation } from "wouter";
+import { Link, useParams, useLocation } from "wouter";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useToast } from "@/hooks/use-toast";
 
 export default function BrokerResetPassword() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
+  const { toast } = useToast();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +29,7 @@ export default function BrokerResetPassword() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Reset failed");
+        throw new Error(body.error || "Reset failed. Please try again.");
       }
       return res.json();
     },
@@ -35,7 +37,10 @@ export default function BrokerResetPassword() {
       queryClient.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
       setLocation("/broker");
     },
-    onError: (e: Error) => setError(e.message),
+    onError: (e: Error) => {
+      setError(e.message);
+      toast({ title: "Couldn't reset password", description: e.message, variant: "destructive" });
+    },
   });
 
   const submit = (e: React.FormEvent) => {
@@ -120,6 +125,20 @@ export default function BrokerResetPassword() {
               {reset.isPending ? "Saving..." : "Set password and sign in"}
             </button>
           </form>
+
+          {/* Escape hatch: an invalid/expired token tells the broker to
+              "request a new one" — the sign-in screen has that flow. */}
+          <p className="text-center text-xs text-muted-foreground mt-4 pt-4 border-t border-border">
+            Link expired or not working?{" "}
+            <Link
+              href="/broker"
+              className="text-teal hover:underline"
+              data-testid="link-back-to-signin"
+            >
+              Back to sign in
+            </Link>{" "}
+            and use "Forgot password?" to request a new link.
+          </p>
         </div>
       </div>
     </div>

@@ -9,6 +9,7 @@ import { useState } from "react";
 import { useParams, Link } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
+  AlertCircle,
   Check,
   ChevronRight,
   Clock,
@@ -16,8 +17,10 @@ import {
   Mail,
   MessageSquare,
   PlayCircle,
+  RefreshCw,
   Upload,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
 
 interface ProgressStep {
@@ -65,7 +68,7 @@ export default function SellerProgress() {
   const { token } = useParams<{ token: string }>();
   const [showOnboarding, setShowOnboarding] = useState(false);
 
-  const { data, isLoading } = useQuery<SellerProgressData>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<SellerProgressData>({
     queryKey: [`/api/seller/${token}/progress`],
     enabled: !!token,
     refetchInterval: 30_000,
@@ -81,10 +84,43 @@ export default function SellerProgress() {
     );
   }
 
-  if (!data) {
+  if (!token || error || !data) {
+    // A 404 means the token is unknown or has been revoked/regenerated —
+    // refreshing cannot help, the seller needs a new link from their broker.
+    const isInvalidLink =
+      !token || (error instanceof Error && /^404:/.test(error.message));
     return (
       <div className="p-6 max-w-3xl mx-auto">
-        <p className="text-muted-foreground">Unable to load your progress. Please try refreshing.</p>
+        <div className="rounded-lg border border-border bg-card p-8 text-center space-y-3">
+          <AlertCircle className="h-8 w-8 mx-auto text-destructive/70" />
+          {isInvalidLink ? (
+            <>
+              <h2 className="text-lg font-semibold">Invalid invite link</h2>
+              <p className="text-sm text-muted-foreground">
+                This invite link is not valid or has expired. Contact your broker for a new link.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="text-lg font-semibold">Couldn't load your progress</h2>
+              <p className="text-sm text-muted-foreground">
+                {error instanceof Error
+                  ? error.message.replace(/^\d{3}:\s*/, "")
+                  : "Something went wrong while loading. Please try again."}
+              </p>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={isFetching}
+                onClick={() => refetch()}
+                data-testid="button-retry-progress"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 mr-2 ${isFetching ? "animate-spin" : ""}`} />
+                Try again
+              </Button>
+            </>
+          )}
+        </div>
       </div>
     );
   }

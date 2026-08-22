@@ -7,7 +7,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
-import { apiRequest, queryClient } from "@/lib/queryClient";
+import { queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Globe } from "lucide-react";
 
 const INDUSTRY_OPTIONS = [
@@ -26,6 +26,33 @@ const INDUSTRY_OPTIONS = [
   "Other",
 ];
 
+/**
+ * Brokers naturally type "acme.com" — accept it. Native `type="url"` rejected
+ * schemeless input on an optional field and silently blocked deal creation.
+ */
+function normalizeWebsiteUrl(raw: string): string | undefined {
+  const trimmed = raw.trim();
+  if (!trimmed) return undefined;
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`;
+}
+
+/** Reads the server's `{ error }` body so the toast says what actually went wrong. */
+async function readErrorMessage(res: Response, fallback: string): Promise<string> {
+  try {
+    const text = await res.text();
+    if (!text) return fallback;
+    try {
+      const body = JSON.parse(text);
+      if (body && typeof body.error === "string") return body.error;
+    } catch {
+      /* not JSON — fall through */
+    }
+    return text.length <= 200 ? text : fallback;
+  } catch {
+    return fallback;
+  }
+}
+
 export default function NewDeal() {
   const [, setLocation] = useLocation();
   const { toast } = useToast();
@@ -37,11 +64,19 @@ export default function NewDeal() {
 
   const createDealMutation = useMutation({
     mutationFn: async (data: { businessName: string; industry: string; websiteUrl?: string; description?: string }) => {
-      const response = await apiRequest("POST", "/api/deals", {
-        ...data,
-        phase: "phase1_info_collection",
-        status: "draft",
+      const response = await fetch("/api/deals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({
+          ...data,
+          phase: "phase1_info_collection",
+          status: "draft",
+        }),
       });
+      if (!response.ok) {
+        throw new Error(await readErrorMessage(response, "Couldn't create the deal. Please try again."));
+      }
       return response.json();
     },
     onSuccess: (deal) => {
@@ -52,10 +87,10 @@ export default function NewDeal() {
       });
       setLocation(`/deal/${deal.id}`);
     },
-    onError: () => {
+    onError: (err: Error) => {
       toast({
-        title: "Something went wrong",
-        description: "Couldn't create the deal. Please try again.",
+        title: "Couldn't create deal",
+        description: err.message,
         variant: "destructive",
       });
     },
@@ -74,7 +109,7 @@ export default function NewDeal() {
     createDealMutation.mutate({
       businessName: businessName.trim(),
       industry,
-      websiteUrl: websiteUrl.trim() || undefined,
+      websiteUrl: normalizeWebsiteUrl(websiteUrl),
       description: description.trim() || undefined,
     });
   };
@@ -102,7 +137,7 @@ export default function NewDeal() {
           </p>
         </div>
 
-        <form onSubmit={handleSubmit}>
+        <form onSubmit={handleSubmit} noValidate>
 
           {/* ── Required fields ── */}
           <div className="space-y-4">
@@ -162,11 +197,13 @@ export default function NewDeal() {
               </Label>
               <Input
                 id="websiteUrl"
-                placeholder="https://example.com"
+                placeholder="example.com"
                 value={websiteUrl}
                 onChange={(e) => setWebsiteUrl(e.target.value)}
                 className="h-9 bg-card border-border"
-                type="url"
+                type="text"
+                inputMode="url"
+                autoComplete="url"
                 data-testid="input-website-url"
               />
               <p className="text-xs text-muted-foreground/60 leading-snug">

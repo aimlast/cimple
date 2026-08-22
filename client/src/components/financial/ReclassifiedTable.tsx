@@ -324,8 +324,9 @@ function CategoryGroup({
                 </div>
               ) : (
                 <button
-                  className="opacity-0 group-hover:opacity-100 transition-opacity inline-flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
+                  className="opacity-40 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring rounded-sm transition-opacity inline-flex items-center gap-1 text-2xs text-muted-foreground hover:text-foreground"
                   onClick={() => onStartEditing(row.id, row.category)}
+                  aria-label={`Reclassify ${row.name}`}
                 >
                   <Pencil className="h-2.5 w-2.5" />
                   Reclassify

@@ -28,10 +28,36 @@ import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import {
-  Users, Plus, Upload, Search, Mail, Phone, Building2,
-  ShieldCheck, Target, ExternalLink, FileText, Tag,
-  Sparkles, UserPlus, Link as LinkIcon,
+  Users, Plus, Upload, Search, Building2,
+  ShieldCheck, Target, ExternalLink,
+  Sparkles, UserPlus, AlertCircle, RefreshCw,
 } from "lucide-react";
+
+/**
+ * JSON request that surfaces the server's own error message. `apiRequest`
+ * throws a bare "500: {...}" string on non-2xx; mutations here need the
+ * parsed `error` field so the toast says what actually went wrong.
+ */
+async function requestJson<T = any>(method: string, url: string, body?: unknown): Promise<T> {
+  const res = await fetch(url, {
+    method,
+    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    body: body !== undefined ? JSON.stringify(body) : undefined,
+    credentials: "include",
+  });
+  if (!res.ok) {
+    let message = `Request failed (${res.status})`;
+    try {
+      const data = await res.json();
+      if (data?.error) message = String(data.error);
+      else if (data?.message) message = String(data.message);
+    } catch {
+      // non-JSON body — keep the status fallback
+    }
+    throw new Error(message);
+  }
+  return res.json() as Promise<T>;
+}
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Tier = "hot" | "warm" | "cool" | "cold";
@@ -123,7 +149,7 @@ export default function Buyers() {
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
-  const { data, isLoading } = useQuery<{ buyers: BuyerRow[] }>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<{ buyers: BuyerRow[] }>({
     queryKey: ["/api/broker/buyers"],
     queryFn: () => apiRequest("GET", "/api/broker/buyers").then(r => r.json()),
   });
@@ -242,6 +268,13 @@ export default function Buyers() {
                   <Skeleton key={i} className="h-12 w-full" />
                 ))}
               </div>
+            ) : error ? (
+              <ErrorState
+                title="Couldn't load your buyers"
+                message={error instanceof Error ? error.message : undefined}
+                retrying={isFetching}
+                onRetry={() => refetch()}
+              />
             ) : filtered.length === 0 ? (
               <EmptyState hasBuyers={buyers.length > 0} onAdd={() => setAddOpen(true)} onImport={() => setImportOpen(true)} />
             ) : (
@@ -366,6 +399,37 @@ function StatCard({ label, value, icon }: { label: string; value: number; icon: 
   );
 }
 
+// ── Error state — distinct from "no buyers" ───────────────────────────────
+function ErrorState({
+  title,
+  message,
+  retrying,
+  onRetry,
+}: {
+  title: string;
+  message?: string;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  return (
+    <div className="p-12 text-center space-y-4" role="alert" data-testid="buyers-error">
+      <div className="h-12 w-12 rounded-full bg-destructive/10 flex items-center justify-center mx-auto">
+        <AlertCircle className="h-6 w-6 text-destructive" />
+      </div>
+      <div>
+        <h3 className="text-sm font-medium text-foreground">{title}</h3>
+        <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+          {message || "The server didn't respond. Check your connection and try again."}
+        </p>
+      </div>
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying} data-testid="button-retry-buyers">
+        <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? "animate-spin" : ""}`} />
+        {retrying ? "Retrying..." : "Retry"}
+      </Button>
+    </div>
+  );
+}
+
 // ── Empty state ────────────────────────────────────────────────────────────
 function EmptyState({
   hasBuyers,
@@ -459,12 +523,7 @@ function AddBuyerDialog({
         notes: form.notes.trim() || null,
         sendInvite: form.sendInvite,
       };
-      const r = await apiRequest("POST", "/api/broker/buyers", payload);
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error || "Failed to add buyer");
-      }
-      return r.json();
+      return requestJson("POST", "/api/broker/buyers", payload);
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
@@ -670,15 +729,10 @@ function ImportCsvDialog({
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const r = await apiRequest("POST", "/api/broker/buyers/import-csv", {
+      return requestJson("POST", "/api/broker/buyers/import-csv", {
         csv,
         sendInvites,
       });
-      if (!r.ok) {
-        const err = await r.json();
-        throw new Error(err.error || "Failed to import");
-      }
-      return r.json();
     },
     onSuccess: (data) => {
       setResult(data);
@@ -833,7 +887,7 @@ function BuyerDetailDrawer({
   const qc = useQueryClient();
   const [, setLocation] = useLocation();
 
-  const { data, isLoading } = useQuery<BuyerDetail>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<BuyerDetail>({
     queryKey: ["/api/broker/buyers", buyerId],
     queryFn: () => apiRequest("GET", `/api/broker/buyers/${buyerId}`).then(r => r.json()),
     enabled: !!buyerId,
@@ -855,25 +909,37 @@ function BuyerDetailDrawer({
     mutationFn: async () => {
       if (!buyerId) return;
       const tags = tagsText.split(",").map(s => s.trim()).filter(Boolean);
-      const r = await apiRequest("PATCH", `/api/broker/buyers/${buyerId}`, {
+      return requestJson("PATCH", `/api/broker/buyers/${buyerId}`, {
         tags,
         notes: notes.trim() || null,
       });
-      if (!r.ok) throw new Error("Save failed");
-      return r.json();
     },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
-      toast({ title: "Saved" });
+      toast({ title: "Saved", description: "Tags and notes updated." });
     },
-    onError: () => toast({ title: "Failed to save", variant: "destructive" }),
+    onError: (err: Error) =>
+      toast({ title: "Failed to save", description: err.message, variant: "destructive" }),
   });
 
   return (
     <Sheet open={!!buyerId} onOpenChange={(o) => !o && onClose()}>
       <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-        {isLoading || !data ? (
+        {error ? (
+          <div className="mt-6">
+            <SheetHeader>
+              <SheetTitle className="text-lg">Buyer details</SheetTitle>
+              <SheetDescription>Something went wrong loading this buyer.</SheetDescription>
+            </SheetHeader>
+            <ErrorState
+              title="Couldn't load this buyer"
+              message={error instanceof Error ? error.message : undefined}
+              retrying={isFetching}
+              onRetry={() => refetch()}
+            />
+          </div>
+        ) : isLoading || !data ? (
           <div className="space-y-3 mt-6">
             <Skeleton className="h-8 w-2/3" />
             <Skeleton className="h-4 w-1/2" />

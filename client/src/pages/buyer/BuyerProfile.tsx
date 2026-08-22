@@ -19,7 +19,7 @@
 import { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Loader2, CheckCircle2, AlertCircle, X, Plus, Sparkles } from "lucide-react";
+import { Loader2, CheckCircle2, AlertCircle, X, Plus, Sparkles, RefreshCw, LayoutDashboard } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -31,8 +31,13 @@ import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { useToast } from "@/hooks/use-toast";
 import { BUYER_CRITERIA_SECTIONS } from "@shared/schema";
-import { BuyerNav } from "./shared";
+import { BuyerNav, readErrorBody } from "./shared";
 
 interface BuyerMe {
   id: string;
@@ -61,17 +66,39 @@ const BUYER_TYPE_OPTIONS = [
   { value: "private_equity", label: "Private equity" },
 ];
 
+/** Radix Select forbids empty-string item values; this sentinel means "Any". */
+const ANY_VALUE = "__any";
+
+/** Stable serialization of the editable subset — used for the dirty check. */
+function serializeEditable(f: Partial<BuyerMe>): string {
+  const { id, email, profileCompletionPct, ...rest } = f;
+  return JSON.stringify(rest);
+}
+
+function hydrateForm(user: BuyerMe): Partial<BuyerMe> {
+  return {
+    ...user,
+    targetIndustries: user.targetIndustries ?? [],
+    targetLocations: user.targetLocations ?? [],
+    buyerCriteria: user.buyerCriteria ?? {},
+  };
+}
+
 export default function BuyerProfile() {
   const [, setLocation] = useLocation();
   const qc = useQueryClient();
+  const { toast } = useToast();
   const [saveMsg, setSaveMsg] = useState<string | null>(null);
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
 
   // Local draft state — we mirror the server record so edits feel snappy
   const [form, setForm] = useState<Partial<BuyerMe>>({});
+  // Snapshot of the last server-confirmed state; form !== baseline means dirty
+  const [baseline, setBaseline] = useState<string | null>(null);
   const [industryInput, setIndustryInput] = useState("");
   const [locationInput, setLocationInput] = useState("");
 
-  const { data, isLoading, error } = useQuery<{ user: BuyerMe }>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<{ user: BuyerMe }>({
     queryKey: ["/api/buyer-auth/me"],
     queryFn: async () => {
       const res = await fetch("/api/buyer-auth/me", { credentials: "include" });
@@ -79,22 +106,35 @@ export default function BuyerProfile() {
         window.location.href = "/buyer/login";
         throw new Error("Not authenticated");
       }
-      if (!res.ok) throw new Error("Failed to load profile");
+      if (!res.ok) {
+        const body = await readErrorBody(res);
+        throw new Error(body.error || "We couldn't load your profile right now.");
+      }
       return res.json();
     },
   });
 
   // Hydrate local form from server on first load
   useEffect(() => {
-    if (data?.user && Object.keys(form).length === 0) {
-      setForm({
-        ...data.user,
-        targetIndustries: data.user.targetIndustries ?? [],
-        targetLocations: data.user.targetLocations ?? [],
-        buyerCriteria: data.user.buyerCriteria ?? {},
-      });
+    if (data?.user && baseline === null) {
+      const hydrated = hydrateForm(data.user);
+      setForm(hydrated);
+      setBaseline(serializeEditable(hydrated));
     }
-  }, [data]);
+  }, [data, baseline]);
+
+  const dirty = baseline !== null && serializeEditable(form) !== baseline;
+
+  // Browser-level guard (tab close / hard navigation) while edits are unsaved
+  useEffect(() => {
+    if (!dirty) return;
+    const handler = (e: BeforeUnloadEvent) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [dirty]);
 
   const save = useMutation({
     mutationFn: async (updates: Partial<BuyerMe>) => {
@@ -105,16 +145,22 @@ export default function BuyerProfile() {
         body: JSON.stringify(updates),
       });
       if (!res.ok) {
-        const body = await res.json();
-        throw new Error(body.error || "Failed to save");
+        const body = await readErrorBody(res);
+        throw new Error(body.error || "Could not save your profile. Please try again.");
       }
       return res.json();
     },
-    onSuccess: (result) => {
+    onSuccess: (result, updates) => {
       qc.setQueryData(["/api/buyer-auth/me"], result);
+      qc.invalidateQueries({ queryKey: ["/api/buyer-auth/dashboard"] });
       setForm((prev) => ({ ...prev, profileCompletionPct: result.user.profileCompletionPct }));
+      // What we sent is now the server's state — the form is clean again.
+      setBaseline(serializeEditable(updates));
       setSaveMsg("Saved");
       setTimeout(() => setSaveMsg(null), 1500);
+    },
+    onError: (e: Error) => {
+      toast({ title: "Couldn't save profile", description: e.message, variant: "destructive" });
     },
   });
 
@@ -126,10 +172,36 @@ export default function BuyerProfile() {
     );
   }
 
-  if (error) {
+  // Distinguishable error state with nav + retry (never a bare string)
+  if (error || !data) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">{(error as Error).message}</div>
+      <div className="min-h-screen bg-background">
+        <BuyerNav />
+        <div className="max-w-4xl mx-auto px-6 py-8">
+          <Card className="border-destructive/30">
+            <CardContent className="p-8 text-center space-y-3" data-testid="profile-error">
+              <AlertCircle className="h-8 w-8 mx-auto text-destructive/70" />
+              <h2 className="text-lg font-semibold">Couldn't load your profile</h2>
+              <p className="text-sm text-muted-foreground">
+                {error instanceof Error ? error.message : "Something went wrong on our side."}
+              </p>
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <Button onClick={() => refetch()} disabled={isFetching} data-testid="button-retry-profile">
+                  {isFetching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Try again
+                </Button>
+                <Button variant="outline" onClick={() => setLocation("/buyer/dashboard")}>
+                  <LayoutDashboard className="h-3.5 w-3.5 mr-1.5" />
+                  Back to dashboard
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -142,6 +214,26 @@ export default function BuyerProfile() {
   const handleSave = () => {
     const { id, email, profileCompletionPct, ...updates } = form;
     save.mutate(updates);
+  };
+
+  const goToDashboard = () => setLocation("/buyer/dashboard");
+
+  const handleBack = () => {
+    if (dirty) {
+      setLeaveDialogOpen(true);
+      return;
+    }
+    goToDashboard();
+  };
+
+  const handleSaveAndLeave = () => {
+    const { id, email, profileCompletionPct, ...updates } = form;
+    save.mutate(updates, {
+      onSuccess: () => {
+        setLeaveDialogOpen(false);
+        goToDashboard();
+      },
+    });
   };
 
   const addIndustry = () => {
@@ -306,7 +398,7 @@ export default function BuyerProfile() {
                     {(form.targetIndustries ?? []).map((i) => (
                       <Badge key={i} variant="secondary" className="gap-1">
                         {i}
-                        <button type="button" onClick={() => removeIndustry(i)}>
+                        <button type="button" onClick={() => removeIndustry(i)} aria-label={`Remove ${i}`}>
                           <X className="h-3 w-3" />
                         </button>
                       </Badge>
@@ -337,7 +429,7 @@ export default function BuyerProfile() {
                     {(form.targetLocations ?? []).map((l) => (
                       <Badge key={l} variant="secondary" className="gap-1">
                         {l}
-                        <button type="button" onClick={() => removeLocation(l)}>
+                        <button type="button" onClick={() => removeLocation(l)} aria-label={`Remove ${l}`}>
                           <X className="h-3 w-3" />
                         </button>
                       </Badge>
@@ -389,6 +481,7 @@ export default function BuyerProfile() {
               <CardContent className="p-6 space-y-6">
                 <div className="text-xs text-muted-foreground">
                   Optional detailed criteria. The more you fill in here, the sharper the match count on your dashboard.
+                  Leave a field on "Any" (or clear it) to stop it counting against a deal.
                 </div>
                 {Object.entries(BUYER_CRITERIA_SECTIONS).map(([sectionKey, section]) => (
                   <div key={sectionKey}>
@@ -417,9 +510,9 @@ export default function BuyerProfile() {
         </Tabs>
 
         {/* Save bar */}
-        <div className="sticky bottom-4 flex items-center justify-end gap-3">
+        <div className="sticky bottom-4 flex items-center justify-end gap-3 flex-wrap">
           {save.error && (
-            <div className="flex items-center gap-1.5 text-xs text-red-400">
+            <div className="flex items-center gap-1.5 text-xs text-red-400" data-testid="text-save-error">
               <AlertCircle className="h-3.5 w-3.5" />
               {(save.error as Error).message}
             </div>
@@ -430,15 +523,54 @@ export default function BuyerProfile() {
               {saveMsg}
             </div>
           )}
-          <Button variant="outline" onClick={() => setLocation("/buyer/dashboard")}>
+          {dirty && !saveMsg && (
+            <span className="text-xs text-muted-foreground" data-testid="text-unsaved">Unsaved changes</span>
+          )}
+          <Button
+            variant="outline"
+            onClick={handleBack}
+            disabled={save.isPending}
+            data-testid="button-back-to-dashboard"
+          >
             Back to dashboard
           </Button>
-          <Button onClick={handleSave} disabled={save.isPending}>
+          <Button onClick={handleSave} disabled={save.isPending} data-testid="button-save-profile">
             {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
             Save profile
           </Button>
         </div>
       </div>
+
+      {/* Unsaved-changes guard for "Back to dashboard" */}
+      <AlertDialog open={leaveDialogOpen} onOpenChange={setLeaveDialogOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>You have unsaved changes</AlertDialogTitle>
+            <AlertDialogDescription>
+              Your profile edits haven't been saved yet. Save them before heading back, or discard them.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={save.isPending}>Keep editing</AlertDialogCancel>
+            <Button
+              variant="outline"
+              onClick={() => { setLeaveDialogOpen(false); goToDashboard(); }}
+              disabled={save.isPending}
+              data-testid="button-discard-changes"
+            >
+              Discard changes
+            </Button>
+            <AlertDialogAction
+              onClick={(e) => { e.preventDefault(); handleSaveAndLeave(); }}
+              disabled={save.isPending}
+              data-testid="button-save-and-leave"
+            >
+              {save.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />}
+              Save and go back
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
@@ -476,13 +608,19 @@ function CriterionInput({
   }
 
   if (type === "select" && def.options) {
+    // An explicit "Any" item lets the buyer clear a criterion they picked
+    // by mistake — otherwise it would silently lower their match counts forever.
     return (
       <Field label={def.label}>
-        <Select value={value ?? ""} onValueChange={(v) => onChange(v || null)}>
-          <SelectTrigger>
+        <Select
+          value={value ? String(value) : ANY_VALUE}
+          onValueChange={(v) => onChange(v === ANY_VALUE ? null : v)}
+        >
+          <SelectTrigger data-testid={`select-criterion-${fieldKey}`}>
             <SelectValue placeholder="Any" />
           </SelectTrigger>
           <SelectContent>
+            <SelectItem value={ANY_VALUE}>Any</SelectItem>
             {def.options.map((o) => (
               <SelectItem key={o} value={o}>{o.replace(/_/g, " ")}</SelectItem>
             ))}
@@ -538,7 +676,7 @@ function CriterionInput({
   return (
     <Field label={def.label}>
       <Input
-        type={type === "number" || type === "currency" || type === "percent" ? "text" : "text"}
+        type="text"
         placeholder={type === "currency" ? "$" : type === "percent" ? "%" : ""}
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value || null)}

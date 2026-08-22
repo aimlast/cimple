@@ -10,6 +10,7 @@
  *
  * Deal data is provided to all tabs via DealContext.
  */
+import { useState } from "react";
 import { useLocation } from "wouter";
 import { DealProvider, useDeal } from "@/contexts/DealContext";
 import {
@@ -18,7 +19,7 @@ import {
   Circle,
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
-import { OverviewTab } from "./OverviewTab";
+import { OverviewTab, type PhaseFocus } from "./OverviewTab";
 import { BuyersTab } from "./BuyersTab";
 import { QATab } from "./QATab";
 import { TeamTab } from "./TeamTab";
@@ -99,17 +100,17 @@ function PhaseStepperHorizontal({
 function DealShellInner({ activeTab }: { activeTab: TabKey }) {
   const { deal, dealId } = useDeal();
   const [, setLocation] = useLocation();
+  // The phase the broker asked to see via the header stepper. OverviewTab
+  // owns the accordion, so it expands + scrolls from an effect once it is
+  // mounted — a fixed timeout here fired before the tab existed when
+  // navigating from another tab, and never expanded the collapsed card.
+  const [phaseFocus, setPhaseFocus] = useState<PhaseFocus | null>(null);
 
   const handlePhaseClick = (key: string) => {
-    // Navigate to overview and scroll to the phase after a tick
     if (activeTab !== "overview") {
       setLocation(`/deal/${dealId}/overview`);
     }
-    setTimeout(() => {
-      document
-        .getElementById(`phase-section-${key}`)
-        ?.scrollIntoView({ behavior: "smooth", block: "start" });
-    }, 100);
+    setPhaseFocus({ key, nonce: Date.now() });
   };
 
   const navigateTab = (tab: string) => {
@@ -165,7 +166,7 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
 
       {/* ── Tab content ── */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
-        {activeTab === "overview" && <OverviewTab />}
+        {activeTab === "overview" && <OverviewTab phaseFocus={phaseFocus} />}
         {activeTab === "buyers" && <BuyersTab />}
         {activeTab === "qa" && <QATab />}
         {activeTab === "team" && <TeamTab />}

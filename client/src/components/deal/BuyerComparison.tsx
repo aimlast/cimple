@@ -8,6 +8,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Progress } from "@/components/ui/progress";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PanelError } from "@/components/deal/PanelError";
 import {
   Users, TrendingUp, Eye, Clock, BookOpen, ArrowDown,
   MessageSquare, FileSignature, Flame,
@@ -45,11 +46,22 @@ const INTENT_CONFIG = {
 };
 
 export function BuyerComparison({ dealId }: { dealId: string }) {
-  const { data: scores, isLoading } = useQuery<BuyerScore[]>({
+  const { data: scores, isLoading, isError, refetch } = useQuery<BuyerScore[]>({
     queryKey: ["/api/deals", dealId, "analytics/buyer-scores"],
     queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/analytics/buyer-scores`);
-      if (!res.ok) throw new Error();
+      const res = await fetch(`/api/deals/${dealId}/analytics/buyer-scores`, { credentials: "include" });
+      if (!res.ok) {
+        let message = res.status === 401
+          ? "Your session has expired — please sign in again."
+          : `Failed to load buyer scores (${res.status})`;
+        try {
+          const data = await res.json();
+          if (data?.error) message = String(data.error);
+        } catch {
+          // non-JSON body
+        }
+        throw new Error(message);
+      }
       return res.json();
     },
   });
@@ -61,6 +73,11 @@ export function BuyerComparison({ dealId }: { dealId: string }) {
         {[...Array(3)].map((_, i) => <Skeleton key={i} className="h-20" />)}
       </div>
     );
+  }
+
+  // A failed request must never look like "no buyers" — render a distinct error state.
+  if (isError) {
+    return <PanelError what="buyer scores" onRetry={() => refetch()} />;
   }
 
   if (!scores || scores.length === 0) {

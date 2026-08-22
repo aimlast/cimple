@@ -1,16 +1,24 @@
 /**
  * ActivityTimeline — chronological feed of buyer events for a deal
  *
- * Shows who did what, when — views, NDA signs, section reads, questions asked.
- * Compact design for embedding in the deal TeamTab.
+ * Shows who did what, when — CIM opens, NDA signatures, section reads,
+ * scroll milestones, questions asked. (nda_signed / question_asked are
+ * written server-side at signing / submission time; download_attempt stays
+ * in EVENT_CONFIG for the server filter but no client emits it yet, so it is
+ * deliberately not promised in any user-facing copy.)
+ * Compact design for embedding in the deal TeamTab and the Analytics page.
+ *
+ * Pages are fetched with offset/limit and appended client-side; the server
+ * clamps a single request to 200 rows, so growing `limit` alone used to stall
+ * on busy deals with a "Show more" button that never loaded anything.
  */
-import { useState } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useInfiniteQuery } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { PanelError } from "@/components/deal/PanelError";
 import {
   Eye, FileSignature, BookOpen, ArrowDown, MessageSquare,
-  Download, Clock, ChevronDown,
+  Download, Clock, ChevronDown, Loader2,
 } from "lucide-react";
 
 interface TimelineEvent {
@@ -23,6 +31,13 @@ interface TimelineEvent {
   timeSpentSeconds: number | null;
   createdAt: string;
 }
+
+interface TimelinePage {
+  timeline: TimelineEvent[];
+  total: number;
+}
+
+const PAGE_SIZE = 20;
 
 const EVENT_CONFIG: Record<string, { icon: typeof Eye; label: string; color: string }> = {
   view:             { icon: Eye,            label: "Opened CIM",       color: "text-blue-400" },
@@ -53,15 +68,39 @@ function timeAgo(dateStr: string): string {
   return new Date(dateStr).toLocaleDateString();
 }
 
-export function ActivityTimeline({ dealId }: { dealId: string }) {
-  const [limit, setLimit] = useState(20);
+async function readError(res: Response, fallback: string): Promise<string> {
+  if (res.status === 401) return "Your session has expired — please sign in again.";
+  try {
+    const data = await res.json();
+    if (data?.error) return String(data.error);
+  } catch {
+    // non-JSON body
+  }
+  return `${fallback} (${res.status})`;
+}
 
-  const { data, isLoading } = useQuery<{ timeline: TimelineEvent[]; total: number }>({
-    queryKey: ["/api/deals", dealId, "analytics/timeline", limit],
-    queryFn: async () => {
-      const res = await fetch(`/api/deals/${dealId}/analytics/timeline?limit=${limit}`);
-      if (!res.ok) throw new Error();
+export function ActivityTimeline({ dealId }: { dealId: string }) {
+  const {
+    data, isLoading, isError, refetch,
+    fetchNextPage, hasNextPage, isFetchingNextPage,
+  } = useInfiniteQuery<TimelinePage>({
+    queryKey: ["/api/deals", dealId, "analytics/timeline"],
+    initialPageParam: 0,
+    queryFn: async ({ pageParam }) => {
+      const offset = Number(pageParam) || 0;
+      const res = await fetch(
+        `/api/deals/${dealId}/analytics/timeline?limit=${PAGE_SIZE}&offset=${offset}`,
+        { credentials: "include" },
+      );
+      if (!res.ok) throw new Error(await readError(res, "Failed to load activity"));
       return res.json();
+    },
+    getNextPageParam: (lastPage, allPages) => {
+      const loaded = allPages.reduce((n, p) => n + p.timeline.length, 0);
+      // Stop when the server returned a short page or we've reached its total —
+      // never promise rows that can't be loaded.
+      if (lastPage.timeline.length < PAGE_SIZE || loaded >= lastPage.total) return undefined;
+      return loaded;
     },
   });
 
@@ -74,22 +113,34 @@ export function ActivityTimeline({ dealId }: { dealId: string }) {
     );
   }
 
-  const timeline = data?.timeline ?? [];
-  const total = data?.total ?? 0;
+  if (isError) {
+    return <PanelError what="buyer activity" onRetry={() => refetch()} />;
+  }
+
+  const timeline = data?.pages.flatMap(p => p.timeline) ?? [];
+  const total = data?.pages[data.pages.length - 1]?.total ?? timeline.length;
 
   if (timeline.length === 0) {
     return (
       <div className="text-center py-4">
         <Clock className="h-5 w-5 mx-auto mb-1.5 opacity-20" />
         <p className="text-xs text-muted-foreground">No activity yet</p>
+        <p className="text-2xs text-muted-foreground/60 mt-0.5">
+          Buyer opens, NDA signatures, section reads, and questions will appear here.
+        </p>
       </div>
     );
   }
+
+  const remaining = Math.max(total - timeline.length, 0);
 
   return (
     <div className="space-y-2">
       <p className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
         <Clock className="h-3.5 w-3.5" /> Activity Feed
+        <span className="text-2xs text-muted-foreground/60 font-normal tabular-nums">
+          · {timeline.length} of {total}
+        </span>
       </p>
 
       <div className="relative">
@@ -127,14 +178,18 @@ export function ActivityTimeline({ dealId }: { dealId: string }) {
         </div>
       </div>
 
-      {timeline.length < total && (
+      {hasNextPage && (
         <Button
           variant="ghost"
           size="sm"
           className="w-full h-7 text-2xs gap-1"
-          onClick={() => setLimit(l => l + 20)}
+          disabled={isFetchingNextPage}
+          onClick={() => fetchNextPage()}
         >
-          <ChevronDown className="h-3 w-3" /> Show more ({total - timeline.length} remaining)
+          {isFetchingNextPage
+            ? <Loader2 className="h-3 w-3 animate-spin" />
+            : <ChevronDown className="h-3 w-3" />}
+          {isFetchingNextPage ? "Loading…" : `Show more${remaining > 0 ? ` (${remaining} remaining)` : ""}`}
         </Button>
       )}
     </div>

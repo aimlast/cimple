@@ -28,6 +28,20 @@ import {
   ChevronDown, ChevronRight, FileText, ArrowRight, MessageCircleQuestion, Undo2,
 } from "lucide-react";
 
+/** apiRequest throws "<status>: <body>" — surface the server's own error message when the body is JSON. */
+function apiErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const body = raw.replace(/^\d{3}:\s*/, "");
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+    if (parsed && typeof parsed.message === "string") return parsed.message;
+  } catch {
+    /* not a JSON body */
+  }
+  return body || fallback;
+}
+
 interface DiscrepancyPanelProps {
   dealId: string;
   onAllResolved?: () => void;
@@ -66,7 +80,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
   const { data: allDiscrepancies = [], isLoading, error: loadError, refetch } = useQuery<Discrepancy[]>({
     queryKey: ["/api/deals", dealId, "discrepancies"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/discrepancies`);
+      const r = await fetch(`/api/deals/${dealId}/discrepancies`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load discrepancies");
       return r.json();
     },
@@ -80,7 +94,6 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
   const runCheck = useMutation({
     mutationFn: async () => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/run-discrepancy-check`);
-      if (!r.ok) { const e = await r.json(); throw new Error(e.error); }
       return r.json();
     },
     onSuccess: (data) => {
@@ -90,7 +103,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
         description: data.count > 0 ? "Review and resolve before generating the CIM." : "All data is consistent. Ready to generate.",
       });
     },
-    onError: (e: Error) => toast({ title: "Check failed", description: e.message, variant: "destructive" }),
+    onError: (e: unknown) => toast({ title: "Check failed", description: apiErrorMessage(e, "Discrepancy check failed"), variant: "destructive" }),
   });
 
   const resolve = useMutation({
@@ -112,7 +125,6 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
         resolvedValue,
         sellerResponse,
       });
-      if (!r.ok) throw new Error("Failed to resolve");
       return r.json();
     },
     onSuccess: () => {
@@ -125,13 +137,12 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
         onAllResolved();
       }
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: unknown) => toast({ title: "Could not resolve discrepancy", description: apiErrorMessage(e, "Failed to resolve discrepancy"), variant: "destructive" }),
   });
 
   const route = useMutation({
     mutationFn: async ({ id, status }: { id: string; status: "ask_seller" | "open" }) => {
       const r = await apiRequest("PATCH", `/api/discrepancies/${id}`, { status });
-      if (!r.ok) throw new Error("Failed to update");
       return r.json();
     },
     onSuccess: (_data, vars) => {
@@ -143,7 +154,7 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
           : undefined,
       });
     },
-    onError: (e: Error) => toast({ title: "Failed", description: e.message, variant: "destructive" }),
+    onError: (e: unknown) => toast({ title: "Could not update routing", description: apiErrorMessage(e, "Failed to update discrepancy"), variant: "destructive" }),
   });
 
   // Stats
@@ -269,6 +280,9 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
         const isFinancial = disc.source === "financial_analysis";
         const isRouted = disc.status === "ask_seller";
         const isOpen = disc.status === "open" || disc.status === "seller_responded";
+        // A clarifying question routed from the financial analysis has no second
+        // source — it is a question with context, not two conflicting values.
+        const isQuestion = isFinancial && !disc.documentValue;
 
         return (
           <Card
@@ -311,27 +325,34 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
               {/* Expanded details */}
               {isExpanded && (
                 <div className="mt-3 pl-6 space-y-3">
-                  {/* Value comparison */}
-                  <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start">
+                  {/* Value comparison (or a single context block for a routed question) */}
+                  {isQuestion ? (
                     <div className="rounded bg-muted/30 p-2.5">
-                      <p className="text-2xs text-muted-foreground font-medium mb-1">
-                        {isFinancial ? "Source A" : "Interview / Seller said"}
-                      </p>
-                      <p className="text-xs">{disc.interviewValue || "—"}</p>
+                      <p className="text-2xs text-muted-foreground font-medium mb-1">Context from the analysis</p>
+                      <p className="text-xs">{disc.interviewValue || "No additional context"}</p>
                     </div>
-                    <ArrowRight className="h-4 w-4 text-muted-foreground mt-5" />
-                    <div className="rounded bg-muted/30 p-2.5">
-                      <p className="text-2xs text-muted-foreground font-medium mb-1">
-                        {isFinancial ? "Source B" : "Document shows"}
-                      </p>
-                      <p className="text-xs">{disc.documentValue || "—"}</p>
-                      {disc.documentName && (
-                        <p className="text-2xs text-muted-foreground mt-1 flex items-center gap-1">
-                          <FileText className="h-2.5 w-2.5" /> {disc.documentName}
+                  ) : (
+                    <div className="grid grid-cols-[1fr_auto_1fr] gap-3 items-start">
+                      <div className="rounded bg-muted/30 p-2.5">
+                        <p className="text-2xs text-muted-foreground font-medium mb-1">
+                          {isFinancial ? "Source A" : "Interview / Seller said"}
                         </p>
-                      )}
+                        <p className="text-xs">{disc.interviewValue || "—"}</p>
+                      </div>
+                      <ArrowRight className="h-4 w-4 text-muted-foreground mt-5" />
+                      <div className="rounded bg-muted/30 p-2.5">
+                        <p className="text-2xs text-muted-foreground font-medium mb-1">
+                          {isFinancial ? "Source B" : "Document shows"}
+                        </p>
+                        <p className="text-xs">{disc.documentValue || "—"}</p>
+                        {disc.documentName && (
+                          <p className="text-2xs text-muted-foreground mt-1 flex items-center gap-1">
+                            <FileText className="h-2.5 w-2.5" /> {disc.documentName}
+                          </p>
+                        )}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
                   {/* AI explanation */}
                   {disc.aiExplanation && (
@@ -374,27 +395,33 @@ export function DiscrepancyPanel({ dealId, onAllResolved, sourceFilter, hideRunC
                         onChange={(e) => setResponses({ ...responses, [disc.id]: e.target.value })}
                       />
                       <div className="flex flex-wrap gap-2">
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs gap-1"
-                          onClick={() => resolve.mutate({ id: disc.id, action: "interview" })}
-                          disabled={resolve.isPending}
-                        >
-                          {isFinancial ? "Accept Source A" : "Accept interview value"}
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          className="h-7 text-xs gap-1"
-                          onClick={() => resolve.mutate({ id: disc.id, action: "document" })}
-                          disabled={resolve.isPending}
-                        >
-                          {isFinancial ? "Accept Source B" : "Accept document value"}
-                        </Button>
+                        {/* Only offer "accept" for values that exist — a routed
+                            question has none; its answer is typed in below. */}
+                        {!isQuestion && disc.interviewValue && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1"
+                            onClick={() => resolve.mutate({ id: disc.id, action: "interview" })}
+                            disabled={resolve.isPending}
+                          >
+                            {isFinancial ? "Accept Source A" : "Accept interview value"}
+                          </Button>
+                        )}
+                        {!isQuestion && disc.documentValue && (
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            className="h-7 text-xs gap-1"
+                            onClick={() => resolve.mutate({ id: disc.id, action: "document" })}
+                            disabled={resolve.isPending}
+                          >
+                            {isFinancial ? "Accept Source B" : "Accept document value"}
+                          </Button>
+                        )}
                         <div className="flex items-center gap-1">
                           <Input
-                            placeholder="Enter corrected value..."
+                            placeholder={isQuestion ? "Enter the seller's answer..." : "Enter corrected value..."}
                             className="h-7 text-xs w-44"
                             value={resolvedValues[disc.id] || ""}
                             onChange={(e) => setResolvedValues({ ...resolvedValues, [disc.id]: e.target.value })}

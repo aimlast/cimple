@@ -221,24 +221,40 @@ async function assembleSources(
 
 // ── Public entry point ──
 
-export async function runFinancialAnalysis(
+/**
+ * Create the "running" placeholder row for a new analysis version.
+ *
+ * Routes call this synchronously BEFORE responding so the client's first
+ * refetch is guaranteed to see status "running" (and start polling). The
+ * placeholder id is then handed to runFinancialAnalysis in the background.
+ */
+export async function createAnalysisPlaceholder(
   dealId: string,
   storage: IStorage,
-): Promise<string> {
-  // 1. Load deal
-  const deal = await storage.getDeal(dealId);
-  if (!deal) throw new Error(`Deal ${dealId} not found`);
-
-  // Determine next version number
+): Promise<{ id: string; version: number }> {
   const existing = await storage.getFinancialAnalysesByDeal(dealId);
   const nextVersion = existing.length > 0 ? (existing[0].version ?? 0) + 1 : 1;
-
-  // Create a placeholder record in "running" status
   const analysis = await storage.createFinancialAnalysis({
     dealId,
     version: nextVersion,
     status: "running",
   });
+  return { id: analysis.id, version: nextVersion };
+}
+
+export async function runFinancialAnalysis(
+  dealId: string,
+  storage: IStorage,
+  opts: { analysisId?: string } = {},
+): Promise<string> {
+  // 1. Load deal
+  const deal = await storage.getDeal(dealId);
+  if (!deal) throw new Error(`Deal ${dealId} not found`);
+
+  // Use the pre-created placeholder when the route made one; otherwise create it here
+  const analysis = opts.analysisId
+    ? { id: opts.analysisId }
+    : await createAnalysisPlaceholder(dealId, storage);
 
   try {
     // 2. Gather every source on the deal

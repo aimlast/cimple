@@ -38,6 +38,8 @@ import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 export interface IStorage {
   getUser(id: string): Promise<User | undefined>;
   getUserByUsername(username: string): Promise<User | undefined>;
+  /** Case-insensitive email lookup; prefers a broker-role account when several match. */
+  getUserByEmail(email: string): Promise<User | undefined>;
   createUser(user: InsertUser): Promise<User>;
   
   // CIM operations (legacy)
@@ -240,6 +242,15 @@ export class MemStorage implements IStorage {
     return Array.from(this.users.values()).find(
       (user) => user.username === username,
     );
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const needle = email.trim().toLowerCase();
+    if (!needle) return undefined;
+    const matches = Array.from(this.users.values()).filter(
+      (user) => (user.email ?? "").toLowerCase() === needle,
+    );
+    return matches.find((u) => u.role === "broker") ?? matches[0];
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -474,6 +485,16 @@ export class DbStorage implements IStorage {
   async getUserByUsername(username: string): Promise<User | undefined> {
     const result = await db.select().from(users).where(eq(users.username, username));
     return result[0];
+  }
+
+  async getUserByEmail(email: string): Promise<User | undefined> {
+    const needle = email.trim().toLowerCase();
+    if (!needle) return undefined;
+    const result = await db
+      .select()
+      .from(users)
+      .where(sql`lower(${users.email}) = ${needle}`);
+    return result.find((u) => u.role === "broker") ?? result[0];
   }
 
   async createUser(insertUser: InsertUser): Promise<User> {
@@ -733,7 +754,7 @@ export class DbStorage implements IStorage {
       total: sql<number>`COALESCE(SUM(${analyticsEvents.timeSpentSeconds}), 0)`
     })
       .from(analyticsEvents)
-      .where(sql`${analyticsEvents.eventType} = 'time_on_page'`);
+      .where(sql`${analyticsEvents.eventType} = 'section_exit'`);
 
     if (dealId) {
       viewsQuery = db.select({ count: count() })
@@ -751,7 +772,7 @@ export class DbStorage implements IStorage {
         total: sql<number>`COALESCE(SUM(${analyticsEvents.timeSpentSeconds}), 0)`
       })
         .from(analyticsEvents)
-        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'time_on_page'`);
+        .where(sql`${analyticsEvents.dealId} = ${dealId} AND ${analyticsEvents.eventType} = 'section_exit'`);
     }
 
     const [viewsResult, buyersResult, timeResult] = await Promise.all([
@@ -809,7 +830,7 @@ export class DbStorage implements IStorage {
         total: sql<number>`COALESCE(SUM(${analyticsEvents.timeSpentSeconds}), 0)`,
       })
         .from(analyticsEvents)
-        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'time_on_page'`),
+        .where(sql`${inArray(analyticsEvents.dealId, dealIds)} AND ${analyticsEvents.eventType} = 'section_exit'`),
       db.select({
         date: sql<string>`DATE(${analyticsEvents.createdAt})`,
         count: count(),

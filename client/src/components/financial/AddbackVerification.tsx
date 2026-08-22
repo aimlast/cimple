@@ -7,13 +7,47 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest, queryClient } from "@/lib/queryClient";
+import { PanelError } from "@/components/deal/PanelError";
+import {
+  AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
+  AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import type { AddbackVerification as AddbackVerificationType } from "@shared/schema";
 import {
   Upload, Loader2, CheckCircle2, XCircle, AlertTriangle,
   HelpCircle, ChevronDown, ChevronRight, FileText, Search,
   ShieldCheck, MessageSquare, ArrowLeft, Plus, X, Lightbulb,
-  ListFilter, Check,
+  ListFilter, Check, RotateCcw,
 } from "lucide-react";
+
+/** apiRequest throws "<status>: <body>" — surface the server's own error message when the body is JSON. */
+function apiErrorMessage(err: unknown, fallback: string): string {
+  const raw = err instanceof Error ? err.message : String(err ?? "");
+  const body = raw.replace(/^\d{3}:\s*/, "");
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+    if (parsed && typeof parsed.message === "string") return parsed.message;
+  } catch {
+    /* not a JSON body */
+  }
+  return body || fallback;
+}
+
+type Workflow = "provided" | "from_scratch";
+
+const WORKFLOW_COPY: Record<Workflow, { title: string; description: string }> = {
+  provided: {
+    title: "Verify Existing Addbacks",
+    description:
+      "Pulls the addback list from this financial analysis and asks the AI to find supporting transactions for each one in your GL, QuickBooks, or bank-statement uploads.",
+  },
+  from_scratch: {
+    title: "Discover Addbacks",
+    description:
+      "Ignores the analysis addback list and asks the AI to identify potential addbacks directly from the uploaded transaction data.",
+  },
+};
 
 /* ──────────────────────────────────────────────
    Types
@@ -115,14 +149,17 @@ function TransactionBrowser({
   const [searchQuery, setSearchQuery] = useState("");
   const [minAmount, setMinAmount] = useState("");
   const [maxAmount, setMaxAmount] = useState("");
+  // Selection is keyed by the transaction's index in the UNFILTERED list — a
+  // stable identity. Keying by filtered index re-pointed every checkmark at a
+  // different transaction whenever the search or amount filters changed.
   const [selectedTxs, setSelectedTxs] = useState<Set<number>>(new Set());
 
   const filtered = useMemo(() => {
-    let results = transactions;
+    let results = transactions.map((tx, idx) => ({ tx, idx }));
     if (searchQuery.trim()) {
       const q = searchQuery.toLowerCase();
       results = results.filter(
-        (tx) =>
+        ({ tx }) =>
           tx.description.toLowerCase().includes(q) ||
           tx.account?.toLowerCase().includes(q) ||
           tx.date.includes(q)
@@ -130,26 +167,34 @@ function TransactionBrowser({
     }
     if (minAmount) {
       const min = parseFloat(minAmount);
-      if (!isNaN(min)) results = results.filter((tx) => Math.abs(tx.amount) >= min);
+      if (!isNaN(min)) results = results.filter(({ tx }) => Math.abs(tx.amount) >= min);
     }
     if (maxAmount) {
       const max = parseFloat(maxAmount);
-      if (!isNaN(max)) results = results.filter((tx) => Math.abs(tx.amount) <= max);
+      if (!isNaN(max)) results = results.filter(({ tx }) => Math.abs(tx.amount) <= max);
     }
     return results;
   }, [transactions, searchQuery, minAmount, maxAmount]);
 
-  const toggleTx = (index: number) => {
+  // Selected rows currently hidden by the filters — still linked on confirm
+  const hiddenSelectedCount = useMemo(() => {
+    const visible = new Set(filtered.map((r) => r.idx));
+    let n = 0;
+    selectedTxs.forEach((idx) => { if (!visible.has(idx)) n++; });
+    return n;
+  }, [filtered, selectedTxs]);
+
+  const toggleTx = (idx: number) => {
     setSelectedTxs((prev) => {
       const next = new Set(prev);
-      if (next.has(index)) next.delete(index);
-      else next.add(index);
+      if (next.has(idx)) next.delete(idx);
+      else next.add(idx);
       return next;
     });
   };
 
   const handleConfirmSelection = () => {
-    const selected = filtered.filter((_, i) => selectedTxs.has(i));
+    const selected = transactions.filter((_, idx) => selectedTxs.has(idx));
     onSelect(selected);
     onClose();
   };
@@ -196,15 +241,19 @@ function TransactionBrowser({
         {filtered.length === 0 ? (
           <p className="text-xs text-muted-foreground text-center py-4">No transactions match your search</p>
         ) : (
-          filtered.map((tx, i) => {
-            const isSelected = selectedTxs.has(i);
+          filtered.map(({ tx, idx }) => {
+            const isSelected = selectedTxs.has(idx);
             return (
               <div
-                key={i}
-                className={`flex items-center gap-2 py-1.5 px-2 rounded text-xs cursor-pointer transition-colors ${
+                key={idx}
+                role="checkbox"
+                aria-checked={isSelected}
+                tabIndex={0}
+                className={`flex items-center gap-2 py-1.5 px-2 rounded text-xs cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${
                   isSelected ? "bg-teal/10 border border-teal/30" : "hover:bg-muted/30"
                 }`}
-                onClick={() => toggleTx(i)}
+                onClick={() => toggleTx(idx)}
+                onKeyDown={(e) => { if (e.key === " " || e.key === "Enter") { e.preventDefault(); toggleTx(idx); } }}
               >
                 <div className={`h-4 w-4 rounded border flex items-center justify-center shrink-0 ${
                   isSelected ? "bg-teal border-teal" : "border-muted-foreground/30"
@@ -228,6 +277,7 @@ function TransactionBrowser({
         <p className="text-2xs text-muted-foreground">
           {filtered.length} transaction{filtered.length !== 1 ? "s" : ""} found
           {selectedTxs.size > 0 && ` · ${selectedTxs.size} selected`}
+          {hiddenSelectedCount > 0 && ` (${hiddenSelectedCount} hidden by filters)`}
         </p>
         <Button
           size="sm"
@@ -277,8 +327,8 @@ function AiHintInput({
       setIsOpen(false);
       onHintSent();
     },
-    onError: (err: Error) => {
-      toast({ title: "Failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Could not send hint", description: apiErrorMessage(err, "Failed to start re-search"), variant: "destructive" });
     },
   });
 
@@ -340,21 +390,34 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   const [browsingForAddback, setBrowsingForAddback] = useState<string | null>(null);
   const [sellerNotes, setSellerNotes] = useState<Record<string, string>>({});
   const [questionAnswers, setQuestionAnswers] = useState<Record<string, string>>({});
+  // Workflow awaiting confirmation before the verification is created
+  const [pendingWorkflow, setPendingWorkflow] = useState<Workflow | null>(null);
+  // "Start over" dialog (switch workflow / reset the existing verification)
+  const [resetOpen, setResetOpen] = useState(false);
 
-  // Fetch verification data
-  const { data: verification, isLoading } = useQuery<AddbackVerificationType | null>({
+  // Fetch verification data; poll while the background analysis is running
+  // (refetchOnWindowFocus is off globally, so without this the "Analyzing"
+  // spinner would never resolve).
+  const {
+    data: verification,
+    isLoading,
+    error: loadError,
+    refetch,
+  } = useQuery<AddbackVerificationType | null>({
     queryKey: ["/api/deals", dealId, "addback-verification"],
     queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/addback-verification`);
+      const r = await fetch(`/api/deals/${dealId}/addback-verification`, { credentials: "include" });
       if (r.status === 404) return null;
       if (!r.ok) throw new Error("Failed to fetch");
       return r.json();
     },
+    refetchInterval: (query) =>
+      query.state.data?.status === "analyzing" ? 4000 : false,
   });
 
   // Start verification
   const startVerification = useMutation({
-    mutationFn: async (workflow: "provided" | "from_scratch") => {
+    mutationFn: async (workflow: Workflow) => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/addback-verification`, {
         workflow,
         financialAnalysisId,
@@ -362,11 +425,40 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       return r.json();
     },
     onSuccess: () => {
+      setPendingWorkflow(null);
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
       toast({ title: "Verification started" });
     },
-    onError: (err: Error) => {
-      toast({ title: "Failed to start verification", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      setPendingWorkflow(null);
+      // 409 = a verification already exists (stale view) — reload it rather than
+      // leaving the broker on the selection cards.
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
+      toast({ title: "Could not start verification", description: apiErrorMessage(err, "Failed to start verification"), variant: "destructive" });
+    },
+  });
+
+  // Start over / switch workflow — resets the existing row in place
+  const resetVerification = useMutation({
+    mutationFn: async (workflow: Workflow) => {
+      if (!verification) throw new Error("No verification to reset");
+      const r = await apiRequest("POST", `/api/deals/${dealId}/addback-verification/${verification.id}/reset`, {
+        workflow,
+        financialAnalysisId,
+      });
+      return r.json();
+    },
+    onSuccess: (_data, workflow) => {
+      setResetOpen(false);
+      setExpandedAddback(null);
+      setBrowsingForAddback(null);
+      setSellerNotes({});
+      setQuestionAnswers({});
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
+      toast({ title: "Verification reset", description: `Starting over with “${WORKFLOW_COPY[workflow].title}”.` });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Could not start over", description: apiErrorMessage(err, "Failed to reset verification"), variant: "destructive" });
     },
   });
 
@@ -381,8 +473,8 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
       toast({ title: "Analysis running", description: "The AI is matching transactions to addbacks. This may take a moment." });
     },
-    onError: (err: Error) => {
-      toast({ title: "Analysis failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Could not start analysis", description: apiErrorMessage(err, "Failed to start analysis"), variant: "destructive" });
     },
   });
 
@@ -396,8 +488,8 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
     },
-    onError: (err: Error) => {
-      toast({ title: "Update failed", description: err.message, variant: "destructive" });
+    onError: (err: unknown) => {
+      toast({ title: "Update failed", description: apiErrorMessage(err, "Failed to update verification"), variant: "destructive" });
     },
   });
 
@@ -408,9 +500,19 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
       const r = await apiRequest("POST", `/api/deals/${dealId}/addback-verification/${verification.id}/confirm`);
       return r.json();
     },
-    onSuccess: () => {
+    onSuccess: (data: AddbackVerificationType | undefined) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "addback-verification"] });
-      toast({ title: "Verification complete" });
+      if (data?.status === "verified") {
+        toast({ title: "Verification complete" });
+      } else {
+        toast({
+          title: "Not finalized yet",
+          description: "Every addback must be confirmed or disputed before the verification can be finalized.",
+        });
+      }
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Finalize failed", description: apiErrorMessage(err, "Failed to finalize verification"), variant: "destructive" });
     },
   });
 
@@ -501,8 +603,98 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
     );
   }
 
+  // A failed fetch must never fall through to the workflow-selection cards:
+  // clicking one would create a second verification that shadows the real one.
+  if (loadError) {
+    return <PanelError what="addback verification" onRetry={() => refetch()} />;
+  }
+
+  // Shared dialogs — rendered inside every state below
+  const dialogs = (
+    <>
+      {/* Confirm workflow before creating the verification */}
+      <AlertDialog open={pendingWorkflow !== null} onOpenChange={(open) => { if (!open && !startVerification.isPending) setPendingWorkflow(null); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>
+              Start “{pendingWorkflow ? WORKFLOW_COPY[pendingWorkflow].title : ""}”?
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingWorkflow ? WORKFLOW_COPY[pendingWorkflow].description : ""}{" "}
+              You can switch workflows later with “Start over”.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={startVerification.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              disabled={startVerification.isPending}
+              onClick={(e) => {
+                e.preventDefault();
+                if (pendingWorkflow) startVerification.mutate(pendingWorkflow);
+              }}
+            >
+              {startVerification.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+              Start
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Start over / switch workflow */}
+      <AlertDialog open={resetOpen} onOpenChange={(open) => { if (!resetVerification.isPending) setResetOpen(open); }}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Start over?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This clears the current verification — matched transactions, seller confirmations,
+              disputes, and AI questions — and restarts with the workflow you choose. This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter className="sm:flex-wrap">
+            <AlertDialogCancel disabled={resetVerification.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-muted text-foreground hover:bg-muted/80 gap-1.5"
+              disabled={resetVerification.isPending}
+              onClick={(e) => { e.preventDefault(); resetVerification.mutate("from_scratch"); }}
+            >
+              {resetVerification.isPending && resetVerification.variables === "from_scratch"
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <Search className="h-3.5 w-3.5 text-blue-400" />}
+              Discover Addbacks
+            </AlertDialogAction>
+            <AlertDialogAction
+              className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+              disabled={resetVerification.isPending}
+              onClick={(e) => { e.preventDefault(); resetVerification.mutate("provided"); }}
+            >
+              {resetVerification.isPending && resetVerification.variables === "provided"
+                ? <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                : <ShieldCheck className="h-3.5 w-3.5" />}
+              Verify Existing Addbacks
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+    </>
+  );
+
+  const startOverButton = verification ? (
+    <Button
+      size="sm"
+      variant="ghost"
+      className="h-8 text-xs gap-1.5 text-muted-foreground hover:text-foreground shrink-0"
+      onClick={() => setResetOpen(true)}
+      disabled={resetVerification.isPending}
+      title="Reset this verification or switch workflow"
+    >
+      <RotateCcw className="h-3 w-3" /> Start over
+    </Button>
+  ) : null;
+
   // ── No verification started ──
   if (!verification) {
+    const cardsDisabled = startVerification.isPending;
     return (
       <div className="space-y-4">
         <div className="flex items-center gap-3">
@@ -521,8 +713,14 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {/* Workflow A */}
-          <Card className="bg-card/50 border-border/50 hover:border-teal/30 transition-colors cursor-pointer"
-                onClick={() => startVerification.mutate("provided")}>
+          <Card
+            role="button"
+            tabIndex={0}
+            aria-disabled={cardsDisabled}
+            className={`bg-card/50 border-border/50 hover:border-teal/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${cardsDisabled ? "opacity-60 pointer-events-none" : ""}`}
+            onClick={() => setPendingWorkflow("provided")}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPendingWorkflow("provided"); } }}
+          >
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <ShieldCheck className="h-4 w-4 text-teal" />
@@ -538,8 +736,14 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
           </Card>
 
           {/* Workflow B */}
-          <Card className="bg-card/50 border-border/50 hover:border-blue-500/30 transition-colors cursor-pointer"
-                onClick={() => startVerification.mutate("from_scratch")}>
+          <Card
+            role="button"
+            tabIndex={0}
+            aria-disabled={cardsDisabled}
+            className={`bg-card/50 border-border/50 hover:border-blue-500/30 transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring ${cardsDisabled ? "opacity-60 pointer-events-none" : ""}`}
+            onClick={() => setPendingWorkflow("from_scratch")}
+            onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setPendingWorkflow("from_scratch"); } }}
+          >
             <CardHeader className="pb-2">
               <CardTitle className="text-sm font-medium flex items-center gap-2">
                 <Search className="h-4 w-4 text-blue-400" />
@@ -554,6 +758,7 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
             </CardContent>
           </Card>
         </div>
+        {dialogs}
       </div>
     );
   }
@@ -562,22 +767,26 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   if (verification.status === "pending_documents") {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          {onBack && (
-            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          )}
-          <div>
-            <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              {verification.workflow === "provided"
-                ? `${addbacks.length} addback${addbacks.length !== 1 ? "s" : ""} to verify`
-                : "Upload transaction data to discover addbacks"}
-            </p>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3 min-w-0">
+            {onBack && (
+              <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <div className="min-w-0">
+              <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
+              <p className="text-sm text-muted-foreground mt-0.5">
+                {verification.workflow === "provided"
+                  ? `${addbacks.length} addback${addbacks.length !== 1 ? "s" : ""} to verify`
+                  : "Upload transaction data to discover addbacks"}
+              </p>
+            </div>
+            <Badge className="bg-amber-500/10 text-amber-400 border-0 shrink-0">Awaiting Documents</Badge>
           </div>
-          <Badge className="bg-amber-500/10 text-amber-400 border-0">Awaiting Documents</Badge>
+          {startOverButton}
         </div>
+        {dialogs}
 
         {/* Show addbacks waiting to be verified (Workflow A) */}
         {addbacks.length > 0 && (
@@ -671,15 +880,19 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   if (verification.status === "failed") {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          {onBack && (
-            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          )}
-          <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
-          <Badge className="bg-destructive/10 text-destructive border-0">Failed</Badge>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {onBack && (
+              <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
+            <Badge className="bg-destructive/10 text-destructive border-0">Failed</Badge>
+          </div>
+          {startOverButton}
         </div>
+        {dialogs}
 
         <Card className="bg-card/50 border-destructive/20">
           <CardContent className="py-8 text-center space-y-4">
@@ -711,15 +924,19 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
   if (verification.status === "verified") {
     return (
       <div className="space-y-4">
-        <div className="flex items-center gap-3">
-          {onBack && (
-            <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
-              <ArrowLeft className="h-4 w-4" />
-            </button>
-          )}
-          <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
-          <Badge className="bg-emerald-500/10 text-emerald-400 border-0">Verified</Badge>
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center gap-3">
+            {onBack && (
+              <button onClick={onBack} className="text-muted-foreground hover:text-foreground transition-colors">
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+            )}
+            <h2 className="text-lg font-semibold tracking-tight">Addback Verification</h2>
+            <Badge className="bg-emerald-500/10 text-emerald-400 border-0">Verified</Badge>
+          </div>
+          {startOverButton}
         </div>
+        {dialogs}
 
         <Card className="bg-card/50 border-emerald-500/20">
           <CardContent className="py-6">
@@ -788,17 +1005,21 @@ export function AddbackVerification({ dealId, financialAnalysisId, onBack }: Add
           </div>
           <Badge className="bg-amber-500/10 text-amber-400 border-0">Awaiting Review</Badge>
         </div>
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 text-xs gap-1.5"
-          onClick={() => runAnalysis.mutate()}
-          disabled={runAnalysis.isPending}
-        >
-          {runAnalysis.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
-          Re-analyze
-        </Button>
+        <div className="flex items-center gap-1.5">
+          {startOverButton}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 text-xs gap-1.5"
+            onClick={() => runAnalysis.mutate()}
+            disabled={runAnalysis.isPending}
+          >
+            {runAnalysis.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Search className="h-3 w-3" />}
+            Re-analyze
+          </Button>
+        </div>
       </div>
+      {dialogs}
 
       {/* Summary bar */}
       <div className="grid grid-cols-4 gap-3">

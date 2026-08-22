@@ -8,9 +8,9 @@
 import { createContext, useContext, type ReactNode } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { queryClient } from "@/lib/queryClient";
-import { Loader2, AlertCircle } from "lucide-react";
+import { Loader2, AlertCircle, SearchX } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { useLocation } from "wouter";
+import { Link } from "wouter";
 import type { Deal } from "@shared/schema";
 
 interface DealContextValue {
@@ -30,8 +30,31 @@ export function useDeal(): DealContextValue {
 }
 
 /**
+ * The default queryFn throws `"<status>: <body>"`. GET /api/deals/:id answers
+ * 404 both for a deleted deal and for a deal owned by another broker (the
+ * server never reveals which), and 403 would mean the same thing to the
+ * user — neither is a transient failure worth retrying.
+ */
+function isNotFoundError(error: unknown): boolean {
+  const msg = error instanceof Error ? error.message : String(error ?? "");
+  return /^(404|403)\b/.test(msg);
+}
+
+function errorDetail(error: unknown): string | null {
+  const msg = error instanceof Error ? error.message : "";
+  // Strip the "500: " prefix and unwrap a JSON { error } body when present.
+  const body = msg.replace(/^\d{3}:\s*/, "");
+  try {
+    const parsed = JSON.parse(body);
+    if (parsed && typeof parsed.error === "string") return parsed.error;
+  } catch { /* plain text */ }
+  return body || null;
+}
+
+/**
  * Wraps children with DealContext after fetching the deal.
- * Shows loading spinner or "not found" error if deal isn't available.
+ * Shows loading spinner, a "not found" state (404/403 — deleted or not in
+ * this broker's account), or a retryable error state for real failures.
  */
 export function DealProvider({
   dealId,
@@ -40,9 +63,7 @@ export function DealProvider({
   dealId: string;
   children: ReactNode;
 }) {
-  const [, setLocation] = useLocation();
-
-  const { data: deal, isLoading, error, refetch } = useQuery<Deal>({
+  const { data: deal, isLoading, error, refetch, isFetching } = useQuery<Deal>({
     queryKey: ["/api/deals", dealId],
     enabled: !!dealId,
   });
@@ -51,43 +72,55 @@ export function DealProvider({
     queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
   };
 
-  if (isLoading || !deal) {
+  if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
-        {isLoading ? (
-          <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        ) : error ? (
-          // A failed fetch is NOT "deal not found" — offer a retry instead of
-          // sending the broker away from a deal that exists.
-          <div className="text-center">
-            <AlertCircle className="h-8 w-8 text-amber-500/60 mx-auto mb-2" />
-            <p className="text-sm font-medium">Couldn't load this deal</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              A loading problem occurred — the deal itself is safe.
-            </p>
-            <div className="flex items-center justify-center gap-2 mt-3">
-              <Button variant="outline" size="sm" onClick={() => refetch()}>
-                Try again
-              </Button>
-              <Button variant="ghost" size="sm" onClick={() => setLocation("/broker/deals")}>
-                Back to Deals
-              </Button>
-            </div>
-          </div>
-        ) : (
-          <div className="text-center">
-            <AlertCircle className="h-8 w-8 text-muted-foreground/30 mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">Deal not found</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="mt-2"
-              onClick={() => setLocation("/broker/deals")}
-            >
+        <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+      </div>
+    );
+  }
+
+  if (error && isNotFoundError(error)) {
+    return (
+      <div className="flex h-full items-center justify-center px-6">
+        <div className="text-center max-w-sm" data-testid="state-deal-not-found">
+          <SearchX className="h-8 w-8 text-muted-foreground/40 mx-auto mb-2" />
+          <p className="text-sm font-medium text-foreground">Deal not found or not in your account</p>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            This link may point to a deal that was deleted, or to one that belongs to another
+            broker. Check with the deal's lead broker if you expected access.
+          </p>
+          <Link href="/broker/deals">
+            <Button variant="outline" size="sm" className="mt-4" data-testid="button-back-to-deals">
               Back to Deals
             </Button>
+          </Link>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !deal) {
+    const detail = errorDetail(error);
+    return (
+      <div className="flex h-full items-center justify-center px-6">
+        {/* A failed fetch is NOT "deal not found" — offer a retry instead of
+            sending the broker away from a deal that exists. */}
+        <div className="text-center max-w-sm" data-testid="state-deal-error">
+          <AlertCircle className="h-8 w-8 text-amber-500/60 mx-auto mb-2" />
+          <p className="text-sm font-medium text-foreground">Couldn't load this deal</p>
+          <p className="text-xs text-muted-foreground mt-1 leading-relaxed">
+            {detail || "A loading problem occurred — the deal itself is safe."}
+          </p>
+          <div className="flex items-center justify-center gap-2 mt-4">
+            <Button variant="outline" size="sm" onClick={() => refetch()} disabled={isFetching} data-testid="button-retry-deal">
+              {isFetching ? "Retrying…" : "Try again"}
+            </Button>
+            <Link href="/broker/deals">
+              <Button variant="ghost" size="sm">Back to Deals</Button>
+            </Link>
           </div>
-        )}
+        </div>
       </div>
     );
   }

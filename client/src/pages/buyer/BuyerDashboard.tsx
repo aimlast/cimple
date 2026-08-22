@@ -9,21 +9,28 @@
  *
  * This keeps buyers engaged with opportunities that partially fit their
  * criteria rather than dismissing them as "low grade" matches.
+ *
+ * Blind deals (teaser/full access) arrive with the project codename and
+ * null location/description — the card must degrade gracefully, never
+ * render "null", and never hint at what the view room withholds.
  */
 import { useState, useMemo } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Loader2, Search, Filter, Sparkles, TrendingUp, Building2, MapPin, DollarSign, ChevronRight, UserCircle } from "lucide-react";
+import {
+  Loader2, Search, Sparkles, TrendingUp, Building2, MapPin, DollarSign,
+  ChevronRight, UserCircle, AlertCircle, RefreshCw, Lock,
+} from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { BuyerNav } from "./shared";
+import { BuyerNav, readErrorBody } from "./shared";
 
 interface DashboardDeal {
   dealId: string;
-  businessName: string;
+  businessName: string | null;
   industry: string | null;
   subIndustry: string | null;
   askingPrice: string | null;
@@ -34,10 +41,12 @@ interface DashboardDeal {
   accessLevel: string;
   ndaSigned: boolean;
   lastAccessedAt: string | null;
+  /** Optional server hint — links the server already filters out never reach us */
+  accessStatus?: "active" | "expired" | "revoked";
   match: {
     criteriaMatched: number;
     criteriaTested: number;
-    topDimensions: string[];
+    topDimensions: string[] | null;
     dataCompleteness: number;
   } | null;
 }
@@ -48,6 +57,8 @@ interface DashboardData {
 }
 
 type SortMode = "best_match" | "recent" | "price_high" | "price_low";
+
+const FALLBACK_NAME = "Confidential Opportunity";
 
 function parsePriceToNumber(price: string | null): number {
   if (!price) return 0;
@@ -62,6 +73,11 @@ function parsePriceToNumber(price: string | null): number {
   return n;
 }
 
+/** Teaser/full access levels see the blind CIM — identity is withheld. */
+function isBlindAccess(level: string): boolean {
+  return !["loi", "due_diligence"].includes(String(level || ""));
+}
+
 export default function BuyerDashboard() {
   const [, setLocation] = useLocation();
   const [query, setQuery] = useState("");
@@ -69,7 +85,7 @@ export default function BuyerDashboard() {
   const [firmFilter, setFirmFilter] = useState<string>("all");
   const [sortMode, setSortMode] = useState<SortMode>("best_match");
 
-  const { data, isLoading, error } = useQuery<DashboardData>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<DashboardData>({
     queryKey: ["/api/buyer-auth/dashboard"],
     queryFn: async () => {
       const res = await fetch("/api/buyer-auth/dashboard", { credentials: "include" });
@@ -77,36 +93,42 @@ export default function BuyerDashboard() {
         window.location.href = "/buyer/login";
         throw new Error("Not authenticated");
       }
-      if (!res.ok) throw new Error("Failed to load dashboard");
+      if (!res.ok) {
+        const body = await readErrorBody(res);
+        throw new Error(body.error || "We couldn't load your opportunities right now.");
+      }
       return res.json();
     },
   });
 
+  const allDeals = useMemo(() => (Array.isArray(data?.deals) ? data!.deals : []), [data]);
+
   // Build filter option lists from dataset
   const industries = useMemo(() => {
     const set = new Set<string>();
-    data?.deals.forEach(d => { if (d.industry) set.add(d.industry); });
+    allDeals.forEach(d => { if (d.industry) set.add(d.industry); });
     return Array.from(set).sort();
-  }, [data]);
+  }, [allDeals]);
 
   const firms = useMemo(() => {
     const set = new Set<string>();
-    data?.deals.forEach(d => { if (d.brokerFirm) set.add(d.brokerFirm); });
+    allDeals.forEach(d => { if (d.brokerFirm) set.add(d.brokerFirm); });
     return Array.from(set).sort();
-  }, [data]);
+  }, [allDeals]);
 
   // Apply filters + sort
   const filteredDeals = useMemo(() => {
-    if (!data) return [];
-    let deals = data.deals;
+    let deals = allDeals;
 
     if (query) {
       const q = query.toLowerCase();
       deals = deals.filter(d =>
-        d.businessName.toLowerCase().includes(q)
-        || d.industry?.toLowerCase().includes(q)
-        || d.description?.toLowerCase().includes(q)
-        || d.brokerFirm?.toLowerCase().includes(q),
+        (d.businessName || "").toLowerCase().includes(q)
+        || (d.industry || "").toLowerCase().includes(q)
+        || (d.subIndustry || "").toLowerCase().includes(q)
+        || (d.description || "").toLowerCase().includes(q)
+        || (d.location || "").toLowerCase().includes(q)
+        || (d.brokerFirm || "").toLowerCase().includes(q),
       );
     }
     if (industryFilter !== "all") deals = deals.filter(d => d.industry === industryFilter);
@@ -132,7 +154,7 @@ export default function BuyerDashboard() {
         break;
     }
     return sorted;
-  }, [data, query, industryFilter, firmFilter, sortMode]);
+  }, [allDeals, query, industryFilter, firmFilter, sortMode]);
 
   if (isLoading) {
     return (
@@ -142,10 +164,37 @@ export default function BuyerDashboard() {
     );
   }
 
-  if (error) {
+  // Distinguishable error state: keeps the nav (sign out / profile still
+  // reachable) and offers a retry instead of a dead-end string.
+  if (error || !data) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <div className="text-sm text-muted-foreground">{(error as Error).message}</div>
+      <div className="min-h-screen bg-background">
+        <BuyerNav />
+        <div className="max-w-6xl mx-auto px-6 py-8">
+          <Card className="border-destructive/30">
+            <CardContent className="p-8 text-center space-y-3" data-testid="dashboard-error">
+              <AlertCircle className="h-8 w-8 mx-auto text-destructive/70" />
+              <h2 className="text-lg font-semibold">Couldn't load your opportunities</h2>
+              <p className="text-sm text-muted-foreground">
+                {error instanceof Error ? error.message : "Something went wrong on our side."}
+              </p>
+              <div className="flex items-center justify-center gap-2 pt-1">
+                <Button onClick={() => refetch()} disabled={isFetching} data-testid="button-retry-dashboard">
+                  {isFetching ? (
+                    <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
+                  ) : (
+                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+                  )}
+                  Try again
+                </Button>
+                <Button variant="outline" onClick={() => setLocation("/buyer/profile")}>
+                  <UserCircle className="h-3.5 w-3.5 mr-1.5" />
+                  Go to profile
+                </Button>
+              </div>
+            </CardContent>
+          </Card>
+        </div>
       </div>
     );
   }
@@ -160,12 +209,12 @@ export default function BuyerDashboard() {
           <div>
             <h1 className="text-2xl font-semibold">Your opportunities</h1>
             <p className="text-sm text-muted-foreground mt-1">
-              {data?.deals.length
-                ? `${data.deals.length} ${data.deals.length === 1 ? "deal" : "deals"} you have access to`
+              {allDeals.length
+                ? `${allDeals.length} ${allDeals.length === 1 ? "deal" : "deals"} you have access to`
                 : "No deals yet — your broker-invited CIMs will appear here."}
             </p>
           </div>
-          {(data?.profileCompletionPct ?? 0) < 70 && (
+          {(data.profileCompletionPct ?? 0) < 70 && (
             <Card className="max-w-sm">
               <CardContent className="p-4">
                 <div className="flex items-start gap-3">
@@ -178,11 +227,11 @@ export default function BuyerDashboard() {
                     <div className="h-1 bg-muted rounded-full mt-2 overflow-hidden">
                       <div
                         className="h-full bg-primary transition-all"
-                        style={{ width: `${data?.profileCompletionPct ?? 0}%` }}
+                        style={{ width: `${data.profileCompletionPct ?? 0}%` }}
                       />
                     </div>
                     <div className="text-[10px] text-muted-foreground mt-1">
-                      {data?.profileCompletionPct ?? 0}% complete
+                      {data.profileCompletionPct ?? 0}% complete
                     </div>
                     <Button
                       size="sm"
@@ -201,7 +250,7 @@ export default function BuyerDashboard() {
         </div>
 
         {/* Filters */}
-        {data && data.deals.length > 0 && (
+        {allDeals.length > 0 && (
           <div className="flex items-center gap-2 flex-wrap">
             <div className="relative flex-1 min-w-[240px]">
               <Search className="absolute left-2.5 top-2.5 h-3.5 w-3.5 text-muted-foreground" />
@@ -210,6 +259,7 @@ export default function BuyerDashboard() {
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 className="pl-8"
+                data-testid="input-search-deals"
               />
             </div>
             {industries.length > 1 && (
@@ -251,8 +301,8 @@ export default function BuyerDashboard() {
         {/* Deals grid */}
         {filteredDeals.length === 0 ? (
           <Card>
-            <CardContent className="p-12 text-center text-sm text-muted-foreground">
-              {data?.deals.length === 0
+            <CardContent className="p-12 text-center text-sm text-muted-foreground" data-testid="dashboard-empty">
+              {allDeals.length === 0
                 ? "No CIMs yet — brokers will add you to deals and they'll show up here."
                 : "No deals match your filters."}
             </CardContent>
@@ -271,28 +321,48 @@ export default function BuyerDashboard() {
 
 function DealCard({ deal }: { deal: DashboardDeal }) {
   const matchCount = deal.match?.criteriaMatched ?? 0;
+  const topDimensions = deal.match?.topDimensions ?? [];
+  const blind = isBlindAccess(deal.accessLevel);
+  const name = (deal.businessName || "").trim() || FALLBACK_NAME;
+  const inactive = deal.accessStatus === "expired" || deal.accessStatus === "revoked";
 
-  return (
-    <a href={`/view/${deal.accessToken}`} className="block">
-      <Card className="hover:border-primary/50 transition-colors cursor-pointer h-full">
-        <CardContent className="p-5 space-y-3">
-          <div className="flex items-start justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="font-semibold text-lg truncate">{deal.businessName}</div>
-              {deal.industry && (
-                <div className="text-xs text-muted-foreground mt-0.5">
-                  {deal.industry}
-                  {deal.subIndustry && ` · ${deal.subIndustry}`}
-                </div>
+  const body = (
+    <Card
+      className={`h-full transition-colors ${
+        inactive ? "opacity-70" : "hover:border-primary/50 cursor-pointer"
+      }`}
+      data-testid={`card-deal-${deal.dealId}`}
+    >
+      <CardContent className="p-5 space-y-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="font-semibold text-lg truncate flex items-center gap-2">
+              <span className="truncate">{name}</span>
+              {blind && (
+                <Badge variant="outline" className="text-[10px] h-4 shrink-0 font-normal">
+                  <Lock className="h-2.5 w-2.5 mr-1" />
+                  Confidential
+                </Badge>
               )}
             </div>
-            <ChevronRight className="h-4 w-4 text-muted-foreground mt-1 flex-shrink-0" />
+            {(deal.industry || deal.subIndustry) && (
+              <div className="text-xs text-muted-foreground mt-0.5">
+                {[deal.industry, deal.subIndustry].filter(Boolean).join(" · ")}
+              </div>
+            )}
           </div>
+          {!inactive && <ChevronRight className="h-4 w-4 text-muted-foreground mt-1 flex-shrink-0" />}
+        </div>
 
-          {deal.description && (
-            <p className="text-xs text-muted-foreground line-clamp-2">{deal.description}</p>
-          )}
+        {deal.description ? (
+          <p className="text-xs text-muted-foreground line-clamp-2">{deal.description}</p>
+        ) : blind ? (
+          <p className="text-xs text-muted-foreground/70">
+            Identifying details are withheld at this stage — open the secure view room for the full overview.
+          </p>
+        ) : null}
 
+        {(deal.askingPrice || deal.location || deal.brokerFirm) && (
           <div className="flex items-center gap-3 text-xs text-muted-foreground flex-wrap">
             {deal.askingPrice && (
               <span className="flex items-center gap-1">
@@ -313,30 +383,44 @@ function DealCard({ deal }: { deal: DashboardDeal }) {
               </span>
             )}
           </div>
+        )}
 
-          {/* Match badge — positive framing only */}
-          {matchCount > 0 && deal.match && (
-            <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-border">
-              <Badge className="bg-primary/10 text-primary border-primary/30 hover:bg-primary/20">
-                <TrendingUp className="h-3 w-3 mr-1" />
-                {matchCount} {matchCount === 1 ? "criterion" : "criteria"} matched
+        {/* Match badge — positive framing only */}
+        {matchCount > 0 && deal.match && (
+          <div className="flex items-center gap-2 flex-wrap pt-2 border-t border-border">
+            <Badge className="bg-primary/10 text-primary border-primary/30 hover:bg-primary/20">
+              <TrendingUp className="h-3 w-3 mr-1" />
+              {matchCount} {matchCount === 1 ? "criterion" : "criteria"} matched
+            </Badge>
+            {topDimensions.map((dim) => (
+              <Badge key={dim} variant="outline" className="text-xs">
+                {dim}
               </Badge>
-              {deal.match.topDimensions.map((dim) => (
-                <Badge key={dim} variant="outline" className="text-xs">
-                  {dim}
-                </Badge>
-              ))}
-            </div>
-          )}
-
-          <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
-            <span>{deal.ndaSigned ? "NDA signed" : "NDA required"}</span>
-            {deal.lastAccessedAt && (
-              <span>Last viewed {new Date(deal.lastAccessedAt).toLocaleDateString()}</span>
-            )}
+            ))}
           </div>
-        </CardContent>
-      </Card>
+        )}
+
+        <div className="flex items-center justify-between text-[10px] text-muted-foreground pt-1">
+          {inactive ? (
+            <span className="text-destructive/80">
+              {deal.accessStatus === "revoked" ? "Access revoked" : "Access expired"} — contact your broker
+            </span>
+          ) : (
+            <span>{deal.ndaSigned ? "NDA signed" : "NDA required"}</span>
+          )}
+          {deal.lastAccessedAt && (
+            <span>Last viewed {new Date(deal.lastAccessedAt).toLocaleDateString()}</span>
+          )}
+        </div>
+      </CardContent>
+    </Card>
+  );
+
+  if (inactive) return <div className="block">{body}</div>;
+
+  return (
+    <a href={`/view/${deal.accessToken}`} className="block" data-testid={`link-deal-${deal.dealId}`}>
+      {body}
     </a>
   );
 }

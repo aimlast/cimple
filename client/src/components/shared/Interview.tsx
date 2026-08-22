@@ -41,7 +41,7 @@
  *  mode: "broker" | "seller"
  *  dealId: string
  *  businessName?: string
- *  onComplete?: () => void
+ *  onComplete?: () => void | Promise<void>
  *  onBack?: () => void
  */
 
@@ -91,7 +91,8 @@ interface InterviewProps {
   businessName?: string;
   /** Seller invite token — authenticates seller-mode interview API calls */
   sellerToken?: string;
-  onComplete?: () => void;
+  /** May be async — the completion button stays in its "Saving..." state until it settles */
+  onComplete?: () => void | Promise<void>;
   onBack?: () => void;
 }
 
@@ -128,14 +129,15 @@ export function Interview({
     }
   }, []);
 
-  const handleComplete = async () => {
+  const handleComplete = useCallback(async () => {
+    if (isCompleting) return;
     setIsCompleting(true);
     try {
-      onComplete?.();
+      await onComplete?.();
     } finally {
       setIsCompleting(false);
     }
-  };
+  }, [onComplete, isCompleting]);
 
   // Derived coverage counts
   const coveredCount = sectionCoverage.filter(

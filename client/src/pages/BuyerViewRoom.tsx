@@ -12,26 +12,46 @@ import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   Building, Clock, Lock, AlertCircle, FileText,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Deal, BuyerAccess, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
+import type { Deal, CimSection, BrandingSettings, BuyerQuestion } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
-import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
-import { FinancialToggle } from "@/components/cim/FinancialToggle";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
 
+type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
+
+/**
+ * The whitelisted access object GET /api/view/:token returns. Buyers never
+ * receive the raw buyerAccess row (broker notes, match scoring, tokens).
+ */
+interface ViewAccess {
+  id: string;
+  dealId: string;
+  buyerEmail: string;
+  buyerName: string | null;
+  accessLevel: string;
+  ndaSigned: boolean | null;
+  ndaSignedAt: string | null;
+  canDownload: boolean | null;
+  watermarkEnabled: boolean | null;
+  firstViewedAt: string | null;
+  viewCount: number | null;
+  decision: BuyerDecision | null;
+  decisionAt: string | null;
+  expiresAt: string | null;
+}
+
 interface ViewData {
-  access: BuyerAccess;
+  access: ViewAccess;
   deal: Deal;
   sections: CimSection[];
   publishedQuestions: BuyerQuestion[];
@@ -40,6 +60,11 @@ interface ViewData {
   ndaGate?: boolean;
   /** True when the blind (redacted) version is still being prepared */
   preparing?: boolean;
+}
+
+/** Parse an error body defensively — proxies return HTML during deploys. */
+async function readErrorBody(res: Response): Promise<{ error?: string }> {
+  return res.json().catch(() => ({}));
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
@@ -66,14 +91,28 @@ function Watermark({ email }: { email: string }) {
 // ── NDA Gate ───────────────────────────────────────────────────────────────
 function NdaGate({ deal, token, onAccepted }: { deal: Deal; token: string; onAccepted: () => void }) {
   const [signing, setSigning] = useState(false);
+  const [signError, setSignError] = useState<string | null>(null);
 
   const sign = async () => {
     setSigning(true);
+    setSignError(null);
     try {
-      await fetch(`/api/view/${token}/sign-nda`, { method: "POST" });
+      const res = await fetch(`/api/view/${token}/sign-nda`, { method: "POST" });
+      if (!res.ok) {
+        const body = await readErrorBody(res);
+        throw new Error(body.error || "Could not record your signature — please try again.");
+      }
+      // Only unlock the document once the server has actually recorded the
+      // signature; otherwise the refetch would just re-render this gate.
+      onAccepted();
+    } catch (err) {
+      setSignError(
+        err instanceof Error && err.message
+          ? err.message
+          : "Could not record your signature — please try again.",
+      );
     } finally {
       setSigning(false);
-      onAccepted();
     }
   };
 
@@ -100,9 +139,20 @@ function NdaGate({ deal, token, onAccepted }: { deal: Deal; token: string; onAcc
           className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
           onClick={sign}
           disabled={signing}
+          data-testid="button-sign-nda"
         >
           {signing ? "Signing…" : "I agree — View the CIM"}
         </Button>
+        {signError && (
+          <div
+            className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
+            role="alert"
+            data-testid="text-nda-error"
+          >
+            <AlertCircle className="h-3.5 w-3.5 mt-px shrink-0" />
+            <span>{signError}</span>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -118,7 +168,7 @@ function useAnalytics(dealId: string | undefined, accessId: string | undefined, 
   }, []);
 
   const flush = useCallback(async () => {
-    if (!dealId || queueRef.current.length === 0) return;
+    if (!dealId || !accessToken || queueRef.current.length === 0) return;
     const batch = queueRef.current.splice(0);
     try {
       await fetch(`/api/deals/${dealId}/analytics/batch`, {
@@ -215,7 +265,7 @@ export default function BuyerViewRoom() {
   const { token } = useParams<{ token: string }>();
   const queryClient = useQueryClient();
   const [timeOnPage, setTimeOnPage] = useState(0);
-  const [localDecision, setLocalDecision] = useState<"under_review" | "interested" | "not_interested" | "lapsed" | null>(null);
+  const [localDecision, setLocalDecision] = useState<BuyerDecision | null>(null);
   const startTimeRef = useRef(Date.now());
 
   const { data, isLoading, error } = useQuery<ViewData>({
@@ -224,7 +274,7 @@ export default function BuyerViewRoom() {
     queryFn: async () => {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
-        const body = await res.json();
+        const body = await readErrorBody(res);
         throw new Error(body.error || "Access denied");
       }
       return res.json();
@@ -234,7 +284,9 @@ export default function BuyerViewRoom() {
       (query.state.data as ViewData | undefined)?.preparing ? 4000 : false,
   });
 
-  const { attachObserver, enqueue } = useAnalytics(data?.deal?.id, data?.access?.id);
+  // The analytics endpoint authenticates every batch with the view-room
+  // token — without it the server rejects the batch and nothing is recorded.
+  const { attachObserver, enqueue } = useAnalytics(data?.deal?.id, data?.access?.id, token);
 
   // Timer
   useEffect(() => {
@@ -252,11 +304,15 @@ export default function BuyerViewRoom() {
     return () => clearTimeout(timer);
   }, [data?.sections, attachObserver]);
 
-  // Track initial view
+  // Track initial view — once per mount, only once real content is served
+  // (the NDA gate and "preparing" holding states are not views).
+  const viewTracked = useRef(false);
   useEffect(() => {
     if (!data?.deal?.id || !data?.access?.id) return;
+    if (data.ndaGate || data.preparing || viewTracked.current) return;
+    viewTracked.current = true;
     enqueue({ eventType: "view" });
-  }, [data?.deal?.id, data?.access?.id, enqueue]);
+  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, enqueue]);
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -273,7 +329,7 @@ export default function BuyerViewRoom() {
   if (error || !data) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center p-6">
-        <div className="max-w-sm text-center space-y-3">
+        <div className="max-w-sm text-center space-y-3" data-testid="view-room-error">
           <AlertCircle className="h-8 w-8 mx-auto text-destructive/60" />
           <h2 className="text-lg font-semibold">Access denied</h2>
           <p className="text-sm text-muted-foreground">
@@ -286,8 +342,7 @@ export default function BuyerViewRoom() {
   }
 
   const { access, deal, sections = [], publishedQuestions = [], branding: brandingSettings } = data;
-  const currentDecision = (localDecision || (access as any).decision || "under_review") as
-    "under_review" | "interested" | "not_interested" | "lapsed";
+  const currentDecision: BuyerDecision = localDecision || access.decision || "under_review";
 
   // NDA gate — the server withholds sections until the NDA is signed, so
   // after signing we refetch to receive the actual CIM content.
@@ -486,8 +541,8 @@ export default function BuyerViewRoom() {
                 token={token!}
                 currentDecision={currentDecision}
                 businessName={deal.businessName}
-                viewCount={(access as any).viewCount || 0}
-                firstViewedAt={(access as any).firstViewedAt || null}
+                viewCount={access.viewCount ?? 0}
+                firstViewedAt={access.firstViewedAt ?? null}
                 onUpdated={(d) => setLocalDecision(d)}
               />
             )}
@@ -500,7 +555,7 @@ export default function BuyerViewRoom() {
       <BuyerChatbot
         dealId={deal.id}
         buyerAccessId={access.id}
-        accessToken={token}
+        accessToken={token!}
         businessName={deal.businessName}
         publishedQuestions={publishedQuestions}
       />

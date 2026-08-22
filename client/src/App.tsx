@@ -5,7 +5,9 @@ import { QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { SidebarProvider } from "@/components/ui/sidebar";
-import { AppSidebar } from "@/components/app-sidebar";
+import { Button } from "@/components/ui/button";
+import { AlertCircle } from "lucide-react";
+import { AppSidebar, BrokerMobileHeader, BROKER_LOGGED_OUT_KEY } from "@/components/app-sidebar";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { RoleProvider, useSetLayoutRole } from "@/contexts/RoleContext";
 import { RoleSwitcher } from "@/components/dev/RoleSwitcher";
@@ -94,8 +96,8 @@ function Routes() {
 /**
  * Fullscreen detection — routes that render without any role-specific layout.
  *
- * Only interviews and standalone token pages (seller approval, legacy
- * invite redirect) render here. All other external-facing pages have
+ * Only interviews and standalone token pages (seller approval, NDA e-sign,
+ * legacy invite redirect) render here. All other external-facing pages have
  * their own layout (SellerLayout, BuyerLayout).
  */
 function isFullscreen(path: string) {
@@ -110,52 +112,137 @@ function isFullscreen(path: string) {
   return false;
 }
 
+/* ═══════════════════════════════════════════
+   BROKER SESSION
+═══════════════════════════════════════════ */
+
+interface BrokerMe {
+  user: { id: string; username: string; [key: string]: unknown };
+}
+
+/**
+ * Shared /api/broker-auth/me query. Resolves to `null` on 401 (no session),
+ * throws on any other failure so the gate can show a retry panel instead of
+ * rendering the app without a session.
+ */
+const BROKER_ME_QUERY = {
+  queryKey: ["/api/broker-auth/me"] as const,
+  queryFn: async (): Promise<BrokerMe | null> => {
+    const res = await fetch("/api/broker-auth/me", { credentials: "include" });
+    if (res.status === 401) return null;
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new Error(body?.error || `Couldn't verify your session (${res.status})`);
+    }
+    return res.json();
+  },
+  retry: false,
+  staleTime: 5 * 60 * 1000,
+};
+
+function AuthPending() {
+  return (
+    <div className="h-screen w-full flex items-center justify-center bg-background">
+      <div className="flex gap-1.5">
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
+        <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
+      </div>
+    </div>
+  );
+}
+
+function AuthError({ message, onRetry, retrying }: { message: string; onRetry: () => void; retrying: boolean }) {
+  return (
+    <div className="h-screen w-full flex items-center justify-center bg-background px-6">
+      <div className="w-full max-w-sm rounded-xl border border-card-border bg-card p-6 text-center" data-testid="panel-auth-error">
+        <AlertCircle className="h-8 w-8 text-amber-500/70 mx-auto mb-3" />
+        <p className="text-sm font-medium text-foreground">Couldn't verify your session</p>
+        <p className="text-xs text-muted-foreground mt-1 leading-relaxed">{message}</p>
+        <Button
+          size="sm"
+          className="mt-4 bg-teal text-teal-foreground hover:bg-teal/90"
+          onClick={onRetry}
+          disabled={retrying}
+          data-testid="button-auth-retry"
+        >
+          {retrying ? "Retrying…" : "Retry"}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /**
  * BrokerAuthGate — broker pages require a broker session.
  *
  * Order of attempts: (1) existing session via /api/broker-auth/me,
- * (2) one dev auto-login attempt (available in local dev and when
- * ENABLE_DEV_SWITCHER=true on the deploy — keeps the demo flow
- * zero-login), (3) the sign-in screen, rendered in place so the deep
+ * (2) LOCAL DEV ONLY: one `/api/dev/login-as-broker` attempt so the dev loop
+ * stays zero-login — never in a production build, and never right after an
+ * explicit logout, (3) the sign-in screen, rendered in place so the deep
  * link survives login.
+ *
+ * Any non-401 failure of /me (500, network) shows a retry panel — the app
+ * is never rendered without a verified session.
  */
-function BrokerAuthGate({ children }: { children: React.ReactNode }) {
-  const { data: me, isLoading, refetch } = useQuery<{ user: unknown } | null>({
-    queryKey: ["/api/broker-auth/me"],
-    queryFn: async () => {
-      const res = await fetch("/api/broker-auth/me", { credentials: "include" });
-      if (res.status === 401) return null;
-      if (!res.ok) throw new Error("Auth check failed");
-      return res.json();
-    },
-    retry: false,
-    staleTime: 5 * 60 * 1000,
-  });
+export function BrokerAuthGate({ children }: { children: React.ReactNode }) {
+  const { data: me, isLoading, isError, error, refetch, isFetching } = useQuery(BROKER_ME_QUERY);
   const [devAttempt, setDevAttempt] = useState<"idle" | "pending" | "done">("idle");
 
   useEffect(() => {
-    if (!isLoading && me === null && devAttempt === "idle") {
-      setDevAttempt("pending");
-      fetch("/api/dev/login-as-broker", { method: "POST", credentials: "include" })
-        .then((r) => (r.ok ? refetch() : undefined))
-        .catch(() => {})
-        .finally(() => setDevAttempt("done"));
+    if (!import.meta.env.DEV) return;
+    if (isLoading || isError || me !== null || devAttempt !== "idle") return;
+    // Respect an explicit logout — the developer asked for the sign-in screen.
+    if (sessionStorage.getItem(BROKER_LOGGED_OUT_KEY)) {
+      setDevAttempt("done");
+      return;
     }
-  }, [isLoading, me, devAttempt, refetch]);
+    setDevAttempt("pending");
+    fetch("/api/dev/login-as-broker", { method: "POST", credentials: "include" })
+      .then((r) => (r.ok ? refetch() : undefined))
+      .catch(() => {})
+      .finally(() => setDevAttempt("done"));
+  }, [isLoading, isError, me, devAttempt, refetch]);
 
-  if (isLoading || devAttempt === "pending") {
+  // A verified session clears the logout marker so the next dev reload can
+  // auto-login again.
+  useEffect(() => {
+    if (me?.user) sessionStorage.removeItem(BROKER_LOGGED_OUT_KEY);
+  }, [me]);
+
+  if (isLoading || devAttempt === "pending") return <AuthPending />;
+  if (isError) {
     return (
-      <div className="h-screen w-full flex items-center justify-center bg-background">
-        <div className="flex gap-1.5">
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
-          <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
-        </div>
-      </div>
+      <AuthError
+        message={(error as Error)?.message || "The server could not be reached."}
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
     );
   }
-  if (me === null) return <BrokerLogin />;
+  if (!me?.user) return <BrokerLogin />;
   return <>{children}</>;
+}
+
+/**
+ * /broker/login — explicit sign-in page reachable logged-out (Log out lands
+ * here). Already-authenticated brokers are sent to the dashboard.
+ */
+function BrokerLoginPage() {
+  useSetLayoutRole("broker");
+  const { data: me, isLoading, isError, error, refetch, isFetching } = useQuery(BROKER_ME_QUERY);
+  if (isLoading) return <AuthPending />;
+  if (isError) {
+    return (
+      <AuthError
+        message={(error as Error)?.message || "The server could not be reached."}
+        onRetry={() => refetch()}
+        retrying={isFetching}
+      />
+    );
+  }
+  if (me?.user) return <Redirect to="/broker" />;
+  return <BrokerLogin />;
 }
 
 function BrokerLayout() {
@@ -166,6 +253,9 @@ function BrokerLayout() {
         <div className="flex h-screen w-full overflow-hidden bg-background">
           <AppSidebar />
           <main className="flex-1 min-w-0 overflow-auto scrollbar-thin">
+            {/* Below md the sidebar is an off-canvas sheet — this bar is the
+                only way to open it (nav, theme toggle, log out). */}
+            <BrokerMobileHeader />
             <Routes />
           </main>
         </div>
@@ -186,8 +276,15 @@ function FullscreenLayout() {
   return (
     <div className="h-screen w-full overflow-auto bg-background">
       <Switch>
-        {/* Broker interview */}
-        <Route path="/deal/:id/interview" component={CIMInterview} />
+        {/* Broker interview — broker-only, so it sits behind the auth gate
+            (expired sessions see the sign-in screen, not a 401 toast). */}
+        <Route path="/deal/:id/interview">
+          {() => (
+            <BrokerAuthGate>
+              <CIMInterview />
+            </BrokerAuthGate>
+          )}
+        </Route>
         {/* Seller interview (fullscreen) */}
         <Route path="/seller/:token/interview" component={SellerInterview} />
         {/* Legacy seller invite redirect → /seller/:token */}
@@ -206,21 +303,23 @@ function FullscreenLayout() {
  * AppContent — Four-layout architecture.
  *
  * Detection order (first match wins):
- * 1. isFullscreen() → FullscreenLayout (interviews, seller approval, legacy redirects)
+ * 1. isFullscreen() → FullscreenLayout (interviews, seller approval/NDA, legacy redirects)
  * 2. /seller/* → SellerLayout (seller intake, progress, documents)
  * 3. /buyer/* | /view/* | /review/* → BuyerLayout (auth, dashboard, view room)
- * 4. Everything else → BrokerLayout (sidebar + main content)
+ * 4. /broker/login, /broker/reset-password/:token → logged-out broker pages (outside the gate)
+ * 5. Everything else → BrokerLayout (sidebar + main content, behind BrokerAuthGate)
  */
 function AppContent() {
   const [location] = useLocation();
   if (isFullscreen(location)) return <FullscreenLayout />;
   if (location.startsWith("/seller/")) return <SellerLayout />;
   if (location.startsWith("/buyer/") || location.startsWith("/view/") || location.startsWith("/review/")) return <BuyerLayout />;
-  // Password reset must be reachable logged-out — it renders outside the
-  // BrokerAuthGate that wraps everything else broker-side.
-  if (location.startsWith("/broker/reset-password/")) {
+  // Sign-in and password reset must be reachable logged-out — they render
+  // outside the BrokerAuthGate that wraps everything else broker-side.
+  if (location === "/broker/login" || location.startsWith("/broker/reset-password/")) {
     return (
       <Switch>
+        <Route path="/broker/login" component={BrokerLoginPage} />
         <Route path="/broker/reset-password/:token" component={BrokerResetPassword} />
       </Switch>
     );
@@ -236,7 +335,8 @@ export default function App() {
           <RoleProvider>
             <WouterRouter>
               <AppContent />
-              <RoleSwitcher />
+              {/* Dev-only — returns null (and tree-shakes) in production builds */}
+              {import.meta.env.DEV && <RoleSwitcher />}
             </WouterRouter>
           </RoleProvider>
           <Toaster />

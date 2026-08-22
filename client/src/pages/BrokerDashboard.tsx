@@ -12,6 +12,7 @@ import {
   MessageSquare,
   Mic,
   Plus,
+  RefreshCw,
   ShieldCheck,
   TrendingUp,
   Users,
@@ -98,7 +99,7 @@ function SectionLabel({ children, badge }: { children: React.ReactNode; badge?: 
 }
 
 export default function BrokerDashboard() {
-  const { data, isLoading, error } = useQuery<DashboardData>({
+  const { data, isLoading, error, refetch, isFetching } = useQuery<DashboardData>({
     queryKey: ["/api/broker/dashboard"],
     refetchInterval: 60_000,
   });
@@ -124,8 +125,35 @@ export default function BrokerDashboard() {
 
   if (error || !data) {
     return (
-      <div className="p-8">
-        <p className="text-destructive">Failed to load dashboard data.</p>
+      <div className="p-6 md:p-10 max-w-[1200px] mx-auto">
+        <div
+          className="rounded-xl border border-destructive/30 bg-destructive/5 p-8 text-center"
+          role="alert"
+          data-testid="dashboard-error"
+        >
+          <AlertCircle className="h-6 w-6 text-destructive mx-auto mb-3" />
+          <p className="text-sm font-medium text-foreground">Couldn't load your dashboard</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-md mx-auto">
+            {error instanceof Error && error.message
+              ? error.message
+              : "The server didn't respond. Check your connection and try again."}
+          </p>
+          <div className="mt-5 flex items-center justify-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => refetch()}
+              disabled={isFetching}
+              data-testid="button-retry-dashboard"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${isFetching ? "animate-spin" : ""}`} />
+              {isFetching ? "Retrying..." : "Retry"}
+            </Button>
+            <Link href="/broker/deals">
+              <Button variant="ghost" size="sm">Go to deals</Button>
+            </Link>
+          </div>
+        </div>
       </div>
     );
   }

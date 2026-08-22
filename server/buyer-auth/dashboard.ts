@@ -77,6 +77,10 @@ export function registerBuyerDashboardRoutes(app: Express) {
       const dashboardDeals: DashboardDeal[] = [];
 
       for (const access of byUser) {
+        // Revoked or expired links are not opportunities — the card would
+        // link straight into a view room that rejects the token.
+        if (access.revokedAt) continue;
+        if (access.expiresAt && new Date(access.expiresAt) < new Date()) continue;
         if (seen.has(access.dealId)) continue;
         seen.add(access.dealId);
 

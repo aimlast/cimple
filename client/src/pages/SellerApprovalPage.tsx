@@ -33,14 +33,17 @@ export default function SellerApprovalPage() {
   const [editing, setEditing] = useState(false);
   const [revision, setRevision] = useState("");
   const [done, setDone] = useState<"approved" | "rejected" | null>(null);
+  // Surfaced inline under the action buttons when the submit fails — the
+  // seller must always know whether their approval was recorded.
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const { data, isLoading, error } = useQuery<ApprovalData>({
+  const { data, isLoading, error, refetch } = useQuery<ApprovalData>({
     queryKey: ["/api/approve", token],
     enabled: !!token,
     queryFn: async () => {
       const res = await fetch(`/api/approve/${token}`);
       if (!res.ok) {
-        const body = await res.json();
+        const body = await res.json().catch(() => ({}));
         throw new Error(body.error || "Invalid link");
       }
       return res.json();
@@ -54,11 +57,22 @@ export default function SellerApprovalPage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ approved, revision: rev }),
       });
-      if (!res.ok) throw new Error("Failed");
-      return res.json();
+      const body = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(body.error || "Could not submit your decision. Please try again.");
+      }
+      return body;
     },
     onSuccess: (_, vars) => {
+      setSubmitError(null);
       setDone(vars.approved ? "approved" : "rejected");
+    },
+    onError: (err) => {
+      setSubmitError(err instanceof Error ? err.message : "Could not submit your decision.");
+      // If the question was processed elsewhere (e.g. another tab), the refetch
+      // flips the page to its "Already processed" state so the seller isn't
+      // left staring at stale buttons.
+      refetch();
     },
   });
 
@@ -213,6 +227,12 @@ export default function SellerApprovalPage() {
                 <XCircle className="h-4 w-4" /> Send back
               </Button>
             </div>
+
+            {submitError && (
+              <p className="text-xs text-red-400 leading-relaxed" role="alert">
+                {submitError}
+              </p>
+            )}
 
             <p className="text-[10px] text-muted-foreground text-center">
               No answer goes to the buyer without your approval.

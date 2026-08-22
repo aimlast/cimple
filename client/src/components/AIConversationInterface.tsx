@@ -1,8 +1,17 @@
 import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff } from "lucide-react";
+import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { Card, CardContent } from "@/components/ui/card";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { ChatMessage } from "./ChatMessage";
 import { useToast } from "@/hooks/use-toast";
 import type { ConversationMessage } from "@shared/schema";
@@ -39,7 +48,7 @@ interface AIConversationInterfaceProps {
   /** Seller invite token — sent as X-Seller-Token to authenticate seller-mode calls */
   sellerToken?: string;
   onTurnResult?: (result: TurnResult) => void;
-  onComplete?: () => void;
+  onComplete?: () => void | Promise<void>;
 }
 
 export function AIConversationInterface({
@@ -61,7 +70,14 @@ export function AIConversationInterface({
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isStarting, setIsStarting] = useState(true);
+  // Set when the session could not be started — renders a real error panel
+  // with a retry, instead of an enabled composer that silently does nothing.
+  const [startError, setStartError] = useState<string | null>(null);
+  // Bumped by "Try again" to re-run the start effect.
+  const [startAttempt, setStartAttempt] = useState(0);
   const [isFinished, setIsFinished] = useState(false);
+  const [isEnding, setIsEnding] = useState(false);
+  const [confirmEndOpen, setConfirmEndOpen] = useState(false);
   const [isRecording, setIsRecording] = useState(false);
   const [abortController, setAbortController] = useState<AbortController | null>(null);
   // Buyer-rationale per AI message, keyed by message timestamp
@@ -78,11 +94,13 @@ export function AIConversationInterface({
   const inputRef = useRef("");
   const { toast } = useToast();
 
-  // Start or resume the interview session on mount
+  // Start or resume the interview session on mount (and on retry)
   useEffect(() => {
     let cancelled = false;
 
     async function initSession() {
+      setIsStarting(true);
+      setStartError(null);
       try {
         const res = await fetch(`/api/interview/${dealId}/start`, {
           method: "POST",
@@ -90,12 +108,15 @@ export function AIConversationInterface({
         });
 
         if (!res.ok) {
-          const err = await res.json();
-          throw new Error(err.error || "Failed to start conversation");
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Failed to start conversation (${res.status})`);
         }
 
         const result: TurnResult = await res.json();
         if (cancelled) return;
+        if (!result.sessionId) {
+          throw new Error("The server did not return a session. Please try again.");
+        }
 
         setSessionId(result.sessionId);
 
@@ -104,6 +125,7 @@ export function AIConversationInterface({
           const historyRes = await fetch(`/api/interview/session/${result.sessionId}/history`, {
             headers: authHeaders(),
           });
+          if (cancelled) return;
           if (historyRes.ok) {
             const history = await historyRes.json();
             if (history.messages && history.messages.length > 0) {
@@ -126,6 +148,13 @@ export function AIConversationInterface({
             if (history.status === "completed") {
               setIsFinished(true);
             }
+          } else {
+            // History is a nice-to-have — fall back to the opening message so
+            // the seller can still talk rather than seeing an empty screen.
+            const ts = new Date().toISOString();
+            setMessages([{ role: "ai", content: result.message, timestamp: ts }]);
+            setSuggestedAnswers(result.suggestedAnswers || []);
+            if (result.whyItMatters) setWhyByTs({ [ts]: result.whyItMatters });
           }
         }
 
@@ -133,9 +162,11 @@ export function AIConversationInterface({
       } catch (error: any) {
         console.error("Failed to start conversation:", error);
         if (!cancelled) {
+          const message = error?.message || "Failed to start conversation";
+          setStartError(message);
           toast({
             title: "Failed to start conversation",
-            description: error.message,
+            description: message,
             variant: "destructive",
           });
         }
@@ -148,7 +179,16 @@ export function AIConversationInterface({
 
     initSession();
     return () => { cancelled = true; };
-  }, [dealId]);
+  }, [dealId, startAttempt]);
+
+  const retryStart = useCallback(() => {
+    setIsStarting(true);
+    setStartError(null);
+    setMessages([]);
+    setSuggestedAnswers([]);
+    setSessionId(null);
+    setStartAttempt((n) => n + 1);
+  }, []);
 
   // Auto-scroll to bottom
   useEffect(() => {
@@ -257,7 +297,15 @@ export function AIConversationInterface({
 
   // Send a message
   const handleSend = useCallback(async () => {
-    if (isFinished || isLoading || !sessionId) return;
+    if (isFinished || isLoading) return;
+    if (!sessionId) {
+      toast({
+        title: "No active conversation",
+        description: "The overview hasn't started yet. Use \"Try again\" to reconnect.",
+        variant: "destructive",
+      });
+      return;
+    }
     stopRecording();
 
     const cleanedInput = input.replace(/\u200B/g, "").trim();
@@ -357,7 +405,7 @@ export function AIConversationInterface({
       onTurnResult?.(result);
       if (result.shouldEnd) {
         setIsFinished(true);
-        setTimeout(() => onComplete?.(), 2000);
+        setTimeout(() => { void onComplete?.(); }, 2000);
       }
     } catch (error: any) {
       if (error.name === "AbortError") return;
@@ -378,7 +426,7 @@ export function AIConversationInterface({
       setIsLoading(false);
       setIsStreaming(false);
     }
-  }, [input, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult]);
+  }, [input, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
 
   const handleCancel = useCallback(() => {
     if (abortController) {
@@ -389,29 +437,51 @@ export function AIConversationInterface({
     }
   }, [abortController]);
 
-  const handleEndInterview = useCallback(() => {
+  // Runs after the seller confirms in the End Overview dialog.
+  const handleEndInterview = useCallback(async () => {
+    if (isEnding) return;
+    setIsEnding(true);
     stopRecording();
     handleCancel();
-    setIsFinished(true);
 
     // Tell the server so the session closes, progress advances, and the next
-    // visit doesn't resume a conversation the seller already ended.
+    // visit doesn't resume a conversation the seller already ended. If that
+    // fails, keep the conversation open and say so — silently "ending" on the
+    // client would leave the server thinking the overview is still in flight.
     if (sessionId) {
-      fetch(`/api/interview/${dealId}/end`, {
-        method: "POST",
-        headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ sessionId }),
-      }).catch((err) => console.error("Failed to finalize interview end:", err));
+      try {
+        const res = await fetch(`/api/interview/${dealId}/end`, {
+          method: "POST",
+          headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify({ sessionId }),
+        });
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err.error || `Failed to end the overview (${res.status})`);
+        }
+      } catch (err: any) {
+        console.error("Failed to finalize interview end:", err);
+        toast({
+          title: "Couldn't end the overview",
+          description: err?.message || "Please try again.",
+          variant: "destructive",
+        });
+        setIsEnding(false);
+        return;
+      }
     }
 
+    setConfirmEndOpen(false);
+    setIsFinished(true);
     const finishMessage: ConversationMessage = {
       role: "ai",
       content: "Thank you for your time. Your broker will review the information you've provided and may reach out if they need anything else.",
       timestamp: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, finishMessage]);
-    onComplete?.();
-  }, [stopRecording, handleCancel, onComplete, sessionId, dealId]);
+    setIsEnding(false);
+    void onComplete?.();
+  }, [stopRecording, handleCancel, onComplete, sessionId, dealId, isEnding, toast]);
 
   // Enter sends (the convention in every messaging app); Shift+Enter inserts
   // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
@@ -434,6 +504,36 @@ export function AIConversationInterface({
         <span className="text-sm">
           {businessName ? `Preparing overview for ${businessName}...` : "Starting overview..."}
         </span>
+      </div>
+    );
+  }
+
+  // Start failed (auth, missing API key, deal not found, network) — show a
+  // real error with a retry instead of a composer that can't send anything.
+  if (startError || !sessionId) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-6" data-testid="status-start-error">
+        <div className="max-w-md w-full rounded-lg border border-destructive/30 bg-destructive/5 p-6 text-center space-y-4">
+          <AlertCircle className="h-8 w-8 mx-auto text-destructive" />
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">We couldn't start your overview</p>
+            <p className="text-xs text-muted-foreground">
+              {startError || "No conversation session was created."}
+            </p>
+          </div>
+          <Button
+            onClick={retryStart}
+            size="sm"
+            className="bg-teal text-teal-foreground hover:bg-teal/90"
+            data-testid="button-retry-start"
+          >
+            <RefreshCw className="h-3.5 w-3.5 mr-1.5" />
+            Try again
+          </Button>
+          <p className="text-[11px] text-muted-foreground/60">
+            If this keeps happening, contact your broker.
+          </p>
+        </div>
       </div>
     );
   }
@@ -492,7 +592,7 @@ export function AIConversationInterface({
               </div>
               {onComplete && (
                 <button
-                  onClick={() => onComplete()}
+                  onClick={() => { void onComplete(); }}
                   className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-teal text-teal-foreground hover:bg-teal/90 transition-colors"
                 >
                   Continue →
@@ -604,8 +704,8 @@ export function AIConversationInterface({
               <Button
                 variant="ghost"
                 size="sm"
-                onClick={handleEndInterview}
-                disabled={isLoading}
+                onClick={() => setConfirmEndOpen(true)}
+                disabled={isLoading || isEnding}
                 className="h-6 text-[10px] text-muted-foreground/60 hover:text-muted-foreground px-2"
                 data-testid="button-end-interview"
               >
@@ -616,6 +716,35 @@ export function AIConversationInterface({
           </>
         )}
       </div>
+
+      {/* Ending closes the session on the server — confirm before doing it */}
+      <AlertDialog
+        open={confirmEndOpen}
+        onOpenChange={(open) => { if (!open && !isEnding) setConfirmEndOpen(false); }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>End your Business Overview?</AlertDialogTitle>
+            <AlertDialogDescription>
+              Everything you've shared so far is saved. Ending now closes this conversation
+              and hands it to your broker — you can still come back later to add or update details.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isEnding}>Keep going</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={isEnding}
+              onClick={(e) => {
+                e.preventDefault();
+                void handleEndInterview();
+              }}
+              data-testid="button-confirm-end-interview"
+            >
+              {isEnding ? "Ending..." : "End Overview"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

@@ -35,7 +35,7 @@ const FAQ: Array<{ q: string; a: string }> = [
   },
   {
     q: "How do buyers see the CIM?",
-    a: "Add a buyer on the deal's Buyers tab to create a secure, watermarked view link. Links are email-specific, expire after 30 days unless extended, and can require an NDA signature before any content is shown. Buyer activity (views, time, sections read) appears in Analytics.",
+    a: "Add a buyer on the deal's Buyers tab to create a secure, watermarked view link. Links are email-specific, expire after your default link expiration (30 days unless you change it in Settings → Defaults) unless extended, and can require an NDA signature before any content is shown. Buyer activity (views, time, sections read) appears in Analytics.",
   },
   {
     q: "What's the difference between the Normal and Blind CIM?",

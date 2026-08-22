@@ -69,6 +69,8 @@ export interface UiClarifyingQuestion {
   context?: string;
   answer?: string;
   status: "pending" | "answered" | "dismissed" | "routed_to_seller";
+  /** Set when routed to the seller interview — the ask_seller discrepancy id. */
+  discrepancyId?: string;
 }
 
 export interface UiInsight {
@@ -330,7 +332,7 @@ export function coerceClarifyingQuestions(raw: any): UiClarifyingQuestion[] | nu
   if (!Array.isArray(raw)) return null;
   const out: UiClarifyingQuestion[] = raw
     .filter((q: any) => q && q.question)
-    .map((q: any) => {
+    .map((q: any, index: number) => {
       const priority = String(q.severity ?? q.priority ?? "medium").toLowerCase();
       const severity: "high" | "medium" | "low" =
         priority === "critical" || priority === "high" ? "high"
@@ -341,11 +343,14 @@ export function coerceClarifyingQuestions(raw: any): UiClarifyingQuestion[] | nu
         context = `${context ? `${context} ` : ""}(Related line items: ${q.relatedLineItems.join(", ")})`;
       }
       return {
-        id: typeof q.id === "string" && q.id ? q.id : genId("q"),
+        // Deterministic fallback id: the route-to-seller endpoint matches by id,
+        // so a legacy row without ids must coerce to the SAME id on every request.
+        id: typeof q.id === "string" && q.id ? q.id : `q_legacy_${index}`,
         severity,
         question: String(q.question),
         context,
         answer: q.answer ? String(q.answer) : undefined,
+        discrepancyId: typeof q.discrepancyId === "string" && q.discrepancyId ? q.discrepancyId : undefined,
         status: ["pending", "answered", "dismissed", "routed_to_seller"].includes(q.status)
           ? q.status
           : "pending",
