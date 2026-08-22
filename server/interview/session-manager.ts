@@ -18,6 +18,7 @@ import {
   VALUATION_FISHING_RE,
   containsValuationFigures,
   CHIP_FIGURE_RE,
+  stripFillerPreamble,
 } from "./turn-guard";
 import {
   mergeExtractedFields,
@@ -624,6 +625,20 @@ export async function processTurn(
     });
   }
 
+  // FILLER GUARD: sellers read dozens of replies in a sitting — a recap or
+  // grade of their last answer ("Got it — $1.1M, that's a solid foundation")
+  // in front of every question is exhausting and nobody talks that way. The
+  // prompt forbids it; this strips it mechanically when the model slips,
+  // leaving the question. Clarifications, reconciliations, and empathy
+  // openers are preserved (see stripFillerPreamble).
+  if (!degraded) {
+    const stripped = stripFillerPreamble(aiResponse.message);
+    if (stripped !== aiResponse.message) {
+      console.log(`[session-manager] Filler guard trimmed a recap opener on session ${sessionId}`);
+      aiResponse.message = stripped;
+    }
+  }
+
   // FORCED END — the seller has now asked to stop more than once, so ending
   // is no longer model discretion. This is the symmetric mirror of the
   // governance shouldEnd=false override below: turn-guard can veto ends AND
@@ -1053,13 +1068,13 @@ async function generateOpeningMessage(
   let openingInstruction: string;
 
   if (hasPriorSession) {
-    openingInstruction = `The seller is returning to an ongoing conversation. Welcome them back warmly. Briefly acknowledge what you already have a good picture of (don't list everything — just mention 2-3 highlights so they know you remember). Then ask if there's anything they'd like to add, update, or correct. If there are still gaps in the knowledge base, gently mention the most important one and ask if they'd like to cover it. Keep the tone casual and collaborative — this is a conversation they can come back to anytime, not a formal interview. Do not repeat any questions that were already answered.`;
+    openingInstruction = `The seller is returning to an ongoing conversation. One short welcome-back sentence, then go straight to the most important open gap or deferral as a question. Do not list what you already have. Do not repeat any question already answered. Three sentences maximum.`;
   } else if (hasQuestionnaireData && hasDocuments) {
-    openingInstruction = `This is the start of the interview. The seller has already completed a questionnaire and uploaded documents. Welcome them warmly, briefly acknowledge what you've already reviewed (without listing every detail), and explain that you'd like to have a conversation to fill in the details and get the full picture. Start with your first question — focus on an area where the questionnaire answers were thin or where you need more depth.`;
+    openingInstruction = `This is the start of the interview. The seller already completed a questionnaire and uploaded documents. One sentence saying you've read them (no inventory of what they contain), then your first question — aimed where the questionnaire was thin. Three sentences maximum, no explanation of the process.`;
   } else if (hasQuestionnaireData) {
-    openingInstruction = `This is the start of the interview. The seller has completed a questionnaire. Welcome them, acknowledge you've reviewed their answers, and start with a question that builds on something they already told you — or explores an area their questionnaire didn't cover well.`;
+    openingInstruction = `This is the start of the interview. The seller completed a questionnaire. One sentence saying you've read it, then your first question building on it. Three sentences maximum, no explanation of the process.`;
   } else {
-    openingInstruction = `This is the start of the interview. You don't have much background yet. Welcome the seller warmly, briefly explain the purpose of the interview (to collect the information needed for a professional CIM/CBO document that will present their business to qualified buyers), and start with a broad opening question to understand the business — what they do, how long they've been operating, and where they're located. This will help you identify the industry and location context for industry-specific questions.`;
+    openingInstruction = `This is the start of the interview and you have little background. One sentence of welcome that says what this is for (the document buyers will read about their business), then one broad opening question: what the business does, how long it has operated, and where. Three sentences maximum.`;
   }
 
   // Recovery-wrapped: retries a malformed/truncated opening once, then falls
@@ -1100,7 +1115,7 @@ async function generateOpeningMessage(
   }
 
   return {
-    message: aiResponse.message,
+    message: stripFillerPreamble(aiResponse.message),
     whyItMatters: aiResponse.whyItMatters,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     industryContext,
