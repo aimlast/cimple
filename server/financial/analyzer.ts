@@ -247,16 +247,21 @@ export async function runFinancialAnalysis(
   storage: IStorage,
   opts: { analysisId?: string } = {},
 ): Promise<string> {
-  // 1. Load deal
-  const deal = await storage.getDeal(dealId);
-  if (!deal) throw new Error(`Deal ${dealId} not found`);
-
-  // Use the pre-created placeholder when the route made one; otherwise create it here
+  // Use the pre-created placeholder when the route made one; otherwise create
+  // it here. This is the only work outside the try: if there is no row yet,
+  // there is nothing to mark failed.
   const analysis = opts.analysisId
     ? { id: opts.analysisId }
     : await createAnalysisPlaceholder(dealId, storage);
 
+  // Everything from here on — including loading the deal — runs inside the
+  // try so EVERY failure path marks the placeholder failed. Previously a
+  // throw before the try left the row "running" forever and the UI polling.
   try {
+    // 1. Load deal
+    const deal = await storage.getDeal(dealId);
+    if (!deal) throw new Error(`Deal ${dealId} not found`);
+
     // 2. Gather every source on the deal
     const sources = await assembleSources(dealId, storage, deal);
 
@@ -305,10 +310,17 @@ export async function runFinancialAnalysis(
     return analysis.id;
   } catch (err: any) {
     console.error("Financial analysis failed:", err);
-    await storage.updateFinancialAnalysis(analysis.id, {
-      status: "failed",
-      aiReasoning: `Analysis failed: ${err.message}`,
-    });
+    // If even the failure write throws (DB down), log it rather than rejecting
+    // into the route's fire-and-forget .catch — the GET handler's 15-minute
+    // stale-running reconciliation is the backstop for that case.
+    await storage
+      .updateFinancialAnalysis(analysis.id, {
+        status: "failed",
+        aiReasoning: `Analysis failed: ${err?.message ?? String(err)}`,
+      })
+      .catch((writeErr: any) => {
+        console.error("Could not mark financial analysis as failed:", writeErr);
+      });
     return analysis.id;
   }
 }

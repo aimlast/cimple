@@ -170,17 +170,18 @@ function useInvites(dealId: string) {
  * newest-first, and sending the NDA to a different address (e.g. the seller's
  * attorney) creates a second invite — so `invites[0]` silently switched the
  * status card and "Copy invite link" to the wrong person. Prefer the invite
- * furthest along (opened > emailed > created), earliest on ties.
+ * furthest along (opened > emailed > created), NEWEST on ties — a re-invite
+ * sent to a corrected email must win over the typo'd one it replaced.
  */
 function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
   if (invites.length === 0) return undefined;
-  const oldestFirst = [...invites].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  const newestFirst = [...invites].sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
   );
   return (
-    oldestFirst.find((i) => !!i.acceptedAt) ??
-    oldestFirst.find((i) => !!i.sentAt) ??
-    oldestFirst[0]
+    newestFirst.find((i) => !!i.acceptedAt) ??
+    newestFirst.find((i) => !!i.sentAt) ??
+    newestFirst[0]
   );
 }
 
@@ -1594,13 +1595,14 @@ function Phase3Center() {
       return r.json();
     },
   });
-  // Mirrors the server's 409 gate on generate-content exactly: anything not
-  // resolved/superseded (open, ask_seller, seller_responded) still blocks.
+  // Mirrors the server's 409 gate on generate-content exactly: only "open"
+  // and "seller_responded" block. "ask_seller" is routed to the interview and
+  // counts as handled (the interview hands it back as seller_responded when
+  // it ends, which re-blocks until the broker resolves it).
   const criticalUnresolved = discrepancyList.filter(
     (d) =>
       d.severity === "critical" &&
-      d.status !== "resolved" &&
-      d.status !== "superseded",
+      (d.status === "open" || d.status === "seller_responded"),
   );
   // If the gate itself couldn't load we can't prove it's clear — block, and
   // say so, rather than letting a failed fetch unlock generation.
@@ -1909,6 +1911,17 @@ function Phase3Center() {
           </Button>
         </div>
       </div>
+
+      {/* The message above says "resolve N critical discrepancies" — give the
+          broker the panel to resolve them (or take one back from the seller)
+          right here instead of sending them hunting for it. */}
+      {generationBlocked && (
+        discrepanciesError ? (
+          <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
+        ) : (
+          <DiscrepancyPanel dealId={dealId} />
+        )
+      )}
 
       {hasVisualSections ? (
         <div className="space-y-6 rounded-lg border border-border bg-card/50 p-6">

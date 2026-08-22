@@ -156,6 +156,62 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
     },
   });
 
+  // Clarifying-question edits. The PATCH replaces the whole clarifyingQuestions
+  // blob, and route-to-seller writes status/discrepancyId server-side — so a
+  // stale client list (routed in another tab, or before the invalidation
+  // refetch landed) would silently un-route a question. Diff the edit against
+  // the copy the UI rendered from, refetch this exact version, and apply only
+  // the changed fields of the changed questions on top of the server's list.
+  const updateQuestions = useMutation({
+    mutationFn: async (updated: ClarifyingQuestion[]) => {
+      if (!analysis?.id) throw new Error("No analysis to update");
+      const before = (analysis.clarifyingQuestions as ClarifyingQuestion[] | null) ?? [];
+      const beforeById = new Map(before.map((q) => [q.id, q]));
+      const changes = new Map<string, Partial<ClarifyingQuestion>>();
+      for (const q of updated) {
+        const prev = beforeById.get(q.id);
+        if (!prev) {
+          changes.set(q.id, q);
+          continue;
+        }
+        const diff: Partial<ClarifyingQuestion> = {};
+        for (const key of Object.keys(q) as (keyof ClarifyingQuestion)[]) {
+          if (JSON.stringify(q[key]) !== JSON.stringify(prev[key])) {
+            (diff as Record<string, unknown>)[key] = q[key];
+          }
+        }
+        if (Object.keys(diff).length > 0) changes.set(q.id, diff);
+      }
+      if (changes.size === 0) return analysis;
+
+      const r = await fetch(`/api/deals/${dealId}/financial-analysis/${analysis.id}`, { credentials: "include" });
+      if (!r.ok) throw new Error(`${r.status}: ${await r.text()}`);
+      const latest = (await r.json()) as FinancialAnalysis;
+      const serverList = (latest.clarifyingQuestions as ClarifyingQuestion[] | null) ?? [];
+      const seen = new Set<string>();
+      const merged: ClarifyingQuestion[] = serverList.map((q) => {
+        seen.add(q.id);
+        const change = changes.get(q.id);
+        return change ? { ...q, ...change } : q;
+      });
+      for (const q of updated) {
+        if (!seen.has(q.id) && changes.has(q.id)) merged.push(q);
+      }
+
+      const res = await apiRequest("PATCH", `/api/deals/${dealId}/financial-analysis/${analysis.id}`, {
+        clarifyingQuestions: merged,
+      });
+      return res.json();
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "financial-analysis"] });
+      toast({ title: "Updated" });
+    },
+    onError: (err: unknown) => {
+      toast({ title: "Update failed", description: apiErrorMessage(err, "Failed to update clarifying questions"), variant: "destructive" });
+    },
+  });
+
   // Route a clarifying question to the seller interview. Goes through the
   // server so an ask_seller discrepancy is created — the interview knowledge
   // base reads those; a local status flip would reach no one.
@@ -206,7 +262,7 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
   };
 
   const handleQuestionsUpdate = (updated: ClarifyingQuestion[]) => {
-    updateAnalysis.mutate({ clarifyingQuestions: updated as any });
+    updateQuestions.mutate(updated);
   };
 
   const statusCfg = analysis ? (STATUS_BADGE[analysis.status] || STATUS_BADGE.draft) : null;

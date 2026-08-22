@@ -42,7 +42,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ## What is already built
 
 ### Hardening pass (2026-07-08) — read this first
-- **Broker auth + multi-tenancy**: every broker endpoint requires a session and scopes by `session.brokerId`; deal ownership is checked on read/write/delete. Dev/demo escape: `ENABLE_DEV_SWITCHER=true` enables `/api/dev/login-as-{broker,buyer}` and the role switcher; the frontend BrokerAuthGate auto-logs-in as `broker_demo` when available.
+- **Broker auth + multi-tenancy**: every broker endpoint requires a session and scopes by `session.brokerId`; deal ownership is checked on read/write/delete. Dev/demo escape: `ENABLE_DEV_SWITCHER=true` enables `/api/dev/role-tokens`, `/api/dev/login-as-{broker,buyer}` and the role switcher (all 404 otherwise). The frontend never auto-logs-in in production: the sign-in form probes `/api/dev/role-tokens` on mount and, only when it answers 200, shows an explicit "Continue as demo broker" button (POST `/api/dev/login-as-broker`). When the switcher is off, the demo account signs in with its `broker_demo` username/password like any other broker. (Local `vite` dev builds still auto-attempt the dev login inside BrokerAuthGate for a zero-login loop.)
 - **View room integrity**: NDA is enforced server-side (sections withheld until signed when `deal.ndaRequired`); buyers receive a whitelisted deal payload (never `extractedInfo`/notes); teaser/full access levels serve the Blind CIM with auto-generation of redaction overrides on first view; new links expire in 30 days; `firstViewedAt`/`viewCount` are stamped on every view (drives the decision panel + day-3/6/8 reminder pipeline).
 - **CIM layout engine is two-phase**: a manifest call plans sections, then each section generates in parallel batches with a shared cached prefix — immune to the old 16K-token truncation. Failures degrade to editable placeholders and surface in `document.warnings` + the broker toast.
 - **Interview upgrades**: industry knowledge is sliced per deal + prompt-cached (~12K tokens vs ~62K); completion is governed (min-turn floor, critical-section coverage, seller stop always wins); malformed output recovers gracefully; intake answers seed extractedInfo (never re-ask); `whyItMatters` buyer-rationale per question; Enter-to-send UI with edit-previous-answer.
@@ -53,7 +53,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 ### Core Platform
 - Broker layout: collapsible icon sidebar with Deals, Buyers, Analytics, Integrations, Settings
 - All broker pages under `/broker/*` namespace (see `ROUTES.md` for full route tree)
-- Deal detail: `/deal/:id/:tab` with tabs for overview, buyers, financials, documents, qa, team, interview-review
+- Deal detail: `/deal/:id/:tab` with tabs for overview, buyers, qa, team, financials, interview-review (documents live inside the Overview tab, not as a separate tab)
 - Seller routes: `/seller/:token` (intake), `/seller/:token/interview` (fullscreen), `/seller/:token/progress`, `/seller/:token/documents`, `/approve/:token`
 - Buyer routes: `/buyer/login`, `/buyer/signup`, `/buyer/dashboard`, `/buyer/profile`, `/view/:token`, `/review/:token`. All render inside BuyerLayout with three modes: auth (centered card), nav (top bar), immersive (no chrome)
 - Four-layout architecture: FullscreenLayout → SellerLayout → BuyerLayout → BrokerLayout (see `ROUTES.md`)

@@ -7,9 +7,14 @@
  *
  * The interview step embeds AIConversationInterface inline. Sellers can
  * also resume the interview fullscreen at /seller/:token/interview.
+ *
+ * `?edit=1` is an explicit edit intent: it opens the wizard at Business
+ * Basics even when intake + interview are already complete (which would
+ * otherwise redirect to the progress page), and saving returns the seller
+ * to progress instead of pushing them back into the conversation.
  */
 import { useEffect, useRef, useState } from "react";
-import { useParams, useLocation } from "wouter";
+import { useParams, useLocation, useSearch } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -132,6 +137,8 @@ interface SellerProgressSummary {
 export default function SellerIntake() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
+  const search = useSearch();
+  const isEditIntent = new URLSearchParams(search).get("edit") === "1";
   const [currentSection, setCurrentSection] = useState<Section>("welcome");
   const [onboardingDismissed, setOnboardingDismissed] = useState(false);
   const { toast } = useToast();
@@ -181,14 +188,22 @@ export default function SellerIntake() {
     if (emps) setEmployees(emps);
 
     const intakeDone = !!basics;
-    if (intakeDone && deal.interviewCompleted) {
+    if (isEditIntent) {
+      // Explicit edit intent (progress page's "Edit business details") —
+      // open the wizard on the first editable step regardless of status.
+      setCurrentSection("business-basics");
+    } else if (intakeDone && deal.interviewCompleted) {
       // Intake and conversation both done — the progress page is the right
       // home (it routes to documents / review and lets them revisit the chat).
       setLocation(`/seller/${token}/progress`);
     } else if (intakeDone) {
       setCurrentSection("interview");
     }
-  }, [inviteData, token, setLocation]);
+  }, [inviteData, token, setLocation, isEditIntent]);
+
+  // In edit mode a seller who already finished the conversation should land
+  // back on progress after saving, not on "Start Business Overview".
+  const returnToProgressAfterSave = isEditIntent && !!inviteData?.deal?.interviewCompleted;
 
   const saveQuestionnaireMutation = useMutation({
     mutationFn: async (data: {
@@ -256,6 +271,10 @@ export default function SellerIntake() {
         // so nothing is lost and the seller can retry.
         return;
       }
+      if (returnToProgressAfterSave) {
+        setLocation(`/seller/${token}/progress`);
+        return;
+      }
     }
     const nextIndex = currentIndex + 1;
     if (nextIndex < sections.length) {
@@ -264,6 +283,12 @@ export default function SellerIntake() {
   };
 
   const goBack = () => {
+    if (isEditIntent && currentSection === "business-basics") {
+      // Edit mode entered from progress — "Back" on the first step returns
+      // there rather than to the welcome screen.
+      setLocation(`/seller/${token}/progress`);
+      return;
+    }
     const prevIndex = currentIndex - 1;
     if (prevIndex >= 0) {
       setCurrentSection(sections[prevIndex].id);
@@ -795,6 +820,11 @@ export default function SellerIntake() {
                       <>
                         <Loader2 className="h-4 w-4 mr-2 animate-spin" />
                         Saving...
+                      </>
+                    ) : returnToProgressAfterSave ? (
+                      <>
+                        Save changes
+                        <ArrowRight className="h-4 w-4 ml-2" />
                       </>
                     ) : (
                       <>

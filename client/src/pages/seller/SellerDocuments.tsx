@@ -67,6 +67,8 @@ export default function SellerDocuments() {
     data: inviteData,
     isLoading: isLoadingInvite,
     error: inviteError,
+    refetch: refetchInvite,
+    isFetching: isFetchingInvite,
   } = useQuery<{ invite: any; deal: any }>({
     queryKey: ["/api/invites", token],
     enabled: !!token,
@@ -80,11 +82,16 @@ export default function SellerDocuments() {
     isLoading: isLoadingProgress,
     error: progressError,
     refetch: refetchProgress,
+    isFetching: isFetchingProgress,
   } = useQuery<SellerProgressData>({
     queryKey: [`/api/seller/${token}/progress`],
     enabled: !!token,
   });
   const isLoading = isLoadingInvite || isLoadingProgress;
+  const isRetrying = isFetchingInvite || isFetchingProgress;
+  // Either query can be the one that failed, so a retry must refetch both —
+  // refetching only progress left an invite-query error stuck on screen.
+  const retryLoad = () => Promise.all([refetchInvite(), refetchProgress()]);
 
   // Upload mutation
   const uploadMutation = useMutation({
@@ -242,10 +249,11 @@ export default function SellerDocuments() {
               <Button
                 variant="outline"
                 size="sm"
-                onClick={() => refetchProgress()}
+                disabled={isRetrying}
+                onClick={() => void retryLoad()}
                 data-testid="button-retry-documents"
               >
-                <RefreshCw className="h-3.5 w-3.5 mr-2" />
+                <RefreshCw className={`h-3.5 w-3.5 mr-2 ${isRetrying ? "animate-spin" : ""}`} />
                 Try again
               </Button>
             </>

@@ -1,14 +1,35 @@
 /**
  * BrokerLogin — full-screen sign-in for brokers.
  *
- * Rendered by BrokerAuthGate whenever no broker session exists (there is no
- * separate /broker/login route — the gate shows this in place, so deep links
- * survive login). Mirrors the buyer auth card styling.
+ * Rendered in two places: by BrokerAuthGate in place of any broker page when
+ * no session exists (so deep links survive login), and by the standalone
+ * /broker/login route that Log out lands on. Mirrors the buyer auth card
+ * styling.
+ *
+ * Demo entry: on mount the form probes GET /api/dev/role-tokens. That route
+ * only answers 200 when the server's dev switcher is on (local dev, or
+ * ENABLE_DEV_SWITCHER=true on a deploy) — otherwise it 404s and the
+ * "Continue as demo broker" button never renders. There is no automatic
+ * demo login; the broker has to click it.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-export default function BrokerLogin() {
+interface BrokerLoginProps {
+  /**
+   * Optional one-line notice shown above the form — used by /broker/login
+   * when the session probe failed for a reason other than "not signed in".
+   */
+  notice?: string;
+}
+
+/** Pull the server's error body off a failed response, with a fallback. */
+async function errorFromResponse(res: Response, fallback: string): Promise<Error> {
+  const body = await res.json().catch(() => ({} as { error?: string }));
+  return new Error(body?.error || `${fallback} (${res.status})`);
+}
+
+export default function BrokerLogin({ notice }: BrokerLoginProps = {}) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   // The reset flow gets its own field — it previously borrowed the login
@@ -16,7 +37,42 @@ export default function BrokerLogin() {
   const [resetUsername, setResetUsername] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [mode, setMode] = useState<"login" | "forgot" | "forgot-sent">("login");
+  // Whether the server's dev switcher is on. Probed once on mount; the
+  // demo button only renders after a 200 — a 404 (the normal production
+  // state) or a network failure leaves it hidden.
+  const [demoAvailable, setDemoAvailable] = useState(false);
   const queryClient = useQueryClient();
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/dev/role-tokens", { credentials: "include" })
+      .then((res) => {
+        if (!cancelled && res.status === 200) setDemoAvailable(true);
+      })
+      .catch(() => {
+        /* unreachable server — same as disabled */
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const demoLogin = useMutation({
+    mutationFn: async () => {
+      const res = await fetch("/api/dev/login-as-broker", {
+        method: "POST",
+        credentials: "include",
+      });
+      if (!res.ok) throw await errorFromResponse(res, "Demo sign in failed");
+      return res.json();
+    },
+    onSuccess: () => {
+      setError(null);
+      // The auth gate / login page re-queries /me and swaps in the app
+      queryClient.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
+    },
+    onError: (e: Error) => setError(e.message),
+  });
 
   const requestReset = useMutation({
     mutationFn: async () => {
@@ -26,10 +82,7 @@ export default function BrokerLogin() {
         body: JSON.stringify({ username: resetUsername.trim() }),
         credentials: "include",
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Could not request a reset");
-      }
+      if (!res.ok) throw await errorFromResponse(res, "Could not request a reset");
       return res.json();
     },
     onSuccess: () => {
@@ -47,10 +100,7 @@ export default function BrokerLogin() {
         body: JSON.stringify({ username, password }),
         credentials: "include",
       });
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        throw new Error(body.error || "Sign in failed");
-      }
+      if (!res.ok) throw await errorFromResponse(res, "Sign in failed");
       return res.json();
     },
     onSuccess: () => {
@@ -94,6 +144,15 @@ export default function BrokerLogin() {
 
         <div className="bg-card border border-border rounded-xl p-6 shadow-sm">
           <h1 className="text-lg font-semibold mb-4">Sign in</h1>
+          {notice && (
+            <p
+              className="text-xs text-amber-500/90 bg-amber-500/5 border border-amber-500/20 rounded-md px-3 py-2 mb-4"
+              role="status"
+              data-testid="text-login-notice"
+            >
+              {notice}
+            </p>
+          )}
           <form onSubmit={submit} className="space-y-4">
             <div>
               <label htmlFor="broker-username" className="block text-xs font-medium text-muted-foreground mb-1.5">
@@ -208,6 +267,26 @@ export default function BrokerLogin() {
               >
                 Back to sign in
               </button>
+            </div>
+          )}
+
+          {demoAvailable && (
+            <div className="mt-4 pt-4 border-t border-border space-y-2">
+              <button
+                type="button"
+                onClick={() => {
+                  setError(null);
+                  demoLogin.mutate();
+                }}
+                disabled={demoLogin.isPending || login.isPending}
+                className="w-full h-9 rounded-md border border-teal/40 text-teal text-sm font-medium hover:bg-teal/5 transition-colors disabled:opacity-50"
+                data-testid="button-demo-broker"
+              >
+                {demoLogin.isPending ? "Opening demo workspace..." : "Continue as demo broker"}
+              </button>
+              <p className="text-center text-[11px] text-muted-foreground">
+                Demo access is on for this deployment — no password needed.
+              </p>
             </div>
           )}
         </div>
