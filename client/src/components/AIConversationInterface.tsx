@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle } from "lucide-react";
 import { usePictureInPicture } from "@/lib/pip";
+import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -120,6 +121,18 @@ export function AIConversationInterface({
   const currentQuestionRef = useRef<string | undefined>(undefined);
   const handleSendRef = useRef<(text?: string) => Promise<void>>(async () => {});
   const HANDS_FREE_PAUSE_MS = 3000;
+  // Speaker-aware live transcription (Deepgram) — the room's conversation,
+  // labelled by speaker, sent to the AI as an exchange after a pause.
+  const [liveActive, setLiveActive] = useState(false);
+  const [liveStarting, setLiveStarting] = useState(false);
+  const [liveLines, setLiveLines] = useState<{ speaker: number; text: string }[]>([]);
+  const [liveInterim, setLiveInterim] = useState("");
+  const [brokerSpeaker, setBrokerSpeaker] = useState<number | null>(null);
+  const liveRef = useRef<LiveTranscriptionHandle | null>(null);
+  const liveLinesRef = useRef<{ speaker: number; text: string }[]>([]);
+  const brokerSpeakerRef = useRef<number | null>(null);
+  const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const LIVE_PAUSE_MS = 3000;
   const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
@@ -662,6 +675,94 @@ export function AIConversationInterface({
 
   // Enter sends (the convention in every messaging app); Shift+Enter inserts
   // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
+  // ── Speaker-aware listening (Deepgram) ──
+  const speakerLabel = useCallback((speaker: number) => {
+    const b = brokerSpeakerRef.current;
+    if (b === null) return `Speaker ${speaker + 1}`;
+    return speaker === b ? "Broker" : "Seller";
+  }, []);
+
+  const flushLiveExchange = useCallback(() => {
+    const lines = liveLinesRef.current;
+    if (lines.length === 0) return;
+    const b = brokerSpeakerRef.current;
+    // Only send when someone other than the broker spoke — the broker reading
+    // the question alone is not an answer.
+    const hasNonBroker = b === null ? true : lines.some((l) => l.speaker !== b);
+    const words = lines.reduce((n, l) => n + l.text.split(/\s+/).length, 0);
+    if (!hasNonBroker || words < 3) return;
+    const text = lines
+      .filter((l) => !looksLikeQuestionEcho(l.text, currentQuestionRef.current))
+      .map((l) => `${speakerLabel(l.speaker)}: ${l.text}`)
+      .join("\n");
+    liveLinesRef.current = [];
+    setLiveLines([]);
+    setLiveInterim("");
+    if (text.trim()) void handleSendRef.current(text);
+  }, [speakerLabel]);
+
+  const armLiveTimer = useCallback(() => {
+    if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
+    liveTimerRef.current = setTimeout(flushLiveExchange, LIVE_PAUSE_MS);
+  }, [flushLiveExchange]);
+
+  const onLiveSegment = useCallback((seg: LiveSegment) => {
+    if (!seg.isFinal) { setLiveInterim(seg.text); return; }
+    setLiveInterim("");
+    // The speaker who reads the question aloud is the broker.
+    if (brokerSpeakerRef.current === null && looksLikeQuestionEcho(seg.text, currentQuestionRef.current)) {
+      brokerSpeakerRef.current = seg.speaker;
+      setBrokerSpeaker(seg.speaker);
+    }
+    const lines = liveLinesRef.current.slice();
+    const last = lines[lines.length - 1];
+    if (last && last.speaker === seg.speaker) last.text = `${last.text} ${seg.text}`.trim();
+    else lines.push({ speaker: seg.speaker, text: seg.text });
+    liveLinesRef.current = lines;
+    setLiveLines(lines);
+    armLiveTimer();
+  }, [armLiveTimer]);
+
+  const stopLive = useCallback(() => {
+    liveRef.current?.stop();
+    liveRef.current = null;
+    if (liveTimerRef.current) { clearTimeout(liveTimerRef.current); liveTimerRef.current = null; }
+    setLiveActive(false);
+    setLiveInterim("");
+  }, []);
+
+  /** One "Listen" button: speaker-aware transcription when configured, else the browser's. */
+  const toggleListening = useCallback(async () => {
+    if (liveActive) { stopLive(); return; }
+    if (handsFreeRef.current) { toggleHandsFree(); return; }
+    setLiveStarting(true);
+    try {
+      liveRef.current = await startLiveTranscription({
+        dealId,
+        sellerToken,
+        onSegment: onLiveSegment,
+        onUtteranceEnd: armLiveTimer,
+        onError: (message) => { toast({ title: "Listening stopped", description: message, variant: "destructive" }); stopLive(); },
+      });
+      setLiveActive(true);
+    } catch (err: any) {
+      if (err instanceof NotConfiguredError) {
+        toast({ title: "Using basic listening", description: "Speaker separation isn't set up on this server; the browser's speech recognition is used instead." });
+        toggleHandsFree();
+      } else {
+        toast({ title: "Couldn't start listening", description: err?.message || "Microphone unavailable", variant: "destructive" });
+      }
+    } finally {
+      setLiveStarting(false);
+    }
+  }, [liveActive, stopLive, toggleHandsFree, dealId, sellerToken, onLiveSegment, armLiveTimer, toast]);
+
+  useEffect(() => { if (isFinished) stopLive(); }, [isFinished, stopLive]);
+  useEffect(() => () => { liveRef.current?.stop(); if (liveTimerRef.current) clearTimeout(liveTimerRef.current); }, []);
+
+  const listening = liveActive || handsFree;
+  const listenLabel = liveStarting ? "Starting…" : listening ? "Stop listening" : "Listen";
+
   // ── Broker-led ("together") helpers ──
   const currentQuestion = useMemo(() => {
     for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "ai") return messages[i];
@@ -710,6 +811,24 @@ export function AIConversationInterface({
           </div>
         )}
       </div>
+      {liveActive && (liveLines.length > 0 || liveInterim) && (
+        <div className={`${compact ? "" : "mt-2"} rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-xs space-y-0.5`} data-testid="live-transcript">
+          {liveLines.slice(-4).map((l, i) => (
+            <p key={i} className="flex gap-2">
+              <button
+                type="button"
+                className={`shrink-0 font-medium ${brokerSpeaker === l.speaker ? "text-muted-foreground" : "text-teal"} hover:underline`}
+                title={brokerSpeaker === l.speaker ? "This is you" : "Click if this is you (the broker)"}
+                onClick={() => { brokerSpeakerRef.current = l.speaker; setBrokerSpeaker(l.speaker); }}
+              >
+                {speakerLabel(l.speaker)}
+              </button>
+              <span className="text-foreground/90">{l.text}</span>
+            </p>
+          ))}
+          {liveInterim && <p className="text-muted-foreground/60 italic">{liveInterim}</p>}
+        </div>
+      )}
       {compact && !isFinished && (
         <div className="space-y-2">
           <Textarea
@@ -720,9 +839,9 @@ export function AIConversationInterface({
             disabled={isLoading}
           />
           <div className="flex items-center gap-2">
-            <Button onClick={toggleHandsFree} size="sm" variant={handsFree ? "destructive" : "outline"} disabled={isFinished} className="h-8 gap-1.5" title="Answers send automatically after a pause">
-              {handsFree ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-              {handsFree ? "Stop listening" : "Hands-free"}
+            <Button onClick={() => void toggleListening()} size="sm" variant={listening ? "destructive" : "outline"} disabled={isFinished || liveStarting} className="h-8 gap-1.5" title="What the seller says is sent automatically after a pause">
+              {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              {listenLabel}
             </Button>
             <Button onClick={() => void handleSend()} size="sm" disabled={isLoading || !cleanInput} className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90">
               {isLoading ? <StopCircle className="h-3.5 w-3.5 animate-pulse" /> : <Send className="h-3.5 w-3.5" />}
@@ -812,19 +931,22 @@ export function AIConversationInterface({
             <p className="text-[11px] text-muted-foreground">
               {via && via !== "person" && via !== "cimple"
                 ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
-                : "Read the question aloud; with Hands-free on, the seller's answer is sent automatically after a pause."}
+                : liveActive
+                  ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
+                  : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
             </p>
             {!isFinished && (
               <Button
                 size="sm"
-                variant={handsFree ? "destructive" : "outline"}
+                variant={listening ? "destructive" : "outline"}
                 className="h-7 text-xs gap-1.5 shrink-0"
-                onClick={toggleHandsFree}
-                title="Keep listening across questions; the seller's answer is sent automatically after a pause"
-                data-testid="button-hands-free"
+                onClick={() => void toggleListening()}
+                disabled={liveStarting}
+                title="Keep listening to the room; what the seller says is sent automatically after a pause"
+                data-testid="button-listen"
               >
-                {handsFree ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                {handsFree ? "Stop listening" : "Hands-free"}
+                {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                {listenLabel}
               </Button>
             )}
             {!isFinished && (
