@@ -94,21 +94,44 @@ function buildSharedSystem(params: CimLayoutParams): SystemBlock {
   };
 }
 
-export async function generateCimLayout(params: CimLayoutParams): Promise<CimDocument> {
+/** Progress callback for generateCimLayout — fired as the run advances. */
+export interface LayoutProgress {
+  phase: "planning" | "writing";
+  /** Sections planned; 0 while planning. */
+  total: number;
+  /** Sections finished writing. */
+  done: number;
+  /** Title of the section that just finished (writing phase only). */
+  lastTitle?: string;
+}
+
+export async function generateCimLayout(
+  params: CimLayoutParams,
+  onProgress?: (p: LayoutProgress) => void,
+): Promise<CimDocument> {
 
   const warnings: string[] = [];
   const sharedSystem = buildSharedSystem(params);
 
   // ── Phase 1: plan the document ─────────────────────────────────────────
+  onProgress?.({ phase: "planning", total: 0, done: 0 });
   const manifest = await generateManifest(sharedSystem);
+  onProgress?.({ phase: "writing", total: manifest.length, done: 0 });
 
   // ── Phase 2: generate each section's content in parallel batches ──────
   const BATCH_SIZE = 5;
   const generated: CimLayoutSection[] = [];
+  let finished = 0;
   for (let i = 0; i < manifest.length; i += BATCH_SIZE) {
     const batch = manifest.slice(i, i + BATCH_SIZE);
     const results = await Promise.all(
-      batch.map((entry) => generateSection(sharedSystem, entry, manifest, warnings)),
+      batch.map((entry) =>
+        generateSection(sharedSystem, entry, manifest, warnings).then((section) => {
+          finished += 1;
+          onProgress?.({ phase: "writing", total: manifest.length, done: finished, lastTitle: entry.sectionTitle });
+          return section;
+        }),
+      ),
     );
     generated.push(...results);
   }

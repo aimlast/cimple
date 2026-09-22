@@ -18,6 +18,7 @@ import Settings from "@/pages/Settings";
 import Support from "@/pages/Support";
 import NewDeal from "@/pages/NewDeal";
 import DealShell from "@/pages/broker/deal/DealShell";
+import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
@@ -237,6 +238,8 @@ function BrokerLayout() {
             {/* Below md the sidebar is an off-canvas sheet — this bar is the
                 only way to open it (nav, theme toggle, log out). */}
             <BrokerMobileHeader />
+            {/* "CIM ready" toast wherever the broker is in the app */}
+            <CimGenerationWatcher />
             <Routes />
           </main>
         </div>
