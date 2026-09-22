@@ -34,6 +34,25 @@ export type User = typeof users.$inferSelect;
 // =====================
 // DEALS - Main entity tracking business through all phases
 // =====================
+/** How much a CIM section matters to buyers of this particular business. */
+export type SectionImportanceLevel = "critical" | "important" | "helpful";
+
+export interface SectionImportanceEntry {
+  level: SectionImportanceLevel;
+  /** One short, buyer-facing reason (≤ 15 words). */
+  reason: string;
+}
+
+export interface SectionImportanceMap {
+  /** Industry label the ranking was computed for ("" = base defaults). */
+  industry: string;
+  subIndustry?: string | null;
+  computedAt: string;
+  /** "base" = static defaults; "ai" = re-ranked for the industry. */
+  source: "base" | "ai";
+  sections: Record<string, SectionImportanceEntry>;
+}
+
 /**
  * Progress/result of a CIM generation run. Written by the server job runner,
  * read by the broker UI (progress bar, completion toast).
@@ -131,6 +150,11 @@ export const deals = pgTable("deals", {
   // progress survives a page refresh and a finished/failed run is still
   // reported after the in-memory job is gone.
   cimGeneration: jsonb("cim_generation").$type<CimGenerationStatus>(),
+  // Per-deal importance of each CIM section for buyers (critical / important /
+  // helpful), re-ranked for the deal's industry by a supporting agent. Drives
+  // the labels sellers and brokers see on questions and sections, and which
+  // sections must be covered before the interview may end.
+  sectionImportance: jsonb("section_importance").$type<SectionImportanceMap>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section
@@ -893,6 +917,11 @@ export const conversationMessageSchema = z.object({
   /** AI turns: buyer-rationale behind "Why we ask this". Persisted with the
    *  message so it survives a reload of the interview. */
   whyItMatters: z.string().optional(),
+  /** AI turns: how much the question's topic matters to buyers of this
+   *  business — shown as a small label beside "Why we ask this". */
+  importance: z.enum(["critical", "important", "helpful"]).optional(),
+  /** AI turns: the CIM section key the question is filling. */
+  targetSection: z.string().optional(),
   /** AI turns: the answer chips offered with the question. Persisted so a
    *  resumed session shows them again for the still-pending question. */
   suggestedAnswers: z.array(z.string()).optional(),

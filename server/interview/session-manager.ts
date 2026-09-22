@@ -9,6 +9,7 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, KNOWN_EXTRACTED_FIELDS, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
 import { buildInterviewSystemBlocks } from "./system-prompt";
+import type { InterviewResponse } from "./response-schema";
 import {
   callInterviewWithRecovery,
   governCompletion,
@@ -45,6 +46,7 @@ import {
   type DeferralEntry,
 } from "./deferral-ledger";
 import { agentConfig } from "./config/load-config";
+import { ensureSectionImportance } from "./section-importance";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 
@@ -82,6 +84,10 @@ export interface TurnResult {
   message: string;
   /** Buyer-rationale for the question asked — behind "Why we ask this" */
   whyItMatters?: string;
+  /** Buyer importance of the question just asked (see section-importance.ts) */
+  importance?: "critical" | "important" | "helpful";
+  /** CIM section the question is filling */
+  targetSection?: string;
   /** Pre-populated answer options the seller can click to respond */
   suggestedAnswers: string[];
   /** The messages exactly as persisted this turn (authoritative timestamps,
@@ -108,6 +114,8 @@ export interface TurnResult {
     key: string;
     title: string;
     status: "well_covered" | "partial" | "missing";
+    importance: "critical" | "important" | "helpful";
+    importanceReason: string;
   }>;
   /** Industry context (for frontend display) */
   industryContext: {
@@ -219,10 +227,12 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       return {
         message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
         whyItMatters: pendingQuestion?.whyItMatters,
+        importance: pendingQuestion?.importance,
+        targetSection: pendingQuestion?.targetSection,
         suggestedAnswers: pendingChips,
         sessionId: session.id,
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-        sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
+        sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
         industryContext: extractIndustryContextForFrontend(kb.industryContext),
         deferredTopics: resumeDeferred,
         shouldEnd: false,
@@ -277,6 +287,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
     content: openingResult.message,
     timestamp: new Date().toISOString(),
     ...(openingResult.whyItMatters ? { whyItMatters: openingResult.whyItMatters } : {}),
+    ...questionLabels(kb, openingResult.importance, openingResult.targetSection),
     suggestedAnswers: openingResult.suggestedAnswers || [],
   };
 
@@ -362,15 +373,20 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
   if (seededIndustryContext) {
     kb.industryContext = seededIndustryContext;
   }
+  // Rank section importance for this industry in the background (no-op when
+  // the deal already has a ranking for its industry).
+  ensureSectionImportance(deal, importanceContext(seededIndustryContext));
 
   return {
     message: openingResult.message,
     whyItMatters: openingResult.whyItMatters,
+    importance: aiMessage.importance,
+    targetSection: aiMessage.targetSection,
     suggestedAnswers: openingResult.suggestedAnswers,
     turnMessages: { ai: aiMessage },
     sessionId: session.id,
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-    sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
+    sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
     deferredTopics: deferralTopicStrings(seededLedger),
     shouldEnd: false,
@@ -492,7 +508,7 @@ export async function processTurn(
     return openDeferrals(priorLedger).some((d) => re.test(d.topic));
   };
   const missingCritical = kb.sectionCoverage
-    .filter((s) => CRITICAL_SECTIONS.has(s.key) && s.status === "missing" && !ledgerAddressed(s.key))
+    .filter((s) => (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical") && s.status === "missing" && !ledgerAddressed(s.key))
     .map((s) => s.key);
 
   // Seller stop signal — the first one permits at most ONE closing question;
@@ -1010,6 +1026,7 @@ export async function processTurn(
     content: aiResponse.message,
     timestamp: new Date().toISOString(),
     ...(aiResponse.whyItMatters ? { whyItMatters: aiResponse.whyItMatters } : {}),
+    ...questionLabels(kb, aiResponse.importance, aiResponse.targetSection),
     suggestedAnswers: aiResponse.suggestedAnswers || [],
   };
   const updatedMessages: ConversationMessage[] = [
@@ -1076,10 +1093,13 @@ export async function processTurn(
   // Rebuild coverage with the updated extracted info
   const updatedDeal = await storage.getDeal(dealId);
   const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies);
+  ensureSectionImportance(updatedDeal!, importanceContext(updatedIndustryContext));
 
   return {
     message: aiResponse.message,
     whyItMatters: aiResponse.whyItMatters,
+    importance: storedAiMessage.importance,
+    targetSection: storedAiMessage.targetSection,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     turnMessages: { user: storedUserMessage, ai: storedAiMessage },
     sessionId,
@@ -1089,7 +1109,7 @@ export async function processTurn(
       updatedFields: changes.filter((c) => c.previousValue !== null).map((c) => c.fieldName),
       changes,
     },
-    sectionCoverage: updatedKb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status })),
+    sectionCoverage: updatedKb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
     // Derived from the durable ledger — stable and append-only until
     // resolved, so the broker-facing panel no longer flickers or loses items.
@@ -1153,7 +1173,7 @@ async function getSession(sessionId: string): Promise<InterviewSession | null> {
 async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
-): Promise<{ message: string; whyItMatters?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
+): Promise<{ message: string; whyItMatters?: string; importance?: InterviewResponse["importance"]; targetSection?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
   // The opening prompt varies based on what we already know
@@ -1213,6 +1233,8 @@ async function generateOpeningMessage(
   return {
     message: stripFillerPreamble(aiResponse.message),
     whyItMatters: aiResponse.whyItMatters,
+    importance: aiResponse.importance,
+    targetSection: aiResponse.targetSection,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
     industryContext,
   };
@@ -1315,6 +1337,31 @@ function seedExtractedInfoFromQuestionnaire(deal: {
   }
 
   return added ? seeded : null;
+}
+
+/**
+ * Labels stored with an AI question. The model's own importance wins; when it
+ * only named the section, the level comes from the deal's ranking; when it
+ * named neither, no label is shown (better than a wrong one).
+ */
+function questionLabels(
+  kb: KnowledgeBase,
+  importance: InterviewResponse["importance"],
+  targetSection: string | undefined,
+): Pick<ConversationMessage, "importance" | "targetSection"> {
+  const section = targetSection && kb.sectionImportance.sections[targetSection] ? targetSection : undefined;
+  const level = importance ?? (section ? kb.sectionImportance.sections[section].level : undefined);
+  return {
+    ...(level ? { importance: level } : {}),
+    ...(section ? { targetSection: section } : {}),
+  };
+}
+
+function importanceContext(ctx: IndustryContext | null | undefined) {
+  if (!ctx?.industry) return undefined;
+  const loc = ctx.location as { city?: string; province?: string; state?: string; country?: string } | null;
+  const location = loc ? [loc.city, loc.province ?? loc.state, loc.country].filter(Boolean).join(", ") : null;
+  return { subIndustry: ctx.subIndustry, location, industrySpecificAreas: ctx.industrySpecificAreas };
 }
 
 function extractIndustryContextForFrontend(

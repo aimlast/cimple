@@ -19,6 +19,12 @@ export interface InterviewResponse {
    */
   whyItMatters?: string;
 
+  /** How much the question's topic matters to buyers of this business. */
+  importance?: "critical" | "important" | "helpful";
+
+  /** CIM section key the question is filling (see CIM_SECTIONS). */
+  targetSection?: string;
+
   /** Pre-populated answer options the seller can click to respond */
   suggestedAnswers: string[];
 
@@ -145,6 +151,15 @@ export const INTERVIEW_RESPONSE_TOOL = {
       whyItMatters: {
         type: "string",
         description: "One sentence explaining why the question you just asked matters to buyers — e.g. 'Buyers discount heavily for owner-dependent operations, so demonstrating a capable team directly increases your valuation.' Shown to the seller only when they tap 'Why we ask this'. Keep it specific to this business and this question, never generic. Omit when the message isn't asking a question (e.g. wrap-up turns).",
+      },
+      importance: {
+        type: "string",
+        enum: ["critical", "important", "helpful"],
+        description: "How much the topic of the question you just asked matters to buyers of THIS business. Use the level of the section it fills from 'Section priorities for this business' in the knowledge base; raise a single question to 'critical' only when it is an industry-mandatory probe. Omit when the message isn't asking a question.",
+      },
+      targetSection: {
+        type: "string",
+        description: "The CIM section key the question you just asked is filling — one of the keys listed under 'Section priorities for this business' (e.g. 'financials', 'permits_licenses'). Omit when not asking a question.",
       },
       suggestedAnswers: {
         type: "array",

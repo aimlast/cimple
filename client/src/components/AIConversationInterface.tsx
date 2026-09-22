@@ -19,6 +19,8 @@ import type { ConversationMessage } from "@shared/schema";
 interface TurnResult {
   message: string;
   whyItMatters?: string;
+  importance?: "critical" | "important" | "helpful";
+  targetSection?: string;
   suggestedAnswers: string[];
   /** The messages exactly as the server persisted them this turn — adopted
    *  so the live view (timestamps, rationale, chips) matches a reload. */
@@ -63,6 +65,7 @@ function openingMessageFrom(result: TurnResult): ConversationMessage {
       content: result.message,
       timestamp: new Date().toISOString(),
       ...(result.whyItMatters ? { whyItMatters: result.whyItMatters } : {}),
+      ...(result.importance ? { importance: result.importance } : {}),
     }
   );
 }
@@ -456,6 +459,7 @@ export function AIConversationInterface({
                 ...m,
                 content: finalResult.message,
                 ...(finalResult.whyItMatters ? { whyItMatters: finalResult.whyItMatters } : {}),
+                ...(finalResult.importance ? { importance: finalResult.importance } : {}),
               }
             );
           }
@@ -642,6 +646,7 @@ export function AIConversationInterface({
             content={message.content}
             timestamp={message.timestamp}
             whyItMatters={message.role === "ai" ? message.whyItMatters : undefined}
+            importance={message.role === "ai" ? message.importance : undefined}
             correctionOf={message.role === "user" ? message.correctionOf : undefined}
             superseded={message.role === "user" && correctedTimestamps.has(message.timestamp)}
             isEditing={message.role === "user" && editing?.timestamp === message.timestamp}
