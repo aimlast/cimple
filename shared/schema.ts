@@ -34,6 +34,29 @@ export type User = typeof users.$inferSelect;
 // =====================
 // DEALS - Main entity tracking business through all phases
 // =====================
+/**
+ * Progress/result of a CIM generation run. Written by the server job runner,
+ * read by the broker UI (progress bar, completion toast).
+ */
+export interface CimGenerationStatus {
+  status: "running" | "done" | "failed";
+  /** "content" = Generate CIM from the Overview tab; "layout" = Designer regenerate-all. */
+  mode: "content" | "layout";
+  phase: "planning" | "writing" | "saving" | "finished";
+  /** Sections planned (0 until the manifest is ready). */
+  total: number;
+  /** Sections finished writing. */
+  done: number;
+  startedAt: string;
+  updatedAt: string;
+  finishedAt?: string;
+  error?: string;
+  warnings: string[];
+  sectionCount?: number;
+  /** Titles of sections finished so far, in completion order. */
+  completedTitles: string[];
+}
+
 export const deals = pgTable("deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   brokerId: varchar("broker_id").notNull(),
@@ -104,6 +127,10 @@ export const deals = pgTable("deals", {
   // CIM layout manifest (bespoke, AI-generated)
   cimLayoutGeneratedAt: timestamp("cim_layout_generated_at"),
   cimLayoutVersion: integer("cim_layout_version").default(0),
+  // Last CIM generation job (see server/cim/generation-jobs.ts). Persisted so
+  // progress survives a page refresh and a finished/failed run is still
+  // reported after the in-memory job is gone.
+  cimGeneration: jsonb("cim_generation").$type<CimGenerationStatus>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section

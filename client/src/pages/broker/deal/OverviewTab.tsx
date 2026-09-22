@@ -12,6 +12,8 @@ import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1695,34 +1697,20 @@ function Phase3Center() {
   ).length;
   const totalDataFields = extractedCount + scrapedCount;
 
+  // Generation is a background job on the server (survives leaving the
+  // page). This tab follows it via useCimGeneration for the progress bar;
+  // the "CIM ready" toast comes from the app-wide CimGenerationWatcher.
+  const generation = useCimGeneration(dealId);
   const generate = useMutation({
     mutationFn: () =>
-      apiJson<{ sectionCount?: number; warnings?: string[] }>(
+      apiJson<{ started: boolean }>(
         "POST",
         `/api/deals/${dealId}/generate-content`,
         undefined,
         "CIM generation failed",
       ),
-    onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "cim-sections"],
-      });
-      const warnings = data?.warnings ?? [];
-      if (warnings.length > 0) {
-        // Partial success is shown honestly — never a clean "success" toast
-        // when sections fell back to placeholders.
-        toast({
-          title: `CIM generated with ${warnings.length} warning${warnings.length > 1 ? "s" : ""}`,
-          description: warnings.join(" "),
-          variant: "destructive",
-        });
-      } else {
-        toast({
-          title: "CIM generated",
-          description: "Visual sections created. Review and edit below.",
-        });
-      }
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: cimGenerationKey(dealId) });
     },
     onError: (e: Error) => {
       // The server is the authority on the discrepancy gate. If it 409s
@@ -1924,22 +1912,33 @@ function Phase3Center() {
               {blockReason}
             </p>
           )}
-          <Button
-            className="bg-teal text-teal-foreground hover:bg-teal/90"
-            onClick={() => generate.mutate()}
-            disabled={generate.isPending || generationBlocked}
-            title={blockReason ?? undefined}
-            data-testid="button-generate-content"
-          >
-            {generate.isPending ? (
-              <>
-                <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                Designing CIM...
-              </>
-            ) : (
-              "Generate CIM"
-            )}
-          </Button>
+          {generation.isRunning ? (
+            <CimGenerationProgress view={generation} className="max-w-md mx-auto" />
+          ) : (
+            <>
+              {generation.job?.status === "failed" && (
+                <CimGenerationProgress view={generation} className="max-w-md mx-auto mb-3" />
+              )}
+              <Button
+                className="bg-teal text-teal-foreground hover:bg-teal/90"
+                onClick={() => generate.mutate()}
+                disabled={generate.isPending || generationBlocked}
+                title={blockReason ?? undefined}
+                data-testid="button-generate-content"
+              >
+                {generate.isPending ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                    Starting…
+                  </>
+                ) : generation.job?.status === "failed" ? (
+                  "Try again"
+                ) : (
+                  "Generate CIM"
+                )}
+              </Button>
+            </>
+          )}
         </div>
       </div>
     );
@@ -2018,17 +2017,21 @@ function Phase3Center() {
             onClick={() => setRegenConfirmOpen(true)}
             // Same gate as the first Generate button — critical discrepancies
             // block every generation, not just the first.
-            disabled={generate.isPending || generationBlocked}
+            disabled={generate.isPending || generation.isRunning || generationBlocked}
             title={blockReason ?? undefined}
             data-testid="button-regenerate-content"
           >
             <RefreshCw
-              className={`h-3 w-3 ${generate.isPending ? "animate-spin" : ""}`}
+              className={`h-3 w-3 ${generate.isPending || generation.isRunning ? "animate-spin" : ""}`}
             />
             Regenerate All
           </Button>
         </div>
       </div>
+
+      {(generation.isRunning || generation.job?.status === "failed") && (
+        <CimGenerationProgress view={generation} />
+      )}
 
       <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
         <AlertDialogContent>

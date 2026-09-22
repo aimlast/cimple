@@ -7,7 +7,8 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf } from "./interview";
-import { generateCimLayout, regenerateCimSection } from "./cim/layout-engine.js";
+import { regenerateCimSection } from "./cim/layout-engine.js";
+import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
@@ -4851,83 +4852,19 @@ Return JSON only.`,
         return;
       }
 
-      // ── Full CIM generation — use the visual layout engine ──
-
-      // Apply resolved discrepancy values to extractedInfo
-      const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
-      const extractedInfo = { ...(deal.extractedInfo as Record<string, unknown> || {}) };
-      for (const d of resolvedDiscrepancies) {
-        if (d.resolvedValue && d.field) {
-          extractedInfo[d.field] = d.resolvedValue;
+      // ── Full CIM generation — runs as a background job ──
+      // Returns 202 immediately; the client follows progress via
+      // GET /api/deals/:dealId/cim-generation. The job keeps running if the
+      // broker leaves the page (the old single request was dropped with it).
+      try {
+        const job = await startCimGeneration(deal, "content");
+        return res.status(202).json({ started: true, job });
+      } catch (err) {
+        if (err instanceof CimGenerationRunningError) {
+          return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
         }
+        throw err;
       }
-
-      const [branding, insights] = await Promise.all([
-        storage.getBrandingByBroker(deal.brokerId),
-        deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
-      ]);
-
-      const document = await generateCimLayout({
-        dealId,
-        businessName: deal.businessName,
-        industry: deal.industry,
-        askingPrice: deal.askingPrice,
-        extractedInfo,
-        scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
-        questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
-        operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
-        employeeChart: (deal.employeeChart as unknown[]) || null,
-        cimContent: (deal.cimContent as Record<string, string>) || null,
-        brokerBranding: branding ? {
-          companyName: branding.companyName || undefined,
-          primaryColor: branding.primaryColor,
-        } : null,
-        engagementInsights: insights.length > 0 ? insights.map(i => ({
-          sectionType: i.sectionType,
-          layoutType: i.layoutType,
-          avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
-          sampleCount: i.sampleCount ?? 0,
-        })) : null,
-      });
-
-      // Persist visual sections to DB
-      await storage.deleteCimSectionsForDeal(dealId);
-      const cimContent: Record<string, string> = {};
-
-      for (const section of document.sections) {
-        await storage.createCimSection({
-          dealId,
-          sectionKey: section.sectionKey,
-          sectionTitle: section.sectionTitle,
-          order: section.order,
-          layoutType: section.layoutType,
-          layoutData: section.layoutData as any,
-          aiLayoutReasoning: section.aiLayoutReasoning,
-          tags: section.tags as any,
-          aiDraftContent: section.aiDraftContent || null,
-          isVisible: section.isVisible,
-          brokerApproved: false,
-        });
-        // Also store text fallback for backward compat
-        if (section.aiDraftContent) {
-          cimContent[section.sectionKey] = section.aiDraftContent;
-        }
-      }
-
-      await storage.updateDeal(dealId, {
-        cimContent,
-        phase: "phase3_content_creation",
-        cimLayoutGeneratedAt: new Date(),
-        cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
-      } as any);
-
-      res.json({
-        success: true,
-        sectionCount: document.sections.length,
-        generatedAt: document.generatedAt,
-        warnings: document.warnings ?? [],
-        cimContent,
-      });
     } catch (error: any) {
       console.error("Error generating content:", error);
       res.status(500).json({ error: error.message || "Failed to generate content" });
@@ -5822,67 +5759,42 @@ Return JSON only.`,
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the layout");
 
-      const [branding, insights] = await Promise.all([
-        storage.getBrandingByBroker(deal.brokerId),
-        deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
-      ]);
-
-      const document = await generateCimLayout({
-        dealId,
-        businessName: deal.businessName,
-        industry: deal.industry,
-        askingPrice: deal.askingPrice,
-        extractedInfo: (deal.extractedInfo as Record<string, unknown>) || {},
-        scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
-        questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
-        operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
-        employeeChart: (deal.employeeChart as unknown[]) || null,
-        cimContent: (deal.cimContent as Record<string, string>) || null,
-        brokerBranding: branding ? {
-          companyName: branding.companyName || undefined,
-          primaryColor: branding.primaryColor,
-        } : null,
-        engagementInsights: insights.length > 0 ? insights.map(i => ({
-          sectionType: i.sectionType,
-          layoutType: i.layoutType,
-          avgTimeSpentSeconds: i.avgTimeSpentSeconds ?? 0,
-          sampleCount: i.sampleCount ?? 0,
-        })) : null,
-      });
-
-      // Persist sections to DB — delete old layout sections first, then insert new ones.
-      // Blind/DD overrides point at the old section ids — clear them too, or the
-      // view room runs the redaction branch against nothing and serves the base CIM.
-      await storage.deleteCimSectionsForDeal(dealId);
-      await storage.deleteCimSectionOverrides(dealId, "blind");
-      await storage.deleteCimSectionOverrides(dealId, "dd");
-      for (const section of document.sections) {
-        await storage.createCimSection({
-          dealId,
-          sectionKey: section.sectionKey,
-          sectionTitle: section.sectionTitle,
-          order: section.order,
-          layoutType: section.layoutType,
-          layoutData: section.layoutData as any,
-          aiLayoutReasoning: section.aiLayoutReasoning,
-          tags: section.tags as any,
-          aiDraftContent: section.aiDraftContent || null,
-          isVisible: section.isVisible,
-          brokerApproved: false,
-        });
+      // Background job — see generation-jobs.ts. 202 now, progress via GET
+      // /api/deals/:dealId/cim-generation.
+      try {
+        const job = await startCimGeneration(deal, "layout");
+        return res.status(202).json({ started: true, job });
+      } catch (err) {
+        if (err instanceof CimGenerationRunningError) {
+          return res.status(409).json({ error: "CIM generation is already running for this deal", job: err.job });
+        }
+        throw err;
       }
-
-      // Mark layout as generated on the deal
-      await storage.updateDeal(dealId, {
-        cimLayoutGeneratedAt: new Date(),
-        cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
-      } as any);
-
-      res.json({ sectionCount: document.sections.length, generatedAt: document.generatedAt, warnings: document.warnings ?? [] });
     } catch (error: any) {
       console.error("Layout generation error:", error);
       res.status(500).json({ error: error.message || "Layout generation failed" });
     }
+  });
+
+  // Progress/result of the deal's CIM generation job (null if never run).
+  app.get("/api/deals/:dealId/cim-generation", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      // Polled every 2s while running — answer from memory when a job is
+      // live and only read the (large) deal row for the persisted record.
+      const live = getLiveCimGenerationStatus(req.params.dealId);
+      if (live) return res.json({ job: live });
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      res.json({ job: getCimGenerationStatus(deal) });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get generation status" });
+    }
+  });
+
+  // Live/recent generation jobs across the signed-in broker's deals — drives
+  // the app-wide "CIM ready" notification wherever the broker is.
+  app.get("/api/broker/cim-generation", requireBroker, (req, res) => {
+    res.json({ jobs: listBrokerCimGeneration(req.session.brokerId!) });
   });
 
   // Get all CIM layout sections for a deal

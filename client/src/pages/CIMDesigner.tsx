@@ -10,7 +10,7 @@
  * Normal version, and there is no endpoint to edit an override directly. The
  * inspector never writes redacted/enriched text back into the base section.
  */
-import { useState, useCallback, useEffect, useMemo } from "react";
+import { useState, useCallback, useEffect, useMemo, useRef } from "react";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -32,6 +32,8 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
+import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import type { Deal, CimSection, CimSectionOverride, BrandingSettings } from "@shared/schema";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
@@ -205,25 +207,17 @@ export default function CIMDesigner() {
   const isReadOnlyMode = previewMode !== "normal";
 
   // ── Mutations ─────────────────────────────────────────────────────────────
+  // Generation runs as a background job on the server; this page follows
+  // it via useCimGeneration and resets its editor state when it finishes.
+  // The completion toast comes from the app-wide CimGenerationWatcher.
+  const generation = useCimGeneration(dealId);
   const generateLayout = useMutation({
     mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-layout`).then(r => r.json()),
-    onSuccess: (result: { sectionCount?: number; warnings?: string[] }) => {
-      // The server rebuilds every section and clears blind/dd overrides, so
-      // every derived cache is stale — including the deal (layout version).
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides"] });
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      setSelectedSectionId(null);
-      setEditedContent("");
-      setContentDirty(false);
-      setPreviewMode("normal");
-      const warnings = result?.warnings ?? [];
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: cimGenerationKey(dealId) });
       toast({
-        title: "Layout generated",
-        description: warnings.length > 0
-          ? `${warnings.length} section${warnings.length === 1 ? "" : "s"} fell back to a placeholder — review them in the list.`
-          : "AI has created a bespoke section layout for this deal.",
-        variant: warnings.length > 0 ? "destructive" : undefined,
+        title: "Generating layout",
+        description: "This runs in the background — you can keep working or leave this page.",
       });
     },
     onError: (e: unknown) => toast({
@@ -370,9 +364,24 @@ export default function CIMDesigner() {
     reorderSections.mutate(newOrder.map(s => s.id));
   };
 
+  // When a run we were following finishes, the server has rebuilt every
+  // section and cleared overrides — drop editor state that pointed at them.
+  const prevGenStatus = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    const status = generation.job?.status;
+    if (prevGenStatus.current === "running" && status === "done") {
+      setSelectedSectionId(null);
+      setEditedContent("");
+      setContentDirty(false);
+      setPreviewMode("normal");
+    }
+    prevGenStatus.current = status;
+  }, [generation.job?.status]);
+
   // ── Regenerate guard ──────────────────────────────────────────────────────
+  const generating = generateLayout.isPending || generation.isRunning;
   const requestGenerateLayout = () => {
-    if (generateLayout.isPending) return;
+    if (generating) return;
     if (sections.length > 0) {
       setRegenConfirmOpen(true);
       return;
@@ -500,13 +509,14 @@ export default function CIMDesigner() {
             {/* Generate version buttons */}
             {generateVersionButton}
 
+            {generation.isRunning && <CimGenerationProgress view={generation} compact className="ml-1" />}
             <Button
               size="sm"
               className="ml-1 h-7 bg-teal text-teal-foreground hover:bg-teal/90 text-xs gap-1.5"
               onClick={requestGenerateLayout}
-              disabled={generateLayout.isPending}
+              disabled={generating}
             >
-              {generateLayout.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
+              {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
               {sections.length > 0 ? "Regenerate Layout" : "Generate Layout"}
             </Button>
           </div>
