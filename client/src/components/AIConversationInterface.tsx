@@ -66,6 +66,24 @@ interface AIConversationInterfaceProps {
 
 const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
 
+const STOPWORDS = new Set(["the","a","an","and","or","of","to","in","on","for","with","is","are","do","does","did","you","your","it","that","this","what","how","any","have","has","be","at","as","by","we","i","so","if","about","from","there","their","they","them","can","would","could","which","who","when"]);
+function tokens(s: string): string[] {
+  return s.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((w) => w.length > 2 && !STOPWORDS.has(w));
+}
+/**
+ * Hands-free mode hears the broker reading the question aloud as well as the
+ * seller's answer. A transcript segment whose content words mostly appear in
+ * the current question is the question being read, not an answer — drop it.
+ */
+export function looksLikeQuestionEcho(segment: string, question: string | undefined): boolean {
+  if (!question) return false;
+  const seg = tokens(segment);
+  if (seg.length < 3) return false;
+  const q = new Set(tokens(question));
+  const hits = seg.filter((w) => q.has(w)).length;
+  return hits / seg.length >= 0.6;
+}
+
 /** The opening AI message as persisted (authoritative timestamp + rationale),
  *  with a client-side fallback for a server that doesn't echo it back. */
 function openingMessageFrom(result: TurnResult): ConversationMessage {
@@ -92,6 +110,16 @@ export function AIConversationInterface({
 }: AIConversationInterfaceProps) {
   const together = variant === "together";
   const conductedBy = together ? ("broker_with_seller" as const) : undefined;
+  // Hands-free (together mode): keep listening across questions and send the
+  // seller's answer automatically after a pause. The broker clicks once.
+  const [handsFree, setHandsFree] = useState(false);
+  const handsFreeRef = useRef(false);
+  const silenceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const consumedResultsRef = useRef(0);
+  const lastResultsLengthRef = useRef(0);
+  const currentQuestionRef = useRef<string | undefined>(undefined);
+  const handleSendRef = useRef<(text?: string) => Promise<void>>(async () => {});
+  const HANDS_FREE_PAUSE_MS = 3000;
   const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
@@ -294,18 +322,33 @@ export function AIConversationInterface({
     recognition.onresult = (event: any) => {
       let fullFinal = "";
       let interimTranscript = "";
-      for (let i = 0; i < event.results.length; i++) {
+      const hf = handsFreeRef.current;
+      lastResultsLengthRef.current = event.results.length;
+      for (let i = hf ? consumedResultsRef.current : 0; i < event.results.length; i++) {
         const transcript = event.results[i][0].transcript;
         if (event.results[i].isFinal) {
+          // Hands-free: the broker reading the question aloud is not an answer.
+          if (hf && looksLikeQuestionEcho(transcript, currentQuestionRef.current)) continue;
           fullFinal += transcript + " ";
         } else {
           interimTranscript += transcript;
         }
       }
-      const base = preRecordingInputRef.current;
+      const base = hf ? "" : preRecordingInputRef.current;
       const prefix = base ? base + " " : "";
       const combined = prefix + fullFinal.trimEnd() + (interimTranscript ? "\u200B" + interimTranscript : "");
       setInput(combined);
+      inputRef.current = combined;
+      if (hf) {
+        if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current);
+        const words = fullFinal.trim().split(/\s+/).filter(Boolean).length;
+        if (words >= 3) {
+          silenceTimerRef.current = setTimeout(() => {
+            consumedResultsRef.current = lastResultsLengthRef.current;
+            void handleSendRef.current();
+          }, HANDS_FREE_PAUSE_MS);
+        }
+      }
     };
 
     recognition.onerror = (event: any) => {
@@ -329,16 +372,40 @@ export function AIConversationInterface({
       setIsRecording(false);
       recognitionRef.current = null;
       setInput((prev) => prev.replace(/\u200B/g, "").trimEnd());
+      // Chrome ends recognition after a stretch of silence — in hands-free
+      // mode start it again (fresh result list, so nothing is re-sent).
+      if (handsFreeRef.current) {
+        consumedResultsRef.current = 0;
+        lastResultsLengthRef.current = 0;
+        setTimeout(() => { if (handsFreeRef.current && !recognitionRef.current) startRecordingRef.current(); }, 400);
+      }
     };
 
     recognitionRef.current = recognition;
     recognition.start();
   }, [getSpeechRecognition, stopRecording, toast]);
 
+  const startRecordingRef = useRef(startRecording);
+  useEffect(() => { startRecordingRef.current = startRecording; }, [startRecording]);
+
   const toggleRecording = useCallback(() => {
     if (isRecording) stopRecording();
     else startRecording();
   }, [isRecording, stopRecording, startRecording]);
+
+  const toggleHandsFree = useCallback(() => {
+    const next = !handsFreeRef.current;
+    handsFreeRef.current = next;
+    setHandsFree(next);
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
+    consumedResultsRef.current = 0;
+    lastResultsLengthRef.current = 0;
+    if (next) {
+      if (!recognitionRef.current) startRecording();
+    } else {
+      stopRecording();
+    }
+  }, [startRecording, stopRecording]);
 
   // Cleanup speech recognition on unmount
   useEffect(() => {
@@ -358,7 +425,8 @@ export function AIConversationInterface({
       });
       return;
     }
-    stopRecording();
+    if (!handsFreeRef.current) stopRecording();
+    if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
 
     // overrideText: a message sent programmatically (e.g. the broker's Skip)
     // without going through the composer's state.
@@ -600,6 +668,13 @@ export function AIConversationInterface({
     return null;
   }, [messages]);
   const cleanInput = input.replace(/\u200B/g, "").trim();
+  useEffect(() => { currentQuestionRef.current = currentQuestion?.content; }, [currentQuestion]);
+  useEffect(() => { handleSendRef.current = handleSend; }, [handleSend]);
+  // Stop hands-free when the interview finishes or the component unmounts.
+  useEffect(() => {
+    if (isFinished && handsFreeRef.current) { handsFreeRef.current = false; setHandsFree(false); stopRecording(); }
+  }, [isFinished, stopRecording]);
+  useEffect(() => () => { handsFreeRef.current = false; if (silenceTimerRef.current) clearTimeout(silenceTimerRef.current); }, []);
   const skipQuestion = useCallback(() => {
     if (isFinished || isLoading) return;
     void handleSend("The seller would rather skip this one for now — please move on to the next question.");
@@ -645,9 +720,9 @@ export function AIConversationInterface({
             disabled={isLoading}
           />
           <div className="flex items-center gap-2">
-            <Button onClick={toggleRecording} size="sm" variant={isRecording ? "destructive" : "outline"} disabled={isFinished || isLoading} className="h-8 gap-1.5">
-              {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-              {isRecording ? "Stop" : "Capture answer"}
+            <Button onClick={toggleHandsFree} size="sm" variant={handsFree ? "destructive" : "outline"} disabled={isFinished} className="h-8 gap-1.5" title="Answers send automatically after a pause">
+              {handsFree ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              {handsFree ? "Stop listening" : "Hands-free"}
             </Button>
             <Button onClick={() => void handleSend()} size="sm" disabled={isLoading || !cleanInput} className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90">
               {isLoading ? <StopCircle className="h-3.5 w-3.5 animate-pulse" /> : <Send className="h-3.5 w-3.5" />}
@@ -737,8 +812,21 @@ export function AIConversationInterface({
             <p className="text-[11px] text-muted-foreground">
               {via && via !== "person" && via !== "cimple"
                 ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
-                : "Read the question, press Capture answer while the seller talks, then Send."}
+                : "Read the question aloud; with Hands-free on, the seller's answer is sent automatically after a pause."}
             </p>
+            {!isFinished && (
+              <Button
+                size="sm"
+                variant={handsFree ? "destructive" : "outline"}
+                className="h-7 text-xs gap-1.5 shrink-0"
+                onClick={toggleHandsFree}
+                title="Keep listening across questions; the seller's answer is sent automatically after a pause"
+                data-testid="button-hands-free"
+              >
+                {handsFree ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                {handsFree ? "Stop listening" : "Hands-free"}
+              </Button>
+            )}
             {!isFinished && (
               <Button
                 size="sm"
