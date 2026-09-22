@@ -170,6 +170,14 @@ export function normalizeInterviewResponse(raw: unknown): {
       typeof r.whyItMatters === "string" && r.whyItMatters.trim().length > 0
         ? r.whyItMatters.trim()
         : undefined,
+    importance:
+      r.importance === "critical" || r.importance === "important" || r.importance === "helpful"
+        ? r.importance
+        : undefined,
+    targetSection:
+      typeof r.targetSection === "string" && r.targetSection.trim().length > 0
+        ? r.targetSection.trim()
+        : undefined,
     suggestedAnswers,
     extractedFields,
     reasoning,
@@ -574,7 +582,7 @@ export interface GovernanceInput {
   sellerMessage: string;
   /** Number of seller (user) turns including the current one */
   userTurnCount: number;
-  sectionCoverage: Array<{ key: string; status: "well_covered" | "partial" | "missing" }>;
+  sectionCoverage: Array<{ key: string; status: "well_covered" | "partial" | "missing"; importance?: string }>;
   deferredTopics: string[];
   minTurnsBeforeEnd: number;
   /** Session-manager's authoritative stop detection for this turn (sees the
@@ -610,8 +618,10 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
     /seller (asked|requested|wants|needs) to (stop|end|pause|leave|go)/i.test(input.endReason ?? "");
   if (sellerAskedToStop) return { allowEnd: true };
 
+  // Critical = the base floor plus whatever the deal's industry ranking
+  // promoted (coverage rows carry their importance level).
   const missingCritical = input.sectionCoverage
-    .filter((s) => CRITICAL_SECTIONS.has(s.key) && s.status === "missing")
+    .filter((s) => (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical") && s.status === "missing")
     .map((s) => s.key);
 
   const reasons: string[] = [];

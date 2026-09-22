@@ -9,6 +9,7 @@ import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf } from "./interview";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
+import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
@@ -23,7 +24,7 @@ import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -5773,6 +5774,23 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("Layout generation error:", error);
       res.status(500).json({ error: error.message || "Layout generation failed" });
+    }
+  });
+
+  // Buyer importance of each CIM section for this deal. Computes the
+  // industry ranking on demand when the deal has an industry but no ranking.
+  app.get("/api/deals/:dealId/section-importance", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      let map = getSectionImportance(deal);
+      if (map.source === "base" && deal.industry) map = await computeSectionImportance(deal);
+      res.json({
+        ...map,
+        sections: CIM_SECTIONS.map((s) => ({ key: s.key, title: s.title, order: s.order, ...map.sections[s.key] })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to get section importance" });
     }
   });
 

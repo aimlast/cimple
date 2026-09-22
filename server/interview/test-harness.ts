@@ -12,6 +12,7 @@ import { buildInterviewSystemPrompt } from "./system-prompt";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type InterviewReasoning } from "./response-schema";
 import { mergeExtractedFields, updateIndustryContext } from "./info-merger";
 import type { KnowledgeBase, IndustryContext, SectionCoverage, LocationContext } from "./knowledge-base";
+import { baseSectionImportance } from "./section-importance";
 import { CIM_SECTIONS, type ExtractedInfo } from "../../shared/schema";
 
 // =====================
@@ -253,6 +254,7 @@ function buildMockKnowledgeBase(persona: SellerPersona, extractedInfo: Partial<E
   const sectionCoverage = buildSectionCoverage(extractedInfo);
 
   return {
+    sectionImportance: baseSectionImportance(),
     business: {
       name: persona.businessName,
       industry: persona.industry,
@@ -303,7 +305,8 @@ function buildSectionCoverage(extractedInfo: Partial<ExtractedInfo>): SectionCov
       status = "partial";
     }
 
-    return { key: section.key, title: section.title, order: section.order, status, fields };
+    const imp = baseSectionImportance().sections[section.key];
+    return { key: section.key, title: section.title, order: section.order, status, fields, importance: imp?.level ?? "important", importanceReason: imp?.reason ?? "" };
   });
 }
 

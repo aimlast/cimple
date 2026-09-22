@@ -61,7 +61,11 @@ interface SectionCoverage {
   key: string;
   title: string;
   status: "well_covered" | "partial" | "missing";
+  importance?: "critical" | "important" | "helpful";
+  importanceReason?: string;
 }
+
+const IMPORTANCE_SHORT = { critical: "Critical", important: "Important", helpful: "Helpful" } as const;
 
 interface IndustryContext {
   identified: boolean;
@@ -321,11 +325,21 @@ export function Interview({
                     <span className="font-medium">{missingCount}</span> missing
                   </span>
                 </div>
+                {/* Critical-section tally — what governs "can the interview end" */}
+                {sectionCoverage.some((s) => s.importance) && (
+                  <p className="text-2xs text-muted-foreground mb-2" data-testid="text-critical-coverage">
+                    <span className="text-teal font-medium">
+                      {sectionCoverage.filter((s) => s.importance === "critical" && s.status !== "missing").length}
+                    </span>
+                    /{sectionCoverage.filter((s) => s.importance === "critical").length} critical sections have coverage
+                  </p>
+                )}
                 <div className="space-y-0.5">
                   {sectionCoverage.map((section) => (
                     <div
                       key={section.key}
                       className="flex items-center gap-2 px-1 py-1 rounded text-xs"
+                      title={section.importanceReason || undefined}
                     >
                       {section.status === "well_covered" ? (
                         <CheckCircle className="h-3 w-3 text-success shrink-0" />
@@ -345,6 +359,20 @@ export function Interview({
                       >
                         {section.title}
                       </span>
+                      {section.importance && (
+                        <span
+                          className={
+                            "ml-auto shrink-0 text-[9px] uppercase tracking-wider " +
+                            (section.importance === "critical"
+                              ? "text-teal"
+                              : section.importance === "important"
+                                ? "text-muted-foreground/70"
+                                : "text-muted-foreground/40")
+                          }
+                        >
+                          {IMPORTANCE_SHORT[section.importance]}
+                        </span>
+                      )}
                     </div>
                   ))}
                 </div>

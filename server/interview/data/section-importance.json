@@ -1,0 +1,18 @@
+{
+  "_comment": "Base importance of each CIM section for buyers, before any industry re-ranking. Keys match CIM_SECTIONS in shared/schema.ts. A supporting agent re-ranks these per deal once the industry is known (server/interview/section-importance.ts); these are the fallback and the floor for the 'critical' set used by completion governance.",
+  "overview": { "level": "critical", "reason": "Buyers need to understand what the business is before anything else." },
+  "financials": { "level": "critical", "reason": "Revenue and earnings drive the valuation and every buyer's first screen." },
+  "revenue_sources": { "level": "critical", "reason": "Buyers price concentration and recurring revenue very differently." },
+  "asking_price": { "level": "critical", "reason": "Price and terms decide whether a buyer engages at all." },
+  "reason_for_sale": { "level": "critical", "reason": "Every buyer asks why — a clear answer removes suspicion." },
+  "employees": { "level": "critical", "reason": "Buyers discount heavily for owner-dependent operations." },
+  "strengths": { "level": "important", "reason": "Competitive advantages justify the multiple." },
+  "operations": { "level": "important", "reason": "Systems and processes show the business runs without the owner." },
+  "real_estate": { "level": "important", "reason": "Lease terms can make or break a deal." },
+  "target_market": { "level": "important", "reason": "Buyers assess demand durability and customer risk." },
+  "growth_potential": { "level": "important", "reason": "Upside is what buyers pay a premium for." },
+  "permits_licenses": { "level": "important", "reason": "Transferability of licences affects closing risk." },
+  "seasonality": { "level": "helpful", "reason": "Helps buyers plan cash flow and working capital." },
+  "buyer_profile": { "level": "helpful", "reason": "Helps the broker target the right buyers." },
+  "training_support": { "level": "helpful", "reason": "Transition support reassures first-time buyers." }
+}

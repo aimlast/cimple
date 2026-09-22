@@ -9,6 +9,8 @@ interface ChatMessageProps {
   timestamp?: string;
   /** Buyer-rationale for the question asked — rendered behind "Why we ask this" */
   whyItMatters?: string;
+  /** How much the question's topic matters to buyers — small label beside "Why we ask this" */
+  importance?: "critical" | "important" | "helpful";
   /** User messages: this message corrects an earlier answer */
   correctionOf?: { timestamp?: string; content: string };
   /** User messages: a later message corrected this one */
@@ -19,11 +21,23 @@ interface ChatMessageProps {
   onEdit?: () => void;
 }
 
+const IMPORTANCE_LABEL = {
+  critical: "Critical for buyers",
+  important: "Important",
+  helpful: "Helpful",
+} as const;
+const IMPORTANCE_HINT = {
+  critical: "Buyers walk away or reprice without this — worth real detail.",
+  important: "Materially affects buyer interest or price.",
+  helpful: "Nice to have — a short answer is fine.",
+} as const;
+
 export function ChatMessage({
   role,
   content,
   timestamp,
   whyItMatters,
+  importance,
   correctionOf,
   superseded,
   isEditing,
@@ -77,9 +91,26 @@ export function ChatMessage({
           ))}
         </div>
 
-        {/* Why we ask this — reveals the buyer-rationale on demand */}
-        {isAI && whyItMatters && (
+        {/* Importance label + Why we ask this — reveals the buyer-rationale on demand */}
+        {isAI && (whyItMatters || importance) && (
           <div className="mt-1.5">
+            {importance && (
+              <span
+                className={cn(
+                  "inline-flex items-center rounded-full border px-1.5 py-px text-[10px] font-medium tracking-wide mr-2 align-middle",
+                  importance === "critical"
+                    ? "border-teal/50 bg-teal/10 text-teal"
+                    : importance === "important"
+                      ? "border-border text-muted-foreground"
+                      : "border-border/60 text-muted-foreground/70",
+                )}
+                title={IMPORTANCE_HINT[importance]}
+                data-testid={`label-importance-${importance}`}
+              >
+                {IMPORTANCE_LABEL[importance]}
+              </span>
+            )}
+            {whyItMatters && (
             <button
               onClick={() => setShowWhy((v) => !v)}
               className="inline-flex items-center gap-1 text-[11px] text-muted-foreground/70 hover:text-teal transition-colors px-1"
@@ -90,7 +121,8 @@ export function ChatMessage({
                 : <HelpCircle className="h-3 w-3" />}
               Why we ask this
             </button>
-            {showWhy && (
+            )}
+            {whyItMatters && showWhy && (
               <p className="mt-1 ml-1 pl-3 border-l-2 border-teal/30 text-xs text-muted-foreground leading-relaxed max-w-prose">
                 {whyItMatters}
               </p>

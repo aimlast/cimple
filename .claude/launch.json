@@ -3,11 +3,10 @@
   "configurations": [
     {
       "name": "Cimple Dev Server",
-      "runtimeExecutable": "node",
+      "runtimeExecutable": "sh",
       "runtimeArgs": [
-        "--env-file=/Users/ik/Documents/GitHub/cimple/.env",
-        "/Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss/node_modules/.bin/tsx",
-        "/Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss/server/index.ts"
+        "-c",
+        "cd /Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss && exec node --env-file=/Users/ik/Documents/GitHub/cimple/.env node_modules/.bin/tsx server/index.ts"
       ],
       "port": 5080
     }
