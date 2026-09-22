@@ -2,6 +2,8 @@ import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy
 import { CIM_SECTIONS } from "@shared/schema";
 import type { SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 import { getSectionImportance, renderSectionImportanceForPrompt } from "./section-importance";
+import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
+import type { InterviewOutline } from "@shared/schema";
 import type { SellerCommunicationProfile } from "./eq-profiler";
 
 // =====================
@@ -22,6 +24,8 @@ export interface KnowledgeBase {
   sectionCoverage: SectionCoverage[];
   /** Per-section buyer importance for this deal (base or industry-ranked). */
   sectionImportance: SectionImportanceMap;
+  /** Broker's plain-language adjustments to the interview plan. */
+  outline: InterviewOutline;
 
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
@@ -275,6 +279,7 @@ export function assembleKnowledgeBase(
   // Buyer importance per section — the industry-ranked map when one exists
   // for the deal's current industry, otherwise the base defaults.
   const sectionImportance = getSectionImportance(deal);
+  const outline = getInterviewOutline(deal);
 
   return {
     business: {
@@ -284,8 +289,9 @@ export function assembleKnowledgeBase(
       description: deal.description,
       location: parseLocation(deal, questionnaireData),
     },
-    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance),
+    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections),
     sectionImportance,
+    outline,
     industryContext: null, // Set by the AI on first turn, stored on session
     sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
     questionnaireData,
@@ -500,6 +506,11 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // Section priorities + coverage
   parts.push("");
   parts.push(renderSectionImportanceForPrompt(kb.sectionImportance));
+  const outlineBlock = renderOutlineForPrompt(kb.outline);
+  if (outlineBlock) {
+    parts.push("");
+    parts.push(outlineBlock);
+  }
   parts.push("");
   parts.push(`## CIM Section Coverage`);
   parts.push(`This shows what information we have for each CIM section. Focus on "missing" and "partial" sections — critical ones first.`);
@@ -633,8 +644,10 @@ export function buildSectionCoverage(
    *  knows to verify them rather than treat them as seller-confirmed. */
   confidenceLevels?: Record<string, string>,
   importanceMap?: SectionImportanceMap,
+  /** CIM section keys the broker removed from this interview — left out entirely. */
+  excludedSections: string[] = [],
 ): SectionCoverage[] {
-  return CIM_SECTIONS.map((section) => {
+  return CIM_SECTIONS.filter((section) => !excludedSections.includes(section.key)).map((section) => {
     const importance = importanceMap?.sections[section.key];
     const fieldNames = SECTION_FIELD_MAP[section.key] || [];
     const fields = fieldNames.map((fieldName) => {

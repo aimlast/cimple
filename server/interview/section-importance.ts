@@ -2,7 +2,7 @@
  * section-importance — how much each CIM section matters to buyers of THIS
  * business.
  *
- * Base levels live in data/section-importance.json. Once a deal's industry is
+ * Base levels live in BASE_TABLE below. Once a deal's industry is
  * known, a supporting agent re-ranks them for that industry (permits become
  * critical for a restaurant or cannabis retailer, seasonality for landscaping,
  * lease terms for anything location-bound) and the result is stored on
@@ -11,26 +11,41 @@
  * interview may end on the agent's own initiative.
  */
 import Anthropic from "@anthropic-ai/sdk";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
 import { storage } from "../storage";
 import { agentConfig } from "./config/load-config";
 import { CIM_SECTIONS } from "@shared/schema";
 import type { Deal, SectionImportanceEntry, SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-
 const LEVELS: SectionImportanceLevel[] = ["critical", "important", "helpful"];
 
+/**
+ * Base importance of each CIM section for buyers, before industry re-ranking.
+ * Kept in code (not a JSON file) because the esbuild bundle only ships
+ * prompts/ and agent-config.json — a data file read at runtime crashed the
+ * production boot on 2026-09-22.
+ */
+const BASE_TABLE: Record<string, SectionImportanceEntry> = {
+  overview: { level: "critical", reason: "Buyers need to understand what the business is before anything else." },
+  financials: { level: "critical", reason: "Revenue and earnings drive the valuation and every buyer's first screen." },
+  revenue_sources: { level: "critical", reason: "Buyers price concentration and recurring revenue very differently." },
+  asking_price: { level: "critical", reason: "Price and terms decide whether a buyer engages at all." },
+  reason_for_sale: { level: "critical", reason: "Every buyer asks why \u2014 a clear answer removes suspicion." },
+  employees: { level: "critical", reason: "Buyers discount heavily for owner-dependent operations." },
+  strengths: { level: "important", reason: "Competitive advantages justify the multiple." },
+  operations: { level: "important", reason: "Systems and processes show the business runs without the owner." },
+  real_estate: { level: "important", reason: "Lease terms can make or break a deal." },
+  target_market: { level: "important", reason: "Buyers assess demand durability and customer risk." },
+  growth_potential: { level: "important", reason: "Upside is what buyers pay a premium for." },
+  permits_licenses: { level: "important", reason: "Transferability of licences affects closing risk." },
+  seasonality: { level: "helpful", reason: "Helps buyers plan cash flow and working capital." },
+  buyer_profile: { level: "helpful", reason: "Helps the broker target the right buyers." },
+  training_support: { level: "helpful", reason: "Transition support reassures first-time buyers." },
+};
+
 const BASE: Record<string, SectionImportanceEntry> = (() => {
-  const raw = JSON.parse(readFileSync(join(__dirname, "data", "section-importance.json"), "utf-8"));
   const out: Record<string, SectionImportanceEntry> = {};
   for (const section of CIM_SECTIONS) {
-    const e = raw[section.key];
-    out[section.key] = e && LEVELS.includes(e.level)
-      ? { level: e.level, reason: String(e.reason || "") }
-      : { level: "important", reason: "" };
+    out[section.key] = BASE_TABLE[section.key] ?? { level: "important", reason: "" };
   }
   return out;
 })();

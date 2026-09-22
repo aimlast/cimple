@@ -53,6 +53,40 @@ export interface SectionImportanceMap {
   sections: Record<string, SectionImportanceEntry>;
 }
 
+/** A topic the broker added to the interview beyond the standard CIM sections. */
+export interface OutlineCustomTopic {
+  key: string;
+  title: string;
+  /** Why it matters for this deal, in one sentence. */
+  description: string;
+  importance: SectionImportanceLevel;
+  /** Concrete things the agent must capture (2–5 items). */
+  capture: string[];
+}
+
+export interface OutlineEmphasis {
+  /** CIM section key */
+  key: string;
+  note: string;
+}
+
+export interface OutlineHistoryEntry {
+  at: string;
+  instruction: string;
+  summary: string;
+}
+
+/** Broker's plain-language adjustments to the interview plan for one deal. */
+export interface InterviewOutline {
+  updatedAt: string;
+  customTopics: OutlineCustomTopic[];
+  /** CIM section keys the broker removed from this interview. */
+  excludedSections: string[];
+  emphasis: OutlineEmphasis[];
+  /** Most recent instructions applied (newest first, capped). */
+  history: OutlineHistoryEntry[];
+}
+
 /**
  * Progress/result of a CIM generation run. Written by the server job runner,
  * read by the broker UI (progress bar, completion toast).
@@ -155,6 +189,10 @@ export const deals = pgTable("deals", {
   // the labels sellers and brokers see on questions and sections, and which
   // sections must be covered before the interview may end.
   sectionImportance: jsonb("section_importance").$type<SectionImportanceMap>(),
+  // Broker's adjustments to what the interview covers (custom topics, excluded
+  // sections, emphasis notes) — edited in plain language, applied by a
+  // supporting agent. See server/interview/outline.ts.
+  interviewOutline: jsonb("interview_outline").$type<InterviewOutline>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section
