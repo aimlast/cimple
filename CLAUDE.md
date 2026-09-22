@@ -33,9 +33,11 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 | Deployment | Railway.app (Nixpacks, NIXPACKS_NODE_VERSION=20) |
 | Auth | Session-based (brokers: username/password via `/api/broker-auth/*` + `requireBroker` middleware with per-broker data scoping; buyers via `/api/buyer-auth/*`), token-based (sellers, tokenized buyer view rooms). SESSION_SECRET is mandatory in production. |
 
-**Live URL:** https://cimple-production.up.railway.app
+**Live URLs:** App: https://app.cimple.ca (also https://cimple-production.up.railway.app). Marketing landing: cimple.ca / www.cimple.ca, served by host-based middleware in `server/index.ts` from `server/landing/` (`index.html` = v3; `v1.html`/`v2.html` kept at `/landing/v1`, `/landing/v2` for comparison, at the founder's request).
 
-**GitHub workflow:** Use GitHub Desktop for bulk pushes. Use the GitHub Contents API (browser) only for small single-file changes.
+**GitHub workflow:** Work happens on branch `claude/zen-gauss` (worktree `.claude/worktrees/zen-gauss`). Merge to main via `git branch -f tmp-main origin/main && git checkout tmp-main && git merge --no-ff claude/zen-gauss && git push origin tmp-main:main && git checkout claude/zen-gauss`. Railway auto-deploys from `main`; confirm with the GitHub commit status (`api.github.com/repos/aimlast/cimple/commits/<sha>/status`) and a behavioural check that the new code is serving. Commit/push/merge without asking, but verify (tsc + build + tests) first. The founder's local `main` checkout can fall behind — `git pull --ff-only` before editing there.
+
+**Railway build/deploy (`railway.toml`):** `buildCommand = "npm install --include=dev && npm run build"` — `--include=dev` is required since Railway's 2026-08-18 build-image change (otherwise `vite: not found`). `startCommand = "npm run db:push && npm run start"`; `drizzle.config.ts` has `tablesFilter: ["!user_sessions"]` so `db:push` never tries to drop the runtime-owned session table (that prompt crashed deploys). SIGTERM handler closes all connections and exits within 2s so redeploys don't trigger false "Deploy Crashed" emails; a crash email that coincides with a deploy is usually that, a standalone one is real.
 
 ---
 
@@ -49,6 +51,61 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - **Document storage**: uploads live under `UPLOADS_DIR` (Railway volume `/data/uploads`) and survive redeploys; `/uploads/docs/*` requires the owning broker session or the deal's seller token.
 - **Removed** (2026-07-08): the legacy "New CIM" flow (NewCIM/CIMQuestionnaire/CIMDocuments/BrokerReview/CIMPreview + `cims`-table UI), mock Templates page, dead root-level duplicate seller pages, and the components/examples folder. Deal creation is a single flow (`/broker/new-deal`).
 - **Settings persist** per broker user (`users.settings` jsonb via `/api/broker-auth/settings`); Support page is honest and in the sidebar.
+
+### Beta-prep work (2026-07-14 → 2026-08-22) — read this second
+Goal throughout: get a few real brokerages into beta. Everything below is merged to `main` and live (last merge `2f3b764`, 2026-08-22).
+
+**Platform / ops hardening**
+- Sessions stored in Postgres (`connect-pg-simple`, table `user_sessions`) with an explicit `pg.Pool` + `.on("error")` handler — the missing handler caused ~4-hourly production crashes when Railway dropped idle connections.
+- Broker password lifecycle: login, "Forgot password?" (username field → emailed single-use 1-hour token → `/broker/reset-password/:token`, always-200 so accounts can't be enumerated), change-password dialog in Settings, logout button in the sidebar.
+- **Dev role switcher and passwordless demo entry removed entirely (2026-08-22)** at the founder's request — everyone signs in with a password. `ENABLE_DEV_SWITCHER` is inert. Separate accounts exist for the founder, a guest/demo broker (seeded showcase deal "TrueNorth HVAC", blind codename "Project Coastal"), and `qa_interview` (automated interview QA). Multi-tenancy isolates them, so guests can't touch the founder's data.
+- Rate limits (`express-rate-limit`: auth 20/15min, AI endpoints 60/5min per IP), `helmet` headers (CSP off for the SPA), Sentry wired but gated on `SENTRY_DSN`, unknown `/api/*` paths return JSON 404.
+- Security sweep: ownership check (`requireOwnedDeal` / `getOwnedDeal`) on every broker deal route; chatbot, analytics batch and published Q&A require a valid view-room token; interview + seller-document endpoints require the seller token (`canAccessDeal`: owning broker session OR matching `X-Seller-Token`); buyer search scoped to the broker's own contacts/deals; integrations API never returns access tokens to the browser. Cross-tenant probe passed 21/21.
+- Email is live: Resend configured for `cimple.ca`, sender `notifications@cimple.ca`, `APP_URL` = app.cimple.ca.
+- Legal drafts in `legal/` (privacy policy — PIPEDA; terms — Ontario law; pilot agreement template; security overview). All marked DRAFT with `[PLACEHOLDER]`s awaiting lawyer review. SOC 2 decision: not needed for a small beta; the security overview stands in until a customer's compliance team asks.
+
+**Deal workflow**
+- Overview tab is invite-first with per-step actor badges and undo; valuation is optional and un-markable; phase labels are consistent; "Continue to Content Creation" CTA appears once the interview is complete; Phase 4 publish flow is reachable.
+- NDA supports both "send for e-signature" (`/nda/send`, public `/api/sign-nda/:token`) and "mark as signed".
+- Seller invites actually email and track sent/accepted; broker "Preview seller view" doesn't stamp the invite accepted. Scraped data is viewable in a dialog. "Ongoing inputs" (docs, transcripts — paste or upload) available in every phase.
+- Seller first visit plays a 5-screen "what a CIM is" intro once; "Replay introduction" on the seller progress page. Re-entering a finished interview shows a completion card ("Add more detail" / "Back to progress").
+- Buyer access UI on the deal's Buyers tab: grant / copy link / extend / revoke.
+
+**Data integrity (field provenance)**
+- Every `extractedInfo` value records who asserted it; authority order is **seller in interview > intake questionnaire > document**. A transcript/document can never override the seller. Losing values are kept as alternates for the discrepancy engine. No newline-gluing of multi-source values; `revenueByYear` can't become garbage. Deleting a document removes the facts it contributed. Reprocess (`/documents/reprocess`) respects provenance and refuses to overwrite with a failed-extraction stub.
+- Document extraction keys are canonicalised (`canonicalFieldName`) so coverage sees them.
+- Discrepancy gate (open / seller_responded block) applies to content generation, layout generation, publish, approvals and phase advance, mirrored in the UI.
+
+**Financial analysis (rebuilt 2026-07-17)**
+- Uses ALL sources (financial docs in full, tax-doc keyword slices, extractedInfo, questionnaire) with a source-authority hierarchy; canonical UI shapes in `server/financial/shape.ts`; long Claude calls are streamed (non-streaming multi-minute calls timed out).
+- Produces discrepancies (`source="financial_analysis"`); per item the broker chooses **ask the seller in the interview** (routed into the interview) or **resolve inline**, then finishes the analysis.
+
+**CIM output**
+- Blind CIM: persisted `deals.blindCodename`, section titles redacted, first viewer sees a "Preparing your confidential view" holding state (never raw content) while overrides generate; buyers receive only what the page renders (no AI layout notes, which had leaked owner names).
+- CIM documents are theme-locked "paper" (`.cim-doc` scope: paper #FBF9F4, ink #201D18, brass #9E752E; Recharts explicit hex) — identical in dark and light app themes. Founder rule: CIMs must be beautiful AND extremely digestible.
+- Broker-edited content renders in the CIM; pre-NDA outreach drafts are blind-safe (codename, industry, province, revenue/SDE bands, signed with the broker's real name).
+
+**Interview (the crown jewel) — hardened through ~7 rounds + a 46-interview persona campaign**
+- Streams token-by-token over SSE (`POST /api/interview/:dealId/message/stream`); streaming is display-only, the final message is authoritative.
+- Tone rule (founder, 2026-08-22): **the reply IS the next question** — no recap of what the seller said, no praise ("buyers love that"), no grading. Only address the last answer when it needs clarification or conflicts with something. Enforced in prompts (conversation-rules rule 2, response-format, emotional-intelligence rule 6) and mechanically by `stripFillerPreamble` in `turn-guard.ts`.
+- Mechanical guards backing the prompt rules: grounding guard (a dodged question records nothing — the most dangerous past failure was inventing "no customer >20%"), numeric-fidelity guard (numbers not actually said by the seller can't be "confirmed"; handles spelled numbers), doc-conflict reconcile (a spoken $2.3M vs P&L $1.82M is probed, document value survives), disclosure-persistence guard ("noted" must mean written), valuation/tax-figure guard (never gives valuations or tax advice), chip template-token filter.
+- Never re-ask: an "ALREADY ANSWERED — DO NOT RE-ASK" block renders every known field with its source; the AI believes a seller who says "you already have it", apologises once, and never misrepresents its own prior questions.
+- Durable deferral ledger (`deferral-ledger.ts`) persists across sessions for circle-backs; declined topics respected; retrieval instructions are addressed to the seller; offered documents become upload requests.
+- Seller stop always wins: first stop → at most one closing question; second consecutive stop → server forces the end.
+- Financial-core checkpoint by ~turn 8; no SDE/addback assertions (e.g. owner dividends are balance-sheet distributions, not addbacks); today's date in the dynamic prompt for relative dates.
+- 14 industry sections in `prompts/industry-intelligence.md` now carry `## MANDATORY PROBES` checklists.
+- Broker-private notes channel (`extractedInfo._brokerPrivateNotes`, shown on the Interview Review tab) for sensitive things that must not reach CIM fields (e.g. health details). `_`-prefixed keys are excluded from CIM/coverage consumers.
+- Degraded path: if the Anthropic API fails (e.g. credits hit zero), the seller gets an honest message and what they said is recovered later.
+- Opening message is ≤3 sentences.
+
+**QA practice**: interview regressions are run as seller personas against the production build under the isolated `qa_interview` account (deals prefixed "QA REG —"); for big campaigns, run several local instances of the production build against the production DB to avoid the 60/5min rate limit. An E2E browser stress test (596 controls, 58 defects) and a 12-area app audit (100 defects) were run and all findings fixed.
+
+**Design**: "Obsidian & Brass" — dark default (black/grey), light mode toggle in the sidebar footer, cream primaries, brass accent. The `--teal` CSS token keeps its name but holds brass. Black sidebar in both themes. Logos (mark + wordmark PNGs in `client/public/`) render cream, not green. Dashboard rebuilt (stat cells, funnel, single "Needs your attention" card, activity rail).
+
+### Testing & safety rules (non-negotiable)
+- **Never send email to anyone except aim.kitabi@gmail.com.** Test/demo people use unroutable `.invalid` addresses or no email. The SariKnotSari deal is a real business used for testing — never contact its real sellers; use aim.kitabi@gmail.com as seller email.
+- Test buyers must end with a submitted decision so the day-3/6/8 reminder pipeline never emails them.
+- Never write API keys, passwords or seller/buyer tokens into the repo (including this file).
 
 ### Core Platform
 - Broker layout: collapsible icon sidebar with Deals, Buyers, Analytics, Integrations, Settings
@@ -197,13 +254,13 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - **Profile-aware:** Buyer Activity tab joins buyer Cimple accounts to show buyer type, profile completion, proof-of-funds, and per-deal match fit (criteria matched + top dimensions)
 - **Qualified Interest insight:** Overview tab ranks buyers by `match-fit × engagement` — surfaces warmest leads that are both interested AND a good fit
 
-**Design system:**
-- Dark mode primary (near-black background, cream/light text)
-- Linear/Notion-inspired aesthetic
+**Design system ("Obsidian & Brass"):**
+- Dark default (black/grey, sleek, "AI-style"), `.light` override for light mode
+- Cream primaries (`42 26% 92%`), brass accent (the `--teal` token now holds brass: `38 42% 60%` dark / `38 55% 40%` light) — teal is no longer the brand color
+- CIM documents are theme-locked paper (`.cim-doc`), never inverted
 - Shadcn/ui + Radix UI components (45+ primitives)
 - Tailwind CSS with custom HSL design tokens
 - Fonts: Inter (UI), JetBrains Mono (technical content)
-- Primary brand color: teal
 - Framer Motion for animations
 
 **Database schema (25 tables):**
@@ -219,6 +276,27 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 - [ ] Proactive buyer-to-deal matching + new-deal notifications (matching engine + buyer dashboard live; auto-notify on new deal pending)
 - [ ] Comps API integration (stub exists, needs BizBuySell/DealStats API keys)
 - [ ] UX iteration pass across all flows
+
+### Open to-dos (as of 2026-09-21)
+- [ ] **Seller-email fallback for Q&A approvals — founder decided, not built yet.** Currently, if a deal has no seller team member, Q&A approval emails go silently to the seller invite address. Decision: don't make it silent. When a deal has no seller team member, prompt the broker to confirm the invite email is the right address for Q&A approvals, and suggest adding a seller team member.
+- [ ] Offered, not yet answered: a "Preview the seller intro" button (broker Settings or the deal's seller panel) so the founder can replay the seller intro animation.
+- [ ] Landing page: founder paused iteration ("I'll come back to it later"); v1/v2/v3 comparison feedback pending. Feedback so far: motion must be visible but calm, layouts varied (not just rectangles and boxes); buyer matching is the flagship message; the three CIM types are Blind / Normal / Due Diligence.
+- [ ] Tier-2 beta backlog: versioned migrations replacing `db:push`, buyer view-link email verification, mini admin panel, invite-token revoke/rotate, demo-deal reset script.
+
+### Founder-side actions outstanding
+- [ ] Create `support@cimple.ca` (Support page points there).
+- [ ] Enable Anthropic API auto-reload — credits hit zero during testing and interviews degraded.
+- [ ] Lawyer review of `legal/` drafts (fill legal entity name, address).
+- [ ] Optional: Sentry DSN, uptime monitor on `/api/health`, confirm Railway Postgres backups.
+- [ ] Set own passwords on the demo accounts (temporary passwords were set during testing), and delete the inert `ENABLE_DEV_SWITCHER` Railway variable.
+- [ ] Confirm GoDaddy DNS for www.cimple.ca → Railway and apex forwarding.
+
+### Known issues
+- `server/reminders/decision-reminders.ts` falls back to `notifications@cimple.app` while the rest of the app uses `@cimple.ca` — only matters if `RESEND_FROM_EMAIL` is unset.
+- Four long-standing TypeScript errors are accepted as pre-existing (MemStorage interface in `server/storage.ts`, `App.tsx` forcedTheme, learning-loop/test-harness Set iteration). New code must add none.
+- The founder's local `.env` Anthropic key has gone stale before (401s); refresh it from Railway when running locally.
+- Background blind-CIM redaction takes ~30s+ on large deals; the first buyer sees the "preparing" state meanwhile (by design).
+- The 60/5min AI rate limit is per IP — fine for real sellers, but a brokerage office sharing one IP running several interviews at once could hit it.
 
 ---
 
@@ -372,7 +450,7 @@ Polish all flows, responsive design, error states, loading states.
 | Anthropic Claude API | All AI functionality | Live |
 | Railway.app | Hosting + PostgreSQL | Live |
 | GitHub | Version control | Live |
-| Resend | Email notifications | Ready (needs RESEND_API_KEY) |
+| Resend | Email notifications | Live (cimple.ca domain) |
 | Twilio | SMS notifications | Ready (needs TWILIO_ACCOUNT_SID, AUTH_TOKEN, PHONE_NUMBER) |
 | Gmail | Seller communication sync | Infrastructure ready (needs OAuth secrets) |
 | Outlook | Seller communication sync | Infrastructure ready (needs OAuth secrets) |
@@ -391,12 +469,14 @@ Polish all flows, responsive design, error states, loading states.
 | `ANTHROPIC_API_KEY` | Claude API access | Yes |
 | `SESSION_SECRET` | Express session encryption | Yes (hard-fail in production if missing) |
 | `UPLOADS_DIR` | Persistent uploads root (Railway volume `/data/uploads`) | Prod yes (falls back to `public/uploads`) |
-| `RESEND_API_KEY` | Email delivery via Resend | No (falls back to console) |
-| `RESEND_FROM_EMAIL` | Sender address | No (defaults to notifications@cimple.app) |
+| `RESEND_API_KEY` | Email delivery via Resend | Set in production (falls back to console) |
+| `RESEND_FROM_EMAIL` | Sender address | No (defaults to notifications@cimple.ca) |
+| `SENTRY_DSN` | Error monitoring | No (Sentry off when unset) |
+| `REMINDER_CRON_SECRET` | Protects the reminder-cron endpoint | No |
 | `TWILIO_ACCOUNT_SID` | SMS delivery via Twilio | No (falls back to console) |
 | `TWILIO_AUTH_TOKEN` | Twilio auth | No |
 | `TWILIO_PHONE_NUMBER` | SMS sender number | No |
-| `APP_URL` | Base URL for notification links | No (defaults to Railway URL) |
+| `APP_URL` | Base URL for notification links | Set to https://app.cimple.ca in production |
 
 ---
 
