@@ -13,6 +13,7 @@ import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type InterviewReasonin
 import { mergeExtractedFields, updateIndustryContext } from "./info-merger";
 import type { KnowledgeBase, IndustryContext, SectionCoverage, LocationContext } from "./knowledge-base";
 import { baseSectionImportance } from "./section-importance";
+import { emptyOutline } from "./outline";
 import { CIM_SECTIONS, type ExtractedInfo } from "../../shared/schema";
 
 // =====================
@@ -255,6 +256,7 @@ function buildMockKnowledgeBase(persona: SellerPersona, extractedInfo: Partial<E
 
   return {
     sectionImportance: baseSectionImportance(),
+    outline: emptyOutline(),
     business: {
       name: persona.businessName,
       industry: persona.industry,

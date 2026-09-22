@@ -15,6 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
+import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -1527,6 +1528,9 @@ function Phase2Center() {
           </div>
         </DialogContent>
       </Dialog>
+
+      {/* Interview outline — what the interviewer will cover; editable in plain language */}
+      <InterviewOutlineCard dealId={dealId} interviewStarted={!!deal.interviewCompleted || (deal as any).interviewStartedAt != null} />
 
       {/* AI Interview */}
       <div

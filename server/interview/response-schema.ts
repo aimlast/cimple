@@ -252,7 +252,7 @@ export const INTERVIEW_RESPONSE_TOOL = {
           industryContext: {
             type: "object",
             required: ["identified", "industry", "subIndustry", "location", "activeIndustryTopics", "coveredIndustryTopics", "regulatoryNotes"],
-            description: "Industry-specific context. Set 'identified' to true once you know the industry, sub-industry, and location. The activeIndustryTopics should list industry-specific areas that need to be covered beyond standard CIM sections.",
+            description: "Industry-specific context. Set 'identified' to true once you know the industry, sub-industry, and location. The activeIndustryTopics should list industry-specific areas that need to be covered beyond standard CIM sections — include any topics from the BROKER'S INTERVIEW OUTLINE by their exact title, and move them to coveredIndustryTopics once their capture items are answered.",
             properties: {
               identified: {
                 type: "boolean",

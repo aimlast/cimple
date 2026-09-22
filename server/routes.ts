@@ -10,6 +10,7 @@ import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
+import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
@@ -3628,7 +3629,7 @@ Return JSON only.`,
       // Interview coverage
       const { buildSectionCoverage } = await import("./interview/knowledge-base");
       const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
-      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal));
+      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal), getInterviewOutline(deal).excludedSections);
       const readiness = computeCimReadiness(sectionCoverage);
       const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
       const partial = sectionCoverage.filter((s) => s.status === "partial").length;
@@ -5780,6 +5781,73 @@ Return JSON only.`,
     }
   });
 
+  // ── Interview outline — what the interview will cover, editable in plain language ──
+  const outlineView = (deal: any) => {
+    const outline = getInterviewOutline(deal);
+    const importance = getSectionImportance(deal);
+    return {
+      outline,
+      sections: CIM_SECTIONS.map((s) => ({
+        key: s.key,
+        title: s.title,
+        order: s.order,
+        importance: importance.sections[s.key]?.level ?? "important",
+        importanceReason: importance.sections[s.key]?.reason ?? "",
+        excluded: outline.excludedSections.includes(s.key),
+        note: outline.emphasis.find((e) => e.key === s.key)?.note ?? null,
+      })),
+    };
+  };
+  app.get("/api/deals/:dealId/interview-outline", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      res.json(outlineView(deal));
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to load interview outline" });
+    }
+  });
+  // Turn a plain-language instruction into a concrete proposal (nothing is saved).
+  app.post("/api/deals/:dealId/interview-outline/propose", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const instruction = typeof req.body?.instruction === "string" ? req.body.instruction.trim() : "";
+      if (!instruction) return res.status(400).json({ error: "Tell Cimple what to change first" });
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      res.json({ instruction, proposal: await proposeOutlineChanges(deal, instruction) });
+    } catch (error: any) {
+      console.error("[outline] propose failed:", error);
+      res.status(500).json({ error: "Couldn't work out the change — try rephrasing" });
+    }
+  });
+  // Apply a proposal the broker reviewed.
+  app.post("/api/deals/:dealId/interview-outline/apply", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { proposal, instruction } = req.body ?? {};
+      if (!proposal || typeof proposal !== "object") return res.status(400).json({ error: "Nothing to apply" });
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      await applyOutlineProposal(deal, proposal, typeof instruction === "string" ? instruction : "");
+      res.json(outlineView(await storage.getDeal(deal.id)));
+    } catch (error: any) {
+      console.error("[outline] apply failed:", error);
+      res.status(500).json({ error: "Couldn't apply the change" });
+    }
+  });
+  // Direct edits without the agent: remove/restore a section, drop a topic, clear a note.
+  app.patch("/api/deals/:dealId/interview-outline", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { excludeSection, restoreSection, removeTopic, clearEmphasis } = req.body ?? {};
+      const result = await patchOutline(deal, { excludeSection, restoreSection, removeTopic, clearEmphasis });
+      if (result.refused) return res.status(409).json({ error: result.refused });
+      res.json(outlineView(await storage.getDeal(deal.id)));
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't update the outline" });
+    }
+  });
+
   // CIM information quality for the deal — coverage weighted by section
   // importance, with the gaps holding the score down (see shared/cim-readiness).
   app.get("/api/deals/:dealId/cim-readiness", requireBroker, requireOwnedDeal, async (req, res) => {
@@ -5795,7 +5863,7 @@ Return JSON only.`,
         .orderBy(descOp(interviewSessions.lastActivityAt)).limit(1);
       const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
       const confidence = meta._confidenceLevels as Record<string, string> | undefined;
-      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal));
+      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal), getInterviewOutline(deal).excludedSections);
       res.json({
         readiness: computeCimReadiness(sections),
         sections: sections.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
