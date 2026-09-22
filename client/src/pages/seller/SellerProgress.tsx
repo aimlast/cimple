@@ -47,6 +47,8 @@ interface SellerProgressData {
     hasActiveSession: boolean;
     percentage: number;
     sections: Section[];
+    /** Importance-weighted quality of the CIM with what's known so far. */
+    readiness?: { score: number; label: string; summary: string };
   };
   documents: {
     requiredTotal: number;
@@ -187,7 +189,7 @@ export default function SellerProgress() {
       {currentStep === "interview" && (
         <CTACard
           title={interview.hasActiveSession ? "Continue your Business Overview" : "Start your Business Overview"}
-          description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of sections covered so far.`}
+          description={`Our AI advisor will chat with you about your business to build a complete profile. ${interview.percentage}% of sections covered so far${interview.readiness ? ` — CIM information quality: ${interview.readiness.label}. ${interview.readiness.summary}` : "."}`}
           icon={MessageSquare}
           buttonLabel={interview.hasActiveSession ? "Continue Overview" : "Start Overview"}
           href={`/seller/${token}/interview`}
