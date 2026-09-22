@@ -480,6 +480,21 @@ Polish all flows, responsive design, error states, loading states.
 
 ---
 
+## Backups & recovery (where everything lives if the computer is lost)
+
+| Thing | Lives in | Notes |
+|---|---|---|
+| Code | GitHub `aimlast/cimple`, branch `main` | Every push is a full copy. Do not sync the code folder via Google Drive (corrupts git). |
+| Production secrets + database | Railway | Never on the Mac. Turn on Railway Postgres backups (founder to-do). |
+| Product decisions, to-dos, known issues | this file | Source of truth — keep it updated on every ship. |
+| Claude Code transcripts + memory files | Founder's Mac at `~/.claude/projects/-Users-ik-Documents-GitHub-cimple*/` (memory: `…/-Users-ik-Documents-GitHub-cimple/memory/`) | **Not in the cloud by default.** Backed up nightly (3:00 am) to Google Drive: `My Drive / Cimple Backups / claude-sessions/` (README.md there has restore steps). |
+
+**Backup mechanism:** `~/.claude/backup-cimple-sessions.sh` (rsync of the two `~/.claude/projects/…cimple…` folders into the Drive folder, writes `LAST-BACKUP.txt`) run by launchd job `~/Library/LaunchAgents/com.cimple.claude-backup.plist` (daily 03:00, log `~/.claude/logs/cimple-backup.log`). Run by hand: `~/.claude/backup-cimple-sessions.sh`. Set up 2026-09-21.
+
+**Restore on a new Mac:** clone the repo with GitHub Desktop to `~/Documents/GitHub/cimple` (same path — Claude's project folder names derive from it), install Google Drive, copy both `projects/…` folders from the Drive backup into `~/.claude/projects/`, then re-create the backup script + launchd job above. GitHub access needs a new fine-grained token (Contents read/write on `cimple` only), stored in the macOS keychain — never pasted into the remote URL or into this repo.
+
+---
+
 ## What not to touch without explicit instruction
 
 - The Drizzle schema migrations — always check before modifying existing tables
