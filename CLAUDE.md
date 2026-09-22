@@ -278,9 +278,15 @@ Goal throughout: get a few real brokerages into beta. Everything below is merged
 - [ ] UX iteration pass across all flows
 
 ### Open to-dos (as of 2026-09-21)
-- [ ] **Seller-email fallback for Q&A approvals — founder decided, not built yet.** Currently, if a deal has no seller team member, Q&A approval emails go silently to the seller invite address. Decision: don't make it silent. When a deal has no seller team member, prompt the broker to confirm the invite email is the right address for Q&A approvals, and suggest adding a seller team member.
+- [x] Seller-email fallback for Q&A approvals (shipped 2026-09-22): when a deal has no seller team member, the Q&A panel calls `GET /api/deals/:id/qa-approval-routing` first and shows a confirmation dialog — confirm the invite address, with a default-on checkbox that adds that person to the seller team as Owner (`POST /members` with `notifyMember:false`), or go to the Team tab. No seller email at all → explicit "nobody will be notified" prompt.
 - [ ] Offered, not yet answered: a "Preview the seller intro" button (broker Settings or the deal's seller panel) so the founder can replay the seller intro animation.
 - [ ] Landing page: founder paused iteration ("I'll come back to it later"); v1/v2/v3 comparison feedback pending. Feedback so far: motion must be visible but calm, layouts varied (not just rectangles and boxes); buyer matching is the flagship message; the three CIM types are Blind / Normal / Due Diligence.
+- [ ] **Founder's next-feature list (2026-09-21, in suggested build order):**
+  1. CIM creation runs in the background — keep building after the broker leaves the page (currently fails if they navigate away), show a real progress bar (sections done / total, time estimate), notify on completion.
+  2. Importance labels on CIM sections and interview questions (critical / important / nice-to-have), industry-dependent, visible to seller and broker.
+  3. Information-quality rating — a CIM quality score based on how much is known about the business; show during/after the interview and after CIM generation to the broker (maybe seller).
+  4. Editable CIM outline before the interview — broker sees the planned sections and adjusts them by telling the platform in plain language (AI restructures; no bulky manual section editor).
+  5. Broker-led / joint interview mode — some sellers refuse to do it alone and some brokers insist on running it themselves. Options to design with the founder: shared screen on a video call where both see the questions; broker asks, seller answers by voice, audio is transcribed into the answers. Needs a design decision before building.
 - [ ] Tier-2 beta backlog: versioned migrations replacing `db:push`, buyer view-link email verification, mini admin panel, invite-token revoke/rotate, demo-deal reset script.
 
 ### Founder-side actions outstanding
