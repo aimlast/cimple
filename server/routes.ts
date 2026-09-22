@@ -13,7 +13,7 @@ import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
-import { notify, sendDirectEmail } from "./notifications/service.js";
+import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
@@ -6099,6 +6099,10 @@ Return JSON only.`,
     try {
       const { dealId } = req.params;
       const { email, name, phone, teamType, role, accessLevel } = req.body;
+      // notifyMember=false skips the "added to a deal" email — used when the
+      // person already holds this deal's seller invite link (same link, so a
+      // second email would only be noise).
+      const notifyMember = req.body.notifyMember !== false;
 
       if (!email?.trim() || !teamType || !role) {
         return res.status(400).json({ error: "Email, team type, and role are required" });
@@ -6147,7 +6151,7 @@ Return JSON only.`,
           actionUrl = `/seller/${sellerInvite.token}`;
         } catch (e) { console.warn("[members] could not create seller invite for team member:", e); }
       }
-      await notify(dealId, "invite", {
+      if (notifyMember) await notify(dealId, "invite", {
         title: `You've been added to a deal`,
         body: `You've been added as ${roleConfig.label} (${teamLabel} team) for ${deal?.businessName || "a business"}. Click below to get started.`,
         actionUrl,
@@ -6397,6 +6401,18 @@ Do not speculate or add information not in the CIM.`,
       res.json(await buildBuyerQuestionFeed(dealId, access.id));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to get questions" });
+    }
+  });
+
+  // Where a "send to seller for approval" would be emailed right now. When
+  // the deal has no seller team member the UI must ask the broker to confirm
+  // the invite address (and suggest adding a seller team member) — never
+  // silently mail a real seller.
+  app.get("/api/deals/:dealId/qa-approval-routing", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      res.json(await previewRecipients(req.params.dealId, "qa_needs_approval"));
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to check approval routing" });
     }
   });
 

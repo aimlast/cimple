@@ -6,12 +6,14 @@
  * Shows analytics on what buyers are asking about.
  */
 import { useState } from "react";
+import { useLocation } from "wouter";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -28,7 +30,7 @@ import type { BuyerQuestion } from "@shared/schema";
 import {
   MessageCircle, Clock, CheckCircle2, AlertCircle,
   Send, ChevronDown, ChevronRight, Bot, User,
-  XCircle, Loader2, Copy, Link2, Undo2,
+  XCircle, Loader2, Copy, Link2, Undo2, Users,
 } from "lucide-react";
 
 interface BuyerQAPanelProps {
@@ -73,15 +75,28 @@ function wasSentBackBySeller(q: BuyerQuestion): boolean {
   return q.status === "pending_broker" && !!q.brokerDraft && q.sellerApproved === false;
 }
 
+/** Where a seller-approval email would go right now (server preview). */
+interface ApprovalRouting {
+  via: "members" | "seller_invite" | "none";
+  members: { name: string | null; email: string | null; role: string }[];
+  sellerInvites: { name: string | null; email: string }[];
+}
+
 type ConfirmAction =
   | { kind: "decline"; q: BuyerQuestion }
-  | { kind: "publish"; q: BuyerQuestion };
+  | { kind: "publish"; q: BuyerQuestion }
+  // No seller team member: the approval would go to the invite address, so
+  // the broker confirms it (and can add that person to the seller team).
+  | { kind: "seller-route"; q: BuyerQuestion; draft: string; routing: ApprovalRouting };
 
 export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
   const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [confirm, setConfirm] = useState<ConfirmAction | null>(null);
+  const [addToTeam, setAddToTeam] = useState(true);
+  const [checkingRoute, setCheckingRoute] = useState<string | null>(null);
 
   const { data: questions = [], isLoading, error: loadError, refetch } = useQuery<BuyerQuestion[]>({
     queryKey: ["/api/deals", dealId, "questions"],
@@ -134,6 +149,65 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
     },
     onError: (e: Error) => toast({ title: "Couldn't publish answer", description: e.message, variant: "destructive" }),
   });
+
+  // Adds the invite-address seller to the deal team as Owner so future
+  // approvals route there without asking again. They already hold the
+  // seller invite link, so the "added to a deal" email is skipped. 409
+  // (already on the deal) counts as success.
+  const addSellerMember = useMutation({
+    mutationFn: async ({ email, name }: { email: string; name: string | null }) => {
+      const r = await fetch(`/api/deals/${dealId}/members`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, name, teamType: "seller", role: "owner", notifyMember: false }),
+        credentials: "include",
+      });
+      if (!r.ok && r.status !== 409) throw new Error(await readError(r, "Failed to add seller to the team"));
+      return r.status === 409 ? null : r.json();
+    },
+    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] }),
+  });
+
+  /** Send the draft to the seller for approval and hand the broker the link. */
+  const sendToSeller = async (q: BuyerQuestion, draft: string, sentTo?: string) => {
+    let result: any;
+    try {
+      result = await updateQuestion.mutateAsync({
+        id: q.id,
+        updates: { brokerDraft: draft.trim(), status: "pending_seller" },
+      });
+    } catch {
+      return; // onError already surfaced the toast
+    }
+    if (result?.approvalLink) {
+      const link = `${window.location.origin}${result.approvalLink}`;
+      await copyApprovalLink(link, sentTo ? `Sent to ${sentTo}` : "Sent to seller");
+    }
+  };
+
+  /**
+   * Before sending: if a seller team member will receive it, send straight
+   * away. Otherwise stop and ask the broker to confirm the invite address
+   * (or add a seller team member) — never silently email a real seller.
+   */
+  const startSendToSeller = async (q: BuyerQuestion, draft: string) => {
+    setCheckingRoute(q.id);
+    try {
+      const r = await fetch(`/api/deals/${dealId}/qa-approval-routing`, { credentials: "include" });
+      if (!r.ok) throw new Error(await readError(r, "Couldn't check who receives seller approvals"));
+      const routing: ApprovalRouting = await r.json();
+      if (routing.via === "members") {
+        await sendToSeller(q, draft);
+      } else {
+        setAddToTeam(true);
+        setConfirm({ kind: "seller-route", q, draft, routing });
+      }
+    } catch (e: any) {
+      toast({ title: "Couldn't send to seller", description: e.message, variant: "destructive" });
+    } finally {
+      setCheckingRoute(null);
+    }
+  };
 
   const copyApprovalLink = async (link: string, title: string) => {
     const ok = await copyToClipboard(link);
@@ -266,27 +340,11 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
                     <Button
                       size="sm"
                       className="h-7 text-xs gap-1 bg-teal text-teal-foreground hover:bg-teal/90"
-                      onClick={async () => {
-                        let result: any;
-                        try {
-                          result = await updateQuestion.mutateAsync({
-                            id: q.id,
-                            updates: {
-                              brokerDraft: draftValue.trim(),
-                              status: "pending_seller",
-                            },
-                          });
-                        } catch {
-                          return; // onError already surfaced the toast
-                        }
-                        if (result?.approvalLink) {
-                          const link = `${window.location.origin}${result.approvalLink}`;
-                          await copyApprovalLink(link, "Sent to seller");
-                        }
-                      }}
-                      disabled={busy || !draftValue.trim()}
+                      onClick={() => void startSendToSeller(q, draftValue)}
+                      disabled={busy || checkingRoute === q.id || !draftValue.trim()}
                     >
-                      <Send className="h-3 w-3" /> {sentBack ? "Resend to seller" : "Send to seller for approval"}
+                      {checkingRoute === q.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Send className="h-3 w-3" />}
+                      {sentBack ? "Resend to seller" : "Send to seller for approval"}
                     </Button>
                     <Button
                       size="sm"
@@ -449,6 +507,101 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
               </AlertDialogFooter>
             </>
           )}
+          {confirm?.kind === "seller-route" && (() => {
+            const invite = confirm.routing.sellerInvites[0];
+            const sending = updateQuestion.isPending || addSellerMember.isPending;
+            const goToTeam = () => { setConfirm(null); setLocation(`/deal/${dealId}/team`); };
+            if (!invite) {
+              return (
+                <>
+                  <AlertDialogHeader>
+                    <AlertDialogTitle>No seller email on this deal</AlertDialogTitle>
+                    <AlertDialogDescription>
+                      There is no seller on the deal team and no seller invite email, so nobody
+                      would be notified. Add a seller team member first, or send the draft and
+                      share the approval link with the seller yourself.
+                    </AlertDialogDescription>
+                  </AlertDialogHeader>
+                  <AlertDialogFooter>
+                    <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
+                    <Button variant="outline" onClick={goToTeam} disabled={sending}>
+                      <Users className="h-3 w-3 mr-1" /> Add a seller team member
+                    </Button>
+                    <AlertDialogAction
+                      disabled={sending}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        void sendToSeller(confirm.q, confirm.draft).finally(() => setConfirm(null));
+                      }}
+                    >
+                      {sending ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Sending…</> : <><Copy className="h-3 w-3 mr-1" />Send and copy link</>}
+                    </AlertDialogAction>
+                  </AlertDialogFooter>
+                </>
+              );
+            }
+            const who = invite.name ? `${invite.name} (${invite.email})` : invite.email;
+            return (
+              <>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Confirm who approves this answer</AlertDialogTitle>
+                  <AlertDialogDescription asChild>
+                    <div className="space-y-3 text-sm text-muted-foreground">
+                      <p>
+                        This deal has no seller on its team yet, so the approval request will be
+                        emailed to <span className="font-medium text-foreground">{invite.email}</span> —
+                        the address you sent the seller invite to. Is that the right person to
+                        approve answers for buyers?
+                      </p>
+                      <label className="flex items-start gap-2 cursor-pointer rounded border border-border/60 bg-muted/20 p-2.5">
+                        <Checkbox
+                          checked={addToTeam}
+                          onCheckedChange={(v) => setAddToTeam(v === true)}
+                          className="mt-0.5"
+                        />
+                        <span className="text-xs">
+                          Add {who} to the seller team as Owner, so future approvals go there
+                          without asking again.
+                        </span>
+                      </label>
+                      <p className="text-xs">
+                        Someone else should approve?{" "}
+                        <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={goToTeam}>
+                          Add them on the Team tab
+                        </button>{" "}
+                        first.
+                      </p>
+                    </div>
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel disabled={sending}>Cancel</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-teal text-teal-foreground hover:bg-teal/90"
+                    disabled={sending}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      const { q, draft } = confirm;
+                      const run = async () => {
+                        if (addToTeam) {
+                          try {
+                            await addSellerMember.mutateAsync({ email: invite.email, name: invite.name });
+                          } catch (err: any) {
+                            toast({ title: "Couldn't add to the seller team", description: `${err.message} — the approval was not sent.`, variant: "destructive" });
+                            return;
+                          }
+                        }
+                        await sendToSeller(q, draft, invite.email);
+                      };
+                      void run().finally(() => setConfirm(null));
+                    }}
+                  >
+                    {sending ? <><Loader2 className="h-3 w-3 mr-1 animate-spin" />Sending…</> : <><Send className="h-3 w-3 mr-1" />Yes, send to {invite.email}</>}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </>
+            );
+          })()}
           {confirm?.kind === "publish" && (
             <>
               <AlertDialogHeader>

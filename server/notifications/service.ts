@@ -19,7 +19,7 @@
  */
 import { storage } from "../storage";
 import { NOTIFICATION_ROUTING } from "@shared/schema";
-import type { DealMember, User } from "@shared/schema";
+import type { DealMember, SellerInvite, User } from "@shared/schema";
 
 // ── Broker notification preferences ─────────────────────────────────────
 //
@@ -262,6 +262,65 @@ export interface NotifyResult {
 const NO_RECIPIENTS: NotifyResult = { recipients: 0, emailsSent: 0, via: "none" };
 
 /**
+ * Seller invites that may receive seller-facing mail: only addresses the
+ * broker actually sent an invite to — a pending row (typed but never sent,
+ * or later corrected) must never receive mail. One row per address.
+ */
+function eligibleSellerInvites(invites: SellerInvite[]): SellerInvite[] {
+  const now = Date.now();
+  const seen = new Set<string>();
+  return invites.filter((inv) => {
+    const email = inv.sellerEmail?.trim().toLowerCase();
+    if (!email || seen.has(email)) return false;
+    if (inv.status !== "sent" && inv.status !== "accepted") return false;
+    if (inv.expiresAt && inv.expiresAt.getTime() < now && inv.status !== "accepted") return false;
+    seen.add(email);
+    return true;
+  });
+}
+
+/** Team members that NOTIFICATION_ROUTING would address for this event. */
+function routedMembers(members: DealMember[], eventType: string): DealMember[] {
+  const routing = NOTIFICATION_ROUTING[eventType];
+  if (!routing) return [];
+  return members.filter((m) => {
+    if (!routing.teams.includes(m.teamType)) return false;
+    if (routing.roles && !routing.roles.includes(m.role)) return false;
+    if (m.inviteStatus !== "accepted" && m.inviteStatus !== "sent") return false;
+    return true;
+  });
+}
+
+export interface RecipientPreview {
+  via: NotifyResult["via"];
+  members: { name: string | null; email: string | null; role: string }[];
+  sellerInvites: { name: string | null; email: string }[];
+}
+
+/**
+ * Who a notify() for this event would reach right now, without sending.
+ * Lets the UI ask the broker to confirm before a seller-facing email goes
+ * to the invite address instead of a seller team member.
+ */
+export async function previewRecipients(dealId: string, eventType: string): Promise<RecipientPreview> {
+  const members = routedMembers(await storage.getDealMembers(dealId), eventType);
+  if (members.length > 0) {
+    return {
+      via: "members",
+      members: members.map((m) => ({ name: m.name, email: m.email, role: m.role })),
+      sellerInvites: [],
+    };
+  }
+  const sellerRouted = !!NOTIFICATION_ROUTING[eventType]?.teams.includes("seller");
+  const invites = sellerRouted ? eligibleSellerInvites(await storage.getSellerInvitesByDealId(dealId)) : [];
+  return {
+    via: invites.length > 0 ? "seller_invite" : "none",
+    members: [],
+    sellerInvites: invites.map((inv) => ({ name: inv.sellerName, email: inv.sellerEmail!.trim() })),
+  };
+}
+
+/**
  * Seller-facing events must reach the seller even when nobody on the deal
  * team has been added with a seller role yet — the invited seller is a
  * sellerInvites row, not a dealMembers row, until the broker builds the
@@ -273,19 +332,7 @@ async function notifySellerInviteFallback(
   eventType: string,
   opts: NotifyOptions,
 ): Promise<NotifyResult> {
-  const invites = await storage.getSellerInvitesByDealId(dealId);
-  const now = Date.now();
-  const seen = new Set<string>();
-  const targets = invites.filter((inv) => {
-    const email = inv.sellerEmail?.trim().toLowerCase();
-    if (!email || seen.has(email)) return false;
-    // Only addresses the broker actually sent an invite to — a pending row
-    // (typed but never sent, or later corrected) must never receive mail.
-    if (inv.status !== "sent" && inv.status !== "accepted") return false;
-    if (inv.expiresAt && inv.expiresAt.getTime() < now && inv.status !== "accepted") return false;
-    seen.add(email);
-    return true;
-  });
+  const targets = eligibleSellerInvites(await storage.getSellerInvitesByDealId(dealId));
   if (targets.length === 0) return NO_RECIPIENTS;
 
   let emailsSent = 0;
@@ -343,13 +390,7 @@ export async function notify(
       }
       sellerRouted = routing.teams.includes("seller");
 
-      const allMembers = await storage.getDealMembers(dealId);
-      recipients = allMembers.filter(m => {
-        if (!routing.teams.includes(m.teamType)) return false;
-        if (routing.roles && !routing.roles.includes(m.role)) return false;
-        if (m.inviteStatus !== "accepted" && m.inviteStatus !== "sent") return false;
-        return true;
-      });
+      recipients = routedMembers(await storage.getDealMembers(dealId), eventType);
     }
 
     if (recipients.length === 0) {
