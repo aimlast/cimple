@@ -1,0 +1,82 @@
+/**
+ * Deepgram — live speech-to-text with speaker separation for the in-person
+ * ("one laptop on the table") broker-led interview.
+ *
+ * The browser streams microphone audio directly to Deepgram's live endpoint
+ * using a SHORT-LIVED key minted here (Deepgram's recommended browser
+ * pattern). The real DEEPGRAM_API_KEY never leaves the server. Without the
+ * key configured, everything degrades to the browser's built-in speech
+ * recognition (single speaker) and the UI says so.
+ */
+const API = "https://api.deepgram.com/v1";
+const TEMP_KEY_TTL_SECONDS = 15 * 60;
+
+export function isDeepgramConfigured(): boolean {
+  return !!process.env.DEEPGRAM_API_KEY;
+}
+
+let cachedProjectId: string | null = null;
+
+async function dg<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API}${path}`, {
+    ...init,
+    headers: {
+      Authorization: `Token ${process.env.DEEPGRAM_API_KEY}`,
+      "Content-Type": "application/json",
+      ...(init.headers || {}),
+    },
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    throw new Error(`Deepgram ${init.method || "GET"} ${path} → ${res.status}: ${body.slice(0, 200)}`);
+  }
+  return res.json() as Promise<T>;
+}
+
+async function projectId(): Promise<string> {
+  if (cachedProjectId) return cachedProjectId;
+  const data = await dg<{ projects: { project_id: string; name: string }[] }>("/projects");
+  const first = data.projects?.[0];
+  if (!first) throw new Error("Deepgram account has no project");
+  cachedProjectId = first.project_id;
+  return first.project_id;
+}
+
+export interface TemporaryKey {
+  key: string;
+  expiresAt: string;
+  /** Query string for the live endpoint — model + diarization + formatting. */
+  liveParams: string;
+}
+
+/**
+ * Mint a key the browser can use for one session. Scope is usage-only (it
+ * can transcribe, nothing else) and it expires on its own.
+ */
+export async function createTemporaryKey(label: string): Promise<TemporaryKey> {
+  if (!isDeepgramConfigured()) throw new Error("Deepgram is not configured");
+  const pid = await projectId();
+  const data = await dg<{ key: string; api_key_id: string; expiration_date?: string }>(`/projects/${pid}/keys`, {
+    method: "POST",
+    body: JSON.stringify({
+      comment: `cimple live interview — ${label}`.slice(0, 120),
+      scopes: ["usage:write"],
+      time_to_live_in_seconds: TEMP_KEY_TTL_SECONDS,
+    }),
+  });
+  return {
+    key: data.key,
+    expiresAt: data.expiration_date ?? new Date(Date.now() + TEMP_KEY_TTL_SECONDS * 1000).toISOString(),
+    liveParams: new URLSearchParams({
+      model: "nova-3",
+      language: "en",
+      smart_format: "true",
+      punctuate: "true",
+      diarize: "true",
+      interim_results: "true",
+      utterance_end_ms: "1500",
+      vad_events: "true",
+      endpointing: "400",
+    }).toString(),
+  };
+}

@@ -11,6 +11,7 @@ import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
+import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
@@ -1277,6 +1278,30 @@ Return JSON only.`,
       console.error("Interview start error:", error);
       res.status(500).json({ error: error.message || "Failed to start interview" });
     }
+  });
+
+  // Short-lived Deepgram key so the browser can stream the room's audio for
+  // speaker-separated live transcription (in-person broker-led mode). The
+  // real key stays on the server; this one expires in minutes.
+  app.post("/api/interview/:dealId/transcription-token", async (req, res) => {
+    try {
+      const { dealId } = req.params;
+      if (!(await canAccessDeal(req, dealId))) return res.status(401).json({ error: "Not authorized for this interview" });
+      if (!isDeepgramConfigured()) return res.status(503).json({ error: "not_configured" });
+      res.json({ provider: "deepgram", ...(await createTemporaryKey(`deal ${dealId}`)) });
+    } catch (error: any) {
+      console.error("[transcription] token failed:", error);
+      res.status(500).json({ error: "Couldn't start live transcription" });
+    }
+  });
+
+  // Which call/transcription services are configured — drives the UI's options.
+  app.get("/api/calls/status", requireBroker, (_req, res) => {
+    res.json({
+      deepgram: isDeepgramConfigured(),
+      daily: !!process.env.DAILY_API_KEY,
+      recall: !!process.env.RECALL_API_KEY,
+    });
   });
 
   // Send a message in an interview session
