@@ -35,7 +35,7 @@ Cimple is an AI-powered platform for business brokers and M&A advisors that solv
 
 **Live URLs:** App: https://app.cimple.ca (also https://cimple-production.up.railway.app). Marketing landing: cimple.ca / www.cimple.ca, served by host-based middleware in `server/index.ts` from `server/landing/` (`index.html` = v3; `v1.html`/`v2.html` kept at `/landing/v1`, `/landing/v2` for comparison, at the founder's request).
 
-**GitHub workflow:** Work happens on branch `claude/zen-gauss` (worktree `.claude/worktrees/zen-gauss`). Merge to main via `git branch -f tmp-main origin/main && git checkout tmp-main && git merge --no-ff claude/zen-gauss && git push origin tmp-main:main && git checkout claude/zen-gauss`. Railway auto-deploys from `main`; confirm with the GitHub commit status (`api.github.com/repos/aimlast/cimple/commits/<sha>/status`) and a behavioural check that the new code is serving. Commit/push/merge without asking, but verify (tsc + build + tests) first. The founder's local `main` checkout can fall behind — `git pull --ff-only` before editing there.
+**GitHub workflow:** Work happens on branch `claude/zen-gauss` (worktree `.claude/worktrees/zen-gauss`). Merge to main via `git branch -f tmp-main origin/main && git checkout tmp-main && git merge --no-ff claude/zen-gauss && git push origin tmp-main:main && git checkout claude/zen-gauss`. Railway auto-deploys from `main`; confirm with the GitHub commit status (`api.github.com/repos/aimlast/cimple/commits/<sha>/status`) and a behavioural check that the new code is serving. **Ship without asking (founder, reconfirmed 2026-09-21):** edit in the worktree; after verifying (tsc + build + tests), commit, then in the local folder (`/Users/ik/Documents/GitHub/cimple`) `git pull --ff-only`, merge `claude/zen-gauss` into main, push, and confirm the Railway deploy. Keep the local folder current on every ship.
 
 **Railway build/deploy (`railway.toml`):** `buildCommand = "npm install --include=dev && npm run build"` — `--include=dev` is required since Railway's 2026-08-18 build-image change (otherwise `vite: not found`). `startCommand = "npm run db:push && npm run start"`; `drizzle.config.ts` has `tablesFilter: ["!user_sessions"]` so `db:push` never tries to drop the runtime-owned session table (that prompt crashed deploys). SIGTERM handler closes all connections and exits within 2s so redeploys don't trigger false "Deploy Crashed" emails; a crash email that coincides with a deploy is usually that, a standalone one is real.
 
@@ -477,6 +477,21 @@ Polish all flows, responsive design, error states, loading states.
 | `TWILIO_AUTH_TOKEN` | Twilio auth | No |
 | `TWILIO_PHONE_NUMBER` | SMS sender number | No |
 | `APP_URL` | Base URL for notification links | Set to https://app.cimple.ca in production |
+
+---
+
+## Backups & recovery (where everything lives if the computer is lost)
+
+| Thing | Lives in | Notes |
+|---|---|---|
+| Code | GitHub `aimlast/cimple`, branch `main` | Every push is a full copy. Do not sync the code folder via Google Drive (corrupts git). |
+| Production secrets + database | Railway | Never on the Mac. Turn on Railway Postgres backups (founder to-do). |
+| Product decisions, to-dos, known issues | this file | Source of truth — keep it updated on every ship. |
+| Claude Code transcripts + memory files | Founder's Mac at `~/.claude/projects/-Users-ik-Documents-GitHub-cimple*/` (memory: `…/-Users-ik-Documents-GitHub-cimple/memory/`) | **Not in the cloud by default.** Backed up nightly (3:00 am) to Google Drive: `My Drive / Cimple Backups / claude-sessions/` (README.md there has restore steps). |
+
+**Backup mechanism:** `~/.claude/backup-cimple-sessions.sh` (rsync of the two `~/.claude/projects/…cimple…` folders into the Drive folder, writes `LAST-BACKUP.txt`) run by launchd job `~/Library/LaunchAgents/com.cimple.claude-backup.plist` (daily 03:00, log `~/.claude/logs/cimple-backup.log`). Run by hand: `~/.claude/backup-cimple-sessions.sh`. Set up 2026-09-21.
+
+**Restore on a new Mac:** clone the repo with GitHub Desktop to `~/Documents/GitHub/cimple` (same path — Claude's project folder names derive from it), install Google Drive, copy both `projects/…` folders from the Drive backup into `~/.claude/projects/`, then re-create the backup script + launchd job above. GitHub access needs a new fine-grained token (Contents read/write on `cimple` only), stored in the macOS keychain — never pasted into the remote URL or into this repo.
 
 ---
 
