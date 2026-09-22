@@ -130,6 +130,16 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
     );
   }
 
+  // Broker-led session: the broker reads your question aloud to the seller
+  // and the seller's spoken answer comes back transcribed.
+  if (kb.conductedBy === "broker_with_seller") {
+    dynamicParts.push(
+      "# SESSION MODE: BROKER-LED (the broker is with the seller on a call or in person)",
+      "Your message is read ALOUD by the broker to the seller — write it as a spoken question: one sentence, plain words, no formatting, no references to tapping, clicking, options or the screen. The seller's replies are transcribed speech: expect filler words, mis-heard numbers and run-on sentences — extract carefully, ask the broker to confirm an exact figure when a number sounds garbled, and never treat a transcription artefact as a fact. Replies may come from the broker on the seller's behalf (e.g. \"he says…\" or \"skip this one\"); a skip request is a deferral, not a dodge. Suggested answers are shown only to the broker as a checklist of what a complete answer covers — phrase them as short facts to listen for.",
+      "\n---\n",
+    );
+  }
+
   dynamicParts.push(
     "# CURRENT KNOWLEDGE BASE",
     "Everything below is what we currently know about this deal. Use it to guide your questions.\n",

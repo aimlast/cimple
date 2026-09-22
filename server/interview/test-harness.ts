@@ -257,6 +257,7 @@ function buildMockKnowledgeBase(persona: SellerPersona, extractedInfo: Partial<E
   return {
     sectionImportance: baseSectionImportance(),
     outline: emptyOutline(),
+    conductedBy: "seller",
     business: {
       name: persona.businessName,
       industry: persona.industry,

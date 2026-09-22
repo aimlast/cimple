@@ -91,8 +91,23 @@ interface TurnResult {
   endReason?: string;
 }
 
+/** How a broker-led ("together") interview is happening. */
+export type TogetherVia = "person" | "zoom" | "meet" | "teams" | "cimple";
+
+export const VIA_LABEL: Record<TogetherVia, string> = {
+  person: "In person",
+  zoom: "Zoom",
+  meet: "Google Meet",
+  teams: "Microsoft Teams",
+  cimple: "Cimple call",
+};
+
 interface InterviewProps {
-  mode: "broker" | "seller";
+  /** broker = broker alone; seller = seller alone; together = broker with the seller on a call / in person */
+  mode: "broker" | "seller" | "together";
+  /** together mode: where the conversation happens */
+  via?: TogetherVia;
+  meetingLink?: string;
   dealId: string;
   businessName?: string;
   /** Seller invite token — authenticates seller-mode interview API calls */
@@ -104,12 +119,15 @@ interface InterviewProps {
 
 export function Interview({
   mode,
+  via,
+  meetingLink,
   dealId,
   businessName,
   sellerToken,
   onComplete,
   onBack,
 }: InterviewProps) {
+  const isTogether = mode === "together";
   const [sectionCoverage, setSectionCoverage] = useState<SectionCoverage[]>([]);
   const [industryContext, setIndustryContext] = useState<IndustryContext>({
     identified: false,
@@ -123,7 +141,7 @@ export function Interview({
   const [interviewEnded, setInterviewEnded] = useState(false);
   const [panelOpen, setPanelOpen] = useState(mode === "broker");
 
-  const isBroker = mode === "broker";
+  const isBroker = mode !== "seller";
 
   const handleTurnResult = useCallback((result: TurnResult) => {
     setSectionCoverage(result.sectionCoverage);
@@ -179,7 +197,7 @@ export function Interview({
               aria-label="Cimple"
               className="h-3.5 w-14 shrink-0"
               style={{
-                backgroundColor: "hsl(162, 65%, 38%)",
+                backgroundColor: "hsl(42, 26%, 92%)",
                 WebkitMaskImage: "url('/cimple-text.png')",
                 WebkitMaskSize: "contain",
                 WebkitMaskRepeat: "no-repeat",
@@ -209,6 +227,14 @@ export function Interview({
               <span className="text-muted-foreground/30">·</span>
               <span className="text-xs text-teal font-medium">
                 {industryContext.industry}
+              </span>
+            </>
+          )}
+          {isTogether && (
+            <>
+              <span className="text-muted-foreground/30">·</span>
+              <span className="text-xs text-muted-foreground inline-flex items-center gap-1" data-testid="label-together-mode">
+                Interview together · {VIA_LABEL[via ?? "person"]}
               </span>
             </>
           )}
@@ -271,6 +297,9 @@ export function Interview({
             sellerToken={sellerToken}
             onTurnResult={handleTurnResult}
             onComplete={handleComplete}
+            variant={isTogether ? "together" : "chat"}
+            via={via}
+            meetingLink={meetingLink}
           />
         </div>
 

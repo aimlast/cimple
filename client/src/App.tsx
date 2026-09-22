@@ -18,6 +18,7 @@ import Settings from "@/pages/Settings";
 import Support from "@/pages/Support";
 import NewDeal from "@/pages/NewDeal";
 import DealShell from "@/pages/broker/deal/DealShell";
+import TogetherInterview from "@/pages/TogetherInterview";
 import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
@@ -103,6 +104,8 @@ function Routes() {
 function isFullscreen(path: string) {
   // Interview pages are fullscreen — but NOT /interview-review (that's a tab)
   if (path.endsWith("/interview")) return true;
+  // Broker-led "Interview together"
+  if (path.endsWith("/interview/together")) return true;
   // Legacy seller invite redirect
   if (path.startsWith("/invite/")) return true;
   // Seller Q&A approval (standalone page, own token table)
@@ -266,6 +269,14 @@ function FullscreenLayout() {
           {() => (
             <BrokerAuthGate>
               <CIMInterview />
+            </BrokerAuthGate>
+          )}
+        </Route>
+        {/* Broker-led interview with the seller on a call / in person */}
+        <Route path="/deal/:id/interview/together">
+          {() => (
+            <BrokerAuthGate>
+              <TogetherInterview />
             </BrokerAuthGate>
           )}
         </Route>

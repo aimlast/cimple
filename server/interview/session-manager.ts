@@ -151,7 +151,12 @@ const INTERVIEW_MODEL = agentConfig.models.interviewAgent;
  * Starts a new interview session or resumes an existing one.
  * Returns the opening message from the AI.
  */
-export async function startOrResumeSession(dealId: string): Promise<TurnResult> {
+export type ConductedBy = "seller" | "broker_with_seller";
+
+export async function startOrResumeSession(
+  dealId: string,
+  opts: { conductedBy?: ConductedBy } = {},
+): Promise<TurnResult> {
   // Load the deal and all related data
   let deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
@@ -357,6 +362,7 @@ export async function startOrResumeSession(dealId: string): Promise<TurnResult> 
       questionsAsked: 1,
       lastActivityAt: new Date(),
       extractedInfo: {
+        _conductedBy: opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller",
         _industryContext: seededIndustryContext,
         _deferredTopics: deferralTopicStrings(seededLedger),
         _deferralLedger: seededLedger,
@@ -406,6 +412,9 @@ export async function processTurn(
   opts: {
     /** Set when the seller is correcting an earlier answer via "Edit". */
     correctionOf?: CorrectionOf;
+    /** Broker-led ("Interview together"): the broker reads questions aloud and
+     *  the seller's spoken answers are captured. Changes phrasing rules. */
+    conductedBy?: ConductedBy;
   } = {},
 ): Promise<TurnResult> {
   // The seller's message is timestamped when it arrives, not when the AI
@@ -433,6 +442,10 @@ export async function processTurn(
   if (sessionMeta._industryContext) {
     kb.industryContext = sessionMeta._industryContext as IndustryContext;
   }
+  // The caller's mode wins over what the session was started with — a broker
+  // can pick up a seller-started session and run the rest together.
+  const conductedBy: ConductedBy = opts.conductedBy ?? (sessionMeta._conductedBy as ConductedBy | undefined) ?? "seller";
+  kb.conductedBy = conductedBy;
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string>) || {};
 
   // Durable deferral ledger + stop-signal counter (see deferral-ledger.ts and
@@ -1050,6 +1063,7 @@ export async function processTurn(
       questionsAnswered,
       questionsSkipped,
       extractedInfo: {
+        _conductedBy: conductedBy,
         _industryContext: updatedIndustryContext,
         // Open ledger topics — kept for the resume path and the learning
         // loop, which read _deferredTopics; the ledger itself is durable.
