@@ -10,6 +10,7 @@ import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
+import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
@@ -3627,7 +3628,8 @@ Return JSON only.`,
       // Interview coverage
       const { buildSectionCoverage } = await import("./interview/knowledge-base");
       const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
-      const sectionCoverage = buildSectionCoverage(extractedInfo as any);
+      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal));
+      const readiness = computeCimReadiness(sectionCoverage);
       const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
       const partial = sectionCoverage.filter((s) => s.status === "partial").length;
       const interviewPct = sectionCoverage.length > 0
@@ -3687,6 +3689,7 @@ Return JSON only.`,
           completed: interviewCompleted,
           hasActiveSession,
           percentage: interviewPct,
+          readiness,
           sections: sectionCoverage.map((s) => ({
             key: s.key,
             title: s.title,
@@ -5774,6 +5777,31 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("Layout generation error:", error);
       res.status(500).json({ error: error.message || "Layout generation failed" });
+    }
+  });
+
+  // CIM information quality for the deal — coverage weighted by section
+  // importance, with the gaps holding the score down (see shared/cim-readiness).
+  app.get("/api/deals/:dealId/cim-readiness", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { buildSectionCoverage } = await import("./interview/knowledge-base");
+      const { db } = await import("./db");
+      const { interviewSessions } = await import("@shared/schema");
+      const { eq: eqOp, desc: descOp } = await import("drizzle-orm");
+      const [latest] = await db.select().from(interviewSessions)
+        .where(eqOp(interviewSessions.dealId, deal.id))
+        .orderBy(descOp(interviewSessions.lastActivityAt)).limit(1);
+      const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
+      const confidence = meta._confidenceLevels as Record<string, string> | undefined;
+      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal));
+      res.json({
+        readiness: computeCimReadiness(sections),
+        sections: sections.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
+      });
+    } catch (error: any) {
+      res.status(500).json({ error: "Failed to compute CIM readiness" });
     }
   });
 

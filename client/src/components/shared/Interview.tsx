@@ -45,7 +45,7 @@
  *  onBack?: () => void
  */
 
-import { useState, useCallback } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { AIConversationInterface } from "@/components/AIConversationInterface";
 import { Button } from "@/components/ui/button";
 import {
@@ -66,6 +66,8 @@ interface SectionCoverage {
 }
 
 const IMPORTANCE_SHORT = { critical: "Critical", important: "Important", helpful: "Helpful" } as const;
+import { computeCimReadiness } from "@shared/cim-readiness";
+import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 
 interface IndustryContext {
   identified: boolean;
@@ -153,6 +155,9 @@ export function Interview({
   const missingCount = sectionCoverage.filter(
     (s) => s.status === "missing",
   ).length;
+  // Importance-weighted quality score — the same function the server uses
+  // for the Overview tab and the seller progress page.
+  const readiness = useMemo(() => computeCimReadiness(sectionCoverage), [sectionCoverage]);
   // Same formula as the seller progress page (/api/seller/:token/progress) —
   // partial sections count at 40% so the two surfaces never disagree.
   const progressPercent =
@@ -211,6 +216,9 @@ export function Interview({
             {/* Broker: fields captured + coverage panel toggle */}
             {isBroker && (
               <>
+                {sectionCoverage.length > 0 && (
+                  <CimReadinessBadge readiness={readiness} className="hidden md:inline-flex" />
+                )}
                 <span className="text-2xs text-muted-foreground tabular-nums hidden sm:block">
                   {capturedTotal} fields captured
                 </span>
@@ -246,6 +254,9 @@ export function Interview({
                 </div>
                 <span className="text-2xs text-muted-foreground tabular-nums">
                   {progressPercent}%
+                </span>
+                <span className="text-2xs text-muted-foreground/70 hidden sm:inline" title={readiness.summary}>
+                  · {readiness.label}
                 </span>
               </div>
             )}
@@ -285,6 +296,13 @@ export function Interview({
       {/* ── Coverage panel — broker only ── */}
       {isBroker && panelOpen && (
         <div className="w-64 border-l border-border overflow-y-auto bg-card shrink-0 scrollbar-thin">
+          {/* Quality score — what the CIM will look like with what we have */}
+          {sectionCoverage.length > 0 && (
+            <div className="p-3 border-b border-border">
+              <CimReadinessCard readiness={readiness} className="p-3 bg-transparent border-0" />
+            </div>
+          )}
+
           {/* Section coverage */}
           <div className="p-4 border-b border-border">
             <p className="text-2xs font-semibold uppercase tracking-widest text-muted-foreground mb-3">

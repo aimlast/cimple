@@ -14,6 +14,8 @@ import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
+import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
+import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1701,6 +1703,16 @@ function Phase3Center() {
   // page). This tab follows it via useCimGeneration for the progress bar;
   // the "CIM ready" toast comes from the app-wide CimGenerationWatcher.
   const generation = useCimGeneration(dealId);
+  // Importance-weighted information quality — replaces the raw field count.
+  const { data: readinessData } = useQuery<{ readiness: CimReadiness }>({
+    queryKey: ["/api/deals", dealId, "cim-readiness"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/cim-readiness`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load CIM readiness");
+      return r.json();
+    },
+  });
+  const readiness = readinessData?.readiness;
   const generate = useMutation({
     mutationFn: () =>
       apiJson<{ started: boolean }>(
@@ -1870,28 +1882,35 @@ function Phase3Center() {
           </p>
         </div>
 
-        <div
-          className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-teal/30 bg-teal/5"}`}
-        >
-          <div className="flex items-start gap-3">
-            {totalDataFields >= 8 ? (
-              <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
-            ) : (
-              <AlertCircle className="h-4 w-4 text-teal mt-0.5 shrink-0" />
-            )}
-            <div>
-              <p className="text-sm font-medium">
-                {totalDataFields} data fields available
-                {totalDataFields < 5 && " — limited data"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-0.5">
-                {totalDataFields >= 8
-                  ? `${extractedCount} from interview, ${scrapedCount} from public scrape. Ready to generate.`
-                  : "More interview data will produce better content. You can still generate and edit manually."}
-              </p>
+        {readiness ? (
+          <CimReadinessCard
+            readiness={readiness}
+            hint={`${totalDataFields} data fields on file (${extractedCount} from the interview and documents, ${scrapedCount} from the public scrape). ${readiness.criticalGap ? "Closing the critical gaps before generating will produce a stronger CIM; you can still generate now and edit." : "Ready to generate."}`}
+          />
+        ) : (
+          <div
+            className={`rounded-lg border p-4 ${totalDataFields >= 8 ? "border-success/30 bg-success/5" : "border-teal/30 bg-teal/5"}`}
+          >
+            <div className="flex items-start gap-3">
+              {totalDataFields >= 8 ? (
+                <CheckCircle2 className="h-4 w-4 text-success mt-0.5 shrink-0" />
+              ) : (
+                <AlertCircle className="h-4 w-4 text-teal mt-0.5 shrink-0" />
+              )}
+              <div>
+                <p className="text-sm font-medium">
+                  {totalDataFields} data fields available
+                  {totalDataFields < 5 && " — limited data"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {totalDataFields >= 8
+                    ? `${extractedCount} from interview, ${scrapedCount} from public scrape. Ready to generate.`
+                    : "More interview data will produce better content. You can still generate and edit manually."}
+                </p>
+              </div>
             </div>
           </div>
-        </div>
+        )}
 
         {discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
@@ -1956,6 +1975,7 @@ function Phase3Center() {
               ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Click any section to edit`
               : "Legacy text CIM — regenerate to enable visual editing"}
           </p>
+          {readiness && <CimReadinessBadge readiness={readiness} className="mt-1" />}
           {blockReason && (
             <p className="text-xs text-red-400 mt-1" data-testid="text-regenerate-blocked">
               {blockReason.replace(/before generating\.$/, "before regenerating.")}
