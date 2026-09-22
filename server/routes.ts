@@ -1270,7 +1270,8 @@ Return JSON only.`,
       if (!(await canAccessDeal(req, dealId))) {
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
-      const result = await startOrResumeSession(dealId);
+      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
+      const result = await startOrResumeSession(dealId, { conductedBy });
       res.json(result);
     } catch (error: any) {
       console.error("Interview start error:", error);
@@ -1335,7 +1336,10 @@ Return JSON only.`,
           sessionId,
           message,
           (chunk) => send({ type: "delta", text: chunk }),
-          { correctionOf: parseCorrectionOf(req.body.correctionOf) },
+          {
+            correctionOf: parseCorrectionOf(req.body.correctionOf),
+            conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+          },
         );
         send({ type: "done", result });
       } catch (err: any) {

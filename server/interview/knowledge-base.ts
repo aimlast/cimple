@@ -26,6 +26,8 @@ export interface KnowledgeBase {
   sectionImportance: SectionImportanceMap;
   /** Broker's plain-language adjustments to the interview plan. */
   outline: InterviewOutline;
+  /** Who is running this session — the seller alone, or a broker with the seller on a call. */
+  conductedBy: "seller" | "broker_with_seller";
 
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
@@ -292,6 +294,7 @@ export function assembleKnowledgeBase(
     sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections),
     sectionImportance,
     outline,
+    conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
     industryContext: null, // Set by the AI on first turn, stored on session
     sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
     questionnaireData,

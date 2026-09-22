@@ -1,5 +1,7 @@
-import { useState, useEffect, useRef, useCallback } from "react";
-import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X } from "lucide-react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { createPortal } from "react-dom";
+import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle } from "lucide-react";
+import { usePictureInPicture } from "@/lib/pip";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -54,7 +56,15 @@ interface AIConversationInterfaceProps {
   sellerToken?: string;
   onTurnResult?: (result: TurnResult) => void;
   onComplete?: () => void | Promise<void>;
+  /** "together": broker-led — the broker reads the question aloud, the
+   *  seller answers by voice (mic) or the broker types; a floating window can
+   *  carry the question over an external call. */
+  variant?: "chat" | "together";
+  via?: string;
+  meetingLink?: string;
 }
+
+const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
 
 /** The opening AI message as persisted (authoritative timestamp + rationale),
  *  with a client-side fallback for a server that doesn't echo it back. */
@@ -76,7 +86,13 @@ export function AIConversationInterface({
   sellerToken,
   onTurnResult,
   onComplete,
+  variant = "chat",
+  via,
+  meetingLink,
 }: AIConversationInterfaceProps) {
+  const together = variant === "together";
+  const conductedBy = together ? ("broker_with_seller" as const) : undefined;
+  const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
   const authHeaders = (base: Record<string, string> = {}) =>
@@ -132,6 +148,7 @@ export function AIConversationInterface({
         const res = await fetch(`/api/interview/${dealId}/start`, {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
+          body: JSON.stringify(conductedBy ? { conductedBy } : {}),
         });
 
         if (!res.ok) {
@@ -331,7 +348,7 @@ export function AIConversationInterface({
   }, []);
 
   // Send a message
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (overrideText?: string) => {
     if (isFinished || isLoading) return;
     if (!sessionId) {
       toast({
@@ -343,7 +360,9 @@ export function AIConversationInterface({
     }
     stopRecording();
 
-    const cleanedInput = input.replace(/\u200B/g, "").trim();
+    // overrideText: a message sent programmatically (e.g. the broker's Skip)
+    // without going through the composer's state.
+    const cleanedInput = (overrideText ?? input).replace(/\u200B/g, "").trim();
     if (!cleanedInput) return;
 
     // A message sent from the editing banner is a correction of that earlier
@@ -400,6 +419,7 @@ export function AIConversationInterface({
           message: cleanedInput,
           sessionId,
           ...(userMessage.correctionOf ? { correctionOf: userMessage.correctionOf } : {}),
+          ...(conductedBy ? { conductedBy } : {}),
         }),
         signal: controller.signal,
       });
@@ -574,6 +594,77 @@ export function AIConversationInterface({
 
   // Enter sends (the convention in every messaging app); Shift+Enter inserts
   // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
+  // ── Broker-led ("together") helpers ──
+  const currentQuestion = useMemo(() => {
+    for (let i = messages.length - 1; i >= 0; i--) if (messages[i].role === "ai") return messages[i];
+    return null;
+  }, [messages]);
+  const cleanInput = input.replace(/\u200B/g, "").trim();
+  const skipQuestion = useCallback(() => {
+    if (isFinished || isLoading) return;
+    void handleSend("The seller would rather skip this one for now — please move on to the next question.");
+  }, [isFinished, isLoading, handleSend]);
+
+  /** The compact question + answer panel — main view and floating window share it. */
+  const renderTogetherPanel = (compact: boolean) => (
+    <div className={compact ? "p-4 space-y-3" : "max-w-3xl mx-auto mb-4"} data-testid={compact ? "together-panel-pip" : "together-panel"}>
+      <div className="rounded-xl border border-teal/30 bg-teal/5 px-5 py-4">
+        <div className="flex items-center justify-between gap-2 mb-1.5">
+          <p className="text-[10px] font-semibold uppercase tracking-widest text-teal">Ask the seller</p>
+          {currentQuestion?.importance && (
+            <span className="text-[10px] uppercase tracking-wider text-muted-foreground">{IMPORTANCE_TEXT[currentQuestion.importance]}</span>
+          )}
+        </div>
+        <p className={`${compact ? "text-base" : "text-lg"} leading-snug`}>
+          {currentQuestion?.content || (isLoading ? "Preparing the next question…" : "…")}
+        </p>
+        {currentQuestion?.whyItMatters && (
+          <p className="mt-2 text-xs text-muted-foreground flex items-start gap-1.5">
+            <HelpCircle className="h-3 w-3 mt-0.5 shrink-0" />
+            <span>{currentQuestion.whyItMatters}</span>
+          </p>
+        )}
+        {suggestedAnswers.length > 0 && !isLoading && (
+          <div className="mt-3">
+            <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">Listen for</p>
+            <ul className="flex flex-wrap gap-1.5">
+              {suggestedAnswers.map((a, i) => (
+                <li key={i} className="text-xs rounded-full border border-border/70 px-2.5 py-1 text-muted-foreground">{a}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </div>
+      {compact && !isFinished && (
+        <div className="space-y-2">
+          <Textarea
+            value={input}
+            onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
+            placeholder={isRecording ? "Listening… the seller can answer now" : "Seller's answer — press the mic or type"}
+            className="resize-none min-h-[72px] text-sm"
+            disabled={isLoading}
+          />
+          <div className="flex items-center gap-2">
+            <Button onClick={toggleRecording} size="sm" variant={isRecording ? "destructive" : "outline"} disabled={isFinished || isLoading} className="h-8 gap-1.5">
+              {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+              {isRecording ? "Stop" : "Capture answer"}
+            </Button>
+            <Button onClick={() => void handleSend()} size="sm" disabled={isLoading || !cleanInput} className="h-8 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90">
+              {isLoading ? <StopCircle className="h-3.5 w-3.5 animate-pulse" /> : <Send className="h-3.5 w-3.5" />}
+              {isLoading ? "Thinking…" : "Send"}
+            </Button>
+            <Button onClick={skipQuestion} size="sm" variant="ghost" disabled={isLoading} className="h-8 gap-1.5 ml-auto text-muted-foreground">
+              <SkipForward className="h-3.5 w-3.5" /> Skip
+            </Button>
+          </div>
+        </div>
+      )}
+      {compact && isFinished && (
+        <p className="text-sm text-muted-foreground">Interview finished — close this window.</p>
+      )}
+    </div>
+  );
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
@@ -637,8 +728,39 @@ export function AIConversationInterface({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Broker-led: the question to read aloud sits on top; the transcript
+          below stays available but secondary. */}
+      {together && (
+        <div className="px-6 pt-5 shrink-0">
+          {renderTogetherPanel(false)}
+          <div className="max-w-3xl mx-auto -mt-2 mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {via && via !== "person" && via !== "cimple"
+                ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
+                : "Read the question, press Capture answer while the seller talks, then Send."}
+            </p>
+            {!isFinished && (
+              <Button
+                size="sm"
+                variant={pip.isOpen ? "secondary" : "outline"}
+                className="h-7 text-xs gap-1.5 shrink-0"
+                onClick={() => {
+                  if (pip.isOpen) { pip.close(); return; }
+                  void pip.open()
+                    .then((ok) => { if (!ok) toast({ title: "Floating window needs Chrome or Edge", description: "Keep this tab beside your call instead.", variant: "destructive" }); })
+                    .catch((err: Error) => toast({ title: "Couldn't open the floating window", description: `${err.message}. Keep this tab beside your call instead.`, variant: "destructive" }));
+                }}
+                data-testid="button-pop-out"
+              >
+                <PictureInPicture2 className="h-3.5 w-3.5" />
+                {pip.isOpen ? "Bring back" : "Pop out"}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
       {/* Messages */}
-      <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
+      <div className={`flex-1 overflow-y-auto px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
         {messages.map((message, idx) => (
           <ChatMessage
             key={`${message.timestamp}-${idx}`}
@@ -772,7 +894,9 @@ export function AIConversationInterface({
                 onChange={(e) => { setInput(e.target.value); inputRef.current = e.target.value; }}
                 onKeyDown={handleKeyDown}
                 placeholder={
-                  isRecording
+                  together
+                    ? (isRecording ? "Listening… the seller can answer now" : isLoading ? "Waiting…" : "Seller's answer — press the mic while they talk, or type what they said")
+                    : isRecording
                     ? "Listening... speak now"
                     : isLoading
                       ? "Waiting..."
@@ -809,7 +933,7 @@ export function AIConversationInterface({
                   </Button>
                 ) : (
                   <Button
-                    onClick={handleSend}
+                    onClick={() => void handleSend()}
                     size="icon"
                     disabled={!input.replace(/\u200B/g, "").trim()}
                     className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
@@ -827,6 +951,19 @@ export function AIConversationInterface({
                   ? "Enter to send your correction · Esc to cancel"
                   : "Enter to send · Shift+Enter for a new line · Progress saves automatically"}
               </span>
+              {together && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={skipQuestion}
+                  disabled={isLoading || isEnding}
+                  className="h-6 text-[10px] text-muted-foreground/60 hover:text-muted-foreground px-2 ml-auto mr-1"
+                  data-testid="button-skip-question"
+                >
+                  <SkipForward className="h-3 w-3 mr-1" />
+                  Skip question
+                </Button>
+              )}
               <Button
                 variant="ghost"
                 size="sm"
@@ -871,6 +1008,10 @@ export function AIConversationInterface({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* Floating question window (Chrome/Edge) — same state, rendered into
+          the picture-in-picture document so it floats over the broker's call. */}
+      {together && pip.container && createPortal(renderTogetherPanel(true), pip.container)}
     </div>
   );
 }

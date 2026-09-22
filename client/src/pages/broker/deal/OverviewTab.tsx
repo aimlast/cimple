@@ -16,6 +16,7 @@ import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
+import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -71,6 +72,7 @@ import {
   Send,
   Eye,
   Undo2,
+  Users,
 } from "lucide-react";
 import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
@@ -1265,6 +1267,7 @@ function Phase2Center() {
   const { deal, dealId } = useDeal();
   const { toast } = useToast();
   const [, setLocation] = useLocation();
+  const [togetherOpen, setTogetherOpen] = useState(false);
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
   const [showScraped, setShowScraped] = useState(false);
 
@@ -1556,16 +1559,32 @@ function Phase2Center() {
                 : "The AI conducts an adaptive interview to build the full business profile."}
             </p>
             {!deal.interviewCompleted && (
-              <Button
-                size="sm"
-                className="mt-3 bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
-                onClick={() => setLocation(`/deal/${dealId}/interview`)}
-                data-testid="button-start-interview"
-              >
-                <MessageSquare className="h-3.5 w-3.5" />
-                Start AI Interview
-              </Button>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
+                  onClick={() => setLocation(`/deal/${dealId}/interview`)}
+                  data-testid="button-start-interview"
+                >
+                  <MessageSquare className="h-3.5 w-3.5" />
+                  Start AI Interview
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="gap-1.5"
+                  onClick={() => setTogetherOpen(true)}
+                  data-testid="button-interview-together"
+                >
+                  <Users className="h-3.5 w-3.5" />
+                  Interview together
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  Run it with the seller on a call or in person — you ask, they answer, Cimple fills it in.
+                </span>
+              </div>
             )}
+            <TogetherSetupDialog dealId={dealId} open={togetherOpen} onOpenChange={setTogetherOpen} />
           </div>
         </div>
       </div>
