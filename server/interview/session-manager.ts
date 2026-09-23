@@ -47,6 +47,7 @@ import {
 } from "./deferral-ledger";
 import { agentConfig } from "./config/load-config";
 import { ensureSectionImportance } from "./section-importance";
+import { ensureInterviewPlan } from "./interview-plan";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 
@@ -382,6 +383,7 @@ export async function startOrResumeSession(
   // Rank section importance for this industry in the background (no-op when
   // the deal already has a ranking for its industry).
   ensureSectionImportance(deal, importanceContext(seededIndustryContext));
+  ensureInterviewPlan(deal, { subIndustry: seededIndustryContext?.subIndustry ?? null });
 
   return {
     message: openingResult.message,
@@ -1108,6 +1110,7 @@ export async function processTurn(
   const updatedDeal = await storage.getDeal(dealId);
   const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies);
   ensureSectionImportance(updatedDeal!, importanceContext(updatedIndustryContext));
+  ensureInterviewPlan(updatedDeal!, { subIndustry: updatedIndustryContext?.subIndustry ?? null });
 
   return {
     message: aiResponse.message,

@@ -11,6 +11,8 @@ import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
+import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel } from "./interview/interview-plan.js";
+import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } from "./interview/knowledge-base.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
 import type { InterviewCall, InterviewBot } from "@shared/schema";
@@ -3834,7 +3836,7 @@ Return JSON only.`,
       // Interview coverage
       const { buildSectionCoverage } = await import("./interview/knowledge-base");
       const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
-      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal), getInterviewOutline(deal).excludedSections);
+      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
       const readiness = computeCimReadiness(sectionCoverage);
       const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
       const partial = sectionCoverage.filter((s) => s.status === "partial").length;
@@ -5990,8 +5992,28 @@ Return JSON only.`,
   const outlineView = (deal: any) => {
     const outline = getInterviewOutline(deal);
     const importance = getSectionImportance(deal);
+    // Kick off the industry checklist if it's missing (background, ~20–40s).
+    ensureInterviewPlan(deal);
+    const plan = getInterviewPlan(deal);
+    // Data points per section with on-file status — the same coverage the
+    // interview and the quality score use (excluded sections kept here so a
+    // removed section still shows what it would have covered).
+    const adjustments = coverageAdjustmentsForDeal(deal);
+    const coverage = buildCoverageForOutline((deal.extractedInfo || {}) as any, undefined, importance, [], adjustments);
+    const byKey = new Map(coverage.map((c) => [c.key, c]));
+    // Every key that belongs to a section (generic + industry + broker-added),
+    // with labels — used to list removed items under their section.
+    const itemLabels = new Map<string, string>();
+    for (const list of Object.values(adjustments.add ?? {})) for (const x of list) itemLabels.set(x.key, x.label);
+    const sectionItemKeys = (sectionKey: string) =>
+      new Set([...(SECTION_FIELD_MAP[sectionKey] ?? []), ...(adjustments.add?.[sectionKey] ?? []).map((x) => x.key)]);
     return {
       outline,
+      plan: {
+        status: plan ? "ready" : isPlanBuilding(deal.id) ? "building" : deal.industry ? "unavailable" : "no_industry",
+        industry: plan?.industry ?? deal.industry ?? null,
+        itemCount: plan?.items.length ?? 0,
+      },
       sections: CIM_SECTIONS.map((s) => ({
         key: s.key,
         title: s.title,
@@ -6000,6 +6022,19 @@ Return JSON only.`,
         importanceReason: importance.sections[s.key]?.reason ?? "",
         excluded: outline.excludedSections.includes(s.key),
         note: outline.emphasis.find((e) => e.key === s.key)?.note ?? null,
+        items: (byKey.get(s.key)?.fields ?? []).map((f) => ({
+          key: f.fieldName,
+          label: f.label ?? fieldLabel(f.fieldName),
+          onFile: f.value !== null,
+          value: f.value ? String(f.value).slice(0, 140) : null,
+          industrySpecific: !!f.industrySpecific,
+          critical: !!f.critical,
+          addedByBroker: (outline.addedItems ?? []).some((a) => a.key === f.fieldName),
+        })),
+        // Checklist items the broker removed from this section, so they can be restored.
+        removedItems: (outline.removedItems ?? [])
+          .filter((k) => sectionItemKeys(s.key).has(k))
+          .map((k) => ({ key: k, label: itemLabels.get(k) ?? fieldLabel(k) })),
       })),
     };
   };
@@ -6044,8 +6079,8 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      const { excludeSection, restoreSection, removeTopic, clearEmphasis } = req.body ?? {};
-      const result = await patchOutline(deal, { excludeSection, restoreSection, removeTopic, clearEmphasis });
+      const { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem } = req.body ?? {};
+      const result = await patchOutline(deal, { excludeSection, restoreSection, removeTopic, clearEmphasis, removeItem, restoreItem });
       if (result.refused) return res.status(409).json({ error: result.refused });
       res.json(outlineView(await storage.getDeal(deal.id)));
     } catch (error: any) {
@@ -6068,7 +6103,7 @@ Return JSON only.`,
         .orderBy(descOp(interviewSessions.lastActivityAt)).limit(1);
       const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
       const confidence = meta._confidenceLevels as Record<string, string> | undefined;
-      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal), getInterviewOutline(deal).excludedSections);
+      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
       res.json({
         readiness: computeCimReadiness(sections),
         sections: sections.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),

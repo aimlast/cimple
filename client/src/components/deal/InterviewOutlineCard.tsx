@@ -14,8 +14,18 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
-import { ListChecks, Loader2, Plus, RotateCcw, Sparkles, X, ChevronDown, ChevronRight, AlertCircle } from "lucide-react";
+import { ListChecks, Loader2, Plus, RotateCcw, Sparkles, X, ChevronDown, ChevronRight, AlertCircle, CheckCircle2, Circle } from "lucide-react";
 import type { InterviewOutline, OutlineCustomTopic, SectionImportanceLevel } from "@shared/schema";
+
+interface OutlineItem {
+  key: string;
+  label: string;
+  onFile: boolean;
+  value: string | null;
+  industrySpecific: boolean;
+  critical: boolean;
+  addedByBroker: boolean;
+}
 
 interface OutlineSection {
   key: string;
@@ -25,17 +35,26 @@ interface OutlineSection {
   importanceReason: string;
   excluded: boolean;
   note: string | null;
+  items: OutlineItem[];
+  removedItems: { key: string; label: string }[];
 }
 
 interface OutlineView {
   outline: InterviewOutline;
+  plan: { status: "ready" | "building" | "unavailable" | "no_industry"; industry: string | null; itemCount: number };
   sections: OutlineSection[];
 }
+
+/** Every CIM needs these — the server refuses to remove them too. */
+const UNREMOVABLE = new Set(["askingPrice", "annualRevenue"]);
 
 interface Proposal {
   summary: string;
   addTopics: OutlineCustomTopic[];
   removeTopics: string[];
+  addItems: { sectionKey: string; label: string; key?: string }[];
+  removeItems: string[];
+  restoreItems: string[];
   excludeSections: string[];
   restoreSections: string[];
   emphasis: { key: string; note: string }[];
@@ -60,6 +79,12 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
   const [instruction, setInstruction] = useState("");
   const [pending, setPending] = useState<{ instruction: string; proposal: Proposal } | null>(null);
   const [expanded, setExpanded] = useState(false);
+  const [openSections, setOpenSections] = useState<Set<string>>(new Set());
+  const toggleSection = (k: string) => setOpenSections((prev) => {
+    const next = new Set(prev);
+    if (next.has(k)) next.delete(k); else next.add(k);
+    return next;
+  });
 
   const key = ["/api/deals", dealId, "interview-outline"];
   const { data, isLoading } = useQuery<OutlineView>({
@@ -69,6 +94,8 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
       if (!r.ok) throw new Error(await readError(r, "Failed to load the interview outline"));
       return r.json();
     },
+    // The industry checklist builds in the background (~30s) — poll until ready.
+    refetchInterval: (q) => (q.state.data?.plan.status === "building" ? 5000 : false),
   });
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: key });
@@ -133,11 +160,17 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
     );
   }
 
-  const { outline, sections } = data;
+  const { outline, sections, plan } = data;
   const active = sections.filter((s) => !s.excluded);
+  const allItems = active.flatMap((s) => s.items);
+  const onFileCount = allItems.filter((i) => i.onFile).length;
+  const industryCount = allItems.filter((i) => i.industrySpecific && !i.addedByBroker).length;
   const excluded = sections.filter((s) => s.excluded);
-  const changed = outline.customTopics.length > 0 || excluded.length > 0 || outline.emphasis.length > 0;
+  const changed = outline.customTopics.length > 0 || excluded.length > 0 || outline.emphasis.length > 0
+    || (outline.addedItems?.length ?? 0) > 0 || (outline.removedItems?.length ?? 0) > 0;
   const titleOf = (k: string) => sections.find((s) => s.key === k)?.title ?? outline.customTopics.find((t) => t.key === k)?.title ?? k;
+  const itemLabel = (k: string) =>
+    sections.flatMap((s) => [...s.items, ...s.removedItems]).find((i) => i.key === k)?.label ?? k;
 
   return (
     <div className="rounded-lg border border-border bg-card p-5" data-testid="interview-outline-card">
@@ -153,38 +186,95 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
               data-testid="button-toggle-outline"
             >
               {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
-              {active.length} sections{outline.customTopics.length > 0 ? ` + ${outline.customTopics.length} custom topic${outline.customTopics.length === 1 ? "" : "s"}` : ""}
+              {allItems.length} data points · {onFileCount} on file{outline.customTopics.length > 0 ? ` · ${outline.customTopics.length} custom topic${outline.customTopics.length === 1 ? "" : "s"}` : ""}
             </button>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
             {changed
-              ? "Adjusted for this deal. The interviewer follows this plan and the industry checklist."
-              : "What the AI interviewer will cover, ranked by what buyers in this industry care about. Change it by telling Cimple what you want."}
+              ? "Adjusted for this deal. The interviewer works through this checklist, section by section."
+              : "Every data point the AI interviewer is after, section by section — ranked by what buyers in this industry care about. Change it by telling Cimple what you want."}
+          </p>
+          <p className="text-[11px] text-muted-foreground/80 mt-1" data-testid="outline-plan-status">
+            {plan.status === "ready" && `Includes ${industryCount} data points specific to ${plan.industry ?? "this industry"}.`}
+            {plan.status === "building" && <span className="inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Building the {plan.industry ?? "industry"} checklist from the industry playbook…</span>}
+            {plan.status === "unavailable" && "Standard checklist — no industry playbook matched this business type yet."}
+            {plan.status === "no_industry" && "Add the business's industry to get its industry-specific checklist."}
           </p>
 
           {expanded && (
             <div className="mt-3 space-y-3">
+              <ul className="divide-y divide-border/50 rounded-md border border-border/50" data-testid="outline-sections">
+                {active.map((s) => {
+                  const open = openSections.has(s.key);
+                  const have = s.items.filter((i) => i.onFile).length;
+                  return (
+                    <li key={s.key} className="text-xs">
+                      <div className="group flex items-center gap-2 px-2.5 py-1.5">
+                        <button type="button" className="flex items-center gap-2 flex-1 min-w-0 text-left" onClick={() => toggleSection(s.key)} title={s.importanceReason || undefined} data-testid={`outline-section-${s.key}`}>
+                          {open ? <ChevronDown className="h-3 w-3 text-muted-foreground shrink-0" /> : <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />}
+                          <span className={`w-16 shrink-0 text-[10px] uppercase tracking-wider ${LEVEL_CLASS[s.importance]}`}>{LEVEL_LABEL[s.importance]}</span>
+                          <span className="truncate">{s.title}</span>
+                          <span className="ml-auto shrink-0 tabular-nums text-muted-foreground">{have}/{s.items.length}</span>
+                        </button>
+                        {s.importance !== "critical" && (
+                          <button
+                            type="button"
+                            className="opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-foreground"
+                            title="Remove this section from the interview"
+                            onClick={() => patch.mutate({ excludeSection: s.key })}
+                            disabled={patch.isPending}
+                          >
+                            <X className="h-3 w-3" />
+                          </button>
+                        )}
+                      </div>
+                      {open && (
+                        <div className="px-2.5 pb-2 pl-9 space-y-0.5">
+                          {s.note && <p className="text-muted-foreground/80 italic pb-1">“{s.note}”</p>}
+                          {s.items.map((it) => (
+                            <div key={it.key} className="group/item flex items-start gap-2 py-0.5" data-testid={`outline-item-${it.key}`}>
+                              {it.onFile
+                                ? <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0 text-success" />
+                                : <Circle className={`h-3 w-3 mt-0.5 shrink-0 ${it.critical ? "text-teal" : "text-muted-foreground/40"}`} />}
+                              <span className="min-w-0 flex-1">
+                                <span className={it.onFile ? "text-muted-foreground" : ""}>{it.label}</span>
+                                {it.critical && !it.onFile && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-teal">critical</span>}
+                                {it.industrySpecific && !it.addedByBroker && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">industry</span>}
+                                {it.addedByBroker && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">added</span>}
+                                {it.onFile && it.value && <span className="block text-[11px] text-muted-foreground/70 truncate" title={it.value}>{it.value}</span>}
+                              </span>
+                              {!UNREMOVABLE.has(it.key) && (
+                                <button
+                                  type="button"
+                                  className="opacity-0 group-hover/item:opacity-100 text-muted-foreground/50 hover:text-foreground"
+                                  title="Don't ask for this"
+                                  onClick={() => patch.mutate({ removeItem: it.key })}
+                                  disabled={patch.isPending}
+                                >
+                                  <X className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          ))}
+                          {s.removedItems.length > 0 && (
+                            <p className="pt-1 text-muted-foreground/70">
+                              Not asking:{" "}
+                              {s.removedItems.map((r, i) => (
+                                <span key={r.key}>
+                                  {i > 0 && ", "}
+                                  <span className="line-through">{r.label}</span>{" "}
+                                  <button type="button" className="underline underline-offset-2 hover:text-foreground" onClick={() => patch.mutate({ restoreItem: r.key })} disabled={patch.isPending}>restore</button>
+                                </span>
+                              ))}
+                            </p>
+                          )}
+                        </div>
+                      )}
+                    </li>
+                  );
+                })}
+              </ul>
               <ul className="grid grid-cols-1 sm:grid-cols-2 gap-x-4 gap-y-1">
-                {active.map((s) => (
-                  <li key={s.key} className="group flex items-start gap-2 text-xs py-0.5" title={s.importanceReason || undefined}>
-                    <span className={`w-16 shrink-0 text-[10px] uppercase tracking-wider ${LEVEL_CLASS[s.importance]}`}>{LEVEL_LABEL[s.importance]}</span>
-                    <span className="min-w-0 flex-1">
-                      <span>{s.title}</span>
-                      {s.note && <span className="block text-muted-foreground/80 italic">“{s.note}”</span>}
-                    </span>
-                    {s.importance !== "critical" && (
-                      <button
-                        type="button"
-                        className="opacity-0 group-hover:opacity-100 text-muted-foreground/50 hover:text-foreground"
-                        title="Remove from this interview"
-                        onClick={() => patch.mutate({ excludeSection: s.key })}
-                        disabled={patch.isPending}
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                    )}
-                  </li>
-                ))}
                 {outline.customTopics.map((t) => (
                   <li key={t.key} className="group flex items-start gap-2 text-xs py-0.5" title={t.description || undefined}>
                     <span className={`w-16 shrink-0 text-[10px] uppercase tracking-wider ${LEVEL_CLASS[t.importance]}`}>{LEVEL_LABEL[t.importance]}</span>
@@ -230,7 +320,7 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
                 <Textarea
                   value={instruction}
                   onChange={(e) => setInstruction(e.target.value)}
-                  placeholder='Tell Cimple what to change — e.g. "Also cover the franchise agreement renewal and their two government contracts. Skip seasonality."'
+                  placeholder='Tell Cimple what to change — e.g. "Also get the number of chairs in use and the recall rate. Skip the mission statement. Cover the two government contracts."'
                   className="text-xs min-h-[3.25rem] resize-none bg-muted/20 flex-1"
                   data-testid="input-outline-instruction"
                 />
@@ -257,6 +347,15 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
                         {t.capture.length > 0 && <span className="block text-muted-foreground">{t.capture.join(" · ")}</span>}
                       </span>
                     </li>
+                  ))}
+                  {pending.proposal.addItems.map((a, i) => (
+                    <li key={`add-${i}`} className="flex items-start gap-1.5"><Plus className="h-3 w-3 text-teal mt-0.5 shrink-0" /><span>Also get <span className="font-medium">{a.label}</span> <span className="text-muted-foreground">({titleOf(a.sectionKey)})</span></span></li>
+                  ))}
+                  {pending.proposal.removeItems.map((k) => (
+                    <li key={`rm-${k}`} className="flex items-start gap-1.5"><X className="h-3 w-3 text-muted-foreground mt-0.5 shrink-0" /><span>Don't ask for <span className="font-medium">{itemLabel(k)}</span></span></li>
+                  ))}
+                  {pending.proposal.restoreItems.map((k) => (
+                    <li key={`rs-${k}`} className="flex items-start gap-1.5"><RotateCcw className="h-3 w-3 text-teal mt-0.5 shrink-0" /><span>Ask for <span className="font-medium">{itemLabel(k)}</span> again</span></li>
                   ))}
                   {pending.proposal.emphasis.map((e) => (
                     <li key={e.key} className="flex items-start gap-1.5"><Sparkles className="h-3 w-3 text-teal mt-0.5 shrink-0" /><span><span className="font-medium">{titleOf(e.key)}</span>: {e.note}</span></li>
