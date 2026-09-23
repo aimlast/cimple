@@ -86,6 +86,16 @@ export interface InterviewCall {
   endedAt?: string;
 }
 
+/** The notetaker bot on an external call (Recall.ai). */
+export interface InterviewBot {
+  botId: string;
+  meetingUrl: string;
+  /** Secret in the webhook URL so only Recall can post transcript lines. */
+  webhookToken: string;
+  startedAt: string;
+  endedAt?: string;
+}
+
 /** Broker's plain-language adjustments to the interview plan for one deal. */
 export interface InterviewOutline {
   updatedAt: string;
@@ -206,6 +216,8 @@ export const deals = pgTable("deals", {
   // The in-Cimple video call for a broker-led interview (Daily room). Only the
   // latest call is kept; `endedAt` set = no active call.
   interviewCall: jsonb("interview_call").$type<InterviewCall>(),
+  // The Recall.ai notetaker bot sent to the broker's own Zoom/Meet/Teams call.
+  interviewBot: jsonb("interview_bot").$type<InterviewBot>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section

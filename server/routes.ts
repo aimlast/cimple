@@ -13,7 +13,8 @@ import { getSectionImportance, computeSectionImportance } from "./interview/sect
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
-import type { InterviewCall } from "@shared/schema";
+import type { InterviewCall, InterviewBot } from "@shared/schema";
+import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
@@ -1362,6 +1363,111 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("[call] seller lookup failed:", error);
       res.status(500).json({ error: "Couldn't check the call" });
+    }
+  });
+
+  // ── Notetaker bot for the broker's own Zoom / Meet / Teams call (Recall.ai) ──
+  const webhookTokens = new Map<string, string>(); // token → dealId (rebuilt lazily after a restart)
+  const activeBot = (deal: any): InterviewBot | null => {
+    const b = deal?.interviewBot as InterviewBot | null | undefined;
+    return b && !b.endedAt ? b : null;
+  };
+  const appUrl = () => (process.env.APP_URL || "https://app.cimple.ca").replace(/\/$/, "");
+
+  app.post("/api/interview/:dealId/call/bot/start", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      if (!isRecallConfigured()) return res.status(503).json({ error: "not_configured" });
+      const meetingUrl = typeof req.body?.meetingUrl === "string" ? req.body.meetingUrl.trim() : "";
+      if (!isSupportedMeetingUrl(meetingUrl)) return res.status(400).json({ error: "Paste a Zoom, Google Meet or Microsoft Teams meeting link (https://…)" });
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const existing = activeBot(deal);
+      if (existing && existing.meetingUrl === meetingUrl) {
+        webhookTokens.set(existing.webhookToken, deal.id);
+        return res.json({ botId: existing.botId, startedAt: existing.startedAt, status: readBotLines(deal.id, 0).status });
+      }
+      if (existing) void leaveCall(existing.botId);
+      const webhookToken = newWebhookToken();
+      // Recall wants a trailing slash before the query string.
+      const bot = await createBot(meetingUrl, `${appUrl()}/api/calls/recall/webhook/?token=${webhookToken}`);
+      const record: InterviewBot = { botId: bot.id, meetingUrl, webhookToken, startedAt: new Date().toISOString() };
+      await storage.updateDeal(deal.id, { interviewBot: record } as any);
+      webhookTokens.set(webhookToken, deal.id);
+      clearBotBuffer(deal.id);
+      setBotStatus(deal.id, latestStatus(bot) || "joining_call");
+      res.json({ botId: bot.id, startedAt: record.startedAt, status: latestStatus(bot) || "joining_call" });
+    } catch (error: any) {
+      console.error("[recall] bot start failed:", error);
+      const status = typeof error?.status === "number" ? error.status : undefined;
+      res.status(500).json({ error: `Couldn't send the notetaker to the call${status ? ` (Recall answered ${status})` : ""}.` });
+    }
+  });
+
+  app.post("/api/interview/:dealId/call/bot/stop", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const bot = activeBot(deal);
+      if (bot) {
+        await leaveCall(bot.botId);
+        await storage.updateDeal(deal.id, { interviewBot: { ...bot, endedAt: new Date().toISOString() } } as any);
+        webhookTokens.delete(bot.webhookToken);
+      }
+      res.json({ stopped: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't stop the notetaker" });
+    }
+  });
+
+  // New transcript lines since `after` (a sequence number) + the bot's status.
+  app.get("/api/interview/:dealId/call/bot/lines", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const after = Number(req.query.after) || 0;
+      const out = readBotLines(req.params.dealId, after);
+      // Refresh the status from Recall every so often while nothing has arrived
+      // yet (joining can take 30–60s; a fatal join failure must not spin forever).
+      if (!out.status || out.status === "joining_call" || out.status === "in_waiting_room") {
+        const deal = await storage.getDeal(req.params.dealId);
+        const bot = deal ? activeBot(deal) : null;
+        if (bot) {
+          try {
+            const s = latestStatus(await getBot(bot.botId));
+            if (s) { setBotStatus(req.params.dealId, s); out.status = s; }
+          } catch { /* keep last known */ }
+        }
+      }
+      res.json(out);
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't read the transcript" });
+    }
+  });
+
+  // Recall posts transcript / participant events here. Public, but every
+  // request must carry the per-bot token from the URL we registered.
+  app.post("/api/calls/recall/webhook/", async (req, res) => {
+    try {
+      const token = typeof req.query.token === "string" ? req.query.token : "";
+      if (!token) return res.status(401).end();
+      let dealId = webhookTokens.get(token);
+      if (!dealId) {
+        // After a restart the map is empty — find the deal that owns this token.
+        const match = (await storage.getAllDeals()).find((d) => (d as any).interviewBot?.webhookToken === token && !(d as any).interviewBot?.endedAt);
+        if (!match) return res.status(401).end();
+        dealId = match.id;
+        webhookTokens.set(token, dealId);
+      }
+      const event = req.body?.event;
+      if (event === "transcript.data") {
+        const line = lineFromWebhook(req.body);
+        if (line) pushBotLine(dealId, line);
+        setBotStatus(dealId, "in_call_recording");
+      } else if (event === "participant_events.join" || event === "participant_events.leave") {
+        setBotStatus(dealId, "in_call_recording");
+      }
+      res.status(200).json({ ok: true });
+    } catch (error: any) {
+      console.error("[recall] webhook error:", error);
+      res.status(200).json({ ok: false });
     }
   });
 
