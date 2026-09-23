@@ -83,7 +83,22 @@ export async function joinDailyCall(opts: JoinOptions): Promise<CallHandle> {
   if (opts.onTranscript) {
     try {
       // Owner-only. Diarisation is per participant, so speaker labels are exact.
-      await call.startTranscription({ language: "en", model: "nova-2", punctuate: true, profanity_filter: false, endpointing: 300 });
+      // nova-3 is Deepgram's most accurate model; fall back to nova-2 if Daily
+      // rejects it up front or reports a transcription error afterwards.
+      const base = { language: "en", punctuate: true, profanity_filter: false, endpointing: 500 };
+      let fellBack = false;
+      const fallBack = async () => {
+        if (fellBack) return;
+        fellBack = true;
+        try { await call.stopTranscription(); } catch { /* not running */ }
+        await call.startTranscription({ ...base, model: "nova-2" } as any);
+      };
+      call.on("transcription-error", () => { void fallBack().catch((e) => opts.onError?.(`Transcription error: ${(e as Error).message}`)); });
+      try {
+        await call.startTranscription({ ...base, model: "nova-3" } as any);
+      } catch {
+        await fallBack();
+      }
       transcriptionStarted = true;
     } catch (err) {
       opts.onError?.(`Transcription couldn't start: ${(err as Error).message}`);
