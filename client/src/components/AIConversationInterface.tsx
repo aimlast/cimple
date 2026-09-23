@@ -142,6 +142,14 @@ export function AIConversationInterface({
   const [callState, setCallState] = useState<"idle" | "joining" | "live" | "ended" | "error">("idle");
   const [callError, setCallError] = useState<string | null>(null);
   const [sellerCallLink, setSellerCallLink] = useState<string | null>(null);
+  // Notetaker bot on the broker's own Zoom / Meet / Teams call (Recall.ai).
+  const externalCall = together && (via === "zoom" || via === "meet" || via === "teams");
+  const [botMeetingUrl, setBotMeetingUrl] = useState(meetingLink || "");
+  const [botState, setBotState] = useState<"idle" | "starting" | "joining" | "live" | "ended" | "error" | "unavailable">("idle");
+  const [botStatusText, setBotStatusText] = useState<string>("");
+  const botSeqRef = useRef(0);
+  const botActiveRef = useRef(false);
+  const brokerNameRef = useRef<string>("");
   const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
@@ -821,6 +829,78 @@ export function AIConversationInterface({
     }
   }, [dealId]);
 
+  // Send the notetaker to the external call and poll its transcript.
+  const startBot = useCallback(async (url: string) => {
+    if (!url.trim()) return;
+    setBotState("starting");
+    setBotStatusText("");
+    try {
+      const me = await fetch("/api/broker-auth/me", { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
+      brokerNameRef.current = (me?.name || me?.username || "").toString().trim().toLowerCase();
+      const r = await fetch(`/api/interview/${dealId}/call/bot/start`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ meetingUrl: url.trim() }),
+        credentials: "include",
+      });
+      if (r.status === 503) { setBotState("unavailable"); return; }
+      if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't send the notetaker");
+      botSeqRef.current = 0;
+      botActiveRef.current = true;
+      brokerSpeakerRef.current = 0;
+      setBrokerSpeaker(0);
+      setLiveActive(true);
+      setBotState("joining");
+    } catch (err: any) {
+      setBotState("error");
+      setBotStatusText(err?.message || "Couldn't send the notetaker");
+    }
+  }, [dealId]);
+
+  useEffect(() => {
+    if (!externalCall || !sessionId || botState !== "idle" || !meetingLink) return;
+    void startBot(meetingLink);
+  }, [externalCall, sessionId, botState, meetingLink, startBot]);
+
+  useEffect(() => {
+    if (!externalCall || !botActiveRef.current || (botState !== "joining" && botState !== "live")) return;
+    let cancelled = false;
+    const tick = async () => {
+      try {
+        const r = await fetch(`/api/interview/${dealId}/call/bot/lines?after=${botSeqRef.current}`, { credentials: "include" });
+        if (!r.ok || cancelled) return;
+        const data = await r.json() as { lines: { seq: number; participantId: string | number; name: string | null; isHost: boolean | null; text: string }[]; seq: number; status: string | null };
+        for (const l of data.lines) {
+          botSeqRef.current = Math.max(botSeqRef.current, l.seq);
+          const name = (l.name || "").trim().toLowerCase();
+          const isBroker = (brokerNameRef.current && name && (name === brokerNameRef.current || name.includes(brokerNameRef.current))) || (!brokerNameRef.current && l.isHost === true);
+          onLiveSegment({ speaker: isBroker ? 0 : 1, text: l.text, isFinal: true, speechFinal: false });
+        }
+        const st = data.status || "";
+        if (st === "fatal" || st === "call_ended" || st === "done") {
+          setBotState("ended");
+          setBotStatusText(st === "fatal" ? "The notetaker couldn't join — check the meeting link and that the meeting has started." : "The notetaker left the call.");
+          botActiveRef.current = false;
+        } else if (st === "in_call_recording" || st === "in_call_not_recording" || data.lines.length > 0) {
+          setBotState("live");
+        } else if (st) {
+          setBotStatusText(st.replace(/_/g, " "));
+        }
+      } catch { /* transient */ }
+    };
+    void tick();
+    const id = setInterval(tick, 2000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [externalCall, botState, dealId, onLiveSegment]);
+
+  // Leaving the page makes the bot leave the call.
+  useEffect(() => () => {
+    if (botActiveRef.current) {
+      botActiveRef.current = false;
+      void fetch(`/api/interview/${dealId}/call/bot/stop`, { method: "POST", credentials: "include", keepalive: true });
+    }
+  }, [dealId]);
+
   const listening = liveActive || handsFree;
   const listenLabel = liveStarting ? "Starting…" : listening ? "Stop listening" : "Listen";
 
@@ -1011,6 +1091,43 @@ export function AIConversationInterface({
           </div>
         </div>
       )}
+      {externalCall && (
+        <div className="px-6 pt-4 shrink-0">
+          <div className="max-w-3xl mx-auto rounded-lg border border-border/60 bg-card/50 px-4 py-2.5 text-xs" data-testid="notetaker-panel">
+            {(botState === "idle" || botState === "error" || botState === "ended" || botState === "unavailable") && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground">
+                  {botState === "unavailable"
+                    ? "The notetaker isn't set up on this server — use Listen below with your laptop mic instead."
+                    : botState === "error" || botState === "ended"
+                      ? botStatusText
+                      : `Paste your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} link and Cimple's notetaker will join to transcribe.`}
+                </span>
+                {botState !== "unavailable" && (
+                  <>
+                    <input
+                      value={botMeetingUrl}
+                      onChange={(e) => setBotMeetingUrl(e.target.value)}
+                      placeholder="https://…"
+                      className="flex-1 min-w-[220px] h-7 rounded border border-border bg-background px-2 text-xs"
+                      data-testid="input-notetaker-url"
+                    />
+                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => void startBot(botMeetingUrl)} disabled={!botMeetingUrl.trim()} data-testid="button-notetaker-start">
+                      {botState === "ended" || botState === "error" ? "Send again" : "Send notetaker"}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            {(botState === "starting" || botState === "joining") && (
+              <p className="text-muted-foreground flex items-center gap-2"><StopCircle className="h-3 w-3 animate-pulse" /> Cimple Notetaker is joining your call{botStatusText ? ` (${botStatusText})` : "…"} — it appears as a participant named "Cimple Notetaker".</p>
+            )}
+            {botState === "live" && (
+              <p className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-teal" /></span> In the call — transcribing. The seller's answers send automatically after a pause.</p>
+            )}
+          </div>
+        </div>
+      )}
       {together && (
         <div className="px-6 pt-5 shrink-0">
           {renderTogetherPanel(false)}
@@ -1024,7 +1141,7 @@ export function AIConversationInterface({
                   ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
                   : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
             </p>
-            {!isFinished && !inCimpleCall && (
+            {!isFinished && !inCimpleCall && !(externalCall && (botState === "joining" || botState === "live" || botState === "starting")) && (
               <Button
                 size="sm"
                 variant={listening ? "destructive" : "outline"}

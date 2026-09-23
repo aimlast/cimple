@@ -88,12 +88,12 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
             <Input
               value={link}
               onChange={(e) => setLink(e.target.value)}
-              placeholder="Paste the meeting link (optional for now)"
+              placeholder="Paste the meeting link — Cimple's notetaker joins it to transcribe"
               className="h-8 text-xs"
               data-testid="input-meeting-link"
             />
             <p className="text-[11px] text-muted-foreground">
-              Automatic transcription from the call is coming; for now use the mic button in the floating window to capture answers, or type them.
+              The notetaker appears in the call as "Cimple Notetaker". Leave the link blank to add it later from the interview screen.
             </p>
           </div>
         )}
