@@ -8,6 +8,7 @@
  */
 import { useState } from "react";
 import { useLocation } from "wouter";
+import { useQuery } from "@tanstack/react-query";
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
@@ -18,7 +19,7 @@ import { Users, Video, MonitorSmartphone } from "lucide-react";
 type Via = "cimple" | "zoom" | "meet" | "teams" | "person";
 
 const OPTIONS: { via: Via; label: string; hint: string; soon?: boolean }[] = [
-  { via: "cimple", label: "Video call in Cimple", hint: "One link for the seller; questions and progress beside the video. Suggested.", soon: true },
+  { via: "cimple", label: "Video call in Cimple", hint: "One link for the seller; questions and progress beside the video. Who said what is exact." },
   { via: "zoom", label: "Zoom", hint: "Use your own call. Questions float in a small window over Zoom." },
   { via: "meet", label: "Google Meet", hint: "Use your own call. Questions float in a small window over Meet." },
   { via: "teams", label: "Microsoft Teams", hint: "Use your own call. Questions float in a small window over Teams." },
@@ -27,12 +28,19 @@ const OPTIONS: { via: Via; label: string; hint: string; soon?: boolean }[] = [
 
 export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: string; open: boolean; onOpenChange: (o: boolean) => void }) {
   const [, setLocation] = useLocation();
+  const { data: services } = useQuery<{ deepgram: boolean; daily: boolean; recall: boolean }>({
+    queryKey: ["/api/calls/status"],
+    queryFn: async () => (await fetch("/api/calls/status", { credentials: "include" })).json(),
+    staleTime: 60_000,
+  });
+  const dailyReady = !!services?.daily;
   const [via, setVia] = useState<Via>("zoom");
+  const effectiveVia: Via = via === "cimple" && !dailyReady ? "zoom" : via;
   const [link, setLink] = useState("");
-  const needsLink = via === "zoom" || via === "meet" || via === "teams";
+  const needsLink = effectiveVia === "zoom" || effectiveVia === "meet" || effectiveVia === "teams";
 
   const start = () => {
-    const qs = new URLSearchParams({ via });
+    const qs = new URLSearchParams({ via: effectiveVia });
     if (needsLink && link.trim()) qs.set("link", link.trim());
     onOpenChange(false);
     setLocation(`/deal/${dealId}/interview/together?${qs.toString()}`);
@@ -49,24 +57,26 @@ export function TogetherSetupDialog({ dealId, open, onOpenChange }: { dealId: st
         </DialogHeader>
         <div className="space-y-1.5" role="radiogroup">
           {OPTIONS.map((o) => {
-            const selected = via === o.via;
+            const soon = o.via === "cimple" ? !dailyReady : !!o.soon;
+            const selected = effectiveVia === o.via;
             return (
               <button
                 key={o.via}
                 type="button"
                 role="radio"
                 aria-checked={selected}
-                disabled={o.soon}
+                disabled={soon}
                 onClick={() => setVia(o.via)}
                 className={`w-full text-left rounded-md border px-3 py-2.5 transition-colors ${
                   selected ? "border-teal/60 bg-teal/10" : "border-border hover:bg-accent"
-                } ${o.soon ? "opacity-60 cursor-not-allowed" : ""}`}
+                } ${soon ? "opacity-60 cursor-not-allowed" : ""}`}
                 data-testid={`option-together-${o.via}`}
               >
                 <div className="flex items-center gap-2">
                   {o.via === "cimple" ? <Video className="h-3.5 w-3.5 text-teal" /> : o.via === "person" ? <Users className="h-3.5 w-3.5 text-muted-foreground" /> : <MonitorSmartphone className="h-3.5 w-3.5 text-muted-foreground" />}
                   <span className="text-sm font-medium">{o.label}</span>
-                  {o.soon && <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground">Coming soon</span>}
+                  {soon && <span className="ml-auto text-[10px] uppercase tracking-wider text-muted-foreground">Coming soon</span>}
+                  {o.via === "cimple" && !soon && <span className="ml-auto text-[10px] uppercase tracking-wider text-teal">Suggested</span>}
                 </div>
                 <p className="text-xs text-muted-foreground mt-0.5 pl-5.5">{o.hint}</p>
               </button>

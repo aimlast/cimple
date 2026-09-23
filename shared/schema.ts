@@ -76,6 +76,16 @@ export interface OutlineHistoryEntry {
   summary: string;
 }
 
+/** State of the deal's in-Cimple video call (Daily). */
+export interface InterviewCall {
+  roomName: string;
+  roomUrl: string;
+  startedAt: string;
+  /** Room expiry from Daily — the call cannot outlive this. */
+  expiresAt: string;
+  endedAt?: string;
+}
+
 /** Broker's plain-language adjustments to the interview plan for one deal. */
 export interface InterviewOutline {
   updatedAt: string;
@@ -193,6 +203,9 @@ export const deals = pgTable("deals", {
   // sections, emphasis notes) — edited in plain language, applied by a
   // supporting agent. See server/interview/outline.ts.
   interviewOutline: jsonb("interview_outline").$type<InterviewOutline>(),
+  // The in-Cimple video call for a broker-led interview (Daily room). Only the
+  // latest call is kept; `endedAt` set = no active call.
+  interviewCall: jsonb("interview_call").$type<InterviewCall>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section
