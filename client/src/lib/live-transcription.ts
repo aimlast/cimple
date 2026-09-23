@@ -49,7 +49,7 @@ export async function startLiveTranscription(opts: StartOptions): Promise<LiveTr
     const body = await tokenRes.json().catch(() => ({}));
     throw new Error(body.error || "Couldn't start live transcription");
   }
-  const { key, liveParams } = (await tokenRes.json()) as { key: string; liveParams: string };
+  const { key, liveParams, scheme } = (await tokenRes.json()) as { key: string; liveParams: string; scheme?: "bearer" | "token" };
 
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
@@ -57,7 +57,7 @@ export async function startLiveTranscription(opts: StartOptions): Promise<LiveTr
   const mimeType = pickMimeType();
   const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
 
-  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${liveParams}`, ["token", key]);
+  const ws = new WebSocket(`wss://api.deepgram.com/v1/listen?${liveParams}`, [scheme ?? "token", key]);
   let stopped = false;
   let keepAlive: ReturnType<typeof setInterval> | null = null;
 
