@@ -794,6 +794,12 @@ export function AIConversationInterface({
   const onLiveSegmentRef = useRef(onLiveSegment);
   useEffect(() => { onLiveSegmentRef.current = onLiveSegment; }, [onLiveSegment]);
   const [remoteCount, setRemoteCount] = useState(0);
+  // Call layout: the conversation column keeps itself scrolled to the latest turn.
+  const callChatScrollRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = callChatScrollRef.current;
+    if (el) el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+  }, [messages, isLoading]);
   useEffect(() => {
     if (!inCimpleCall || !sessionId || callStartedRef.current) return;
     callStartedRef.current = true;
@@ -981,6 +987,28 @@ export function AIConversationInterface({
   }, [isFinished, isLoading, handleSend]);
 
   /** The compact question + answer panel — main view and floating window share it. */
+  /** What's being heard right now, labelled by speaker. */
+  const renderLiveTranscript = (extraClass: string, maxLines: number) => (
+    liveActive && (liveLines.length > 0 || liveInterim) ? (
+        <div className={`${extraClass} rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-xs space-y-0.5`} data-testid="live-transcript">
+          {liveLines.slice(-maxLines).map((l, i) => (
+            <p key={i} className="flex gap-2">
+              <button
+                type="button"
+                className={`shrink-0 font-medium ${brokerSpeaker === l.speaker ? "text-muted-foreground" : "text-teal"} hover:underline`}
+                title={brokerSpeaker === l.speaker ? "This is you" : "Click if this is you (the broker)"}
+                onClick={() => { brokerSpeakerRef.current = l.speaker; setBrokerSpeaker(l.speaker); }}
+              >
+                {speakerLabel(l.speaker)}
+              </button>
+              <span className="text-foreground/90">{l.text}</span>
+            </p>
+          ))}
+          {liveInterim && <p className="text-muted-foreground/60 italic">{liveInterim}</p>}
+        </div>
+      ) : null
+  );
+
   const renderTogetherPanel = (compact: boolean) => (
     <div className={compact ? "p-4 space-y-3" : "max-w-3xl mx-auto mb-4"} data-testid={compact ? "together-panel-pip" : "together-panel"}>
       <div className="rounded-xl border border-teal/30 bg-teal/5 px-5 py-4">
@@ -1010,24 +1038,7 @@ export function AIConversationInterface({
           </div>
         )}
       </div>
-      {liveActive && (liveLines.length > 0 || liveInterim) && (
-        <div className={`${compact ? "" : "mt-2"} rounded-lg border border-border/60 bg-card/60 px-3 py-2 text-xs space-y-0.5`} data-testid="live-transcript">
-          {liveLines.slice(-4).map((l, i) => (
-            <p key={i} className="flex gap-2">
-              <button
-                type="button"
-                className={`shrink-0 font-medium ${brokerSpeaker === l.speaker ? "text-muted-foreground" : "text-teal"} hover:underline`}
-                title={brokerSpeaker === l.speaker ? "This is you" : "Click if this is you (the broker)"}
-                onClick={() => { brokerSpeakerRef.current = l.speaker; setBrokerSpeaker(l.speaker); }}
-              >
-                {speakerLabel(l.speaker)}
-              </button>
-              <span className="text-foreground/90">{l.text}</span>
-            </p>
-          ))}
-          {liveInterim && <p className="text-muted-foreground/60 italic">{liveInterim}</p>}
-        </div>
-      )}
+      {!inCimpleCall && renderLiveTranscript(compact ? "" : "mt-2", 4)}
       {compact && !isFinished && (
         <div className="space-y-2">
           <Textarea
@@ -1119,181 +1130,9 @@ export function AIConversationInterface({
     );
   }
 
-  return (
-    <div className="flex flex-col h-full">
-      {/* Everything above the composer scrolls as one — in "together" mode the
-          call, invite box and question card would otherwise push the composer
-          off the bottom of the screen. */}
-      <div className="flex-1 min-h-0 overflow-y-auto">
-      {/* Broker-led: the question to read aloud sits on top; the transcript
-          below stays available but secondary. */}
-      {inCimpleCall && (
-        <div className="px-6 pt-4 shrink-0">
-          <div className="max-w-3xl mx-auto">
-            <div ref={callContainerRef} className="h-64 rounded-xl overflow-hidden bg-card border border-border" data-testid="broker-call-frame" />
-            <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
-              <span>
-                {callState === "joining" && "Starting the call… if the video window asks, click Join."}
-                {callState === "live" && "In the call — Cimple is transcribing; the seller's answers send automatically after a pause."}
-                {callState === "ended" && "Call ended."}
-                {callState === "error" && (callError || "Couldn't start the call")}
-                {callState === "live" && callError && ` ${callError}`}
-              </span>
-            </div>
-            {/* Invite the seller — always visible, works whether or not the deal has an invite yet */}
-            {remoteCount > 0 ? (
-              <p className="mt-2 text-xs text-success flex items-center gap-1.5" data-testid="seller-joined">
-                <CheckCircle className="h-3.5 w-3.5" /> Seller joined the call
-                {sellerCallLink && (
-                  <button type="button" className="ml-2 text-muted-foreground hover:text-foreground underline underline-offset-2"
-                    onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied" })); }}>
-                    copy link again
-                  </button>
-                )}
-              </p>
-            ) : (
-            <div className="mt-2 rounded-lg border border-teal/30 bg-teal/5 px-3 py-2.5 text-xs space-y-2" data-testid="seller-call-invite">
-              <p className="font-medium">
-                Invite the seller to this call
-                {linkSentTo && <span className="ml-2 font-normal text-success">Sent to {linkSentTo}</span>}
-              </p>
-              {sellerCallLink && (
-                <div className="flex items-center gap-2">
-                  <span className="flex-1 min-w-0 truncate rounded border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground" title={sellerCallLink}>{sellerCallLink}</span>
-                  <Button
-                    size="sm"
-                    variant="outline"
-                    className="h-7 text-xs gap-1 shrink-0"
-                    onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied", description: "Paste it into a text or email to the seller." })); }}
-                    data-testid="button-copy-seller-call-link"
-                  >
-                    <Copy className="h-3 w-3" /> Copy link
-                  </Button>
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                <input
-                  value={sellerName}
-                  onChange={(e) => setSellerName(e.target.value)}
-                  placeholder="Seller's name"
-                  className="h-7 w-36 rounded border border-border bg-background px-2 text-xs"
-                  data-testid="input-seller-call-name"
-                />
-                <input
-                  value={sellerEmail}
-                  onChange={(e) => setSellerEmail(e.target.value)}
-                  placeholder="Seller's email"
-                  type="email"
-                  className="h-7 flex-1 min-w-[180px] rounded border border-border bg-background px-2 text-xs"
-                  data-testid="input-seller-call-email"
-                />
-                <Button
-                  size="sm"
-                  className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
-                  onClick={() => void requestSellerLink(true)}
-                  disabled={!!linkBusy || !sellerEmail.trim()}
-                  data-testid="button-email-seller-call-link"
-                >
-                  {linkBusy === "send" ? "Sending…" : "Email the link"}
-                </Button>
-                {!sellerCallLink && (
-                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void requestSellerLink(false)} disabled={!!linkBusy} data-testid="button-create-seller-call-link">
-                    {linkBusy === "create" ? "Creating…" : "Just give me the link"}
-                  </Button>
-                )}
-              </div>
-              <p className="text-[11px] text-muted-foreground">The seller opens the link in their browser — nothing to install — and joins as soon as you're in the call.</p>
-            </div>
-            )}
-          </div>
-        </div>
-      )}
-      {externalCall && (
-        <div className="px-6 pt-4 shrink-0">
-          <div className="max-w-3xl mx-auto rounded-lg border border-border/60 bg-card/50 px-4 py-2.5 text-xs" data-testid="notetaker-panel">
-            {(botState === "idle" || botState === "error" || botState === "ended" || botState === "unavailable") && (
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-muted-foreground">
-                  {botState === "unavailable"
-                    ? "The notetaker isn't set up on this server — use Listen below with your laptop mic instead."
-                    : botState === "error" || botState === "ended"
-                      ? botStatusText
-                      : `Paste your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} link and Cimple's notetaker will join to transcribe.`}
-                </span>
-                {botState !== "unavailable" && (
-                  <>
-                    <input
-                      value={botMeetingUrl}
-                      onChange={(e) => setBotMeetingUrl(e.target.value)}
-                      placeholder="https://…"
-                      className="flex-1 min-w-[220px] h-7 rounded border border-border bg-background px-2 text-xs"
-                      data-testid="input-notetaker-url"
-                    />
-                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => void startBot(botMeetingUrl)} disabled={!botMeetingUrl.trim()} data-testid="button-notetaker-start">
-                      {botState === "ended" || botState === "error" ? "Send again" : "Send notetaker"}
-                    </Button>
-                  </>
-                )}
-              </div>
-            )}
-            {(botState === "starting" || botState === "joining") && (
-              <p className="text-muted-foreground flex items-center gap-2"><StopCircle className="h-3 w-3 animate-pulse" /> Cimple Notetaker is joining your call{botStatusText ? ` (${botStatusText})` : "…"} — it appears as a participant named "Cimple Notetaker".</p>
-            )}
-            {botState === "live" && (
-              <p className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-teal" /></span> In the call — transcribing. The seller's answers send automatically after a pause.</p>
-            )}
-          </div>
-        </div>
-      )}
-      {together && (
-        <div className="px-6 pt-5 shrink-0">
-          {renderTogetherPanel(false)}
-          <div className="max-w-3xl mx-auto -mt-2 mb-2 flex items-center justify-between gap-2">
-            <p className="text-[11px] text-muted-foreground">
-              {inCimpleCall
-                ? "Read the question to the seller; their answer is captured from the call."
-                : via && via !== "person"
-                ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
-                : liveActive
-                  ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
-                  : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
-            </p>
-            {!isFinished && !inCimpleCall && !(externalCall && (botState === "joining" || botState === "live" || botState === "starting")) && (
-              <Button
-                size="sm"
-                variant={listening ? "destructive" : "outline"}
-                className="h-7 text-xs gap-1.5 shrink-0"
-                onClick={() => void toggleListening()}
-                disabled={liveStarting}
-                title="Keep listening to the room; what the seller says is sent automatically after a pause"
-                data-testid="button-listen"
-              >
-                {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
-                {listenLabel}
-              </Button>
-            )}
-            {!isFinished && (
-              <Button
-                size="sm"
-                variant={pip.isOpen ? "secondary" : "outline"}
-                className="h-7 text-xs gap-1.5 shrink-0"
-                onClick={() => {
-                  if (pip.isOpen) { pip.close(); return; }
-                  void pip.open()
-                    .then((ok) => { if (!ok) toast({ title: "Floating window needs Chrome or Edge", description: "Keep this tab beside your call instead.", variant: "destructive" }); })
-                    .catch((err: Error) => toast({ title: "Couldn't open the floating window", description: `${err.message}. Keep this tab beside your call instead.`, variant: "destructive" }));
-                }}
-                data-testid="button-pop-out"
-              >
-                <PictureInPicture2 className="h-3.5 w-3.5" />
-                {pip.isOpen ? "Bring back" : "Pop out"}
-              </Button>
-            )}
-          </div>
-        </div>
-      )}
-      {/* Messages */}
-      <div className={`px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
+  // ── Reusable pieces of the conversation screen ──
+  const messagesView = (
+      <div className={inCimpleCall ? "px-4 py-4 space-y-4" : `px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
         {messages.map((message, idx) => (
           <ChatMessage
             key={`${message.timestamp}-${idx}`}
@@ -1328,10 +1167,9 @@ export function AIConversationInterface({
         )}
         <div ref={messagesEndRef} />
       </div>
+  );
 
-      </div>
-
-      {/* Input area */}
+  const composerView = (
       <div className="border-t border-border px-4 py-3 bg-card">
         {isFinished ? (
           <div className="max-w-3xl mx-auto">
@@ -1514,8 +1352,68 @@ export function AIConversationInterface({
           </>
         )}
       </div>
+  );
 
-      {/* Ending closes the session on the server — confirm before doing it */}
+  /** Invite the seller to the in-Cimple call — one compact row; collapses once they're in. */
+  const inviteView = remoteCount > 0 ? (
+    <p className="text-xs text-success flex items-center gap-1.5" data-testid="seller-joined">
+      <CheckCircle className="h-3.5 w-3.5" /> Seller joined the call
+      {sellerCallLink && (
+        <button type="button" className="ml-2 text-muted-foreground hover:text-foreground underline underline-offset-2"
+          onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied" })); }}>
+          copy link again
+        </button>
+      )}
+    </p>
+  ) : (
+    <div
+      className="flex flex-wrap items-center gap-2 rounded-lg border border-teal/30 bg-teal/5 px-3 py-2 text-xs"
+      title="The seller opens the link in their browser — nothing to install — and joins as soon as you're in the call."
+      data-testid="seller-call-invite"
+    >
+      <span className="font-medium shrink-0">Invite the seller</span>
+      {sellerCallLink ? (
+        <>
+          <span className="min-w-[160px] flex-1 truncate rounded border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground" title={sellerCallLink}>{sellerCallLink}</span>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1 shrink-0"
+            onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied", description: "Paste it into a text or email to the seller." })); }}
+            data-testid="button-copy-seller-call-link"
+          >
+            <Copy className="h-3 w-3" /> Copy
+          </Button>
+        </>
+      ) : (
+        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0" onClick={() => void requestSellerLink(false)} disabled={!!linkBusy} data-testid="button-create-seller-call-link">
+          {linkBusy === "create" ? "Creating…" : "Get the link"}
+        </Button>
+      )}
+      <span className="text-muted-foreground shrink-0">or email it</span>
+      <input
+        value={sellerEmail}
+        onChange={(e) => setSellerEmail(e.target.value)}
+        placeholder="seller@email.com"
+        type="email"
+        className="h-7 w-44 rounded border border-border bg-background px-2 text-xs"
+        data-testid="input-seller-call-email"
+      />
+      <Button
+        size="sm"
+        className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 shrink-0"
+        onClick={() => void requestSellerLink(true)}
+        disabled={!!linkBusy || !sellerEmail.trim()}
+        data-testid="button-email-seller-call-link"
+      >
+        {linkBusy === "send" ? "Sending…" : "Send"}
+      </Button>
+      {linkSentTo && <span className="text-success shrink-0">Sent to {linkSentTo}</span>}
+    </div>
+  );
+
+  /** Ending closes the session on the server — confirm before doing it. */
+  const confirmDialogView = (
       <AlertDialog
         open={confirmEndOpen}
         onOpenChange={(open) => { if (!open && !isEnding) setConfirmEndOpen(false); }}
@@ -1543,6 +1441,151 @@ export function AIConversationInterface({
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+  );
+
+  const callStatusText =
+    callState === "joining" ? "Starting the call… if the video window asks, click Join."
+    : callState === "live" ? `In the call — Cimple is transcribing; the seller's answers send automatically after a pause.${callError ? ` ${callError}` : ""}`
+    : callState === "ended" ? "Call ended."
+    : callState === "error" ? (callError || "Couldn't start the call")
+    : "";
+
+  // ── In-Cimple video call: video big on the left with the question under
+  // it; transcript + conversation + notes in a column on the right. ──
+  if (inCimpleCall) {
+    return (
+      <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="call-layout">
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
+          <div className="shrink-0">{inviteView}</div>
+          <div
+            ref={callContainerRef}
+            className="min-h-[300px] flex-1 overflow-hidden rounded-xl border border-border bg-card"
+            data-testid="broker-call-frame"
+          />
+          <p className="shrink-0 -mt-1 text-[11px] text-muted-foreground">{callStatusText}</p>
+          <div className="shrink-0 [&_[data-testid=together-panel]]:max-w-none [&_[data-testid=together-panel]]:mb-0">
+            {renderTogetherPanel(false)}
+          </div>
+        </div>
+        <div className="flex min-h-[420px] w-full shrink-0 flex-col border-t border-border bg-card/30 lg:min-h-0 lg:w-[400px] lg:border-l lg:border-t-0">
+          <div className="shrink-0 border-b border-border px-4 py-2">
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Live transcript</p>
+            {renderLiveTranscript("mt-1.5", 6) ?? (
+              <p className="mt-1 text-xs text-muted-foreground/70">
+                {callState === "live" ? "Listening — what the seller says appears here." : "Starts when you join the call."}
+              </p>
+            )}
+          </div>
+          <div ref={callChatScrollRef} className="min-h-0 flex-1 overflow-y-auto">
+            {messagesView}
+          </div>
+          {composerView}
+        </div>
+        {confirmDialogView}
+        {together && pip.container && createPortal(renderTogetherPanel(true), pip.container)}
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col h-full">
+      {/* Everything above the composer scrolls as one — in "together" mode the
+          call, invite box and question card would otherwise push the composer
+          off the bottom of the screen. */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
+      {/* Broker-led: the question to read aloud sits on top; the transcript
+          below stays available but secondary. */}
+      {externalCall && (
+        <div className="px-6 pt-4 shrink-0">
+          <div className="max-w-3xl mx-auto rounded-lg border border-border/60 bg-card/50 px-4 py-2.5 text-xs" data-testid="notetaker-panel">
+            {(botState === "idle" || botState === "error" || botState === "ended" || botState === "unavailable") && (
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-muted-foreground">
+                  {botState === "unavailable"
+                    ? "The notetaker isn't set up on this server — use Listen below with your laptop mic instead."
+                    : botState === "error" || botState === "ended"
+                      ? botStatusText
+                      : `Paste your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} link and Cimple's notetaker will join to transcribe.`}
+                </span>
+                {botState !== "unavailable" && (
+                  <>
+                    <input
+                      value={botMeetingUrl}
+                      onChange={(e) => setBotMeetingUrl(e.target.value)}
+                      placeholder="https://…"
+                      className="flex-1 min-w-[220px] h-7 rounded border border-border bg-background px-2 text-xs"
+                      data-testid="input-notetaker-url"
+                    />
+                    <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => void startBot(botMeetingUrl)} disabled={!botMeetingUrl.trim()} data-testid="button-notetaker-start">
+                      {botState === "ended" || botState === "error" ? "Send again" : "Send notetaker"}
+                    </Button>
+                  </>
+                )}
+              </div>
+            )}
+            {(botState === "starting" || botState === "joining") && (
+              <p className="text-muted-foreground flex items-center gap-2"><StopCircle className="h-3 w-3 animate-pulse" /> Cimple Notetaker is joining your call{botStatusText ? ` (${botStatusText})` : "…"} — it appears as a participant named "Cimple Notetaker".</p>
+            )}
+            {botState === "live" && (
+              <p className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-teal" /></span> In the call — transcribing. The seller's answers send automatically after a pause.</p>
+            )}
+          </div>
+        </div>
+      )}
+      {together && (
+        <div className="px-6 pt-5 shrink-0">
+          {renderTogetherPanel(false)}
+          <div className="max-w-3xl mx-auto -mt-2 mb-2 flex items-center justify-between gap-2">
+            <p className="text-[11px] text-muted-foreground">
+              {inCimpleCall
+                ? "Read the question to the seller; their answer is captured from the call."
+                : via && via !== "person"
+                ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
+                : liveActive
+                  ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
+                  : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
+            </p>
+            {!isFinished && !inCimpleCall && !(externalCall && (botState === "joining" || botState === "live" || botState === "starting")) && (
+              <Button
+                size="sm"
+                variant={listening ? "destructive" : "outline"}
+                className="h-7 text-xs gap-1.5 shrink-0"
+                onClick={() => void toggleListening()}
+                disabled={liveStarting}
+                title="Keep listening to the room; what the seller says is sent automatically after a pause"
+                data-testid="button-listen"
+              >
+                {listening ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
+                {listenLabel}
+              </Button>
+            )}
+            {!isFinished && (
+              <Button
+                size="sm"
+                variant={pip.isOpen ? "secondary" : "outline"}
+                className="h-7 text-xs gap-1.5 shrink-0"
+                onClick={() => {
+                  if (pip.isOpen) { pip.close(); return; }
+                  void pip.open()
+                    .then((ok) => { if (!ok) toast({ title: "Floating window needs Chrome or Edge", description: "Keep this tab beside your call instead.", variant: "destructive" }); })
+                    .catch((err: Error) => toast({ title: "Couldn't open the floating window", description: `${err.message}. Keep this tab beside your call instead.`, variant: "destructive" }));
+                }}
+                data-testid="button-pop-out"
+              >
+                <PictureInPicture2 className="h-3.5 w-3.5" />
+                {pip.isOpen ? "Bring back" : "Pop out"}
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {messagesView}
+      </div>
+
+      {composerView}
+
+      {confirmDialogView}
 
       {/* Floating question window (Chrome/Edge) — same state, rendered into
           the picture-in-picture document so it floats over the broker's call. */}
