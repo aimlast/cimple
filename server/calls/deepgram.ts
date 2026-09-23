@@ -46,17 +46,49 @@ async function projectId(): Promise<string> {
 
 export interface TemporaryKey {
   key: string;
+  /** WebSocket subprotocol scheme: "bearer" for a JWT from /auth/grant, "token" for a project key. */
+  scheme: "bearer" | "token";
   expiresAt: string;
   /** Query string for the live endpoint — model + diarization + formatting. */
   liveParams: string;
 }
 
+function liveParams(): string {
+  return new URLSearchParams({
+    model: "nova-3",
+    language: "en",
+    smart_format: "true",
+    punctuate: "true",
+    diarize: "true",
+    interim_results: "true",
+    utterance_end_ms: "1500",
+    vad_events: "true",
+    endpointing: "400",
+  }).toString();
+}
+
 /**
- * Mint a key the browser can use for one session. Scope is usage-only (it
- * can transcribe, nothing else) and it expires on its own.
+ * Short-lived credential for the browser. Preferred: Deepgram's token grant
+ * (a JWT, works with any Member-or-higher key, only needs to be valid while
+ * the socket opens). Fallback: a temporary project key (needs a key that may
+ * create keys).
  */
 export async function createTemporaryKey(label: string): Promise<TemporaryKey> {
   if (!isDeepgramConfigured()) throw new Error("Deepgram is not configured");
+  try {
+    const grant = await dg<{ access_token: string; expires_in: number }>("/auth/grant", {
+      method: "POST",
+      body: JSON.stringify({ ttl_seconds: 60 }),
+    });
+    return {
+      key: grant.access_token,
+      scheme: "bearer",
+      expiresAt: new Date(Date.now() + (grant.expires_in || 30) * 1000).toISOString(),
+      liveParams: liveParams(),
+    };
+  } catch (err) {
+    console.warn("[deepgram] token grant failed, trying a temporary project key:", (err as Error).message);
+  }
   const pid = await projectId();
   const data = await dg<{ key: string; api_key_id: string; expiration_date?: string }>(`/projects/${pid}/keys`, {
     method: "POST",
@@ -68,17 +100,8 @@ export async function createTemporaryKey(label: string): Promise<TemporaryKey> {
   });
   return {
     key: data.key,
+    scheme: "token",
     expiresAt: data.expiration_date ?? new Date(Date.now() + TEMP_KEY_TTL_SECONDS * 1000).toISOString(),
-    liveParams: new URLSearchParams({
-      model: "nova-3",
-      language: "en",
-      smart_format: "true",
-      punctuate: "true",
-      diarize: "true",
-      interim_results: "true",
-      utterance_end_ms: "1500",
-      vad_events: "true",
-      endpointing: "400",
-    }).toString(),
+    liveParams: liveParams(),
   };
 }
