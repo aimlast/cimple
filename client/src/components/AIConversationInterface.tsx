@@ -3,6 +3,8 @@ import { createPortal } from "react-dom";
 import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle } from "lucide-react";
 import { usePictureInPicture } from "@/lib/pip";
 import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
+import { joinDailyCall, type CallHandle } from "@/lib/daily-call";
+import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import {
@@ -133,6 +135,13 @@ export function AIConversationInterface({
   const brokerSpeakerRef = useRef<number | null>(null);
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const LIVE_PAUSE_MS = 3000;
+  // In-Cimple video call (Daily) — together mode with via="cimple".
+  const inCimpleCall = together && via === "cimple";
+  const callContainerRef = useRef<HTMLDivElement>(null);
+  const callHandleRef = useRef<CallHandle | null>(null);
+  const [callState, setCallState] = useState<"idle" | "joining" | "live" | "ended" | "error">("idle");
+  const [callError, setCallError] = useState<string | null>(null);
+  const [sellerCallLink, setSellerCallLink] = useState<string | null>(null);
   const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
@@ -760,6 +769,58 @@ export function AIConversationInterface({
   useEffect(() => { if (isFinished) stopLive(); }, [isFinished, stopLive]);
   useEffect(() => () => { liveRef.current?.stop(); if (liveTimerRef.current) clearTimeout(liveTimerRef.current); }, []);
 
+  // Start the deal's video call when the together page opens in Cimple-call
+  // mode; the transcript arrives per participant, so labels are exact.
+  useEffect(() => {
+    if (!inCimpleCall || !sessionId || callState !== "idle") return;
+    let cancelled = false;
+    const start = async () => {
+      setCallState("joining");
+      try {
+        const r = await fetch(`/api/interview/${dealId}/call/start`, { method: "POST", credentials: "include" });
+        if (r.status === 503) throw new Error("The video call service isn't set up on this server.");
+        if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't start the call");
+        const { roomUrl, token } = await r.json();
+        // The seller joins from their own link — surface it for the broker to send.
+        try {
+          const inv = await fetch(`/api/deals/${dealId}/invites`, { credentials: "include" }).then((x) => (x.ok ? x.json() : []));
+          const primary = Array.isArray(inv) ? inv.find((i: any) => i.status === "accepted") ?? inv.find((i: any) => i.status === "sent") ?? inv[0] : null;
+          if (primary?.token) setSellerCallLink(`${window.location.origin}/seller/${primary.token}/call`);
+        } catch { /* link is a convenience */ }
+        if (cancelled || !callContainerRef.current) return;
+        brokerSpeakerRef.current = 0;
+        setBrokerSpeaker(0);
+        callHandleRef.current = await joinDailyCall({
+          container: callContainerRef.current,
+          roomUrl,
+          token,
+          onTranscript: (line) => {
+            onLiveSegment({ speaker: line.local ? 0 : 1, text: line.text, isFinal: line.isFinal, speechFinal: false });
+          },
+          onLeft: () => setCallState("ended"),
+          onError: (m) => { setCallError(m); },
+        });
+        if (cancelled) { void callHandleRef.current.leave(); return; }
+        setLiveActive(true);
+        setCallState("live");
+      } catch (err: any) {
+        setCallError(err?.message || "Couldn't start the call");
+        setCallState("error");
+      }
+    };
+    void start();
+    return () => { cancelled = true; };
+  }, [inCimpleCall, sessionId, callState, dealId, onLiveSegment]);
+
+  // Leaving the page ends the call for everyone and clears the room.
+  useEffect(() => () => {
+    if (callHandleRef.current) {
+      void callHandleRef.current.leave();
+      callHandleRef.current = null;
+      void fetch(`/api/interview/${dealId}/call/end`, { method: "POST", credentials: "include", keepalive: true });
+    }
+  }, [dealId]);
+
   const listening = liveActive || handsFree;
   const listenLabel = liveStarting ? "Starting…" : listening ? "Stop listening" : "Listen";
 
@@ -924,18 +985,46 @@ export function AIConversationInterface({
     <div className="flex flex-col h-full">
       {/* Broker-led: the question to read aloud sits on top; the transcript
           below stays available but secondary. */}
+      {inCimpleCall && (
+        <div className="px-6 pt-4 shrink-0">
+          <div className="max-w-3xl mx-auto">
+            <div ref={callContainerRef} className="h-64 rounded-xl overflow-hidden bg-card border border-border" data-testid="broker-call-frame" />
+            <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+              <span>
+                {callState === "joining" && "Starting the call…"}
+                {callState === "live" && "In the call — Cimple is transcribing; the seller's answers send automatically after a pause."}
+                {callState === "ended" && "Call ended."}
+                {callState === "error" && (callError || "Couldn't start the call")}
+                {callState === "live" && callError && ` ${callError}`}
+              </span>
+              {sellerCallLink && (
+                <button
+                  type="button"
+                  className="inline-flex items-center gap-1 hover:text-foreground shrink-0"
+                  onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's call link copied", description: "Send it to the seller — they join with one click." })); }}
+                  data-testid="button-copy-seller-call-link"
+                >
+                  <Copy className="h-3 w-3" /> Copy seller's link
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
       {together && (
         <div className="px-6 pt-5 shrink-0">
           {renderTogetherPanel(false)}
           <div className="max-w-3xl mx-auto -mt-2 mb-2 flex items-center justify-between gap-2">
             <p className="text-[11px] text-muted-foreground">
-              {via && via !== "person" && via !== "cimple"
+              {inCimpleCall
+                ? "Read the question to the seller; their answer is captured from the call."
+                : via && via !== "person"
                 ? `On your ${via === "meet" ? "Google Meet" : via === "teams" ? "Teams" : "Zoom"} call${meetingLink ? "" : ""} — pop the question out so it floats over the call.`
                 : liveActive
                   ? `Listening to the room — ${brokerSpeaker === null ? "read the question aloud once so Cimple learns your voice" : "the seller's answer is sent automatically after a pause"}.`
                   : "Read the question aloud; press Listen once and the seller's answer is sent automatically after a pause."}
             </p>
-            {!isFinished && (
+            {!isFinished && !inCimpleCall && (
               <Button
                 size="sm"
                 variant={listening ? "destructive" : "outline"}

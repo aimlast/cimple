@@ -12,6 +12,8 @@ import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus,
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
+import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
+import type { InterviewCall } from "@shared/schema";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
@@ -1298,6 +1300,68 @@ Return JSON only.`,
         ? "Deepgram refused to create a session key — the DEEPGRAM_API_KEY needs the Admin (or Owner) role, not Member."
         : status ? `Deepgram answered ${status}.` : "Couldn't reach Deepgram.";
       res.status(500).json({ error: `Couldn't start live transcription. ${hint}`, deepgramStatus: status });
+    }
+  });
+
+  // ── In-Cimple video call (Daily) for broker-led interviews ──
+  const activeCall = (deal: any): InterviewCall | null => {
+    const c = deal?.interviewCall as InterviewCall | null | undefined;
+    if (!c || c.endedAt) return null;
+    if (c.expiresAt && new Date(c.expiresAt).getTime() < Date.now()) return null;
+    return c;
+  };
+
+  // Broker starts (or rejoins) the deal's call. Returns an owner token so the
+  // broker's browser can start transcription.
+  app.post("/api/interview/:dealId/call/start", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      if (!isDailyConfigured()) return res.status(503).json({ error: "not_configured" });
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const broker = await storage.getUser(deal.brokerId);
+      let call = activeCall(deal);
+      if (!call) {
+        const room = await createRoom(deal.id);
+        call = { roomName: room.name, roomUrl: room.url, startedAt: new Date().toISOString(), expiresAt: room.expiresAt };
+        await storage.updateDeal(deal.id, { interviewCall: call } as any);
+      }
+      const token = await createMeetingToken(call.roomName, broker?.name || broker?.username || "Broker", true);
+      res.json({ roomUrl: call.roomUrl, token, startedAt: call.startedAt, expiresAt: call.expiresAt });
+    } catch (error: any) {
+      console.error("[call] start failed:", error);
+      res.status(500).json({ error: "Couldn't start the video call" });
+    }
+  });
+
+  app.post("/api/interview/:dealId/call/end", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const call = activeCall(deal);
+      if (call) {
+        await storage.updateDeal(deal.id, { interviewCall: { ...call, endedAt: new Date().toISOString() } } as any);
+        void deleteRoom(call.roomName);
+      }
+      res.json({ ended: true });
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't end the call" });
+    }
+  });
+
+  // Seller side: is the broker waiting in a call? If so, a participant token.
+  app.get("/api/seller/:token/call", async (req, res) => {
+    try {
+      const invite = await storage.getSellerInviteByToken(req.params.token);
+      if (!invite) return res.status(404).json({ error: "Invite not found" });
+      const deal = await storage.getDeal(invite.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const call = activeCall(deal);
+      if (!call || !isDailyConfigured()) return res.json({ active: false, businessName: deal.businessName });
+      const token = await createMeetingToken(call.roomName, invite.sellerName || "Seller", false);
+      res.json({ active: true, roomUrl: call.roomUrl, token, startedAt: call.startedAt, businessName: deal.businessName });
+    } catch (error: any) {
+      console.error("[call] seller lookup failed:", error);
+      res.status(500).json({ error: "Couldn't check the call" });
     }
   });
 

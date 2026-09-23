@@ -6,7 +6,7 @@
  * broker contact info, and estimated time remaining.
  */
 import { useState } from "react";
-import { useParams, Link } from "wouter";
+import { useParams, Link, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
 import {
   AlertCircle,
@@ -20,6 +20,7 @@ import {
   PlayCircle,
   RefreshCw,
   Upload,
+  Video,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { SellerOnboarding } from "@/components/seller/SellerOnboarding";
@@ -186,6 +187,7 @@ export default function SellerProgress() {
           href={`/seller/${token}`}
         />
       )}
+      <SellerCallBanner token={token!} />
       {currentStep === "interview" && (
         <CTACard
           title={interview.hasActiveSession ? "Continue your Business Overview" : "Start your Business Overview"}
@@ -405,5 +407,31 @@ function CTACard({
         </div>
       </div>
     </Link>
+  );
+}
+
+
+/** Shows the moment the broker opens a video call for this deal. */
+function SellerCallBanner({ token }: { token: string }) {
+  const [, navigate] = useLocation();
+  const { data } = useQuery<{ active: boolean }>({
+    queryKey: ["/api/seller", token, "call"],
+    queryFn: async () => (await fetch(`/api/seller/${token}/call`)).json(),
+    refetchInterval: 10000,
+  });
+  if (!data?.active) return null;
+  return (
+    <div className="rounded-lg border border-teal/40 bg-teal/10 p-4 flex items-center justify-between gap-3" data-testid="seller-call-banner">
+      <div className="flex items-center gap-3">
+        <Video className="h-5 w-5 text-teal shrink-0" />
+        <div>
+          <p className="text-sm font-medium">Your broker is in the video call</p>
+          <p className="text-xs text-muted-foreground">Join to go through your Business Overview together.</p>
+        </div>
+      </div>
+      <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90 shrink-0" onClick={() => navigate(`/seller/${token}/call`)}>
+        Join the call
+      </Button>
+    </div>
   );
 }

@@ -19,6 +19,7 @@ import Support from "@/pages/Support";
 import NewDeal from "@/pages/NewDeal";
 import DealShell from "@/pages/broker/deal/DealShell";
 import TogetherInterview from "@/pages/TogetherInterview";
+import SellerCall from "@/pages/seller/SellerCall";
 import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
@@ -106,6 +107,8 @@ function isFullscreen(path: string) {
   if (path.endsWith("/interview")) return true;
   // Broker-led "Interview together"
   if (path.endsWith("/interview/together")) return true;
+  // Seller's side of the in-Cimple video call
+  if (/^\/seller\/[^/]+\/call$/.test(path)) return true;
   // Legacy seller invite redirect
   if (path.startsWith("/invite/")) return true;
   // Seller Q&A approval (standalone page, own token table)
@@ -282,6 +285,7 @@ function FullscreenLayout() {
         </Route>
         {/* Seller interview (fullscreen) */}
         <Route path="/seller/:token/interview" component={SellerInterview} />
+        <Route path="/seller/:token/call" component={SellerCall} />
         {/* Legacy seller invite redirect → /seller/:token */}
         <Route path="/invite/:token">{(params: { token: string }) => <Redirect to={`/seller/${params.token}`} />}</Route>
         {/* Seller Q&A approval (standalone) */}
