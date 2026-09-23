@@ -28,7 +28,9 @@ async function dg<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    throw new Error(`Deepgram ${init.method || "GET"} ${path} → ${res.status}: ${body.slice(0, 200)}`);
+    const err = new Error(`Deepgram ${init.method || "GET"} ${path} → ${res.status}: ${body.slice(0, 200)}`) as Error & { status?: number };
+    err.status = res.status;
+    throw err;
   }
   return res.json() as Promise<T>;
 }

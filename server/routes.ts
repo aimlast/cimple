@@ -1291,7 +1291,13 @@ Return JSON only.`,
       res.json({ provider: "deepgram", ...(await createTemporaryKey(`deal ${dealId}`)) });
     } catch (error: any) {
       console.error("[transcription] token failed:", error);
-      res.status(500).json({ error: "Couldn't start live transcription" });
+      // Say what Deepgram answered — a 403 here almost always means the
+      // account key lacks permission to create keys (needs Admin/Owner role).
+      const status = typeof error?.status === "number" ? error.status : undefined;
+      const hint = status === 403 || status === 401
+        ? "Deepgram refused to create a session key — the DEEPGRAM_API_KEY needs the Admin (or Owner) role, not Member."
+        : status ? `Deepgram answered ${status}.` : "Couldn't reach Deepgram.";
+      res.status(500).json({ error: `Couldn't start live transcription. ${hint}`, deepgramStatus: status });
     }
   });
 
