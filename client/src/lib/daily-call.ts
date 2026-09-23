@@ -29,6 +29,8 @@ interface JoinOptions {
   onTranscript?: (line: TranscriptLine) => void;
   onLeft?: () => void;
   onError?: (message: string) => void;
+  /** Number of other people in the call (excludes the local participant). */
+  onRemoteCount?: (count: number) => void;
 }
 
 /** Colours matched to the app's dark theme so the embedded UI doesn't glare. */
@@ -67,6 +69,13 @@ export async function joinDailyCall(opts: JoinOptions): Promise<CallHandle> {
     });
   });
   call.on("left-meeting", () => opts.onLeft?.());
+  const reportRemote = () => {
+    const all = call.participants() || {};
+    opts.onRemoteCount?.(Object.keys(all).filter((k) => k !== "local").length);
+  };
+  call.on("participant-joined", reportRemote);
+  call.on("participant-left", reportRemote);
+  call.on("joined-meeting", reportRemote);
   call.on("error", (ev) => opts.onError?.(ev?.errorMsg || "Call error"));
 
   await call.join({ url: opts.roomUrl, token: opts.token });

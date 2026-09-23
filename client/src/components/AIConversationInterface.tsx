@@ -4,6 +4,7 @@ import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, Refres
 import { usePictureInPicture } from "@/lib/pip";
 import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
 import { joinDailyCall, type CallHandle } from "@/lib/daily-call";
+import DailyIframe from "@daily-co/daily-js";
 import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -304,10 +305,13 @@ export function AIConversationInterface({
   // restored transcript reads as the page running away.
   useEffect(() => {
     if (isStarting || !messagesEndRef.current) return;
+    // Broker-led: the call and the question to read aloud live at the top —
+    // never scroll them out of view; the transcript below is secondary.
+    if (variant === "together") return;
     const behavior: ScrollBehavior = initialScrollDoneRef.current ? "smooth" : "auto";
     initialScrollDoneRef.current = true;
     messagesEndRef.current.scrollIntoView({ behavior, block: "end" });
-  }, [messages, isLoading, isStarting]);
+  }, [messages, isLoading, isStarting, variant]);
 
   // Escalate the thinking label after a few seconds so long Opus turns
   // read as "still with you" rather than frozen.
@@ -783,9 +787,16 @@ export function AIConversationInterface({
 
   // Start the deal's video call when the together page opens in Cimple-call
   // mode; the transcript arrives per participant, so labels are exact.
+  // Runs once: a ref guards it, because putting callState in the deps made
+  // the effect cancel itself the moment it set "joining" (the broker's side
+  // stayed blank while the seller got in).
+  const callStartedRef = useRef(false);
+  const onLiveSegmentRef = useRef(onLiveSegment);
+  useEffect(() => { onLiveSegmentRef.current = onLiveSegment; }, [onLiveSegment]);
+  const [remoteCount, setRemoteCount] = useState(0);
   useEffect(() => {
-    if (!inCimpleCall || !sessionId || callState !== "idle") return;
-    let cancelled = false;
+    if (!inCimpleCall || !sessionId || callStartedRef.current) return;
+    callStartedRef.current = true;
     const start = async () => {
       setCallState("joining");
       try {
@@ -793,7 +804,9 @@ export function AIConversationInterface({
         if (r.status === 503) throw new Error("The video call service isn't set up on this server.");
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't start the call");
         const { roomUrl, token } = await r.json();
-        if (cancelled || !callContainerRef.current) return;
+        // The frame's container renders with the page; wait a tick if needed.
+        for (let i = 0; i < 20 && !callContainerRef.current; i++) await new Promise((res) => setTimeout(res, 100));
+        if (!callContainerRef.current) throw new Error("The call area didn't load — refresh the page.");
         brokerSpeakerRef.current = 0;
         setBrokerSpeaker(0);
         callHandleRef.current = await joinDailyCall({
@@ -801,28 +814,35 @@ export function AIConversationInterface({
           roomUrl,
           token,
           onTranscript: (line) => {
-            onLiveSegment({ speaker: line.local ? 0 : 1, text: line.text, isFinal: line.isFinal, speechFinal: false });
+            onLiveSegmentRef.current({ speaker: line.local ? 0 : 1, text: line.text, isFinal: line.isFinal, speechFinal: false });
           },
           onLeft: () => setCallState("ended"),
           onError: (m) => { setCallError(m); },
+          onRemoteCount: setRemoteCount,
         });
-        if (cancelled) { void callHandleRef.current.leave(); return; }
         setLiveActive(true);
         setCallState("live");
       } catch (err: any) {
         setCallError(err?.message || "Couldn't start the call");
         setCallState("error");
+        callStartedRef.current = false;
       }
     };
     void start();
-    return () => { cancelled = true; };
-  }, [inCimpleCall, sessionId, callState, dealId, onLiveSegment]);
+  }, [inCimpleCall, sessionId, dealId]);
 
   // Leaving the page ends the call for everyone and clears the room.
+  // Also covers leaving before actually joining (e.g. still on the camera
+  // check): the room exists from call/start, so end it and remove the frame.
   useEffect(() => () => {
     if (callHandleRef.current) {
       void callHandleRef.current.leave();
       callHandleRef.current = null;
+    } else {
+      try { DailyIframe.getCallInstance()?.destroy(); } catch { /* no frame */ }
+    }
+    if (callStartedRef.current) {
+      callStartedRef.current = false;
       void fetch(`/api/interview/${dealId}/call/end`, { method: "POST", credentials: "include", keepalive: true });
     }
   }, [dealId]);
@@ -1101,6 +1121,10 @@ export function AIConversationInterface({
 
   return (
     <div className="flex flex-col h-full">
+      {/* Everything above the composer scrolls as one — in "together" mode the
+          call, invite box and question card would otherwise push the composer
+          off the bottom of the screen. */}
+      <div className="flex-1 min-h-0 overflow-y-auto">
       {/* Broker-led: the question to read aloud sits on top; the transcript
           below stays available but secondary. */}
       {inCimpleCall && (
@@ -1109,7 +1133,7 @@ export function AIConversationInterface({
             <div ref={callContainerRef} className="h-64 rounded-xl overflow-hidden bg-card border border-border" data-testid="broker-call-frame" />
             <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
               <span>
-                {callState === "joining" && "Starting the call…"}
+                {callState === "joining" && "Starting the call… if the video window asks, click Join."}
                 {callState === "live" && "In the call — Cimple is transcribing; the seller's answers send automatically after a pause."}
                 {callState === "ended" && "Call ended."}
                 {callState === "error" && (callError || "Couldn't start the call")}
@@ -1117,6 +1141,17 @@ export function AIConversationInterface({
               </span>
             </div>
             {/* Invite the seller — always visible, works whether or not the deal has an invite yet */}
+            {remoteCount > 0 ? (
+              <p className="mt-2 text-xs text-success flex items-center gap-1.5" data-testid="seller-joined">
+                <CheckCircle className="h-3.5 w-3.5" /> Seller joined the call
+                {sellerCallLink && (
+                  <button type="button" className="ml-2 text-muted-foreground hover:text-foreground underline underline-offset-2"
+                    onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied" })); }}>
+                    copy link again
+                  </button>
+                )}
+              </p>
+            ) : (
             <div className="mt-2 rounded-lg border border-teal/30 bg-teal/5 px-3 py-2.5 text-xs space-y-2" data-testid="seller-call-invite">
               <p className="font-medium">
                 Invite the seller to this call
@@ -1169,6 +1204,7 @@ export function AIConversationInterface({
               </div>
               <p className="text-[11px] text-muted-foreground">The seller opens the link in their browser — nothing to install — and joins as soon as you're in the call.</p>
             </div>
+            )}
           </div>
         </div>
       )}
@@ -1257,7 +1293,7 @@ export function AIConversationInterface({
         </div>
       )}
       {/* Messages */}
-      <div className={`flex-1 overflow-y-auto px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
+      <div className={`px-6 py-5 space-y-5 ${together ? "opacity-80" : ""}`}>
         {messages.map((message, idx) => (
           <ChatMessage
             key={`${message.timestamp}-${idx}`}
@@ -1291,6 +1327,8 @@ export function AIConversationInterface({
           </div>
         )}
         <div ref={messagesEndRef} />
+      </div>
+
       </div>
 
       {/* Input area */}
@@ -1355,7 +1393,7 @@ export function AIConversationInterface({
                 Multi-select produced nonsense like "One. Three." Hidden while
                 editing: the chips answer the current question, not the one
                 being corrected. */}
-            {suggestedAnswers.length > 0 && !isLoading && !editing && (
+            {!together && suggestedAnswers.length > 0 && !isLoading && !editing && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
                 {suggestedAnswers.map((answer, idx) => {
                   const isSelected = selectedAnswer === idx;

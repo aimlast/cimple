@@ -9,6 +9,15 @@
         "cd /Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss && exec node --env-file=/Users/ik/Documents/GitHub/cimple/.env node_modules/.bin/tsx server/index.ts"
       ],
       "port": 5080
+    },
+    {
+      "name": "Cimple (production keys)",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss && exec /Users/ik/.npm-global/bin/railway run --service cimple -- sh -c 'export $(grep ^DATABASE_URL= /Users/ik/Documents/GitHub/cimple/.env | xargs) NODE_ENV=development PORT=5081 UPLOADS_DIR=/tmp/cimple-uploads; exec node node_modules/.bin/tsx server/index.ts'"
+      ],
+      "port": 5081
     }
   ]
 }
