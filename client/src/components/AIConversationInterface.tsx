@@ -135,7 +135,11 @@ export function AIConversationInterface({
   const liveLinesRef = useRef<{ speaker: number; text: string }[]>([]);
   const brokerSpeakerRef = useRef<number | null>(null);
   const liveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const LIVE_PAUSE_MS = 3000;
+  // How long the seller must be silent before their answer is sent. 3s cut
+  // natural speech ("let me see…") into fragments; 5s lets people think.
+  const LIVE_PAUSE_MS = 5000;
+  /** Mirrors isLoading for timer callbacks (a stale closure would read false). */
+  const isLoadingRef = useRef(false);
   // In-Cimple video call (Daily) — together mode with via="cimple".
   const inCimpleCall = together && via === "cimple";
   const callContainerRef = useRef<HTMLDivElement>(null);
@@ -710,14 +714,26 @@ export function AIConversationInterface({
   const flushLiveExchange = useCallback(() => {
     const lines = liveLinesRef.current;
     if (lines.length === 0) return;
+    // The AI is still answering the previous exchange: keep everything and try
+    // again shortly. (Previously the lines were cleared and then the send was
+    // refused because a reply was in progress — speech said while the AI was
+    // thinking was silently lost.)
+    if (isLoadingRef.current) {
+      if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
+      liveTimerRef.current = setTimeout(() => flushLiveExchangeRef.current(), 1500);
+      return;
+    }
     const b = brokerSpeakerRef.current;
-    // Only send when someone other than the broker spoke — the broker reading
-    // the question alone is not an answer.
-    const hasNonBroker = b === null ? true : lines.some((l) => l.speaker !== b);
-    const words = lines.reduce((n, l) => n + l.text.split(/\s+/).length, 0);
-    if (!hasNonBroker || words < 3) return;
+    // Only send once the SELLER has said something substantive — the broker
+    // reading or rephrasing the question alone is not an answer.
+    const sellerWords = lines
+      .filter((l) => b === null || l.speaker !== b)
+      .reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length, 0);
+    if (sellerWords < 4) return;
     const text = lines
-      .filter((l) => !looksLikeQuestionEcho(l.text, currentQuestionRef.current))
+      // Only the broker's lines can be "the question being read aloud"; a
+      // seller who repeats the question's words is answering it.
+      .filter((l) => !(l.speaker === b && looksLikeQuestionEcho(l.text, currentQuestionRef.current)))
       .map((l) => `${speakerLabel(l.speaker)}: ${l.text}`)
       .join("\n");
     liveLinesRef.current = [];
@@ -725,6 +741,10 @@ export function AIConversationInterface({
     setLiveInterim("");
     if (text.trim()) void handleSendRef.current(text);
   }, [speakerLabel]);
+
+  const flushLiveExchangeRef = useRef(flushLiveExchange);
+  useEffect(() => { flushLiveExchangeRef.current = flushLiveExchange; }, [flushLiveExchange]);
+  useEffect(() => { isLoadingRef.current = isLoading; }, [isLoading]);
 
   const armLiveTimer = useCallback(() => {
     if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
@@ -1470,10 +1490,24 @@ export function AIConversationInterface({
         <div className="flex min-h-[420px] w-full shrink-0 flex-col border-t border-border bg-card/30 lg:min-h-0 lg:w-[400px] lg:border-l lg:border-t-0">
           <div className="shrink-0 border-b border-border px-4 py-2">
             <p className="text-[10px] font-semibold uppercase tracking-widest text-muted-foreground">Live transcript</p>
-            {renderLiveTranscript("mt-1.5", 6) ?? (
+            {renderLiveTranscript("mt-1.5", 8) ?? (
               <p className="mt-1 text-xs text-muted-foreground/70">
                 {callState === "live" ? "Listening — what the seller says appears here." : "Starts when you join the call."}
               </p>
+            )}
+            {liveLines.length > 0 && (
+              <div className="mt-1.5 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+                <span>{isLoading ? "Held until the AI finishes its reply…" : "Sends automatically 5 seconds after the seller stops."}</span>
+                <button
+                  type="button"
+                  className="shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-40"
+                  disabled={isLoading}
+                  onClick={() => { if (liveTimerRef.current) clearTimeout(liveTimerRef.current); flushLiveExchangeRef.current(); }}
+                  data-testid="button-send-exchange-now"
+                >
+                  Send now
+                </button>
+              </div>
             )}
           </div>
           <div ref={callChatScrollRef} className="min-h-0 flex-1 overflow-y-auto">
