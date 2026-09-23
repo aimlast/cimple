@@ -86,6 +86,29 @@ export interface InterviewCall {
   endedAt?: string;
 }
 
+/** One data point the interview aims to capture, beyond the generic CIM fields. */
+export interface InterviewPlanItem {
+  /** camelCase extractedInfo key the interview records the answer under. */
+  key: string;
+  /** Plain label a broker understands, e.g. "Active patients (last 18 months)". */
+  label: string;
+  /** CIM section key (see CIM_SECTIONS). */
+  sectionKey: string;
+  /** Marked [CRITICAL] / mandatory for this industry. */
+  critical: boolean;
+  /** An existing extractedInfo key whose value already answers this item (set when the checklist is built). */
+  answeredByKey?: string | null;
+}
+
+/** Industry-specific data checklist for a deal, keyed to the industry it was built for. */
+export interface InterviewPlan {
+  industry: string;
+  subIndustry?: string | null;
+  computedAt: string;
+  status: "ready" | "failed";
+  items: InterviewPlanItem[];
+}
+
 /** The notetaker bot on an external call (Recall.ai). */
 export interface InterviewBot {
   botId: string;
@@ -103,6 +126,10 @@ export interface InterviewOutline {
   /** CIM section keys the broker removed from this interview. */
   excludedSections: string[];
   emphasis: OutlineEmphasis[];
+  /** Data points the broker added to a section ("also get the chair count"). */
+  addedItems?: { sectionKey: string; key: string; label: string }[];
+  /** Data point keys the broker removed from the checklist. */
+  removedItems?: string[];
   /** Most recent instructions applied (newest first, capped). */
   history: OutlineHistoryEntry[];
 }
@@ -218,6 +245,9 @@ export const deals = pgTable("deals", {
   interviewCall: jsonb("interview_call").$type<InterviewCall>(),
   // The Recall.ai notetaker bot sent to the broker's own Zoom/Meet/Teams call.
   interviewBot: jsonb("interview_bot").$type<InterviewBot>(),
+  // Industry-specific data checklist per CIM section (what the interview is
+  // trying to capture for THIS kind of business). See server/interview/interview-plan.ts.
+  interviewPlan: jsonb("interview_plan").$type<InterviewPlan>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section

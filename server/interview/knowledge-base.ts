@@ -3,6 +3,7 @@ import { CIM_SECTIONS } from "@shared/schema";
 import type { SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 import { getSectionImportance, renderSectionImportanceForPrompt } from "./section-importance";
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
+import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import type { SellerCommunicationProfile } from "./eq-profiler";
 
@@ -109,9 +110,20 @@ export interface SectionCoverage {
   // Which extracted fields map to this section and their current values
   fields: Array<{
     fieldName: string;
+    /** Human label (industry checklist items and broker-added items). */
+    label?: string;
+    /** Came from the industry checklist or the broker, not the generic map. */
+    industrySpecific?: boolean;
+    critical?: boolean;
     value: string | null;
     confidence: "confirmed" | "inferred" | "approximate" | "unknown";
   }>;
+}
+
+/** Per-deal additions/removals to the generic section fields (industry checklist + broker edits). */
+export interface CoverageFieldAdjustments {
+  add?: Record<string, { key: string; label: string; critical?: boolean; alias?: string | null }[]>;
+  remove?: ReadonlySet<string>;
 }
 
 export interface IndustryContext {
@@ -174,7 +186,7 @@ export interface PriorSessionSummary {
 
 // Maps each CIM section to the extractedInfo fields that populate it.
 // This is how we determine coverage per section.
-const SECTION_FIELD_MAP: Record<string, string[]> = {
+export const SECTION_FIELD_MAP: Record<string, string[]> = {
   overview: [
     "businessName", "industry", "companyHistory", "yearsOperating",
     "entityType", "brandIdentity", "missionStatement", "coreValues",
@@ -291,7 +303,7 @@ export function assembleKnowledgeBase(
       description: deal.description,
       location: parseLocation(deal, questionnaireData),
     },
-    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections),
+    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
     sectionImportance,
     outline,
     conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
@@ -516,7 +528,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   }
   parts.push("");
   parts.push(`## CIM Section Coverage`);
-  parts.push(`This shows what information we have for each CIM section. Focus on "missing" and "partial" sections — critical ones first.`);
+  parts.push(`This shows what information we have for each CIM section. Focus on "missing" and "partial" sections — critical ones first. Items with a label in brackets are this industry's specific data points (or ones the broker added): when the seller answers one, record it in extractedFields under EXACTLY that key (e.g. operatoryCount), so the broker's checklist ticks it off.`);
 
   for (const section of kb.sectionCoverage) {
     const icon = section.status === "well_covered" ? "[COVERED]"
@@ -531,10 +543,11 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     }
 
     for (const field of section.fields) {
+      const name = field.label ? `${field.fieldName} (${field.label}${field.critical ? " — CRITICAL for this industry" : ""})` : field.fieldName;
       if (field.value) {
-        parts.push(`  - ${field.fieldName}: ${field.value} (${field.confidence})`);
+        parts.push(`  - ${name}: ${field.value} (${field.confidence})`);
       } else {
-        parts.push(`  - ${field.fieldName}: NOT YET CAPTURED`);
+        parts.push(`  - ${name}: NOT YET CAPTURED`);
       }
     }
   }
@@ -649,12 +662,24 @@ export function buildSectionCoverage(
   importanceMap?: SectionImportanceMap,
   /** CIM section keys the broker removed from this interview — left out entirely. */
   excludedSections: string[] = [],
+  /** Industry checklist items and broker edits for this deal. */
+  adjustments?: CoverageFieldAdjustments,
 ): SectionCoverage[] {
   return CIM_SECTIONS.filter((section) => !excludedSections.includes(section.key)).map((section) => {
     const importance = importanceMap?.sections[section.key];
-    const fieldNames = SECTION_FIELD_MAP[section.key] || [];
-    const fields = fieldNames.map((fieldName) => {
-      const raw = extractedInfo[fieldName as keyof ExtractedInfo] ?? null;
+    const core = SECTION_CORE_FIELDS[section.key] ?? [];
+    const generic = (SECTION_FIELD_MAP[section.key] || [])
+      .filter((f) => core.includes(f) || !adjustments?.remove?.has(f))
+      .map((f) => ({ key: f, label: undefined as string | undefined, extra: false, critical: false }));
+    const seen = new Set(generic.map((g) => g.key));
+    const extras = (adjustments?.add?.[section.key] ?? [])
+      .filter((x) => !seen.has(x.key) && !adjustments?.remove?.has(x.key) && (seen.add(x.key), true))
+      .map((x) => ({ key: x.key, label: x.label as string | undefined, extra: true, critical: !!x.critical, alias: x.alias ?? null }));
+    const fields = [...generic.map((g) => ({ ...g, alias: null as string | null })), ...extras].map(({ key: fieldName, label, extra, critical, alias }) => {
+      // A checklist item may already be answered by a fact stored under a
+      // general key (e.g. associate agreements inside keyEmployees).
+      const own = extractedInfo[fieldName as keyof ExtractedInfo] ?? null;
+      const raw = isSubstantiveValue(own) ? own : alias ? (extractedInfo[alias as keyof ExtractedInfo] ?? null) : own;
       // Quality gate: junk placeholders don't count as answers
       const value = isSubstantiveValue(raw) ? (raw as string) : null;
       const sessionConf = confidenceLevels?.[fieldName];
@@ -662,7 +687,7 @@ export function buildSectionCoverage(
         !value ? "unknown"
         : sessionConf === "confirmed" || sessionConf === "approximate" ? sessionConf
         : "inferred";
-      return { fieldName, value, confidence };
+      return { fieldName, value, confidence, ...(label ? { label } : {}), ...(extra ? { industrySpecific: true, critical } : {}) };
     });
 
     const populatedCount = fields.filter((f) => f.value !== null).length;
