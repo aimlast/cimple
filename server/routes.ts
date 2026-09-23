@@ -1336,6 +1336,56 @@ Return JSON only.`,
     }
   });
 
+  // The seller's link to join the call. Reuses the deal's seller invite
+  // (creating one from the broker-supplied email if the deal has none) and,
+  // only when the broker asks, emails the link to the seller.
+  app.get("/api/interview/:dealId/call/seller-link", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const invites = await storage.getSellerInvitesByDealId(req.params.dealId);
+      const primary = invites.find((i) => i.status === "accepted") ?? invites.find((i) => i.status === "sent") ?? invites[0];
+      if (!primary) return res.json({ link: null });
+      res.json({ link: `${appBase(req)}/seller/${primary.token}/call`, sellerName: primary.sellerName, sellerEmail: primary.sellerEmail });
+    } catch (error: any) {
+      res.status(500).json({ error: "Couldn't load the seller's link" });
+    }
+  });
+
+  app.post("/api/interview/:dealId/call/seller-link", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const email = typeof req.body?.sellerEmail === "string" ? req.body.sellerEmail.trim() : "";
+      const name = typeof req.body?.sellerName === "string" ? req.body.sellerName.trim() : "";
+      const send = req.body?.send === true;
+      if (send && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return res.status(400).json({ error: "Enter the seller's email address to send the link" });
+      const existing = await storage.getSellerInvitesByDealId(deal.id);
+      const primary = existing.find((i) => i.status === "accepted") ?? existing.find((i) => i.status === "sent") ?? existing[0];
+      const invite = email
+        ? await findOrCreateSellerInvite(deal.id, email, name || null)
+        : primary ?? await findOrCreateSellerInvite(deal.id, "", name || null);
+      const link = `${appBase(req)}/seller/${invite.token}/call`;
+      let emailSent = false;
+      if (send) {
+        const who = invite.sellerName || name;
+        emailSent = await sendDirectEmail(
+          email,
+          `${deal.businessName}: join the video call with your broker`,
+          `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1a1815">
+            <p>${who ? `Hi ${who.replace(/</g, "&lt;")},` : "Hi,"}</p>
+            <p>Your broker is ready to go through your business overview with you on a video call.</p>
+            <p><a href="${link}" style="display:inline-block;background:#B08D57;color:#151311;padding:10px 18px;border-radius:6px;text-decoration:none;font-weight:600">Join the call</a></p>
+            <p style="color:#6b655c;font-size:13px">The link opens in your browser — nothing to install. If your broker hasn't started yet, the page waits and joins you automatically.</p>
+          </div>`,
+        );
+        if (emailSent && invite.status !== "accepted") await storage.updateSellerInvite(invite.id, { sentAt: new Date(), status: "sent" as const });
+      }
+      res.json({ link, sellerName: invite.sellerName, sellerEmail: invite.sellerEmail, emailSent });
+    } catch (error: any) {
+      console.error("[call] seller link failed:", error);
+      res.status(500).json({ error: "Couldn't create the seller's link" });
+    }
+  });
+
   app.post("/api/interview/:dealId/call/end", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const deal = await storage.getDeal(req.params.dealId);

@@ -142,6 +142,10 @@ export function AIConversationInterface({
   const [callState, setCallState] = useState<"idle" | "joining" | "live" | "ended" | "error">("idle");
   const [callError, setCallError] = useState<string | null>(null);
   const [sellerCallLink, setSellerCallLink] = useState<string | null>(null);
+  const [sellerEmail, setSellerEmail] = useState("");
+  const [sellerName, setSellerName] = useState("");
+  const [linkBusy, setLinkBusy] = useState<"create" | "send" | null>(null);
+  const [linkSentTo, setLinkSentTo] = useState<string | null>(null);
   // Notetaker bot on the broker's own Zoom / Meet / Teams call (Recall.ai).
   const externalCall = together && (via === "zoom" || via === "meet" || via === "teams");
   const [botMeetingUrl, setBotMeetingUrl] = useState(meetingLink || "");
@@ -789,12 +793,6 @@ export function AIConversationInterface({
         if (r.status === 503) throw new Error("The video call service isn't set up on this server.");
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't start the call");
         const { roomUrl, token } = await r.json();
-        // The seller joins from their own link — surface it for the broker to send.
-        try {
-          const inv = await fetch(`/api/deals/${dealId}/invites`, { credentials: "include" }).then((x) => (x.ok ? x.json() : []));
-          const primary = Array.isArray(inv) ? inv.find((i: any) => i.status === "accepted") ?? inv.find((i: any) => i.status === "sent") ?? inv[0] : null;
-          if (primary?.token) setSellerCallLink(`${window.location.origin}/seller/${primary.token}/call`);
-        } catch { /* link is a convenience */ }
         if (cancelled || !callContainerRef.current) return;
         brokerSpeakerRef.current = 0;
         setBrokerSpeaker(0);
@@ -900,6 +898,46 @@ export function AIConversationInterface({
       void fetch(`/api/interview/${dealId}/call/bot/stop`, { method: "POST", credentials: "include", keepalive: true });
     }
   }, [dealId]);
+
+  // The seller's link to the call — loaded as soon as the call page opens.
+  useEffect(() => {
+    if (!inCimpleCall) return;
+    fetch(`/api/interview/${dealId}/call/seller-link`, { credentials: "include" })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        if (d.link) setSellerCallLink(d.link);
+        if (d.sellerEmail) setSellerEmail(d.sellerEmail);
+        if (d.sellerName) setSellerName(d.sellerName);
+      })
+      .catch(() => {});
+  }, [inCimpleCall, dealId]);
+
+  const requestSellerLink = useCallback(async (send: boolean) => {
+    setLinkBusy(send ? "send" : "create");
+    try {
+      const r = await fetch(`/api/interview/${dealId}/call/seller-link`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ sellerEmail: sellerEmail.trim(), sellerName: sellerName.trim(), send }),
+        credentials: "include",
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "Couldn't get the seller's link");
+      setSellerCallLink(d.link);
+      if (send) {
+        if (d.emailSent) { setLinkSentTo(sellerEmail.trim()); toast({ title: "Link sent", description: `Emailed to ${sellerEmail.trim()}.` }); }
+        else toast({ title: "Email didn't send", description: "Copy the link and send it yourself.", variant: "destructive" });
+      } else {
+        const ok = await navigator.clipboard?.writeText(d.link).then(() => true).catch(() => false);
+        toast({ title: ok ? "Seller's link copied" : "Seller's link ready", description: ok ? "Paste it into a text or email to the seller." : d.link });
+      }
+    } catch (err: any) {
+      toast({ title: "Couldn't get the seller's link", description: err?.message, variant: "destructive" });
+    } finally {
+      setLinkBusy(null);
+    }
+  }, [dealId, sellerEmail, sellerName, toast]);
 
   const listening = liveActive || handsFree;
   const listenLabel = liveStarting ? "Starting…" : listening ? "Stop listening" : "Listen";
@@ -1077,16 +1115,59 @@ export function AIConversationInterface({
                 {callState === "error" && (callError || "Couldn't start the call")}
                 {callState === "live" && callError && ` ${callError}`}
               </span>
+            </div>
+            {/* Invite the seller — always visible, works whether or not the deal has an invite yet */}
+            <div className="mt-2 rounded-lg border border-teal/30 bg-teal/5 px-3 py-2.5 text-xs space-y-2" data-testid="seller-call-invite">
+              <p className="font-medium">
+                Invite the seller to this call
+                {linkSentTo && <span className="ml-2 font-normal text-success">Sent to {linkSentTo}</span>}
+              </p>
               {sellerCallLink && (
-                <button
-                  type="button"
-                  className="inline-flex items-center gap-1 hover:text-foreground shrink-0"
-                  onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's call link copied", description: "Send it to the seller — they join with one click." })); }}
-                  data-testid="button-copy-seller-call-link"
-                >
-                  <Copy className="h-3 w-3" /> Copy seller's link
-                </button>
+                <div className="flex items-center gap-2">
+                  <span className="flex-1 min-w-0 truncate rounded border border-border bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground" title={sellerCallLink}>{sellerCallLink}</span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-7 text-xs gap-1 shrink-0"
+                    onClick={() => { void navigator.clipboard?.writeText(sellerCallLink).then(() => toast({ title: "Seller's link copied", description: "Paste it into a text or email to the seller." })); }}
+                    data-testid="button-copy-seller-call-link"
+                  >
+                    <Copy className="h-3 w-3" /> Copy link
+                  </Button>
+                </div>
               )}
+              <div className="flex flex-wrap items-center gap-2">
+                <input
+                  value={sellerName}
+                  onChange={(e) => setSellerName(e.target.value)}
+                  placeholder="Seller's name"
+                  className="h-7 w-36 rounded border border-border bg-background px-2 text-xs"
+                  data-testid="input-seller-call-name"
+                />
+                <input
+                  value={sellerEmail}
+                  onChange={(e) => setSellerEmail(e.target.value)}
+                  placeholder="Seller's email"
+                  type="email"
+                  className="h-7 flex-1 min-w-[180px] rounded border border-border bg-background px-2 text-xs"
+                  data-testid="input-seller-call-email"
+                />
+                <Button
+                  size="sm"
+                  className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
+                  onClick={() => void requestSellerLink(true)}
+                  disabled={!!linkBusy || !sellerEmail.trim()}
+                  data-testid="button-email-seller-call-link"
+                >
+                  {linkBusy === "send" ? "Sending…" : "Email the link"}
+                </Button>
+                {!sellerCallLink && (
+                  <Button size="sm" variant="outline" className="h-7 text-xs" onClick={() => void requestSellerLink(false)} disabled={!!linkBusy} data-testid="button-create-seller-call-link">
+                    {linkBusy === "create" ? "Creating…" : "Just give me the link"}
+                  </Button>
+                )}
+              </div>
+              <p className="text-[11px] text-muted-foreground">The seller opens the link in their browser — nothing to install — and joins as soon as you're in the call.</p>
             </div>
           </div>
         </div>
