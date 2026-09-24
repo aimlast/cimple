@@ -48,6 +48,17 @@ const TREND_ICONS = {
   ),
 };
 
+// A currency unit reads as "$250,000", not "250,000 $".
+const CURRENCY_UNIT = /^(?:[A-Z]{0,3}\s?[$€£¥]|[$€£¥]\s?[A-Z]{0,3})$/;
+function isCurrencyUnit(unit: string): boolean {
+  return CURRENCY_UNIT.test(unit.trim());
+}
+function currencyPrefix(metric: { value: unknown; unit?: string }): string {
+  if (!metric.unit || !isCurrencyUnit(metric.unit)) return "";
+  const sym = metric.unit.trim();
+  return String(metric.value).trim().startsWith(sym) || /^[$€£¥]/.test(String(metric.value).trim()) ? "" : sym;
+}
+
 export function MetricGridRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: MetricGridLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const metrics = data.metrics || [];
@@ -90,9 +101,9 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
             {/* Value */}
             <div className="flex items-baseline gap-1.5">
               <span className="text-2xl font-semibold tracking-tight text-foreground">
-                {metric.value}
+                {currencyPrefix(metric) + String(metric.value)}
               </span>
-              {metric.unit && (
+              {metric.unit && !isCurrencyUnit(metric.unit) && (
                 <span className="text-xs text-muted-foreground font-medium">{metric.unit}</span>
               )}
             </div>
