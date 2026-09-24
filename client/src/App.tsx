@@ -19,6 +19,7 @@ import Support from "@/pages/Support";
 import NewDeal from "@/pages/NewDeal";
 import DealShell from "@/pages/broker/deal/DealShell";
 import TogetherInterview from "@/pages/TogetherInterview";
+import { UpdateNotice } from "@/components/UpdateNotice";
 import SellerCall from "@/pages/seller/SellerCall";
 import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
@@ -337,6 +338,7 @@ export default function App() {
             </WouterRouter>
           </RoleProvider>
           <Toaster />
+          <UpdateNotice />
         </TooltipProvider>
       </ThemeProvider>
     </QueryClientProvider>
