@@ -298,7 +298,9 @@ Goal throughout: get a few real brokerages into beta. Everything below is merged
 - [ ] Enable Anthropic API auto-reload — credits hit zero during testing and interviews degraded.
 - [ ] Lawyer review of `legal/` drafts (fill legal entity name, address).
 - [ ] Optional: Sentry DSN, uptime monitor on `/api/health`, confirm Railway Postgres backups.
-- [ ] Set own passwords on the demo accounts (temporary passwords were set during testing), and delete the inert `ENABLE_DEV_SWITCHER` Railway variable.
+- [ ] Set own passwords on the demo accounts (temporary passwords were set during testing).
+- [x] Railway past-due balance paid; inert `ENABLE_DEV_SWITCHER` variable deleted; unused Deepgram keys removed (2026-09-23).
+- [ ] Real-call tests of the three "Interview together" modes (founder, pending).
 - [ ] Confirm GoDaddy DNS for www.cimple.ca → Railway and apex forwarding.
 
 ### Known issues
