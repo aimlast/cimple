@@ -3,8 +3,9 @@ import { createPortal } from "react-dom";
 import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle } from "lucide-react";
 import { usePictureInPicture } from "@/lib/pip";
 import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
-import { joinDailyCall, type CallHandle } from "@/lib/daily-call";
-import DailyIframe from "@daily-co/daily-js";
+import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
+import DailyIframe, { type DailyCall } from "@daily-co/daily-js";
+import { CallStage } from "@/components/call/CallStage";
 import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -142,8 +143,10 @@ export function AIConversationInterface({
   const isLoadingRef = useRef(false);
   // In-Cimple video call (Daily) — together mode with via="cimple".
   const inCimpleCall = together && via === "cimple";
-  const callContainerRef = useRef<HTMLDivElement>(null);
   const callHandleRef = useRef<CallHandle | null>(null);
+  const [callObject, setCallObject] = useState<DailyCall | null>(null);
+  // Bumped by "Rejoin" to run the call startup again after leaving.
+  const [callAttempt, setCallAttempt] = useState(0);
   const [callState, setCallState] = useState<"idle" | "joining" | "live" | "ended" | "error">("idle");
   const [callError, setCallError] = useState<string | null>(null);
   const [sellerCallLink, setSellerCallLink] = useState<string | null>(null);
@@ -830,19 +833,18 @@ export function AIConversationInterface({
         if (r.status === 503) throw new Error("The video call service isn't set up on this server.");
         if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't start the call");
         const { roomUrl, token } = await r.json();
-        // The frame's container renders with the page; wait a tick if needed.
-        for (let i = 0; i < 20 && !callContainerRef.current; i++) await new Promise((res) => setTimeout(res, 100));
-        if (!callContainerRef.current) throw new Error("The call area didn't load — refresh the page.");
         brokerSpeakerRef.current = 0;
         setBrokerSpeaker(0);
-        callHandleRef.current = await joinDailyCall({
-          container: callContainerRef.current,
+        // Our own call screen renders from this object; Daily only carries media.
+        const call = createDailyCall();
+        setCallObject(call);
+        callHandleRef.current = await joinDailyCall(call, {
           roomUrl,
           token,
           onTranscript: (line) => {
             onLiveSegmentRef.current({ speaker: line.local ? 0 : 1, text: line.text, isFinal: line.isFinal, speechFinal: false });
           },
-          onLeft: () => setCallState("ended"),
+          onLeft: () => { setCallState("ended"); setLiveActive(false); },
           onError: (m) => { setCallError(m); },
           onRemoteCount: setRemoteCount,
         });
@@ -855,7 +857,24 @@ export function AIConversationInterface({
       }
     };
     void start();
-  }, [inCimpleCall, sessionId, dealId]);
+  }, [inCimpleCall, sessionId, dealId, callAttempt]);
+
+  /** Leave button on the stage — the room stays open so the broker can rejoin. */
+  const leaveCall = useCallback(async () => {
+    const h = callHandleRef.current;
+    callHandleRef.current = null;
+    setCallObject(null);
+    setCallState("ended");
+    setLiveActive(false);
+    if (h) await h.leave();
+  }, []);
+
+  const rejoinCall = useCallback(() => {
+    callStartedRef.current = false;
+    setCallError(null);
+    setCallState("idle");
+    setCallAttempt((n) => n + 1);
+  }, []);
 
   // Leaving the page ends the call for everyone and clears the room.
   // Also covers leaving before actually joining (e.g. still on the camera
@@ -865,7 +884,7 @@ export function AIConversationInterface({
       void callHandleRef.current.leave();
       callHandleRef.current = null;
     } else {
-      try { DailyIframe.getCallInstance()?.destroy(); } catch { /* no frame */ }
+      try { DailyIframe.getCallInstance()?.destroy(); } catch { /* no call */ }
     }
     if (callStartedRef.current) {
       callStartedRef.current = false;
@@ -1463,12 +1482,6 @@ export function AIConversationInterface({
       </AlertDialog>
   );
 
-  const callStatusText =
-    callState === "joining" ? "Starting the call… if the video window asks, click Join."
-    : callState === "live" ? `In the call — Cimple is transcribing; the seller's answers send automatically after a pause.${callError ? ` ${callError}` : ""}`
-    : callState === "ended" ? "Call ended."
-    : callState === "error" ? (callError || "Couldn't start the call")
-    : "";
 
   // ── In-Cimple video call: video big on the left with the question under
   // it; transcript + conversation + notes in a column on the right. ──
@@ -1477,12 +1490,24 @@ export function AIConversationInterface({
       <div className="flex h-full min-h-0 flex-col lg:flex-row" data-testid="call-layout">
         <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 overflow-y-auto p-4">
           <div className="shrink-0">{inviteView}</div>
-          <div
-            ref={callContainerRef}
-            className="min-h-[300px] flex-1 overflow-hidden rounded-xl border border-border bg-card"
-            data-testid="broker-call-frame"
-          />
-          <p className="shrink-0 -mt-1 text-[11px] text-muted-foreground">{callStatusText}</p>
+          {callState === "ended" || callState === "error" ? (
+            <div className="flex min-h-[300px] flex-1 flex-col items-center justify-center gap-3 rounded-xl bg-[#0c0b0a] text-sm text-[#9C958A]" data-testid="broker-call-frame">
+              <span>{callState === "ended" ? "You left the call." : (callError || "Couldn't start the call")}</span>
+              <Button size="sm" className="bg-teal text-teal-foreground hover:bg-teal/90" onClick={rejoinCall} data-testid="button-rejoin-call">
+                {callState === "ended" ? "Rejoin the call" : "Try again"}
+              </Button>
+            </div>
+          ) : (
+            <CallStage
+              call={callObject}
+              selfLabel="You"
+              otherLabel={sellerName || "Seller"}
+              waitingText="Waiting for the seller to join…"
+              onLeave={() => void leaveCall()}
+              className="min-h-[300px] flex-1"
+            />
+          )}
+          {callState === "live" && callError && <p className="shrink-0 -mt-1 text-[11px] text-red-400">{callError}</p>}
           <div className="shrink-0 [&_[data-testid=together-panel]]:max-w-none [&_[data-testid=together-panel]]:mb-0">
             {renderTogetherPanel(false)}
           </div>

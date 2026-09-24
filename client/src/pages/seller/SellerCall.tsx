@@ -8,7 +8,9 @@
 import { useEffect, useRef, useState } from "react";
 import { useParams, useLocation } from "wouter";
 import { useQuery } from "@tanstack/react-query";
-import { joinDailyCall, type CallHandle } from "@/lib/daily-call";
+import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
+import { CallStage } from "@/components/call/CallStage";
+import type { DailyCall } from "@daily-co/daily-js";
 import { Button } from "@/components/ui/button";
 import { Loader2, Video, ArrowLeft } from "lucide-react";
 
@@ -23,8 +25,8 @@ interface CallInfo {
 export default function SellerCall() {
   const { token } = useParams<{ token: string }>();
   const [, setLocation] = useLocation();
-  const containerRef = useRef<HTMLDivElement>(null);
   const handleRef = useRef<CallHandle | null>(null);
+  const [callObject, setCallObject] = useState<DailyCall | null>(null);
   const [joined, setJoined] = useState(false);
   const [left, setLeft] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -41,10 +43,11 @@ export default function SellerCall() {
   });
 
   useEffect(() => {
-    if (!data?.active || !data.roomUrl || !data.token || joined || !containerRef.current) return;
+    if (!data?.active || !data.roomUrl || !data.token || joined || handleRef.current) return;
     let cancelled = false;
-    joinDailyCall({
-      container: containerRef.current,
+    const call = createDailyCall();
+    setCallObject(call);
+    joinDailyCall(call, {
       roomUrl: data.roomUrl,
       token: data.token,
       onLeft: () => { setLeft(true); },
@@ -76,7 +79,16 @@ export default function SellerCall() {
           </div>
         ) : (
           <>
-            <div ref={containerRef} className={`h-full w-full ${data?.active ? "" : "hidden"}`} data-testid="seller-call-frame" />
+            {data?.active && (
+              <CallStage
+                call={callObject}
+                selfLabel="You"
+                otherLabel="Your broker"
+                waitingText="Waiting for your broker…"
+                onLeave={() => { const h = handleRef.current; handleRef.current = null; setCallObject(null); setLeft(true); void h?.leave(); }}
+                className="h-full w-full"
+              />
+            )}
             {!data?.active && (
               <div className="h-full flex items-center justify-center">
                 <div className="max-w-sm text-center space-y-3">
