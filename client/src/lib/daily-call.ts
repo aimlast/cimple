@@ -1,6 +1,8 @@
 /**
- * Daily call helpers — one place that knows how to embed Daily's prebuilt
- * call UI and, for the broker (owner), turn on per-participant transcription.
+ * Daily call helpers — the audio/video transport and transcription for the
+ * in-Cimple call. We use Daily's headless "call object" (no Prebuilt iframe):
+ * the call screen itself is ours (components/call/CallStage.tsx), so it looks
+ * like Meet/Zoom instead of Daily's own UI boxed inside our page.
  *
  * Transcript lines arrive with the speaking participant's session id, so the
  * broker's browser can label them "Broker" (local) / "Seller" (remote) with
@@ -22,7 +24,6 @@ export interface TranscriptLine {
 }
 
 interface JoinOptions {
-  container: HTMLElement;
   roomUrl: string;
   token: string;
   /** Owner only: start transcription and receive lines. */
@@ -33,30 +34,14 @@ interface JoinOptions {
   onRemoteCount?: (count: number) => void;
 }
 
-/** Colours matched to the app's dark theme so the embedded UI doesn't glare. */
-const THEME = {
-  colors: {
-    accent: "#B08D57",
-    accentText: "#151311",
-    background: "#0F0E0C",
-    backgroundAccent: "#1A1815",
-    baseText: "#EDE7DA",
-    border: "#2A2723",
-    mainAreaBg: "#0F0E0C",
-    mainAreaBgAccent: "#1A1815",
-    mainAreaText: "#EDE7DA",
-    supportiveText: "#9C958A",
-  },
-};
+/** One call object per page — Daily allows a single instance at a time. */
+export function createDailyCall(): DailyCall {
+  const existing = DailyIframe.getCallInstance();
+  if (existing) existing.destroy();
+  return DailyIframe.createCallObject({ subscribeToTracksAutomatically: true });
+}
 
-export async function joinDailyCall(opts: JoinOptions): Promise<CallHandle> {
-  const call = DailyIframe.createFrame(opts.container, {
-    showLeaveButton: true,
-    showFullscreenButton: false,
-    iframeStyle: { width: "100%", height: "100%", border: "0", borderRadius: "12px" },
-    theme: THEME,
-  });
-
+export async function joinDailyCall(call: DailyCall, opts: JoinOptions): Promise<CallHandle> {
   let transcriptionStarted = false;
   call.on("transcription-message", (ev: DailyEventObjectTranscriptionMessage) => {
     if (!opts.onTranscript) return;
@@ -77,8 +62,9 @@ export async function joinDailyCall(opts: JoinOptions): Promise<CallHandle> {
   call.on("participant-left", reportRemote);
   call.on("joined-meeting", reportRemote);
   call.on("error", (ev) => opts.onError?.(ev?.errorMsg || "Call error"));
+  call.on("camera-error", (ev: any) => opts.onError?.(ev?.errorMsg?.errorMsg || ev?.error?.msg || "Camera or microphone blocked — allow access in the browser's address bar."));
 
-  await call.join({ url: opts.roomUrl, token: opts.token });
+  await call.join({ url: opts.roomUrl, token: opts.token, startVideoOff: false, startAudioOff: false });
 
   if (opts.onTranscript) {
     try {
@@ -110,7 +96,7 @@ export async function joinDailyCall(opts: JoinOptions): Promise<CallHandle> {
     leave: async () => {
       try { if (transcriptionStarted) await call.stopTranscription(); } catch { /* fine */ }
       try { await call.leave(); } catch { /* fine */ }
-      call.destroy();
+      try { call.destroy(); } catch { /* already destroyed */ }
     },
   };
 }
