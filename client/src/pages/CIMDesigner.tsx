@@ -526,11 +526,13 @@ export default function CIMDesigner() {
         <div className="flex flex-1 overflow-hidden">
 
           {/* LEFT: section list ────────────────────────────────────────────── */}
-          <div className="w-[220px] shrink-0 border-r border-border flex flex-col bg-card">
+          <div className="w-[250px] shrink-0 border-r border-border flex flex-col bg-card">
             <div className="px-3 py-2 border-b border-border">
               <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sections</p>
             </div>
-            <ScrollArea className="flex-1">
+            {/* Radix wraps content in a display:table div that grows to the
+                widest row, which clipped long titles — force it to the panel width. */}
+            <ScrollArea className="flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
               {sectionsLoading ? (
                 <div className="p-3 space-y-2">
                   {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-8 rounded" />)}
@@ -873,14 +875,14 @@ function SectionListItem({
       } ${hidden ? "opacity-60" : ""}`}
       onClick={onSelect}
     >
-      <div className="flex-1 min-w-0">
-        <p className={`text-xs truncate leading-tight ${isSelected ? "font-medium text-foreground" : ""} ${hidden ? "line-through" : ""}`}>
+      <div className="flex-1 min-w-0" title={displayTitle}>
+        <p className={`text-xs leading-snug break-words line-clamp-2 ${isSelected ? "font-medium text-foreground" : ""} ${hidden ? "line-through" : ""}`}>
           {displayTitle}
         </p>
         <p className="text-[10px] text-muted-foreground/60 truncate font-mono">{section.layoutType}</p>
       </div>
       {!readOnly && (
-        <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+        <div className="flex shrink-0 items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
           <Tooltip>
             <TooltipTrigger asChild>
               <button
