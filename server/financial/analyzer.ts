@@ -1111,11 +1111,12 @@ Respond with valid JSON matching this EXACT structure (this is the shape the bro
     "netIncome": { "2022": 140000, "2023": 170000 },
     "addbacks": [
       {
-        "label": "Owner salary above market",
-        "description": "Owner takes $200K; market replacement is $110K",
+        "label": "Owner compensation (President)",
+        "description": "Owner's salary + benefits on the P&L; a general manager for the role costs about $110K",
         "category": "owner_comp",
-        "type": "sde",
-        "amounts": { "2022": 80000, "2023": 85000 },
+        "ownerActualComp": { "2022": 190000, "2023": 195000 },
+        "marketSalary": 110000,
+        "amounts": { "2022": 190000, "2023": 195000 },
         "confidence": "high"
       }
     ],
@@ -1173,11 +1174,11 @@ RULES:
 - THE ROWS MUST TIE: for every year, Revenue + Other Income − (every other non-Excluded category) MUST equal the reported net income you put in normalization.netIncome. The rows are a reclassification of the source statement, not a rewrite — line items must sum to the source totals.
 - CARVE-OUTS: when you separate a one-time or non-recurring amount out of a line (e.g. a $28,000 renovation buried in Rent), you MUST reduce the parent line by the same amount (Rent = source Rent − 28,000; "Renovation (one-time)" = 28,000 under "Non-Recurring"). Never add a carve-out row while leaving the parent at its full amount — that double-counts the expense and breaks the tie.
 - Liability and expense values should be POSITIVE numbers (the UI subtracts them by category).
-- normalization.netIncome must be the reported net income per year; addbacks type "sde" = owner-specific (only applies to SDE), type "ebitda" = applies to both (D&A, interest, taxes, true one-offs). Removal of non-recurring INCOME (e.g. government grants) belongs as a NEGATIVE addback amount.
+- normalization.netIncome must be the reported net income per year. Add-backs apply to both adjusted EBITDA and SDE (type "ebitda"): D&A, interest, taxes, one-offs, AND owner perks run through the company, a relative's pay for a role the business doesn't need, and family pay above market. The only SDE-only amount is the working owner's market salary, which the code derives from "ownerActualComp" and "marketSalary" (so SDE = adjusted EBITDA + the market salary). Removal of non-recurring INCOME (e.g. government grants, insurance proceeds) belongs as a NEGATIVE addback amount.
 - DISTRIBUTIONS ARE NOT ADD-BACKS: dividends (any class), owner draws, and shareholder-loan repayments are paid out of after-tax profit on the balance sheet — nothing on the P&L to add back. Never include them in an add-back or in owner compensation; mention them in normalization.notes instead.
-- OWNER COMPENSATION add-back = the owner's actual salary/wages and benefits on the P&L minus a market replacement salary for the role they do (state both figures in the description). Never add a dividend to it.
-- A recovery, clawback or post-payment audit adjustment is a timing item, not income: never remove it as a negative add-back.
-- Every EBITDA or SDE figure you state (insights, notes, discrepancies) must equal net income + the add-backs you listed for that year — the code recomputes them and flags any figure that doesn't tie.
+- OWNER COMPENSATION: one add-back per working owner, category "owner_comp", with "ownerActualComp" = the owner's actual salary/wages + benefits on the P&L per year (never a dividend) and "marketSalary" = what it would cost to hire someone for the role they do (annual); put the actual compensation in "amounts" too. The code splits it: SDE adds back the owner's FULL compensation, adjusted EBITDA only the part above the market salary. If you cannot estimate a market salary, give "ownerActualComp" and leave "marketSalary" out.
+- A clawback the business had to REPAY (a drug-plan post-payment audit recovery, a recoupment) is a cost, not income: never remove it as a negative add-back (a one-time clawback may be added back as non-recurring). A recovery the business RECEIVED (insurance proceeds, a legal settlement, a one-time gain) is non-recurring income: remove it with a NEGATIVE add-back.
+- Every EBITDA or SDE figure you state (insights, notes, discrepancies) must tie to net income + the add-backs you listed for that year — adjusted EBITDA = net income + the non-owner add-backs + owner compensation above the market salary; SDE = adjusted EBITDA + the market salary (= net income + the non-owner add-backs + the owner's full compensation). The code recomputes both and flags any figure that doesn't tie.
 - addback category MUST be from: "owner_comp", "discretionary", "non_recurring", "one_time", "other".
 - workingCapital: use the latest period with a full balance sheet; list real line items. If NO source contains a balance sheet, set "workingCapital" to null — never estimate current assets or liabilities from a P&L, and never invent a net working capital figure.
 - Working capital is CASH-FREE, DEBT-FREE: exclude cash and equivalents, bank debt / lines of credit, the current portion of long-term debt, shareholder loans (either direction) and income taxes payable/receivable. Set pegAmount and targetNwc only from a trailing average of several periods' NWC; never set a peg equal to one period's NWC (use null).

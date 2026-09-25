@@ -19,9 +19,13 @@ export interface DiscrepancyCandidateLike {
   field: string;
   interviewValue?: string | null;
   documentValue?: string | null;
+  /** The model's own explanation (the check's `aiExplanation`, the analysis's `explanation`). */
+  explanation?: string | null;
+  aiExplanation?: string | null;
+  severity?: string | null;
 }
 
-export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported";
+export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "not_a_conflict";
 
 export interface FilterResult<T> {
   kept: T[];
@@ -38,8 +42,23 @@ function normText(v: string): string {
   return v.toLowerCase().replace(/[^a-z0-9%.$]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
-const MISSING_RE =
-  /^(?:—|-|–|n\/?a|none|unknown|not (?:provided|available|stated|specified|known)|no (?:data|value|information|document(?:s)?))\.?$|\bnot (?:uploaded|provided|available|on file|disclosed|found|stated|mentioned|specified|documented)\b|\bno\b[^.]{0,40}\b(?:uploaded|provided|on file|available) to (?:verify|confirm|check)\b|\b(?:has|have) not been (?:uploaded|provided)\b|\bmissing (?:document|documentation)\b|\bcannot be verified\b|\bnothing (?:uploaded|on file)\b/i;
+const MISSING_RE = new RegExp(
+  [
+    String.raw`^(?:—|-|–|n\/?a|none|unknown|not (?:provided|available|stated|specified|known)|no (?:data|value|information|document(?:s)?))\.?$`,
+    String.raw`\bnot (?:uploaded|provided|available|on file|disclosed|found|stated|mentioned|specified|documented)\b`,
+    // "no MSA uploaded to verify", "No Larkspur MSA document provided in
+    // uploaded documents to verify this claim", "no contract on file to confirm"
+    String.raw`\bno\b[^.;]{0,80}\b(?:uploaded|provided|on file|available|included|supplied|received)\b[^.;]{0,60}\bto (?:verify|confirm|check|support|substantiate|corroborate)\b`,
+    // "no supporting document in the uploaded documents", "no agreement on file"
+    String.raw`\bno\b[^.;]{0,60}\b(?:documents?|documentation|records?|evidence|support(?:ing)?|copy|agreement|contract)\b[^.;]{0,40}(?:\b(?:uploaded|provided|on file)\b|\bin the (?:uploaded |provided )?documents\b|\bin (?:the )?data ?room\b)`,
+    String.raw`\b(?:not|never|isn'?t|wasn'?t) (?:been )?(?:in|among|part of) (?:the )?(?:uploaded |provided )?documents\b`,
+    String.raw`\b(?:has|have) not been (?:uploaded|provided)\b`,
+    String.raw`\bmissing (?:document|documentation)\b`,
+    String.raw`\b(?:cannot|can'?t|could not|unable to) be (?:verified|confirmed|checked)\b`,
+    String.raw`\bnothing (?:uploaded|on file)\b`,
+  ].join("|"),
+  "i",
+);
 
 /** One side is absent, or says only that a document isn't there. */
 export function isMissingSide(v: string | null | undefined): boolean {
@@ -190,11 +209,31 @@ export function isAdjustedVsReported(item: DiscrepancyCandidateLike): boolean {
   return adjA !== adjB;
 }
 
+// The model's own explanation says the two sides don't actually conflict
+// ("a timing clarification rather than a conflict", "both can be true").
+const NOT_A_CONFLICT_RE =
+  /\b(?:(?:is|are|this is|it is|it's)\s+not\s+(?:a|an)\s+(?:real\s+|actual\s+|true\s+|genuine\s+|material\s+)?(?:conflict|discrepancy|contradiction|inconsistency)|(?:there is|there's)\s+no\s+(?:real\s+|actual\s+|true\s+|genuine\s+|material\s+)?(?:conflict|discrepancy|contradiction|inconsistency)|not\s+(?:actually\s+)?(?:contradictory|inconsistent|in conflict)|(?:do|does)\s+not\s+(?:actually\s+)?(?:contradict|conflict)|(?:timing|wording|terminology)\s+clarification|clarification\s+rather\s+than|rather\s+than\s+a\s+(?:conflict|discrepancy|contradiction)|both\s+(?:can|could|may)\s+be\s+(?:true|correct|accurate)|(?:sources|values|figures)\s+(?:are\s+)?(?:consistent|compatible|complementary))\b/i;
+const CONTRAST_AFTER_RE = /\b(?:but|however|although|though|yet|except)\b/i;
+
+/**
+ * The model reported a finding and, in its own explanation, said it isn't a
+ * conflict. Only for non-critical findings, and only when nothing after that
+ * statement walks it back ("not a conflict on the date, but the amount…").
+ */
+export function selfDeclaredNonConflict(item: DiscrepancyCandidateLike): boolean {
+  if ((item.severity ?? "").toLowerCase() === "critical") return false;
+  const text = item.explanation ?? item.aiExplanation ?? "";
+  const m = text.match(NOT_A_CONFLICT_RE);
+  if (!m || m.index === undefined) return false;
+  return !CONTRAST_AFTER_RE.test(text.slice(m.index + m[0].length));
+}
+
 /** Why a finding should be dropped, or null to keep it. */
 export function dropReason(item: DiscrepancyCandidateLike, today: Date = new Date()): DropReason | null {
   if (isMissingSide(item.interviewValue) || isMissingSide(item.documentValue)) return "missing_side";
   if (sidesEquivalent(item.interviewValue ?? "", item.documentValue ?? "", today)) return "equal";
   if (isAdjustedVsReported(item)) return "adjusted_vs_reported";
+  if (selfDeclaredNonConflict(item)) return "not_a_conflict";
   return null;
 }
 

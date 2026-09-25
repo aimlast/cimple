@@ -4,7 +4,7 @@
  */
 import assert from "node:assert/strict";
 import { filterDiscrepancyItems, dropReason, sidesEquivalent } from "../../server/cim/discrepancy-filter";
-import { buildDiscrepancyInput } from "../../server/cim/discrepancy-engine";
+import { buildDiscrepancyInput, conflictScore, focusSnippet } from "../../server/cim/discrepancy-engine";
 
 const today = new Date("2026-09-25T12:00:00Z");
 const item = (interviewValue: string, documentValue: string, field = "x") => ({ field, interviewValue, documentValue });
@@ -90,6 +90,61 @@ const item = (interviewValue: string, documentValue: string, field = "x") => ({ 
   assert.deepEqual(input.evidenceDocs.map((d) => d.id).sort(), ["lease", "ltc"]);
   assert.ok(input.claims.some((e) => e.key === "customerConcentration"));
   assert.ok(input.evidence.some((e) => e.key === "employees"), "a document's winning fact is evidence, not a seller claim");
+}
+
+// ── Round 2: missing-document wordings and self-declared non-conflicts ──
+{
+  const drop = (a: string, b: string, extra: Record<string, string> = {}) => dropReason({ field: "x", interviewValue: a, documentValue: b, ...extra }, today);
+  // Ridgeline's real noise row.
+  assert.equal(drop("Larkspur MSA has a 90-day termination clause", "No Larkspur MSA document provided in uploaded documents to verify this claim"), "missing_side");
+  assert.equal(drop("Signed supply agreement with Dow", "No supporting documentation on file"), "missing_side");
+  assert.equal(drop("Contract renews annually", "The contract is not among the uploaded documents"), "missing_side");
+  assert.equal(drop("Lease runs to 2029", "Cannot be confirmed from the documents provided"), "missing_side");
+  // Real values that merely contain "no" stay.
+  assert.equal(drop("No customer over 20%", "Maplecrest 41% of LTC revenue"), null);
+  assert.equal(drop("No written lease; month-to-month", "Lease to June 30, 2029"), null);
+  // The model called it a clarification, not a conflict (Beacon lease notice period).
+  assert.equal(
+    drop("Option window opens in 2028", "Written notice required 6 to 12 months before June 30, 2029", {
+      severity: "minor",
+      aiExplanation: "The seller's description is a timing clarification rather than a conflict: the notice window does open in 2028.",
+    }),
+    "not_a_conflict",
+  );
+  assert.equal(drop("24 licensed technicians", "22 licensed technicians", { severity: "significant", explanation: "Both could be true if two apprentices were licensed after the roster date." }), "not_a_conflict");
+  // …but never a critical, and never when the explanation walks it back.
+  assert.equal(drop("about a quarter", "41%", { severity: "critical", aiExplanation: "This is not a rounding difference; it is not a conflict of wording but of substance." }), null);
+  assert.equal(drop("2034", "June 30, 2029", { severity: "significant", aiExplanation: "There is no conflict on the address, but the expiry years differ." }), null);
+  assert.equal(drop("24 licensed technicians", "22 licensed technicians", { severity: "significant", aiExplanation: "The roster shows two fewer licensed technicians than the seller stated." }), null);
+}
+
+// ── Round 2: a claim is paired with the document statement about the same thing ──
+{
+  const docs = [
+    { id: "crm2", name: "CRM note — referral intake", category: "other", sourceKind: "crm", visibility: "broker_only", extractedText: "x", extractedData: null },
+    { id: "reg", name: "Regulatory & inspection file", category: "legal", sourceKind: "document", visibility: "shared", extractedText: "x", extractedData: null },
+    { id: "fs", name: "Financial statements FY2024", category: "financial", sourceKind: "document", visibility: "shared", extractedText: "x", extractedData: null },
+  ];
+  const info = {
+    leaseDetails: "Premises at Unit 3, 1742 Merivale Road, Ottawa (4,850 rentable sq ft). Lease expires June 30, 2029 with one five-year renewal option; base rent $26.50 per sq ft.",
+    _fieldSources: { leaseDetails: { source: "document", documentId: "fs" } },
+    _fieldAlternates: {
+      leaseDetails: [
+        { value: "Address: Merivale Rd, Ottawa; Expires: 2034", source: "crm", documentId: "crm2" },
+        { value: "Address: Unit 3, 1742 Merivale Road, Ottawa ON K2G 4A1", source: "document", documentId: "reg" },
+      ],
+    },
+  };
+  const input = buildDiscrepancyInput(info, docs);
+  const lease = input.candidates.find((x) => x.factKey === "leaseDetails");
+  assert.ok(lease, "the CRM expiry is a candidate");
+  assert.match(lease!.evidence.value, /June 30, 2029/, "paired with the lease statement, not the address");
+  assert.ok(conflictScore("Expires: 2034", lease!.evidence.value) >= 2);
+  assert.equal(conflictScore("Expires: 2034", "Address: Unit 3, 1742 Merivale Road"), 0);
+  // A long document statement is shown around the part that answers the claim.
+  const long = "Company also leases two automated strip-packaging units at $3,900 per month to October 2027, and a passenger vehicle used by the shareholder at $640 per month to March 2026. Premises leased at Unit 3 under a lease expiring June 30, 2029 with one five-year renewal option.";
+  assert.match(focusSnippet("Expires: 2034", long, 120), /2027|2026|2029/);
+  assert.ok(focusSnippet("Expires: 2034", long, 120).length <= 124);
 }
 
 console.log("discrepancy-filter: ok");

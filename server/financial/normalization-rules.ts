@@ -7,7 +7,10 @@
  *     shareholder-loan repayments come out of after-tax profit on the balance
  *     sheet; there is nothing on the P&L to add back. (Ridgeline: a $60K
  *     Class D dividend was added to owner comp — $268K — and inflated SDE.)
- *     A recovery or clawback is a timing item, not income to strip out.
+ *     A clawback the business repaid is a cost, never income to strip out.
+ *     Owner compensation is split: the part above a market salary counts
+ *     for EBITDA and SDE, the market salary for SDE only — SDE adds back the
+ *     owner's full pay, adjusted EBITDA only the excess.
  *  2. Working capital is cash-free and debt-free: cash, bank debt, the
  *     current portion of long-term debt, shareholder loans and income taxes
  *     are out of NWC, and a single period's NWC is never the peg.
@@ -29,14 +32,62 @@ const fmt = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
 
 // ── 1. Add-back rules ──
 
+/**
+ * A line that IS a payment to the owners out of after-tax profit: dividends
+ * (any class), owner/shareholder draws or distributions, shareholder-loan
+ * repayments. Deliberately narrow — "Distribution centre relocation" (a
+ * logistics one-off) and "Dividend income on investments" (non-operating
+ * income being removed) are ordinary add-backs, not distributions.
+ */
 export const DISTRIBUTION_RE =
-  /\b(?:dividends?|owner'?s?\s+draws?|draws?\s+(?:by|to)\s+(?:the\s+)?(?:owner|shareholders?)|shareholder\s+draws?|distributions?(?:\s+to\s+(?:owners?|shareholders?))?|(?:repayments?\s+of\s+)?shareholder(?:'s)?\s+loans?\s+(?:repaid|repayments?)|repayments?\s+of\s+(?:the\s+)?shareholder(?:'s)?\s+loans?)\b/i;
-export const RECOVERY_RE = /\b(?:recover(?:y|ies|ed)|claw-?backs?|post[- ]payment\s+(?:recovery|review|audit)|recoupments?)\b/i;
+  /\b(?:dividends?(?!\s+(?:income|revenue|received|earned|receivable))|owner'?s?\s+draws?|draws?\s+(?:by|to)\s+(?:the\s+)?(?:owners?|shareholders?|partners?)|(?:shareholder|owner|partner|member)s?'?\s+(?:draws?|distributions?)|distributions?\s+(?:paid\s+)?to\s+(?:the\s+)?(?:owners?|shareholders?|partners?|members?)|repayments?\s+of\s+(?:the\s+)?shareholder(?:'s)?\s+loans?|shareholder(?:'s)?\s+loans?\s+(?:repaid|repayments?))\b/i;
+/** A label that is nothing but "Distributions" / "Distributions paid". */
+const BARE_DISTRIBUTION_RE = /^\s*(?:distributions?|draws?)(?:\s+paid)?\s*$/i;
+/** Money coming IN (income, a gain) — never a distribution. */
+const INCOME_WORD_RE = /\b(?:income|revenue|received|earned|gain|interest\s+on)\b/i;
 
+export function isDistributionLine(ab: Pick<UiAddback, "label" | "amounts">): boolean {
+  const label = ab.label ?? "";
+  if (!DISTRIBUTION_RE.test(label) && !BARE_DISTRIBUTION_RE.test(label)) return false;
+  if (INCOME_WORD_RE.test(label)) return false;
+  // A distribution added back is always positive; a negative line is income
+  // being removed.
+  return !Object.values(ab.amounts ?? {}).some((v) => Number(v) < 0);
+}
+
+/**
+ * A clawback — money the business had to PAY BACK (a drug-plan post-payment
+ * audit, a recoupment). Removing it as if it were income double-counts it.
+ * Recoveries the business RECEIVED (insurance proceeds, a settlement, a
+ * one-time gain) are the opposite: non-recurring income, correctly removed
+ * with a negative add-back.
+ */
+export const CLAWBACK_RE =
+  /\b(?:claw-?backs?|recoupments?|post[- ]payment\s+(?:recover(?:y|ies)|reviews?|audits?|adjustments?)|audit\s+(?:recover(?:y|ies)|repayments?|clawbacks?)|(?:odb|drug\s+plan|ministry|government|payer|plan)\s+(?:audit\s+)?recover(?:y|ies))\b/i;
+const RECEIVED_RE = /\b(?:insurance|settlement|proceeds|gain|received|recovered\s+from|reimburse(?:d|ment)|refund(?:ed)?\s+(?:from|to\s+the\s+company))\b/i;
+
+export function isClawbackLine(ab: Pick<UiAddback, "label" | "description">): boolean {
+  const label = ab.label ?? "";
+  if (RECEIVED_RE.test(label)) return false;
+  return CLAWBACK_RE.test(label) || (CLAWBACK_RE.test(ab.description ?? "") && !RECEIVED_RE.test(ab.description ?? ""));
+}
+
+const MONEY_AMOUNT = String.raw`\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?`;
 const DIVIDEND_AMOUNT_RES = [
-  /(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?)\s+(?:[A-Za-z-]+\s+){0,3}dividends?\b/i,
-  /\bdividends?\s+(?:of\s+|totall?ing\s+|paid\s+|declared\s+)?(?:[A-Za-z-]+\s+){0,2}(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?)/i,
+  new RegExp(String.raw`(${MONEY_AMOUNT})\s+(?:[A-Za-z-]+\s+){0,3}dividends?\b`, "i"),
+  new RegExp(String.raw`\bdividends?\s+(?:of\s+|totall?ing\s+|paid\s+|declared\s+)?(?:[A-Za-z-]+\s+){0,2}(${MONEY_AMOUNT})`, "i"),
 ];
+const DIVIDEND_MENTION_RE = /\b(?:dividends?|owner'?s?\s+draws?|shareholder\s+draws?|distributions?\s+to\s+(?:the\s+)?(?:owners?|shareholders?))\b/i;
+/** The clause says the dividend is NOT in the figure. */
+const EXCLUSION_RE =
+  /\b(?:exclud(?:e|es|ed|ing)|not\s+(?:included|added|counted|part\s+of|in\s+(?:the|this)|an?\s+add-?back|compensation)|isn'?t|is\s+not|are\s+not|was\s+not|never|without|separate(?:ly)?|rather\s+than|removed|taken\s+out|left\s+out|net\s+of|a\s+distribution,?\s+not)\b/i;
+/** The clause says the dividend IS in the figure. */
+const INCLUSION_RE = /\+|\bplus\b|\binclud(?:es|ing|ed)\b|\band\b|\bcombined\b|\btotal(?:l?ing)?\b|\bmade\s+up\s+of\b|\bconsist(?:s|ing)\s+of\b/i;
+
+/** The clauses of a description that mention a dividend or draw. */
+function dividendClauses(text: string): string[] {
+  return text.split(/(?<=[.;!?])\s+|\s+[—–]\s+|\s+-\s+|[()]/).filter((c) => DIVIDEND_MENTION_RE.test(c));
+}
 
 function dividendAmount(text: string): number | null {
   for (const re of DIVIDEND_AMOUNT_RES) {
@@ -49,33 +100,202 @@ function dividendAmount(text: string): number | null {
   return null;
 }
 
+/**
+ * The amounts only make sense with the dividend in them: an amount equals
+ * all the description's figures summed ($180K salary, $60K dividend, $28K
+ * benefits = $268K), or equals another stated figure plus the dividend.
+ */
+function dividendAddsUp(description: string, dividend: number, amounts: Record<string, number>): boolean {
+  const figures = (description.match(new RegExp(MONEY_AMOUNT, "gi")) ?? []).map(moneyValue).filter((v): v is number => v !== null);
+  const total = figures.reduce((s, v) => s + v, 0);
+  const others = figures.filter((v) => v !== dividend);
+  return Object.values(amounts).some((a) => {
+    const n = Number(a);
+    if (!Number.isFinite(n) || n <= dividend) return false;
+    return (figures.length >= 2 && within(n, total)) || others.some((x) => within(n, x + dividend));
+  });
+}
+
 /** Owner-decided add-backs (custom, or approval toggled by the broker) are never rewritten. */
 const brokerOwned = (ab: UiAddback) => ab.custom === true || ab.approvedOverride === true;
+
+const OWNER_WORD_RE = /\b(?:owner|shareholder|officer|president|principal|founder|proprietor|ceo)\b/i;
+const PAY_WORD_RE = /\b(?:salary|salaries|wages?|compensation|comp|pay|payroll|remuneration|management\s+fees?|bonus(?:es)?|t4)\b/i;
+/** A relative's pay, or someone with no role in the business — not the working owner. */
+const FAMILY_RE =
+  /\b(?:spouse|spousal|wife|husband|son|daughter|child(?:ren)?|family|relatives?|related[- ]part(?:y|ies)|brother|sister|mother|father|parents?|in-laws?|nephew|niece|income[- ]splitting)\b|\bnon[- ]working\b|\bno\s+(?:active\s+)?role\b|\bnot\s+(?:active|working)\s+in\b/i;
+
+const isOwnerComp = (ab: UiAddback) => ab.category === "owner_comp" || OWNER_WORD_RE.test(ab.label);
+
+function isFamilyOrNonWorking(ab: UiAddback): boolean {
+  if (FAMILY_RE.test(ab.label)) return true;
+  return !OWNER_WORD_RE.test(ab.label) && FAMILY_RE.test(ab.description ?? "");
+}
+
+/** The working owner's own pay — not a relative's, not a perk. */
+export function isOwnerPayLine(ab: UiAddback): boolean {
+  if (isFamilyOrNonWorking(ab)) return false;
+  if (ab.ownerActualComp || ab.marketSalary !== undefined) return true;
+  return PAY_WORD_RE.test(ab.label) && isOwnerComp(ab);
+}
+
+// ── Owner compensation: split into the above-market part and the market salary ──
+
+const MARKET_BEFORE_RE = /\b(?:market|replacement|arm'?s[- ]length|fair)\b[^$\d.;=]{0,40}?(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?)/i;
+const MARKET_AFTER_RE = /(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?)\s+(?:\w+\s+){0,2}(?:market|replacement)\b/i;
+/** The label says the line is only the part above market. */
+const EXCESS_LABEL_RE = /\b(?:above|over|in\s+excess\s+of|excess)\b[^.]{0,20}\b(?:market|replacement)\b|\bexcess\s+(?:owner|shareholder|officer)?\s*(?:comp|compensation|salary|wages)\b/i;
+
+function moneyValue(raw: string): number | null {
+  const t = numberTokens(raw)[0];
+  return t && !t.pct && t.value > 0 ? t.value : null;
+}
+
+/** The market replacement salary stated for this owner line (structured field first, then the description). */
+function marketSalaryOf(ab: UiAddback): Record<string, number> | number | null {
+  const m = ab.marketSalary;
+  if (typeof m === "number" && Number.isFinite(m) && m > 0) return m;
+  if (m && typeof m === "object") {
+    const map = Object.fromEntries(Object.entries(m).filter(([, v]) => Number.isFinite(Number(v)) && Number(v) > 0).map(([y, v]) => [y, Number(v)]));
+    if (Object.keys(map).length > 0) return map;
+  }
+  const d = ab.description ?? "";
+  const hit = d.match(MARKET_BEFORE_RE) ?? d.match(MARKET_AFTER_RE);
+  return hit ? moneyValue(hit[1]) : null;
+}
+
+const within = (a: number, b: number) => Math.abs(a - b) <= Math.max(1000, Math.abs(b) * 0.01);
+
+/**
+ * The owner's actual compensation per year. Structured field first; else
+ * worked out from the description's figures: the line is the above-market
+ * part when its amount = X − market for a stated X, the full compensation
+ * when its amount = X. With only the market figure stated, the label decides
+ * ("… above market" = the excess); an unlabelled amount above the market
+ * salary is the full pay ("Owner salary (T4 wages)" $180K, market $165K).
+ */
+function actualCompOf(ab: UiAddback, market: (y: string) => number): Record<string, number> | null {
+  const given = ab.ownerActualComp;
+  if (given && typeof given === "object") {
+    const map = Object.fromEntries(Object.entries(given).filter(([, v]) => Number.isFinite(Number(v))).map(([y, v]) => [y, Number(v)]));
+    if (Object.keys(map).length > 0) return map;
+  }
+  const d = ab.description ?? "";
+  const figures = (d.match(new RegExp(MONEY_AMOUNT, "gi")) ?? []).map(moneyValue).filter((v): v is number => v !== null);
+  const excessLabel = EXCESS_LABEL_RE.test(ab.label);
+  const out: Record<string, number> = {};
+  for (const [y, rawAmount] of Object.entries(ab.amounts ?? {})) {
+    const amount = Number(rawAmount);
+    if (!Number.isFinite(amount)) continue;
+    const m = market(y);
+    const asExcess = figures.find((x) => x !== m && within(amount, x - m));
+    if (asExcess !== undefined) { out[y] = asExcess; continue; }
+    const asFull = figures.find((x) => x !== m && within(amount, x));
+    if (asFull !== undefined && !excessLabel) { out[y] = asFull; continue; }
+    if (excessLabel) { out[y] = amount + m; continue; }
+    if (amount > m) { out[y] = amount; continue; }
+    return null; // can't tell what this amount is
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/**
+ * SDE adds back the working owner's FULL pay; adjusted EBITDA adds back only
+ * what the owner is paid above a market salary for the role (a buyer who
+ * hires a manager still pays the market salary). One line can't be both, so
+ * it becomes two: the above-market part (type "ebitda" — counts for both
+ * metrics) and the market-salary part (type "sde" — SDE only). SDE = net
+ * income + the owner's actual pay; SDE − adjusted EBITDA = the market salary.
+ * (Ridgeline's re-run: "$180K minus $125K market = $55K" as an SDE-only line
+ * understated SDE by the $125K market salary.)
+ */
+export function splitOwnerCompensation(ab: UiAddback): { lines: UiAddback[]; note: string | null } {
+  const marketInfo = marketSalaryOf(ab);
+  if (marketInfo === null) {
+    // No market salary: an "above market" line is the excess (both metrics,
+    // but SDE is missing the market part); a full-pay line counts for SDE only.
+    if (EXCESS_LABEL_RE.test(ab.label)) {
+      return {
+        lines: [{ ...ab, type: "ebitda", confidence: "low" }],
+        note: `"${ab.label}" is the owner's pay above market, but the market salary isn't stated — SDE should also add back the market salary. Add it to complete SDE.`,
+      };
+    }
+    return {
+      lines: [{ ...ab, type: "sde" }],
+      note: `"${ab.label}" is added back in full for SDE. Set a market salary for the role to normalise adjusted EBITDA for the owner's pay.`,
+    };
+  }
+  const market = (y: string) => (typeof marketInfo === "number" ? marketInfo : marketInfo[y] ?? Object.values(marketInfo)[0]);
+  const actual = actualCompOf(ab, market);
+  if (!actual) {
+    return {
+      lines: [{ ...ab, type: "sde", confidence: "low" }],
+      note: `"${ab.label}": state the owner's actual compensation and the market replacement salary separately — SDE adds back the full compensation, EBITDA only the part above market.`,
+    };
+  }
+  const years = Object.keys(actual).sort();
+  const latest = years[years.length - 1];
+  const excess: UiAddback = {
+    ...ab,
+    type: "ebitda",
+    amounts: Object.fromEntries(years.map((y) => [y, Math.round(actual[y] - market(y))])),
+    ownerActualComp: actual,
+    marketSalary: marketInfo,
+    ownerCompPart: "excess",
+    description: `Owner's pay ${fmt(actual[latest])}${years.length > 1 ? ` (${latest})` : ""} less a ${fmt(market(latest))} market salary for the role: the difference counts for EBITDA and SDE; the market salary is added back for SDE only.${ab.description ? ` ${ab.description}` : ""}`,
+  };
+  // An owner paid below market gets a negative EBITDA adjustment (a buyer
+  // pays more for the role); the two lines still sum to the actual pay.
+  const marketLine: UiAddback = {
+    id: `${ab.id}_market`,
+    label: `${ab.label} — market salary`,
+    description: "SDE adds back the owner's full pay; this is the market-salary part. A buyer who hires someone for the role pays it, so it is not added back to EBITDA.",
+    category: "owner_comp",
+    type: "sde",
+    amounts: Object.fromEntries(years.map((y) => [y, Math.round(market(y))])),
+    approved: ab.approved,
+    ...(ab.confidence ? { confidence: ab.confidence } : {}),
+    ownerCompPart: "market",
+  };
+  return { lines: [excess, marketLine], note: null };
+}
 
 export function applyAddbackRules(n: UiNormalization | null): UiNormalization | null {
   if (!n) return n;
   const notes: string[] = [...(n.notes ?? [])];
-  const addbacks = (Array.isArray(n.addbacks) ? n.addbacks : []).map((ab) => {
-    if (brokerOwned(ab)) return ab;
-    const out: UiAddback = { ...ab, amounts: { ...ab.amounts } };
+  const input = Array.isArray(n.addbacks) ? n.addbacks : [];
+  const addbacks: UiAddback[] = [];
+  const retyped: string[] = [];
+  for (const ab of input) {
+    if (brokerOwned(ab) || ab.ownerCompPart) { addbacks.push(ab); continue; }
+    const out: UiAddback = { ...ab, amounts: { ...ab.amounts }, ...(ab.ownerActualComp ? { ownerActualComp: { ...ab.ownerActualComp } } : {}) };
     const description = out.description ?? "";
     // A line that IS a distribution.
-    if (DISTRIBUTION_RE.test(out.label)) {
+    if (isDistributionLine(out)) {
       if (out.approved) {
         out.approved = false;
         out.description = `Not an add-back — dividends and owner draws are distributions of after-tax profit, not P&L expenses.${description ? ` ${description}` : ""}`;
         notes.push(`"${out.label}" is a distribution to the shareholder, not an expense on the P&L, so it is not added back. It is listed for reference only.`);
       }
-      return out;
+      addbacks.push(out);
+      continue;
     }
-    // Owner compensation that folded a dividend in: take the dividend out.
-    if (DISTRIBUTION_RE.test(description) && (out.category === "owner_comp" || /owner|shareholder|officer/i.test(out.label))) {
-      const d = dividendAmount(description);
+    // Owner compensation that folded a dividend in: take the dividend out —
+    // but only when the description says it is IN the figure. "The $60,000
+    // dividend is excluded" means the model already left it out.
+    const clauses = isOwnerComp(out) ? dividendClauses(description) : [];
+    const clause = clauses[0];
+    if (clause && !clauses.some((c) => EXCLUSION_RE.test(c))) {
+      const d = dividendAmount(clause) ?? dividendAmount(description);
+      const included = INCLUSION_RE.test(clause) || (d !== null && dividendAddsUp(description, d, out.amounts));
       const years = Object.keys(out.amounts).filter((y) => (out.amounts[y] ?? 0) >= (d ?? Infinity) * 0.98);
       const named = years.filter((y) => description.includes(y));
       const target = named.length > 0 ? named : years.length === 1 ? years : [];
-      if (d && target.length > 0) {
-        for (const y of target) out.amounts[y] = Math.round(out.amounts[y] - d);
+      if (included && d && target.length > 0) {
+        for (const y of target) {
+          out.amounts[y] = Math.round(out.amounts[y] - d);
+          if (out.ownerActualComp && (out.ownerActualComp[y] ?? 0) >= d * 0.98) out.ownerActualComp[y] = Math.round(out.ownerActualComp[y] - d);
+        }
         out.description = `${description} — the ${fmt(d)} dividend is excluded (a distribution, not compensation).`;
         notes.push(`Owner compensation add-back "${out.label}" included a ${fmt(d)} dividend; dividends are distributions of after-tax profit and are not added back, so it was removed (${target.join(", ")}).`);
       } else {
@@ -83,14 +303,42 @@ export function applyAddbackRules(n: UiNormalization | null): UiNormalization | 
         notes.push(`"${out.label}" mentions a dividend or draw. Dividends and draws are distributions, not add-backs — check that none is included in the amount.`);
       }
     }
-    // A clawback/recovery removed as if it were income.
-    if (RECOVERY_RE.test(`${out.label} ${description}`) && Object.values(out.amounts).some((v) => v < 0) && out.approved) {
+    // A clawback removed as if it were income.
+    if (isClawbackLine(out) && Object.values(out.amounts).some((v) => v < 0) && out.approved) {
       out.approved = false;
-      out.description = `Not removed as income — a recovery or clawback is a timing item.${description ? ` ${description}` : ""}`;
-      notes.push(`"${out.label}" is a recovery/clawback (a timing item), not income; it is not deducted from earnings.`);
+      out.description = `Not removed as income — a clawback the business repaid is a cost, not income.${description ? ` ${description}` : ""}`;
+      notes.push(`"${out.label}" is a clawback the business had to repay (a cost), not income; it is not deducted from earnings again.`);
     }
-    return out;
-  });
+    // The working owner's pay: the above-market part (EBITDA and SDE) and the
+    // market-salary part (SDE only).
+    if (isOwnerPayLine(out)) {
+      const { lines, note } = splitOwnerCompensation(out);
+      if (note) notes.push(note);
+      addbacks.push(...lines);
+      continue;
+    }
+    // Everything else — owner perks run through the company, a relative's
+    // pay, discretionary and one-time items — counts for adjusted EBITDA as
+    // well as SDE. Only the owner's market salary is SDE-only.
+    if (out.type === "sde") {
+      out.type = "ebitda";
+      if (out.approved) retyped.push(out.label);
+    }
+    addbacks.push(out);
+  }
+  // SDE adds back ONE working owner's full pay. With several owners' market
+  // salaries, the largest stays; the others are a real cost of the business.
+  const marketLines = addbacks.filter((a) => a.ownerCompPart === "market" && !brokerOwned(a));
+  if (marketLines.length > 1) {
+    const total = (a: UiAddback) => Object.values(a.amounts).reduce((s, v) => s + (Number(v) || 0), 0);
+    const keep = marketLines.reduce((best, a) => (total(a) > total(best) ? a : best));
+    const dropped = marketLines.filter((a) => a !== keep);
+    for (const a of dropped) addbacks.splice(addbacks.indexOf(a), 1);
+    notes.push(`SDE adds back one working owner's full pay (${keep.label.replace(/ — market salary$/, "")}). The market salary for ${dropped.map((a) => a.label.replace(/ — market salary$/, "")).join(", ")} stays as a cost — a buyer would pay someone for that role.`);
+  }
+  if (retyped.length > 0) {
+    notes.push(`Adjusted EBITDA includes the owner-related and discretionary add-backs too (${retyped.join(", ")}); only the owner's market salary is SDE-only, so SDE = adjusted EBITDA + the market salary.`);
+  }
   return { ...n, addbacks, notes: Array.from(new Set(notes)) };
 }
 
@@ -254,9 +502,6 @@ export function findEarningsMismatches(text: string, computed: CanonicalEarnings
   const out: Array<Omit<EarningsMismatch, "where">> = [];
   const years = Object.keys(computed.adjustedEbitda);
   for (const sentence of text.split(/(?<=[.!?])\s+/)) {
-    // Someone else's figure ("Seller initially claimed $4.1M adjusted EBITDA")
-    // is reported, not stated — never "corrected".
-    if (ATTRIBUTION_RE.test(sentence)) continue;
     const sentenceYears = Array.from(new Set((sentence.match(new RegExp(YEAR_RE.source, "g")) ?? []).map((y) => y.replace(/\D/g, ""))));
     const eq = sentence.lastIndexOf("=");
     const monies = moneyIn(sentence);
@@ -297,6 +542,13 @@ export function findEarningsMismatches(text: string, computed: CanonicalEarnings
         }
       }
       if (!amount) continue;
+      // Someone else's figure ("Seller initially claimed $4.1M adjusted
+      // EBITDA", "$4.1M as claimed by the seller") is reported, not stated —
+      // never "corrected". Judged on the words up to the figure and right
+      // after it, not on a later aside ("= $1,777,000 (rounds to the seller's
+      // claimed ~$1.8M)" is still the analysis's own figure).
+      const after = sentence.slice(amount.end, amount.end + 40).split(/[(;]|\s[—–]\s/)[0];
+      if (ATTRIBUTION_RE.test(sentence.slice(0, amount.end) + after)) continue;
       const near = yearText.match(YEAR_RE)?.[1];
       const statedYear = near && years.includes(near) ? near : sentenceYears.length === 1 && years.includes(sentenceYears[0]) ? sentenceYears[0] : null;
       const candidatesFor = (y: string) =>
