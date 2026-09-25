@@ -183,8 +183,8 @@ const LAYOUTS = [
     blind: "redact",
     family: "scorecard",
     planner: true,
-    aiSpec: "scorecard: { items: [{label, score, benchmark?, description?}], title?, maxScore? }",
-    aiUse: "— Use for: business health assessment, risk factors, readiness indicators",
+    aiSpec: "scorecard: { items: [{label, score: number (0..maxScore), benchmark?: number (0..maxScore), description?}], title?, maxScore?: number (default 100) }",
+    aiUse: "— Use for: business health assessment, risk factors, readiness indicators — ONLY when every item has a real numeric score on one shared scale. Ratings, statuses, percentages of different things or counts (\"Satisfactory\", \"PIP\", \"9.4%\", \"4 claims\") are NOT scores: use callout_list or comparison_table for those.",
     defaultData: () => ({ items: [{ label: "Factor", score: 50, description: "" }], maxScore: 100 }),
   },
 
@@ -359,7 +359,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "two_column",
     planner: true,
-    aiSpec: "two_column: { left: {title?, content, layoutType?}, right: {title?, content, layoutType?}, title? }",
+    aiSpec: "two_column: { left: {title?, content, layoutType?}, right: {title?, content, layoutType?}, title? } — each column's layoutType is \"prose\" (content = paragraphs), \"list\" (content = one item per line), \"metric\" (content = \"Label: value\" lines), or one of metric_grid | icon_stat_row | callout_list | numbered_list | stat_callout | bar_chart | pie_chart | donut_chart | line_chart | financial_table | comparison_table | scorecard, in which case content is an OBJECT of exactly that layout's shape (e.g. {stats: [{label, value}]} for icon_stat_row, {items: [{title, description}]} for callout_list) — never a word such as \"stats\".",
     aiUse: "— Use for: pairing complementary information — narrative + stats, overview + highlights",
     defaultData: () => ({
       left: { title: "", content: "", layoutType: "prose" },
@@ -442,7 +442,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "org_chart",
     planner: true,
-    aiSpec: "org_chart: { nodes: [{id, name, role, reportsTo?, isKeyPerson?, isOwner?, yearsAtCompany?, notes?}], title?, totalHeadcount?, ownerDependency? }",
+    aiSpec: "org_chart: { nodes: [{id, name, role, reportsTo?, isKeyPerson?, isOwner?, yearsAtCompany?, notes?}], title?, totalHeadcount?, ownerDependency? } — ids are neutral (\"n1\", \"n2\"…), never a person's name; reportsTo holds the manager's id",
     aiUse: "— Use for: team structure, management hierarchy, key personnel",
     defaultData: () => ({ nodes: [{ id: "1", name: "Owner", role: "Owner", isOwner: true }] }),
   },
@@ -693,4 +693,197 @@ export function applySectionOverride<T extends SectionLike>(
       ? text || (blind ? null : section.brokerEditedContent)
       : null,
   };
+}
+
+// ── Generated-data hygiene (layout engine, redactor, renderers) ─────────────
+
+type AnyRecord = Record<string, unknown>;
+const isRecord = (v: unknown): v is AnyRecord => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Org chart node ids rewritten to neutral "n1", "n2"… (reportsTo / parentId
+ * follow). The AI often uses first names as ids ("dave", reportsTo:
+ * "kevin"): harmless in the named CIM, but those strings would reach a
+ * blind buyer's browser, and the identity guard (rightly) rejected every
+ * blind version that kept them. Data without nodes is returned unchanged;
+ * a reportsTo that points at no node is dropped.
+ */
+export function neutralOrgChartIds<T>(data: T): T {
+  if (!isRecord(data) || !Array.isArray(data.nodes)) return data;
+  const nodes = data.nodes as unknown[];
+  const ids = new Map<string, string>();
+  nodes.forEach((n, i) => {
+    if (isRecord(n) && (typeof n.id === "string" || typeof n.id === "number")) {
+      const key = String(n.id);
+      if (!ids.has(key)) ids.set(key, `n${i + 1}`);
+    }
+  });
+  const remap = (v: unknown) => (typeof v === "string" || typeof v === "number" ? ids.get(String(v)) : undefined);
+  return {
+    ...data,
+    nodes: nodes.map((n, i) => {
+      if (!isRecord(n)) return n;
+      const out: AnyRecord = { ...n, id: remap(n.id) ?? `n${i + 1}` };
+      for (const k of ["reportsTo", "parentId"]) {
+        if (!(k in n)) continue;
+        const to = remap(n[k]);
+        if (to && to !== out.id) out[k] = to;
+        else delete out[k];
+      }
+      return out;
+    }),
+  } as T;
+}
+
+/** A score the scorecard can draw as a bar: a number, or a plain number in a string ("85"). */
+export function numericScore(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && /^\s*-?\d+(?:\.\d+)?\s*$/.test(v)) return Number(v);
+  return null;
+}
+
+/** True when every scorecard item has a numeric score (and there is at least one). */
+export function scorecardIsNumeric(data: unknown): boolean {
+  const items = isRecord(data) && Array.isArray(data.items) ? (data.items as unknown[]) : [];
+  return items.length > 0 && items.every((it) => isRecord(it) && numericScore(it.score) !== null);
+}
+
+/** Column types drawn as text inside a two-column section. */
+const TEXT_COLUMN_TYPES = new Set(["prose", "list", "metric"]);
+
+/** The list each structured sub-layout needs ({stats: […]} for icon_stat_row…). */
+const SUB_LAYOUT_LIST_KEY: Record<string, string> = {
+  metric_grid: "metrics", icon_stat_row: "stats", callout_list: "items", numbered_list: "items", scorecard: "items",
+  bar_chart: "data", horizontal_bar_chart: "data", pie_chart: "data", donut_chart: "data", line_chart: "data",
+  financial_table: "rows", comparison_table: "rows", timeline: "events",
+};
+
+/** Sub-layouts a two-column column can hold (each has a renderer inside TwoColumn). */
+export const TWO_COLUMN_SUB_LAYOUTS: readonly string[] = [...Object.keys(SUB_LAYOUT_LIST_KEY), "stat_callout"];
+
+export interface TwoColumnColumn {
+  title?: string;
+  content: unknown;
+  layoutType: string;
+}
+
+/**
+ * How a two-column column should be drawn, or null when it holds nothing
+ * real. Repairs the shapes the AI produced on real deals:
+ *   - {content: "stats", layoutType: "icon_stat_row"} — a placeholder word
+ *     where the data should be → null (nothing to show; never the word);
+ *   - {content: [{title, description}…]} with no layoutType → callout_list;
+ *   - {content: {stats: […]}} with no layoutType → icon_stat_row (and the
+ *     other list shapes likewise);
+ *   - a structured type whose content is a bare list → wrapped in its shape.
+ */
+export function resolveTwoColumnColumn(raw: unknown): TwoColumnColumn | null {
+  if (!isRecord(raw)) return null;
+  const title = typeof raw.title === "string" && raw.title.trim() ? raw.title : undefined;
+  const content = raw.content;
+  const type = typeof raw.layoutType === "string" && raw.layoutType.trim() ? raw.layoutType.trim() : "";
+  if (!type || TEXT_COLUMN_TYPES.has(type)) {
+    if (Array.isArray(content)) {
+      if (content.length === 0) return null;
+      if (content.every((x) => typeof x === "string")) return { title, layoutType: "list", content: (content as string[]).join("\n") };
+      if (content.every((x) => isRecord(x) && (typeof x.title === "string" || typeof x.label === "string"))) {
+        const items = (content as AnyRecord[]).map((x) => ({ ...x, title: (x.title ?? x.label) as string }));
+        const style = raw.style === "card" || raw.style === "list" || raw.style === "icon-row" ? raw.style : "list";
+        return { title, layoutType: "callout_list", content: { items, columns: 1, style } };
+      }
+      return null;
+    }
+    if (isRecord(content)) {
+      for (const [key, layout] of [["stats", "icon_stat_row"], ["metrics", "metric_grid"], ["items", "callout_list"], ["rows", "financial_table"], ["events", "timeline"], ["data", "bar_chart"]] as const) {
+        if (Array.isArray(content[key]) && (content[key] as unknown[]).length > 0) return { title, layoutType: layout, content };
+      }
+      return null;
+    }
+    const text = typeof content === "string" ? content : content == null ? "" : String(content);
+    return text.trim() ? { title, layoutType: type || "prose", content: text } : null;
+  }
+  // A structured sub-layout.
+  const listKey = SUB_LAYOUT_LIST_KEY[type];
+  if (isRecord(content)) {
+    if (listKey && !(Array.isArray(content[listKey]) && (content[listKey] as unknown[]).length > 0)) return null;
+    if (type === "stat_callout" && !content.primaryValue) return null;
+    return { title, layoutType: type, content };
+  }
+  if (Array.isArray(content) && listKey && content.length > 0) return { title, layoutType: type, content: { [listKey]: content } };
+  // A string where the data should be: a placeholder word ("stats") is
+  // nothing; real prose is shown as prose rather than lost.
+  if (typeof content === "string" && content.trim().split(/\s+/).length >= 6) return { title, layoutType: "prose", content };
+  return null;
+}
+
+/**
+ * Problems in a generated section's data that the renderer can't draw
+ * truthfully. Empty = fine. The layout engine retries a section once when
+ * this isn't empty, then falls back to tidyGeneratedLayout().
+ */
+export function layoutDataProblems(layoutType: string, data: unknown): string[] {
+  const problems: string[] = [];
+  if (!isRecord(data)) return problems;
+  if (layoutType === "two_column") {
+    for (const side of ["left", "right"] as const) {
+      const col = data[side];
+      if (col === undefined) continue;
+      const declared = isRecord(col) && typeof col.layoutType === "string" ? col.layoutType : "";
+      const resolved = resolveTwoColumnColumn(col);
+      if (!resolved) {
+        problems.push(`the ${side} column has no real content${declared ? ` for its ${declared} layout` : ""}`);
+      } else if (resolved.layoutType !== (declared || "prose") && !(declared === "" && resolved.layoutType === "prose")) {
+        problems.push(`the ${side} column's content doesn't match its layout (${declared || "no layoutType"})`);
+      }
+    }
+  }
+  if (layoutType === "scorecard" && Array.isArray(data.items) && data.items.length > 0 && !scorecardIsNumeric(data)) {
+    problems.push("scorecard scores must be numbers — ratings, statuses and mixed units belong in a callout list");
+  }
+  return problems;
+}
+
+/**
+ * Deterministic clean-up of a generated section before it is saved:
+ * neutral org chart ids; financial-table "section header" rows that carry
+ * figures become bold rows (their figures were hidden); a scorecard without
+ * numeric scores becomes highlight cards (it drew "Satisfactory/100");
+ * two-column columns repaired or emptied (never a placeholder word).
+ */
+export function tidyGeneratedLayout(layoutType: string, data: unknown): { layoutType: string; layoutData: AnyRecord } {
+  const layoutData: AnyRecord = isRecord(data) ? { ...data } : {};
+  if (layoutType === "org_chart") return { layoutType, layoutData: neutralOrgChartIds(layoutData) };
+  if (layoutType === "financial_table") {
+    const fix = (rows: unknown) => Array.isArray(rows)
+      ? rows.map((r) => {
+          if (!isRecord(r) || !r.isSectionHeader) return r;
+          const values = Array.isArray(r.values) ? r.values : [];
+          if (!values.some((v) => (typeof v === "number" && Number.isFinite(v)) || (typeof v === "string" && v.trim()))) return r;
+          const { isSectionHeader: _h, ...rest } = r;
+          return { ...rest, bold: true };
+        })
+      : rows;
+    if (Array.isArray(layoutData.rows)) layoutData.rows = fix(layoutData.rows);
+    if (Array.isArray(layoutData.normalizedRows)) layoutData.normalizedRows = fix(layoutData.normalizedRows);
+    return { layoutType, layoutData };
+  }
+  if (layoutType === "scorecard" && Array.isArray(layoutData.items) && layoutData.items.length > 0 && !scorecardIsNumeric(layoutData)) {
+    const items = (layoutData.items as unknown[]).filter(isRecord).map((it) => {
+      const benchmark = it.benchmark != null && String(it.benchmark).trim() ? String(it.benchmark).trim() : "";
+      const description = [typeof it.description === "string" ? it.description : "", benchmark ? `Benchmark: ${benchmark}.` : ""]
+        .filter(Boolean).join(" ");
+      const score = it.score != null ? String(it.score).trim() : "";
+      return { title: String(it.label ?? ""), ...(score ? { badge: score } : {}), ...(description ? { description } : {}) };
+    });
+    const { items: _i, maxScore: _m, ...rest } = layoutData;
+    return { layoutType: "callout_list", layoutData: { ...rest, items, columns: 2, style: "card" } };
+  }
+  if (layoutType === "two_column") {
+    for (const side of ["left", "right"] as const) {
+      if (layoutData[side] === undefined) continue;
+      layoutData[side] = resolveTwoColumnColumn(layoutData[side]) ?? { content: "", layoutType: "prose" };
+    }
+    return { layoutType, layoutData };
+  }
+  return { layoutType, layoutData };
 }

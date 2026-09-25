@@ -32,7 +32,12 @@ import {
   retryBlindNow,
   invalidateBlind,
   scheduleBlindRefresh,
+  redoSectionsBlind,
+  redoLeakedBlind,
+  dealHasBlindVersion,
 } from "../cim/blind-sync";
+import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { renameDealCodename } from "../cim/codenames";
 import {
   deleteSection,
   duplicateSection,
@@ -139,6 +144,16 @@ export function registerCimBuilderRoutes(app: Express): void {
       ]);
       const withOverride = new Set(blindOverrides.map((o) => o.cimSectionId));
       const blindGenerated = blindOverrides.length > 0;
+      if (blindGenerated) {
+        // The same final check the view room runs: a blind version that still
+        // names something, or kept a "[Province/State]" placeholder, is redone
+        // now rather than waiting for the first buyer to open the CIM.
+        const check = buildBuyerCim({ deal, accessLevel: "full", sections, overrides: blindOverrides, media: null });
+        if (check.leaked.length > 0) {
+          redoLeakedBlind(deal.id, check.leaked, check.leakReasons).catch((err) => console.error("[cim-builder] blind redo failed:", err));
+          for (const id of check.leaked) withOverride.delete(id);
+        }
+      }
       const rows = sections.map((s) => toBuilderSection(s, blindGenerated, withOverride.has(s.id)));
       const active = buyers.filter((b) => !b.revokedAt);
       const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
@@ -395,6 +410,40 @@ export function registerCimBuilderRoutes(app: Express): void {
     } catch (err) {
       console.error("[cim-builder] blind retry failed:", err);
       res.status(500).json({ error: "Couldn't retry the blind version" });
+    }
+  });
+
+  // ── Redo one section's blind version (e.g. it reads oddly, or is held back) ──
+  app.post("/api/cim-sections/:sectionId/blind/redo", requireBroker, aiLimiter, async (req, res) => {
+    try {
+      const owned = await ownedSection(req, res);
+      if (!owned) return;
+      const { section, deal } = owned;
+      if (getCimLayout(section.layoutType)?.blind === "exclude") {
+        return res.status(400).json({ error: "This section is never shown in the Blind CIM." });
+      }
+      if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section." });
+      if (!(await dealHasBlindVersion(deal.id))) {
+        return res.status(409).json({ error: "There's no blind version yet — generate it first." });
+      }
+      await redoSectionsBlind(deal.id, [section.id]);
+      res.status(202).json({ started: true });
+    } catch (err) {
+      console.error("[cim-builder] blind redo failed:", err);
+      res.status(500).json({ error: "Couldn't redo the blind version" });
+    }
+  });
+
+  // ── Set or rename the Blind CIM's project codename ──
+  app.patch("/api/deals/:dealId/codename", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = res.locals.deal as Deal;
+      const r = await renameDealCodename(deal, req.body?.codename);
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json({ codename: r.codename, updated: r.updated });
+    } catch (err) {
+      console.error("[cim-builder] codename change failed:", err);
+      res.status(500).json({ error: "Couldn't change the codename" });
     }
   });
 

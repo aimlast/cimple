@@ -10,17 +10,25 @@
  *
  * Fails closed (2026-09-25): a reply that is cut off, malformed or missing a
  * field — or a result that still names the business, a person, the city or
- * the street (shared/blind-guard.ts) — is a FAILURE, never a partially
- * scrubbed copy. The caller (blind-sync) keeps that section held back from
+ * the street (shared/blind-guard.ts), or that copied a template placeholder
+ * such as "[Province/State]" — is a FAILURE, never a partially scrubbed copy.
+ *
+ * Location (2026-09-26): the business's region is worked out from its
+ * premises facts (dealBlindRegion — "British Columbia, Canada") and given
+ * to the model as THE way to say where the business is, so it never
+ * invents a metro area ("Greater Toronto Area" for a Hamilton business) or
+ * leaves "[Province/State]" in a cover. Only the business's own premises
+ * are identifying: markets, lanes and customer regions stay as written. The caller (blind-sync) keeps that section held back from
  * blind buyers and tells the broker. The old catch-all fallback did a naive
  * name replacement and committed it as the redacted section, which served
  * the owner's full name, the city and staff names to pre-NDA buyers.
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { blindIdentifiers } from "@shared/blind-identifiers";
-import { blindLeakTerms, collectStrings, findBlindLeaks, honorificNames } from "@shared/blind-guard";
+import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks, honorificNames } from "@shared/blind-guard";
 import type { CimSection } from "@shared/schema";
-import { isMediaLayout, mediaTextSkeleton, type MediaLayoutKey } from "@shared/cim-media";
+import { dealBlindRegion, isMediaLayout, mediaTextSkeleton, type MediaLayoutKey } from "@shared/cim-media";
+import { neutralOrgChartIds } from "@shared/cim-layouts";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -185,9 +193,14 @@ export async function redactOneSection(
   // photos/videos a blind buyer gets, and the map's region, are decided
   // deterministically from the real data (shared/cim-media.ts).
   const media = isMediaLayout(section.layoutType);
-  const baseData: Record<string, any> = media
+  const rawData: Record<string, any> = media
     ? mediaTextSkeleton(section.layoutType as MediaLayoutKey, section.layoutData)
     : ((section.layoutData as Record<string, any> | null) || {});
+  // Org chart ids are often first names ("dave"): neutral ids before the AI
+  // ever sees them, so the blind copy can't carry them.
+  const orgChart = section.layoutType === "org_chart";
+  const baseData = orgChart ? neutralOrgChartIds(rawData) : rawData;
+  const region = dealBlindRegion(deal.extractedInfo);
   const content = media ? "" : displayedProse(section);
   // A narrative whose body IS the content text: send it once, not twice
   // (echoing it twice doubled the output and cut long sections off).
@@ -223,11 +236,15 @@ export async function redactOneSection(
 
 ## Rules
 1. Replace the business name with "${codename}" everywhere
-2. Replace ALL location references (city, town, street, address, postal/zip code, plaza or building names) with generic equivalents (e.g. "Major Metropolitan Area, [Province/State]"). The province/state and country may stay.
+2. Location — only the business's OWN premises identify it: its street address, postal/zip code, plaza, building or industrial-park name, and its city or town (or a neighbourhood of it). ${region
+    ? `Wherever the text says where the business itself is, write "${region}" (e.g. "based in ${region}"). Do not substitute a metro area, county, nearby city or any other region for it.`
+    : "Wherever the text says where the business itself is, keep only its province/state and country; if the text doesn't give them, say \"the region\"."}
+   Distant markets are not identifying and stay exactly as written: other provinces/states and countries, trade lanes, far-away destinations, customer or supplier regions (e.g. "Washington State lanes (Seattle, Spokane)").
+   A LOCAL service area — the towns around the business's own city — would point to that city: describe it generally ("the surrounding communities", "a regional service area within ${region || "the region"}") and never name a metro area such as "Greater Toronto Area".
 3. Replace every person's name (owner, employees, associates, advisors) with a role-based identifier (e.g. "the Owner", "Operations Manager" — not "John Smith" or "Dr. Smith")
 4. Replace customer names with "Customer A", "Customer B", etc.
 5. Replace vendor/supplier names with "Supplier A", "Supplier B", etc.
-6. Replace specific addresses and phone numbers with "[Address Withheld]" and "[Contact Info Withheld]"
+6. Replace specific addresses and phone numbers with "[Address Withheld]" and "[Contact Info Withheld]". These two are the ONLY bracketed stand-ins allowed — never write template placeholders such as "[Province]", "[State]", "[City]" or "[Name]"; write real words instead.
 7. KEEP all financial figures, percentages, years, metrics, and industry terminology intact
 8. KEEP the same JSON structure for layoutData — only change string values that contain identifying info${bodyIsContent ? `\n   (layoutData.body is "${SAME_AS_CONTENT}" — return it exactly like that; that text is the "Content text" below)` : ""}
 9. Be thorough — buyers should not be able to identify the business from the blind version
@@ -256,10 +273,17 @@ Respond with ONLY a JSON object (no markdown, no explanation):
   "contentOverride": "<redacted content text>"
 }`;
 
+  // Brackets the section's own text already had are not placeholders.
+  const originalText = [section.sectionTitle || "", content, ...collectStrings(baseData)].join("\n");
+
   let maxTokens = redactionMaxTokens(JSON.stringify(layoutData).length + content.length + (section.sectionTitle || "").length);
   let feedback = "";
   let lastError = "";
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // One corrective retry; a copied placeholder earns one more (it is
+  // always fixable once the model is told the region to write).
+  let attempts = 2;
+  let placeholderRetry = false;
+  for (let attempt = 0; attempt < attempts; attempt++) {
     const reply = await model(basePrompt + feedback, maxTokens);
     let parsed: ParsedReply;
     try {
@@ -282,6 +306,12 @@ Respond with ONLY a JSON object (no markdown, no explanation):
     const contentOverride = scrub(typeof parsed.contentOverride === "string" ? parsed.contentOverride : "");
     let redactedData: Record<string, any> = hasLayoutData ? JSON.parse(scrub(JSON.stringify(parsed.layoutData))) : {};
     if (bodyIsContent) redactedData = { ...redactedData, body: contentOverride };
+    if (orgChart) redactedData = neutralOrgChartIds(redactedData);
+    if (section.layoutType === "cover_page") {
+      // The cover's name and place are never left to the model.
+      redactedData = { ...redactedData, businessName: codename };
+      if (region && (redactedData.location || baseData.location)) redactedData.location = region;
+    }
     const title = typeof parsed.sectionTitle === "string" && parsed.sectionTitle.trim()
       ? parsed.sectionTitle.trim()
       : section.sectionTitle || "";
@@ -292,11 +322,25 @@ Respond with ONLY a JSON object (no markdown, no explanation):
       sectionTitle: scrub(title),
     };
 
-    // Fail closed: nothing identifying may survive.
-    const leaks = findBlindLeaks([result.sectionTitle, result.contentOverride, result.layoutData], terms);
-    if (leaks.length === 0) return result;
-    lastError = `the blind version still named ${leaks.slice(0, 3).map((l) => `"${l}"`).join(", ")}`;
-    feedback = `\n\n## Your previous attempt was rejected\nIt still contained: ${leaks.map((l) => `"${l}"`).join(", ")}. Remove every one of them (and any other identifying detail) this time.`;
+    // Fail closed: nothing identifying may survive, and no unfilled
+    // template placeholder may reach a buyer.
+    const out = [result.sectionTitle, result.contentOverride, result.layoutData];
+    const leaks = findBlindLeaks(out, terms);
+    const placeholders = blindPlaceholders(out, originalText);
+    if (leaks.length === 0 && placeholders.length === 0) return result;
+    const problems: string[] = [];
+    if (leaks.length > 0) problems.push(`It still contained: ${leaks.map((l) => `"${l}"`).join(", ")}. Remove every one of them (and any other identifying detail) this time.`);
+    if (placeholders.length > 0) {
+      if (!placeholderRetry) {
+        placeholderRetry = true;
+        attempts++;
+      }
+      problems.push(`It contained unfilled placeholders: ${placeholders.join(", ")}. Write real words instead${region ? ` — the business's location is "${region}"` : ""}; the only bracketed text allowed is [Address Withheld] and [Contact Info Withheld].`);
+    }
+    lastError = leaks.length > 0
+      ? `the blind version still named ${leaks.slice(0, 3).map((l) => `"${l}"`).join(", ")}`
+      : `the blind version kept placeholders such as ${placeholders.slice(0, 2).join(", ")}`;
+    feedback = `\n\n## Your previous attempt was rejected\n${problems.join("\n")}`;
   }
   throw new RedactionFailedError(`"${section.sectionTitle || "Untitled section"}" — ${lastError}`);
 }

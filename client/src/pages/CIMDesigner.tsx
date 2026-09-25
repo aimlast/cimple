@@ -254,6 +254,7 @@ export default function CIMDesigner() {
           onToggleVisible={(s) => builder.patch.mutate({ id: s.id, isVisible: s.isVisible === false })}
           onSetTier={(id, tier) => builder.patch.mutate({ id, accessTier: tier })}
           onDelete={(s) => setDeleteTarget(s)}
+          onRedoBlind={(id) => builder.redoBlind.mutate(id)}
         />
         {!readOnly && sections.length > 0 && (
           <div className="px-3 pb-4">

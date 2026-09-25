@@ -197,7 +197,14 @@ export function useCimBuilder(dealId: string) {
     "Couldn't retry the blind version",
   );
 
-  return { query, refresh, patch, reorder, add, remove, duplicate, setLayout, rewrite, applyRewrite, discardTask, undo, regenerate, refreshBlind };
+  // One section's blind version, redone from its current content.
+  const redoBlind = useAction(
+    (id: string) => builderRequest("POST", `/api/cim-sections/${id}/blind/redo`),
+    "Couldn't redo the blind version",
+    () => toast({ title: "Redoing the blind version", description: "Blind buyers get this section again as soon as it's redacted." }),
+  );
+
+  return { query, refresh, patch, reorder, add, remove, duplicate, setLayout, rewrite, applyRewrite, discardTask, undo, regenerate, refreshBlind, redoBlind };
 }
 
 export type CimBuilderApi = ReturnType<typeof useCimBuilder>;
