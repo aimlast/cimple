@@ -20,6 +20,7 @@ import {
   FUNDING_OPTIONS, NDA_BUYER_TYPES, OPERATE_OPTIONS, PROOF_OF_FUNDS_OPTIONS, TIMELINE_OPTIONS, formatPrice,
   type NdaBuyerProfile,
 } from "@shared/nda-buyer-profile";
+import { buyerAccessPhrase } from "@shared/cim-layouts";
 import { storage } from "../storage";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
 import {
@@ -312,10 +313,10 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
   for (const a of ctx.accesses) {
     const d = dealName(a.dealId);
     const eng = ctx.engagement.get(a.id);
-    push({ id: `grant-${a.id}`, at: a.createdAt, kind: "access_granted", title: `Given ${a.accessLevel === "full" ? "full" : a.accessLevel} access`, dealId: a.dealId, dealName: d });
+    push({ id: `grant-${a.id}`, at: a.createdAt, kind: "access_granted", title: `Given ${buyerAccessPhrase(a.accessLevel)} access`, dealId: a.dealId, dealName: d });
     ((a.accessEvents as BuyerAccessEvent[] | null) ?? []).forEach((e, i) => {
       if (e.type === "extended") push({ id: `ext-${a.id}-${i}`, at: e.at, kind: "access_extended", title: "Access extended", detail: e.expiresAt ? `Now expires ${new Date(e.expiresAt).toDateString()}` : null, dealId: a.dealId, dealName: d });
-      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: `Access changed to ${e.accessLevel ?? "a new level"}`, dealId: a.dealId, dealName: d });
+      if (e.type === "level_changed") push({ id: `lvl-${a.id}-${i}`, at: e.at, kind: "access_level", title: e.accessLevel ? `Access changed to ${buyerAccessPhrase(e.accessLevel)}` : "Access level changed", dealId: a.dealId, dealName: d });
     });
     if (a.revokedAt) push({ id: `rev-${a.id}`, at: a.revokedAt, kind: "access_revoked", title: "Access revoked", dealId: a.dealId, dealName: d, tone: "negative" });
     else if (a.expiresAt && new Date(a.expiresAt) < new Date()) push({ id: `exp-${a.id}`, at: a.expiresAt, kind: "link_expired", title: "Link expired", dealId: a.dealId, dealName: d });

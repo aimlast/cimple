@@ -197,12 +197,20 @@ export function SourceViewer({
     queryFn: () => requestJson<SourceText>("GET", `/api/deals/${dealId}/information/sources/${docId}/text`),
   });
   const del = useMutation({
-    mutationFn: () => requestJson("DELETE", `/api/documents/${docId}`),
-    onSuccess: () => {
+    mutationFn: () => requestJson<{ removedFields?: string[] }>("DELETE", `/api/documents/${docId}`),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: informationKey(dealId) });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId], exact: true });
-      toast({ title: "Source deleted", description: "The facts it contributed were removed too." });
+      // Say what the server actually did: a source whose facts were only matched
+      // by inference (or that gave none) removes nothing.
+      const removed = new Set((res?.removedFields ?? []).map((k) => k.split(":")[0])).size;
+      toast({
+        title: "Source deleted",
+        description: removed > 0
+          ? `What it contributed to ${removed} fact${removed === 1 ? "" : "s"} was removed too.`
+          : "No facts on file were removed.",
+      });
       setConfirmDelete(false);
       onClose();
     },

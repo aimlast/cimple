@@ -636,6 +636,13 @@ export function buyerAccessLabel(level: string | null | undefined): string {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
 }
 
+/** The same name inside a sentence: "Given LOI access", "Given due diligence access", "Given full CIM access". */
+export function buyerAccessPhrase(level: string | null | undefined): string {
+  const label = buyerAccessLabel(level);
+  // Keep acronyms ("LOI"); lower-case the first letter of words.
+  return /^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
+}
+
 /** Which CIM version a buyer access level sees. */
 export function cimModeForAccessLevel(level: string | null | undefined): "blind" | "normal" | "dd" {
   if (level === "due_diligence") return "dd";

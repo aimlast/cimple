@@ -15,6 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useToast } from "@/hooks/use-toast";
+import { buyerAccessLabel } from "@shared/cim-layouts";
 import { TagEditor } from "./FieldEditors";
 import { Eyebrow } from "./ProfileSections";
 import {
@@ -106,7 +107,7 @@ function DealEngagementRow({ d }: { d: DealRow }) {
         </div>
       </div>
       <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-2xs text-muted-foreground tabular-nums">
-        <span>{d.accessLevel === "full" ? "Full CIM" : humanize(d.accessLevel)} access</span>
+        <span>{buyerAccessLabel(d.accessLevel)} access</span>
         <span className="inline-flex items-center gap-1"><Eye className="h-3 w-3" />{d.views} visit{d.views === 1 ? "" : "s"}</span>
         <span className="inline-flex items-center gap-1"><Clock className="h-3 w-3" />{fmtDuration(d.seconds)}</span>
         {d.questions > 0 && <span className="inline-flex items-center gap-1"><MessageSquare className="h-3 w-3" />{d.questions}</span>}

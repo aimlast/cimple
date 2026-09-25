@@ -116,6 +116,9 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
+            // Points sit on the plot edges, so their centred labels ("FY2025")
+            // would hang past the right edge and touch the "$0" tick on the left.
+            padding={{ left: 20, right: 20 }}
             label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <YAxis
