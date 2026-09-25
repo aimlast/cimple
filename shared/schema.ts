@@ -490,6 +490,21 @@ export const cimSections = pgTable("cim_sections", {
   images: jsonb("images"),
 
   // @anchor:cim-sections-cols:cim
+  // CIM builder (see shared/cim-layouts.ts, server/cim/section-ops.ts).
+  // "teaser" | "full" — full sections show as locked stubs to teaser buyers.
+  // Nullable with a default so existing rows read as teaser (unchanged CIMs).
+  accessTier: text("access_tier").default("teaser"),
+  // Set whenever the section's content changes; cleared when its blind
+  // override has been regenerated for that exact revision. While set, the
+  // blind view room holds the section back (never serves stale/unredacted).
+  blindStaleAt: timestamp("blind_stale_at"),
+  // AI-redacted title written together with the blind override.
+  blindTitle: text("blind_title"),
+  // Background AI task on this section (write / regenerate / rewrite /
+  // convert) — CimSectionAiTask. Null when idle.
+  aiTask: jsonb("ai_task"),
+  // Undo stack of earlier versions (CimSectionSnapshot[], newest last, capped).
+  contentHistory: jsonb("content_history"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1922,6 +1937,37 @@ export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSele
 // (buyers workstream)
 
 // @anchor:schema-tail:cim
+/** A background AI task on one CIM section (cim_sections.ai_task). */
+export interface CimSectionAiTask {
+  id: string;
+  kind: "write" | "regenerate" | "rewrite" | "convert";
+  /** "ready" = a rewrite proposal waiting for the broker to apply or discard. */
+  status: "running" | "failed" | "ready";
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  request?: {
+    instructions?: string;
+    tones?: string[];
+    length?: "shorter" | "same" | "longer";
+    brief?: string;
+    layoutType?: string;
+  };
+  /** Rewrite result, same layout type as the section. */
+  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null };
+}
+
+/** One entry of a section's undo stack (cim_sections.content_history). */
+export interface CimSectionSnapshot {
+  at: string;
+  /** What replaced this version, in plain words ("AI rewrite", "Edited text"). */
+  reason: string;
+  sectionTitle: string;
+  layoutType: string;
+  layoutData: unknown;
+  aiDraftContent: string | null;
+  brokerEditedContent: string | null;
+}
 // (cim workstreams)
 
 // @anchor:schema-tail:seed

@@ -1,12 +1,21 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
+import {
+  getCimLayout,
+  layoutSpecsForPrompt,
+  normalizeLayoutType,
+  plannerLayouts,
+} from "@shared/cim-layouts";
+import { agentConfig } from "../interview/config/load-config";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
   timeout: 600_000, // 10 min headroom across the batched generation calls
 });
 
-const MODEL = "claude-sonnet-4-5";
+// Supporting-agent model (Sonnet). Every call in this file shares one cached
+// system prefix, so they must all use the same model.
+const MODEL = agentConfig.models.supportingAgents;
 
 /**
  * generateCimLayout
@@ -136,12 +145,14 @@ export async function generateCimLayout(
     generated.push(...results);
   }
 
-  // Validate and normalise
+  // Validate and normalise. A layout type outside the registry has no
+  // renderer — it would reach buyers as a blank or raw-data block — so it
+  // degrades to a narrative section.
   let sections: CimLayoutSection[] = generated.map((s, i) => ({
     sectionKey: s.sectionKey || `section_${i + 1}`,
     sectionTitle: s.sectionTitle || `Section ${i + 1}`,
     order: s.order ?? i + 1,
-    layoutType: (s.layoutType || "unknown") as LayoutType,
+    layoutType: normalizeLayoutType(s.layoutType) as LayoutType,
     layoutData: s.layoutData || {},
     aiDraftContent: s.aiDraftContent,
     aiLayoutReasoning: s.aiLayoutReasoning || "",
@@ -183,6 +194,81 @@ export interface ExistingSectionRef {
   aiLayoutReasoning?: string | null;
 }
 
+/** A section to (re)write: an existing one, or a new one the broker is adding. */
+export interface SectionTarget {
+  sectionKey: string;
+  sectionTitle: string;
+  order: number;
+  layoutType: string;
+  tags?: unknown;
+  aiLayoutReasoning?: string | null;
+}
+
+/**
+ * writeOneSection — shared by "Regenerate this section" and the CIM builder's
+ * "Add section → write it from the deal's information".
+ *
+ * Builds a manifest from the current document with `target` in its place
+ * (replacing the existing section with the same key, or inserted at
+ * target.order when it is new), then generates just that one section with
+ * the rest of the document as sibling context. Nothing else is touched.
+ *
+ * Throws if the section could not be generated — the caller keeps whatever it
+ * had. A write must never silently land a placeholder.
+ */
+export async function writeOneSection(
+  params: CimLayoutParams,
+  existing: ExistingSectionRef[],
+  target: SectionTarget,
+  options: { brief?: string } = {},
+): Promise<CimLayoutSection> {
+  const sharedSystem = buildSharedSystem(params);
+  const layoutType = normalizeLayoutType(target.layoutType);
+  const tagsOf = (t: unknown) => (Array.isArray(t) ? (t as string[]) : []);
+  const others: ManifestEntry[] = existing
+    .filter((s) => s.sectionKey !== target.sectionKey)
+    .map((s) => ({
+      sectionKey: s.sectionKey,
+      sectionTitle: s.sectionTitle,
+      order: s.order,
+      layoutType: s.layoutType,
+      tags: tagsOf(s.tags),
+      aiLayoutReasoning: s.aiLayoutReasoning || "",
+      contentBrief: `${s.sectionTitle}${tagsOf(s.tags).length ? ` (${tagsOf(s.tags).join(", ")})` : ""}`,
+    }));
+  const isNew = !existing.some((s) => s.sectionKey === target.sectionKey);
+  const brief = options.brief?.trim();
+  const entry: ManifestEntry = {
+    sectionKey: target.sectionKey,
+    sectionTitle: target.sectionTitle,
+    order: target.order,
+    layoutType,
+    tags: tagsOf(target.tags),
+    aiLayoutReasoning: target.aiLayoutReasoning || (isNew ? "Added by the broker in the CIM builder." : ""),
+    contentBrief: brief
+      ? brief
+      : isNew
+        ? `Write the "${target.sectionTitle}" section from the knowledge base. Cover what a buyer needs to know about this topic; do not repeat what sibling sections already cover.`
+        : `Rebuild "${target.sectionTitle}" from the knowledge base with the same scope it has today.`,
+  };
+  // Siblings keep their order; the target sits at its slot (after the
+  // sibling already holding that number).
+  const manifest = [...others, entry].sort(
+    (a, b) => a.order - b.order || (a === entry ? 1 : b === entry ? -1 : 0),
+  );
+
+  const warnings: string[] = [];
+  const section = await generateSection(sharedSystem, entry, manifest, warnings);
+  if (warnings.length > 0) {
+    throw new Error(
+      isNew
+        ? "The AI couldn't write this section. Try again, or start it blank."
+        : "The section could not be regenerated. The existing version was kept — please try again.",
+    );
+  }
+  return section;
+}
+
 /**
  * regenerateCimSection
  *
@@ -201,29 +287,187 @@ export async function regenerateCimSection(
   target: ExistingSectionRef,
   options: { layoutType?: string; brief?: string } = {},
 ): Promise<CimLayoutSection> {
-  const sharedSystem = buildSharedSystem(params);
-  const manifest: ManifestEntry[] = [...existing]
-    .sort((a, b) => a.order - b.order)
-    .map((s) => ({
-      sectionKey: s.sectionKey,
-      sectionTitle: s.sectionTitle,
-      order: s.order,
-      layoutType: s.sectionKey === target.sectionKey && options.layoutType ? options.layoutType : s.layoutType,
-      tags: Array.isArray(s.tags) ? (s.tags as string[]) : [],
-      aiLayoutReasoning: s.aiLayoutReasoning || "",
-      contentBrief: s.sectionKey === target.sectionKey
-        ? (options.brief || `Rebuild "${s.sectionTitle}" from the knowledge base with the same scope it has today.`)
-        : `${s.sectionTitle}${Array.isArray(s.tags) && s.tags.length ? ` (${(s.tags as string[]).join(", ")})` : ""}`,
-    }));
-  const entry = manifest.find((m) => m.sectionKey === target.sectionKey);
-  if (!entry) throw new Error("Section is not part of the current CIM.");
-
-  const warnings: string[] = [];
-  const section = await generateSection(sharedSystem, entry, manifest, warnings);
-  if (warnings.length > 0) {
-    throw new Error("The section could not be regenerated. The existing version was kept — please try again.");
+  if (!existing.some((s) => s.sectionKey === target.sectionKey)) {
+    throw new Error("Section is not part of the current CIM.");
   }
-  return section;
+  return writeOneSection(
+    params,
+    existing,
+    { ...target, layoutType: options.layoutType || target.layoutType },
+    { brief: options.brief },
+  );
+}
+
+// ── Rewrite / convert one section (CIM builder) ─────────────────────────────
+
+export const REWRITE_TONES = ["concise", "detailed", "persuasive", "formal", "plain_english"] as const;
+export type RewriteTone = (typeof REWRITE_TONES)[number];
+export type RewriteLength = "shorter" | "same" | "longer";
+
+const TONE_GUIDE: Record<RewriteTone, string> = {
+  concise: "Concise — tight sentences, no padding, lead with the point.",
+  detailed: "Detailed — add specifics from the knowledge base (figures, examples, context) where they strengthen the section.",
+  persuasive: "Persuasive — frame strengths for a buyer: why this matters to an acquirer, what it de-risks. Stay factual; no hype words.",
+  formal: "Formal — the register of a professional offering memorandum.",
+  plain_english: "Plain English — short words, no jargon; a first-time buyer must understand every sentence.",
+};
+
+const LENGTH_GUIDE: Record<RewriteLength, string> = {
+  shorter: "Make it noticeably shorter (roughly 40-60% of the current length). Keep the most important facts.",
+  same: "Keep roughly the same length.",
+  longer: "Make it longer (roughly 1.5-2x) by adding real detail from the knowledge base — never filler, never invented facts.",
+};
+
+/** The section as it stands today, for rewrite/convert prompts. */
+export interface SectionContentRef {
+  sectionKey: string;
+  sectionTitle: string;
+  layoutType: string;
+  layoutData: unknown;
+  /** The prose the renderer shows today (broker edit → body → AI draft). */
+  prose: string;
+}
+
+const BUILDER_TOOL = {
+  name: "cim_section",
+  description: "The full content for one CIM section.",
+  input_schema: {
+    type: "object" as const,
+    required: ["layoutData"],
+    properties: {
+      layoutData: {
+        type: "object",
+        description: "The structured data for this section's layout type, exactly matching the shape in the layout spec.",
+      },
+      aiDraftContent: {
+        type: "string",
+        description: "The section's prose as one plain-text string (paragraphs separated by a blank line). Required for prose_highlight (the same text as layoutData.body) and two_column (the prose column); optional elsewhere.",
+      },
+    },
+  },
+} as const;
+
+type SectionContent = { layoutData: Record<string, unknown>; aiDraftContent?: string };
+
+async function callBuilderTool(sharedSystem: SystemBlock, task: string, userMessage: string): Promise<SectionContent | null> {
+  const response = await anthropic.messages.create({
+    model: MODEL,
+    max_tokens: 6000,
+    system: [sharedSystem, { type: "text", text: task }] as never,
+    tools: [BUILDER_TOOL] as never,
+    tool_choice: { type: "tool", name: "cim_section" },
+    messages: [{ role: "user", content: userMessage }],
+  });
+  if (response.stop_reason === "max_tokens") return null;
+  const block = response.content.find((b) => b.type === "tool_use");
+  if (!block || block.type !== "tool_use") return null;
+  const input = block.input as { layoutData?: unknown; aiDraftContent?: unknown };
+  if (!input.layoutData || typeof input.layoutData !== "object" || Array.isArray(input.layoutData)) return null;
+  return {
+    layoutData: input.layoutData as Record<string, unknown>,
+    aiDraftContent: typeof input.aiDraftContent === "string" ? input.aiDraftContent : undefined,
+  };
+}
+
+/** One retry, then give up — the caller surfaces a clear error. */
+async function withOneRetry<T>(fn: () => Promise<T | null>): Promise<T | null> {
+  try {
+    const first = await fn();
+    if (first) return first;
+  } catch (err) {
+    console.warn("[layout-engine] builder call failed — retrying once:", (err as Error)?.message);
+  }
+  try {
+    return await fn();
+  } catch (err) {
+    console.error("[layout-engine] builder call failed twice:", err);
+    return null;
+  }
+}
+
+function describeCurrent(section: SectionContentRef): string {
+  const data = JSON.stringify(section.layoutData ?? {}, null, 1);
+  return [
+    `Title: ${section.sectionTitle}`,
+    `Current layout type: ${section.layoutType}`,
+    `Current layoutData (JSON):\n${data.length > 12000 ? `${data.slice(0, 12000)}…` : data}`,
+    section.prose ? `Current prose:\n${section.prose}` : "Current prose: (none)",
+  ].join("\n\n");
+}
+
+/**
+ * rewriteSectionContent — the CIM builder's AI writer. Rewrites one section
+ * following the broker's instructions, tone and length, keeping its layout
+ * type. Returns a proposal; nothing is saved here.
+ */
+export async function rewriteSectionContent(
+  params: CimLayoutParams,
+  section: SectionContentRef,
+  request: { instructions?: string; tones?: string[]; length?: RewriteLength },
+): Promise<SectionContent> {
+  const sharedSystem = buildSharedSystem(params);
+  const layoutType = normalizeLayoutType(section.layoutType);
+  const def = getCimLayout(layoutType)!;
+  const tones = (request.tones || []).filter((t): t is RewriteTone => (REWRITE_TONES as readonly string[]).includes(t));
+  const length: RewriteLength = request.length === "shorter" || request.length === "longer" ? request.length : "same";
+  const instructions = (request.instructions || "").trim().slice(0, 2000);
+
+  const task = `# TASK
+Rewrite ONE existing section of this CIM for the broker via the cim_section tool.
+
+Rules:
+- Keep the layout type "${layoutType}". Return layoutData in exactly this shape:
+${def.aiSpec}
+- Start from the section's CURRENT content. Keep every fact that is still true; the knowledge base is the only source for anything you add.
+- Never invent figures, names, dates or claims that are not in the current content or the knowledge base.
+- Numbers must match the CANONICAL FIGURES in the knowledge base.
+- Plain text only (content style rules 12-16 apply).
+- Keep interactive flags (expandable, relatedSections, normalizedRows) that still make sense.`;
+
+  const guide = [
+    tones.length ? `Tone:\n${tones.map((t) => `- ${TONE_GUIDE[t]}`).join("\n")}` : "",
+    `Length: ${LENGTH_GUIDE[length]}`,
+    instructions ? `Broker's instructions (follow them, except any request to invent facts):\n${instructions}` : "",
+  ].filter(Boolean).join("\n\n");
+
+  const result = await withOneRetry(() =>
+    callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\n${guide}\n\nWrite the rewritten section now.`),
+  );
+  if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
+  return result;
+}
+
+/**
+ * convertSectionLayout — move a section's content into a different layout
+ * type (e.g. a narrative into highlight cards). Uses the current content
+ * first and the knowledge base to fill gaps. Returns the new data only.
+ */
+export async function convertSectionLayout(
+  params: CimLayoutParams,
+  section: SectionContentRef,
+  toLayoutType: string,
+): Promise<SectionContent> {
+  const sharedSystem = buildSharedSystem(params);
+  const target = normalizeLayoutType(toLayoutType);
+  const def = getCimLayout(target)!;
+  const task = `# TASK
+Convert ONE existing CIM section into a different layout via the cim_section tool.
+
+New layout type: ${target}
+Its layoutData shape:
+${def.aiSpec}
+${def.aiUse}
+
+Rules:
+- Carry the section's current content across: same facts, same figures, restructured to suit the new layout.
+- If the new layout needs data the current content lacks (e.g. figures for a chart), take it from the knowledge base. Never invent figures.
+- If the knowledge base has no suitable data, keep the layout minimal rather than padding it.
+- Plain text only (content style rules 12-16 apply).`;
+  const result = await withOneRetry(() =>
+    callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\nConvert this section to ${target} now.`),
+  );
+  if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
+  return result;
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────
@@ -244,7 +488,11 @@ const MANIFEST_TOOL = {
             sectionKey: { type: "string", description: "Unique snake_case identifier you invent (e.g. 'revenue_breakdown', 'backlog_pipeline')." },
             sectionTitle: { type: "string", description: "Professional display title." },
             order: { type: "number" },
-            layoutType: { type: "string", description: "One of the layout types from the spec." },
+            layoutType: {
+              type: "string",
+              enum: plannerLayouts().map((l) => l.key),
+              description: "One of the layout types from the spec.",
+            },
             tags: { type: "array", items: { type: "string" } },
             aiLayoutReasoning: { type: "string", description: "1-2 sentences: why this layout for this content." },
             contentBrief: { type: "string", description: "One line: exactly what this section covers and which knowledge-base facts feed it." },
@@ -312,10 +560,12 @@ const SECTION_TOOL = {
 
 async function generateSection(
   sharedSystem: SystemBlock,
-  entry: ManifestEntry,
+  rawEntry: ManifestEntry,
   manifest: ManifestEntry[],
   warnings: string[],
 ): Promise<CimLayoutSection> {
+  // Only registered layouts have renderers; anything else becomes a narrative.
+  const entry: ManifestEntry = { ...rawEntry, layoutType: normalizeLayoutType(rawEntry.layoutType) };
   const siblingList = manifest
     .map((m) => `${m.order}. ${m.sectionTitle} (${m.layoutType}) — ${m.contentBrief}`)
     .join("\n");
@@ -336,7 +586,7 @@ async function generateSection(
       messages: [
         {
           role: "user",
-          content: `Generate section ${entry.order}: "${entry.sectionTitle}" (sectionKey: ${entry.sectionKey})\nLayout type: ${entry.layoutType}\nBrief: ${entry.contentBrief}\n\nProduce layoutData exactly matching the ${entry.layoutType} shape from the spec, populated with real values from the knowledge base. Use the interactive flags (expandable, relatedSections, normalizedRows) where the rules call for them.`,
+          content: `Generate section ${entry.order}: "${entry.sectionTitle}" (sectionKey: ${entry.sectionKey})\nLayout type: ${entry.layoutType}\nLayout shape: ${getCimLayout(entry.layoutType)?.aiSpec ?? entry.layoutType}\nBrief: ${entry.contentBrief}\n\nProduce layoutData exactly matching the ${entry.layoutType} shape from the spec, populated with real values from the knowledge base. Use the interactive flags (expandable, relatedSections, normalizedRows) where the rules call for them.`,
         },
       ],
     });
@@ -411,68 +661,7 @@ You are NOT generating a template. You are generating a bespoke document for thi
 
 LAYOUT TYPES AND THEIR layoutData SHAPE:
 
-cover_page: { businessName, tagline?, industry?, location?, askingPrice?, revenue?, ebitda?, earningsLabel?, preparedBy?, date?, confidentialLabel? }
-— ebitda holds the headline earnings figure; earningsLabel says what it is ("SDE", "EBITDA", "Adjusted EBITDA") and MUST match the figure. Never put an SDE number under an EBITDA label. Put only the number in ebitda (e.g. "$628,000"), the name in earningsLabel.
-
-metric_grid: { metrics: [{label, value, unit?, trend?, delta?, highlight?, footnote?}], columns?: 2|3|4, title? }
-— Use for: KPIs, key financial figures, key operational metrics, snapshot stats
-
-bar_chart: { data: [{name, value, secondaryValue?, color?}], xLabel?, yLabel?, secondaryLabel?, unit?, title?, stacked? }
-— Use for: revenue by year, revenue by stream, seasonality by month, headcount growth
-
-horizontal_bar_chart: { data: [{name, value, unit?}], yLabel?, unit?, title?, showPercentages? }
-— Use for: revenue by customer, revenue by product line, time allocation, % breakdowns where labels are long
-
-pie_chart: { data: [{name, value, color?}], totalLabel?, unit?, title? }
-— Use for: ownership breakdown, customer concentration, revenue mix (when ≤6 categories)
-
-donut_chart: { data: [{name, value, color?}], totalLabel?, unit?, title?, centerLabel?, centerValue? }
-— Use for: same as pie_chart but when you want to show a central metric
-
-line_chart: { data: [{name, [seriesKey]: value}], series: [{key, label, color?}], xLabel?, yLabel?, unit?, title? }
-— Use for: revenue trend over years, EBITDA trend, growth over time
-
-timeline: { events: [{date?, year?, title, description?, highlight?, category?}], title? }
-— Use for: company history, milestones, expansion history, ownership transitions
-
-financial_table: { headers: string[], rows: [{label, values: string[], isTotal?, isSectionHeader?, indent?, bold?}], caption?, currency?, footnotes? }
-— Use for: P&L summary, SDE normalization, balance sheet highlights, asking price build-up
-
-comparison_table: { leftLabel, rightLabel, rows: [{label, left, right, highlight?}], title? }
-— Use for: business vs. industry benchmarks, current vs. prior year, pre-sale vs. post-sale
-
-callout_list: { items: [{title, description?, icon?, highlight?, badge?}], columns?: 1|2|3, style?: "card"|"list"|"icon-row", title? }
-— Use for: USPs, growth opportunities, competitive advantages, buyer requirements, key differentiators
-
-icon_stat_row: { stats: [{icon?, label, value, unit?, description?}], title? }
-— Use for: compact stats that don't warrant a full metric grid — operational facts, headcounts, key numbers
-
-prose_highlight: { body, pullQuote?, highlights?: string[], subheading? }
-— Use for: company narrative, reason for sale, owner story, transition plan — anything deeply human
-
-two_column: { left: {title?, content, layoutType?}, right: {title?, content, layoutType?}, title? }
-— Use for: pairing complementary information — narrative + stats, overview + highlights
-
-org_chart: { nodes: [{id, name, role, reportsTo?, isKeyPerson?, isOwner?, yearsAtCompany?, notes?}], title?, totalHeadcount?, ownerDependency? }
-— Use for: team structure, management hierarchy, key personnel
-
-location_card: { locations: [{label?, address?, sqft?, leaseType?, leaseExpiry?, monthlyRent?, annualRent?, renewalOptions?, notes?}], totalSqft?, title? }
-— Use for: physical location details, lease terms, real estate included in sale
-
-stat_callout: { primaryValue, primaryLabel, secondaryStats?: [{label, value}], description?, accentColor? }
-— Use for: one standout number that defines the business — leading metric on a major section
-
-numbered_list: { items: [{title, description?}], title?, ordered? }
-— Use for: process steps, reasons to buy, ranked priorities, ordered action items
-
-scorecard: { items: [{label, score, benchmark?, description?}], title?, maxScore? }
-— Use for: business health assessment, risk factors, readiness indicators
-
-waterfall_chart: { items: [{label, value, type?: "start"|"add"|"subtract"|"total"}], title?, unit?, currency? }
-— Use for: SDE normalization build-up, EBITDA walk, asking price build-up — any stepped financial calculation. Shows starting point, each addback/adjustment as green (add) or red (subtract) steps, and final total. Excellent for showing how you get from net income to adjusted SDE/EBITDA.
-
-divider: { label?, style?: "line"|"section-break"|"page-break" }
-— Use for: visual separation between major document sections
+${layoutSpecsForPrompt()}
 
 INTERACTIVE CAPABILITIES:
 

@@ -235,6 +235,7 @@ function SummaryPreview({
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
           <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background to-transparent flex items-end justify-center pb-1">
@@ -266,6 +267,7 @@ function SummaryPreview({
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
           <div className="text-center mt-2">
@@ -293,6 +295,7 @@ function SummaryPreview({
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
           <div className="text-center mt-2">
@@ -345,6 +348,7 @@ function SummaryPreview({
       section={section}
       branding={branding}
       brokerMode={false}
+      hideTitle
     />
   );
 }

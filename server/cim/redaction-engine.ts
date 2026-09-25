@@ -14,43 +14,48 @@ import type { CimSection } from "@shared/schema";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
-interface RedactionResult {
+export interface RedactionResult {
   cimSectionId: string;
   layoutData: any;
   contentOverride: string;
+  /** The section title with identifying details removed. */
+  sectionTitle: string;
 }
 
-/**
- * Generate blind (redacted) overrides for all CIM sections of a deal.
- */
-export async function generateBlindOverrides(
-  sections: CimSection[],
-  deal: {
-    businessName: string;
-    industry?: string | null;
-    extractedInfo?: Record<string, any> | null;
-  },
-  options: {
-    /** Reuse the deal's existing codename when re-redacting a subset of sections. */
-    codename?: string | null;
-  } = {},
-): Promise<{ codename: string; overrides: RedactionResult[] }> {
-  // Build a mapping of known identifiers to help the AI
+type RedactionDeal = {
+  businessName: string;
+  industry?: string | null;
+  extractedInfo?: Record<string, any> | null;
+};
+
+/** Every string the redactor must never let through for this deal. */
+export function knownIdentifiersFor(deal: RedactionDeal): string[] {
   const extractedInfo = deal.extractedInfo || {};
-  const knownIdentifiers: string[] = Array.from(new Set([
+  return Array.from(new Set([
     ...blindIdentifiers(deal),
     extractedInfo.contactEmail,
     extractedInfo.contactPhone,
     extractedInfo.address,
     extractedInfo.leaseAddress,
   ].filter((v): v is string => typeof v === "string" && v.length > 0)));
+}
 
-  // Generate a project codename
-  const codenames = [
-    "Project Maple", "Project Horizon", "Project Summit", "Project Coastal",
-    "Project Pinnacle", "Project Meridian", "Project Evergreen", "Project Atlas",
-  ];
-  const codename = options.codename || codenames[Math.floor(Math.random() * codenames.length)];
+/**
+ * Generate blind (redacted) overrides for all CIM sections of a deal.
+ * Callers pass the deal's codename (server/cim/codenames.ts keeps it stable
+ * and unique per brokerage); a random pick is only a last-resort fallback.
+ */
+export async function generateBlindOverrides(
+  sections: CimSection[],
+  deal: RedactionDeal,
+  options: {
+    /** The deal's codename — reused so outreach and the CIM always agree. */
+    codename?: string | null;
+  } = {},
+): Promise<{ codename: string; overrides: RedactionResult[] }> {
+  const knownIdentifiers = knownIdentifiersFor(deal);
+  const { pickCodename } = await import("./codenames");
+  const codename = options.codename || pickCodename(new Set());
 
   const overrides: RedactionResult[] = [];
 
@@ -66,6 +71,29 @@ export async function generateBlindOverrides(
   return { codename, overrides };
 }
 
+/** Redact one section (throws if the AI call itself fails). */
+export async function redactOneSection(
+  section: CimSection,
+  deal: RedactionDeal,
+  codename: string,
+): Promise<RedactionResult> {
+  return redactSection(section, knownIdentifiersFor(deal), codename, deal.industry);
+}
+
+/**
+ * The prose the renderer actually shows for this section — the redacted copy
+ * must be of the same text, or the Blind CIM reads differently from Normal.
+ * Narrative: broker edit → layoutData.body → AI draft. Elsewhere the broker
+ * edit or AI draft (two-column keeps its prose column in layoutData).
+ */
+function displayedProse(section: CimSection): string {
+  const data = (section.layoutData as Record<string, unknown> | null) || {};
+  if (section.layoutType === "prose_highlight") {
+    return section.brokerEditedContent || (typeof data.body === "string" ? data.body : "") || section.aiDraftContent || "";
+  }
+  return section.brokerEditedContent || section.aiDraftContent || "";
+}
+
 async function redactSection(
   section: CimSection,
   knownIdentifiers: string[],
@@ -73,7 +101,7 @@ async function redactSection(
   industry?: string | null,
 ): Promise<RedactionResult> {
   const layoutData = section.layoutData as any || {};
-  const content = section.brokerEditedContent || section.aiDraftContent || "";
+  const content = displayedProse(section);
 
   const message = await anthropic.messages.create({
     model: "claude-sonnet-4-5",
@@ -93,6 +121,7 @@ async function redactSection(
 7. KEEP all financial figures, percentages, years, metrics, and industry terminology intact
 8. KEEP the same JSON structure for layoutData — only change string values that contain identifying info
 9. Be thorough — buyers should not be able to identify the business from the blind version
+10. Redact the section title too, keeping it a natural heading (return it unchanged if it holds nothing identifying)
 
 ## Known identifiers to watch for:
 ${knownIdentifiers.map(id => `- "${id}"`).join("\n")}
@@ -111,6 +140,7 @@ ${content}
 ## Output format
 Respond with ONLY a JSON object (no markdown, no explanation):
 {
+  "sectionTitle": "<redacted title>",
   "layoutData": <redacted layoutData with same structure>,
   "contentOverride": "<redacted content text>"
 }`,
@@ -118,28 +148,41 @@ Respond with ONLY a JSON object (no markdown, no explanation):
     ],
   });
 
+  // Deterministic net: known identifiers → codename. Used for any field the
+  // model left out, so a missing field can never fall back to the raw text.
+  // (An empty pattern would match between every character — guard it.)
+  const nameRegex = knownIdentifiers.length > 0
+    ? new RegExp(knownIdentifiers.map(id => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi")
+    : null;
+  const scrub = (t: string) => (nameRegex ? t.replace(nameRegex, codename) : t);
+  const scrubbedData = () => JSON.parse(scrub(JSON.stringify(layoutData)));
+
   try {
     const text = message.content[0].type === "text" ? message.content[0].text : "";
     // Extract JSON from response (handle possible markdown wrapping)
     const jsonMatch = text.match(/\{[\s\S]*\}/);
     if (!jsonMatch) throw new Error("No JSON in response");
     const parsed = JSON.parse(jsonMatch[0]);
+    const redactedData = parsed.layoutData && typeof parsed.layoutData === "object" ? parsed.layoutData : scrubbedData();
 
     return {
       cimSectionId: String(section.id),
-      layoutData: parsed.layoutData || layoutData,
-      contentOverride: parsed.contentOverride || content,
+      // Second pass with the known-identifier net in case the model missed one.
+      layoutData: JSON.parse(scrub(JSON.stringify(redactedData))),
+      contentOverride: scrub(typeof parsed.contentOverride === "string" && (parsed.contentOverride || !content)
+        ? parsed.contentOverride
+        : content),
+      sectionTitle: scrub(typeof parsed.sectionTitle === "string" && parsed.sectionTitle.trim()
+        ? parsed.sectionTitle.trim()
+        : section.sectionTitle || ""),
     };
   } catch {
     // Fallback: naive string replacement
-    const nameRegex = new RegExp(
-      knownIdentifiers.map(id => id.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-      "gi",
-    );
     return {
       cimSectionId: String(section.id),
-      layoutData: JSON.parse(JSON.stringify(layoutData).replace(nameRegex, codename)),
-      contentOverride: content.replace(nameRegex, codename),
+      layoutData: scrubbedData(),
+      contentOverride: scrub(content),
+      sectionTitle: scrub(section.sectionTitle || ""),
     };
   }
 }

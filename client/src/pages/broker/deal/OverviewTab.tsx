@@ -58,10 +58,8 @@ import {
   AlertCircle,
   Loader2,
   Globe,
-  Pencil,
   RefreshCw,
   X,
-  Check,
   Wand2,
   Mail,
   Phone,
@@ -76,10 +74,7 @@ import {
 } from "lucide-react";
 import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
-import { buildBranding } from "@/components/cim/CimBrandingContext";
-import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
-import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
+import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
@@ -87,7 +82,6 @@ import type {
   SellerInvite,
   Document as DocType,
   CimSection,
-  BrandingSettings,
   Discrepancy,
 } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
@@ -1669,12 +1663,6 @@ function Phase3Center() {
   const { deal, dealId } = useDeal();
   const { toast } = useToast();
   const cimContent = deal.cimContent as Record<string, string> | null;
-  const [editingSection, setEditingSection] = useState<string | null>(null);
-  // Prose layouts edit a text draft (→ brokerEditedContent); structured
-  // layouts edit their layoutData (→ layoutData). See editableText.ts.
-  const [editMode, setEditMode] = useState<"text" | "data">("text");
-  const [editDraft, setEditDraft] = useState("");
-  const [dataDraft, setDataDraft] = useState<Record<string, any>>({});
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
 
   // Throws on failure: returning [] here would drop the broker into the
@@ -1693,17 +1681,6 @@ function Phase3Center() {
     },
   });
 
-  const { data: brandingSettings } = useQuery<BrandingSettings | null>({
-    queryKey: ["/api/branding"],
-    queryFn: async () => {
-      const r = await fetch("/api/branding");
-      if (!r.ok) return null;
-      const arr = await r.json();
-      return Array.isArray(arr) ? arr[0] || null : arr;
-    },
-  });
-
-  const branding = buildBranding(brandingSettings, deal);
   const hasVisualSections = cimSections.length > 0;
 
   const {
@@ -1770,63 +1747,6 @@ function Phase3Center() {
       });
     },
   });
-
-  const saveEdit = useMutation({
-    mutationFn: ({ sectionId, patch }: { sectionId: string; patch: { brokerEditedContent?: string; layoutData?: Record<string, any> } }) =>
-      apiJson(
-        "PATCH",
-        `/api/cim-sections/${sectionId}`,
-        patch,
-        "Couldn't save the section",
-      ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "cim-sections"],
-      });
-      setEditingSection(null);
-      toast({ title: "Section saved" });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Save failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  // Per-section regenerate: rebuilds ONE section through the layout engine
-  // (POST generate-content { sectionId }); everything else is untouched.
-  const regenerateSection = useMutation({
-    mutationFn: (sectionId: string) =>
-      apiJson(
-        "POST",
-        `/api/deals/${dealId}/generate-content`,
-        { sectionId },
-        "Couldn't regenerate the section",
-      ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "Section regenerated" });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Regenerate failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  const startEdit = (section: CimSection) => {
-    setEditingSection(String(section.id));
-    if (isTextEditableLayout(section.layoutType)) {
-      setEditMode("text");
-      setEditDraft(getEditableText(section));
-    } else {
-      setEditMode("data");
-      setDataDraft(((section.layoutData as Record<string, any> | null) ?? {}));
-    }
-  };
 
   const approve = useMutation({
     mutationFn: (role: "broker" | "seller") =>
@@ -1991,11 +1911,11 @@ function Phase3Center() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">
-            CIM Preview
+            Your CIM
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             {hasVisualSections
-              ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Click any section to edit`
+              ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Edit, add and rearrange them in the CIM builder`
               : "Legacy text CIM — regenerate to enable visual editing"}
           </p>
           {readiness && <CimReadinessBadge readiness={readiness} className="mt-1" />}
@@ -2123,105 +2043,9 @@ function Phase3Center() {
       )}
 
       {hasVisualSections ? (
-        <div className="space-y-6 rounded-lg border border-border bg-card/50 p-6">
-          {cimSections.map((section) => {
-            const isEditing = editingSection === String(section.id);
-            const textEditable = isTextEditableLayout(section.layoutType);
-            const dataEditable = isStructuredLayout(section.layoutType);
-            const isRegenerating =
-              regenerateSection.isPending && regenerateSection.variables === String(section.id);
-            return (
-              <div key={section.id} className="group relative">
-                {!isEditing && (
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
-                    {(textEditable || dataEditable) && (
-                      <button
-                        onClick={() => startEdit(section)}
-                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm"
-                        data-testid={`button-edit-section-${section.sectionKey}`}
-                      >
-                        <Pencil className="h-3 w-3" /> {textEditable ? "Edit text" : "Edit data"}
-                      </button>
-                    )}
-                    {section.layoutType !== "cover_page" && section.layoutType !== "divider" && (
-                      <button
-                        onClick={() => regenerateSection.mutate(String(section.id))}
-                        disabled={regenerateSection.isPending || generationBlocked}
-                        title={blockReason ?? "Rebuild only this section from the knowledge base"}
-                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm disabled:opacity-50"
-                        data-testid={`button-regenerate-section-${section.sectionKey}`}
-                      >
-                        <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
-                        {isRegenerating ? "Regenerating…" : "Regenerate"}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {isEditing ? (
-                  <div className="rounded-lg border-2 border-teal/40 bg-card p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-                        {section.sectionTitle}
-                      </p>
-                      <span className="text-2xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                        {section.layoutType}
-                      </span>
-                    </div>
-                    {editMode === "text" ? (
-                      <Textarea
-                        value={editDraft}
-                        onChange={(e) => setEditDraft(e.target.value)}
-                        className="resize-none text-sm min-h-[140px] font-normal"
-                        autoFocus
-                      />
-                    ) : (
-                      <div className="max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
-                        <StructuredDataEditor value={dataDraft} onChange={setDataDraft} />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
-                        onClick={() =>
-                          saveEdit.mutate({
-                            sectionId: String(section.id),
-                            patch: editMode === "text"
-                              ? { brokerEditedContent: editDraft }
-                              : { layoutData: dataDraft },
-                          })
-                        }
-                        disabled={saveEdit.isPending}
-                      >
-                        {saveEdit.isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Check className="h-3 w-3" />
-                        )}
-                        Save
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs gap-1"
-                        onClick={() => setEditingSection(null)}
-                      >
-                        <X className="h-3 w-3" /> Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <CimSectionRenderer
-                    section={section}
-                    branding={branding}
-                    brokerMode
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+        // The CIM builder is the one editor for sections (add, delete,
+        // reorder, rewrite with AI, access tiers) — Overview shows a summary.
+        <CimSummaryCard dealId={dealId} />
       ) : (
         <div className="space-y-3">
           {CIM_SECTIONS.map((section) => {
@@ -2325,7 +2149,7 @@ function Phase4Center() {
           onClick={() => navigate(`/deal/${dealId}/design`)}
         >
           <Wand2 className="h-3.5 w-3.5" />
-          Open CIM Designer
+          Open CIM builder
         </Button>
       </div>
       {publishBlocked && (

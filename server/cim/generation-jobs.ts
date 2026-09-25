@@ -64,7 +64,7 @@ async function persist(job: CimGenerationJob) {
  * discrepancies onto extractedInfo (the broker's accepted values win);
  * layout mode uses extractedInfo as stored, matching the old endpoints.
  */
-async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
+export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
   const extractedInfo = { ...((deal.extractedInfo as Record<string, unknown>) || {}) };
   if (mode === "content") {
     const resolved = await storage.getResolvedDiscrepancies(deal.id);

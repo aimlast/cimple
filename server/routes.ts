@@ -17,11 +17,14 @@ import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
 import type { InterviewCall, InterviewBot } from "@shared/schema";
 import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-profile";
-import { blindTitleRedactor } from "@shared/blind-identifiers";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
+import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { invalidateBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
+import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
+import { isBuyerAccessLevel } from "@shared/cim-layouts";
 import multer from "multer";
 import { registerDealListRoutes } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
@@ -4161,34 +4164,9 @@ Return JSON only.`,
   // Auto-generate blind overrides in the background the first time a
   // blind-mode link is opened before the broker ran "Generate blind CIM".
   // In-flight guard prevents a stampede of redaction runs per deal.
-  const blindGenInFlight = new Set<string>();
-  function ensureBlindOverridesInBackground(deal: { id: string; businessName: string; industry: string; extractedInfo: unknown }) {
-    if (blindGenInFlight.has(deal.id)) return;
-    blindGenInFlight.add(deal.id);
-    (async () => {
-      const sections = await storage.getCimSectionsByDeal(deal.id);
-      if (sections.length === 0) return;
-      const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const { codename, overrides } = await generateBlindOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      });
-      await storage.deleteCimSectionOverrides(deal.id, "blind");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId: deal.id,
-          cimSectionId: override.cimSectionId,
-          mode: "blind",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
-      }
-      await storage.updateDeal(deal.id, { blindCodename: codename } as any);
-      console.log(`[view] Auto-generated ${overrides.length} blind overrides for deal ${deal.id}`);
-    })()
-      .catch((err) => console.error(`[view] Blind auto-generation failed for deal ${deal.id}:`, err))
-      .finally(() => blindGenInFlight.delete(deal.id));
+  // In-flight guard + codename reuse live in server/cim/blind-sync.ts.
+  function ensureBlindOverridesInBackground(deal: { id: string }) {
+    regenerateAllBlindInBackground(deal.id);
   }
 
   app.get("/api/view/:token", async (req, res) => {
@@ -4301,70 +4279,40 @@ Return JSON only.`,
         buildBuyerQuestionFeed(deal.id, access.id),
       ]);
 
-      // Apply redaction/enrichment overrides for non-normal modes
-      let sections = baseSections;
-      if (cimMode !== "normal" && baseSections.length > 0) {
-        const overrides = await storage.getCimSectionOverrides(deal.id, cimMode);
-        if (overrides.length > 0) {
-          // Section titles are NOT stored in the override (which only holds
-          // layoutData + content), so redact them here with the same codename.
-          // Every known name variant (company/legal/trade/brand names, owner,
-          // website) — see shared/blind-identifiers.ts.
-          const redactTitle = blindMode
-            ? blindTitleRedactor(deal as any, codename)
-            : (t: string) => t;
-
-          const overrideMap = new Map(overrides.map(o => [o.cimSectionId, o]));
-          sections = baseSections.map(s => {
-            const sectionTitle = redactTitle(s.sectionTitle || "");
-            const override = overrideMap.get(String(s.id));
-            if (!override) return { ...s, sectionTitle };
-            return {
-              ...s,
-              sectionTitle,
-              layoutData: override.layoutData || s.layoutData,
-              // Blind: the override IS the content. Falling back to the base
-              // draft/broker edit would serve un-redacted prose to a pre-NDA buyer.
-              aiDraftContent: override.contentOverride || (blindMode ? null : s.aiDraftContent),
-              brokerEditedContent: override.contentOverride || (blindMode ? null : s.brokerEditedContent),
-            };
-          });
-        } else if (blindMode) {
-          // No redacted version exists yet. Do NOT serve the real, un-redacted
-          // sections — that would leak identity to the first viewer. Serve a
-          // "preparing" holding state and generate; the client polls back.
-          ensureBlindOverridesInBackground(deal);
-          return res.json({
-            access: freshAccess,
-            deal: publicDeal,
-            sections: [],
-            publishedQuestions: [],
-            branding: branding ?? null,
-            cimMode,
-            preparing: true,
-          });
-        }
-        // dd mode with no overrides yet: serving base sections is acceptable —
-        // a due-diligence buyer has already earned full-identity access.
+      // Which sections this buyer may receive, in which form — hidden
+      // sections, per-section access tiers and blind freshness are all
+      // enforced here (shared/cim-buyer-view.ts). Buyers get only what
+      // the renderer needs: never aiLayoutReasoning (internal AI notes that
+      // name the owners), seller edits, approval flags or AI task state.
+      const overrides = cimMode === "normal" ? [] : await storage.getCimSectionOverrides(deal.id, cimMode);
+      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides });
+      if (buyerCim.preparing) {
+        // No redacted version exists yet. Do NOT serve the real, un-redacted
+        // sections — that would leak identity to the first viewer. Serve a
+        // "preparing" holding state and generate; the client polls back.
+        ensureBlindOverridesInBackground(deal);
+        return res.json({
+          access: freshAccess,
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding: branding ?? null,
+          cimMode,
+          preparing: true,
+        });
       }
-
-      // Buyers get only what the renderer needs. The raw cimSections row
-      // carries aiLayoutReasoning (internal AI notes that name the owners),
-      // seller edits, finalContent, approval flags — none of which may reach
-      // a blind-mode buyer, and none of which the view room renders.
-      const toBuyerSection = (sec: any) => ({
-        id: sec.id,
-        dealId: sec.dealId,
-        sectionKey: sec.sectionKey,
-        sectionTitle: sec.sectionTitle,
-        order: sec.order,
-        layoutType: sec.layoutType,
-        layoutData: sec.layoutData,
-        aiDraftContent: sec.aiDraftContent,
-        brokerEditedContent: sec.brokerEditedContent,
-        isVisible: sec.isVisible,
+      // Sections whose blind version is behind their content (just added or
+      // edited) are held back until re-redacted — make sure that is running.
+      if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
+      res.json({
+        access: freshAccess,
+        deal: publicDeal,
+        sections: buyerCim.sections,
+        pendingSections: buyerCim.heldBack,
+        publishedQuestions,
+        branding: branding ?? null,
+        cimMode,
       });
-      res.json({ access: freshAccess, deal: publicDeal, sections: sections.map(toBuyerSection), publishedQuestions, branding: branding ?? null, cimMode });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -4454,6 +4402,11 @@ Return JSON only.`,
       if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
       const { dealId: _d, accessToken: _t, id: _i, ...accessUpdates } = req.body || {};
       if (typeof accessUpdates.expiresAt === "string") accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+      // Access level decides which CIM version (and which sections) the buyer
+      // sees — only the four known levels are accepted.
+      if (accessUpdates.accessLevel !== undefined && !isBuyerAccessLevel(accessUpdates.accessLevel)) {
+        return res.status(400).json({ error: "Access level must be teaser, full, loi or due_diligence" });
+      }
       const access = await storage.updateBuyerAccess(req.params.id, accessUpdates);
       if (!access) {
         return res.status(404).json({ error: "Buyer access not found" });
@@ -5062,21 +5015,9 @@ Return JSON only.`,
     }
   });
 
-  app.patch("/api/sections/:id", requireBroker, async (req, res) => {
-    try {
-      const existingSection = await storage.getCimSection(req.params.id);
-      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
-      const { dealId: _d, id: _i, ...sectionUpdates } = req.body || {};
-      const section = await storage.updateCimSection(req.params.id, sectionUpdates);
-      if (!section) {
-        return res.status(404).json({ error: "Section not found" });
-      }
-      res.json(section);
-    } catch (error: any) {
-      console.error("Error updating section:", error);
-      res.status(500).json({ error: "Failed to update section" });
-    }
-  });
+  // Legacy alias — same whitelisted, blind-safe update as /api/cim-sections/:id
+  // (it used to accept ANY column, including blind-freshness state).
+  app.patch("/api/sections/:id", requireBroker, patchCimSection);
 
   // ── CIM-SECTIONS ALIASES (used by CIMDesigner) ──
 
@@ -5091,12 +5032,10 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/cim-sections/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { orderedIds } = req.body;
-      if (Array.isArray(orderedIds)) {
-        for (let i = 0; i < orderedIds.length; i++) {
-          await storage.updateCimSection(String(orderedIds[i]), { order: i } as any);
-        }
-      }
+      // Every id must belong to this deal (the old loop wrote any id it was
+      // given — a cross-tenant write); one transaction, 0-based.
+      const result = await reorderDealSections(req.params.dealId, req.body?.orderedIds);
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to reorder sections" });
@@ -5174,38 +5113,11 @@ Return JSON only.`,
           brokerEditedContent: null,
           brokerApproved: false,
         });
-        // The section's overrides now describe content that no longer exists.
-        // DD: drop it (a DD buyer is allowed to see the base section). Blind:
-        // NEVER leave a gap — the view room serves the base section when an
-        // override is missing, which would show a blind buyer the real name.
-        // Re-redact the new section under the existing codename; if that
-        // fails, keep the stale (still redacted) overrides in place.
-        const blindOverrides = await storage.getCimSectionOverrides(dealId, "blind");
-        const hadBlind = blindOverrides.some(o => o.cimSectionId === String(target.id));
-        if (hadBlind && updatedSection) {
-          try {
-            const { generateBlindOverrides } = await import("./cim/redaction-engine");
-            const { overrides: reblinded } = await generateBlindOverrides([updatedSection], {
-              businessName: deal.businessName,
-              industry: deal.industry,
-              extractedInfo: deal.extractedInfo as Record<string, any> | null,
-            }, { codename: (deal as any).blindCodename });
-            await storage.deleteCimSectionOverridesForSection(String(target.id));
-            for (const o of reblinded) {
-              await storage.createCimSectionOverride({
-                dealId,
-                cimSectionId: o.cimSectionId,
-                mode: "blind",
-                layoutData: o.layoutData,
-                contentOverride: o.contentOverride,
-              });
-            }
-          } catch (err) {
-            console.error(`[generate-content] Re-redaction failed for section ${target.id}; keeping stale overrides:`, err);
-          }
-        } else {
-          await storage.deleteCimSectionOverridesForSection(String(target.id));
-        }
+        // The section's overrides now describe content that no longer exists:
+        // drop them, mark the section stale and re-redact in the background
+        // under the existing codename. The view room holds a stale section
+        // back from blind buyers until then (it is never served un-redacted).
+        await invalidateBlind(dealId, [String(target.id)]);
         if (regenerated.aiDraftContent) {
           const existingContent = (deal.cimContent as Record<string, string>) || {};
           await storage.updateDeal(deal.id, { cimContent: { ...existingContent, [target.sectionKey]: regenerated.aiDraftContent } });
@@ -5276,27 +5188,11 @@ Return JSON only.`,
         return res.status(400).json({ error: "Generate CIM content first" });
       }
 
-      const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const { codename, overrides } = await generateBlindOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      });
-
-      // Delete old blind overrides and insert new ones
-      await storage.deleteCimSectionOverrides(dealId, "blind");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId,
-          cimSectionId: override.cimSectionId,
-          mode: "blind",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
-      }
-      await storage.updateDeal(dealId, { blindCodename: codename } as any);
-
-      res.json({ success: true, overrideCount: overrides.length });
+      // Rebuilds every section's blind version under the deal's EXISTING
+      // codename (a new, brokerage-unique one only if it never had one) —
+      // outreach already sent under the codename keeps matching the CIM.
+      const { codename, count } = await regenerateAllBlind(dealId);
+      res.json({ success: true, overrideCount: count, codename });
     } catch (error: any) {
       console.error("Error generating blind CIM:", error);
       res.status(500).json({ error: error.message || "Failed to generate blind CIM" });
@@ -6344,38 +6240,22 @@ Return JSON only.`,
   });
 
   // Update a single CIM section (broker edit, format override, approve)
-  app.patch("/api/cim-sections/:sectionId", requireBroker, async (req, res) => {
-    try {
-      const { sectionId } = req.params;
-      const existingSection = await storage.getCimSection(sectionId);
-      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
-      const { brokerEditedContent, layoutOverride, layoutData, layoutType, isVisible, sectionTitle } = req.body;
-      // The designer historically sent `isApproved`; the column is brokerApproved.
-      const brokerApproved = req.body.brokerApproved !== undefined ? req.body.brokerApproved : req.body.isApproved;
+  // Whitelisted + validated (title, content, data, layout, visibility,
+  // approval, access tier); content edits push an undo snapshot and refresh
+  // the section's blind version — see server/cim/section-ops.ts.
+  app.patch("/api/cim-sections/:sectionId", requireBroker, patchCimSection);
 
-      const updated = await storage.updateCimSection(sectionId, {
-        ...(brokerEditedContent !== undefined && { brokerEditedContent }),
-        ...(layoutType !== undefined && { layoutType }),
-        ...(layoutOverride !== undefined && { layoutOverride }),
-        ...(layoutData !== undefined && { layoutData }),
-        ...(isVisible !== undefined && { isVisible }),
-        ...(brokerApproved !== undefined && { brokerApproved }),
-        ...(sectionTitle !== undefined && { sectionTitle }),
-      });
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to update section" });
-    }
-  });
-
-  // Reorder sections
+  // Reorder sections ({ order: [{ id, order }] }) — same rules as
+  // /cim-sections/reorder: ids must belong to the deal, one transaction.
   app.post("/api/deals/:dealId/layout/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { dealId } = req.params;
-      const { order }: { order: Array<{ id: string; order: number }> } = req.body;
-      for (const item of order) {
-        await storage.updateCimSection(item.id, { order: item.order } as any);
+      const order = Array.isArray(req.body?.order) ? req.body.order : null;
+      if (!order || order.some((o: any) => !o || typeof o.id !== "string" || typeof o.order !== "number")) {
+        return res.status(400).json({ error: "order must be a list of { id, order }" });
       }
+      const orderedIds = [...order].sort((a: any, b: any) => a.order - b.order).map((o: any) => o.id);
+      const result = await reorderDealSections(req.params.dealId, orderedIds);
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to reorder sections" });
@@ -6759,32 +6639,25 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // carries most of the facts in a bespoke CIM, so it is flattened into
       // the context alongside the prose — otherwise "what is the monthly
       // rent?" escalated even though the Facility section shows it.
-      const baseSections = (await storage.getCimSectionsByDeal(dealId)).filter(s => s.isVisible !== false);
-      let answerSections: AnswerSection[] = baseSections.map(s => ({
-        title: s.sectionTitle,
-        body: s.brokerEditedContent || s.aiDraftContent || "",
-        layoutType: s.layoutType,
-        layoutData: s.layoutData,
-      }));
-      if (chatMode !== "normal") {
-        const overrides = await storage.getCimSectionOverrides(dealId, chatMode);
-        if (overrides.length === 0 && chatMode === "blind") {
-          answerSections = [];
-        } else if (overrides.length > 0) {
-          const blind = chatMode === "blind";
-          answerSections = baseSections.map(s => {
-            const o = overrides.find(ov => ov.cimSectionId === String(s.id));
-            return {
-              title: o ? "Section" : s.sectionTitle,
-              body: o?.contentOverride || (blind ? "" : (s.brokerEditedContent || s.aiDraftContent || "")),
-              layoutType: s.layoutType,
-              // Same rule as the prose: a blind buyer only ever gets the
-              // redacted override's data, never the un-redacted base.
-              layoutData: o?.layoutData || (blind ? null : s.layoutData),
-            };
-          });
-        }
-      }
+      // Same authority as the view room (shared/cim-buyer-view.ts):
+      // hidden, locked (above the buyer's tier) and not-yet-redacted
+      // sections never feed the answer.
+      const chatDeal = await storage.getDeal(dealId);
+      const [chatBaseSections, chatOverrides] = await Promise.all([
+        storage.getCimSectionsByDeal(dealId),
+        chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+      ]);
+      const chatCim = chatDeal
+        ? buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides })
+        : null;
+      const answerSections: AnswerSection[] = (chatCim?.sections ?? [])
+        .filter(s => !s.locked)
+        .map(s => ({
+          title: s.sectionTitle,
+          body: s.brokerEditedContent || s.aiDraftContent || "",
+          layoutType: s.layoutType,
+          layoutData: s.layoutData,
+        }));
       // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
       const cimText = stripDdMarkers(buildAnswerContext(answerSections));
 

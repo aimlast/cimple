@@ -62,7 +62,12 @@ interface ViewData {
   ndaGate?: boolean;
   /** True when the blind (redacted) version is still being prepared */
   preparing?: boolean;
+  /** Sections held back until their redacted version is ready (just added/edited). */
+  pendingSections?: number;
 }
+
+/** A section the buyer's access level doesn't open yet (server sends title only). */
+const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
 async function readErrorBody(res: Response): Promise<{ error?: string }> {
@@ -220,9 +225,13 @@ export default function BuyerViewRoom() {
       }
       return res.json();
     },
-    // While the redacted version is being prepared, poll until it's ready.
-    refetchInterval: (query) =>
-      (query.state.data as ViewData | undefined)?.preparing ? 4000 : false,
+    // While the redacted version is being prepared, poll until it's ready;
+    // more slowly while a few freshly edited sections catch up.
+    refetchInterval: (query) => {
+      const d = query.state.data as ViewData | undefined;
+      if (d?.preparing) return 4000;
+      return d?.pendingSections ? 10000 : false;
+    },
   });
 
   // The analytics endpoint authenticates every batch with the view-room
@@ -386,7 +395,8 @@ export default function BuyerViewRoom() {
                         className="flex items-start gap-1.5 px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors leading-snug"
                       >
                         <span className="opacity-40 shrink-0 pt-px">{idx + 1}.</span>
-                        <span>{s.sectionTitle}</span>
+                        <span className={isLocked(s) ? "opacity-60" : undefined}>{s.sectionTitle}</span>
+                        {isLocked(s) && <Lock className="h-3 w-3 shrink-0 mt-0.5 opacity-50" aria-label="Locked" />}
                       </a>
                     ))
                   : legacySections.map((s, idx) => (
@@ -418,6 +428,14 @@ export default function BuyerViewRoom() {
 
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
           <main className="flex-1 min-w-0">
+            {hasAiSections && !!data.pendingSections && (
+              <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
+                <span className="h-1.5 w-1.5 rounded-full bg-teal/60 animate-pulse" />
+                {data.pendingSections === 1
+                  ? "One more section is being finalized and will appear shortly."
+                  : `${data.pendingSections} more sections are being finalized and will appear shortly.`}
+              </p>
+            )}
             {hasAiSections ? (
               /* The document itself: one continuous theme-locked paper sheet.
                  App chrome around it (header, TOC, decision panel) keeps app tokens. */

@@ -15,16 +15,16 @@
  *    broker's unapproved draft never leave the server.
  */
 import { storage } from "../storage";
+import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
 
 type AnyRecord = Record<string, any>;
 
-/** Presentation-only keys that carry no facts — skipped by the generic walker. */
-const SKIP_KEYS = new Set([
-  "color", "icon", "highlight", "columns", "style", "accentColor", "relatedSections",
-  "url", "alt", "isTotal", "isSectionHeader", "indent", "bold", "trend", "weight",
-  "category", "layoutType", "id", "reportsTo", "isKeyPerson", "ordered", "stacked",
-  "showPercentages", "preparedByLogo", "businessLogo", "xLabel", "yLabel",
-]);
+/**
+ * Presentation-only keys that carry no facts — skipped by the generic walker.
+ * Owned by the layout registry (shared/cim-layouts.ts): each layout declares
+ * its own presentation keys (logos, media URLs, colours).
+ */
+const SKIP_KEYS: ReadonlySet<string> = CIM_PRESENTATION_KEYS;
 
 /** Keep a single section's structured text bounded so the prompt stays small. */
 const MAX_SECTION_CHARS = 4000;
