@@ -21,7 +21,7 @@ import { addressFragments, dealBlindRegion } from "../../shared/cim-media";
 import { layoutDataProblems, neutralOrgChartIds, resolveTwoColumnColumn, tidyGeneratedLayout } from "../../shared/cim-layouts";
 import { normalizeFinancialTable } from "../../shared/financial-table";
 import { redactOneSection, setRedactionModelForTests, type RedactionModel } from "../../server/cim/redaction-engine";
-import { validateCodename } from "../../server/cim/codenames";
+import { carryCodename, validateCodename, withCodenameLock } from "../../server/cim/codenames";
 import type { CimSection, CimSectionOverride } from "../../shared/schema";
 
 let passed = 0;
@@ -240,6 +240,73 @@ test("a codename must be blind-safe, name-like and unique", () => {
   assert.equal(validateCodename(pacific, "[Project]", none).ok, false);
   assert.equal(validateCodename(pacific, "ab", none).ok, false);
   assert.equal(validateCodename(pacific, "Project Mosaic", new Set(["project mosaic"])).ok, false);
+});
+
+test("a redaction written under the old codename is carried to the new one (rename mid-run)", () => {
+  const r = {
+    sectionTitle: "About Project Ember",
+    layoutData: { businessName: "Project Ember", body: "PROJECT EMBER builds…", nested: [{ t: "Project  Ember's fleet" }] },
+    contentOverride: "The Project Ember team; Project Embers is not it.",
+  };
+  const c = carryCodename(r, "Project Ember", "Project Kestrel");
+  assert.equal(c.sectionTitle, "About Project Kestrel");
+  assert.deepEqual(c.layoutData, { businessName: "Project Kestrel", body: "Project Kestrel builds…", nested: [{ t: "Project Kestrel's fleet" }] });
+  assert.equal(c.contentOverride, "The Project Kestrel team; Project Embers is not it.");
+  assert.equal(carryCodename(r, "Project Ember", "Project Ember"), r, "same name → untouched");
+  assert.equal(carryCodename(r, "Project Ember", null), r);
+});
+test("the codename lock runs a rename and commits one at a time, in order", async () => {
+  const log: string[] = [];
+  const slow = (tag: string, ms: number) => () => new Promise<void>((res) => setTimeout(() => { log.push(tag); res(); }, ms));
+  await Promise.all([
+    withCodenameLock("d1", slow("commit-1", 30)),
+    withCodenameLock("d1", slow("rename", 1)),
+    withCodenameLock("d1", slow("commit-2", 1)),
+    withCodenameLock("d2", slow("other-deal", 1)),
+  ]);
+  assert.deepEqual(log.filter((l) => l !== "other-deal"), ["commit-1", "rename", "commit-2"]);
+  assert.equal(log[0], "other-deal", "another deal is not held up");
+});
+
+console.log("surnames that are also place names");
+const keystone = {
+  businessName: "Keystone Auto Service Ltd.",
+  extractedInfo: {
+    keyEmployees: "Joe Montana (Shop Foreman), Lisa York (Controller), Dana Washington (Service Manager), Paul Jersey (Estimator)",
+    successor: "Mike Wales",
+    serviceArea: "Washington State lanes (Seattle, Spokane)",
+  },
+};
+test("a staff surname that is a place word is still caught on its own", () => {
+  const terms = blindLeakTerms(keystone);
+  for (const s of [
+    "Montana runs the shop floor.",
+    "York handles the books and payroll.",
+    "Washington manages the service team.",
+    "Jersey prepares every estimate.",
+    "Wales is the likely successor.",
+    "Seattle, Washington hub run by the service manager.",
+    "The foreman reports to Washington weekly.",
+  ]) assert.ok(findBlindLeaks(s, terms).length > 0, s);
+  assert.ok(findBlindLeaks("Joe Montana runs the floor", terms).includes("Joe Montana"));
+});
+test("…but not where the text means the place", () => {
+  const terms = blindLeakTerms(keystone);
+  for (const s of [
+    "Washington State lanes (Seattle, Spokane).",
+    "Customers in Montana and Idaho.",
+    "Offices in New York and New Jersey.",
+    "Expanding into Wales.",
+    "Oregon and Washington routes.",
+    "The state of Washington requires a permit.",
+    "Based in British Columbia, Canada.",
+  ]) assert.deepEqual(findBlindLeaks(s, terms), [], s);
+  // Pacific's own facts: no staff surname is a place, so its lanes and province stay fine.
+  assert.deepEqual(findBlindLeaks("Based in British Columbia, Canada, with Washington State lanes.", blindLeakTerms(pacific, { codename: pacific.blindCodename })), []);
+});
+test("a place-word given name counts everywhere, as before", () => {
+  const terms = blindLeakTerms({ businessName: "X Co", extractedInfo: { owner: "Georgia Wells" } });
+  assert.ok(findBlindLeaks("Georgia Wells founded it.", terms).length > 0);
 });
 
 console.log("generated layout hygiene");

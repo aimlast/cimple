@@ -102,20 +102,71 @@ function codenamePattern(codename: string): RegExp {
   return new RegExp(`(?<![\\p{L}\\p{N}])${codename.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+")}(?![\\p{L}\\p{N}])`, "giu");
 }
 
+// ── Per-deal codename lock ───────────────────────────────────────────────
+/**
+ * A rename and every commit of a blind redaction for the deal run one at a
+ * time. Both are short (database writes only — the AI call happens before
+ * the commit, outside the lock), so a broker renaming during a long blind
+ * run is never kept waiting for it, yet a redaction written under the old
+ * codename can't land after the rename has already swapped the rest
+ * (2026-09-26: a rename mid-run left "Project Ember" in the blind CIM
+ * beside "Project Kestrel").
+ */
+const codenameLocks = new Map<string, Promise<unknown>>();
+export function withCodenameLock<T>(dealId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = codenameLocks.get(dealId) ?? Promise.resolve();
+  const next = prev.catch(() => undefined).then(fn);
+  const tail = next.catch(() => undefined);
+  codenameLocks.set(dealId, tail);
+  tail.then(() => { if (codenameLocks.get(dealId) === tail) codenameLocks.delete(dealId); });
+  return next;
+}
+
+/**
+ * A redaction made under `used` whose deal is now called `current`: the
+ * same result with the old codename replaced everywhere (title, text,
+ * data — the cover included). Unchanged when the names agree. Pure.
+ */
+export function carryCodename<R extends { sectionTitle?: string | null; layoutData?: unknown; contentOverride?: string | null }>(
+  result: R,
+  used: string | null | undefined,
+  current: string | null | undefined,
+): R {
+  if (!used || !current || used === current) return result;
+  const re = codenamePattern(used);
+  const swap = (t: string) => t.replace(re, current);
+  return {
+    ...result,
+    sectionTitle: result.sectionTitle == null ? result.sectionTitle : swap(result.sectionTitle),
+    layoutData: result.layoutData == null ? result.layoutData : JSON.parse(swap(JSON.stringify(result.layoutData))),
+    contentOverride: result.contentOverride == null ? result.contentOverride : swap(result.contentOverride),
+  };
+}
+
 /**
  * Rename the deal's codename and carry it through everything already
  * written under the old one: every blind override (text and data), the
  * redacted section titles, and outreach drafts not sent yet. Sent emails
- * keep what they said. Returns how many rows changed.
+ * keep what they said. A blind run still going commits its sections under
+ * the new name (see carryCodename in blind-sync). Returns how many rows
+ * changed.
  */
-export async function renameDealCodename(
+export function renameDealCodename(
+  deal: { id: string; brokerId: string; blindCodename?: string | null; businessName?: string | null; extractedInfo?: unknown },
+  raw: unknown,
+): Promise<{ ok: true; codename: string; updated: number } | { ok: false; error: string; status: number }> {
+  return withCodenameLock(deal.id, () => renameUnlocked(deal, raw));
+}
+
+async function renameUnlocked(
   deal: { id: string; brokerId: string; blindCodename?: string | null; businessName?: string | null; extractedInfo?: unknown },
   raw: unknown,
 ): Promise<{ ok: true; codename: string; updated: number } | { ok: false; error: string; status: number }> {
   const taken = await brokerCodenames(deal.brokerId, deal.id);
   const v = validateCodename(deal, raw, taken);
   if (!v.ok) return { ok: false, error: v.error, status: 400 };
-  const previous = deal.blindCodename || null;
+  // The name as it is now (a blind run may have given the deal its first one).
+  const previous = (await storage.getDeal(deal.id))?.blindCodename || deal.blindCodename || null;
   await storage.updateDeal(deal.id, { blindCodename: v.codename } as any);
   if (!previous || previous === v.codename) return { ok: true, codename: v.codename, updated: 0 };
 
@@ -160,9 +211,17 @@ export async function renameDealCodename(
  */
 export async function ensureDealCodename(deal: { id: string; brokerId: string; blindCodename?: string | null }): Promise<string> {
   if (deal.blindCodename) return deal.blindCodename;
-  const fresh = await storage.getDeal(deal.id);
-  if (fresh?.blindCodename) return fresh.blindCodename;
-  const codename = pickCodename(await brokerCodenames(deal.brokerId, deal.id));
-  await storage.updateDeal(deal.id, { blindCodename: codename } as any);
-  return codename;
+  // Under the lock, so a name the broker is choosing right now is never overwritten.
+  return withCodenameLock(deal.id, async () => {
+    const fresh = await storage.getDeal(deal.id);
+    if (fresh?.blindCodename) return fresh.blindCodename;
+    const codename = pickCodename(await brokerCodenames(deal.brokerId, deal.id));
+    await storage.updateDeal(deal.id, { blindCodename: codename } as any);
+    return codename;
+  });
+}
+
+/** The deal's codename as saved right now (null if it has none). */
+export async function currentCodename(dealId: string): Promise<string | null> {
+  return (await storage.getDeal(dealId))?.blindCodename || null;
 }

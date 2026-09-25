@@ -74,6 +74,14 @@ export interface BlindTerm {
    * "family" after it — never as the word on its own.
    */
   titled?: boolean;
+  /**
+   * A one-word surname that is also part of a province, state or country
+   * name ("Dana Washington", "Joe Montana", "Lisa York"): it counts
+   * wherever it stands for the person — everywhere except where the text
+   * uses it as the place ("Washington State lanes", "customers in
+   * Montana", "New York").
+   */
+  regionWord?: boolean;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -680,14 +688,21 @@ export function blindLeakTerms(
   opts: { codename?: string | null; extraPeople?: string[] } = {},
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
-  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean }> = [];
+  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean; regionWord?: boolean }> = [];
   const add = (text: string, kind: BlindTermKind, common?: boolean) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
+    // A person's one-word surname that is also a place word ("Washington",
+    // "York", "Wales") still identifies them: kept, but not matched where
+    // the text means the place (see `regionWord`). A given name that is a
+    // place ("Georgia") counts everywhere, as before.
+    if (kind === "person" && !t.includes(" ") && (isRegionWord(t) || isRegionLabel(t)) && !GIVEN_NAMES.has(foldForMatch(t))) {
+      terms.push({ text: t, kind, common, regionWord: true });
+      return;
+    }
     // A province, state or country may stay in a Blind CIM (and the blind
     // map shows exactly that) — it is never a person or a place term.
     if ((kind === "person" || kind === "place") && isRegionLabel(t)) return;
-    if (kind === "person" && !t.includes(" ") && isRegionWord(t) && !GIVEN_NAMES.has(foldForMatch(t))) return;
     terms.push({ text: t, kind, common });
   };
 
@@ -781,8 +796,18 @@ export function blindLeakTerms(
       if (!byFold.has(key) && !byFold.has(foldForMatch(titled[1]))) byFold.set(key, { text: t.text, kind: t.kind, common: false, titled: true });
       continue;
     }
-    if (byFold.has(folded)) continue;
-    byFold.set(folded, { text: t.text, kind: t.kind, common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)) });
+    const prev = byFold.get(folded);
+    if (prev) {
+      // The same word also as a plain term (a town, a business name) → matched everywhere.
+      if (prev.regionWord && !t.regionWord) delete prev.regionWord;
+      continue;
+    }
+    byFold.set(folded, {
+      text: t.text,
+      kind: t.kind,
+      common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)),
+      ...(t.regionWord ? { regionWord: true } : {}),
+    });
   }
   return Array.from(byFold.values());
 }
@@ -842,6 +867,15 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
     const needle = ` ${f} `;
     let at = lower.indexOf(needle);
     if (at < 0) continue;
+    if (t.regionWord) {
+      for (; at >= 0; at = lower.indexOf(needle, at + 1)) {
+        if (!usedAsPlace(lower, at, f)) {
+          hits.push(t.text);
+          break;
+        }
+      }
+      continue;
+    }
     if (!t.common) {
       hits.push(t.text);
       continue;
@@ -854,6 +888,49 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
     }
   }
   return hits;
+}
+
+/** Every multi-word province, state or country name, folded ("british columbia", "new york"). */
+const MULTI_WORD_REGIONS = REGION_NAMES.map((n) => foldForMatch(n)).filter((n) => n.includes(" "));
+/** A word right before a place that makes it the place: "in Montana", "across Washington". ("to" is not one: "reports to Washington".) */
+const PLACE_BEFORE = new Set(["in", "across", "throughout", "within", "into", "from", "outside", "northern", "southern", "eastern", "western", "central", "upstate", "downstate"]);
+/** What right after it names the place itself: "Washington State", "Washington DC", "Montana, USA". */
+const PLACE_AFTER = /^(?:state|province|dc|d c|usa|us|u s|u s a|canada|uk)(?: |$)/;
+
+/**
+ * Is the region-word surname `f`, found at `at` (the space before it in
+ * folded lowercase text), used as the place rather than the person? Yes
+ * inside a longer place name ("new york", "british columbia"), before
+ * "State"/"DC"/"USA", after "in"/"across"/"state of", or listed with
+ * another province or state ("Oregon and Washington"). Anything else —
+ * "Washington manages the service team", "York handles the books" — is
+ * the person. A city before it ("Seattle, Washington") proves nothing,
+ * so it still counts.
+ */
+function usedAsPlace(lower: string, at: number, f: string): boolean {
+  const start = at + 1;
+  const end = start + f.length;
+  for (const r of MULTI_WORD_REGIONS) {
+    if (!` ${r} `.includes(` ${f} `)) continue;
+    for (let i = lower.indexOf(` ${r} `, Math.max(0, start - r.length - 1)); i >= 0 && i < end; i = lower.indexOf(` ${r} `, i + 1)) {
+      if (i + 1 <= start && i + 1 + r.length >= end) return true;
+    }
+  }
+  const after = lower.slice(end + 1).split(" ");
+  if (PLACE_AFTER.test(after.slice(0, 3).join(" "))) return true;
+  const before = lower.slice(0, at).trim().split(" ");
+  const w1 = before[before.length - 1] ?? "";
+  const w2 = before[before.length - 2] ?? "";
+  if (PLACE_BEFORE.has(w1)) return true;
+  if (w1 === "of" && (w2 === "state" || w2 === "province" || w2 === "commonwealth")) return true;
+  const region = (...words: Array<string | undefined>) => {
+    const t = words.filter(Boolean).join(" ");
+    return !!t && isRegionLabel(t);
+  };
+  // Listed with another province or state: "Oregon and Washington", "Washington or Idaho".
+  if ((w1 === "and" || w1 === "or") && (region(w2) || region(before[before.length - 3], w2))) return true;
+  if ((after[0] === "and" || after[0] === "or") && (region(after[1]) || region(after[1], after[2]))) return true;
+  return false;
 }
 
 /** " dr winter ", " winter family ", " winter s family " in folded lowercase text. */

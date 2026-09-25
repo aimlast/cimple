@@ -18,6 +18,8 @@
  *
  * All blind work for one deal runs one-at-a-time (runExclusive) so a full
  * regeneration and a per-section refresh can't interleave their writes.
+ * A codename rename doesn't wait for a run: each commit re-reads the name
+ * under the codename lock and writes the section under the current one.
  *
  * A section the view room keeps rejecting (its redaction passes but what a
  * buyer would get still names something, or keeps a placeholder) is not
@@ -31,7 +33,7 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, cimSectionOverrides, type CimSection, type CimSectionAiTask } from "@shared/schema";
 import { getCimLayout } from "@shared/cim-layouts";
-import { ensureDealCodename } from "./codenames";
+import { carryCodename, currentCodename, ensureDealCodename, withCodenameLock } from "./codenames";
 import { generateBlindOverrides, redactOneSection, redactionErrorMessage, type RedactionResult } from "./redaction-engine";
 
 // ── Per-deal serial queue ────────────────────────────────────────────────
@@ -145,8 +147,17 @@ export async function markSectionsBlindStale(sectionIds: string[]): Promise<Date
 /**
  * Commit one section's redaction — only if the section is still at the
  * revision the redaction was made from. Returns false when it moved on.
+ * `codename` is the name the redaction was written under: if the broker
+ * renamed the deal while it ran, the result is carried over to the new
+ * name first (under the codename lock, so a rename can't slip in between).
  */
-async function commitOverride(section: CimSection, result: RedactionResult): Promise<boolean> {
+function commitOverride(section: CimSection, result: RedactionResult, codename: string): Promise<boolean> {
+  return withCodenameLock(section.dealId, async () =>
+    commitUnlocked(section, carryCodename(result, codename, await currentCodename(section.dealId))),
+  );
+}
+
+async function commitUnlocked(section: CimSection, result: RedactionResult): Promise<boolean> {
   const stale = section.blindStaleAt ? new Date(section.blindStaleAt) : null;
   const updated = await db
     .update(cimSections)
@@ -216,7 +227,7 @@ async function refreshStaleSections(dealId: string): Promise<void> {
     for (let j = 0; j < batch.length; j++) {
       const r = results[j];
       if (r.status === "fulfilled") {
-        if (await commitOverride(batch[j], r.value)) sectionBackoff.delete(batch[j].id);
+        if (await commitOverride(batch[j], r.value, codename)) sectionBackoff.delete(batch[j].id);
       } else {
         // Fail closed: no override is written, so the section stays held
         // back from blind buyers until a redaction succeeds.
@@ -348,7 +359,7 @@ export function regenerateAllBlind(dealId: string): Promise<{ codename: string; 
       for (const o of overrides) {
         const section = byId.get(o.cimSectionId);
         if (!section) continue;
-        if (!(await commitOverride(section, o))) moved = true;
+        if (!(await commitOverride(section, o, codename))) moved = true;
         sectionBackoff.delete(section.id);
         leakRedos.delete(section.id);
       }
@@ -358,7 +369,7 @@ export function regenerateAllBlind(dealId: string): Promise<{ codename: string; 
       state.set(dealId, { running: false });
       // A section edited mid-run keeps its stale mark — catch it up.
       if (moved) scheduleBlindRefresh(dealId);
-      return { codename, count: overrides.length, failed: failures.length };
+      return { codename: (await currentCodename(dealId)) || codename, count: overrides.length, failed: failures.length };
     } catch (err: any) {
       state.set(dealId, { running: false, lastError: err?.message || "Blind generation failed", lastErrorAt: Date.now() });
       throw err;

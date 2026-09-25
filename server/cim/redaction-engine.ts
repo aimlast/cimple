@@ -218,6 +218,7 @@ export async function redactOneSection(
   const termNote = new Map<string, string>();
   for (const t of terms) {
     if (t.titled) termNote.set(t.text, " (this surname after any title, or as a family name — the ordinary word is fine)");
+    else if (t.regionWord) termNote.set(t.text, " (as this person's surname — the province, state or country of that name is fine)");
     else if (t.common) termNote.set(t.text, " (as a name — the ordinary lowercase word is fine)");
   }
   const watchList = Array.from(new Set([...knownIdentifiers, ...terms.map((t) => t.text)]));
