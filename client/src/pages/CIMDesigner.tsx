@@ -171,11 +171,17 @@ export default function CIMDesigner() {
     onError: (e) => toast({ title: "Couldn't start generating", description: errorText(e), variant: "destructive" }),
   });
   const generateVersion = useMutation({
-    mutationFn: (mode: "blind" | "dd") => builderRequest("POST", `/api/deals/${dealId}/generate-${mode}`),
-    onSuccess: (_r, mode) => {
+    mutationFn: (mode: "blind" | "dd") => builderRequest<{ warnings?: string[] }>("POST", `/api/deals/${dealId}/generate-${mode}`),
+    onSuccess: (r, mode) => {
       builder.refresh();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready" });
+      const kept = mode === "dd" ? r?.warnings ?? [] : [];
+      toast({
+        title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready",
+        // Enrichments that would have changed a figure or named someone not on
+        // file are discarded — those sections show the named CIM.
+        description: kept.length > 0 ? `${kept.length} section${kept.length === 1 ? "" : "s"} kept as the named CIM: ${kept[0]}` : undefined,
+      });
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
@@ -295,6 +301,9 @@ export default function CIMDesigner() {
             blindHeld={blind?.held ?? 0}
             blindError={blind?.error ?? null}
             ddGenerated={!!state?.dd.generated}
+            ddOutOfDate={state?.dd.outOfDate ?? 0}
+            ddRunning={!!state?.dd.running || builder.refreshAllDd.isPending}
+            onRefreshDd={() => builder.refreshAllDd.mutate(undefined as never)}
             loading={overridesLoading}
             busy={generateVersion.isPending}
             onGenerate={(m) => generateVersion.mutate(m)}
@@ -657,7 +666,7 @@ export default function CIMDesigner() {
 
 // ── Preview banner (app chrome above the paper) ─────────────────────────
 function PreviewBanner({
-  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
+  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, ddOutOfDate, ddRunning, onRefreshDd, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
 }: {
   previewAs: PreviewAs;
   hint: string;
@@ -666,6 +675,9 @@ function PreviewBanner({
   blindHeld: number;
   blindError: string | null;
   ddGenerated: boolean;
+  ddOutOfDate: number;
+  ddRunning: boolean;
+  onRefreshDd: () => void;
   loading: boolean;
   busy: boolean;
   onGenerate: (m: "blind" | "dd") => void;
@@ -700,6 +712,19 @@ function PreviewBanner({
       {previewAs === "due_diligence" && !ddGenerated && (
         <Notice tone="blue" action={<Button size="sm" className="h-7 text-xs bg-blue-500 text-white hover:bg-blue-400" disabled={busy} onClick={() => onGenerate("dd")}>{busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}Generate DD version</Button>}>
           No due-diligence version yet — DD buyers currently see the named CIM without the extra detail.
+        </Notice>
+      )}
+      {previewAs === "due_diligence" && ddGenerated && ddOutOfDate > 0 && (
+        <Notice
+          tone="blue"
+          action={
+            <Button size="sm" variant="outline" className="h-7 text-xs" disabled={ddRunning} onClick={onRefreshDd} data-testid="button-refresh-all-dd">
+              {ddRunning ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}
+              {ddRunning ? "Refreshing…" : `Refresh ${ddOutOfDate === 1 ? "it" : `all ${ddOutOfDate}`}`}
+            </Button>
+          }
+        >
+          {`${ddOutOfDate} section${ddOutOfDate === 1 ? " has" : "s have"} changed since the due-diligence version was made. DD buyers see the current named version of ${ddOutOfDate === 1 ? "it" : "them"} until the DD version is refreshed.`}
         </Notice>
       )}
     </div>

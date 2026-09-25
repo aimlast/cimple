@@ -262,6 +262,8 @@ export async function patchCimSection(req: Request, res: Response) {
       if (typeof approved !== "boolean") return bad("brokerApproved must be true or false");
       set.brokerApproved = approved;
     }
+    // The broker checked the flagged figures and they're right.
+    if (body.dismissFigureWarnings === true) set.figureWarnings = null;
     if (body.accessTier !== undefined) {
       if (!(CIM_ACCESS_TIERS as readonly unknown[]).includes(body.accessTier)) return bad("Access must be teaser or full");
       set.accessTier = body.accessTier as string;
@@ -279,6 +281,9 @@ export async function patchCimSection(req: Request, res: Response) {
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);
+      // The broker edited the content: the figure check's flags described
+      // the AI's version, and the broker now owns what the section says.
+      if ("layoutData" in set || "brokerEditedContent" in set || "layoutType" in set) set.figureWarnings = null;
     }
     const [updated] = await db
       .update(cimSections)

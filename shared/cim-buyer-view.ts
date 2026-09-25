@@ -137,7 +137,7 @@ export function buildBuyerCim(input: {
     sectionTitle: s.sectionTitle,
     order: s.order,
     layoutType: s.layoutType,
-    layoutData: s.layoutData,
+    layoutData: withoutAiPreparedBy(s.layoutType, s.layoutData),
     aiDraftContent: s.aiDraftContent ?? null,
     brokerEditedContent: s.brokerEditedContent ?? null,
     isVisible: true,
@@ -147,7 +147,7 @@ export function buildBuyerCim(input: {
     const sections: BuyerSection[] = [];
     for (const s of visible) {
       const data = mediaData(s, null);
-      if (data) sections.push({ ...base(s), layoutData: data });
+      if (data) sections.push({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) });
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
   }
@@ -166,7 +166,9 @@ export function buildBuyerCim(input: {
         if (data) sections.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null });
         continue;
       }
-      const o = overrideMap.get(s.id);
+      // A DD version written before the section's last edit is stale: the
+      // current named content is served until the broker refreshes it.
+      const o = s.ddStaleAt ? undefined : overrideMap.get(s.id);
       sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
@@ -253,9 +255,20 @@ export function buildBuyerCim(input: {
   return { mode, sections: out, preparing: false, heldBack, leaked };
 }
 
-function pick(s: { layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }) {
+/**
+ * Cover "Prepared by" is presentation-only (the renderer shows the
+ * brokerage from its settings). Older covers carry an AI-filled value —
+ * once the seller's accountant — so it never leaves the server.
+ */
+function withoutAiPreparedBy(layoutType: string, layoutData: unknown): unknown {
+  if (layoutType !== "cover_page" || !layoutData || typeof layoutData !== "object" || !("preparedBy" in (layoutData as object))) return layoutData;
+  const { preparedBy: _p, ...rest } = layoutData as Record<string, unknown>;
+  return rest;
+}
+
+function pick(s: { layoutType?: string; layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }) {
   return {
-    layoutData: s.layoutData,
+    layoutData: withoutAiPreparedBy(s.layoutType ?? "", s.layoutData),
     aiDraftContent: s.aiDraftContent ?? null,
     brokerEditedContent: s.brokerEditedContent ?? null,
   };

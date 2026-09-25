@@ -7,7 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
   AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Copy, Eye, EyeOff, GripVertical, Loader2, Lock,
-  MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Users,
+  MoreHorizontal, Pencil, Plus, RefreshCw, Sparkles, Trash2, Users,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
@@ -191,7 +191,7 @@ function Row({
               {s.sectionTitle}
             </p>
           )}
-          <div className="flex items-center gap-1.5 mt-0.5 min-w-0 text-[10px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 min-w-0 text-[10px] text-muted-foreground">
             <span className="truncate">{layoutLabel(s.layoutType)}</span>
             {s.accessTier === "full" && (
               <span className="inline-flex items-center gap-0.5 text-teal shrink-0" title="Full access only — locked for teaser buyers">
@@ -217,6 +217,23 @@ function Row({
                 title={`Blind buyers don't see this section: ${s.blindError || "its blind version couldn't be made"}. Edit the section or retry the blind version.`}
               >
                 <AlertTriangle className="h-2.5 w-2.5" /> Blind held back
+              </span>
+            )}
+            {s.figureWarnings?.length > 0 && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-amber-500 shrink-0"
+                title={`Some figures couldn't be traced to the deal's information — open the section to see which.`}
+                data-testid={`chip-figures-${s.id}`}
+              >
+                <AlertTriangle className="h-2.5 w-2.5" /> Check figures
+              </span>
+            )}
+            {(s.ddStatus === "stale" || s.ddStatus === "missing") && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-blue-400 shrink-0"
+                title="Due-diligence buyers see the current named version of this section until its DD version is refreshed."
+              >
+                <RefreshCw className="h-2.5 w-2.5" /> DD out of date
               </span>
             )}
           </div>

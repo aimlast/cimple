@@ -31,6 +31,7 @@ interface CoverPageLayoutData {
   earningsLabel?: string;
   /** Some manifests emit `sde` instead of `ebitda`. */
   sde?: string;
+  /** Legacy AI field — ignored; "Prepared by" comes from the brokerage settings. */
   preparedBy?: string;
   date?: string;
   confidentialLabel?: string;
@@ -92,10 +93,10 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
 
   const businessName = data.businessName || (section as any).sectionTitle || "Business Overview";
   const confidentialLabel = data.confidentialLabel || "CONFIDENTIAL BUSINESS OVERVIEW";
-  // The AI sometimes fills preparedBy with a document title — never show
-  // that under "Prepared by".
-  const aiPreparedBy = data.preparedBy && !/memorandum|confidential|overview|\bcim\b/i.test(data.preparedBy) ? data.preparedBy : "";
-  const firmName = design.brokerage.firmName || branding.firmName || aiPreparedBy;
+  // "Prepared by" is the brokerage, from its brand settings — never the AI's
+  // layoutData.preparedBy (it once credited the seller's accountant, even on
+  // the blind cover). No brokerage name → no "Prepared by" line.
+  const firmName = design.brokerage.firmName || branding.firmName || "";
   const firmLogo = design.brokerage.logoUrl;
   // Business branding is null in the Blind CIM (CimDesign never carries it there).
   const businessLogoId = design.business?.logoMediaId || null;

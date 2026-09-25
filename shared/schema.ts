@@ -548,6 +548,13 @@ export const cimSections = pgTable("cim_sections", {
   aiTask: jsonb("ai_task"),
   // Undo stack of earlier versions (CimSectionSnapshot[], newest last, capped).
   contentHistory: jsonb("content_history"),
+  // h-cim (cimgen): figures/names the post-generation check couldn't trace to
+  // the deal's data (string[]; server/cim/figure-check.ts). Null = clean.
+  figureWarnings: jsonb("figure_warnings").$type<string[]>(),
+  // h-cim (cimgen): set when the section's content changed after its DD
+  // version was written. The DD override is kept (not deleted) but a DD
+  // buyer is served the current Normal content until it is refreshed.
+  ddStaleAt: timestamp("dd_stale_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2461,7 +2468,7 @@ export interface CimSectionAiTask {
     layoutType?: string;
   };
   /** Rewrite result, same layout type as the section. */
-  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null };
+  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null; figureWarnings?: string[] };
 }
 
 /** One entry of a section's undo stack (cim_sections.content_history). */

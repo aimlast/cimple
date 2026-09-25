@@ -129,6 +129,55 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
         </div>
       )}
 
+      {/* Figures the check couldn't trace to the deal's information */}
+      {!running && section.figureWarnings?.length > 0 && (
+        <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1.5" data-testid="figure-warnings">
+          <p className="flex items-start gap-1.5 font-medium text-amber-500">
+            <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Check these before buyers see them
+          </p>
+          <p className="text-muted-foreground">These couldn't be traced to the deal's facts or financial analysis. Correct them below, or mark them checked if they're right.</p>
+          <ul className="space-y-1 pl-5 list-disc text-foreground/85">
+            {section.figureWarnings.slice(0, 8).map((w, i) => <li key={i} className="break-words">{w}</li>)}
+          </ul>
+          {section.figureWarnings.length > 8 && <p className="text-muted-foreground">…and {section.figureWarnings.length - 8} more.</p>}
+          <button
+            type="button"
+            className="text-teal hover:underline"
+            onClick={() => api.patch.mutate({ id: section.id, dismissFigureWarnings: true })}
+            data-testid="button-dismiss-figures"
+          >
+            They're right — mark as checked
+          </button>
+        </div>
+      )}
+
+      {/* Due-diligence version out of date after an edit */}
+      {!running && (section.ddStatus === "stale" || section.ddStatus === "missing") && (
+        <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 p-3 text-xs space-y-2" data-testid="dd-stale">
+          <p className="flex items-start gap-1.5 font-medium text-blue-400">
+            <RefreshCw className="h-3.5 w-3.5 mt-0.5 shrink-0" /> DD version out of date
+          </p>
+          <p className="text-muted-foreground">
+            {section.ddStatus === "missing"
+              ? "This section was added after the due-diligence version was made."
+              : "This section changed after its due-diligence version was made."}{" "}
+            Due-diligence buyers see the current named version until you refresh it.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs w-full"
+            onClick={() => api.refreshDd.mutate(section.id)}
+            disabled={api.refreshDd.isPending || !!aiBlockedReason}
+            title={aiBlockedReason ?? undefined}
+            data-testid="button-refresh-dd"
+          >
+            {api.refreshDd.isPending ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : <RefreshCw className="h-3 w-3 mr-1" />}
+            {api.refreshDd.isPending ? "Refreshing — about 20 seconds" : "Refresh DD version"}
+          </Button>
+        </div>
+      )}
+
       {/* Layout */}
       <div className="space-y-1.5">
         <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Layout</p>

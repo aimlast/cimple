@@ -48,6 +48,7 @@ export function useCimBuilder(dealId: string) {
       const busy =
         s.sections.some((x) => x.aiTask?.status === "running") ||
         s.blind.running ||
+        !!s.dd.running ||
         // Held-back sections aren't counted in `updating`; stop polling only
         // on a whole-run failure (an error with nothing held back).
         (s.blind.generated && s.blind.updating > 0 && !(s.blind.error && !s.blind.held));
@@ -197,7 +198,22 @@ export function useCimBuilder(dealId: string) {
     "Couldn't retry the blind version",
   );
 
-  return { query, refresh, patch, reorder, add, remove, duplicate, setLayout, rewrite, applyRewrite, discardTask, undo, regenerate, refreshBlind };
+  // DD version of one edited section (≈20s), or of every out-of-date one (background).
+  const refreshDd = useAction(
+    (id: string) => builderRequest<{ warning: string | null }>("POST", `/api/cim-sections/${id}/dd/refresh`),
+    "Couldn't refresh the DD version",
+    (r) =>
+      r.warning
+        ? toast({ title: "DD version kept as the named CIM", description: r.warning })
+        : toast({ title: "DD version updated", description: "Due-diligence buyers now see the current content with its DD detail." }),
+  );
+  const refreshAllDd = useAction(
+    () => builderRequest<{ sections: number }>("POST", `/api/deals/${dealId}/cim-dd/refresh`),
+    "Couldn't refresh the DD version",
+    (r) => toast({ title: "Updating the DD version", description: `${r.sections} section${r.sections === 1 ? "" : "s"} — about 20 seconds each, and it keeps going if you leave.` }),
+  );
+
+  return { query, refresh, patch, reorder, add, remove, duplicate, setLayout, rewrite, applyRewrite, discardTask, undo, regenerate, refreshBlind, refreshDd, refreshAllDd };
 }
 
 export type CimBuilderApi = ReturnType<typeof useCimBuilder>;

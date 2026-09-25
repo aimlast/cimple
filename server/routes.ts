@@ -10,7 +10,7 @@ import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
-import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
+import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError, buildLayoutParams } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel } from "./interview/interview-plan.js";
@@ -5354,12 +5354,9 @@ Return JSON only.`,
           return res.status(404).json({ error: "Section not found" });
         }
         const existingSections = await storage.getCimSectionsByDeal(dealId);
-        const resolvedDiscrepancies = resolvedNotes(await storage.getResolvedDiscrepancies(dealId));
-        const extractedInfo = overlayResolvedFacts(
-          (deal.extractedInfo as Record<string, unknown>) || {},
-          resolvedDiscrepancies,
-        );
-        const branding = await storage.getBrandingByBroker(deal.brokerId);
+        // Same knowledge base as a full generation (resolved values, the
+        // financial analysis, privacy screening) — see generation-jobs.
+        const layoutParams = await buildLayoutParams(deal, "content");
         const refs = existingSections.map(s => ({
           sectionKey: s.sectionKey,
           sectionTitle: s.sectionTitle,
@@ -5369,20 +5366,7 @@ Return JSON only.`,
           aiLayoutReasoning: s.aiLayoutReasoning,
         }));
         const regenerated = await regenerateCimSection(
-          {
-            dealId,
-            businessName: deal.businessName,
-            industry: deal.industry,
-            askingPrice: listedAskingPrice(deal),
-            extractedInfo,
-            resolvedDiscrepancies,
-            scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
-            questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
-            operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
-            employeeChart: (deal.employeeChart as unknown[]) || null,
-            cimContent: (deal.cimContent as Record<string, string>) || null,
-            brokerBranding: branding ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor } : null,
-          },
+          layoutParams,
           refs,
           refs.find(r => r.sectionKey === target.sectionKey)!,
           { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
@@ -5390,6 +5374,7 @@ Return JSON only.`,
         const updatedSection = await storage.updateCimSection(String(target.id), {
           layoutData: regenerated.layoutData as any,
           aiDraftContent: regenerated.aiDraftContent || null,
+          figureWarnings: regenerated.figureWarnings?.length ? regenerated.figureWarnings : null,
           brokerEditedContent: null,
           brokerApproved: false,
         });
@@ -5501,27 +5486,13 @@ Return JSON only.`,
         return res.status(400).json({ error: "Generate CIM content first" });
       }
 
-      // Gather DD context
-      const [addbackVerification, financialAnalyses, allDocs] = await Promise.all([
-        storage.getAddbackVerificationByDeal(dealId),
-        storage.getFinancialAnalysesByDeal(dealId),
-        storage.getDocumentsByDeal(dealId),
-      ]);
-
-      const { generateDdOverrides } = await import("./cim/dd-enrichment");
-      const overrides = await generateDdOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      }, {
-        addbackVerification,
-        financialAnalysis: financialAnalyses[0] || null,
-        documents: allDocs.map(d => ({
-          name: d.name,
-          category: d.category || "other",
-          extractedText: d.extractedText,
-        })),
-      });
+      // DD context: shared documents only, CIM-safe facts, the computed
+      // financial analysis (never the analyzer's raw JSON or its internal
+      // questions) — see dd-enrichment buildDdContext.
+      const { generateDdOverrides, loadDdInputs, markDdFresh } = await import("./cim/dd-enrichment");
+      const startedAt = new Date();
+      const inputs = await loadDdInputs(deal);
+      const overrides = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
 
       // Delete old DD overrides and insert new ones
       await storage.deleteCimSectionOverrides(dealId, "dd");
@@ -5534,8 +5505,11 @@ Return JSON only.`,
           contentOverride: override.contentOverride,
         });
       }
+      // Sections edited while this ran keep their stale mark.
+      await markDdFresh(dealId, startedAt);
 
-      res.json({ success: true, overrideCount: overrides.length });
+      const warnings = overrides.map((o) => o.warning).filter((w): w is string => !!w);
+      res.json({ success: true, overrideCount: overrides.length, warnings });
     } catch (error: any) {
       console.error("Error generating DD CIM:", error);
       res.status(500).json({ error: error.message || "Failed to generate DD CIM" });

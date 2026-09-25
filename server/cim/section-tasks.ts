@@ -26,6 +26,7 @@ import {
   groundLocationMap,
   convertSectionLayout,
   rewriteSectionContent,
+  sectionFigureWarnings,
   writeOneSection,
   type RewriteLength,
 } from "./layout-engine";
@@ -108,20 +109,28 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
         length: req.length as RewriteLength | undefined,
       });
       if (!(await stillCurrent(section.id, task.id))) return;
+      const proposalWarnings = sectionFigureWarnings(params, { ...current, layoutData: proposal.layoutData, tags: section.tags });
       await setTask(section.id, {
         ...task,
         status: "ready",
         finishedAt: new Date().toISOString(),
-        proposal: { layoutData: proposal.layoutData, aiDraftContent: proposal.aiDraftContent ?? null },
+        proposal: {
+          layoutData: proposal.layoutData,
+          aiDraftContent: proposal.aiDraftContent ?? null,
+          ...(proposalWarnings.length ? { figureWarnings: proposalWarnings } : {}),
+        },
       });
       return;
     }
 
     let result: { layoutData: Record<string, unknown>; aiDraftContent?: string };
     let layoutType = normalizeLayoutType(section.layoutType);
+    // Figures/names the check couldn't trace to the deal (figure-check.ts).
+    let figureWarnings: string[] = [];
     if (task.kind === "convert") {
       layoutType = normalizeLayoutType(task.request?.layoutType);
       result = await convertSectionLayout(params, current, layoutType);
+      figureWarnings = sectionFigureWarnings(params, { sectionTitle: section.sectionTitle, layoutType, layoutData: result.layoutData, tags: section.tags });
     } else {
       // write / regenerate — the rest of the CIM is sibling context. A new
       // section is left out of its own sibling list so it is written fresh.
@@ -150,6 +159,7 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
       );
       result = { layoutData: written.layoutData as Record<string, unknown>, aiDraftContent: written.aiDraftContent };
       layoutType = normalizeLayoutType(written.layoutType);
+      figureWarnings = written.figureWarnings ?? [];
     }
 
     // Maps only show addresses from the deal's facts; photo/video sections
@@ -166,6 +176,7 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
         layoutType,
         layoutData: result.layoutData as any,
         aiDraftContent: result.aiDraftContent ?? null,
+        figureWarnings: figureWarnings.length ? figureWarnings : null,
         // The new text lives in layoutData / the AI draft now.
         brokerEditedContent: null,
         brokerApproved: false,
@@ -233,6 +244,7 @@ export async function applyRewrite(section: CimSection): Promise<CimSection | nu
     .set({
       layoutData: task.proposal.layoutData as any,
       aiDraftContent: task.proposal.aiDraftContent ?? null,
+      figureWarnings: task.proposal.figureWarnings?.length ? task.proposal.figureWarnings : null,
       brokerEditedContent: null,
       brokerApproved: false,
       contentHistory: historyWith(section, "AI rewrite"),
