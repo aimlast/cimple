@@ -209,6 +209,9 @@ export function listedAskingPrice(deal: Pick<Deal, "askingPrice" | "extractedInf
   const info = (deal.extractedInfo as Info | null) || {};
   const fact = columnText(info.askingPrice);
   if (fact && isBrokerFact(info, "askingPrice")) return fact;
+  // The broker deleted the fact: a leftover column copy is gone too (as
+  // brokerFactsView shows it — one value on every surface).
+  if (!fact && getSuppressedKeys(info).includes("askingPrice")) return null;
   return columnText(deal.askingPrice);
 }
 

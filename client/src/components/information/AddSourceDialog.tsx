@@ -319,7 +319,7 @@ export function AddSourceDialog({ dealId, open, onOpenChange, preset, onAdded }:
             <span className="text-xs">
               <span className="flex items-center gap-1 font-medium"><Lock className="h-3 w-3" /> Broker only</span>
               <span className="block text-muted-foreground mt-0.5">
-                Never shown to the seller. The interview may confirm its facts, but never mentions or quotes it.
+                Never shown to the seller, and the interview doesn't use it: its facts stay with you, and the interview asks the seller for them directly.
               </span>
             </span>
           </label>

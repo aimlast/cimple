@@ -271,7 +271,11 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     assert.match(prompt, /annualRevenue: NOT YET CAPTURED/, "…so the agent asks the seller openly");
     assert.match(prompt, /recent surgery/, "a note from a shared source stays (seller-disclosed)");
     assert.match(prompt, /divorce/, "an interview-captured note stays");
-    assert.match(prompt, /Communication style: direct/, "style fields of a stale profile still used");
+    // (round 4) a stale profile's AI-derived categories may come from the
+    // private notes too ("Family involvement: spouse_involved" from "Wife
+    // Karen handles the books") — none of them reach the interview until
+    // the rebuild lands.
+    assert.doesNotMatch(prompt, /Communication style:|Family involvement:|Selling reason:/, "no AI-derived category of a stale profile");
     assert.equal(sellerProfileNeedsRebuild(legacyProfile, docs), true);
     assert.equal(sellerProfileNeedsRebuild({ ...legacyProfile, privacyVersion: PROFILE_PRIVACY_VERSION }, docs), false);
     assert.equal(sellerProfileNeedsRebuild(legacyProfile, [docs[1]]), true, "an old profile is rebuilt even after its broker-only source was deleted");

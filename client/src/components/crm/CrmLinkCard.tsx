@@ -245,7 +245,7 @@ export function CrmLinkCard({ dealId, variant = "full" }: { dealId: string; vari
 
       <p className="mt-3 pt-3 border-t border-border/50 flex items-start gap-1.5 text-[11px] text-muted-foreground/80 leading-snug">
         <Lock className="h-3 w-3 mt-0.5 shrink-0" />
-        Imported notes, emails and files are private to you. The seller never sees them; the interview only confirms their facts with the seller.
+        Imported notes, emails and files are private to you. The seller never sees them, and the interview doesn't use them: it asks the seller directly.
       </p>
 
       <AlertDialog open={confirmUnlink} onOpenChange={setConfirmUnlink}>

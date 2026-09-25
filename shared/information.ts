@@ -32,6 +32,11 @@ export interface FactSourceInfo {
   inferred?: boolean;
   /** A website / CRM / social value the broker accepted into the facts — shown as a fact, not a lead. */
   acceptedByBroker?: boolean;
+  /**
+   * From a broker-only source (a CRM note or activity, a private email or
+   * file): the seller never sees it and the interview doesn't use it.
+   */
+  brokerOnly?: boolean;
 }
 
 export interface FactAlternate {
