@@ -210,7 +210,9 @@ For ANY source that describes the business itself (business overviews, CBOs, CIM
 
 Any other clearly business-relevant fact may use its own specific camelCase key (e.g. operatoryCount, bondingCapacity).
 
-For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)`;
+For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
+
+PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble, legal trouble not about the business, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.`;
 }
 
 /** Long sources (full-year email threads, hour-long calls) are read in full up to this size. */
@@ -229,6 +231,7 @@ const EXTRACTION_TOOL = {
       keyFacts: { type: "string" },
       redFlags: { type: "string" },
       revenueByYear: { type: "object", additionalProperties: { type: "string" } },
+      _privateNotes: { type: "array", items: { type: "string" } },
     },
   },
 };
@@ -244,6 +247,12 @@ function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
         if (amount !== null && amount !== undefined && amount !== "") map[y] = String(amount);
       }
       if (Object.keys(map).length > 0) out[k] = map;
+      continue;
+    }
+    if (k === "_privateNotes") {
+      // Kept apart (one per line) — ingestion routes them to the broker-private notes.
+      const notes = (Array.isArray(v) ? v : [v]).map((x) => String(x ?? "").trim()).filter(Boolean);
+      if (notes.length > 0) out[k] = notes.join("\n");
       continue;
     }
     if (typeof v === "string") out[k] = v;

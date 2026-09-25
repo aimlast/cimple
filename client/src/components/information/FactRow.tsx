@@ -219,7 +219,7 @@ export function FactRow({
   return (
     <div
       id={`fact-${fact.key}`}
-      className={`group relative grid grid-cols-1 sm:grid-cols-[minmax(0,12.5rem)_minmax(0,1fr)_auto] gap-x-4 gap-y-1 px-4 py-3 border-t border-border/40 first:border-t-0 transition-colors ${
+      className={`group relative grid grid-cols-[minmax(0,1fr)] sm:grid-cols-[minmax(0,12.5rem)_minmax(0,1fr)_auto] gap-x-4 gap-y-1 px-4 py-3 border-t border-border/40 first:border-t-0 transition-colors ${
         highlight === fact.key ? "bg-teal/5" : "hover:bg-muted/20"
       }`}
       data-testid={`fact-row-${fact.key}`}

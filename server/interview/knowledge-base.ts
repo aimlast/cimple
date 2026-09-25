@@ -96,6 +96,9 @@ export interface AskSellerDiscrepancy {
   severity: string;
   explanation: string | null;
   suggestedResolution: string | null;
+  /** One side came from a broker-only source (CRM note, private email/file):
+   *  confirm the figure with the seller, never mention or quote that source. */
+  privateSource?: boolean;
 }
 
 export interface LocationContext {
@@ -290,6 +293,8 @@ export function assembleKnowledgeBase(
       severity: d.severity,
       explanation: d.aiExplanation,
       suggestedResolution: d.suggestedResolution,
+      privateSource:
+        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only")) || undefined,
     }));
 
   // Per-field confidence lives on the session (interview turns write it) —
@@ -433,6 +438,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
       if (d.valueB) parts.push(`    Value 2: ${d.valueB}`);
       if (d.explanation) parts.push(`    Why it matters: ${d.explanation}`);
       if (d.suggestedResolution) parts.push(`    Suggested approach: ${d.suggestedResolution}`);
+      if (d.privateSource) parts.push(`    ⚠ One value comes from the broker's private notes (CRM). Ask the seller to confirm the figure in your own words — never mention the CRM, the broker's notes or any document, and never quote the explanation above.`);
     }
     parts.push(``);
   }

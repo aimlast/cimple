@@ -18,6 +18,8 @@ import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadin
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
+import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
+import type { DealSellerContact } from "@shared/schema";
 import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -413,7 +415,7 @@ function IntegrationPromptCard({
     {
       icon: Database,
       label: "CRM",
-      desc: "Connect Pipedrive for buyer prefill",
+      desc: "Import the seller's Pipedrive record",
       badge: "Available",
       badgeCls: "bg-teal/10 text-teal",
       onClick: () => setLocation("/broker/integrations"),
@@ -715,6 +717,12 @@ Signed electronically via the Cimple platform.`;
       testId: "button-invite-seller",
       action: () => {
         setInviteResult(null);
+        // Start from the seller's details on file (CRM / Information tab).
+        const contact = deal.sellerContact as DealSellerContact | null;
+        if (contact) {
+          setSellerName((v) => v || contact.name || "");
+          setSellerEmail((v) => v || contact.email || "");
+        }
         setInviteOpen(true);
       },
       actionLabel: "Invite Seller",
@@ -2636,6 +2644,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
               the seller can add them at any time.
             </p>
           </div>
+          <CrmLinkCard dealId={dealId} variant="compact" />
           <DocumentUploadCard openSignal={uploadSignal} />
           <IntegrationPromptCard
             onOpenTranscripts={() =>

@@ -229,17 +229,49 @@ async function gatherDataSources(dealId: string): Promise<{
     notesParts.push(`Asking Price: ${deal.askingPrice}`);
   }
 
+  // The broker's CRM notes and activities about the seller (imported from
+  // Pipedrive or pasted as "CRM note") say a lot about how the seller
+  // communicates — they're the broker's own notes, so they belong here.
+  let dealDocs: Awaited<ReturnType<typeof storage.getDocumentsByDeal>> = [];
+  try {
+    dealDocs = await storage.getDocumentsByDeal(dealId);
+  } catch {
+    dealDocs = [];
+  }
+  const crmText = dealDocs
+    .filter((d) => d.sourceKind === "crm" && d.extractedText && d.extractedText.trim())
+    .map((d) => `--- ${d.name} ---\n${d.extractedText!.trim()}`)
+    .join("\n\n")
+    .slice(0, 12_000);
+  if (crmText) {
+    notesParts.push(
+      `Broker's private CRM notes about the seller and the business (personal matters here — health, family, money — ` +
+        `belong under sensitive topics: never something the interviewer raises):\n${crmText}`,
+    );
+  }
+
   if (notesParts.length > 0) {
     brokerNotes = notesParts.join("\n\n");
     sources.push("broker_notes");
     availableSourceCount++;
   }
 
-  // 2. Email communications from integrationEmails
+  // 2. Email communications — the text of email sources on the deal (pasted,
+  // uploaded or imported from the CRM), else the addresses from integrationEmails
   let emailContent: string | null = null;
+  const emailText = dealDocs
+    .filter((d) => d.sourceKind === "email" && d.extractedText && d.extractedText.trim())
+    .map((d) => `--- ${d.name} ---\n${d.extractedText!.trim()}`)
+    .join("\n\n")
+    .slice(0, 12_000);
+  if (emailText) {
+    emailContent = `Emails on file:\n${emailText}`;
+    sources.push("emails");
+    availableSourceCount++;
+  }
   try {
     const emails = await storage.getIntegrationEmailsByDeal(dealId);
-    if (emails.length > 0) {
+    if (emails.length > 0 && !emailContent) {
       const emailSummary = emails
         .map((e) => `[${e.label || "Unknown"}] ${e.emailAddress}`)
         .join("\n");

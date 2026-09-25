@@ -34,7 +34,7 @@ import {
   FIELD_ALTERNATES_KEY,
   BROKER_SUPPRESSED_KEY,
 } from "../interview/info-merger";
-import { documentKind } from "./ingest";
+import { documentKind, mergeableExtraction } from "./ingest";
 
 export async function reprocessDealDocuments(
   dealId: string,
@@ -121,7 +121,7 @@ export async function reprocessDealDocuments(
   if (Array.isArray(suppressed) && suppressed.length > 0) docsMerged[BROKER_SUPPRESSED_KEY] = suppressed;
   for (const { doc, data } of results) {
     if (data) {
-      docsMerged = mergeExtractedData(docsMerged, data, { documentId: doc.id, source: documentKind(doc) });
+      docsMerged = mergeExtractedData(docsMerged, mergeableExtraction(doc, data), { documentId: doc.id, source: documentKind(doc) });
       documentsReprocessed++;
     }
   }

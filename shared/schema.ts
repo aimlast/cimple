@@ -252,6 +252,12 @@ export const deals = pgTable("deals", {
   // Public data scrape
   websiteUrl: text("website_url"),
   // @anchor:deals-cols:crm
+  // The seller's record in the broker's CRM (Pipedrive deal / organisation /
+  // person) and the state of the last import from it. See server/crm/seller-import.ts.
+  crmLink: jsonb("crm_link").$type<DealCrmLink>(),
+  // Who the seller is (name / email / phone / title) and where that came
+  // from — the CRM, the broker, or the seller invite.
+  sellerContact: jsonb("seller_contact").$type<DealSellerContact>(),
   scrapedAt: timestamp("scraped_at"),
   scrapedData: jsonb("scraped_data"),   // Unverified public data — confirmed during AI interview
   scrapeSource: text("scrape_source"),  // "website" | "internet_search" | "website_and_internet"
@@ -1954,6 +1960,66 @@ export interface DocumentSourceMeta {
 
 // @anchor:schema-tail:crm
 // (crm-seller workstream)
+
+export type CrmRecordType = "deal" | "organization" | "person";
+
+/** Progress / outcome of an import from the CRM (deals.crmLink.lastImportStatus). */
+export interface CrmImportStatus {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  /** Plain-English line for the broker ("Imported 9 new items"). */
+  message?: string;
+  /** Items found in the CRM this run (record, notes, activities, emails, files). */
+  total?: number;
+  processed?: number;
+  /** New or changed items turned into sources this run. */
+  imported?: number;
+  /** Items already imported and unchanged (or deleted by the broker). */
+  unchanged?: number;
+  /** Items skipped (empty notes, unsupported files, too large). */
+  skipped?: number;
+  failed?: number;
+  byKind?: { record?: number; notes?: number; activities?: number; emails?: number; files?: number };
+  /** Parts of the CRM that couldn't be read (e.g. mail not synced) — shown as a hint. */
+  warnings?: string[];
+}
+
+/** One CRM item already imported as a source — makes re-import idempotent. */
+export interface CrmImportedItem {
+  /** documents.id of the source it became (may since have been deleted by the broker). */
+  documentId: string;
+  /** The item's version when imported: the CRM's update time, or a hash of its content. */
+  version: string;
+}
+
+/** deals.crmLink — the seller's record in the broker's CRM. */
+export interface DealCrmLink {
+  provider: "pipedrive";
+  /** What the broker picked (deal / organisation / person). */
+  linkedType?: CrmRecordType;
+  dealId?: string;
+  orgId?: string;
+  personId?: string;
+  title: string;
+  /** Opens the record in the CRM. */
+  url?: string;
+  linkedAt: string;
+  lastImportAt?: string;
+  lastImportStatus?: CrmImportStatus;
+  /** "note:123", "file:9", "record:deal:4" … → the source it became. */
+  imported?: Record<string, CrmImportedItem>;
+}
+
+/** deals.sellerContact — the seller's contact details and where they came from. */
+export interface DealSellerContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+  title?: string;
+  source: "crm" | "broker" | "invite";
+  updatedAt: string;
+}
 
 // @anchor:schema-tail:buyers
 // (buyers workstream)

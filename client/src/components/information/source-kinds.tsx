@@ -89,7 +89,8 @@ export function sourceChipText(src: FactSourceInfo): string {
       return src.documentName ? `Email · ${stripExt(src.documentName)}` : when ? `Email · ${when}` : "Email";
     }
     case "crm":
-      return "CRM note";
+      // "CRM note — Site visit…" → "CRM · Site visit…"; "CRM call — Intro call" → "CRM · call — Intro call"
+      return src.documentName ? `CRM · ${src.documentName.replace(/^CRM (note|record) — /, "").replace(/^CRM /, "")}` : "CRM note";
     case "website":
       return "Website";
     case "social":

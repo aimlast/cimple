@@ -22,6 +22,7 @@ import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
 import { isSourceKind, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
+import { SOURCE_META_KEYS } from "../information/view";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -158,6 +159,53 @@ export async function createAndIngestSource(input: CreateSourceInput): Promise<D
   return (await storage.getDocument(doc.id)) ?? doc;
 }
 
+/**
+ * What of a source's extraction may become deal-level facts. A broker-only
+ * source's own summary / red flags / concerns describe the broker's private
+ * notes, not the business — they stay on the source (Sources panel) and
+ * never become deal-level keys the interview agent would see.
+ */
+export function mergeableExtraction(doc: Pick<Document, "visibility">, data: ExtractedDocumentData): ExtractedDocumentData {
+  if (!isBrokerOnly(doc)) return data;
+  return Object.fromEntries(Object.entries(data).filter(([k]) => !SOURCE_META_KEYS.has(k))) as ExtractedDocumentData;
+}
+
+/**
+ * Sensitive personal matters the extractor kept out of the business fields
+ * (health, family…) join the deal's broker-private notes — shown to the
+ * broker on the Interview tab, known to the interview agent as "never
+ * repeat", and excluded from every CIM path ("_" keys).
+ */
+function addPrivateNotes(info: Record<string, unknown>, raw: unknown, doc: Pick<Document, "id" | "name" | "sourceKind">): void {
+  if (typeof raw !== "string" || !raw.trim()) return;
+  const existing = Array.isArray(info._brokerPrivateNotes) ? (info._brokerPrivateNotes as Array<{ note: string }>) : [];
+  const fresh = raw
+    .split("\n")
+    .map((n) => n.trim())
+    .filter((n) => n && !existing.some((e) => e.note === n))
+    .slice(0, 10)
+    .map((note) => ({ note, reason: `From ${doc.name}`, documentId: doc.id }));
+  if (fresh.length > 0) info._brokerPrivateNotes = [...existing, ...fresh];
+}
+
+const factLocks = new Map<string, Promise<unknown>>();
+
+/**
+ * Runs `fn` after any other in-process read-merge-write of the same deal's
+ * facts has finished (a simple per-deal queue).
+ */
+export async function withDealFactsLock<T>(dealId: string, fn: () => Promise<T>): Promise<T> {
+  const prev = factLocks.get(dealId) ?? Promise.resolve();
+  const run = prev.catch(() => {}).then(fn);
+  const tail = run.catch(() => {});
+  factLocks.set(dealId, tail);
+  try {
+    return await run;
+  } finally {
+    if (factLocks.get(dealId) === tail) factLocks.delete(dealId);
+  }
+}
+
 export interface IngestResult {
   status: "extracted" | "failed" | "missing";
   /** Keys this source newly asserted or replaced on the deal. */
@@ -191,15 +239,20 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     } as any);
     if (failed) return { status: "failed", fieldsWritten: [] };
 
-    const deal = await storage.getDeal(doc.dealId);
-    if (!deal) return { status: "extracted", fieldsWritten: [] };
-    const before = (deal.extractedInfo as Record<string, unknown>) || {};
-    const merged = mergeExtractedData(before, extracted, { documentId: doc.id, source: kind });
-    const fieldsWritten = Object.keys(merged).filter(
-      (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
-    );
-    await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
-    return { status: "extracted", fieldsWritten };
+    // Serialised per deal: several sources finishing at once (a CRM import
+    // ingests a few in parallel) must not overwrite each other's facts.
+    return await withDealFactsLock(doc.dealId, async () => {
+      const deal = await storage.getDeal(doc.dealId);
+      if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
+      const before = (deal.extractedInfo as Record<string, unknown>) || {};
+      const merged = mergeExtractedData(before, mergeableExtraction(doc, extracted), { documentId: doc.id, source: kind });
+      addPrivateNotes(merged, extracted._privateNotes, doc);
+      const fieldsWritten = Object.keys(merged).filter(
+        (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
+      );
+      await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
+      return { status: "extracted" as const, fieldsWritten };
+    });
   } catch (err) {
     console.error(`[ingest] failed for doc ${documentId}:`, err);
     await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});

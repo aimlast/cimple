@@ -42,6 +42,8 @@ import { SourcesPanel, SourceViewer } from "@/components/information/SourcesPane
 import { AddSourceDialog } from "@/components/information/AddSourceDialog";
 import { FILTER_KINDS, KIND_META } from "@/components/information/source-kinds";
 import { useInformation, useInformationAction } from "@/components/information/useInformation";
+import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
+import { SellerContactCard } from "@/components/crm/SellerContactCard";
 
 const LEVEL_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
 const STATUS_TEXT = { well_covered: "Covered", partial: "Partly covered", missing: "Nothing yet" } as const;
@@ -194,6 +196,12 @@ export function InformationTab() {
             </p>
           </div>
         </div>
+      </div>
+
+      {/* ── Who the seller is + their CRM record ── */}
+      <div className="grid sm:grid-cols-2 gap-3">
+        <SellerContactCard dealId={dealId} />
+        <CrmLinkCard dealId={dealId} />
       </div>
 
       {/* ── Filters ── */}

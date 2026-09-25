@@ -2452,6 +2452,11 @@ Return JSON only.`,
           console.warn("[intake] questionnaire seeding failed:", e);
         }
       }
+      if (!req.session.brokerId) {
+        // A seller-token save gets the seller-visible fields only.
+        const { sellerSafeDeal } = await import("./seller-safe-deal");
+        return res.json(sellerSafeDeal(deal));
+      }
       res.json(deal);
     } catch (error: any) {
       if (error.name === "ZodError") {
@@ -2770,12 +2775,9 @@ Return JSON only.`,
         typeof req.body.apiToken === "string" ? req.body.apiToken.trim() : "";
       if (!apiToken) return res.status(400).json({ error: "API token is required" });
 
+      const { validatePipedriveToken } = await import("./crm/pipedrive.js");
       try {
-        const check = await fetch(
-          `https://api.pipedrive.com/v1/users/me?api_token=${encodeURIComponent(apiToken)}`,
-        );
-        const body: any = await check.json().catch(() => null);
-        if (!check.ok || !body?.success) {
+        if (!(await validatePipedriveToken(apiToken))) {
           return res
             .status(400)
             .json({ error: "Pipedrive rejected that token — double-check it and try again." });
@@ -2803,7 +2805,9 @@ Return JSON only.`,
             brokerId: req.session.brokerId,
           } as any);
 
-      res.json({ ok: true, integration });
+      // Never echo the token (or any credential) back to the browser.
+      const { accessToken: _token, refreshToken: _refresh, ...safeIntegration } = (integration ?? {}) as Record<string, unknown>;
+      res.json({ ok: true, integration: safeIntegration });
     } catch (error: any) {
       console.error("Pipedrive connect error:", error);
       res.status(500).json({ error: "Failed to connect Pipedrive" });
@@ -3960,8 +3964,11 @@ Return JSON only.`,
       if (!deal) {
         return res.status(404).json({ error: "Associated deal not found" });
       }
-      
-      res.json({ invite, deal });
+
+      // Seller-visible fields only — never the broker's facts, CRM link,
+      // notes, seller profile or call/bot secrets.
+      const { sellerSafeDeal } = await import("./seller-safe-deal");
+      res.json({ invite, deal: sellerSafeDeal(deal) });
     } catch (error: any) {
       console.error("Error fetching invite:", error);
       res.status(500).json({ error: "Failed to fetch invite" });
@@ -4563,8 +4570,10 @@ Return JSON only.`,
         ? describeCrmAction(syncResult.provider, decision)
         : syncResult.status === "failed"
         ? `CRM auto-update failed (${crmProviderLabel(syncResult.provider)}): ${syncResult.error}. Please update your pipeline manually.`
+        : syncResult.reason
+        ? syncResult.reason
         : crmProvider
-        ? describeCrmAction(crmProvider, decision)
+        ? `${crmProviderLabel(crmProvider)} is connected, but nothing was changed in it for this decision.`
         : "No CRM is connected — connect Pipedrive, HubSpot or Salesforce in Settings to enable automatic pipeline updates.";
 
       // Compose email body
@@ -4676,7 +4685,8 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const query = String(req.body?.query || req.body?.recordId || "");
       if (!query) return res.status(400).json({ error: "query or recordId required" });
-      const result = await prefillBuyerFromCrm(deal.brokerId, query);
+      const recordId = req.body?.recordId != null ? String(req.body.recordId) : null;
+      const result = await prefillBuyerFromCrm(deal.brokerId, query, recordId);
       res.json(result);
     } catch (error: any) {
       console.error("Error prefilling buyer:", error);
