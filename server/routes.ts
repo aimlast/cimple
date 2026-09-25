@@ -4486,6 +4486,16 @@ Return JSON only.`,
       if (!parsed.success) return res.status(400).json({ error: "Invalid update" });
       const accessUpdates: Record<string, any> = {};
       for (const [k, v] of Object.entries(parsed.data)) if (v !== undefined) accessUpdates[k] = v;
+      if (Object.keys(accessUpdates).length === 0) {
+        // Nothing a broker may change was sent. An empty body is a no-op;
+        // a body carrying only server-owned fields (buyerUserId, NDA, decision…)
+        // is refused so the caller knows it was not applied.
+        const sent = Object.keys(req.body && typeof req.body === "object" ? req.body : {});
+        if (sent.length > 0) {
+          return res.status(400).json({ error: "Only the access level, expiry date, buyer name and company can be changed here" });
+        }
+        return res.json(existingAccess);
+      }
       if (typeof accessUpdates.expiresAt === "string") {
         accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
         if (isNaN(accessUpdates.expiresAt.getTime())) return res.status(400).json({ error: "Invalid expiry date" });

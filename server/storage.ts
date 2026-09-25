@@ -704,6 +704,9 @@ export class DbStorage implements IStorage {
   }
 
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
+    // Drizzle throws "No values to set" on an empty update — nothing to change
+    // means the row as it stands.
+    if (!Object.values(updates).some((v) => v !== undefined)) return this.getBuyerAccess(id);
     const result = await db.update(buyerAccess)
       .set(updates)
       .where(eq(buyerAccess.id, id))
