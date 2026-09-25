@@ -78,11 +78,19 @@ export function knownFiguresFrom(kbText: string): KnownFigures {
   };
 }
 
+/**
+ * Does the knowledge-base figure `k` round to the written figure (value `v`,
+ * written to precision `vTol`)? Only the written figure's precision counts:
+ * "$3.9M" traces to 3,897,000, but "$3,910,000" does not trace to "$3.9M" —
+ * a vague figure on file never vouches for a precise one written from it
+ * (a "$5M" fact used to validate an invented $5,440,500 subtotal, and
+ * "$4.4M"-style facts let invented EBITDA figures through).
+ */
 function near(v: number, vTol: number, k: Figure): boolean {
   const a = Math.abs(v);
   const b = Math.abs(k.value);
-  // Rounding in either direction, plus a hair for float noise.
-  return Math.abs(a - b) <= Math.max(vTol, k.tolerance) + 1e-6 * Math.max(1, b);
+  // Rounding of the written figure, plus a hair for float noise.
+  return Math.abs(a - b) <= vTol + 1e-6 * Math.max(1, b);
 }
 
 /**
@@ -119,6 +127,8 @@ interface SectionLike {
 type Cell = { where: string; text: string; allowPlain: boolean };
 
 const asArr = (v: unknown): any[] => (Array.isArray(v) ? v : []);
+/** A unit saying the values are percentages ("%", "(%)", "% of revenue") — not a note like "8.6% margin". */
+const PERCENT_UNIT = /(?:^|[^\d.])%/;
 const str = (v: unknown): string => (v === null || v === undefined ? "" : String(v));
 
 function cellsOf(section: SectionLike): Cell[] {
@@ -145,7 +155,7 @@ function cellsOf(section: SectionLike): Cell[] {
     case "pie_chart":
     case "donut_chart":
       asArr(d.data).forEach((it) => {
-        cells.push({ where: `"${str(it?.name)}"`, text: `${str(it?.value)}${typeof it?.value === "number" && /%/.test(str(d.unit)) ? "%" : ""}`, allowPlain: true });
+        cells.push({ where: `"${str(it?.name)}"`, text: `${str(it?.value)}${typeof it?.value === "number" && PERCENT_UNIT.test(str(d.unit)) ? "%" : ""}`, allowPlain: true });
         if (it?.secondaryValue !== undefined) cells.push({ where: `"${str(it?.name)}" (second value)`, text: str(it.secondaryValue), allowPlain: true });
       });
       if (d.centerValue) cells.push({ where: "centre figure", text: str(d.centerValue), allowPlain: false });
@@ -153,12 +163,12 @@ function cellsOf(section: SectionLike): Cell[] {
     case "line_chart": {
       const keys = asArr(d.series).map((s) => str(s?.key)).filter(Boolean);
       asArr(d.data).forEach((pt) =>
-        keys.forEach((k) => pt && pt[k] !== undefined && cells.push({ where: `"${str(pt?.name)}" ${k}`, text: `${str(pt[k])}${/%/.test(str(d.unit)) ? "%" : ""}`, allowPlain: true })),
+        keys.forEach((k) => pt && pt[k] !== undefined && cells.push({ where: `"${str(pt?.name)}" ${k}`, text: `${str(pt[k])}${PERCENT_UNIT.test(str(d.unit)) ? "%" : ""}`, allowPlain: true })),
       );
       break;
     }
     case "metric_grid":
-      asArr(d.metrics).forEach((m) => cells.push({ where: `metric "${str(m?.label)}"`, text: `${str(m?.value)}${/%/.test(str(m?.unit)) && !/%/.test(str(m?.value)) ? "%" : ""}`, allowPlain: false }));
+      asArr(d.metrics).forEach((m) => cells.push({ where: `metric "${str(m?.label)}"`, text: `${str(m?.value)}${PERCENT_UNIT.test(str(m?.unit)) && !/[%$]/.test(str(m?.value)) ? "%" : ""}`, allowPlain: false }));
       break;
     case "stat_callout":
       cells.push({ where: `"${str(d.primaryLabel)}"`, text: str(d.primaryValue), allowPlain: false });
@@ -215,64 +225,221 @@ function unknownFigures(section: SectionLike, known: KnownFigures): string[] {
 
 // ── Reconciliation ───────────────────────────────────────────────────────
 
-function amount(text: string): number | null {
+interface Amount {
+  value: number;
+  /** Rounding of the written figure, in the table's own scale. */
+  tol: number;
+}
+
+function amountOf(text: string): Amount | null {
   const t = text.trim();
   if (!t || t === "—" || t === "-") return null;
   const negative = /^\(.*\)$/.test(t) || /^[-−–]/.test(t);
   const f = parseFigures(t.replace(/[()−–]/g, ""))[0];
   if (!f || f.kind === "percent") return null;
-  return negative ? -Math.abs(f.value) : f.value;
+  return { value: negative ? -Math.abs(f.value) : f.value, tol: f.tolerance };
+}
+
+function amount(text: string): number | null {
+  return amountOf(text)?.value ?? null;
 }
 
 const ROW_PATTERNS = {
   revenue: /^(total\s+)?(net\s+)?(revenue|sales|net sales|gross revenue)s?$/i,
-  cogs: /^(total\s+)?(cost of (goods sold|sales|revenue)|cogs|direct (operating )?costs?)$/i,
+  cogs: /^(total\s+)?(cost of (goods sold|sales|revenue|services)|cogs|direct (operating )?costs?)$/i,
   gross: /^gross (profit|margin \$)$/i,
   opex: /^(total\s+)?(operating expenses|opex|general (and|&) administrative( expenses)?|sg&a|overhead( expenses)?)$/i,
   ebitda: /^(reported\s+)?ebitda$/i,
 };
+/** A row that states the sum of the lines above it ("Total Operating Expenses", "Subtotal"). */
+const SUM_LABEL = /^(sub)?total\b|\btotal$/i;
+/** Statement rows that are results, not lines of a subtotal (revenue, gross profit, EBITDA, net income). */
+const STATEMENT_ROW =
+  /^(net\s+)?(revenue|sales|gross revenue)s?$|^(cost of (goods sold|sales|revenue|services)|cogs)$|^gross (profit|margin \$)$|^(reported\s+|adjusted\s+)?ebitda$|^(net (income|profit|earnings)|(income|earnings) before (income )?tax(es)?|operating (income|profit)|ebit)$/i;
+/** A breakdown of the line above ("of which owner compensation"), not a line of its own. */
+const BREAKDOWN_LABEL = /^(of which|incl(uding|\.)?|includes)\b/i;
+/** Lines that add to earnings rather than cost (other income, a gain on sale). */
+const INCOME_LABEL = /\b(income|gain|recover(y|ies)|rebate)\b/i;
 
-function findRow(rows: any[], re: RegExp): any | null {
-  const hits = rows.filter((r) => re.test(str(r?.label).replace(/\s*\(.*?\)\s*$/, "").trim()));
-  return hits.length === 1 ? hits[0] : null;
+interface TableRow {
+  label: string;
+  /** The label without a trailing "(…)" note. */
+  bare: string;
+  amounts: Array<Amount | null>;
+  /** A heading row with no amounts ("Operating Expenses" over its lines). */
+  header: boolean;
+  /** A heading that carries its group's amounts ("Revenue $6,212,400" over the service lines). */
+  headTotal: boolean;
+  total: boolean;
+  /** A result row (revenue, gross profit, EBITDA, net income) — never a line of a subtotal. */
+  statement: boolean;
 }
 
-/** Tables whose rows don't add up. Only checked where the rows are unambiguous. */
+function tableRows(d: Record<string, any>, cols: number): TableRow[] {
+  const out: TableRow[] = [];
+  for (const r of asArr(d.rows)) {
+    const label = str(r?.label).trim();
+    const values = asArr(r?.values).map(str);
+    // Percentage rows (margins, growth) are not amounts.
+    if (values.some((v) => /%/.test(v))) continue;
+    const amounts = Array.from({ length: cols }, (_, i) => amountOf(values[i] ?? ""));
+    const has = amounts.some(Boolean);
+    const bare = label.replace(/\s*\(.*?\)\s*$/, "").trim();
+    const headTotal = !!r?.isSectionHeader && has;
+    out.push({
+      label,
+      bare,
+      amounts,
+      header: !has,
+      headTotal,
+      total: headTotal || !!r?.isTotal || SUM_LABEL.test(label),
+      statement: STATEMENT_ROW.test(bare) && !SUM_LABEL.test(label),
+    });
+  }
+  return out;
+}
+
+/** The row a pattern names; with several (a "Revenue" line and "Total Revenue"), the last total, else the last. */
+function pickRow(rows: TableRow[], re: RegExp): TableRow | null {
+  const hits = rows.filter((r) => !r.header && re.test(r.bare));
+  if (hits.length <= 1) return hits[0] ?? null;
+  const totals = hits.filter((r) => r.total);
+  const pool = totals.length > 0 ? totals : hits;
+  return pool[pool.length - 1];
+}
+
+const fmt = (n: number) => Math.round(n).toLocaleString("en-US");
+
+/**
+ * Tables whose rows don't add up: a "Total …" row that isn't the sum of the
+ * lines above it, revenue − cost of sales ≠ gross profit, and an EBITDA that
+ * isn't gross profit less the expenses printed between them. Heading rows
+ * ("Operating Expenses" over its lines), margin rows and a "Revenue" heading
+ * beside "Total Revenue" no longer switch the check off — the writer's
+ * normal style used to disable it (Pacific 2026-09-25: an invented
+ * "Total Operating Expenses (recurring)" went unflagged).
+ */
 function reconcileTable(section: SectionLike): string[] {
   const d = (section.layoutData ?? {}) as Record<string, any>;
-  const rows = asArr(d.rows);
   const headers = asArr(d.headers).map(str);
-  const rev = findRow(rows, ROW_PATTERNS.revenue);
-  const cogs = findRow(rows, ROW_PATTERNS.cogs);
-  const gp = findRow(rows, ROW_PATTERNS.gross);
-  const opex = findRow(rows, ROW_PATTERNS.opex);
-  const ebitda = findRow(rows, ROW_PATTERNS.ebitda);
+  const cols = headers.length > 1 ? headers.length - 1 : Math.max(0, ...asArr(d.rows).map((r) => asArr(r?.values).length));
+  const rows = tableRows(d, cols);
   const out: string[] = [];
-  const cols = Math.max(0, headers.length - 1);
-  const val = (r: any, i: number) => (r ? amount(str(asArr(r.values)[i])) : null);
-  const off = (a: number, b: number) => Math.abs(a - b) > Math.max(1000, Math.abs(b) * 0.01);
-  const opexIdx = opex ? rows.indexOf(opex) : -1;
-  const ebitdaIdx = ebitda ? rows.indexOf(ebitda) : -1;
-  for (let i = 0; i < cols; i++) {
-    const col = headers[i + 1] || `column ${i + 1}`;
-    const R = val(rev, i), C = val(cogs, i), G = val(gp, i), O = val(opex, i), E = val(ebitda, i);
-    if (R !== null && C !== null && G !== null && off(R - Math.abs(C), G)) {
-      out.push(`${col}: revenue − cost of sales (${Math.round(R - Math.abs(C)).toLocaleString("en-US")}) ≠ gross profit (${Math.round(G).toLocaleString("en-US")})`);
-    }
-    const gross = G ?? (R !== null && C !== null ? R - Math.abs(C) : null);
-    if (gross !== null && O !== null && E !== null) {
-      // Expense rows printed between operating expenses and EBITDA (one-time
-      // costs, owner compensation) count too.
-      const between = opexIdx >= 0 && ebitdaIdx > opexIdx
-        ? rows.slice(opexIdx + 1, ebitdaIdx).filter((r) => !r?.isTotal && !r?.isSectionHeader).map((r) => val(r, i) ?? 0)
-        : [];
-      const plain = gross - Math.abs(O);
-      const withBetween = plain - between.reduce((s, x) => s + Math.abs(x), 0);
-      if (off(plain, E) && off(withBetween, E)) {
-        out.push(`${col}: gross profit − operating expenses (${Math.round(plain).toLocaleString("en-US")}) ≠ EBITDA (${Math.round(E).toLocaleString("en-US")})`);
+  const colName = (i: number) => headers[i + 1] || `column ${i + 1}`;
+  // Written rounding of every figure involved, else 0.5% of the target.
+  const off = (a: number, b: number, tol: number) => Math.abs(a - b) > Math.max(tol, Math.abs(b) * 0.005) + 1e-6;
+  const tolOf = (xs: Array<Amount | null | undefined>) => xs.reduce((s, a) => s + (a?.tol ?? 0), 0);
+
+  // 1. Subtotals: "Total X" = the lines since the previous total or heading,
+  //    or those lines plus the group's earlier subtotals ("Total assets" after
+  //    "Total current assets" and the non-current lines).
+  //    A heading that carries amounts must equal the lines under it.
+  const checkSum = (T: TableRow, block: TableRow[], prior: TableRow[], where: "above" | "under") => {
+    for (let i = 0; i < cols; i++) {
+      const t = T.amounts[i];
+      const parts = block.map((l) => l.amounts[i]).filter((a): a is Amount => !!a);
+      if (!t || parts.length === 0) continue;
+      const before = prior.map((g) => g.amounts[i]).filter((a): a is Amount => !!a);
+      const abs = parts.reduce((s, p) => s + Math.abs(p.value), 0);
+      const signed = Math.abs(parts.reduce((s, p) => s + p.value, 0));
+      const withPrior = abs + before.reduce((s, p) => s + Math.abs(p.value), 0);
+      const target = Math.abs(t.value);
+      const tol = t.tol + tolOf(parts) + tolOf(before);
+      if ([abs, signed, withPrior].every((c) => off(c, target, tol))) {
+        out.push(`${colName(i)}: "${T.label}" shows ${fmt(target)} but the lines ${where} it add up to ${fmt(abs)}`);
       }
     }
-    if (R !== null && O !== null && Math.abs(O) > Math.abs(R)) out.push(`${col}: operating expenses exceed revenue`);
+  };
+  let lines: TableRow[] = [];
+  let groupTotals: TableRow[] = [];
+  let openHead: TableRow | null = null;
+  const closeHead = () => {
+    if (openHead && lines.length > 0) checkSum(openHead, lines, [], "under");
+    openHead = null;
+  };
+  for (const r of rows) {
+    if (r.header || r.headTotal || r.statement) {
+      // A new group (or a result row, which no subtotal includes).
+      closeHead();
+      lines = [];
+      groupTotals = [];
+      if (r.headTotal) openHead = r;
+      continue;
+    }
+    if (!r.total) {
+      if (!BREAKDOWN_LABEL.test(r.bare)) lines.push(r);
+      continue;
+    }
+    closeHead();
+    if (SUM_LABEL.test(r.label) && lines.length > 0) checkSum(r, lines, groupTotals, "above");
+    groupTotals.push(r);
+    lines = [];
+  }
+  closeHead();
+
+  // 2. Revenue − cost of sales = gross profit; expenses never exceed revenue.
+  const ebitdaRow = rows.find((r) => !r.header && ROW_PATTERNS.ebitda.test(r.bare)) ?? null;
+  const upTo = ebitdaRow ? rows.slice(0, rows.indexOf(ebitdaRow)) : rows;
+  const rev = pickRow(upTo, ROW_PATTERNS.revenue);
+  const cogs = pickRow(upTo, ROW_PATTERNS.cogs);
+  const gp = pickRow(upTo, ROW_PATTERNS.gross);
+  const opex = pickRow(upTo, ROW_PATTERNS.opex);
+  for (let i = 0; i < cols; i++) {
+    const R = rev?.amounts[i] ?? null, C = cogs?.amounts[i] ?? null, G = gp?.amounts[i] ?? null, O = opex?.amounts[i] ?? null;
+    if (R && C && G && off(R.value - Math.abs(C.value), G.value, tolOf([R, C, G]))) {
+      out.push(`${colName(i)}: revenue − cost of sales (${fmt(R.value - Math.abs(C.value))}) ≠ gross profit (${fmt(G.value)})`);
+    }
+    if (R && O && Math.abs(O.value) > Math.abs(R.value)) out.push(`${colName(i)}: operating expenses exceed revenue`);
+  }
+
+  // 3. EBITDA = gross profit less the expense rows printed between them.
+  if (ebitdaRow) {
+    const anchor = gp ?? cogs;
+    const from = anchor ? rows.indexOf(anchor) + 1 : 0;
+    const between = rows.slice(from, rows.indexOf(ebitdaRow)).filter((r) => !r.header && !BREAKDOWN_LABEL.test(r.bare));
+    const leaves = between.filter((r) => !r.total);
+    const last = between[between.length - 1];
+    const lastTotalIdx = between.map((r) => r.total).lastIndexOf(true);
+    for (let i = 0; i < cols; i++) {
+      const E = ebitdaRow.amounts[i];
+      // No expense figures printed for this year: a blank is allowed (never a guess).
+      if (!E || !between.some((r) => r.amounts[i])) continue;
+      const G = gp?.amounts[i] ?? null;
+      const R = rev?.amounts[i] ?? null, C = cogs?.amounts[i] ?? null;
+      const gross = G ? G.value : R && C ? R.value - Math.abs(C.value) : null;
+      if (gross === null) continue;
+      // An expense reduces EBITDA; other income / a gain adds to it.
+      const cost = (r: TableRow) => {
+        const a = r.amounts[i];
+        if (!a) return 0;
+        return INCOME_LABEL.test(r.bare) && !/expense|cost/i.test(r.bare) ? -Math.abs(a.value) : Math.abs(a.value);
+      };
+      const tol = E.tol + (G ? G.tol : tolOf([R, C])) + tolOf(between.map((r) => r.amounts[i]));
+      const lastAmt = last?.amounts[i] ?? null;
+      if (last?.total && lastAmt) {
+        // The expense total printed right above EBITDA: a reader takes
+        // gross profit − that total = EBITDA, so it has to hold as printed.
+        const v = gross - Math.abs(lastAmt.value);
+        if (off(v, E.value, E.tol + lastAmt.tol + (G ? G.tol : tolOf([R, C])))) {
+          out.push(`${colName(i)}: gross profit − operating expenses ("${last.label}": ${fmt(v)}) ≠ EBITDA (${fmt(E.value)})`);
+        }
+        continue;
+      }
+      // Every line listed; or the totals only (a heading "Operating Expenses
+      // $1,484,800" over its lines); or the last total plus what follows it.
+      const candidates = [
+        gross - leaves.reduce((s, r) => s + cost(r), 0),
+        gross - leaves.reduce((s, r) => s + Math.abs(r.amounts[i]?.value ?? 0), 0),
+        gross - between.filter((r) => r.total).reduce((s, r) => s + Math.abs(r.amounts[i]?.value ?? 0), 0),
+      ];
+      if (lastTotalIdx >= 0) {
+        const t = between[lastTotalIdx].amounts[i];
+        if (t) candidates.push(gross - Math.abs(t.value) - between.slice(lastTotalIdx + 1).reduce((s, r) => s + cost(r), 0));
+      }
+      if (candidates.every((c) => off(c, E.value, tol))) {
+        out.push(`${colName(i)}: gross profit − operating expenses (${fmt(candidates[0])}) ≠ EBITDA (${fmt(E.value)})`);
+      }
+    }
   }
   return out;
 }
@@ -308,17 +475,22 @@ const GENERIC_LABEL =
   /^(customer|client|supplier|vendor|account|payer|carrier)s?\s+[a-z0-9]{1,3}\b|\bothers?\b|\bremaining\b|\ball other|\brest of\b|\btop \d+|\bbalance\b|\blong tail\b|^\d+\+?\s|\bcustomers?\b$|\bclients?\b$|\bunnamed\b|\bconfidential\b|^(government|retail|wholesale|commercial|residential|industrial|institutional|online|direct|private)\b/i;
 const PARTY_CONTEXT = /\b(customer|client|account|supplier|vendor|payer|concentration)s?\b/i;
 
-/** Is a chart/table label that names a company on file? */
+// Legal / corporate endings dropped before the look-up ("Kestrel Building Supply Ltd."
+// is on file as "Kestrel Building Supply"). "co-op" before "co", so the ending goes whole.
+const LEGAL_ENDING = /\b(co-op|co-operative|cooperative|incorporated|inc|ltd|limited|llc|llp|lp|plc|gmbh|corp|corporation|company|co|the)\b\.?/gi;
+
+/**
+ * Is a chart/table label a company on file? The whole name (legal endings
+ * aside) must appear as written in the knowledge base: "Alderbrook Grocery"
+ * is on file when the file says "Alderbrook Grocery Distributors", but
+ * "Fraser Valley Dairy Co-op" is not just because the history mentions
+ * "Fraser Valley farms" — matching only the first two words let exactly
+ * that invented customer through.
+ */
 export function nameOnFile(label: string, known: KnownFigures): boolean {
-  const norm = normalizeForLookup(label.replace(COMPANY_SUFFIX, " ")).trim();
+  const norm = normalizeForLookup(label.replace(LEGAL_ENDING, " ")).trim();
   if (!norm) return true;
-  if (known.text.includes(` ${norm} `)) return true;
-  // "Alderbrook Grocery" when the file says "Alderbrook Grocery Distributors": the
-  // first two distinctive words must appear together.
-  const words = norm.split(" ").filter((w) => w.length >= 3);
-  if (words.length === 0) return true;
-  const head = words.slice(0, Math.min(2, words.length)).join(" ");
-  return known.text.includes(` ${head} `);
+  return known.text.includes(` ${norm} `);
 }
 
 function unknownNames(section: SectionLike, known: KnownFigures): string[] {
@@ -333,7 +505,12 @@ function unknownNames(section: SectionLike, known: KnownFigures): string[] {
   }
   const out: string[] = [];
   for (const raw of labels) {
-    const label = raw.replace(/\s*\(.*?\)\s*$/, "").replace(/\s*[—–-]\s*\d.*$/, "").trim();
+    // "Alderbrook Grocery (MSA to 2027)", "Kestrel — 8%", "Alderbrook: anchor account" → the name.
+    const label = raw
+      .replace(/\s*\(.*?\)\s*$/, "")
+      .replace(/\s*[—–-]\s*\d.*$/, "")
+      .replace(/\s+[—–]\s.*$|\s+-\s.*$|:\s.*$/, "")
+      .trim();
     if (!label || GENERIC_LABEL.test(label)) continue;
     const looksLikeCompany = COMPANY_SUFFIX.test(label) || (partySection && /^[A-Z][\w'&.-]*(\s+[A-Z&][\w'&.-]*)+/.test(label));
     if (!looksLikeCompany) continue;

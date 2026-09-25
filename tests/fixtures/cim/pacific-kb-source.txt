@@ -1,0 +1,480 @@
+TODAY: September 25, 2026 (resolve relative dates against the recorded date or today — rule 20)
+BUSINESS: QA HARVEST check-cimgen-pacific — Pacific Coast Logistics Ltd.
+INDUSTRY: Transportation & Logistics
+ASKING PRICE: $18,000,000
+
+CANONICAL FIGURES (copy these exact values everywhere they appear):
+EBITDA: $3,900,000 adjusted EBITDA (FY2024)
+Headcount: 148 (96 drivers + 52 staff, Dec 31, 2024)
+Net income: $972,960 (FY2024, after tax)
+Revenue: $31,020,000 (FY2024)
+Asking price: $18,000,000
+NOTE: EBITDA on file is $3,900,000 adjusted EBITDA (FY2024) but the financial analysis bridge totals $3,596,200 (Adjusted EBITDA, 2024) — statement tables and the bridge use the financial analysis figures (rule 18); do not reconcile them yourself.
+
+JURISDICTION (all regulatory / licensing references must match):
+Location: Surrey BC
+Jurisdiction: British Columbia
+
+--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---
+Cash: $1,024,059
+Fleet: 71 power units: 52 owned, 19 on operating lease with Westline; 160 trailers (as of Dec 31, 2024)
+Ebitda: $3,900,000 adjusted EBITDA (FY2024)
+Rental: $2,433,500 (warehouse and related-party yard)
+Auditor: None — shareholders unanimously waive appointment of an auditor annually (review engagement by Harmon Bains LLP; Fraserview CPA Group LLP engaged for 2025)
+Tax Year: January 1, 2023 to December 31, 2023
+Addbacks: Harjit's salary above $120K replacement cost (customer relationship role); Surinder's full salary (non-working family member, income-splitting, no role since 2019); below-market Barnston yard rent ($8K actual vs. $14.5K market = $6.5K/month or $78K/year difference deducted); 2023 one-time: $58K labour lawyers for union certification; 2024 one-time: $72K Axon system migration consultants, $55K wrongful dismissal settlement + $29K legal fees
+Cash2021: $1,102,094
+Cash2022: $959,004
+Cash Flow: Operating cash flow $2,974,940 (2024), $2,373,055 (2023). Free cash flow approximately $114,940 after capex and dividends
+Deposits: $316,250
+Location: Surrey BC
+Sale Type: Business sale; real estate (4-acre yard) may be included or separately leased to buyer
+Contracts: Master agreement with Alderbrook (3-year term, renewed last year, goes to 2027) [recorded Nov 2025]
+Dividends: $500,000 eligible dividends declared and paid in 2022, distributed pro rata to shareholders based on ownership (T5 slips issued, designated from general rate income pool per Schedule 53)
+Employees: 148 (96 drivers + 52 staff, Dec 31, 2024)
+Fleet Size: 70+ power units (exact number available from Manpreet), approximately 160 trailers
+Fuel Costs: $4,760,000 (2023); $5,420,000 (2022) - direct fuel costs
+Inventory: Fuel, parts and tires: $312,000 (2024), $291,000 (2023), valued at lower of cost (FIFO) and net realizable value
+Lease Sqft: 110,000 sq ft
+Legal Name: PACIFIC COAST LOGISTICS LTD.
+Naics Code: 484110 General freight trucking (79% of revenue); 493120 Refrigerated warehousing and storage, incl. dry storage and cross-dock (21%)
+Net Income: $972,960 (FY2024, after tax)
+Strengths: Diversified customer base (300+ customers, largest customer 22.0%), strong contract with largest customer to 2027, established relationships with key decision-makers, proven crisis performance, experienced key personnel with long tenure, good safety record (satisfactory rating), no union, substantial asset base (70+ trucks, 160 trailers)
+Suppliers: Westline (operating lease for 19 power units); Harmon Bains (accountant FY2022-2024, Ranjit Bains retired); Fraserview CPA Group (accountant FY2025 forward); Kaur Whitfield law firm (Amrit Kaur)
+Total Debt: $7,860,000 (current portion $2,420,000 plus long-term $5,440,000)
+Accountant: Harmon Bains (review engagement statements)
+Bank Credit: Operating line of credit of $3,000,000 with Westshore Commercial Bank at prime + 0.75%, secured by general security agreement and personal guarantee from Harjit S. Grewal. Nil drawn at December 31, 2022. Debt service coverage covenant of 1.25:1.
+Cca Claimed: $2,090,000 (discretionary claim, less than maximum available including Accelerated Investment Incentive)
+Ebitda2021: $3,413,000
+Ebitda2022: $3,409,800
+Ebitda2024: $2,649,200 (calculated as net income before taxes $1,266,200 plus amortization $1,950,000 minus gain on disposal $64,000 plus interest $433,000 plus professional fees $341,000 - wait, recalculating: $1,266,200 + $1,950,000 + $433,000 = $3,649,200 minus gain $64,000 = $3,585,200, but let me use the operating income approach: Net income before taxes $1,266,200 + interest $433,000 + amortization $1,950,000 = $3,649,200; subtracting the gain on disposal $64,000 = $3,585,200)
+Entity Type: Corporation (incorporated 1998)
+Filing Date: June 18, 2024 (electronically filed by Harmon Bains LLP)
+Head Office: 19220 Campbell Ridge Drive, Surrey, BC V3Z 1K4
+Ideal Buyer: Larger company that Manpreet can be part of; company that will preserve culture of people care and driver relationships; not interested in earn-out structures
+Legal Notes: One-time legal settlement (addback to EBITDA); 2023 compliance review and warning letter; 2023 union application mentioned; minute book excerpt certified by Amrit Kaur at Kaur Whitfield law firm
+Open Claims: Broker mentioned "any open claims" as item to be provided
+Report Date: May 22, 2025
+Review Date: May 12, 2023
+Tax Year End: December 31, 2024
+Asking Price: $18,000,000
+Audit Status: Unaudited - Review Engagement (not an audit). Review report issued April 26, 2024.
+Company Name: Pacific Coast Logistics Ltd.
+Cost Of Sales: $20,612,900
+Debt Details: Bank indebtedness: $350,000 drawn on $3,000,000 authorized operating line of credit with Westshore Commercial Bank at prime + 0.75%, secured by general security agreement and personal guarantee from Harjit S. Grewal, subject to debt service coverage covenant of 1.25:1 (in compliance). Long-term debt: $7,570,000 total equipment loans with Pacific Crest Equipment Finance Ltd. and Westshore Commercial Bank, repayable over 48-60 months at fixed rates 4.89%-7.45%, secured by specific equipment financed. Current portion: $2,210,000. Principal repayments: 2024 $2,210,000, 2025 $2,050,000, 2026 $1,720,000, 2027 $1,080,000, 2028 $510,000.
+Driver Wages: $7,122,900 (2023); $7,002,200 (2022) - driver wages & benefits
+Gross Profit: $7,691,800 (2022)
+Inventories: $291,000
+Lease Expiry: 2037
+Margin Trend: EBITDA margin 13.2% (2022) → 11.3% (2023) → 12.6% (2024); 2023 dip from full Campbell Ridge rent and higher equipment loan rates; 2024 recovery from 35% warehouse revenue growth (higher-margin than trucking); wage inflation and insurance premiums pressuring trucking side offset by fuel surcharge and warehouse growth
+Monthly Rent: Years 1-5: $158,125/month Basic Rent + Additional Rent (estimated $35,750/month based on $3.90/sq ft); Years 6-10: $178,750/month + Additional Rent; Years 11-15: $199,375/month + Additional Rent. Additional Rent is 100% of Realty Taxes and Operating Costs estimated at $3.90/sq ft ($429,000 annually, $35,750 monthly) for 2022. First 3 months of Basic Rent abated (Oct-Dec 2022).
+Revenue2024: $31,020,000
+Sale Advisor: Brassline Advisory Partners (engaged December 2, 2025)
+Seasonality: Q4 peak (~28% of annual revenue) driven by grocery holiday volumes and retail restocking; Q1 trough (~22%) due to slow general freight and winter weather closures on Coquihalla/Hwy 3; summer lift on reefer side from BC produce season; warehousing steadier but follows same Q4 peak/Q1 trough pattern
+Service Area: Regional transportation from Surrey, British Columbia facility; Port of Vancouver container drayage services
+Total Assets: $21,122,309
+Union Status: Non-union; union organizing attempt in 2023, drivers voted no
+Years Of Data: FY2022, FY2023, FY2024 (review engagement statements from Harmon Bains)
+Amortization: $1,880,000
+Bad Debts2021: $28,000
+Bad Debts2022: $35,000
+Class8 Assets: Racking, shop equipment, furniture: UCC start $1,086,766, additions $210,000, disposals $0, CCA $238,353, UCC end $1,058,413
+Common Shares: $1,000
+Customer Base: Over 300 customers; largest is Alderbrook (grocery distributor, 22.0% of FY2024 revenue, customer since 2009, master agreement renewed last year goes to 2027); second largest is building supply company at ~8%; other sectors include beverage, pet food, furniture, dairy co-op; food represents approximately 50% of business [recorded Feb 2026]
+Fleet Cameras: Samsara cameras in every tractor since 2022
+Industry Type: Logistics, trucking, refrigerated transportation
+Jurisdiction: British Columbia
+Key Customers: Alderbrook Grocery Distributors Ltd.
+Key Employees: Manpreet Grewal (son, 38, runs operations - dispatch, warehouse, shop, safety); Diane (controller, since 2016, "excellent, very sharp"); Rajvir (dispatch manager, since 2011); Dale (shop manager/mechanic, since 2005, "best mechanic in Lower Mainland" - considering retirement in couple years); Carlos (warehouse manager); Tanya (safety manager); Surinder Grewal (wife, on payroll, formerly did books, now helps sometimes)
+Lease Address: Campbell Ridge Drive facility
+Lease Details: Warehouse: 110,000 sq ft, Campbell Heights, landlord Silvergate, 15-year term (commenced ~2022). Yard: 4 acres, Barnston Road Surrey, owned by seller's holding company, leased to operating company at below-market rate.
+Location City: Surrey
+Long Term Debt: $5,360,000
+Main Activity: Trucking and warehousing — NAICS 484110 General freight trucking (79% of revenue); 493120 Refrigerated warehousing and storage, incl. dry storage and cross-dock (21%)
+Property Info: Warehouse: 110,000 sq ft in Campbell Heights, leased from Silvergate (15-year lease, moved in 3 years ago/2022). Yard: 4 acres on Barnston Road, Surrey, with shop facility, owned by Harjit and wife through holding company (purchased 2016), currently leased to operating company at below-market family rate. [recorded Nov 2025]
+Safety Record: Satisfactory rating; logbook compliance issue in 2023 when electronic logs were implemented (resolved); cameras now installed in every truck
+Share Capital: 850 Class A voting common shares and 150 Class B non-voting common shares ($1,000 total)
+Shareholders: Harjit Singh Grewal (60% common shares), Manpreet Grewal (25% common shares), Surinder Kaur Grewal (15% common shares)
+Target Market: Food distribution and grocery (approximately 50% of business), building supply, beverage, pet food, furniture, dairy; primarily Fraser Valley and Greater Vancouver area
+Taxes Payable: $60,000
+Ucc End Of Year: $8,376,222
+Annual Revenue: $31,020,000 (FY2024)
+Class10 Assets: Trailers, chassis, forklifts, other automotive: UCC start $2,344,854, additions $850,000, disposals $74,000, CCA $819,856, UCC end $2,300,998
+Class13 Assets: Leasehold improvements: UCC start $1,553,799, additions $100,000, disposals $0, CCA $128,304, UCC end $1,525,495
+Class16 Assets: Freight tractors & trucks (GVWR > 11,788 kg): UCC start $3,265,294, additions $1,580,000, disposals $250,000, CCA $871,457, UCC end $3,723,837
+Class50 Assets: Computer hardware & systems software: UCC start $125,509, additions $120,000, disposals $0, CCA $102,030, UCC end $143,479
+Current Assets: $5,966,059
+Dock Door Count: 42 dock doors plus 2 drive-in doors; 6 dedicated temperature-controlled doors on north side for cooler
+Fiscal Year End: December 31
+Fuel Costs2021: $3,760,000
+Fuel Costs2022: $5,420,000
+Full Time Count: 82 full-time drivers
+Ideal Timeline: Owner wants to complete sale within one year, before next birthday (fall 2026); realistic 6-9 month process from launch
+Insurance2022: $1,140,000 total (fleet & cargo $1,060,000, property & general liability $80,000)
+Inventory2021: $240,000
+Inventory2022: $268,000 (fuel, parts and tires)
+Net Income2021: $1,204,374
+Net Income2022: $1,115,900
+Other Expenses: $1,150,000
+Part Time Count: 14 part-time / spare board drivers
+Payroll Source: Ceridian payroll register and safety department files
+Reason For Sale: Owner retiring (age 67, 34 years in business), family considerations, transition planning for next generation
+Revenue By Year: 2021: $25,480,000 · 2022: $28,640,000 · 2023: $29,180,000 · 2024: $31,020,000 · FY25: ~$31.8M (mgmt, verbal only, unreviewed)
+Taxable Income: $591,500
+Warehouse Size: 110,000 sq ft (rentable, per lease)
+Yard Shop Lease: Month-to-month rental at 17865 Barnston Road, Surrey from related party (Grewal Family Holdings Ltd.) for $96,000 annually
+Accounting Firm: Harmon Bains LLP (EFILE preparer)
+Additional Rent: Proportionate share of property taxes, insurance and common area costs (approximately $3.90 per square foot in 2022)
+Asset Disposals: $352,000 proceeds from dispositions (Class 16 trucks $260,000; Class 10 trailers/equipment $92,000)
+Assets Included: 70+ power units (trucks), approximately 160 trailers (dry vans, reefers, chassis for port work), 110,000 sq ft leased warehouse in Campbell Heights, 4-acre yard with shop on Barnston Road in Surrey (owned by Harjit through holding company - may be included or separately leased)
+Bad Debt Expense: $61,000 (2023); $35,000 (2022)
+Balance Due Date: February 28, 2025
+Business Number: 81234 5678 RC0001
+Collisions2022: 4 reportable collisions, 2 preventable, 0.24 per million km, 0 injuries, 0 fatalities
+Collisions2023: 5 reportable collisions, 2 preventable, 0.23 per million km, 1 minor injury, 0 fatalities
+Collisions2024: 3 reportable collisions, 1 preventable, 0.11 per million km, 0 injuries, 0 fatalities
+Company History: Founded by Harjit Grewal who immigrated to Canada in 1984, drove for others for 7 years, bought first truck (used 1986 Kenworth W900) in 1991, hauled berries and vegetables from Fraser Valley farms into Vancouver. Started with wife doing invoices on kitchen table. Incorporated as Pacific Coast Logistics Ltd. in 1998 with 6 trucks. Moved into 110,000 sq ft Campbell Heights warehouse 3 years ago (2022). [recorded Nov 2025]
+Driver Trainers: 6 driver trainers
+Expansion Plans: Cooler expansion: landlord pre-approved up to 15,000 sq ft inside existing building, estimated $1.1-1.2M cost, payback under 3 years due to reefer storage demand; Alberta expansion: small Calgary cross-dock (25-30K sq ft) to run own lanes for customers shipping to Calgary; Electric vehicle pilot: 2 battery-electric day cabs on order for mid-2026 delivery with provincial incentive, lease allows 6 Level 3 chargers in truck court
+Gain On Disposal: $72,000
+Insurance Costs: Fleet & cargo insurance: $1,150,000 (2023), $1,060,000 (2022); Property & general liability: $88,000 (2023), $80,000 (2022)
+Management Team: Manpreet Grewal (operations), Diane (controller), Rajvir (dispatch), Dale (shop), Carlos (warehouse), Tanya (safety)
+Referral Source: Gary Lindqvist (previously sold food distribution company in Abbotsford through Morgan Ellis/Brassline)
+Revenue Streams: Trucking approximately 80% of revenue, warehousing approximately 20% (warehouse side growing fastest); services include store deliveries (reefer and dry van), cross-docking, port work (chassis)
+Share Structure: 850 Class A voting common shares, 150 Class B non-voting common shares, total share capital $1,000
+Target Timeline: Closed transaction within roughly 12 months
+Transition Plan: Harjit willing to stay 6 months to 1 year to introduce new owner to all customers (Alderbrook, dairy co-op, building supply, etc.); Manpreet (son, 38) runs operations and likely to stay with right buyer
+Ucc Start Of Year: $7,578,222
+Working Capital: $1,022,999 net working capital (current assets $6,200,999 less current liabilities $5,178,000)
+Years Operating: 34 years (since 1991); incorporated 27 years (since 1998)
+Accounting Basis: Canadian accounting standards for private enterprises (ASPE)
+Accounts Payable: $2,420,000
+Average Fleet Age: Highway tractors: ~2.8 years; day cabs/straight trucks: 4–5 years; overall power units: ~3 years; dry van trailers and chassis: 2017–2023; 14 of 46 reefers: 2011–2014 vintage (11–14 years old, need replacing)
+Balance Remitted: $60,000 (remitted by balance-due day, February 29, 2024)
+Cost Of Sales2024: $21,706,300
+Cvsa O O S Rate2024: 9.4% (below national average)
+Days Outstanding: 51–52 days DSO; major accounts net-30 terms but pay 40–45 days in practice; smaller customers and spot freight can stretch to 60–75 days
+Dividend History: $300,000 paid in 2023; $500,000 paid in 2022
+Driver Abstracts: 89 drivers have clean driving abstracts; 7 drivers have minor (1 conviction) on record
+Driver Wages2021: $6,560,000
+Driver Wages2022: $7,002,200
+Equipment Leases: 19 tractors under operating leases expiring 2024-2028, annual payments approximately $581,000. Also included in tractor leases & equipment rentals expense: $590,000 (2023), $566,000 (2022)
+Fast Card Holders: 22 FAST-card holders (cross-border capable)
+Gross Profit2021: $7,150,000
+Gross Profit2022: $7,691,800
+Gross Profit2024: $9,313,700
+Income Taxes2021: $454,626
+Income Taxes2022: $423,900
+Instalments Paid: $39,545
+Interest Expense: $448,000
+Location Country: Canada
+Open Cargo Claims: One outstanding cargo claim: reefer temperature excursion (fall 2024), $38.4K total, insured above $10K deductible, net exposure minimal
+Operations Notes: Fleet includes dry vans, reefers, and chassis for port work. All trucks now equipped with cameras. Electronic logs implemented (2023). Shop operations managed by Dale. Dispatch managed by Rajvir. Safety managed by Tanya. No union (organizing attempt failed in 2023 vote). Drivers treated well with long tenure. Some drivers have been with company 20 years.
+Permits Licenses: Satisfactory safety rating; CVSA records available; logbook compliance issue in 2023 (resolved by safety manager Tanya)
+Prepaid Expenses: $441,000
+Total Assets2021: $17,162,094
+Total Assets2022: $19,665,254
+Total Tax Payable: $99,545
+Training Support: Owner willing to provide 6-12 months of customer relationship transition and introductions
+Turnover Metrics: FY2022: 90 drivers at year end, 19 departures, 21.8% turnover rate, 25 new hires; FY2023: 93 drivers at year end, 18 departures, 19.7% turnover rate, 21 new hires; FY2024: 96 drivers at year end, 17 departures, 18.0% turnover rate, 20 new hires
+Warehouse Labour: $1,690,000 (2023); $1,380,000 (2022) - warehouse labour & benefits
+Year Established: 1998
+Amortization2021: $1,610,000
+Amortization2022: $1,720,000
+Amortization2024: $1,950,000
+Business Location: Surrey, British Columbia
+Cargo Claim Status: $10K deductible paid November 2024; insurer covered remainder; file closed December 2024; customer (produce importer) settled; no dispute or tail
+Certifying Lawyer: Amrit Kaur, Barrister & Solicitor, Kaur Whitfield LLP
+Dividends History: December 12, 2022: $500,000 declared pro-rata ($500 per share); December 18, 2023: $300,000 declared pro-rata ($300 per share); December 16, 2024: $300,000 declared pro-rata ($300 per share), designated as eligible dividends
+Equipment Details: 19 leased tractors under operating leases expiring 2023-2027 with annual payments approximately $552,000
+Facility Location: Surrey, British Columbia
+Financial Year End: December 31
+Fleet Composition: Dry vans, reefers (refrigerated), chassis for port work
+Fleet Maintenance: $1,850,000 (2023); $1,720,000 (2022) - fleet repairs, maintenance & tires including shop wages
+Insurance Renewal: April 1st renewal; preliminary indication ~8-9% increase ($1.35M vs $1.24M in 2024); market hardening not loss experience; $5M liability, $100K cargo per occurrence; insurer flagged no red flags on continuation post-sale but wants to meet new owner
+Location Province: British Columbia
+Long Term Debt2021: $5,600,000 total ($1,850,000 current, $3,750,000 long-term)
+Long Term Debt2022: $6,950,000 total ($2,080,000 current, $4,870,000 long-term)
+Number Of Tractors: Fleet includes owned tractors/trucks with net book value of $5,019,200 plus 19 leased tractors
+Number Of Trailers: Trailers & container chassis with net book value of $6,534,300
+Owner Involvement: Harjit Grewal handles customer relationships and sales ("I know these people twenty, twenty-five years"); Manpreet runs day-to-day operations. Harjit willing to stay 6 months to 1 year post-sale for customer introductions, then wants to exit fully.
+Professional Fees: $231,000
+Registered Office: Kaur Whitfield LLP, Suite 1450, 10470 Guildview Place, Surrey, BC V3R 0Y3
+Retained Earnings: $9,065,189 (end of year), $8,699,274 (start of year)
+Safety Compliance: 2023 warning letter and compliance review (detailed in safety summary section 4); CVSA inspection history provided; NSC profile provided
+Salaries And Wages: $1,655,000 (administrative and shareholder)
+Tax Filing Details: Tax year January 1 to December 31, 2022. Filed electronically June 21, 2023 by Harmon Bains LLP. Business number 81234 5678 RC0001. Instalments paid $126,640, balance remitted $125,000 by February 28, 2023. Province of permanent establishment: British Columbia (100%)
+Total Liabilities: $12,056,120
+Auditor Review Firm: Harmon Bains LLP, Chartered Professional Accountants, Suite 2150, 10288 Harrowgate Way, Surrey, BC V3T 5Y1
+Capex Requirements: $3,240,000 in additions during 2023 (Class 16 freight tractors & trucks $1,650,000; Class 10 trailers, chassis, forklifts $1,090,000; Class 8 racking, shop equipment, furniture $290,000; Class 13 leasehold improvements $90,000; Class 50 computer hardware $120,000)
+Deferred Income Tax: $76,140
+Dividends Declared: $300,000 (eligible dividends paid pro rata to Class A and Class B shareholders)
+Dividends Paid2021: $450,000
+Dividends Paid2022: $500,000
+Driver Payroll2024: Total driver gross wages: $6,370,823 (including $5,939,263 for active drivers on roster and $431,560 for 17 drivers who left during 2024); Employer CPP/EI, WorkSafeBC, group benefits (extended health & dental), RRSP match 3%: $987,477; Total driver wages & benefits per FY2024 financial statements (Schedule 2): $7,358,300
+Employee Structure: Drivers: 96 total as of year-end; linehaul, city, reefer, and drayage drivers. Shop: 6 people at Barnston yard (Dale/foreman, 4 Red Seal heavy-duty techs, 1 trailer/reefer tech). Office: includes Diane (books/accounting since 2019), dispatchers, warehouse staff (counts not specified)
+Federal Tax Payable: $66,165
+Gross Profit Margin: 30.0%
+Head Office Address: 19220 Campbell Ridge Drive, Surrey, BC V3Z 1K4
+Incorporation Date: June 3, 1998
+Insurance Coverage: Fleet & cargo insurance: $1,240,000 (2024), Property & general liability: $94,000 (2024)
+Key Financial Notes: Revenue: 2024 ~$31M, 2025 ~$31.8M (management, unreviewed). Adjusted EBITDA: 2024 $3.9M (broker-normalized), 2025 ~$4M. Normalization adjustments: Harjit replacement cost $120K, below-market yard rent delta ($78K/year), Surinder salary addback (full), one-time legal/system costs. DSO ~52 days, AR clean except one $41K disputed invoice. Warehousing growing, drayage shrinking. Capex: $2.86M (2024), $3.2M (2023), higher in 2022 for racking/cooler at move-in; normal capex $2.3-2.6M/year; reefer trailer replacement ~$1.4M needed next 2 years.
+Other Expenses2024: $1,211,000
+Rate Per Mile By Lane: Linehaul dry van: $2.40–$2.65/mile all-in; reefer: $2.75–$3.10/mile; grocery delivery (Alderbrook): $85–$110/stop + per-mile; dedicated reefer runs: ~$2.90/mile equivalent; drayage: $240–$310/container (20'/40'/45')
+Rental Expense2024: $2,444,500 (warehouse and related-party yard)
+Safety Audit Status: No open audits or enforcement actions; NSC certificate current with Satisfactory rating; last full CVSE compliance review June 2023 (clean outcome following Q1 2023 HOS warning letter during ELD transition)
+Safety Credentials: NSC BC 20-487-316 Satisfactory rating, Partners in Protection (CBSA) member since 2016, WorkSafeBC COR since 2019
+Shareholder Equity: $9,066,189
+Taxable Income2024: $1,026,000
+Warehouse Facility: 110,000 square foot warehouse and cross-dock facility at 19220 Campbell Ridge Drive, Surrey
+Accounting Standard: Canadian accounting standards for private enterprises (ASPE)
+Accounts Receivable: $4,210,000
+Amortization Policy: Tractors/trucks: straight-line over 6 years to 30% residual; Trailers/chassis: straight-line over 15 years to 20% residual; Warehouse equipment/forklifts, shop/yard equipment, office furniture: 20% declining balance; Computer hardware/software: 45% declining balance; Leasehold improvements: straight-line over remaining lease term. Half-year rule in year of acquisition.
+Annual Base Rent2023: $1,897,500
+California Exposure: No California lanes; no CARB compliance required; cross-border limited to Washington State (Seattle, Spokane) at 15–20 loads/month
+Contact Information: Manpreet Grewal: manpreet.grewal@pacificcoastlogistics.invalid; Harjit Grewal: harjit.grewal@pacificcoastlogistics.invalid
+Current Income Taxes: $99,545
+Current Liabilities: $5,040,000
+Dale Succession Plan: Dale (shop foreman since 2005) retiring 2027; Kevin Tran (Red Seal, with company since 2018) promoted to Assistant Shop Foreman in May 2025 to shadow Dale through transition
+Equipment Disposals: Proceeds $352,000, gain on disposal $72,000 (2023); Proceeds $428,000, gain $118,000 (2022)
+Equipment Financing: Equipment loans with Pacific Crest Equipment Finance Ltd. and Westshore Commercial Bank, 48-60 month terms, interest rates 4.89%-7.45%, secured by specific equipment financed
+Gain On Disposal2024: $64,000
+Key Customer Details: Alderbrook (grocery distributor): customer since 2009, VP Doug Fairweather (personal relationship), provides store deliveries (reefer and dry) and produce cross-docking, 22.0% of FY2024 revenue ($6.82M), 3-year master agreement renewed last year (expires 2027), relationship strengthened during 2021 BC floods when Pacific Coast kept stores supplied [recorded Feb 2026]
+Load Counts Per Truck: Fleet average revenue per power unit: ~$8,350/week (2024)
+Net Income Before Tax: $841,600
+Operational Systems: Payroll: Ceridian; Other: Axon TMS (dispatch, billing, IFTA/fuel tax) — since 2024, Samsara (ELD, AI dash cams, telematics), Magaya WMS with customer portal, Fleetio (maintenance), Reefer temperature telematics on all 46 reefers
+Total Current Assets: $6,200,999
+Warehouse Labor2021: $1,120,000
+Warehouse Labor2022: $1,380,000
+Accounting Standards: Canadian accounting standards for private enterprises (ASPE)
+Accounts Payable2021: $1,980,000
+Accounts Payable2022: $2,310,000
+Average Driver Tenure: 6.7 years
+Banking Relationship: Westshore Commercial Bank - $3,000,000 operating line at prime + 0.75%, secured by general security agreement and personal guarantee
+Business Description: Regional dry van and reefer trucking, port drayage, and 3PL warehousing / cross-dock
+Debt Service Covenant: 1.25:1 minimum debt service coverage ratio - company in compliance
+Disputed Receivables: One disputed invoice over 90 days, approximately $41K, currently being worked by controller
+Growth Opportunities: Warehouse side growing fastest (currently 20% of revenue), operated by Manpreet who has built that division
+Incorporation Number: BC0571234
+Interest Expense2021: $240,000
+Interest Expense2022: $268,000
+Lease Renewal Options: 2 x 5-year options
+Main Revenue Activity: Trucking and warehousing — NAICS 484110 General freight trucking (78% of revenue); 493120 Refrigerated warehousing and storage, incl. dry storage and cross-dock (22%)
+Office Admin Salaries: $1,150,000 (2023); $1,090,000 (2022) - office, dispatch & administration salaries
+Province Of Operation: British Columbia (100%)
+Retained Earnings End: $9,738,149
+Tax Balance Owing2024: $118,000 (remitted by February 28, 2025)
+Total Tax Payable2024: $219,260
+Business Limit Reduced: $361,000 (reduced from $500,000 for taxable capital of associated group of $21.12M in preceding year; 100% allocated to this corporation)
+Capital Additions2024: $2,860,000
+Competitive Advantage: Long-term customer relationships (20-25 years), proven reliability during crises (2021 BC floods - kept stores supplied via back roads, drivers slept in cabs; maintained service through COVID and snow), employee loyalty (some drivers with company 20 years), strong safety culture
+Cross Border Authority: Partners in Protection (CBSA) since 2016 — company enrollment, transfers with shares; no CTPAT (U.S. importer program, not applicable); 22 FAST cards held individually by drivers
+Driver Qualifications: All 96 drivers hold Class 1 licence and air brake endorsement; all are TDG certified; 22 hold FAST cards for cross-border operations
+Longest Tenured Driver: 26.8 years (D-093, hired 1998-03-14, Port drayage)
+Professional Fees2022: $168,000
+Professional Fees2024: $341,000 (including claim settlement and TMS implementation consulting)
+Provincial Tax Payable: $33,380 (British Columbia: 2% lower rate on $376,000; 12% general rate on $215,500)
+Retained Earnings2021: $8,083,374
+Retained Earnings2022: $8,699,274
+Salaries And Wages2024: $1,732,000 (administrative and shareholder)
+Warehouse Clear Height: 32-foot clear height
+Club Dues Non Deductible: $9,800
+Compensation Structure: Linehaul pay: $0.64–$0.73 per km + hourly for delays over 2 hrs, drop/hook $25; safe-driving bonus $0.02/km quarterly. City/reefer/drayage pay: $30.50–$36.50 per hour; overtime after 60 hrs/week per BC motor-carrier variance. Referral bonus: $2,500 per referred driver retained 6 months
+Contract Renewal Status: Alderbrook MSA runs to March 31, 2027 (renewed April 2024), verbal discussion of 3-year extension to 2030 not yet formalized; Tidewater Beverage warehousing agreement expires June 30, 2026, in renewal discussions now; Kestrel Building Supply rates reset January 2026; rest of top 10 on evergreen, annual rate sheets, or locked in for 1+ years
+Customer Concentration: Largest customer (Alderbrook) 22.0% of FY2024 revenue; top 5 = 47%, top 10 = 63.5%; no other customer over 10%; 352 active accounts
+Customer Relationships: President knows key customers 20-25 years; personal relationship with Alderbrook VP Doug Fairweather (play golf together); demonstrated loyalty during 2021 floods
+Dividends Declared2024: $300,000 (eligible dividends paid pro rata to shareholders)
+Driver Roster Breakdown: Linehaul / regional highway: 38 drivers (34 full-time, 4 part-time); City & regional distribution: 26 drivers (21 full-time, 5 part-time); Dedicated reefer (grocery): 18 drivers (16 full-time, 2 part-time); Port drayage: 14 drivers (11 full-time, 3 part-time)
+Due From Related Parties: $330,000
+Eligible Dividends2024: $300,000 (designated from general rate income pool)
+Federal Tax Payable2024: $132,240
+Net Income After Tax2024: $972,960
+Retained Earnings Start: $9,065,189
+Warehouse Revenue Model: Blended: per-pallet storage (cooler $18–22/pallet/month, ambient $12–16) plus handling fees per pallet in/out and pick fees for fulfillment. Some customers on fixed monthly (reserved block). Cross-dock/transload is per-container or per-pallet throughput. $6.72M warehousing revenue breaks down ~60% storage, 40% handling and accessorial.
+Accounts Receivable2021: $3,720,000
+Accounts Receivable2022: $4,050,000
+Associated Corporations: Yes — Grewal Family Holdings Ltd. (Schedule 23 on file). The associated group's taxable capital exceeded $15,000,000 in the preceding year, eliminating small business deduction eligibility
+Capital Investments2024: $2,860,000 total additions (freight tractors/trucks $1,580,000, trailers/chassis/forklifts/automotive $850,000, racking/shop equipment/furniture $210,000, computer hardware/software $120,000, leasehold improvements $100,000)
+Driver Employment Status: All 96 drivers are employees (82 full-time, 14 part-time/spare board); no owner-operators running under company authority. Purchased transportation ($3.18M in 2024) is from ~11 arm's-length carriers with their own authorities plus spot brokers — no misclassification risk.
+Financial Statement Type: Review engagement; GIFI Schedules 100 and 125 attached
+Fuel Surcharge Structure: All major accounts have fuel surcharges tied to BC Fuel Index (published weekly), auto-adjusting. $3.05M FSC revenue in 2024 included in freight revenue line. Spot/one-off loads quoted all-in. One- to two-week lag on rapid diesel spikes, but nets out over quarter/year.
+Maintenance Repairs2022: $1,720,000 (fleet repairs, maintenance & tires including shop wages)
+Management Salaries2021: $471,000
+Management Salaries2022: $488,000 (to shareholders)
+Net Income Before Tax2024: $1,266,200
+Rate Pass Through Ability: Rate increases of 3–5% pushed through on annual renewals (Kestrel, dairy co-op); Alderbrook took 2.5% in April 2024 plus fuel surcharge; some compression absorbed on spot market and smaller accounts but overall margin held (12.6% adj. EBITDA in 2024 vs 11.3% in 2023)
+Shareholders Equity2021: $8,084,374
+Shareholders Equity2022: $8,700,274
+Small Business Deduction: $68,590 (19% of $361,000; business limit reduced from $500,000 due to associated group taxable capital of $21.12M)
+Tax Instalments Paid2024: $101,260
+Tidewater Renewal Status: Tidewater indicating 3-year extension at same scope (2,800 pallet positions dry storage + regional delivery); expecting 4-5% rate increase on warehousing to reflect Oct 2027 lease step-up; trucking rates to adjust via fuel-index mechanism; ops manager indicated not going to bid, seeking clean rollover; 95% certain per seller
+Total Operating Expenses: $7,797,500
+Total Shareholder Equity: $9,739,149
+Warehouse Occupancy Rate: 88% (10,900 pallets of 12,400 total positions including 3,100 cooler positions)
+Accumulated Amortization: $9,132,600
+Capital Expenditures2021: $2,960,000
+Capital Expenditures2022: $3,960,000 (purchase of property and equipment)
+Facility Relocation Costs: $0 (2023); $186,000 (2022) - one-time expense in prior year
+Fleet Replacement Capital: ~$1.4M for 14 aging reefers over next 12–18 months; normal maintenance capex $2.3–2.6M/year (8–12 highway tractors annually); 24-month total capex budget: ~$6–7M
+Kilometers Travelled2022: 8,420,000 km
+Kilometers Travelled2023: 8,610,000 km
+Kilometers Travelled2024: 8,930,000 km
+Office Admin Salaries2021: $1,020,000
+Office Admin Salaries2022: $1,090,000
+Purchased Transportation: $2,860,000 (2023); $3,260,000 (2022) - owner-operators & brokered loads
+Roadside Inspections2022: 589 inspections, 36 out-of-service, 15.5% OOS rate
+Roadside Inspections2023: 711 inspections, 25 driver OOS, 7 vehicle OOS, 16.9% OOS rate
+Roadside Inspections2024: 646 inspections, 1 driver OOS, 5 vehicle OOS, 9.4% OOS rate
+Total Current Liabilities: $5,178,000
+Authorized Signing Officer: Harjit S. Grewal, President
+Consumer Complaint History: No BBB listing, no complaints filed; no Transport Canada complaints; no insurer flags or corrective action plans; cargo claim ratio well under 0.5% of revenue; pass annual food safety audits from Alderbrook and dairy co-op
+Financial Instruments Risk: Credit risk on accounts receivable concentrated with small number of large customers. Interest rate risk on operating line (floating rate). Fuel price risk partially mitigated by fuel surcharges billed to customers. No change in risk exposures from prior year.
+Normalized Working Capital: $2.4M normalized working capital for the deal
+Prior Acquisition Interest: 2019 offer from national carrier at approximately 4x earnings with 50% earn-out over 3 years (declined)
+Property And Equipment2021: $11,500,000 net book value
+Property And Equipment2022: $13,430,000 net book value
+Provincial Tax Payable2024: $87,020
+Related Party Transactions: Rental expense for warehouse and related-party yard $2,444,500; amounts due from related parties $410,000
+Tangible Capital Assets Net: $15,160,000
+Current Income Tax Provision: $219,260
+Document Certification Date: December 5, 2025
+Equipment Disposal Gain2022: $118,000
+Future Deferred Income Taxes: $1,656,120
+Tangible Capital Assets Cost: $23,642,600
+Workplace Safety Claims2022: 6 time-loss claims (3 strains during manual unloading, 2 slips on trailer steps, 1 forklift contact)
+Workplace Safety Claims2023: 7 time-loss claims (4 strains, 2 slips/falls, 1 minor collision injury)
+Workplace Safety Claims2024: 4 time-loss claims (2 strains, 1 slip on ice in yard, 1 forklift contact)
+Alderbrook Relationship Risk: Alderbrook relationship (22% of revenue, 17 years) held personally by Harjit; Doug Fairweather (VP Logistics) knows Manpreet but primary trust is with Harjit; requires intentional handoff beyond contract transfer
+Bank Overdraft Operating Line: $350,000
+Current Portion Long Term Debt: $2,210,000
+Deferred Income Tax Provision: $73,980
+Interest And Bank Charges2024: $433,000
+Proceeds Of Dispositions2024: $324,000
+Review Engagement Accountant: Harmon Bains LLP (historical); Fraserview CPA Group LLP (engaged for year ending December 31, 2025)
+Temperature Controlled Space: 22,000 sq ft cooler with 6 dedicated dock doors; landlord pre-approved up to 15,000 sq ft additional cooler expansion (~$1.1–$1.2M cost, <3-year payback)
+Capital Cost Allowance Claimed: $2,160,000
+Facility Relocation Costs2022: $186,000
+Operating Authority Ownership: All in Pacific Coast Logistics Ltd. name — NSC certificate, USDOT number, Port of Vancouver truck licensing; transfers with shares
+Purchased Transportation2022: $3,260,000 (owner-operators & brokered loads)
+Small Business Deduction Limit: $376,000 (reduced from $500,000 due to taxable capital of associated group of $19.92M)
+Driver Recruiting Training2022: $96,000
+Associated Group Taxable Capital: $21.12M (preceding year)
+Equipment Disposal Proceeds2022: $428,000
+Equipment Lease Consent Required: Westline operating leases (19 tractors, ~$50,600/month) require lessor consent on change of control; equipment loans with Pacific Crest and Westshore ($7.86M) to be paid out at close (cash-free/debt-free structure); personal guarantee on operating line and warehouse lease indemnity need release
+Drivers With Ten Years Plus Service: 24 drivers
+Average Full Time Driver Earnings2024: $74,274
+Non Deductible Meals And Entertainment: $24,000 (50% non-deductible)
+Accounts Payable And Accrued Liabilities: $2,640,000
+Driver Count: 96 company drivers (82 full-time, 14 part-time/spare) at Dec 31, 2024
+
+--- RESOLVED DISCREPANCIES — FINAL VALUES (the broker reconciled these; any other figure or wording for the same thing is outdated and must not be used) ---
+driverCount: 96 company drivers (82 full-time, 14 part-time/spare) at Dec 31, 2024 — replaces: "Over 110 professional drivers", "96 drivers at December 31, 2024"
+2024 Adjusted EBITDA: $3,900,000 — replaces: "$4.1M (Manpreet's initial calculation)", "$3.9M (broker normalized)"
+warehouseSize: 110,000 sq ft (rentable, per lease) — replaces: "110,000 square feet"
+Alderbrook revenue percentage: 22.0% of FY2024 revenue ($6,824,400) — replaces: "~18% (approximately, under 20%)", "22.0% in FY2024"
+
+--- AUTHORITATIVE FINANCIALS (financial analysis v1, built from the uploaded financial statements; every total below is already computed) ---
+Use these for every financial table, EBITDA/SDE bridge (waterfall), earnings chart and statement figure. Copy line names, amounts and totals exactly. Never add, subtract, estimate or re-derive a figure, and never add a year or line that is not listed. Where a statement figure differs from a fact elsewhere in the knowledge base, these statement figures win inside tables and bridges.
+
+INCOME STATEMENT SUMMARY (fiscal years 2022, 2023, 2024):
+Revenue: 2022 $28,640,000 · 2023 $29,180,000 (1.9% vs prior year) · 2024 $31,020,000 (6.3% vs prior year)
+Cost of sales / direct costs: 2022 $20,948,200 · 2023 $20,612,900 · 2024 $21,706,300
+Gross profit: 2022 $7,691,800 (26.9% gross margin) · 2023 $8,567,100 (29.4% gross margin) · 2024 $9,313,700 (30.0% gross margin)
+Operating expenses (incl. owner compensation): 2022 $4,096,000 · 2023 $5,447,500 · 2024 $5,567,500
+  of which owner compensation: 2022 $347,000 · 2023 $347,000 · 2024 $347,000
+One-time / non-recurring expenses: 2022 $186,000 · 2023 $58,000 · 2024 $127,000
+EBITDA before other income (as reported, unadjusted): 2022 $3,409,800 (11.9% margin) · 2023 $3,061,600 (10.5% margin) · 2024 $3,619,200 (11.7% margin)
+Other income: 2022 $118,000 · 2023 $72,000 · 2024 $64,000
+Depreciation & amortization: 2022 $1,720,000 · 2023 $1,880,000 · 2024 $1,950,000
+Interest: 2022 $268,000 · 2023 $412,000 · 2024 $395,000
+Income taxes: 2022 $423,900 · 2023 $175,685 · 2024 $293,240
+Net income (as reported): 2022 $1,115,900 · 2023 $665,915 · 2024 $972,960
+Note: the statement rows do not tie to reported net income for 2024. Show the reported net income; do not print a net income you work out from the rows.
+
+STATEMENT LINE ITEMS (as reclassified):
+[Revenue] Dry van truckload & regional distribution: 2022 $13,480,000 · 2023 $12,610,000 · 2024 $13,560,000
+[Revenue] Temperature-controlled (reefer) transport: 2022 $7,420,000 · 2023 $7,890,000 · 2024 $8,410,000
+[Revenue] 3PL warehousing, cross-dock & handling: 2022 $4,960,000 · 2023 $6,020,000 · 2024 $6,720,000
+[Revenue] Port of Vancouver container drayage: 2022 $2,780,000 · 2023 $2,660,000 · 2024 $2,330,000
+[COGS] Driver wages & benefits: 2022 $7,002,200 · 2023 $7,122,900 · 2024 $7,358,300
+[COGS] Purchased transportation: 2022 $3,260,000 · 2023 $2,860,000 · 2024 $3,180,000
+[COGS] Fuel: 2022 $5,420,000 · 2023 $4,760,000 · 2024 $4,860,000
+[COGS] Fleet repairs, maintenance & tires (incl. shop wages): 2022 $1,720,000 · 2023 $1,850,000 · 2024 $1,960,000
+[COGS] Fleet & cargo insurance: 2022 $1,060,000 · 2023 $1,150,000 · 2024 $1,240,000
+[COGS] Warehouse labour & benefits: 2022 $1,380,000 · 2023 $1,690,000 · 2024 $1,862,000
+[COGS] Licences, permits, tolls & fuel tax: 2022 $344,000 · 2023 $362,000 · 2024 $386,000
+[COGS] Tractor leases & equipment rentals: 2022 $566,000 · 2023 $590,000 · 2024 $612,000
+[COGS] Warehouse supplies & materials handling: 2022 $196,000 · 2023 $228,000 · 2024 $248,000
+[Operating Expenses] Office, dispatch & administration salaries: 2022 $1,090,000 · 2023 $1,150,000 · 2024 $1,210,000
+[Owner Compensation] Management salaries — shareholders (Harjit): 2022 $285,000 · 2023 $285,000 · 2024 $285,000
+[Owner Compensation] Management salaries — shareholders (Surinder, non-working): 2022 $62,000 · 2023 $62,000 · 2024 $62,000
+[Operating Expenses] Management salaries — shareholders (Manpreet, working): 2022 $141,000 · 2023 $158,000 · 2024 $175,000
+[Operating Expenses] Facility rent & additional rent (warehouse): 2022 $1,217,000 · 2023 $2,337,500 · 2024 $2,348,500
+[Operating Expenses] Yard & shop rent — related party: 2022 $96,000 · 2023 $96,000 · 2024 $96,000
+[Operating Expenses] Utilities: 2022 $232,000 · 2023 $274,000 · 2024 $286,000
+[Operating Expenses] Insurance — property & general liability: 2022 $80,000 · 2023 $88,000 · 2024 $94,000
+[Operating Expenses] Office, IT & software subscriptions: 2022 $262,000 · 2023 $291,000 · 2024 $246,000
+[Operating Expenses] Telephone & communications: 2022 $74,000 · 2023 $79,000 · 2024 $84,000
+[Operating Expenses] Professional fees (recurring): 2022 $168,000 · 2023 $173,000 · 2024 $214,000
+[Operating Expenses] Advertising & promotion: 2022 $48,000 · 2023 $58,000 · 2024 $64,000
+[Operating Expenses] Meals & entertainment: 2022 $42,000 · 2023 $45,000 · 2024 $48,000
+[Operating Expenses] Travel & vehicle: 2022 $108,000 · 2023 $117,000 · 2024 $126,000
+[Operating Expenses] Dues, memberships & subscriptions: 2022 $27,000 · 2023 $29,000 · 2024 $31,000
+[Operating Expenses] Bad debts: 2022 $35,000 · 2023 $61,000 · 2024 $42,000
+[Operating Expenses] Bank charges: 2022 $33,000 · 2023 $36,000 · 2024 $38,000
+[Operating Expenses] Driver recruiting, training & medicals: 2022 $96,000 · 2023 $108,000 · 2024 $118,000
+[Non-Recurring] Facility relocation costs (one-time): 2022 $186,000 · 2023 $0 · 2024 $0
+[Non-Recurring] Union certification legal fees (one-time): 2022 $0 · 2023 $58,000 · 2024 $0
+[Non-Recurring] TMS migration consultants (one-time): 2022 $0 · 2023 $0 · 2024 $72,000
+[Non-Recurring] Wrongful dismissal settlement (one-time): 2022 $0 · 2023 $0 · 2024 $55,000
+[Depreciation] Amortization of property and equipment: 2022 $1,720,000 · 2023 $1,880,000 · 2024 $1,950,000
+[Interest] Interest on long-term debt and bank indebtedness: 2022 $268,000 · 2023 $412,000 · 2024 $395,000
+[Other Income] Gain on disposal of equipment: 2022 $118,000 · 2023 $72,000 · 2024 $64,000
+[Taxes] Current income taxes: 2022 $251,640 · 2023 $99,545 · 2024 $219,260
+[Taxes] Future (deferred) income taxes: 2022 $172,260 · 2023 $76,140 · 2024 $73,980
+
+ADJUSTED EBITDA BRIDGE (normalization — the broker-approved add-backs; a waterfall starts at net income, applies each line in this order and ends at the total, which is already computed):
+Net income (start): 2022 $1,115,900 · 2023 $665,915 · 2024 $972,960
++ Interest expense: 2022 $268,000 · 2023 $412,000 · 2024 $395,000
++ Income taxes (current + deferred): 2022 $423,900 · 2023 $175,685 · 2024 $293,240
++ Depreciation & amortization: 2022 $1,720,000 · 2023 $1,880,000 · 2024 $1,950,000
++ Below-market yard rent adjustment: 2022 ($78,000) · 2023 ($78,000) · 2024 ($78,000)
++ Facility relocation costs (one-time): 2022 $186,000 · 2023 $0 · 2024 $0
++ Union certification legal fees (one-time): 2022 $0 · 2023 $58,000 · 2024 $0
++ TMS migration consultants (one-time): 2022 $0 · 2023 $0 · 2024 $72,000
++ Wrongful dismissal settlement (one-time): 2022 $0 · 2023 $0 · 2024 $55,000
++ Gain on disposal of equipment: 2022 ($118,000) · 2023 ($72,000) · 2024 ($64,000)
+= Adjusted EBITDA (total): 2022 $3,517,800 · 2023 $3,041,600 · 2024 $3,596,200
+Negative amounts are deductions (shown in parentheses). Only the lines above are add-backs; never add another, change an amount, or plug a line to reach a different total.
+Owner-specific add-backs (SDE only — NOT part of Adjusted EBITDA):
++ Harjit's salary above replacement cost: 2022 $165,000 · 2023 $165,000 · 2024 $165,000
++ Surinder's salary (non-working): 2022 $62,000 · 2023 $62,000 · 2024 $62,000
+= SDE (Adjusted EBITDA + owner-specific add-backs): 2022 $3,744,800 · 2023 $3,268,600 · 2024 $3,823,200
+
+WORKING CAPITAL (as of 2024-12-31):
+Current asset — Cash: $1,022,999
+Current asset — Accounts receivable: $4,380,000
+Current asset — Inventory — fuel, parts and tires: $312,000
+Current asset — Prepaid expenses: $486,000
+Current liability — Bank indebtedness (operating line): $0
+Current liability — Accounts payable and accrued liabilities: $2,640,000
+Current liability — Income taxes payable: $118,000
+Current liability — Current portion of long-term debt: $2,420,000
+Net working capital: $1,022,999
+Working capital peg (target): $2,400,000
+
+--- OPERATIONAL SYSTEMS ---
+other: Axon TMS (dispatch, billing, IFTA/fuel tax) — since 2024,Samsara (ELD, AI dash cams, telematics),Magaya WMS with customer portal,Fleetio (maintenance),Reefer temperature telematics on all 46 reefers
+payroll: Ceridian
+
+--- EMPLOYEES ---
+Harjit Grewal, Founder & President (60% owner), 34yr, [KEY PERSON]
+Manpreet Grewal, VP Operations (25% owner), 13yr, [KEY PERSON]
+Diane Tremblay, Controller (CPA), 9yr, [KEY PERSON]
+Rajvir Dhillon, Dispatch Manager — 7 in dispatch & load planning, 14yr, [KEY PERSON]
+Carlos Mendes, Warehouse Manager — 30 in warehouse, 6yr, [KEY PERSON]
+Tanya Beaulieu, Safety & Compliance Manager — 2 in safety, 8yr
+Dale Kowalczyk, Shop Foreman — 6 in shop (retiring 2027), 20yr, [KEY PERSON]
+Jason Whitlock, Business Development Manager, 4yr
+Company drivers, 96 Class 1 drivers (82 full-time, 14 part-time/spare)
+Finance & administration, 4 staff

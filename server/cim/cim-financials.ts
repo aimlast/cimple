@@ -225,6 +225,7 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
   if (pnl) {
     const years = Object.keys(pnl).sort();
     out.push(`\nINCOME STATEMENT SUMMARY (fiscal years ${years.join(", ")}):`);
+    const hasNonRecurring = years.some((y) => pnl[y].nonRecurring > 0);
     const rows = [
       yearRow("Revenue", years, (y) => pnl[y].revenue, (y) => {
         const i = years.indexOf(y);
@@ -232,10 +233,28 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
       }),
       yearRow("Cost of sales / direct costs", years, (y) => pnl[y].cogs),
       yearRow("Gross profit", years, (y) => pnl[y].grossProfit, (y) => (pnl[y].grossProfit === null ? null : `${pct(pnl[y].grossProfit!, pnl[y].revenue)} gross margin`)),
-      yearRow("Operating expenses (incl. owner compensation)", years, (y) => pnl[y].operatingExpenses),
+      yearRow(
+        hasNonRecurring
+          ? "Operating expenses (recurring, incl. owner compensation; the one-time items below are NOT in this total)"
+          : "Operating expenses (incl. owner compensation)",
+        years,
+        (y) => pnl[y].operatingExpenses,
+      ),
       yearRow("  of which owner compensation", years, (y) => (pnl[y].ownerCompensation ? pnl[y].ownerCompensation : null)),
       yearRow("One-time / non-recurring expenses", years, (y) => (pnl[y].nonRecurring ? pnl[y].nonRecurring : null)),
-      yearRow("EBITDA before other income (as reported, unadjusted)", years, (y) => pnl[y].ebitda, (y) => `${pct(pnl[y].ebitda, pnl[y].revenue)} margin`),
+      // One grouped total, so a table that folds the one-time items into its
+      // expenses has a real figure to print instead of summing its own.
+      hasNonRecurring
+        ? yearRow("Total operating expenses incl. one-time items", years, (y) => pnl[y].operatingExpenses + pnl[y].nonRecurring)
+        : null,
+      yearRow(
+        hasNonRecurring
+          ? "EBITDA before other income (as reported, unadjusted; = gross profit − operating expenses − one-time items)"
+          : "EBITDA before other income (as reported, unadjusted; = gross profit − operating expenses)",
+        years,
+        (y) => pnl[y].ebitda,
+        (y) => `${pct(pnl[y].ebitda, pnl[y].revenue)} margin`,
+      ),
       yearRow("Other income", years, (y) => (pnl[y].otherIncome ? pnl[y].otherIncome : null)),
       yearRow("Other expense", years, (y) => (pnl[y].otherExpense ? pnl[y].otherExpense : null)),
       yearRow("Depreciation & amortization", years, (y) => (pnl[y].depreciation ? pnl[y].depreciation : null)),

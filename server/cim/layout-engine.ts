@@ -15,6 +15,7 @@ import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-bl
 import { analysisHeadlines, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
 import { checkSectionFigures, figureWarningText, knownFiguresFrom, parseFigures, type KnownFigures } from "./figure-check";
 import { screenFactsForCim, screenText, type HeldFact } from "./sensitive-facts";
+import { repairInferredYears } from "./fact-dates";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -146,6 +147,12 @@ export interface CimLayoutParams {
   financials?: CimFinancials | null;
   /** "Today" for the writer and the cover date. Defaults to now (tests pin it). */
   today?: Date;
+  /**
+   * For interview facts that state a "Month YYYY": the seller's own words on
+   * the turn that recorded the fact, and when — so a year the seller never
+   * said is taken out before the writer sees it (fact-dates.ts).
+   */
+  factSourceWords?: Record<string, { words: string; at: string }> | null;
 }
 
 /**
@@ -991,6 +998,15 @@ function recordedMonth(iso: string | undefined): string | null {
   return d.toLocaleDateString("en-US", { month: "short", year: "numeric", timeZone: "UTC" });
 }
 
+/** Model scratch work left in a fact value ("wait, recalculating", "let me use …"). */
+const WORKING_OUT = /\bwait,|\brecalculat|\blet me\b|\blet's (use|redo|recompute)\b|\bactually,? let\b/i;
+
+const UNFINISHED_FACT_WARNING = (keys: string[]) =>
+  `Left out of the CIM: ${keys.map((k) => `"${formatKey(k)}"`).join(", ")} ${keys.length === 1 ? "reads" : "read"} like unfinished working rather than a figure. Correct or delete ${keys.length === 1 ? "it" : "them"} on the Information tab.`;
+
+const YEAR_FIX_WARNING = (items: string[]) =>
+  `Year left out of the CIM: ${items.join(", ")}. The seller named the month but never that year, so the CIM gives the month only. Correct the fact on the Information tab if you know the year.`;
+
 const PERSONAL_DETAIL_WARNING = (keys: string[]) =>
   `Held back from the CIM for your review: ${keys.map((k) => `"${formatKey(k)}"`).join(", ")} ${keys.length === 1 ? "mentions" : "mention"} a personal health or family detail. The CIM was written without it. If a buyer may see it, move it into a fact yourself; otherwise record it as a private note.`;
 
@@ -1049,19 +1065,38 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
     const leads = screenFactsForCim(split.leads);
     held.push(...confirmed.held, ...leads.held);
     const sources = getFieldSources(params.extractedInfo);
+    const yearFixes: string[] = [];
     const line = (key: string, value: unknown) => {
-      const text = factValueText(value);
-      const when = RELATIVE_TIME.test(text) ? recordedMonth(sources[key]?.at) : null;
-      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}`;
+      let text = factValueText(value);
+      // A year the seller never said ("in May" → "May 2025") is taken out;
+      // the writer gets their sentence for the tense and never adds a year.
+      let said = "";
+      const src = params.factSourceWords?.[key];
+      const fix = src ? repairInferredYears(text, src.words) : null;
+      if (fix) {
+        text = fix.text;
+        const quote = screenText(fix.quotes.join(" … ")).trim();
+        said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
+        yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
+      }
+      const when = !fix && RELATIVE_TIME.test(text) ? recordedMonth(sources[key]?.at) : null;
+      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}${said}`;
     };
-    if (confirmed.safe.length > 0) {
+    // A value that is an extractor's working-out ("$2,649,200 (calculated as …
+    // wait, recalculating …)") is not a figure: its stray numbers would pass
+    // the figure check. Held back until the broker fixes the fact.
+    const unfinished = confirmed.safe.filter(([, v]) => WORKING_OUT.test(factValueText(v))).map(([k]) => k);
+    if (unfinished.length > 0) warnings.push(UNFINISHED_FACT_WARNING(unfinished));
+    const usable = confirmed.safe.filter(([k]) => !unfinished.includes(k));
+    if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
-      for (const [key, value] of confirmed.safe) parts.push(line(key, value));
+      for (const [key, value] of usable) parts.push(line(key, value));
     }
     if (leads.safe.length > 0) {
       pushOther(`\n--- ${CIM_LEADS_HEADING} ---`);
       for (const [key, value] of leads.safe) pushOther(line(key, value));
     }
+    if (yearFixes.length > 0) warnings.push(YEAR_FIX_WARNING(yearFixes));
   }
 
   const resolvedBlock = renderResolvedBlock(params.resolvedDiscrepancies ?? []);
@@ -1161,19 +1196,104 @@ function isScalar(v: unknown): v is string | number {
   return (typeof v === "string" && v.trim().length > 0 && v.length < 80) || typeof v === "number";
 }
 
-const FIRST_MONEY = /\$\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:[KMB]\b|million\b|thousand\b|billion\b))?/i;
+const MONEY_IN_TEXT = /(?:~\s?|(?:approx(?:imately|\.)?|about|around|roughly)\s)?\$\s?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?:\s?(?:MM\b|[KMB]\b|million\b|thousand\b|billion\b))?/gi;
+const YEAR_TOKEN = /\b(?:FY\s?'?)?(?:19|20)\d{2}\b|\bFY\s?'?\d{2}\b/gi;
+/** Where one statement in a fact ends: "; ", a new line, a sentence, ", FY2022: …". */
+const CLAUSE_BREAK = /;|\n|\.\s|,\s/g;
+/** A figure that isn't a result: a budget, forecast, target or an average. */
+const NOT_ACTUAL = /\b(budget(ed)?|forecast|project(ed|ion)|target|plan(ned)?|expected|pro[- ]?forma|run[- ]?rate|guidance|outlook|avg|average)\b/i;
+/** Wording that says a figure belongs to another metric ("Normalized EBITDA: FY2021: $161,189" inside a net-income fact). */
+const OTHER_METRIC: Record<string, RegExp> = {
+  Revenue: /\b(ebitda|sde|net income|profit|margin|earnings|cash flow)\b/i,
+  "Net income": /\b(ebitda|sde|revenue|sales|cash flow)\b/i,
+  EBITDA: /\b(sde|revenue|sales|net income)\b/i,
+  SDE: /\b(ebitda|revenue|sales|net income)\b/i,
+};
+
+/** "adjusted EBITDA", "Normalized EBITDA:", "SDE (adjusted)" — not "owner compensation normalized to market". */
+const ADJUSTED_METRIC = /\b(adjusted|normali[sz]ed)\s+(ebitda|sde|earnings|cash flow)\b|\b(ebitda|sde)\s*\(?(adjusted|normali[sz]ed)\b/i;
+
+function yearNumber(token: string): number {
+  const digits = token.replace(/\D/g, "");
+  return digits.length === 2 ? 2000 + Number(digits) : Number(digits);
+}
 
 /**
- * A fact's value as a canonical figure. A long value ("$3.9M adjusted EBITDA
- * (broker-normalized) … 2025 ~$4M …") used to be skipped entirely, so a
- * detailed EBITDA fact never became canonical: its first dollar figure is
- * the figure.
+ * The headline figure in a long, multi-figure fact: the latest actual year,
+ * for the metric the fact is about — adjusted when an EBITDA/SDE fact gives
+ * both reported and adjusted. Taking the first dollar figure made the
+ * OLDEST year canonical for facts listed oldest-first (180 Smoke Vape:
+ * "Net income: $9,254" = FY2021 of five years) and the reported EBITDA
+ * canonical where the fact went on to give the adjusted one (Harborview).
+ * No figure is chosen when the fact is ambiguous (several figures, no years).
  */
-function canonicalValue(value: unknown): string | null {
+export function headlineFigure(value: string, label: string): string | null {
+  const figs = Array.from(value.matchAll(MONEY_IN_TEXT)).map((m) => ({ text: m[0].trim(), start: m.index!, end: m.index! + m[0].length }));
+  if (figs.length === 0) return null;
+  const amountOfText = (t: string) => parseFigures(t.replace(/^[^$]*/, ""))[0]?.value;
+  if (new Set(figs.map((f) => amountOfText(f.text))).size === 1) return figs[0].text;
+
+  const clauseTail = (s: string) => {
+    let cut = 0;
+    for (const m of Array.from(s.matchAll(CLAUSE_BREAK))) cut = m.index! + m[0].length;
+    return s.slice(cut);
+  };
+  const clauseHead = (s: string) => {
+    const at = s.search(new RegExp(CLAUSE_BREAK.source));
+    return at >= 0 ? s.slice(0, at) : s;
+  };
+  const years = (s: string) => Array.from(s.matchAll(YEAR_TOKEN)).map((m) => m[0]);
+  const scored = figs.map((f, i) => {
+    const pre = clauseTail(value.slice(i > 0 ? figs[i - 1].end : 0, f.start));
+    const post = clauseHead(value.slice(f.end, i + 1 < figs.length ? figs[i + 1].start : value.length));
+    // What the figure is ("adjusted EBITDA $780,052", "$3.9M adjusted EBITDA (FY2024)"):
+    // the words before it and those right after it, up to a note or the next add-back.
+    const after = post.split(/[(+—–]|\s-\s/)[0];
+    return { ...f, pre, post, context: `${pre} ${after}` };
+  });
+  // "FY2024 $920,052" (year before) or "$246,000 (2024)" (year after): the
+  // fact's first figure says which way it's written.
+  const yearFirst = years(scored[0].pre).length > 0;
+  let carried: string | null = null;
+  const dated = scored.map((f) => {
+    const before = years(f.pre).pop() ?? null;
+    const after = years(f.post)[0] ?? null;
+    const token = (yearFirst ? before ?? after : after ?? before) ?? carried;
+    carried = token;
+    return { ...f, token, year: token ? yearNumber(token) : null };
+  });
+
+  // Not a result, another metric's figure, or a component ("+ owner compensation $82,000").
+  let pool = dated.filter(
+    (f) => !NOT_ACTUAL.test(f.context) && !OTHER_METRIC[label]?.test(f.pre) && !/^\s*(?:[+−–-]|plus\b|less\b|minus\b)/i.test(f.pre),
+  );
+  if (pool.length === 0) return null;
+  if (label === "EBITDA" || label === "SDE") {
+    const adjusted = pool.filter((f) => ADJUSTED_METRIC.test(f.context));
+    if (adjusted.length > 0) pool = adjusted;
+  }
+  const withYear = pool.filter((f) => f.year !== null);
+  if (withYear.length === 0) {
+    return new Set(pool.map((f) => amountOfText(f.text))).size === 1 ? pool[0].text : null;
+  }
+  const latest = Math.max(...withYear.map((f) => f.year!));
+  const candidates = withYear.filter((f) => f.year === latest);
+  // The most precise statement of that year's figure ("$2,013,000" over "just over $2 million").
+  const tol = (t: string) => parseFigures(t.replace(/^[^$]*/, ""))[0]?.tolerance ?? Infinity;
+  const pick = candidates.reduce((best, f) => (tol(f.text) < tol(best.text) ? f : best), candidates[0]);
+  const kind = ADJUSTED_METRIC.test(pick.context)
+    ? /\bnormali[sz]ed\b/i.test(pick.context) ? ", normalized" : ", adjusted"
+    : /\breported\b/i.test(pick.context) ? ", reported" : "";
+  return `${pick.text} (${pick.token!.replace(/\s+/g, "")}${kind})`;
+}
+
+/** A fact's value as a canonical figure: short values as written, long ones reduced to their headline figure. */
+function canonicalValue(value: unknown, label: string): string | null {
+  // A headcount is never a dollar figure (a long staff note's "$42K" salary).
+  if (label === "Headcount") return isScalar(value) && !/\$/.test(String(value)) ? String(value) : null;
   if (isScalar(value)) return String(value);
   if (typeof value !== "string") return null;
-  const m = value.match(FIRST_MONEY);
-  return m ? m[0].trim() : null;
+  return headlineFigure(value, label);
 }
 
 /** Canonical headline facts (label → value text), extractedInfo only. */
@@ -1195,7 +1315,7 @@ function canonicalFacts(params: CimLayoutParams): Array<{ label: string; value: 
     const bare = key.replace(/[^a-z]/gi, "");
     const hit = FIGURE_PATTERNS.find((p) => p.test.test(bare));
     if (!hit || seen.has(hit.label)) continue;
-    const value = canonicalValue(raw);
+    const value = canonicalValue(raw, hit.label);
     if (!value) continue;
     seen.add(hit.label);
     out.push({ label: hit.label, value });
@@ -1212,14 +1332,15 @@ function collectCanonicalFigures(params: CimLayoutParams): string[] {
 }
 
 /**
- * Headline facts that disagree (by more than 1%) with the financial
- * analysis for its latest year — surfaced to the broker, never "fixed" by
- * the writer inventing a bridge line.
+ * Headline facts (revenue, EBITDA, SDE, net income) that disagree (by more
+ * than 1%) with the financial analysis for the same year — surfaced to the
+ * broker, never "fixed" by the writer inventing a bridge line.
  */
 export function figureConflicts(params: CimLayoutParams): string[] {
   const heads = analysisHeadlines(params.financials);
   if (heads.length === 0) return [];
   const pnl = params.financials?.pnl ?? null;
+  const pnlYears = pnl ? Object.keys(pnl).sort() : [];
   const out: string[] = [];
   for (const fact of canonicalFacts(params)) {
     const figs = parseFigures(fact.value).filter((f) => f.kind === "money" && f.value > 0);
@@ -1227,21 +1348,35 @@ export function figureConflicts(params: CimLayoutParams): string[] {
     const v = figs[0].value;
     const close = (a: number) => Math.abs(a - v) <= Math.max(figs[0].tolerance, Math.abs(a) * 0.01);
     const money = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
+    // The statement year the fact speaks for: its own year when it names one
+    // the statements cover (a FY2023 figure is compared with 2023), else the
+    // latest. A year the statements don't cover can't be compared.
+    const factYear = (fact.value.match(/\b(?:FY\s?)?((?:19|20)\d{2})\b/) ?? [])[1];
+    const statementYear = factYear ? (pnlYears.includes(factYear) ? factYear : null) : pnlYears[pnlYears.length - 1];
     if (fact.label === "Revenue") {
       const h = heads.find((x) => x.label === "Revenue");
-      if (h && !close(h.value)) out.push(`revenue on file is ${fact.value} but the financial statements show ${money(h.value)} for ${h.year}`);
+      const year = factYear ? statementYear : h?.year;
+      const rev = year && pnl?.[year] ? pnl[year].revenue : undefined;
+      if (typeof rev === "number" && !close(rev)) out.push(`revenue on file is ${fact.value} but the financial statements show ${money(rev)} for ${year}`);
     } else if (fact.label === "EBITDA") {
       const adjusted = heads.find((x) => x.label === "EBITDA");
-      const reportedYear = pnl ? Object.keys(pnl).sort().pop() : undefined;
+      const reportedYear = pnlYears[pnlYears.length - 1];
       const reported = reportedYear ? pnl![reportedYear].ebitda : undefined;
-      const candidates = [adjusted?.value, reported].filter((x): x is number => typeof x === "number");
-      if (candidates.length > 0 && !candidates.some(close)) {
-        const what = adjusted ? `the financial analysis bridge totals ${money(adjusted.value)} (Adjusted EBITDA, ${adjusted.year})` : `the statements show ${money(reported!)} (${reportedYear})`;
+      // An adjusted figure is compared with the bridge, a reported one with the
+      // statements (an adjusted $780,052 is no conflict with a reported $660,252).
+      const isAdjusted = ADJUSTED_METRIC.test(fact.value) || /, (adjusted|normali[sz]ed)\)/.test(fact.value);
+      const isReported = !isAdjusted && /\breported\b/i.test(fact.value);
+      const candidates = [isReported ? undefined : adjusted?.value, isAdjusted ? undefined : reported].filter((x): x is number => typeof x === "number");
+      if (candidates.length > 0 && !candidates.some(close) && (!factYear || factYear === (isReported ? reportedYear : adjusted?.year ?? reportedYear))) {
+        const what = adjusted && !isReported ? `the financial analysis bridge totals ${money(adjusted.value)} (Adjusted EBITDA, ${adjusted.year})` : `the statements show ${money(reported!)} (${reportedYear})`;
         out.push(`EBITDA on file is ${fact.value} but ${what}`);
       }
     } else if (fact.label === "SDE") {
       const h = [...heads].reverse().find((x) => x.label === "SDE");
-      if (h && !close(h.value)) out.push(`SDE on file is ${fact.value} but the financial analysis bridge totals ${money(h.value)} for ${h.year}`);
+      if (h && !close(h.value) && (!factYear || factYear === h.year)) out.push(`SDE on file is ${fact.value} but the financial analysis bridge totals ${money(h.value)} for ${h.year}`);
+    } else if (fact.label === "Net income" && statementYear && pnl) {
+      const ni = pnl[statementYear].netIncomeReported ?? pnl[statementYear].netIncomeFromRows;
+      if (typeof ni === "number" && !close(ni)) out.push(`net income on file is ${fact.value} but the financial statements show ${money(ni)} for ${statementYear}`);
     }
   }
   return out;

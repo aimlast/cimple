@@ -21,6 +21,12 @@ import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
 import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
+import { hasMonthYear } from "./fact-dates";
+import { getFieldSources, isFactKey } from "../interview/info-merger";
+import { factValueText } from "../information/cim-facts";
+import { db } from "../db";
+import { interviewSessions } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -65,6 +71,36 @@ async function persist(job: CimGenerationJob) {
 }
 
 /**
+ * For interview facts that state a "Month YYYY": the seller's words on the
+ * turn that recorded them (provenance keeps the session and seller turn), so
+ * the writer's knowledge base can correct a year the seller never said.
+ * Best-effort: a failed look-up just leaves the facts as they are.
+ */
+export async function factSourceWordsFor(dealId: string, info: Record<string, unknown>): Promise<Record<string, { words: string; at: string }>> {
+  const sources = getFieldSources(info);
+  const wanted = Object.entries(sources).filter(
+    ([key, s]) => isFactKey(key) && s?.sessionId && typeof s.turn === "number" && s.at && key in info && hasMonthYear(factValueText(info[key])),
+  );
+  if (wanted.length === 0) return {};
+  try {
+    const rows = await db.select({ id: interviewSessions.id, messages: interviewSessions.messages }).from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+    const byId = new Map(rows.map((r) => [r.id, Array.isArray(r.messages) ? (r.messages as Array<{ role?: string; content?: unknown }>) : []]));
+    const out: Record<string, { words: string; at: string }> = {};
+    for (const [key, s] of wanted) {
+      // `turn` counts the seller's messages (1-based) in that session.
+      const seller = (byId.get(s.sessionId!) ?? []).filter((m) => m?.role === "user");
+      const msg = seller[s.turn! - 1];
+      const words = typeof msg?.content === "string" ? msg.content : "";
+      if (words) out[key] = { words, at: s.at! };
+    }
+    return out;
+  } catch (err) {
+    console.warn(`[cim-generation] could not read interview words for deal ${dealId}:`, err);
+    return {};
+  }
+}
+
+/**
  * Build the layout-engine params from a deal. Resolved discrepancies (both
  * modes): a row naming a real fact key overlays that key (the broker's
  * accepted value wins), and every resolved row reaches the writer in the
@@ -77,10 +113,11 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     (deal.extractedInfo as Record<string, unknown>) || {},
     resolvedDiscrepancies,
   );
-  const [branding, insights, analyses] = await Promise.all([
+  const [branding, insights, analyses, factSourceWords] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
     storage.getFinancialAnalysesByDeal(deal.id).catch((): FinancialAnalysis[] => []),
+    factSourceWordsFor(deal.id, extractedInfo),
   ]);
   // The deal's design template may carry the brokerage's house structure
   // ("Match my existing CIM") — the planner follows it.
@@ -106,6 +143,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // The broker-reviewed financial analysis (else the latest completed one):
     // statement tables and bridges are copied from it, never rebuilt.
     financials: buildCimFinancials(pickAnalysisForCim(analyses)),
+    factSourceWords,
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({
