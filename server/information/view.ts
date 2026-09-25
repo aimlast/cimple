@@ -469,7 +469,9 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       const factKey = websiteFactKey(field);
       const src = sources[factKey];
       const status: WebsiteItem["status"] =
-        src?.source === "website" ? "accepted" : hasValue(info[factKey]) ? "on_file" : "new";
+        src?.source === "website" || (src?.acceptedByBroker && String(info[factKey]) === raw.trim())
+          ? "accepted"
+          : hasValue(info[factKey]) ? "on_file" : "new";
       items.push({ field, label: EXTRA_LABELS[factKey] ?? labelOf(factKey), value: raw, factKey, status });
     }
     website = {

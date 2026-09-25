@@ -38,6 +38,10 @@ import {
   noteSameValue,
   displaceCorroborations,
   BROKER_SUPPRESSED_KEY,
+  addPrivateNote,
+  getPrivateNotes,
+  privateNoteSources,
+  privateNoteSourceKey,
   type FieldSource,
   type SourceKind,
   numbersMateriallyConflict,
@@ -273,12 +277,17 @@ export function buildTurnSave(args: {
   }
   toSave._fieldSources = savedSources;
 
-  // Broker-private notes: everything on file plus what this turn recorded.
-  const freshNotes = Array.isArray(fresh._brokerPrivateNotes) ? (fresh._brokerPrivateNotes as Array<{ note: string }>) : [];
-  const turnNotes = Array.isArray(merged._brokerPrivateNotes) ? (merged._brokerPrivateNotes as Array<{ note: string }>) : [];
-  const notes = [...freshNotes];
-  for (const n of turnNotes) if (n && !notes.some((e) => e?.note === n.note)) notes.push(n);
-  if (notes.length > 0) toSave._brokerPrivateNotes = notes;
+  // Broker-private notes: everything on file now (a source deleted during the
+  // turn took its notes with it — never resurrected from the stale
+  // snapshot) plus what this turn recorded, added source by source.
+  const snapNoteSources = new Set(
+    getPrivateNotes(snapshot).flatMap((n) => privateNoteSources(n).map((s) => privateNoteSourceKey(n.note, s))),
+  );
+  for (const n of getPrivateNotes(merged)) {
+    for (const s of privateNoteSources(n)) {
+      if (!snapNoteSources.has(privateNoteSourceKey(n.note, s))) addPrivateNote(toSave, n.note, s);
+    }
+  }
 
   // A fact the broker deleted comes back only when the seller states it
   // again live — that is new information, and leaving it suppressed would
@@ -1103,24 +1112,18 @@ export async function processTurn(
   // BROKER-PRIVATE NOTES: sensitive facts land in _brokerPrivateNotes on the
   // deal — visible to the broker, excluded from every CIM-feeding path (the
   // layout engine, financial analysis, and field counters all skip "_" keys).
-  if ((aiResponse.privateNotes ?? []).length > 0) {
-    const existing = Array.isArray((merged as Record<string, unknown>)._brokerPrivateNotes)
-      ? ((merged as Record<string, unknown>)._brokerPrivateNotes as {
-          note: string;
-          reason: string;
-          turn?: number;
-        }[])
-      : [];
-    const fresh = (aiResponse.privateNotes ?? []).filter(
-      (n) => !existing.some((e) => e.note === n.note),
-    );
-    if (fresh.length > 0) {
-      (merged as Record<string, unknown>)._brokerPrivateNotes = [
-        ...existing,
-        ...fresh.map((n) => ({ ...n, turn: userTurnCount })),
-      ];
+  // A note a document (a CRM note, an email) already holds gains the
+  // session as another source: the seller has now said it themselves, so
+  // deleting that document later must not take the note with it.
+  {
+    let added = 0;
+    for (const n of aiResponse.privateNotes ?? []) {
+      if (!n?.note) continue;
+      if (addPrivateNote(merged as Record<string, unknown>, n.note, { reason: n.reason, turn: userTurnCount })) added++;
+    }
+    if (added > 0) {
       console.log(
-        `[session-manager] Stored ${fresh.length} broker-private note(s) on deal ${dealId}`,
+        `[session-manager] Stored ${added} broker-private note(s) on deal ${dealId}`,
       );
     }
   }

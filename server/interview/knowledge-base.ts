@@ -6,7 +6,7 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, getPrivateNotes, privateNoteSources, type FieldSource, type PrivateNoteSource } from "./info-merger";
 
 // =====================
 // Types
@@ -286,11 +286,18 @@ export function assembleKnowledgeBase(
     const raw = (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
     if (Array.isArray(raw)) {
       const docVisibility = new Map(documents.map((d) => [d.id, d.visibility]));
-      const safe = raw.filter((n: { documentId?: string; brokerOnly?: boolean } | null) => {
-        if (!n || n.brokerOnly) return false;
-        if (!n.documentId) return true;
-        const vis = docVisibility.get(n.documentId);
+      // A note may come from several sources; the agent holds it when at
+      // least one of them is the seller's own (a session, a shared source),
+      // credited to that source — never to the broker's private one.
+      const sellerSide = (s: PrivateNoteSource) => {
+        if (s.brokerOnly) return false;
+        if (!s.documentId) return true;
+        const vis = docVisibility.get(s.documentId);
         return vis !== undefined && vis !== "broker_only";
+      };
+      const safe = getPrivateNotes(extractedInfo as Record<string, unknown>).flatMap((n) => {
+        const src = privateNoteSources(n).find(sellerSide);
+        return src ? [{ note: n.note, ...src }] : [];
       });
       if (safe.length > 0) (extractedInfo as Record<string, unknown>)._brokerPrivateNotes = safe;
       else delete (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;

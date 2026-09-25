@@ -616,6 +616,12 @@ export interface FieldSource {
   note?: string;
   /** The words the value came from, when known. */
   excerpt?: string;
+  /**
+   * The broker explicitly accepted this value into the facts ("Accept into
+   * facts" on a website claim): the kind still ranks as its source, but the
+   * broker vouched for it, so CIM writers treat it as a fact, not a lead.
+   */
+  acceptedByBroker?: boolean;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
@@ -1077,17 +1083,131 @@ export function removeDocumentFields(
   }
 
   // Broker-private notes the deleted source contributed (CRM notes, emails).
-  if (Array.isArray(out._brokerPrivateNotes)) {
-    const notes = out._brokerPrivateNotes as Array<{ documentId?: string } | null>;
-    const kept = notes.filter((n) => !n || n.documentId !== documentId);
-    if (kept.length !== notes.length) {
-      changed = true;
-      if (kept.length > 0) out._brokerPrivateNotes = kept;
-      else delete out._brokerPrivateNotes;
-    }
-  }
+  // A note another source also states (a re-imported CRM note, the seller in
+  // the interview) stays, credited to that source.
+  if (removePrivateNoteSource(out, documentId)) changed = true;
   if (removed.length > 0) changed = true;
   return { info: out, removed, changed };
+}
+
+// ─── Broker-private notes ────────────────────────────────────────────────────
+// `_brokerPrivateNotes`: sensitive matters (health, family, the broker's own
+// negotiation notes) kept out of every CIM path. Each note records every
+// source that stated it — the first on the entry itself (documentId / reason
+// / turn / brokerOnly, the shape older rows already have), others in
+// `alsoFrom` — so deleting or re-importing one source never drops a note
+// another source still states.
+
+export const BROKER_PRIVATE_NOTES_KEY = "_brokerPrivateNotes";
+
+/** One source of a broker-private note. No documentId = the seller said it in a session. */
+export interface PrivateNoteSource {
+  /** The documents row (CRM note, email, transcript…) it came from. */
+  documentId?: string;
+  /** From a broker-only source: the broker's own note, never the agent's. */
+  brokerOnly?: boolean;
+  reason?: string;
+  /** Interview turn it was recorded on. */
+  turn?: number;
+}
+
+export interface BrokerPrivateNote extends PrivateNoteSource {
+  note: string;
+  /** Other sources that state the same note. */
+  alsoFrom?: PrivateNoteSource[];
+}
+
+const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn"] as const;
+
+function pickNoteSource(n: PrivateNoteSource): PrivateNoteSource {
+  const out: PrivateNoteSource = {};
+  for (const f of SOURCE_FIELDS) if (n[f] !== undefined && n[f] !== null) (out as Record<string, unknown>)[f] = n[f];
+  return out;
+}
+
+/** Same note, however the extractor punctuated or capitalised it. */
+export function privateNoteText(note: string): string {
+  return note.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
+}
+
+/** One identity per source: the document, or the seller's own sessions. */
+function noteSourceId(s: PrivateNoteSource): string {
+  return s.documentId ? `doc:${s.documentId}` : "session";
+}
+
+/** A (note, source) pair's identity — what a turn save compares against the snapshot. */
+export function privateNoteSourceKey(note: string, s: PrivateNoteSource): string {
+  return `${privateNoteText(note)}|${noteSourceId(s)}`;
+}
+
+export function getPrivateNotes(info: Record<string, unknown>): BrokerPrivateNote[] {
+  const raw = info[BROKER_PRIVATE_NOTES_KEY];
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((n): n is BrokerPrivateNote => !!n && typeof (n as BrokerPrivateNote).note === "string");
+}
+
+/** Every source of a note, the entry's own first. */
+export function privateNoteSources(n: BrokerPrivateNote): PrivateNoteSource[] {
+  return [pickNoteSource(n), ...(Array.isArray(n.alsoFrom) ? n.alsoFrom.map(pickNoteSource) : [])];
+}
+
+function withSources(n: BrokerPrivateNote, sources: PrivateNoteSource[]): BrokerPrivateNote {
+  const rest: Record<string, unknown> = { ...n };
+  for (const f of SOURCE_FIELDS) delete rest[f];
+  delete rest.alsoFrom;
+  return {
+    ...(rest as { note: string }),
+    ...sources[0],
+    ...(sources.length > 1 ? { alsoFrom: sources.slice(1) } : {}),
+  };
+}
+
+/**
+ * Records `note` from `src` on `info` (mutates). A note already on file with
+ * the same text gains `src` as another source instead of being skipped — the
+ * old skip left the note depending on its first source alone. Returns true
+ * when anything changed.
+ */
+export function addPrivateNote(info: Record<string, unknown>, note: string, src: PrivateNoteSource): boolean {
+  const text = note.trim();
+  if (!text) return false;
+  const notes = getPrivateNotes(info);
+  const key = privateNoteText(text);
+  const idx = notes.findIndex((n) => privateNoteText(n.note) === key);
+  const source = pickNoteSource(src);
+  if (idx === -1) {
+    info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...source }];
+    return true;
+  }
+  const sources = privateNoteSources(notes[idx]);
+  if (sources.some((s) => noteSourceId(s) === noteSourceId(source))) return false;
+  const next = [...notes];
+  next[idx] = withSources(notes[idx], [...sources, source]);
+  info[BROKER_PRIVATE_NOTES_KEY] = next;
+  return true;
+}
+
+/**
+ * Drops `documentId` as a source of every private note (mutates). A note no
+ * other source states goes; one another source states stays, now credited to
+ * the first surviving source. Returns true when anything changed.
+ */
+export function removePrivateNoteSource(info: Record<string, unknown>, documentId: string): boolean {
+  const notes = getPrivateNotes(info);
+  if (!Array.isArray(info[BROKER_PRIVATE_NOTES_KEY])) return false;
+  let changed = false;
+  const kept: BrokerPrivateNote[] = [];
+  for (const n of notes) {
+    const sources = privateNoteSources(n);
+    const surviving = sources.filter((s) => s.documentId !== documentId);
+    if (surviving.length === sources.length) { kept.push(n); continue; }
+    changed = true;
+    if (surviving.length > 0) kept.push(withSources(n, surviving));
+  }
+  if (!changed) return false;
+  if (kept.length > 0) info[BROKER_PRIVATE_NOTES_KEY] = kept;
+  else delete info[BROKER_PRIVATE_NOTES_KEY];
+  return true;
 }
 
 function stripDocumentId(src: FieldSource): FieldSource {

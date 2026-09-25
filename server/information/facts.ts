@@ -39,6 +39,7 @@ import {
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import { withDealFactsLock } from "../documents/facts-lock";
+import { LEAD_SOURCE_KINDS, WEBSITE_ACCEPTED_NOTE } from "./cim-facts";
 import type { Discrepancy } from "@shared/schema";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
@@ -307,7 +308,9 @@ export function websiteFactKey(field: string): string {
 
 /**
  * Broker accepts a scraped website value. It lands as a fact with source
- * "website" (public, unverified — the interview still confirms it). If a
+ * "website" and `acceptedByBroker` — ranked as the website (the interview,
+ * a document or a broker edit still replaces it), but the broker vouched for
+ * it, so the CIM writers use it as a fact rather than an unconfirmed lead. If a
  * stronger source already holds the fact, it's kept as an alternate instead.
  */
 export function acceptWebsiteFact(info: Info, field: string, value: string): { key: string; addedAs: "fact" | "alternate" } {
@@ -321,7 +324,12 @@ export function acceptWebsiteFact(info: Info, field: string, value: string): { k
 
 function acceptWebsiteValue(info: Info, key: string, value: string): { key: string; addedAs: "fact" | "alternate" } {
   unsuppress(info, key);
-  const src: FieldSource = { source: "website", at: new Date().toISOString(), note: "Accepted by you from the website" };
+  const src: FieldSource = {
+    source: "website",
+    at: new Date().toISOString(),
+    note: WEBSITE_ACCEPTED_NOTE,
+    acceptedByBroker: true,
+  };
   const current = info[key];
   const empty = current === null || current === undefined || current === "";
   if (empty) {
@@ -332,6 +340,9 @@ function acceptWebsiteValue(info: Info, key: string, value: string): { key: stri
   if (serialize(current) === value) {
     const cur = getFieldSources(info)[key];
     if (!cur) setFieldSource(info, key, src);
+    // The same value from a lead (a CRM note): the broker has now vouched
+    // for it — the CIM may state it — while it keeps its real source.
+    else if (LEAD_SOURCE_KINDS.has(cur.source) && !cur.acceptedByBroker) setFieldSource(info, key, { ...cur, acceptedByBroker: true });
     return { key, addedAs: "fact" };
   }
   const cur = getFieldSources(info)[key];

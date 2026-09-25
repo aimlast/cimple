@@ -9,9 +9,13 @@
  *   only came from second-hand or public sources — the broker's CRM notes,
  *   the business's website, social media — are UNCONFIRMED LEADS until the
  *   seller or broker confirms them (an interview answer or a document
- *   replaces them automatically; a broker edit makes them "broker").
+ *   replaces them automatically; a broker edit makes them "broker"; a
+ *   website claim the broker accepted into the facts is a fact).
  */
-import { getFieldSources, isFactKey, repairCharIndexedValue, type SourceKind } from "../interview/info-merger";
+import { getFieldSources, isFactKey, repairCharIndexedValue, type FieldSource, type SourceKind } from "../interview/info-merger";
+
+/** Note the website "Accept into facts" action writes on the source. */
+export const WEBSITE_ACCEPTED_NOTE = "Accepted by you from the website";
 
 /** Source kinds whose facts are leads, not verified facts. */
 export const LEAD_SOURCE_KINDS: ReadonlySet<SourceKind> = new Set<SourceKind>(["crm", "website", "social"]);
@@ -31,10 +35,23 @@ function hasValue(v: unknown): boolean {
   return true;
 }
 
-/** True when the fact's recorded source is a lead (CRM / website / social). */
+/**
+ * The broker accepted this value into the facts ("Accept into facts" on a
+ * website claim). Rows written before the flag existed are recognised by the
+ * note the accept action has always written.
+ */
+export function brokerAcceptedSource(src: FieldSource | undefined): boolean {
+  if (!src) return false;
+  return src.acceptedByBroker === true || (src.source === "website" && src.note === WEBSITE_ACCEPTED_NOTE);
+}
+
+/**
+ * True when the fact's recorded source is a lead (CRM / website / social)
+ * that the broker hasn't vouched for.
+ */
 export function isLeadFact(info: Record<string, unknown>, key: string): boolean {
   const src = getFieldSources(info)[key];
-  return !!src && LEAD_SOURCE_KINDS.has(src.source);
+  return !!src && LEAD_SOURCE_KINDS.has(src.source) && !brokerAcceptedSource(src);
 }
 
 export function splitFactsForCim(info: Record<string, unknown> | null | undefined): CimFactSplit {

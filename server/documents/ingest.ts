@@ -20,7 +20,7 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
-import { isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
+import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { withDealFactsLock } from "./facts-lock";
 
@@ -185,15 +185,14 @@ export function addPrivateNotes(
   doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
 ): void {
   if (typeof raw !== "string" || !raw.trim()) return;
-  const existing = Array.isArray(info._brokerPrivateNotes) ? (info._brokerPrivateNotes as Array<{ note: string }>) : [];
   const brokerOnly = isBrokerOnly(doc);
-  const fresh = raw
-    .split("\n")
-    .map((n) => n.trim())
-    .filter((n) => n && !existing.some((e) => e.note === n))
-    .slice(0, 10)
-    .map((note) => ({ note, reason: `From ${doc.name}`, documentId: doc.id, ...(brokerOnly ? { brokerOnly: true } : {}) }));
-  if (fresh.length > 0) info._brokerPrivateNotes = [...existing, ...fresh];
+  const lines = Array.from(new Set(raw.split("\n").map((n) => n.trim()).filter(Boolean))).slice(0, 10);
+  // A note already on file (an earlier version of the same CRM note, another
+  // email) gains this source too — so retiring or deleting that other source
+  // leaves the note in place while this one still states it.
+  for (const note of lines) {
+    addPrivateNote(info, note, { reason: `From ${doc.name}`, documentId: doc.id, ...(brokerOnly ? { brokerOnly: true } : {}) });
+  }
 }
 
 // The per-deal facts queue lives in its own module so broker edits and the
