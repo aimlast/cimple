@@ -76,6 +76,7 @@ import {
   Users,
   Library,
   ArrowRight,
+  Pencil,
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
