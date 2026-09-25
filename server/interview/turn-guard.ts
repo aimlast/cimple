@@ -458,24 +458,47 @@ export const CRITICAL_SECTIONS = new Set([
  */
 // A phrase counts only where its clause ends — "that's enough to cover
 // payroll" and "talk later about it" are not the stop phrases they contain.
-const CLAUSE_END = String.raw`(?=\s*(?:[.!?,;:)—–-]|$|\n|\s(?:thanks|thank you|please|bye|sorry|anyway|so|and|but|i|we|let'?s)\b))`;
+// (A hyphen joined to a word isn't a clause end: "Bye-laws in our township".)
+const CLAUSE_END = String.raw`(?=\s*(?:[.!?,;:)—–]|-(?![A-Za-z])|$|\n|\s(?:thanks|thank you|please|bye|sorry|anyway|so|and|but|i|we|let'?s)\b))`;
 const LATER = String.raw`(?:later(?: on)?|tomorrow|another (?:time|day)|some other time|next (?:time|week)|(?:on )?(?:monday|tuesday|wednesday|thursday|friday|the weekend))`;
-// "I have to run" — but not "I have to run the numbers" / "go through the files".
-const GO_WORDS = String.raw`(?:go|run|leave|head out|head off|jump(?: off)?|hop off|sign off|get going|take off|dash|split)(?!\s+(?:the|a|an|to|through|over|back|with|for|into|on|out of|by|and (?:check|look|get|ask|see|find)|some|our|my|their|his|her|it|them|those|these|this|that|payroll|numbers?|errands?)\b)`;
+// Who is doing the stopping: the seller about themselves or this conversation
+// ("let's", "can we", "I have to", "I'm going to have to") — never "we" the
+// business ("we stop taking orders at 9", "we end the session with…").
+const I_MUST = String.raw`(?:i (?:(?:really|just|actually|do|unfortunately|now|kind of|kinda) ){0,2}(?:have|need|got|gotta|'ve got|'ve gotta) to|i(?:'ve)? got(?:ta| to)|i'?m (?:going to|gonna) have to|i'?ll (?:have|need) to|i must)`;
+const LEAVE_VERB = String.raw`(?:go|run|leave|head out|head off|jump(?: off)?|hop off|sign off|get going|take off|dash|split|bounce|step away|log off)`;
+// Leaving FOR something: "go to a meeting", "leave for an appointment", "run
+// to the bank", "go pick up my daughter", "jump on another call". Unlike the
+// bare "I have to go", these read like business in a long answer ("I have to
+// go to the supplier every Monday"), so they count only in a short message
+// or as the closing (or apologetic opening) sentence, and never with a
+// habit word in the sentence.
+const LEAVE_FOR_DEST = String.raw`(?:meeting|appointment|appt|call|zoom|job|job ?site|site|bank|doctor|dentist|school|daycare|kids?|daughter|son|wife|husband|partner|mom|mum|dad|family|flight|airport|plane|train|lunch|dinner|class|practice|game|funeral|delivery|client|customer|patient|supplier|vendor|inspector|inspection|shift|errand|thing|event|store|shop|office|clinic|plant|warehouse|truck|crew|guys|staff|emergency|fire)s?`;
+const ERRAND_STOP_RE = new RegExp(
+  String.raw`\b(?:${I_MUST}|(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)\s{1,3})(?:gotta|got to)) ${LEAVE_VERB}(?: (?:now|quickly|real quick|right now))?(?: (?:to|for|and|into|over to|out to|off to|on|meet|see|grab|get|catch|take|pick(?: [\w']+)? up)\b)(?: [\w'-]+){0,4}? ${LEAVE_FOR_DEST}\b`,
+  "i",
+);
+const HABIT_RE =
+  /\b(?:every|each|usually|normally|typically|often|sometimes|always|whenever|once a|twice a|per (?:week|month|day)|regularly|most (?:days|weeks|mornings|nights)|on (?:mondays|tuesdays|wednesdays|thursdays|fridays|saturdays|sundays|weekends))\b/i;
+// "…to a meeting in ten minutes, so quickly: …" — leaving is imminent.
+const SOON_RE = /\b(?:right now|shortly|in (?:a (?:few|couple(?: of)?) |\d+ |five |ten |fifteen |twenty )?min(?:ute)?s?|in a (?:sec|second|bit|minute))\b/i;
+const APOLOGY_START_RE = /^(?:sorry|so sorry|apologies|oh|oops|ah|actually|unfortunately|hey|listen|ok(?:ay)?|shoot|darn|argh)\b/i;
 const ADDRESSED_STOP_PHRASES: string[] = [
-  String.raw`(?:let'?s|can we|could we|we should|we can|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we)\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break)(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
-  String.raw`(?:let'?s|can we|could we|we can|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we)\s+(?:(?:finish|continue|resume|pick (?:this|it|things) up|come back to (?:this|it|the rest)|do the rest|carry on|keep going|chat|talk|speak)\s+(?:\w+\s+){0,2}?)${LATER}`,
-  String.raw`(?:can|could) (?:we|i) (?:pick (?:this|it) up|continue|finish|come back to (?:this|it))\b[^.?!]{0,30}\?`,
-  String.raw`stop (?:here|now|the interview|this (?:interview|conversation|session))${CLAUSE_END}`,
-  String.raw`end (?:this|the) ?(?:interview|conversation|overview|session|call|chat)`,
-  String.raw`i (?:(?:really|just|actually|do|unfortunately|now) ){0,2}(?:have|need|got|gotta) to ${GO_WORDS}`,
-  String.raw`(?:gotta|got to) (?:go|run|head out|jump)${CLAUSE_END}`,
-  String.raw`that(?:'| i)?s (?:all|enough|it) (?:i (?:have|can do|'ve got) )?for (?:now|today|tonight|the day)${CLAUSE_END}`,
+  String.raw`(?:let'?s|can we|could we|we should|we can|we'?ll (?:have|need) to|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we|time to|i think we (?:should|can)|${I_MUST})\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break|leave it (?:there|at that)|cut (?:this|it|things) short)(?: (?:the|this|our) (?:session|call|chat|interview|conversation|meeting))?(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
+  String.raw`(?:let'?s|can we|could we|we can|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we)\s+(?:(?:finish|continue|resume|pick (?:this|it|things) up|come back to (?:this|it|the rest)|do the rest|carry on|keep going|chat|talk|speak)\s+(?:\w+\s+){0,4}?)${LATER}${CLAUSE_END}`,
+  // "Can we pick this up?" — resuming later, said as a question. (Not "can
+  // we continue with the lease next?" — that's a seller who wants to go on.)
+  String.raw`(?:can|could) (?:we|i) pick (?:this|it|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
+  String.raw`(?<=^|[.!?,]\s{0,3}|\b(?:ok|okay|please|so|sorry|alright|right)\s{1,3})stop (?:here|now|there)${CLAUSE_END}`,
+  String.raw`stop (?:the interview|this (?:interview|conversation|session|chat))`,
+  String.raw`end (?:this (?:interview|conversation|session|call|chat)|the (?:interview|conversation|chat))\b`,
+  String.raw`${I_MUST} ${LEAVE_VERB}(?: (?:now|soon|shortly|real quick|unfortunately|in a (?:minute|sec|second|few|bit)|for (?:a bit|a while|now|today)))?${CLAUSE_END}`,
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)\s{1,3})(?:gotta|got to) (?:go|run|head out|jump|dash|split)${CLAUSE_END}`,
+  String.raw`that(?:'| i)?s (?:all|enough|it)(?: (?:for|from) (?:me|us))?(?: i (?:have|can do|'ve got))?(?: for)? (?:now|today|tonight|the day)${CLAUSE_END}`,
   String.raw`(?:i'?m|we'?re|i am|we are) (?:all )?done for (?:now|today|tonight|the day)`,
   String.raw`enough for (?:now|today|tonight)${CLAUSE_END}`,
-  String.raw`call it a day`,
-  String.raw`talk (?:to you )?(?:later|tomorrow|soon|next time)${CLAUSE_END}`,
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:ok|okay|so|thanks|thank you|bye|alright|great|anyway|cheers)[,!.]?\s{1,3})talk (?:to you )?(?:later|tomorrow|soon|next time)${CLAUSE_END}`,
   String.raw`no more questions(?: for (?:now|today))?${CLAUSE_END}`,
+  String.raw`(?:don'?t|do not|won'?t) have (?:any )?(?:more )?time (?:for (?:(?:any )?more|this|the rest|questions|it now)|today|right now|to (?:continue|keep going|finish))|no more time for (?:this|questions|today)`,
   // Self-addressed completion declarations are unambiguous stops even
   // without a wrap offer — "from me" / "I've got" removes the ambiguity
   // that keeps bare "that's everything" gated behind the wrap-offer check.
@@ -490,6 +513,7 @@ const SHORT_ONLY_STOP_PHRASES: string[] = [
   String.raw`no more time${CLAUSE_END}`,
   String.raw`(?:i (?:have|'ve got|got) a )?hard stop(?: (?:at|in) [\w: ]{1,12})?${CLAUSE_END}`,
   String.raw`wrap (?:this|it) up${CLAUSE_END}`,
+  String.raw`call it a day${CLAUSE_END}`,
   String.raw`(?:have|need|got) to get back to (?:work|the (?:shop|floor|office|store|site|clinic|kitchen|yard)|my (?:day|desk|customers|patients|crew))${CLAUSE_END}`,
   String.raw`(?:good)?bye(?: for now)?${CLAUSE_END}`,
 ];
@@ -504,17 +528,26 @@ const CONVERSATIONAL_FILLER = new Set(
 const SHORT_STOP_MESSAGE_WORDS = 25;
 
 const wordCount = (s: string) => (s.trim().match(/\S+/g) ?? []).length;
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 
 /** True when the seller's message asks to stop the interview (see STOP phrases above). */
 function matchesStopRequest(sellerMessage: string): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text) return false;
   if (ADDRESSED_STOP_RE.test(text)) return true;
-  if (wordCount(text) <= SHORT_STOP_MESSAGE_WORDS) return SHORT_ONLY_STOP_RE.test(text);
+  const short = wordCount(text) <= SHORT_STOP_MESSAGE_WORDS;
+  const sentences = sentencesOf(text);
+  const last = sentences[sentences.length - 1] ?? "";
+  // Leaving for something: anywhere in a short message; in a long one only
+  // as the closing sentence, or an opening one that apologises or says it's
+  // imminent ("I have to go to a meeting in ten minutes, so quickly: …").
+  const first = sentences[0] ?? "";
+  const leadsWithIt = sentences.length > 1 && (APOLOGY_START_RE.test(first) || SOON_RE.test(first));
+  const errandZone = short ? sentences : [last, ...(leadsWithIt ? [first] : [])];
+  if (errandZone.some((s) => ERRAND_STOP_RE.test(s) && !HABIT_RE.test(s))) return true;
+  if (short) return SHORT_ONLY_STOP_RE.test(text);
   // A long answer: an ambiguous phrase counts only when it IS the final
   // sentence — "Anyway, I'm out of time." — not "In November we're done."
-  const sentences = text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
-  const last = sentences[sentences.length - 1] ?? "";
   const m = SHORT_ONLY_STOP_RE.exec(last);
   if (!m) return false;
   const residual = (last.slice(0, m.index) + " " + last.slice(m.index + m[0].length))
@@ -628,15 +661,16 @@ export function buildStopSignalNudge(
       ? ` If you ask it, take it from the critical sections still missing — ${missingCriticalSections.join(", ")} — nothing else is worth their remaining patience.`
       : ` Everything critical is at least partially covered — prefer wrapping up over asking anything.`;
     return (
-      `# SELLER STOP SIGNAL\n` +
-      `The seller has just signaled they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage}${declineBan} ` +
-      `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another.`
+      `# THE SELLER WANTS TO STOP\n` +
+      `The seller has just said they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage}${declineBan} ` +
+      `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another. ` +
+      `Speak to them, not about them: never mention a "stop signal", this note or any system, and don't grade the session ("we've made excellent progress").`
     );
   }
   return (
     `# SELLER STOP — FINAL\n` +
     `The seller has now asked to stop more than once. Ask NOTHING — no questions, no "one quick thing". ` +
-    `Say a warm goodbye, recap in one sentence, note that unanswered items are saved for next time, and set shouldEnd to true. This is mandatory.`
+    `Say a warm goodbye, recap in one sentence, note that unanswered items are saved for next time, and set shouldEnd to true. This is mandatory. Never mention a "stop signal" or this note.`
   );
 }
 
@@ -718,19 +752,22 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
 }
 
 /**
- * The turn after a stop signal: the agent answered it with a CHOICE ("…or
- * shall we wrap up for today?") and the seller just kept talking about the
- * business — they declined the wrap-up, so the earlier stop no longer stands
- * (QA harvest: a false stop at turn 5 let the model end at turn 6 while the
- * seller was mid-answer). A short reply, or one that accepts or repeats the
- * stop, still ends the interview.
+ * The turn after a stop signal. The seller's stop stands — they may answer
+ * the one closing question the agent allowed, at any length, and the
+ * interview still ends ("seller stop always wins"). It is withdrawn only
+ * when the seller SAYS they want to carry on: "let's keep going", "I've got
+ * a few more minutes", "can we continue with the lease?". Talking at length
+ * is not a decline — a seller answering "…who holds the lease? Or shall we
+ * wrap up?" in full has answered the closing question, not changed their
+ * mind (review-caught: a length rule kept questioning a seller who had asked
+ * to stop).
  */
-const WRAP_CHOICE_RE =
-  /\b(?:or (?:shall|should|would|do|can) (?:we|you)|shall we|should we|would you (?:like|rather|prefer)|do you want|want to|happy to)\b[^?]{0,80}\b(?:wrap(?:ping)?(?: (?:it|this|things))? up|stop|pause|pick (?:this|it) up|call it|finish (?:up|here)|end (?:here|there|for today)|leave it there)\b[^?]*\?|\b(?:keep going|continue|carry on)\b[^?]{0,60}\bor\b[^?]{0,60}\?|\bor (?:keep going|continue|carry on)\b[^?]*\?/i;
-export function sellerDeclinedWrapUp(prevAiMessage: string | undefined, sellerMessage: string): boolean {
-  if (!prevAiMessage || !WRAP_CHOICE_RE.test(prevAiMessage)) return false;
-  if (matchesStopRequest(sellerMessage) || COMPLETION_RE.test(sellerMessage)) return false;
-  return wordCount(sellerMessage) > SHORT_STOP_MESSAGE_WORDS;
+const CONTINUE_RE =
+  /\b(?:let'?s (?:keep going|continue|carry on|keep at it|push on|do (?:a few|some|a couple(?: of)?) more|finish (?:this|it|up) (?:now|today))|(?:i'?m|i am) (?:happy|fine|good|ok(?:ay)?|glad) to (?:keep going|continue|carry on|do (?:a few |some )?more)|(?:i|we) (?:can|could) (?:keep going|carry on|do (?:a few|some|a couple(?: of)?) more)|(?:can|could|shall) we (?:continue|keep going|carry on|move on)\b(?! (?:later|tomorrow|another|some other|next (?:time|week)))|i(?:'ve| have)(?: got)? (?:a few|a couple(?: of)?|some|\d+|five|ten|fifteen) (?:more )?minutes|i (?:still )?(?:have|'ve got) (?:some|more|a bit of|plenty of) time|not (?:done|finished) yet|i'?m not done|no,? (?:let'?s )?(?:keep going|continue|carry on)|(?:we|i) can keep going)\b/i;
+export function sellerDeclinedWrapUp(_prevAiMessage: string | undefined, sellerMessage: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'");
+  if (matchesStopRequest(text) || COMPLETION_RE.test(text)) return false;
+  return CONTINUE_RE.test(text);
 }
 
 
@@ -822,7 +859,7 @@ const WORK_PATTERNS: RegExp[] = [
 ];
 
 const ACK_START_RE =
-  /^(?:good|great|perfect|excellent|wonderful|fantastic|awesome|nice|lovely|brilliant|exactly|absolutely|right|okay|ok|got it|understood|noted|makes sense|that makes sense|fair enough|thanks?(?: you)?|thank you|(?:i )?(?:really )?appreciate|helpful|interesting|cool|all right|alright|glad|love that|congrat\w*)\b/i;
+  /^(?:good|great|perfect|excellent|wonderful|fantastic|awesome|nice|lovely|brilliant|exactly|absolutely|right|okay|ok|got it|understood|noted|makes sense|(?:that|it|this|all of that|all that) (?:(?:really|totally|completely) )?makes (?:(?:complete|total|perfect|a lot of|good) )?sense|fair enough|thanks?(?: you)?|thank you|(?:i )?(?:really )?appreciate|helpful|interesting|cool|all right|alright|glad|love that|congrat\w*)\b/i;
 // "That…", "This…", "It…", "Those…", "Both of those…" + a verdict verb: the
 // sentence is a comment on what the seller just said.
 const BACKREF_VERDICT_RE =
@@ -843,10 +880,10 @@ const GRADING_PATTERNS: RegExp[] = [
   // Buyer commentary: "A smart buyer will prioritize that conversation…"
   /^(?:a|the|any|most|every)?\s*(?:smart |savvy |serious |good |right |sophisticated )?(?:buyers?|acquirers?|purchasers?)\b[^.?!]*\b(?:will|would|should|tend to|typically|usually)\b/i,
   // Recaps of the seller's own point / the file's state
-  /\byou(?:'ve| have) already (?:flagged|covered|mentioned|noted|said|addressed|identified|thought)\b|\bi (?:now )?have a (?:clear|good|full|solid|great|much (?:clearer|better)) (?:picture|sense|read|understanding)\b|\bmade (?:good|great|real|solid) progress\b|\bwe (?:have|now have|'ve got) (?:strong|good|solid|great|comprehensive|thorough|detailed) (?:documentation|coverage|detail|information|data)\b|\bwhich is why\b|\b(?:will|would) likely be part of\b|\bdirectly (?:impacts?|affects?)\b/i,
+  /\byou(?:'ve| have) already (?:flagged|covered|mentioned|noted|said|addressed|identified|thought)\b|\bi (?:now )?have a (?:clear|good|full|solid|great|much (?:clearer|better)) (?:picture|sense|read|understanding)\b|\bmade (?:(?:really|very|some|such) )?(?:good|great|real|solid|excellent|terrific|tremendous|fantastic|wonderful|strong|amazing|significant|substantial|a lot of|lots of|huge) progress\b|\b(?:all |are all |is all )?(?:well|nicely|thoroughly|fully) (?:captured|covered|documented|understood)\b|\bwe (?:have|now have|'ve got) (?:strong|good|solid|great|comprehensive|thorough|detailed) (?:documentation|coverage|detail|information|data)\b|\bwhich is why\b|\b(?:will|would) likely be part of\b|\bdirectly (?:impacts?|affects?)\b/i,
   // Buyer cheerleading and valuation commentary
   /\b(?:buyers?|acquirers?|lenders?|insurers?|investors?|purchasers?|a buyer|the buyer|the right buyer)\b[^.?!]{0,60}\b(?:love|like|appreciate|value|reward|want to (?:see|hear)|need to hear|will (?:love|like|appreciate|value|notice|want to see)|pay (?:more|a premium)|look for|are looking for|tend to look for|feel confident|(?:will |would )?(?:want|need|expect) (?:certainty|comfort|confidence|assurance|clarity|to (?:know|understand|see))|prioriti[sz]e)\b/i,
-  /\b(?:gives?|give|giving|provides?) (?:a |the )?(?:buyers?|them|a buyer|the buyer|buyers and their \w+)\b[^.?!]{0,30}\b(?:confidence|comfort|a clear picture|certainty|peace of mind|a sense of|real|a (?:clear |real )?path|runway|a head start)\b|\b(?:will|would|should) (?:land|play|read|sit|go over) well\b|\bland well\b|\bmatters? (?:to|for|in) (?:buyers|valuation|a buyer|the deal)\b|\bwill matter to\b|\bthe distinction that matters\b|\bwhat (?:buyers|they|a buyer) (?:want|need|like|love|expect) to (?:see|hear)\b|\bexactly (?:what|the kind)\b|\bthe kind of (?:detail|thing|answer|number|signal|stuff|insight|story)\b|\bremoves? (?:a |the |most of the |one )?(?:major |big |key |common |real )?(?:\w+ )?(?:risk|concern|obstacle|question mark)\b|\bde-?risks?\b|\b(?:a )?(?:real|genuine|clear|big|major) (?:asset|strength|differentiator|plus|advantage)\b|\bspeaks for itself\b|\btells a (?:good|great|strong) story\b|\bcomes? through clearly\b|\bwell below (?:the )?industry\b|\bincreasingly rare\b|\bsmart (?:planning|move|approach|buyer)\b|\bgood (?:to (?:know|hear|have|see|get)|detail|news|sign)\b|\blines up with what i'?d expect\b|\bin (?:a )?(?:good|great|strong) (?:place|position|shape)\b|\bwell[- ]positioned\b|\bbuyers? (?:and their \w+ )?(?:will|would) (?:definitely |certainly )?(?:want|need) (?:that |this |it )?nailed down\b|\byou(?:'ve| have) built\b|\bsomething (?:solid|special|great|real)\b|\b(?:cleaner|stronger|better) [\w ]{0,30}(?:i'?ve seen|out there)\b/i,
+  /\b(?:gives?|give|giving|provides?) (?:a |the )?(?:buyers?|them|a buyer|the buyer|buyers and their \w+)\b[^.?!]{0,30}\b(?:confidence|comfort|a clear picture|certainty|peace of mind|a sense of|real|a (?:clear |real )?path|runway|a head start)\b|\b(?:will|would|should) (?:land|play|read|sit|go over) well\b|\bland well\b|\bmatters? (?:to|for|in) (?:buyers|valuation|a buyer|the deal)\b|\bwill matter to\b|\bthe distinction that matters\b|\bwhat (?:buyers|they|a buyer) (?:want|need|like|love|expect) to (?:see|hear)\b|\bexactly (?:what|the kind)\b|\bthe kind of (?:detail|thing|answer|number|signal|stuff|insight|story)\b|\bremoves? (?:a |the |most of the |one )?(?:major |big |key |common |real )?(?:\w+ )?(?:risk|concern|obstacle|question mark)\b|\bde-?risks?\b|\b(?:a )?(?:real|genuine|clear|big|major) (?:asset|strength|differentiator|plus|advantage)\b|\bspeaks for itself\b|\b(?:will|would|should|could|is going to|are going to) (?:really |definitely |certainly )?resonate\b|\bresonates? (?:with|well)\b|\btells a (?:good|great|strong) story\b|\bcomes? through clearly\b|\bwell below (?:the )?industry\b|\bincreasingly rare\b|\bsmart (?:planning|move|approach|buyer)\b|\bgood (?:to (?:know|hear|have|see|get)|detail|news|sign)\b|\blines up with what i'?d expect\b|\bin (?:a )?(?:good|great|strong) (?:place|position|shape)\b|\bwell[- ]positioned\b|\bbuyers? (?:and their \w+ )?(?:will|would) (?:definitely |certainly )?(?:want|need) (?:that |this |it )?nailed down\b|\byou(?:'ve| have) built\b|\bsomething (?:solid|special|great|real)\b|\b(?:cleaner|stronger|better) [\w ]{0,30}(?:i'?ve seen|out there)\b/i,
 ];
 // Session recaps in front of a question ("We've covered a lot of ground —
 // your market position, referral channels…").
@@ -864,11 +901,16 @@ export function isFillerSentence(sentence: string, sellerMessage?: string | null
   if (!s || s.includes("?")) return false;
   if (RECAP_RECORDED_RE.test(s)) return true;
   if (isWork(s)) return false;
+  // An aside between dashes hides the verdict from the back-reference
+  // check: "That differentiation — the 45-minute follow-ups, continuity of
+  // care — will resonate with buyers" is "That differentiation will
+  // resonate with buyers" (seen live after round 1).
+  const flat = s.replace(/\s[\u2014\u2013]\s[^\u2014\u2013.?!]{1,220}?\s[\u2014\u2013]\s/g, " ");
+  const any = (re: RegExp) => re.test(s) || (flat !== s && re.test(flat));
   if (QUESTION_PRAISE_SENTENCE_RE.test(s)) return true;
   if (ACK_START_RE.test(s)) return true;
-  if (BACKREF_VERDICT_RE.test(s)) return true;
-  if (RECAP_START_RE.test(s)) return true;
-  if (GRADING_PATTERNS.some((re) => re.test(s))) return true;
+  if (any(RECAP_START_RE)) return true;
+  if (GRADING_PATTERNS.some(any)) return true;
   // Mostly the seller's own words played back ("A range of six to seven
   // thousand active patients, with Carol pulling the exact count.").
   if (sellerMessage) {
@@ -879,8 +921,19 @@ export function isFillerSentence(sentence: string, sellerMessage?: string | null
       if (echoed / own.length >= 0.7) return true;
     }
   }
+  // A figure, a comparison or an implication the question stands on is
+  // context, not a comment — even when it opens with "That's": "That's
+  // about $400K more than the T2 shows.", "That's net of the $180K owner
+  // salary.", "That would make Leah your only senior physio." (It got here
+  // without a grade, so there's nothing evaluative in it.)
+  if (FACT_CONTEXT_RE.test(s)) return false;
+  if (any(BACKREF_VERDICT_RE)) return true;
   return false;
 }
+
+/** A lead sentence carrying a figure, a comparison or an implication. */
+const FACT_CONTEXT_RE =
+  /\$\s?\d|\d[\d,.]*\s?(?:%|percent\b)|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand|people|employees|staff|techs?|trucks?|units?|clients?|customers?|patients?|locations?|sites?|years?|months?|weeks?|days?|hours?|sq\.? ?ft|square feet)\b|\b(?:more|less|higher|lower|bigger|smaller|larger|fewer|greater|older|newer|longer|shorter) than\b|\bnet of\b|\b(?:before|after|excluding|including|net|gross) (?:of )?(?:the |your |any )?(?:refunds?|returns?|tax(?:es)?|salary|salaries|owner|addbacks?|add-backs?|depreciation|interest|rent|fees|discounts?|cogs|expenses|chargebacks?|hst|gst|payroll|wages)\b|\bgross (?:figure|number|revenue|sales|amount|margin)\b|\b(?:up|down) from\b|\bcompared (?:to|with)\b|\binstead of\b|\brather than\b|\bthe first i'?ve heard\b|\bnew to me\b|^(?:that|this|which) (?:would|will|could|might) (?:mean|make|leave|put)\b/i;
 
 /** Praise of the seller or the business in a goodbye — the recap itself stays. */
 const CLOSING_PRAISE_PATTERNS: RegExp[] = [
@@ -940,7 +993,7 @@ function rebuild(spans: Span[], cut: Set<number>): string {
 // Also "I appreciate the context on differentiation — but …" and
 // "Understood on the team stability — and …" in front of the question.
 const ACK_PREFIX_RE =
-  /^(?:(?:good|great|perfect|excellent|got it|thanks|thank you|understood|okay|ok|exactly|absolutely|makes sense|noted|right|sure|that'?s (?:helpful|great|good|clear|useful|fair|interesting))|(?:i )?appreciate (?:the|that|you|it|your)[^\u2014\u2013.?!]{0,60}|(?:understood|noted|thanks?) (?:on|for|about) [^\u2014\u2013.?!]{1,60})\s*(?:[\u2014\u2013:,]|\s-)\s*(?:(?:but|and|so)\s+)?(?=\S)/i;
+  /^(?:(?:good|great|perfect|excellent|got it|thanks|thank you|understood|okay|ok|exactly|absolutely|makes sense|noted|right|sure|that'?s (?:helpful|great|good|clear|useful|fair|interesting))|(?:i )?(?:really )?appreciate (?:the|that|you|it|your|all|this|these|those)[^\u2014\u2013.?!]{0,60}|(?:understood|noted|thanks?) (?:on|for|about) [^\u2014\u2013.?!]{1,60})\s*(?:[\u2014\u2013:,]|\s-)\s*(?:(?:but|and|so)\s+)?(?=\S)/i;
 // A sentence left leading with a back-reference once what it referred to was
 // cut: "It shows operational leverage as the 3PL side scales." (Pacific T17).
 const DANGLING_BACKREF_RE = /^(?:it|this|that|which|these|those|they|so|and|but|also)\b/i;
@@ -983,10 +1036,18 @@ function stripOpeners(message: string, sellerMessage: string | null): string {
   const q = spans.findIndex((s) => s.text.includes("?"));
   if (q < 0) return message; // nothing to ask after it (the no-question guard handles these)
   const cut = new Set<number>();
+  let edited = false;
   for (let i = 0; i < q; i++) {
     const s = spans[i].text;
     if (isFillerSentence(s, sellerMessage)) cut.add(i);
     else if (cut.has(i - 1) && DANGLING_BACKREF_RE.test(s.trim()) && !isWork(s)) cut.add(i);
+    else {
+      // A sentence kept for its work can still open with a grade: "That
+      // $12-15 range is useful for now — if Kyle can send that spreadsheet…"
+      // → "If Kyle can send that spreadsheet…".
+      const trimmed = dropGradePrefix(s);
+      if (trimmed !== s) { spans[i] = { text: trimmed }; edited = true; }
+    }
   }
   // Buyer-rationale tacked on after the last question belongs in
   // whyItMatters ("Buyers will want to see whether the growth is a one-year
@@ -995,7 +1056,6 @@ function stripOpeners(message: string, sellerMessage: string | null): string {
   for (let i = lastQ + 1; i < spans.length; i++) {
     if (isFillerSentence(spans[i].text, sellerMessage)) cut.add(i);
   }
-  let edited = false;
   // The question sentence itself: drop an acknowledgement prefix.
   const qTrim = spans[q].text.replace(/^\s+/, "");
   const prefix = qTrim.match(ACK_PREFIX_RE);
@@ -1014,6 +1074,29 @@ function stripOpeners(message: string, sellerMessage: string | null): string {
   return rebuild(spans, cut);
 }
 
+/**
+ * "<grade> — <work>" → "<work>". Only a real grade goes (a verdict or
+ * praise); a plain acknowledgement in front of a privacy promise or a
+ * document request ("Understood — that stays with your broker only", "No
+ * problem — if Donna can send…") is a human beat and stays.
+ */
+function dropGradePrefix(sentence: string): string {
+  const m = sentence.match(/^(\s*)([^\u2014\u2013?]{3,200}?)\s[\u2014\u2013]\s([\s\S]+)$/);
+  if (!m) return sentence;
+  const head = m[2].trim().replace(/[\u2019\u2018]/g, "'");
+  const rest = m[3];
+  if (ACK_START_RE.test(head) || isWork(head) || !isWork(rest) || wordCount(rest) < 4) return sentence;
+  const graded = GRADING_PATTERNS.some((re) => re.test(head)) || (!FACT_CONTEXT_RE.test(head) && BACKREF_VERDICT_RE.test(head));
+  if (!graded) return sentence;
+  return m[1] + capitalise(rest);
+}
+
+// Praise strong enough that it is never the answer to a seller's question,
+// even when it shares a word with it ("That makes complete sense, and it's
+// exactly the kind of insight that helps the right buyer…").
+const STRONG_PRAISE_RE =
+  /\bexactly (?:what|the kind|the sort|the type)\b|\bresonat\w*|\bcomes? through clearly\b|\byou(?:'ve| have) built\b|\bgenuine(?:ly)? (?:differentiator|rare|strength|asset)\b|\b(?:real|genuine|big|major|huge) (?:asset|strength|differentiator)\b|\bmakes? (?:complete|total|perfect) sense\b|\bspeaks for itself\b|\b(?:great|good|excellent|smart|fair) (?:question|point|instinct)\b|\blove (?:that|this|it)\b|\bmade (?:(?:really|very) )?(?:good|great|excellent|real|solid) progress\b/i;
+
 function stripClosingPraise(message: string): string {
   const text = message.trim();
   const spans = splitSentences(text);
@@ -1025,6 +1108,15 @@ function stripClosingPraise(message: string): string {
     if (CLOSING_PRAISE_PATTERNS.some((re) => re.test(s))) cut.add(i);
   });
   if (cut.size === 0 || cut.size === spans.length) return message;
+  // "Thank you for being so thorough — this is one of the cleaner pictures
+  // I've seen." goes as praise; the goodbye keeps a plain thanks.
+  const thanksCut = Array.from(cut).find((i) => /^(?:thanks?|thank you)\b/i.test(spans[i].text.trim()));
+  const thanksKept = spans.some((sp, i) => !cut.has(i) && /\b(?:thanks?|thank you)\b/i.test(sp.text));
+  if (thanksCut !== undefined && !thanksKept) {
+    cut.delete(thanksCut);
+    const trailing = spans[thanksCut].text.match(/\s*$/)?.[0] ?? "";
+    spans[thanksCut] = { text: `Thank you.${trailing}` };
+  }
   return rebuild(spans, cut);
 }
 
@@ -1066,6 +1158,7 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
       // "Good to know the landlord is receptive." opens with an
       // acknowledgement, not an answer — even when it names what was asked.
       (!answerExpected && !reportsRecord && !answerStart && ACK_START_RE.test(h) && isFillerSentence(h, null)) ||
+      (!answerExpected && !answerStart && !isWork(h) && STRONG_PRAISE_RE.test(h)) ||
       (!answerExpected &&
         !reportsRecord &&
         isFillerSentence(h, null) &&
@@ -1091,7 +1184,7 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
  * read like the form it must never feel like (QA harvest, Pacific T15/T17).
  */
 const INTERNAL_MACHINERY_RE =
-  /\bmandatory probes?\b|\b(?:need|have|want) to check off\b|\bcheck(?:ing)? (?:it|them|that|this|those|these) off\b|\bcoverage (?:map|dashboard|panel|list|gaps?|checklist)\b|\bknowledge base\b|\b(?:deferral )?ledger\b|\bopen deferrals?\b|\bsystem (?:note|override|instructions?|prompt|correction)s?\b|\bCIM sections?\b|\bsection (?:priorities|coverage)\b|\bmy (?:checklist|list of (?:questions|items|topics)|notes say|outline|playbook|coverage)\b|\b(?:industry|interview) playbook\b|\binterview (?:plan|outline)\b|\bpriorCheck\b|\bextracted ?fields\b|\bALREADY ANSWERED\b|\bmarked as (?:critical|important|helpful)\b/i;
+  /\bmandatory probes?\b|\b(?:need|have|want) to check off\b|\bcheck(?:ing)? (?:it|them|that|this|those|these) off\b|\bcoverage (?:map|dashboard|panel|list|checklist)\b|(?<!\b(?:your|our|their|client|clients'|customer|customers'|support|internal|team|it|documentation|shared) )\bknowledge base\b|\b(?:deferral|my) ledger\b|\bopen deferrals?\b|\bsystem (?:note|override|instructions?|prompt|correction)s?\b|\bCIM sections?\b|\bsection (?:priorities|coverage)\b|\bmy (?:checklist|list of (?:questions|items|topics)|notes say|outline|playbook|coverage)\b|\b(?:industry|interview) playbook\b|\binterview (?:plan|outline)\b|\bpriorCheck\b|\bextracted ?fields\b|\bALREADY ANSWERED\b|\bmarked as (?:critical|important|helpful)\b|\bstop signals?\b/i;
 
 export function leaksInternalMachinery(text: string): boolean {
   return INTERNAL_MACHINERY_RE.test(text);
@@ -1106,14 +1199,17 @@ export function leaksInternalMachinery(text: string): boolean {
  */
 export function scrubInternalMachinery(text: string): string {
   let out = text.replace(
-    /(^|[.!?]\s+|\n)([^.!?:\n]*?\b(?:mandatory probes?|check (?:it |them |that |this )?off|coverage (?:map|dashboard|list|checklist)|knowledge base|ledger|my (?:checklist|list|outline|playbook))\b[^.!?:\n]*):\s*(\S)/gi,
+    /(^|[.!?]\s+|\n)([^.!?:\n]*?\b(?:mandatory probes?|check (?:it |them |that |this )?off|coverage (?:map|dashboard|list|checklist)|knowledge base|(?:deferral |my )ledger|my (?:checklist|list|outline|playbook))\b[^.!?:\n]*):\s*(\S)/gi,
     (_m, lead: string, _clause: string, next: string) => `${lead}${next.toUpperCase()}`,
   );
   out = out.replace(/\b(?:the |my )?(?:coverage (?:map|dashboard|panel|list)|knowledge base|interview (?:plan|outline)|checklist) (?:shows|has|lists|says)\b/gi, "I have");
   if (!leaksInternalMachinery(out)) return out.trim();
   const sentences = out.split(/(?<=[.!?])\s+/);
   const kept = sentences.filter((s) => !leaksInternalMachinery(s));
-  if (kept.some((s) => s.includes("?"))) out = kept.join(" ");
+  // Drop the sentences that name it — when a question survives, or when the
+  // reply never asked one (a goodbye: "Since the seller stop signal came
+  // through, I want to respect your time.").
+  if (kept.some((s) => s.includes("?")) || (kept.length > 0 && !out.includes("?"))) out = kept.join(" ");
   else out = out.replace(INTERNAL_MACHINERY_RE, "what I have so far");
   out = out.trim();
   return out.charAt(0).toUpperCase() + out.slice(1);

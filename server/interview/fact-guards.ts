@@ -48,7 +48,7 @@ type Info = Record<string, unknown>;
 // =====================
 
 const STOPWORDS = new Set(
-  "about above after again also and any are because been before being below between both but can cannot could did does doing down during each few for from further had has have having here how into its just like more most much must need needs other our ours out over own really same should some such than that the their theirs them then there these they this those through too under until very was were what when where which while who why will with would you your yours business thing things something anything know think said says just".split(" "),
+  "about above after again also and any are because been before being below between both but can cannot could did does doing down during each few for from further had has have having here how into its just like more most much must need needs other our ours out over own really same should some such than that the their theirs them then there these they this those through too under until very was were what when where which while who why will with would you your yours business thing things something anything know think said says just every each even still many well right sure actually honestly exactly maybe probably".split(" "),
 );
 const stems = (text: string): Set<string> =>
   new Set(
@@ -66,9 +66,33 @@ const overlap = (a: Set<string>, b: Set<string>) => Array.from(a).filter((w) => 
 /**
  * The seller withdrawing something they said: "take those numbers back", "I
  * was guessing", "scratch that", "don't put that in", "ignore what I said".
+ *
+ * Every form is anchored to the SELLER as speaker and to this conversation —
+ * first person ("let me take those back", "I was guessing") or an instruction
+ * to the interviewer ("scratch that", "don't put that in the book") — so the
+ * same verbs describing the business never read as a withdrawal: "we take
+ * the old units back and recycle them", "we take it back, no questions
+ * asked", "we don't use it in the winter", "customers forget that we do
+ * repairs" (review-caught: each one fired the retraction path, which could
+ * delete the seller's previous answer).
  */
-export const RETRACTION_RE =
-  /\b(?:take (?:that|those|it|this|them|back what i said|(?:that|those|the|my) [\w-]+(?: [\w-]+)?) back|i was (?:just |only |kind of |sort of )?guessing|(?:that|those|it) (?:was|were) (?:just )?(?:a )?guess(?:es)?|scratch that|ignore (?:what i (?:just )?said|that(?: last)?(?: number| figure| part| bit)?|those (?:numbers|figures))|don'?t (?:put|write|include|use|record) (?:that|those|it|this|them)(?: \w+){0,3} (?:in|down)|(?:strike|disregard|forget) (?:that|those|what i said)|i (?:mis-?spoke|shouldn'?t have said)|leave (?:that|those|it|them) out(?: of the (?:book|cim|document))?)\b/i;
+// An instruction to the interviewer starts its clause: "Scratch that", "…,
+// actually don't put that in", "Oh — ignore what I said".
+const IMPERATIVE_AT = String.raw`(?<=^|[.!?;:,(—–-]\s{0,3}|\b(?:please|just|actually|oh|so|and|but|ok|okay|no|wait|sorry|hmm|um|also|then|yeah|you can|can you|could you)\s{1,3})`;
+const RETRACTION_FORMS = [
+  // "Let me take those mold numbers back", "I take that back", "I'd like to take back what I said"
+  String.raw`(?:let me|lemme|i(?:'ll| will|'d like to| would like to| want to| wanna| need to| have to| gotta| should| must| better)?|can i|could i) take (?:that|those|it|this|them|(?:that|those|the|my) [\w-]+(?: [\w-]+)?) back(?! (?:to|from|into|in|for|and|at|on|off|when|every|each|as|with|under|through)\b)`,
+  String.raw`(?:let me|lemme|i(?:'d like to| would like to| want to| wanna| need to| have to| should)?) take back (?:what i (?:just )?said|that(?: last)?(?: number| figure| part| bit)?|those (?:numbers|figures))`,
+  String.raw`i was (?:just |only |really |kind of |sort of |kinda )?guessing(?=\s*(?:[.,;:!?—–)-]|$|\s(?:on|about|there|at|with|when|before|earlier|here|and|so|but|really|honestly|though)\b))`,
+  String.raw`(?:that|those|it|this) (?:was|were|is|are) (?:just |only |really |more of |more like )?(?:a |my )?(?:rough |wild |total )?guess(?:es|timates?)?(?=\s*(?:[.,;:!?—–)-]|$|\s(?:on my part|really|honestly|so|and|but|though|at best)\b))`,
+  String.raw`${IMPERATIVE_AT}scratch that(?! (?:off|out|from)\b)`,
+  String.raw`${IMPERATIVE_AT}ignore (?:what i (?:just )?said|that(?: last)?(?: number| figure| part| bit| answer)?(?=\s*(?:[.,;:!?—–-]|$|\s(?:i|it|the|we)\b))|those (?:numbers|figures))`,
+  String.raw`${IMPERATIVE_AT}don'?t (?:put|write|include|use|record|keep) (?:that|those|it|this|them)(?: \w+){0,3} (?:in|down|on file)(?=\s*(?:[.,;:!?—–-]|$|\s(?:the|your|any|my|there|please|yet)\b))`,
+  String.raw`${IMPERATIVE_AT}(?:strike|disregard|forget) (?:that(?: last)?(?: number| figure| part| bit| answer)?(?=\s*(?:[.,;:!?—–-]|$))|those (?:numbers|figures)|what i (?:just )?said)`,
+  String.raw`i (?:mis-?spoke|shouldn'?t have said (?:that|it|those))`,
+  String.raw`${IMPERATIVE_AT}(?:leave|keep) (?:that|those|it|them) out(?: of (?:the|your|any) (?:book|cim|document|memo|write-?up|materials|notes))?(?=\s*(?:[.,;:!?—–-]|$|\s(?:please|for now|i|it)\b))`,
+];
+export const RETRACTION_RE = new RegExp(`\\b(?:${RETRACTION_FORMS.join("|")})`, "i");
 
 export function detectRetraction(sellerMessage: string): boolean {
   return RETRACTION_RE.test(sellerMessage.replace(/[’‘]/g, "'"));
@@ -204,8 +228,11 @@ export function restatesWithdrawnValue(newValue: string, withdrawn: string, sell
 /**
  * Fallback when the seller clearly withdrew something but the model named no
  * field: the facts the seller's PREVIOUS turn wrote in this session that the
- * retraction talks about ("those mold numbers" → toolingOwnership). Exactly
- * one candidate from the previous turn is taken even without shared words.
+ * retraction talks about ("those mold numbers" → toolingOwnership). With no
+ * shared words, the previous turn's only fact is taken only when the whole
+ * message is a short withdrawal ("Scratch that — I was guessing."); in a
+ * longer answer the model, which was just told the seller withdrew
+ * something and still named nothing, is trusted over the pattern.
  */
 export function guessRetractedFields(info: Info, sellerMessage: string, ctx: { sessionId: string; turn: number }): string[] {
   const sources = getFieldSources(info);
@@ -220,7 +247,8 @@ export function guessRetractedFields(info: Info, sellerMessage: string, ctx: { s
     return overlap(stems(text), said) > 0;
   });
   if (matching.length > 0) return matching;
-  return lastTurn.length === 1 ? lastTurn : [];
+  const words = (sellerMessage.trim().match(/\S+/g) ?? []).length;
+  return lastTurn.length === 1 && words <= 20 ? lastTurn : [];
 }
 
 /** Who the seller says holds the real answer: "Rob keeps the tooling list" → "Rob". */
@@ -252,17 +280,47 @@ const YEAR_RE = /\b(19\d{2}|20\d{2})\b/g;
 
 const FUTURE_RE = /\b(?:will|'ll|going to|gonna|plan(?:ning)? to|planned|planning|scheduled|expect(?:ing|ed)? to|next|upcoming|coming up|intend|hope to|aim(?:ing)? to|about to|set to|due (?:in|to))\b|\b(?:are|'re|is|'s|am|'m) \w+ing\b/i;
 const PAST_RE = /\b(?:was|were|did|had|got|went|came|made|last|ago|back in|already|just|used to|happened|\w+ed)\b/i;
+// "was expecting to…", "were planning…" — past, though FUTURE_RE matches the -ing.
+const PAST_PROGRESSIVE_RE = /\b(?:was|were) (?:\w+ing|going to|planning|expecting|hoping)\b/i;
 
 export type Tense = "past" | "future" | "unknown";
 
-/** Past or future, from the seller's sentence that names the month. */
-export function tenseOf(sentence: string, cue?: string): Tense {
+/**
+ * Past or future, from the seller's words around the month. `sentence` is
+ * the clause that names the month (see clauseAround) — the verb of THAT
+ * clause decides: in "Leah just got the raise in October, so she's
+ * staying" the month belongs to "got" (past), not to "she's staying"
+ * (review-caught: reading the whole sentence turned a correct October 2025
+ * into October 2026). `wider` (the whole sentence) is only consulted when
+ * the clause has no verb that decides it.
+ */
+export function tenseOf(sentence: string, cue?: string, wider?: string): Tense {
   const c = (cue ?? "").toLowerCase();
   if (c === "last" || c === "back in" || c === "since") return "past";
   if (c === "next" || c === "coming" || c === "come" || c === "by" || c === "until" || c === "til") return "future";
-  if (FUTURE_RE.test(sentence)) return "future";
-  if (PAST_RE.test(sentence)) return "past";
+  for (const text of [sentence, wider].filter((s): s is string => !!s)) {
+    if (PAST_PROGRESSIVE_RE.test(text)) return "past";
+    if (FUTURE_RE.test(text)) return "future";
+    if (PAST_RE.test(text)) return "past";
+  }
   return "unknown";
+}
+
+/**
+ * The clause of `text` that holds `index`: sentence breaks, commas, dashes,
+ * semicolons and the conjunctions that start a new clause ("so", "and",
+ * "but", "because", "while", "which"…) bound it.
+ */
+export function clauseAround(text: string, index: number): string {
+  const BOUNDARY = /[.!?;,\n\u2014\u2013]|\s(?:so|and|but|because|while|although|though|whereas|which|then|plus|or)\s/gi;
+  let start = 0;
+  let end = text.length;
+  for (const m of Array.from(text.matchAll(BOUNDARY))) {
+    const at = m.index ?? 0;
+    if (at + m[0].length <= index) start = at + m[0].length;
+    else if (at > index) { end = at; break; }
+  }
+  return text.slice(start, end);
 }
 
 /**
@@ -407,7 +465,7 @@ export function applyDateFidelityGuard(
         continue; // otherwise not a month the seller just gave — the bare-year check below decides
       }
       handledYearsAt.add(m.index ?? -1);
-      const tense = tenseOf(sentenceAround(seller, spoken.index ?? 0), spoken[1]);
+      const tense = tenseOf(clauseAround(seller, spoken.index ?? 0), spoken[1], sentenceAround(seller, spoken.index ?? 0));
       const resolved = resolveMonthYear(month, tense, today);
       if (resolved === null) {
         verify = true;

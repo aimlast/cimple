@@ -13,6 +13,8 @@ import {
   applyLegalGroundingGuard,
   findLegalAssertions,
   recordFactSpeakers,
+  tenseOf,
+  clauseAround,
 } from "../../server/interview/fact-guards";
 import {
   leaksInternalMachinery,
@@ -297,6 +299,63 @@ const change = (fieldName: string, newValue: string, newConfidence = "confirmed"
   assert.equal(fallbackQuestion("Ask about the pharmacy's prepaid services because buyers inherit them", "operations"), "Could you walk me through the pharmacy's prepaid services?");
   assert.match(fallbackQuestion("", "real_estate"), /\?$/);
   ok("fallback question always ends with a question mark");
+}
+
+// ── 9. Round-2 review: ordinary answers aren't retractions; a month's own clause sets its tense ──
+{
+  for (const s of [
+    "When we replace a furnace we take the old units back and recycle them through Enviro-Cycle.",
+    "If a customer isn't happy we take it back, no questions asked.",
+    "We don't use it in the winter, the patio closes in October.",
+    "We don't use them in production anymore since the new press came in.",
+    "A lot of customers forget that we do repairs too, not just installs.",
+    "We leave them out in the yard over the winter.",
+    "I was guessing the weather would hold, but it didn't.",
+    "Customers ignore that rule all the time.",
+  ]) assert.equal(detectRetraction(s), false, `not a retraction: ${s}`);
+  for (const s of [
+    "Let me take those mold numbers back — I was guessing.",
+    "Scratch that, it's 14 not 12.",
+    "I take that back — it's closer to 40.",
+    "Actually, don't put that in the book.",
+    "Please leave that out of the CIM.",
+    "Honestly that was just a guess.",
+    "Oh, ignore what I said about the margins.",
+  ]) assert.equal(detectRetraction(s), true, `retraction: ${s}`);
+  // With no shared words, a long answer never gives up the previous turn's fact.
+  const info: Record<string, unknown> = {
+    warrantyTerms: "10-year parts, 2-year labour on every install",
+    _fieldSources: { warrantyTerms: { source: "interview", sessionId: "s1", turn: 6 } },
+  };
+  assert.deepEqual(
+    guessRetractedFields(info, "Scratch that — I was guessing on the numbers there, honestly, and I'd rather Denise pulls the real warranty sheet before anything goes in the book for buyers.", { sessionId: "s1", turn: 7 }),
+    ["warrantyTerms"],
+    "shared word (warranty) → it's the one",
+  );
+  assert.deepEqual(
+    guessRetractedFields(info, "Scratch that, I was guessing — Denise pulls those reports every month from the system and she would know exactly, so ask her.", { sessionId: "s1", turn: 7 }),
+    [],
+    "no shared word in a long message → the model's silence is trusted",
+  );
+  assert.deepEqual(guessRetractedFields(info, "Scratch that, I was guessing.", { sessionId: "s1", turn: 7 }), ["warrantyTerms"], "a bare withdrawal takes the only fact");
+
+  // Dates: the clause that names the month decides the tense.
+  assert.equal(clauseAround("Leah just got the raise in October, so she's staying.", 26).trim(), "Leah just got the raise in October");
+  assert.equal(tenseOf("Leah just got the raise in October"), "past");
+  const cases: Array<[string, string, RegExp]> = [
+    ["Leah just got the raise in October, so she's staying.", "Leah got a raise in October 2025 and is staying", /October 2025/],
+    ["We signed the new lease in March and we're expanding the gym side now.", "New lease signed March 2026", /March 2026/],
+    ["Sales dipped in January because we're doing fewer installs in winter.", "Sales dipped in January 2026", /January 2026/],
+    ["We're promoting him in May, and he's been great.", "Promotion planned May 2025", /May 2027/],
+    ["He's getting promoted in May.", "Promotion May 2026", /May 2027/],
+    ["We were expecting to open Seton in March, but it slipped.", "Seton opening expected March 2027", /March 2026/],
+  ];
+  for (const [said, value, want] of cases) {
+    const c = change("f", value);
+    applyDateFidelityGuard([c], {}, { sellerMessage: said, today: TODAY });
+    assert.match(c.newValue, want, `${said} → ${c.newValue}`);
+  }
+  ok("round 2: 'we take the old units back' / 'we don't use it in the winter' aren't retractions; past clauses stay past next to a present one");
 }
 
 console.log(`\n${n} groups passed`);

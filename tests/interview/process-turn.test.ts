@@ -67,13 +67,73 @@ const TURN6 =
     assert.equal(h.deal.interviewCompleted, true);
     ok("a real stop ends the interview after the one closing question");
 
+    // The seller answers the closing question in full — a long answer is
+    // still an answer, not a change of mind: the stop stands.
+    const closing = "Understood. One last one: who holds the Hillhurst lease — you or the corporation? Or shall we wrap up for today?";
+    const fullAnswer =
+      "The corporation holds it, Clearwater Physiotherapy and Wellness Inc. is the tenant, and I signed a personal guarantee back in 2017 when we renewed. The landlord is Hillhurst Commons and the renewal window opens August 31.";
+    const h3 = installHarness(baseDeal(), { messages: [...clearwaterHistory, seller("I have to run, let's continue later"), ai(closing)], sessionMeta: { _stopSignalCount: 1 } });
+    h3.script.push({ message: "Thanks, Amrit — the lease details are saved, and you can pick this up anytime.", shouldEnd: true, endReason: "seller asked to stop" });
+    const long = await processTurn("deal-1", "sess-1", fullAnswer);
+    assert.equal(long.shouldEnd, true, "the stop stands after a full answer to the closing question");
+    assert.equal(has(h3, /Blocked premature interview end/), false);
+    assert.equal(h3.deal.interviewCompleted, true);
+    ok("seller stop always wins: a full answer to the one closing question still ends");
+
+    // Two stops in a row (check run cw-B): the second forces the goodbye.
+    const h4 = installHarness(baseDeal(), { messages: [...clearwaterHistory] });
+    h4.script.push({ message: "Before you go — one quick one: who holds the Hillhurst lease, you or the corporation?", shouldEnd: false });
+    await processTurn("deal-1", "sess-1", "Sorry, I have to go to a meeting.");
+    assert.equal(has(h4, /Seller stop signal #1/), true);
+    // (the exact reply seen live: a goodbye with a question tacked on)
+    h4.script.push({ message: "Talk soon.\n\nWhat else should I understand about session end?", shouldEnd: false });
+    const forced = await processTurn("deal-1", "sess-1", "Sorry — I have to leave for an appointment, my next patient is waiting.");
+    assert.equal(has(h4, /Seller stop signal #2/), true);
+    assert.equal(forced.shouldEnd, true, "the second stop forces the end");
+    assert.doesNotMatch(forced.message, /\?/, "no question is appended to a goodbye");
+    assert.equal(has(h4, /Blocked premature interview end/), false);
+    ok("'Sorry, I have to go to a meeting.' then 'I have to leave for an appointment' ends the interview");
+
+    // Only a seller who SAYS they want to go on withdraws the stop.
     const h2 = installHarness(baseDeal(), { messages: [...clearwaterHistory, seller("I have to run, let's continue later"), ai(WRAP_OFFER)], sessionMeta: { _stopSignalCount: 1 } });
     h2.script.push({ message: "Thanks for your time.", shouldEnd: true, endReason: "seller asked to stop" });
     h2.script.push({ message: "What share of new patients come from the two family-practice groups?" });
-    const t = await processTurn("deal-1", "sess-1", TURN6);
-    assert.equal(t.shouldEnd, false, "declined the wrap-up — the earlier stop doesn't count");
+    const t = await processTurn("deal-1", "sess-1", `Actually I've got a few more minutes — let's keep going. ${TURN6}`);
+    assert.equal(t.shouldEnd, false, "the seller chose to continue — the earlier stop doesn't count");
     assert.equal(has(h2, /Blocked premature interview end/), true);
-    ok("a seller who keeps talking after '…or shall we wrap up?' is not ended");
+    ok("a seller who says 'let's keep going' after a stop is not ended");
+
+    // "Can we continue with the lease next?" is a seller who wants to go on (check run cw-A, turn 7).
+    const h5 = installHarness(baseDeal(), { messages: [...clearwaterHistory, seller(TURN5), ai("Who holds the relationship with the two family-practice groups day to day?")] });
+    h5.script.push({ message: "Thanks for your time today — everything is saved.", shouldEnd: true, endReason: "seller wants to stop" });
+    h5.script.push({ message: "On the Hillhurst lease: is there a personal guarantee on it?" });
+    const lease = await processTurn("deal-1", "sess-1", "Can we continue with the lease next? I have the Hillhurst lease paperwork in front of me right now.");
+    assert.equal(has(h5, /Seller stop signal/), false, "not a stop");
+    assert.equal(lease.shouldEnd, false);
+    assert.equal(h5.deal.interviewCompleted, false);
+    ok("'Can we continue with the lease next?' is not a stop, and the model can't end on it");
+  }
+
+  // ── 2b. An ordinary answer with "take … back" never withdraws the previous answer ──
+  {
+    const deal = baseDeal({
+      businessName: "Lakeshore Home Comfort",
+      extractedInfo: {
+        warrantyTerms: "10-year parts, 2-year labour on every install",
+        _fieldSources: { warrantyTerms: { source: "interview", sessionId: "sess-1", turn: 1, at: "2026-09-25T10:00:00Z" } },
+      },
+    });
+    const h = installHarness(deal, {
+      messages: [ai("What warranty do you give on installs?"), seller("10-year parts and 2-year labour on every install."), ai("What happens to the old equipment when you replace a system?")],
+    });
+    h.script.push({ message: "Who handles the recycling paperwork?", extractedFields: { equipmentDisposal: { value: "Old units taken back and recycled through Enviro-Cycle", confidence: "confirmed" } } });
+    await processTurn("deal-1", "sess-1", "When we replace a furnace we take the old units back and recycle them through Enviro-Cycle.");
+    const info = h.deal.extractedInfo as Record<string, any>;
+    assert.equal(h.calls.some((c) => /The seller just withdrew something/.test(c)), false, "no retraction re-call");
+    assert.equal(info.warrantyTerms, "10-year parts, 2-year labour on every install", "the previous answer is untouched");
+    assert.equal(info._brokerDeleted?.warrantyTerms, undefined);
+    assert.match(info.equipmentDisposal, /Enviro-Cycle/);
+    ok("'we take the old units back and recycle them' is an answer, not a retraction");
   }
 
   // ── 3. Retraction (Great Lakes session 1, turns 1–3) ──

@@ -3,7 +3,7 @@
 // saw reach a seller, followed by the real question it sat in front of.
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused npx tsx tests/interview/filler-guard.test.ts
 import assert from "node:assert/strict";
-import { stripFillerPreamble, isFillerSentence } from "../../server/interview/turn-guard";
+import { stripFillerPreamble, isFillerSentence, leaksInternalMachinery, scrubInternalMachinery } from "../../server/interview/turn-guard";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log("✓", name); };
@@ -188,6 +188,71 @@ const Q = "On the lease: is there a personal guarantee from you on it?";
     "For the CIM, we'll show the $3.1M signed backlog as the firm number and note the Westlock job separately.\n\nOn the Larkspur side — have you had any signal yet on the shortlist?",
   );
   ok("question mode keeps the answer and drops the grade");
+}
+
+// ── 6. Round-2 review: live misses, over-strips, closings ──
+{
+  // Seen live (check run cw-A): an aside between dashes hid the verdict.
+  const q = "On the regulatory side, though: have there been any complaints filed with the College of Physiotherapists of Alberta — open or resolved — against the clinic or any of your practitioners?";
+  assert.equal(
+    stripFillerPreamble(`That differentiation — the 45-minute follow-ups, continuity of care, and multi-generational patient relationships — will resonate with buyers who understand the space. ${q}`),
+    q,
+  );
+  assert.equal(
+    stripFillerPreamble("I appreciate all this context, but I want to make sure we close the loop on one specific item: have there been any complaints filed with the College?"),
+    "I want to make sure we close the loop on one specific item: have there been any complaints filed with the College?",
+  );
+  // Question mode: strong praise is never the answer, even sharing a word with the question.
+  assert.equal(
+    stripFillerPreamble(
+      "That makes complete sense, and it's exactly the kind of insight that helps the right buyer understand what they're stepping into. Who at the clinic would run the scheduling day to day?",
+      { sellerMessage: "I want to stay involved clinically and see it thrive. Does that make sense?" },
+    ),
+    "Who at the clinic would run the scheduling day to day?",
+  );
+  assert.equal(
+    stripFillerPreamble("It makes complete sense — that care model is clearly the engine behind the retention. I do need to pin down one regulatory item: any College complaints?", {
+      sellerMessage: "That's what I want buyers to understand. Does that make sense?",
+    }),
+    "I do need to pin down one regulatory item: any College complaints?",
+  );
+  // A grade in front of a document request goes; the request stays.
+  assert.equal(
+    stripFillerPreamble("That $12-15 range is useful for now — if Kyle can send that spreadsheet with the exact breakdown, that'll settle it. What does the core stack cost per endpoint?"),
+    "If Kyle can send that spreadsheet with the exact breakdown, that'll settle it. What does the core stack cost per endpoint?",
+  );
+  // Figures, comparisons and implications the question stands on are kept.
+  for (const k of [
+    "That's about $400K more than the T2 shows. Which number should buyers see?",
+    "That's 14 people, but the payroll register lists 12. Which is current?",
+    "That's 62% from one customer. How long is their current contract?",
+    "That's net of the $180K owner salary. What's the figure before your salary?",
+    "That's the gross figure before refunds. What were refunds and chargebacks last year?",
+    "That's a big jump from the $1.6M in 2023. What drove it?",
+    "That would make Leah your only senior physio after Mark leaves. Who covers her caseload if she's away?",
+    "This is the first I've heard of a second location. Where is it, and is it on the same lease?",
+  ]) assert.equal(stripFillerPreamble(k, { sellerMessage: "We did about $2.2 million last year with 14 people." }), k, `kept: ${k}`);
+  // …but a figure with a grade is still a grade.
+  assert.equal(isFillerSentence("That $47K premium with a clean claims history is actually favorable given the market."), true);
+  assert.equal(isFillerSentence("That's a strong 22% margin for the sector."), true);
+
+  // Closings: praise and machinery go, the facts and a thanks stay.
+  const cw = "We've covered the leases thoroughly from the documents — Hillhurst through May 2027, Seton through 2031. Since the seller stop signal came through, I want to respect your time. We've made excellent progress — the financials, payer mix and team structure are all well captured. Everything we've covered is saved, and you can pick this up anytime.";
+  const out = scrubInternalMachinery(stripFillerPreamble(cw, { closing: true }));
+  assert.doesNotMatch(out, /stop signal|excellent progress|well captured/);
+  assert.match(out, /Hillhurst through May 2027/);
+  assert.match(out, /Everything we've covered is saved/);
+  const hv = "We've covered the critical ground. The outstanding items are Kyle's tooling spreadsheet and the template employment agreement. Thank you for being so thorough — this is one of the cleaner operational pictures I've seen.";
+  assert.equal(
+    stripFillerPreamble(hv, { closing: true }),
+    "We've covered the critical ground. The outstanding items are Kyle's tooling spreadsheet and the template employment agreement. Thank you.",
+  );
+  // Business vocabulary is not machinery.
+  assert.equal(leaksInternalMachinery("Is the client documentation in your knowledge base current for every managed client?"), false);
+  assert.equal(leaksInternalMachinery("Does your general ledger separate the 3PL revenue from the trucking revenue?"), false);
+  assert.equal(leaksInternalMachinery("Are there any coverage gaps in your liability policy?"), false);
+  assert.equal(leaksInternalMachinery("Since the seller stop signal came through, I want to respect your time."), true);
+  ok("round 2: dash asides, 'appreciate all this', question-mode praise, graded doc requests; figures kept; closings cleaned");
 }
 
 console.log(`\n${n} groups passed`);

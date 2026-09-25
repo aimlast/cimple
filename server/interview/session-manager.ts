@@ -951,6 +951,14 @@ export async function processTurn(
     aiResponse.shouldEnd = true;
     aiResponse.endReason = aiResponse.endReason || "Seller asked to stop (repeated stop signals)";
   }
+  // A forced goodbye asks nothing — a question the model slipped in would be
+  // left hanging on an ended interview.
+  if (forcedEnd && asksQuestion(aiResponse.message)) {
+    const kept = aiResponse.message.split(/(?<=[.!?])\s+/).filter((s) => !s.includes("?")).join(" ").trim();
+    aiResponse.message = kept.length >= 12 ? kept : "Thanks for your time — everything you've shared is saved, and you can pick this up whenever suits you.";
+    if (!/\bsaved\b/i.test(aiResponse.message)) aiResponse.message += " Everything you've shared is saved, and you can pick this up whenever suits you.";
+    aiResponse.suggestedAnswers = [];
+  }
 
   // Merge extracted fields — against the facts exactly as the agent was
   // shown them (sellerInterviewView), so "already on file" and "a change"
@@ -1027,9 +1035,9 @@ export async function processTurn(
       minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
       // Only a stop THIS turn — or the answer to the one closing question a
       // stop on the previous turn allowed — permits an early end. A seller
-      // who was offered "…or shall we wrap up?" and kept talking about the
-      // business declined; an earlier (possibly false) stop no longer
-      // counts (QA harvest: Clearwater ended at 6 of 10 turns this way).
+      // who then says they'd rather keep going ("let's continue", "I've got
+      // a few more minutes") has withdrawn it; an older stop never counts
+      // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
       sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage)),
     });
 
