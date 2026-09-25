@@ -60,7 +60,9 @@ test("the AI prompt lists exactly the planner layouts", () => {
   const prompt = layoutSpecsForPrompt();
   for (const l of plannerLayouts()) assert.ok(prompt.includes(`${l.key}: {`), l.key);
   assert.ok(!prompt.includes("tag_cloud:"), "tag_cloud is broker-only");
-  assert.equal(plannerLayouts().length, 21, "the 21 layouts the engine always had");
+  // The 21 layouts the engine always had + the location map (cim-media).
+  assert.equal(plannerLayouts().length, 22);
+  assert.ok(!prompt.includes("image_gallery:") && !prompt.includes("video:"), "photos/videos are broker-only");
 });
 
 test("unknown layout types normalise to a narrative", () => {

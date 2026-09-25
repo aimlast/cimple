@@ -13,12 +13,16 @@
  * Below 1024px the three panes become tabs (Sections · Page · Edit).
  * Pieces live in client/src/components/cim-builder/.
  */
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowLeft, Eye, Loader2, Lock, Pencil, Plus, RefreshCw, Sparkles, Unlock, Wand2,
+  AlertTriangle, ArrowLeft, Eye, Images, Loader2, Lock, Pencil, Plus, RefreshCw, Sparkles, Unlock, Wand2,
 } from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { CimMediaProvider } from "@/components/cim/CimMediaContext";
+import { useMediaLibrary } from "@/components/cim-builder/media/api";
+import { MediaLibrary } from "@/components/cim-builder/media/MediaLibrary";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Textarea } from "@/components/ui/textarea";
@@ -77,6 +81,12 @@ export default function CIMDesigner() {
   const [regenTarget, setRegenTarget] = useState<BuilderSection | null>(null);
   const [regenBrief, setRegenBrief] = useState("");
   const [regenAllOpen, setRegenAllOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  // Unsaved photo/video/map edits, previewed live on the page.
+  const [draft, setDraft] = useState<{ id: string; layoutData: Record<string, any> } | null>(null);
+  const onDraftChange = useCallback((id: string, layoutData: Record<string, any> | null) => {
+    setDraft((cur) => (layoutData ? { id, layoutData } : cur?.id === id ? null : cur));
+  }, []);
 
   // ── Data ──────────────────────────────────────────────────────────────
   const dealQuery = useQuery<Deal>({
@@ -98,6 +108,7 @@ export default function CIMDesigner() {
   const state = builder.query.data;
   const sections = state?.sections ?? [];
   const gate = useAiGate(dealId);
+  const media = useMediaLibrary(dealId);
   const generation = useCimGeneration(dealId);
 
   const overrideMode = previewAs === "teaser" || previewAs === "full" ? "blind" : previewAs === "due_diligence" ? "dd" : null;
@@ -267,6 +278,7 @@ export default function CIMDesigner() {
             onBackToEditing={() => setPreviewAs("editor")}
           />
         )}
+        <CimMediaProvider value={{ assets: media.assets }}>
         {sections.length === 0 ? (
           <EmptyCim
             generating={generating}
@@ -278,6 +290,8 @@ export default function CIMDesigner() {
         ) : (
           <CimCanvas
             sections={sections}
+            media={media.refs}
+            draft={readOnly ? null : draft}
             previewAs={previewAs}
             overrides={overrides}
             deal={deal}
@@ -290,6 +304,7 @@ export default function CIMDesigner() {
             applying={builder.applyRewrite.isPending}
           />
         )}
+        </CimMediaProvider>
       </div>
     </div>
   );
@@ -305,6 +320,7 @@ export default function CIMDesigner() {
           onChangeLayout={() => setLayoutOpen(true)}
           onRegenerate={() => { setRegenBrief(""); setRegenTarget(selected); }}
           onDelete={() => setDeleteTarget(selected)}
+          onDraftChange={onDraftChange}
         />
       ) : (
         <div className="flex flex-col items-center justify-center h-full min-h-[240px] text-center p-6 gap-2">
@@ -356,6 +372,17 @@ export default function CIMDesigner() {
               ))}
             </SelectContent>
           </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs gap-1.5 text-muted-foreground px-2 sm:px-3"
+            onClick={() => setMediaOpen(true)}
+            title="Photos and videos uploaded for this deal"
+            data-testid="button-media-library"
+          >
+            <Images className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Media{media.items.length ? ` (${media.items.length})` : ""}</span>
+          </Button>
           {sections.length > 0 && (
             <Button
               variant="ghost"
@@ -404,6 +431,19 @@ export default function CIMDesigner() {
         <div className={cn("h-full min-h-0", pane === "page" ? "block" : "hidden lg:block")}>{pagePane}</div>
         <div className={cn("h-full min-h-0 lg:border-l border-border", pane === "edit" ? "block" : "hidden lg:block")}>{editPane}</div>
       </div>
+
+      {/* ── Media library ── */}
+      <Sheet open={mediaOpen} onOpenChange={setMediaOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader className="mb-4">
+            <SheetTitle>Media library</SheetTitle>
+            <SheetDescription>
+              Photos and videos for this deal. Use them in any photo gallery or video section — add one from the “Media” group of Add section.
+            </SheetDescription>
+          </SheetHeader>
+          <MediaLibrary dealId={dealId} library={media} mode="manage" />
+        </SheetContent>
+      </Sheet>
 
       {/* ── Dialogs ── */}
       <AddSectionDialog

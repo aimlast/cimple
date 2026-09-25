@@ -17,6 +17,8 @@ import { storage } from "../storage";
 import { cimSections, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
 import {
   BUYER_ACCESS_LEVELS,
+  canAiRewriteLayout,
+  canAiWriteLayout,
   defaultLayoutData,
   getCimLayout,
   isCimLayoutKey,
@@ -45,6 +47,14 @@ import {
   startSectionTask,
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
+import { dealStreetAddress } from "@shared/cim-media";
+
+const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
+
+/** Context for a blank section's starting data (a map starts at the deal's address). */
+function blankContext(deal: Deal, title: string | null) {
+  return { businessName: deal.businessName, industry: deal.industry, title, address: dealStreetAddress(deal.extractedInfo) };
+}
 
 // Same ceiling as the other AI endpoints (server/index.ts aiLimiter).
 const aiLimiter = rateLimit({
@@ -157,6 +167,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!isCimLayoutKey(body.layoutType)) return res.status(400).json({ error: "Pick a layout for the section" });
       const mode = body.mode === "ai" ? "ai" : body.mode === "blank" ? "blank" : null;
       if (!mode) return res.status(400).json({ error: "mode must be \"blank\" or \"ai\"" });
+      if (mode === "ai" && !canAiWriteLayout(body.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
       const brief = typeof body.brief === "string" ? body.brief.trim().slice(0, 1500) : "";
       if (mode === "ai") {
         const blocked = await discrepancyBlock(deal.id);
@@ -175,7 +186,7 @@ export function registerCimBuilderRoutes(app: Express): void {
           {
             sectionTitle: title,
             layoutType: body.layoutType,
-            layoutData: defaultLayoutData(body.layoutType, { businessName: deal.businessName, industry: deal.industry, title }) as any,
+            layoutData: defaultLayoutData(body.layoutType, blankContext(deal, title)) as any,
             aiLayoutReasoning: mode === "ai" ? "Added by the broker; written by the AI from the deal's information." : "Added by the broker.",
             tags: [] as any,
             brokerApproved: false,
@@ -243,7 +254,8 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (!isCimLayoutKey(layoutType)) return res.status(400).json({ error: "Pick a layout" });
       if (layoutType === section.layoutType) return res.json({ section });
       if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is already working on this section." });
-      const how = req.body?.convert === "ai" ? "ai" : "blank";
+      // Photos and videos can't be produced by the AI — those start blank.
+      const how = req.body?.convert === "ai" && canAiWriteLayout(layoutType) ? "ai" : "blank";
 
       if (sameLayoutFamily(section.layoutType, layoutType) || how === "blank") {
         const [updated] = await db
@@ -253,7 +265,7 @@ export function registerCimBuilderRoutes(app: Express): void {
             layoutOverride: section.layoutOverride || section.layoutType,
             ...(sameLayoutFamily(section.layoutType, layoutType)
               ? {}
-              : { layoutData: defaultLayoutData(layoutType, { businessName: deal.businessName, industry: deal.industry, title: section.sectionTitle }) as any }),
+              : { layoutData: defaultLayoutData(layoutType, blankContext(deal, section.sectionTitle)) as any }),
             contentHistory: historyWith(section, "Changed layout"),
             updatedAt: new Date(),
           })
@@ -277,6 +289,7 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const owned = await ownedSection(req, res);
       if (!owned) return;
+      if (!canAiWriteLayout(owned.section.layoutType)) return res.status(400).json({ error: NO_AI_MEDIA });
       const blocked = await discrepancyBlock(owned.deal.id);
       if (blocked) return res.status(409).json({ error: blocked });
       const brief = typeof req.body?.brief === "string" ? req.body.brief.trim().slice(0, 1500) : "";
@@ -295,6 +308,9 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const owned = await ownedSection(req, res);
       if (!owned) return;
+      if (!canAiRewriteLayout(owned.section.layoutType)) {
+        return res.status(400).json({ error: "The AI writer doesn't rewrite photo, video or map sections — edit them directly." });
+      }
       const body = req.body || {};
       const instructions = typeof body.instructions === "string" ? body.instructions.trim().slice(0, 2000) : "";
       const tones = Array.isArray(body.tones)

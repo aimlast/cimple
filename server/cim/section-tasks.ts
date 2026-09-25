@@ -23,6 +23,7 @@ import { cimSections, type CimSection, type CimSectionAiTask, type Deal } from "
 import { normalizeLayoutType } from "@shared/cim-layouts";
 import { buildLayoutParams } from "./generation-jobs";
 import {
+  groundLocationMap,
   convertSectionLayout,
   rewriteSectionContent,
   writeOneSection,
@@ -30,6 +31,8 @@ import {
 } from "./layout-engine";
 import { invalidateBlind } from "./blind-sync";
 import { displayedProse, historyWith } from "./section-ops";
+import { isMediaLayout } from "@shared/cim-media";
+import { cleanMediaLayoutForDeal } from "./media-store";
 
 type TaskKind = CimSectionAiTask["kind"];
 export type TaskRequest = NonNullable<CimSectionAiTask["request"]>;
@@ -148,6 +151,11 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
       result = { layoutData: written.layoutData as Record<string, unknown>, aiDraftContent: written.aiDraftContent };
       layoutType = normalizeLayoutType(written.layoutType);
     }
+
+    // Maps only show addresses from the deal's facts; photo/video sections
+    // only this deal's uploads (the AI can't add those — see cim-builder).
+    if (layoutType === "location_map") result.layoutData = groundLocationMap(result.layoutData, params);
+    if (isMediaLayout(layoutType)) result.layoutData = await cleanMediaLayoutForDeal(layoutType, result.layoutData, deal.id);
 
     const row = await stillCurrent(section.id, task.id);
     if (!row) return;

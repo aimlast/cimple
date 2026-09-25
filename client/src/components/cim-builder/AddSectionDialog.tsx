@@ -11,7 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { getCimLayout } from "@shared/cim-layouts";
+import { canAiWriteLayout, getCimLayout } from "@shared/cim-layouts";
 import { cn } from "@/lib/utils";
 import { LayoutGallery, LayoutIcon } from "./LayoutGallery";
 import type { BuilderSection } from "./api";
@@ -52,7 +52,13 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
   }, [open, afterSectionId, aiBlockedReason]);
 
   const layout = getCimLayout(layoutType);
-  const canSubmit = title.trim().length > 0 && !!layout && !busy && !(mode === "ai" && aiBlockedReason);
+  const aiWritable = canAiWriteLayout(layoutType);
+  const noAiReason = !aiWritable ? "Photos and videos are yours to choose — the AI can't pick them. Start it blank and add them in the editor." : null;
+  // Switching to a photo/video layout moves the choice to "Start blank".
+  useEffect(() => {
+    if (!aiWritable && mode === "ai") setMode("blank");
+  }, [aiWritable, mode]);
+  const canSubmit = title.trim().length > 0 && !!layout && !busy && !(mode === "ai" && (aiBlockedReason || !aiWritable));
 
   const submit = () => {
     if (!canSubmit) return;
@@ -128,14 +134,16 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
               <Label className="text-xs">How to fill it</Label>
               <ChoiceCard
                 selected={mode === "ai"}
-                disabled={!!aiBlockedReason}
+                disabled={!!aiBlockedReason || !aiWritable}
                 onSelect={() => setMode("ai")}
                 icon={<Sparkles className="h-4 w-4" />}
-                title="Write it from the deal's information"
-                body={aiBlockedReason || "The AI drafts it from everything collected — the interview, documents and financials. About 30 seconds."}
+                title={layoutType === "location_map" ? "Fill in the address from the deal's information" : "Write it from the deal's information"}
+                body={noAiReason || aiBlockedReason || (layoutType === "location_map"
+                  ? "The AI adds the premises' address from what's on file — only an address it actually finds."
+                  : "The AI drafts it from everything collected — the interview, documents and financials. About 30 seconds.")}
                 testId="choice-ai"
               />
-              {mode === "ai" && !aiBlockedReason && (
+              {mode === "ai" && !aiBlockedReason && aiWritable && (
                 <Textarea
                   value={brief}
                   onChange={(e) => setBrief(e.target.value)}
@@ -151,7 +159,11 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
                 onSelect={() => setMode("blank")}
                 icon={<PenLine className="h-4 w-4" />}
                 title="Start blank"
-                body="An empty section with this layout, ready for you to fill in."
+                body={layout?.editor === "media"
+                  ? layoutType === "location_map"
+                    ? "Starts with the deal's address when there's one on file — check it and add more locations."
+                    : "An empty section — upload or choose the photos and videos in the editor."
+                  : "An empty section with this layout, ready for you to fill in."}
                 testId="choice-blank"
               />
             </div>

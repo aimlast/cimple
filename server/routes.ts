@@ -32,6 +32,7 @@ import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
+import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
@@ -270,6 +271,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Document access check failed:", err);
       return res.status(500).json({ error: "Access check failed" });
     }
+  });
+
+  // CIM photos/videos (private-media/) are NEVER served statically — only
+  // through GET /api/media/:id (server/routes/cim-media.ts), which checks the
+  // broker session, seller token or buyer view token. The path is decoded
+  // and normalised first so "%2D", "./" or case tricks can't slip past.
+  app.use("/uploads", (req, res, next) => {
+    let p: string;
+    try {
+      p = decodeURIComponent(req.path);
+    } catch {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const norm = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase();
+    if (norm === "/private-media" || norm.startsWith("/private-media/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    next();
   });
 
   app.use("/uploads", (await import("express")).default.static(uploadsDir));
@@ -4284,8 +4303,12 @@ Return JSON only.`,
       // enforced here (shared/cim-buyer-view.ts). Buyers get only what
       // the renderer needs: never aiLayoutReasoning (internal AI notes that
       // name the owners), seller edits, approval flags or AI task state.
-      const overrides = cimMode === "normal" ? [] : await storage.getCimSectionOverrides(deal.id, cimMode);
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides });
+      const [overrides, media] = await Promise.all([
+        cimMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, cimMode),
+        // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
+        loadMediaAssets(deal.id),
+      ]);
+      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -6643,12 +6666,13 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // hidden, locked (above the buyer's tier) and not-yet-redacted
       // sections never feed the answer.
       const chatDeal = await storage.getDeal(dealId);
-      const [chatBaseSections, chatOverrides] = await Promise.all([
+      const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
         storage.getCimSectionsByDeal(dealId),
         chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+        loadMediaAssets(dealId),
       ]);
       const chatCim = chatDeal
-        ? buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides })
+        ? buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia })
         : null;
       const answerSections: AnswerSection[] = (chatCim?.sections ?? [])
         .filter(s => !s.locked)
@@ -6672,17 +6696,23 @@ Do not speculate or add information not in the CIM.`,
       });
 
       const aiAnswer = cimText.trim().length === 0 ? null : (aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null);
-      const needsEscalation = !aiAnswer || aiAnswer.trim() === "ESCALATE";
+      // The model sometimes writes "ESCALATE" and then explains — still an escalation.
+      const needsEscalation = !aiAnswer || /^\s*ESCALATE\b/.test(aiAnswer);
 
+      // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
+      // business name, address or people — it goes to the asker only, never
+      // into the shared feed / knowledge base that blind buyers read. Only
+      // answers from the blind CIM are safe to share with every buyer.
+      const shareable = !needsEscalation && chatMode === "blind";
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
         question,
         aiAnswer: needsEscalation ? null : aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        isPublished: !needsEscalation,
+        isPublished: shareable,
         publishedAnswer: needsEscalation ? null : aiAnswer,
-        addedToKnowledgeBase: !needsEscalation,
+        addedToKnowledgeBase: shareable,
       } as any);
 
       // Notify broker when question needs manual response

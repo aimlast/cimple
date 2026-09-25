@@ -34,10 +34,16 @@ export const STRUCTURED_LAYOUTS: ReadonlySet<string> = new Set(
   CIM_LAYOUTS.filter((l) => l.editor === "data").map((l) => l.key),
 );
 
+/** Photo gallery, video and map — edited with the media editors. */
+export const MEDIA_EDITOR_LAYOUTS: ReadonlySet<string> = new Set(
+  CIM_LAYOUTS.filter((l) => l.editor === "media").map((l) => l.key),
+);
+
 /** True when a free-text editor is the right tool for this section. */
 export function isTextEditableLayout(layoutType: string | null | undefined): boolean {
   if (!layoutType) return true;
   if (TEXT_EDITABLE_LAYOUTS.has(layoutType)) return true;
+  if (MEDIA_EDITOR_LAYOUTS.has(layoutType)) return false;
   // Unregistered layouts fall back to a prose renderer — text is all there is.
   return !STRUCTURED_LAYOUTS.has(layoutType);
 }

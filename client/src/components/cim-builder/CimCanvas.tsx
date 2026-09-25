@@ -7,8 +7,9 @@
  * (shared/cim-buyer-view.ts) and drawn with the same wrappers as the view
  * room (ExpandableSection + ConnectedContent on the theme-locked sheet).
  */
-import { Check, EyeOff, Loader2, Lock, Plus, Sparkles, X } from "lucide-react";
+import { Check, EyeOff, Loader2, Lock, Pencil, Plus, Sparkles, X } from "lucide-react";
 import type { CimSection, CimSectionOverride } from "@shared/schema";
+import type { MediaAssetRef } from "@shared/cim-media";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
@@ -32,6 +33,10 @@ interface Props {
   onApplyRewrite: (id: string) => void;
   onDiscardRewrite: (id: string) => void;
   applying: boolean;
+  /** The deal's media library — buyer previews apply the same blind rules as the server. */
+  media?: MediaAssetRef[];
+  /** Unsaved edits of one section (photo/video/map editors), previewed live. */
+  draft?: { id: string; layoutData: Record<string, any> } | null;
 }
 
 export function CimCanvas(props: Props) {
@@ -47,7 +52,7 @@ function withProposal(s: BuilderSection): CimSection {
   return { ...base, layoutData: p.layoutData as any, aiDraftContent: p.aiDraftContent ?? null, brokerEditedContent: null };
 }
 
-function EditorSheet({ sections, branding, selectedId, onSelect, onAddAfter, onApplyRewrite, onDiscardRewrite, applying }: Props) {
+function EditorSheet({ sections, branding, selectedId, onSelect, onAddAfter, onApplyRewrite, onDiscardRewrite, applying, draft }: Props) {
   const all = sections as unknown as CimSection[];
   return (
     <div className="cim-doc cim-sheet px-4 py-6 sm:px-10 sm:py-12 space-y-10">
@@ -58,7 +63,8 @@ function EditorSheet({ sections, branding, selectedId, onSelect, onAddAfter, onA
         const writing = running && s.aiTask?.kind === "write";
         const proposal = s.aiTask?.kind === "rewrite" && s.aiTask.status === "ready";
         const selected = selectedId === s.id;
-        const shown = withProposal(s);
+        const drafted = draft && draft.id === s.id;
+        const shown = drafted ? { ...withProposal(s), layoutData: draft.layoutData as any } : withProposal(s);
         return (
           <div key={s.id} id={`section-${s.id}`} className="scroll-mt-6">
             <div
@@ -73,8 +79,9 @@ function EditorSheet({ sections, branding, selectedId, onSelect, onAddAfter, onA
               data-testid={`canvas-section-${s.id}`}
             >
               {/* Broker chips — app chrome over the paper, never part of the CIM */}
-              {(hidden || s.accessTier === "full" || proposal) && (
-                <div className="absolute -top-3 right-2 z-10 flex flex-wrap justify-end gap-1">
+              {(hidden || s.accessTier === "full" || proposal || drafted) && (
+                <div className="absolute -top-3 right-2 z-20 flex flex-wrap justify-end gap-1">
+                  {drafted && <Chip tone="brass"><Pencil className="h-3 w-3" /> Unsaved changes</Chip>}
                   {proposal && <Chip tone="brass"><Sparkles className="h-3 w-3" /> Proposed rewrite — not applied yet</Chip>}
                   {s.accessTier === "full" && <Chip><Lock className="h-3 w-3" /> Full access only</Chip>}
                   {hidden && <Chip><EyeOff className="h-3 w-3" /> Hidden from buyers</Chip>}
@@ -126,12 +133,13 @@ function EditorSheet({ sections, branding, selectedId, onSelect, onAddAfter, onA
   );
 }
 
-function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect }: Props) {
+function BuyerSheet({ sections, previewAs, overrides, deal, branding, selectedId, onSelect, media }: Props) {
   const view = buildBuyerCim({
     deal,
     accessLevel: previewAs,
     sections: sections as unknown as CimSection[],
     overrides,
+    media: media ?? [],
   });
   if (view.preparing) return null; // the page shows the "not generated yet" banner
   const shown = view.sections as unknown as CimSection[];

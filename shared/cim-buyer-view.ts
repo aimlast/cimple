@@ -17,6 +17,10 @@
  *     redacted title only, no content.
  *   - Blind section keys that contain a known business name are replaced
  *     (keys reach the page as data attributes and analytics ids).
+ *   - Media sections (gallery, video, map) are rebuilt deterministically
+ *     (shared/cim-media.ts): only this deal's uploads, only blind-safe media
+ *     and region-only maps in the Blind CIM; a media section with nothing
+ *     left to show is dropped.
  */
 import type { CimSection, CimSectionOverride } from "./schema";
 import {
@@ -27,6 +31,7 @@ import {
   sectionTier,
 } from "./cim-layouts";
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
+import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 
 export interface BuyerSection {
   id: string;
@@ -70,9 +75,23 @@ export function buildBuyerCim(input: {
   accessLevel: string | null | undefined;
   sections: CimSection[];
   overrides: CimSectionOverride[];
+  /**
+   * The deal's media library (id, kind, blind-safe). Omitted = unknown: the
+   * Blind CIM then shows no uploads at all.
+   */
+  media?: MediaAssetRef[] | null;
 }): BuyerCim {
   const { deal, accessLevel } = input;
   const mode = cimModeForAccessLevel(accessLevel);
+  const assets = input.media ? new Map(input.media.map((m) => [m.id, m])) : null;
+  const mediaIdentifiers = mode === "blind"
+    ? [...blindIdentifiers(deal as any), ...dealAddressFragments((deal as any).extractedInfo)]
+    : [];
+  /** A media section's buyer data, or null when it has nothing to show. */
+  const mediaData = (s: CimSection, override: unknown): unknown | null =>
+    isMediaLayout(s.layoutType)
+      ? buyerMediaLayoutData(s.layoutType, s.layoutData, override, mode, { assets, identifiers: mediaIdentifiers })
+      : s.layoutData;
   const visible = [...input.sections]
     .filter((s) => s.isVisible !== false && !writingInProgress(s))
     .sort((a, b) => a.order - b.order);
@@ -91,7 +110,12 @@ export function buildBuyerCim(input: {
   });
 
   if (mode === "normal") {
-    return { mode, sections: visible.map(base), preparing: false, heldBack: 0 };
+    const sections: BuyerSection[] = [];
+    for (const s of visible) {
+      const data = mediaData(s, null);
+      if (data) sections.push({ ...base(s), layoutData: data });
+    }
+    return { mode, sections, preparing: false, heldBack: 0 };
   }
 
   const overrideMap = new Map(input.overrides.map((o) => [String(o.cimSectionId), o]));
@@ -99,15 +123,19 @@ export function buildBuyerCim(input: {
   if (mode === "dd") {
     // A due-diligence buyer has full-identity access: a section without a DD
     // override (e.g. edited since DD was generated) is served as Normal.
-    return {
-      mode,
-      sections: visible.map((s) => {
-        const o = overrideMap.get(s.id);
-        return o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s);
-      }),
-      preparing: false,
-      heldBack: 0,
-    };
+    // Media sections are served from their base data (DD adds nothing to a
+    // photo or a map, and the enricher must not touch their references).
+    const sections: BuyerSection[] = [];
+    for (const s of visible) {
+      if (isMediaLayout(s.layoutType)) {
+        const data = mediaData(s, null);
+        if (data) sections.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null });
+        continue;
+      }
+      const o = overrideMap.get(s.id);
+      sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
+    }
+    return { mode, sections, preparing: false, heldBack: 0 };
   }
 
   // ── Blind ──
@@ -147,6 +175,13 @@ export function buildBuyerCim(input: {
         isVisible: true,
         locked: true,
       });
+      return;
+    }
+    if (isMediaLayout(s.layoutType)) {
+      // Built from the base items + the redacted words, never the AI's refs.
+      const data = mediaData(s, o.layoutData);
+      if (!data) return;
+      out.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null, sectionKey: safeKey, sectionTitle: title });
       return;
     }
     out.push({ ...base(s), ...pick(applySectionOverride(s, o, "blind")), sectionKey: safeKey, sectionTitle: title });

@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { Loader2, Sparkles } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { getCimLayout, layoutLabel, sameLayoutFamily } from "@shared/cim-layouts";
+import { canAiWriteLayout, getCimLayout, layoutLabel, sameLayoutFamily } from "@shared/cim-layouts";
 import { LayoutGallery } from "./LayoutGallery";
 
 interface Props {
@@ -27,6 +27,8 @@ export function ChangeLayoutDialog({ open, onOpenChange, currentLayout, sectionT
 
   const target = picked && picked !== currentLayout ? getCimLayout(picked) : undefined;
   const instant = !!target && sameLayoutFamily(currentLayout, target.key);
+  // Photos and videos: only the broker can add them — no AI conversion.
+  const blankOnly = !!target && !instant && !canAiWriteLayout(target.key);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -46,18 +48,20 @@ export function ChangeLayoutDialog({ open, onOpenChange, currentLayout, sectionT
               ? "Choose a different layout."
               : instant
                 ? `${target.label} uses the same data — your content carries straight over.`
-                : aiBlockedReason
+                : blankOnly
+                  ? `${target.label} starts empty — you add the photos or videos yourself. Undo brings the current version back.`
+                  : aiBlockedReason
                   ? aiBlockedReason
                   : `The AI can move your content into ${target.label.toLowerCase()} for you. Undo brings the current version back.`}
           </p>
           <div className="flex gap-2 justify-end shrink-0">
             <Button variant="outline" size="sm" onClick={() => onOpenChange(false)} disabled={busy}>Cancel</Button>
             {target && !instant && (
-              <Button variant="outline" size="sm" disabled={busy} onClick={() => onChoose(target.key, "blank")} data-testid="button-layout-blank">
+              <Button variant={blankOnly ? "default" : "outline"} size="sm" className={blankOnly ? "bg-teal text-teal-foreground hover:bg-teal/90" : undefined} disabled={busy} onClick={() => onChoose(target.key, "blank")} data-testid="button-layout-blank">
                 Start it blank
               </Button>
             )}
-            {target && (
+            {target && !blankOnly && (
               <Button
                 size="sm"
                 className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"

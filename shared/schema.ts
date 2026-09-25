@@ -1968,6 +1968,35 @@ export interface CimSectionSnapshot {
   aiDraftContent: string | null;
   brokerEditedContent: string | null;
 }
+
+// ── CIM media library (cim-media workstream) ──────────────────────────────
+// Photos and videos a broker uploads for a deal's CIM (gallery / video
+// blocks). Files live under <UPLOADS_DIR>/private-media/<dealId>/ with
+// random names and are NEVER served statically — only through
+// GET /api/media/:id (owning broker, the deal's seller token, or a buyer
+// view token whose CIM shows the file). Blind-CIM buyers only ever get
+// files marked blind_safe (see shared/cim-media.ts).
+export const dealMedia = pgTable("deal_media", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  kind: text("kind").notNull(), // "image" | "video"
+  // Private path relative to UPLOADS_DIR ("private-media/<dealId>/<random>.jpg").
+  // Never sent to a browser.
+  fileUrl: text("file_url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  caption: text("caption"),
+  // The broker's statement that nothing in the file identifies the business.
+  blindSafe: boolean("blind_safe").notNull().default(false),
+  // Broker-only: the name the file had on the broker's computer.
+  originalName: text("original_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type DealMedia = typeof dealMedia.$inferSelect;
+export type InsertDealMedia = typeof dealMedia.$inferInsert;
 // (cim workstreams)
 
 // @anchor:schema-tail:seed

@@ -5,7 +5,7 @@
 import {
   AlignLeft, BarChart3, BookOpen, Columns2, FileText, GanttChart, Grid2x2, Hash, LayoutList,
   LineChart, ListOrdered, MapPin, Minus, Network, PieChart, Scale, Sparkles, Table2, Tags,
-  TrendingDown, Gauge, CircleDot, BarChartHorizontal, type LucideIcon,
+  TrendingDown, Gauge, CircleDot, BarChartHorizontal, Images, Clapperboard, Map as MapIcon, type LucideIcon,
 } from "lucide-react";
 import { layoutsByCategory, type CimLayoutDef } from "@shared/cim-layouts";
 import { cn } from "@/lib/utils";
@@ -33,6 +33,9 @@ const ICONS: Record<string, LucideIcon> = {
   tag_cloud: Tags,
   org_chart: Network,
   location_card: MapPin,
+  image_gallery: Images,
+  video: Clapperboard,
+  location_map: MapIcon,
 };
 
 export function LayoutIcon({ layoutType, className }: { layoutType: string; className?: string }) {

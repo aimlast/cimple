@@ -296,9 +296,30 @@ export function serializeLayoutData(layoutType: string | null | undefined, layou
         }
         break;
       }
+      // Media blocks: only their words (the buyer view has already reduced
+      // them to what this buyer may see — region-only maps when blind).
       case "image_gallery": {
         push("Title", d.title);
-        for (const img of Array.isArray(d.images) ? d.images : []) push("Image", img?.caption);
+        for (const img of Array.isArray(d.images) ? d.images : []) push("Photo", img?.caption || img?.alt);
+        break;
+      }
+      case "video": {
+        push("Title", d.title);
+        for (const v of Array.isArray(d.items) ? d.items : []) {
+          const t = [fmt(v?.title), fmt(v?.caption)].filter(Boolean).join(" — ");
+          if (t) lines.push(`Video: ${t}`);
+        }
+        break;
+      }
+      case "location_map": {
+        push("Title", d.title);
+        for (const l of Array.isArray(d.locations) ? d.locations : []) {
+          if (!l) continue;
+          const where = fmt(l.address) || (fmt(l.region) ? `${fmt(l.region)} (general area only)` : "");
+          const t = [fmt(l.label), where, fmt(l.note)].filter(Boolean).join(" — ");
+          if (t) lines.push(`Location: ${t}`);
+        }
+        push("Note", d.caption);
         break;
       }
       case "divider": {
@@ -368,13 +389,16 @@ export async function buildBuyerQuestionFeed(dealId: string, buyerAccessId: stri
     const isMine = !!q.buyerAccessId && q.buyerAccessId === buyerAccessId;
     const published = !!q.isPublished && !!(q.publishedAnswer || q.aiAnswer);
     if (!published && !isMine) continue;
+    // The asker also sees an AI answer kept private to them (answered from
+    // the named CIM — see the chatbot route).
+    const answerVisible = published || (isMine && q.status === "published");
     feed.push({
       id: q.id,
       question: q.question,
       status: published ? "published" : q.status,
       isPublished: published,
-      aiAnswer: published ? q.aiAnswer ?? null : null,
-      publishedAnswer: published ? q.publishedAnswer ?? null : null,
+      aiAnswer: answerVisible ? q.aiAnswer ?? null : null,
+      publishedAnswer: answerVisible ? q.publishedAnswer ?? null : null,
       createdAt: q.createdAt,
       updatedAt: q.updatedAt,
       isMine,

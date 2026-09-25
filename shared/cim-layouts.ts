@@ -32,6 +32,8 @@ export interface CimLayoutDefaultContext {
   businessName?: string | null;
   industry?: string | null;
   title?: string | null;
+  /** The premises' street address, when the deal has one (location map). */
+  address?: string | null;
 }
 
 export interface CimLayoutDef {
@@ -43,8 +45,8 @@ export interface CimLayoutDef {
   category: CimLayoutCategory;
   /** Where the words live: a prose string (brokerEditedContent) or layoutData. */
   content: "prose" | "structured";
-  /** Which editor the builder offers. */
-  editor: "text" | "data";
+  /** Which editor the builder offers ("media" = the photo/video/map editors). */
+  editor: "text" | "data" | "media";
   /**
    * Blind CIM handling.
    *  "redact"  — the AI redaction pass rewrites every identifying string.
@@ -59,6 +61,14 @@ export interface CimLayoutDef {
   family: string;
   /** Offered to the AI planner when it designs a whole CIM. */
   planner: boolean;
+  /**
+   * The AI can write / regenerate / convert into this layout from the deal's
+   * facts (default true). False for photos and videos — only the broker can
+   * choose those.
+   */
+  aiWrite?: boolean;
+  /** The AI writer may rewrite this layout's content (default true). */
+  aiRewrite?: boolean;
   /** The layoutData shape as written into the AI prompt. */
   aiSpec: string;
   /** "Use for: …" guidance (+ any extra rule lines) for the AI prompt. */
@@ -450,6 +460,64 @@ const LAYOUTS = [
     aiUse: "— Use for: physical location details, lease terms, real estate included in sale",
     defaultData: () => ({ locations: [{ label: "Main location", address: "", leaseType: "leased" }] }),
   },
+
+  // ── Media (blind-safety rules: shared/cim-media.ts) ───────────────────
+  {
+    key: "image_gallery",
+    label: "Photo gallery",
+    description: "Photos of the premises, equipment or work — a grid or a slideshow.",
+    category: "media",
+    content: "structured",
+    editor: "media",
+    // Captions are AI-redacted; WHICH photos a blind buyer sees is decided
+    // deterministically (uploads marked blind-safe only) — never by the AI.
+    blind: "redact",
+    family: "image_gallery",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    aiSpec: "image_gallery: { images: [{mediaId?, url?, caption?, alt?}], style?: \"grid\"|\"carousel\", columns?: 2|3|4, title? }",
+    aiUse: "— Photos the broker adds. Never produce this layout yourself.",
+    defaultData: () => ({ images: [], style: "grid" }),
+    presentationKeys: ["mediaId", "blindSafe", "style"],
+  },
+  {
+    key: "video",
+    label: "Video",
+    description: "A YouTube or Vimeo video, or one you upload — a walkthrough or the owner's story.",
+    category: "media",
+    content: "structured",
+    editor: "media",
+    blind: "redact",
+    family: "video",
+    planner: false,
+    aiWrite: false,
+    aiRewrite: false,
+    aiSpec: "video: { items: [{source: \"youtube\"|\"vimeo\"|\"upload\", url?, mediaId?, title?, caption?}], title? }",
+    aiUse: "— Videos the broker adds. Never produce this layout yourself.",
+    defaultData: () => ({ items: [] }),
+    presentationKeys: ["mediaId", "source", "blindSafe"],
+  },
+  {
+    key: "location_map",
+    label: "Map",
+    description: "An interactive map of the premises, with the address beside it.",
+    category: "media",
+    content: "structured",
+    editor: "media",
+    blind: "redact",
+    family: "location_map",
+    planner: true,
+    aiRewrite: false,
+    aiSpec: "location_map: { locations: [{label, address, note? (one short line)}], zoom?: 3-20, caption? (one short line, under 120 characters), title? }",
+    aiUse: "— Use for: an interactive map of where the business operates, next to the premises/location content. ONLY when the knowledge base gives a real street address for the business's premises: copy each address exactly as written there (street, city, province/state, postal code) — never invent, complete or approximate one. At most one location_map per CIM. The blind version automatically shows only the province/state.",
+    defaultData: (ctx) => ({
+      locations: [{ label: "Main location", address: ctx.address || "" }],
+      zoom: 14,
+      blindMap: "region",
+    }),
+    presentationKeys: ["zoom", "blindMap", "regionOnly"],
+  },
 ] as const satisfies readonly CimLayoutDef[];
 
 export type CimLayoutKey = (typeof LAYOUTS)[number]["key"];
@@ -504,6 +572,18 @@ export function sameLayoutFamily(a: string | null | undefined, b: string | null 
   const da = getCimLayout(a);
   const db = getCimLayout(b);
   return !!da && !!db && da.family === db.family;
+}
+
+/** Can the AI write / regenerate / convert into this layout from the deal's facts? */
+export function canAiWriteLayout(key: string | null | undefined): boolean {
+  const def = getCimLayout(key);
+  return !def || def.aiWrite !== false;
+}
+
+/** Can the AI writer rewrite this layout's content? */
+export function canAiRewriteLayout(key: string | null | undefined): boolean {
+  const def = getCimLayout(key);
+  return !def || def.aiRewrite !== false;
 }
 
 /** Presentation-only keys across all layouts (colours, icons, URLs, flags). */

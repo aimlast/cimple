@@ -26,6 +26,8 @@ import { CIM_ACCESS_TIERS, defaultLayoutData, isCimLayoutKey, sameLayoutFamily }
 import { getOwnedDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "./blind-sync";
 import { uniqueSectionKey } from "./section-ops-keys";
+import { isMediaLayout } from "@shared/cim-media";
+import { cleanMediaLayoutForDeal } from "./media-store";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -263,6 +265,13 @@ export async function patchCimSection(req: Request, res: Response) {
     if (body.accessTier !== undefined) {
       if (!(CIM_ACCESS_TIERS as readonly unknown[]).includes(body.accessTier)) return bad("Access must be teaser or full");
       set.accessTier = body.accessTier as string;
+    }
+
+    // Photo / video / map sections: valid links only, and only this deal's
+    // own uploads (shared/cim-media.ts rules).
+    const effectiveType = (set.layoutType as string | undefined) ?? section.layoutType;
+    if (set.layoutData !== undefined && isMediaLayout(effectiveType)) {
+      set.layoutData = (await cleanMediaLayoutForDeal(effectiveType, set.layoutData, section.dealId)) as any;
     }
 
     const contentChanged = ["sectionTitle", "brokerEditedContent", "layoutData", "layoutType"].some((k) => k in set);

@@ -11,6 +11,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { blindIdentifiers } from "@shared/blind-identifiers";
 import type { CimSection } from "@shared/schema";
+import { isMediaLayout, mediaTextSkeleton, type MediaLayoutKey } from "@shared/cim-media";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -100,8 +101,14 @@ async function redactSection(
   codename: string,
   industry?: string | null,
 ): Promise<RedactionResult> {
-  const layoutData = section.layoutData as any || {};
-  const content = displayedProse(section);
+  // Media blocks: the AI only ever sees (and returns) their words. Which
+  // photos/videos a blind buyer gets, and the map's region, are decided
+  // deterministically from the real data (shared/cim-media.ts).
+  const media = isMediaLayout(section.layoutType);
+  const layoutData = media
+    ? mediaTextSkeleton(section.layoutType as MediaLayoutKey, section.layoutData)
+    : (section.layoutData as any) || {};
+  const content = media ? "" : displayedProse(section);
 
   const message = await anthropic.messages.create({
     model: "claude-sonnet-4-5",

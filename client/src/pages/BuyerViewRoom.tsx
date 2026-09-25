@@ -22,6 +22,7 @@ import { CIM_SECTIONS } from "@shared/schema";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
+import { CimMediaProvider } from "@/components/cim/CimMediaContext";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/BuyerChatbot";
@@ -439,6 +440,8 @@ export default function BuyerViewRoom() {
             {hasAiSections ? (
               /* The document itself: one continuous theme-locked paper sheet.
                  App chrome around it (header, TOC, decision panel) keeps app tokens. */
+              /* Photos/videos load through /api/media/:id with this link's token. */
+              <CimMediaProvider value={{ buyerToken: token }}>
               <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
                 {visibleSections.map(section => (
                   /* scroll-mt clears the sticky header + section strip so
@@ -472,6 +475,7 @@ export default function BuyerViewRoom() {
                   </div>
                 ))}
               </div>
+              </CimMediaProvider>
             ) : legacySections.length > 0 ? (
               // Legacy text fallback — same theme-locked paper sheet
               <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">

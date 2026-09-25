@@ -7,6 +7,7 @@ import {
   plannerLayouts,
 } from "@shared/cim-layouts";
 import { agentConfig } from "../interview/config/load-config";
+import { normalizeLocationMap, normText } from "@shared/cim-media";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -163,6 +164,13 @@ export async function generateCimLayout(
     layoutOverride: undefined,
   }));
 
+  // A map must show a real address from the deal's facts — never one the AI
+  // made up. Ungrounded locations are dropped, and an empty map with them.
+  sections = sections
+    .map((s) => (s.layoutType === "location_map" ? { ...s, layoutData: groundLocationMap(s.layoutData, params) } : s))
+    .filter((s) => s.layoutType !== "location_map" || ((s.layoutData as { locations?: unknown[] }).locations?.length ?? 0) > 0);
+  sections.forEach((s, i) => { s.order = i + 1; });
+
   // Ensure cover_page is first
   const coverIdx = sections.findIndex(s => s.layoutType === "cover_page");
   if (coverIdx > 0) {
@@ -182,6 +190,23 @@ export async function generateCimLayout(
     version: 1,
     warnings: warnings.length > 0 ? warnings : undefined,
   };
+}
+
+/**
+ * Keep only map locations whose address is in the deal's facts (its street
+ * number(s) and street name appear there). The AI is told to copy addresses
+ * verbatim; this makes sure a guessed or completed one never reaches a buyer.
+ */
+export function groundLocationMap(layoutData: unknown, params: Pick<CimLayoutParams, "extractedInfo" | "scrapedData" | "questionnaireData">): Record<string, unknown> {
+  const map = normalizeLocationMap(layoutData);
+  const facts = normText(JSON.stringify([params.extractedInfo ?? {}, params.scrapedData ?? {}, params.questionnaireData ?? {}]));
+  const grounded = (address: string) => {
+    const street = address.split(/[,\n]/)[0] || "";
+    const numbers = street.match(/\d+/g) || [];
+    const words = (street.match(/[A-Za-z]{4,}/g) || []).map((w) => w.toLowerCase());
+    return numbers.length > 0 && numbers.every((n) => facts.includes(n)) && words.some((w) => facts.includes(w));
+  };
+  return { ...map, locations: map.locations.filter((l) => !!l.address && grounded(l.address)) } as unknown as Record<string, unknown>;
 }
 
 /** The subset of a stored section needed to rebuild one of its siblings. */

@@ -34,6 +34,9 @@ import { CoverPageRenderer }          from "./renderers/CoverPage";
 import { DividerRenderer }            from "./renderers/Divider";
 import { WaterfallChartRenderer }     from "./renderers/WaterfallChart";
 import { TagCloudRenderer }           from "./renderers/TagCloud";
+import { ImageGalleryRenderer }       from "./renderers/ImageGallery";
+import { VideoRenderer }              from "./renderers/Video";
+import { LocationMapRenderer }        from "./renderers/LocationMap";
 import { LockedSectionBody }          from "./renderers/LockedSection";
 import { ProseFallback, sanitizeLayoutData } from "./richText";
 
@@ -70,6 +73,9 @@ const RENDERERS = {
   tag_cloud: TagCloudRenderer,
   org_chart: OrgChartRenderer,
   location_card: LocationCardRenderer,
+  image_gallery: ImageGalleryRenderer,
+  video: VideoRenderer,
+  location_map: LocationMapRenderer,
 } satisfies Record<CimLayoutKey, ComponentType<any>>;
 
 /** Layouts without their own heading (they are headings themselves). */
@@ -111,7 +117,7 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
     brokerMode && isEmptyProse(section, layoutData, content) ? (
       <EmptySectionPlaceholder />
     ) : (
-      <Renderer layoutData={layoutData} content={content} branding={branding} section={section} />
+      <Renderer layoutData={layoutData} content={content} branding={branding} section={section} brokerMode={brokerMode} />
     )
   ) : content ? (
     <ProseFallback content={content} />

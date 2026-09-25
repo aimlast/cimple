@@ -16,6 +16,7 @@
  * split on whatever the model returns, and strips the legacy literal "[DD]"
  * tag so it never reaches a buyer.
  */
+import { isMediaLayout } from "@shared/cim-media";
 import Anthropic from "@anthropic-ai/sdk";
 import type { CimSection } from "@shared/schema";
 
@@ -179,7 +180,9 @@ async function enrichSection(
 
   // Cover pages and dividers carry nothing to enrich — skip the model call so
   // they can't come back with stray markers or a reworded title.
-  if (section.layoutType === "cover_page" || section.layoutType === "divider") {
+  // Media blocks (photos, videos, maps) are served from their own data in
+  // every version — nothing to enrich, and their references must not change.
+  if (section.layoutType === "cover_page" || section.layoutType === "divider" || isMediaLayout(section.layoutType)) {
     return { cimSectionId: String(section.id), layoutData, contentOverride: content };
   }
 

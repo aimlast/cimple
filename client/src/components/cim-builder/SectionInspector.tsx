@@ -15,7 +15,8 @@ import { Switch } from "@/components/ui/switch";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
 import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
-import { getCimLayout, layoutLabel } from "@shared/cim-layouts";
+import { canAiRewriteLayout, canAiWriteLayout, getCimLayout, layoutLabel } from "@shared/cim-layouts";
+import { MediaSectionEditor } from "./media/MediaSectionEditor";
 import { cn } from "@/lib/utils";
 import { AiWriterPanel } from "./AiWriterPanel";
 import { LayoutIcon } from "./LayoutGallery";
@@ -29,9 +30,11 @@ interface Props {
   onChangeLayout: () => void;
   onRegenerate: () => void;
   onDelete: () => void;
+  /** Unsaved photo/video/map edits, so the page can preview them live (null = none). */
+  onDraftChange?: (sectionId: string, layoutData: Record<string, any> | null) => void;
 }
 
-export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout, onRegenerate, onDelete }: Props) {
+export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout, onRegenerate, onDelete, onDraftChange }: Props) {
   const running = taskRunning(section);
   const task = section.aiTask;
   const failedWrite = task?.kind === "write" && task.status === "failed";
@@ -39,6 +42,9 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
   const layout = getCimLayout(section.layoutType);
   const textEditable = isTextEditableLayout(section.layoutType);
   const dataEditable = isStructuredLayout(section.layoutType);
+  const mediaEditable = layout?.editor === "media";
+  const aiRewrite = canAiRewriteLayout(section.layoutType);
+  const aiWrite = canAiWriteLayout(section.layoutType);
 
   // ── Title ──
   const [title, setTitle] = useState(section.sectionTitle);
@@ -60,6 +66,13 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
     // Re-seed when the section changes underneath (switch, AI finished, undo).
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [section.id, section.updatedAt, section.layoutType]);
+
+  // Media edits preview live on the page until saved (or cancelled).
+  useEffect(() => {
+    if (!mediaEditable || !onDraftChange) return;
+    onDraftChange(section.id, dirty ? data : null);
+  }, [mediaEditable, dirty, data, section.id, onDraftChange]);
+  useEffect(() => () => onDraftChange?.(section.id, null), [section.id, onDraftChange]);
 
   const saveContent = () => {
     api.patch.mutate(
@@ -146,6 +159,19 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
             placeholder="Write this section. Leave a blank line between paragraphs."
             data-testid="input-section-text"
           />
+        ) : mediaEditable ? (
+          <div className={cn(running && "pointer-events-none opacity-60")}>
+            <MediaSectionEditor
+              dealId={section.dealId}
+              layoutType={section.layoutType}
+              value={data}
+              disabled={running}
+              onChange={(next) => {
+                setData((cur) => (typeof next === "function" ? next(cur) : next));
+                setDirty(true);
+              }}
+            />
+          </div>
         ) : dataEditable ? (
           <div className={cn("rounded-lg border border-border p-2.5 max-h-[420px] overflow-y-auto", running && "pointer-events-none opacity-60")}>
             <StructuredDataEditor value={data} onChange={(v) => { setData(v); setDirty(true); }} compact />
@@ -168,7 +194,8 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
         )}
       </div>
 
-      {/* AI writer */}
+      {/* AI writer (not for photos, videos or maps) */}
+      {aiRewrite && (
       <div className="space-y-2 rounded-lg border border-border p-3">
         <div className="flex items-center gap-1.5">
           <Sparkles className="h-3.5 w-3.5 text-teal" />
@@ -184,6 +211,7 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
           onDiscard={() => api.discardTask.mutate(section.id)}
         />
       </div>
+      )}
 
       {/* Who can see it */}
       <div className="space-y-2">
@@ -236,7 +264,7 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
           <CheckCircle2 className="h-3.5 w-3.5" />
           {section.brokerApproved ? "Approved — undo approval" : "Approve section"}
         </Button>
-        {section.layoutType !== "divider" && (
+        {section.layoutType !== "divider" && aiWrite && (
           <Button
             size="sm"
             variant="outline"
