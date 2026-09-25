@@ -38,6 +38,7 @@ import { getInterviewOutline } from "../interview/outline.js";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan.js";
 import { brokerFactsView } from "../information/facts";
 import { getFieldSources, repairCharIndexedValue, typedNumericValues, yearSource } from "../interview/info-merger";
+import { isAdjustedOnly } from "../documents/merge-policy";
 import { isLeadFact, isPrivateToBroker } from "../information/cim-facts";
 import { getLiveCimGenerationStatus } from "../cim/generation-jobs";
 import { effectiveAskingPrice } from "../information/deal-mirror";
@@ -64,7 +65,7 @@ export interface DealListRow {
   /** SDE on file (kept for older clients) — prefer `earnings`. */
   sde: number | null;
   /** The earnings figure the card shows: SDE or EBITDA, labelled. */
-  earnings: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean } | null;
+  earnings: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean; year?: string } | null;
   readiness: { score: number; label: CimReadiness["label"] } | null;
   nextStep: NextStep;
   counts: { documents: number; buyersWithAccess: number; buyerViews: number; openDiscrepancies: number };
@@ -116,6 +117,8 @@ export function moneyValue(raw: unknown): number | null {
 export interface HeadlineMoney {
   value: number;
   unverified?: boolean;
+  /** The fiscal year the figure is for, when an older one than the revenue's (the card says "SDE · FY2023"). */
+  year?: string;
 }
 
 export interface DealEarnings extends HeadlineMoney {
@@ -135,10 +138,14 @@ const SDE_SIZED_REVENUE = 5_000_000;
  */
 export function dealHeadlineFigures(info: Record<string, unknown>): { revenue: HeadlineMoney | null; earnings: DealEarnings | null } {
   const sources = getFieldSources(info);
+  // Which fiscal year a figure is for (internal — only surfaced when older than the revenue's).
+  const years = new WeakMap<HeadlineMoney, string>();
+  const withYear = (m: HeadlineMoney, year: string | undefined) => { if (year) years.set(m, year); return m; };
   const scalar = (key: string): HeadlineMoney | null => {
     const value = moneyValue(info[key]);
     if (!value) return null;
-    return isLeadFact(info, key) ? { value, unverified: true } : { value };
+    const year = /^\d{4}/.test(sources[key]?.period ?? "") ? sources[key]!.period!.slice(0, 4) : undefined;
+    return withYear(isLeadFact(info, key) ? { value, unverified: true } : { value }, year);
   };
   const latestYear = (key: string): HeadlineMoney | null => {
     const map = repairCharIndexedValue(info[key]);
@@ -149,8 +156,8 @@ export function dealHeadlineFigures(info: Record<string, unknown>): { revenue: H
       if (!value) continue;
       const ys = yearSource(sources[key], y);
       const unconfirmed = !!ys && (isPrivateToBroker(ys) || ((ys.source === "website" || ys.source === "social") && !ys.acceptedByBroker));
-      if (!unconfirmed) return { value };
-      lead ??= { value, unverified: true };
+      if (!unconfirmed) return withYear({ value }, y);
+      lead ??= withYear({ value, unverified: true }, y);
     }
     return lead;
   };
@@ -158,13 +165,23 @@ export function dealHeadlineFigures(info: Record<string, unknown>): { revenue: H
 
   const revenue = pick(scalar("annualRevenue"), latestYear("revenueByYear"));
   const sde = pick(scalar("sde"), latestYear("sdeByYear"));
-  const ebitda = pick(scalar("ebitda"), scalar("adjustedEbitda"), latestYear("ebitdaByYear"), latestYear("adjustedEbitdaByYear"));
+  // The card's EBITDA is reported EBITDA: an adjusted figure filed under the
+  // plain key ("$3,900,000 adjusted EBITDA (FY2024)") yields to the reported year's.
+  const adjustedText = typeof info.ebitda === "string" && isAdjustedOnly(info.ebitda);
+  const ebitda = adjustedText
+    ? pick(latestYear("ebitdaByYear"), scalar("ebitda"), scalar("adjustedEbitda"), latestYear("adjustedEbitdaByYear"))
+    : pick(scalar("ebitda"), scalar("adjustedEbitda"), latestYear("ebitdaByYear"), latestYear("adjustedEbitdaByYear"));
   let earnings: DealEarnings | null = null;
   const sdeSized = !revenue || revenue.value < SDE_SIZED_REVENUE;
   if (sde && !sde.unverified && (sdeSized || !ebitda || ebitda.unverified)) earnings = { label: "SDE", ...sde };
   else if (ebitda && !ebitda.unverified) earnings = { label: "EBITDA", ...ebitda };
   else if (sde) earnings = { label: "SDE", ...sde };
   else if (ebitda) earnings = { label: "EBITDA", ...ebitda };
+  // An earnings figure for an older year than the revenue says which year it is.
+  const src = earnings?.label === "SDE" ? sde : ebitda;
+  const earningsYear = src ? years.get(src) : undefined;
+  const revenueYear = revenue ? years.get(revenue) : undefined;
+  if (earnings && earningsYear && revenueYear && earningsYear < revenueYear) earnings = { ...earnings, year: earningsYear };
   return { revenue, earnings };
 }
 

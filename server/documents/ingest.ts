@@ -262,46 +262,59 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
 
     const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
+    // A failed extraction (an API error, no credits) never replaces the
+    // extraction on file — reprocess can still replay it.
+    const hadExtraction = !!doc.extractedData && typeof doc.extractedData === "object" &&
+      Object.keys(doc.extractedData as object).some((k) => !k.startsWith("_") && k !== "summary");
     await storage.updateDocument(doc.id, {
-      status: failed ? "failed" : "extracted",
+      status: failed ? (hadExtraction ? doc.status : "failed") : "extracted",
       extractedText: text,
-      extractedData: extracted,
-      isProcessed: !failed,
+      ...(failed && hadExtraction ? {} : { extractedData: extracted }),
+      isProcessed: failed ? (hadExtraction ? doc.isProcessed : false) : true,
       ...(failed ? {} : rememberPeriodEnd(doc, extracted)),
     } as any);
     if (failed) return { status: "failed", fieldsWritten: [] };
-
-    // Serialised per deal: several sources finishing at once (a CRM import
-    // ingests a few in parallel) must not overwrite each other's facts.
-    const conflicts: MergeConflict[] = [];
-    let saved: Record<string, unknown> = {};
-    const documents = await storage.getDocumentsByDeal(doc.dealId);
-    const result = await withDealFactsLock(doc.dealId, async () => {
-      const deal = await storage.getDeal(doc.dealId);
-      if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
-      const before = (deal.extractedInfo as Record<string, unknown>) || {};
-      const ctx: MergeContext = { conflicts, lookup: sourceRowLookup(documents) };
-      // Every source entry carries its row's visibility (older entries too),
-      // so the CIM writers and the deal list can tell broker-only years apart.
-      const merged = stampSourceDetails(
-        mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
-        documents,
-      );
-      addPrivateNotes(merged, extracted._privateNotes, doc);
-      const fieldsWritten = Object.keys(merged).filter(
-        (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
-      );
-      await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
-      saved = merged;
-      return { status: "extracted" as const, fieldsWritten };
-    });
-    // Material conflicts still standing after the merge become discrepancies (deduplicated).
-    await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
-      console.error(`[ingest] recording merge conflicts failed for doc ${documentId}:`, err));
-    return result;
+    return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {
     console.error(`[ingest] failed for doc ${documentId}:`, err);
     await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});
     return { status: "failed", fieldsWritten: [] };
   }
+}
+
+/**
+ * Merges one source row's extraction into its deal's facts with provenance
+ * (the second half of ingestDocument; also used to replay a stored
+ * extraction). Serialised per deal; material conflicts still standing after
+ * the merge become discrepancies.
+ */
+export async function mergeExtractionIntoDeal(doc: Document, extracted: ExtractedDocumentData): Promise<IngestResult> {
+  // Serialised per deal: several sources finishing at once (a CRM import
+  // ingests a few in parallel) must not overwrite each other's facts.
+  const conflicts: MergeConflict[] = [];
+  let saved: Record<string, unknown> = {};
+  const documents = await storage.getDocumentsByDeal(doc.dealId);
+  const result = await withDealFactsLock(doc.dealId, async () => {
+    const deal = await storage.getDeal(doc.dealId);
+    if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
+    const before = (deal.extractedInfo as Record<string, unknown>) || {};
+    const ctx: MergeContext = { conflicts, lookup: sourceRowLookup(documents) };
+    // Every source entry carries its row's visibility (older entries too),
+    // so the CIM writers and the deal list can tell broker-only years apart.
+    const merged = stampSourceDetails(
+      mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
+      documents,
+    );
+    addPrivateNotes(merged, extracted._privateNotes, doc);
+    const fieldsWritten = Object.keys(merged).filter(
+      (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
+    );
+    await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
+    saved = merged;
+    return { status: "extracted" as const, fieldsWritten };
+  });
+  // Material conflicts still standing after the merge become discrepancies (deduplicated).
+  await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
+    console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
+  return result;
 }

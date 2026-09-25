@@ -35,6 +35,8 @@ import {
   periodForYear,
   periodYear,
   reconcileHeadlines,
+  leadingYearFigure,
+  singleYearFigure,
   splitMultiYearValue,
   stripYearTag,
   yearMapKeyFor,
@@ -214,12 +216,14 @@ Extract all relevant fields. Include:
 - _documentType: what type of source this appears to be
 - _confidence: "high", "medium", or "low" based on how clear and direct the source is
 
-For FINANCIAL documents, extract: revenue, grossProfit, ebitda, sde, addbacks, netIncome, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes
+For FINANCIAL documents, extract: revenue, grossProfit, ebitda, adjustedEbitda, sde, addbacks, netIncome, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes
+- ebitda is EBITDA as reported / before adjustments. A figure the source calls adjusted, normalised, recast or pro forma EBITDA goes ONLY in adjustedEbitda (and byYear.adjustedEbitda) — never in ebitda. When a source gives both, record both.
+- netIncome is net income after tax. Income before tax, operating income or one location's / segment's profit is not netIncome — use its own key (incomeBeforeTax, operatingIncome) or keyFinancialNotes.
 
 FISCAL PERIODS (any source that states figures):
 - periodEnd: the end date (YYYY-MM-DD) of the LATEST fiscal period the source reports figures for (e.g. "2024-12-31" for FY2024 statements).
-- revenue, grossProfit, ebitda, sde, netIncome and the other plain figure fields hold ONLY the latest period's single figure — never a list of years, never a year in the field name (no netIncome2023, sde2024).
-- Every figure for each fiscal year goes in byYear: {"revenue": {"2024": "$3,318,600", "2023": "$3,082,400"}, "netIncome": {"2024": "…"}} (revenue also in revenueByYear). Key by the fiscal year-END year ("FY2023/24" → "2024"); leave out partial or relative periods (YTD, TTM, "last year" with no year).
+- revenue, grossProfit, ebitda, adjustedEbitda, sde, netIncome and the other plain figure fields hold ONLY the latest period's single figure — never a list of years, never a year in the field name (no netIncome2023, sde2024).
+- Every figure for each fiscal year goes in byYear: {"revenue": {"2024": "$3,318,600", "2023": "$3,082,400"}, "netIncome": {"2024": "…"}, "adjustedEbitda": {"2024": "…"}} (revenue also in revenueByYear). Key by the fiscal year-END year ("FY2023/24" → "2024"); leave out partial or relative periods (YTD, TTM, "last year" with no year).
 - revenueByYear holds revenue only — never SDE, EBITDA, profit or margin.
 
 BROKER PROCESS: how the business reached the broker (who referred it, the lead source), the broker's fee, commission, listing or engagement terms, earlier approaches or offers — these are not facts about the business: put them ONLY in _privateNotes.
@@ -283,6 +287,42 @@ const ADJUSTED_WORDS = /\b(?:adj\.?|adjusted|normali[sz]ed|pro ?forma|recast)\b/
 /** Plain earnings maps → their adjusted counterpart. */
 const ADJUSTED_OF: Record<string, string> = { ebitdaByYear: "adjustedEbitdaByYear" };
 
+/** Pre-tax income ("income before taxes $350,000") — never net income. */
+const PRE_TAX_WORDS = /\b(?:before (?:income )?tax(?:es)?|pre-?tax)\b/i;
+const NET_INCOME_MAPS: ReadonlySet<string> = new Set(["netIncomeByYear", "netProfitByYear"]);
+
+/** Clauses of a figure text: split at ";", new lines and sentence ends ("…900. Adjusted …"). */
+function figureClauses(text: string): string[] {
+  return text.split(/[;\n]+|\.\s+(?=[A-Z])/).map((c) => c.trim()).filter(Boolean);
+}
+const hasDollarFigure = (t: string) => /\$\s*\d/.test(t);
+
+/**
+ * EBITDA text that states BOTH the reported and the adjusted measure →
+ * the clauses of each ({reported, adjusted}); null when it states only one.
+ * "Tom: Adjusted EBITDA $6,105,400 in 2024, $5,311,310 in 2023; EBITDA as
+ * reported $5,274,900 in 2024" → adjusted: the first clause, reported: the second.
+ */
+export function splitEarningsMeasures(text: string): { reported: string; adjusted: string } | null {
+  const reported: string[] = [];
+  const adjusted: string[] = [];
+  for (const c of figureClauses(text)) {
+    if (!hasDollarFigure(c)) continue;
+    (ADJUSTED_WORDS.test(c) ? adjusted : reported).push(c);
+  }
+  return reported.length > 0 && adjusted.length > 0 ? { reported: reported.join("; "), adjusted: adjusted.join("; ") } : null;
+}
+
+/** One labelled figure per clause and year ("Adjusted EBITDA 2023: $5,311,310. …") → a by-year map, or null. */
+function figuresByYear(text: string): Record<string, string> | null {
+  const out: Record<string, string> = {};
+  for (const c of figureClauses(text)) {
+    const one = singleYearFigure(c);
+    if (one && out[one.year] === undefined) out[one.year] = one.value;
+  }
+  return Object.keys(out).length > 0 ? out : null;
+}
+
 /**
  * The merge contract for one extraction (idempotent — also applied to stored
  * extractions replayed by reprocess):
@@ -320,8 +360,12 @@ export function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocu
     const { map, rejected: bad } = cleanYearMap(metric, source);
     for (const r of bad) rejected.push(`${metric}: ${r}`);
     for (const [y, v] of Object.entries(map)) {
-      // "adj EBITDA $6.1M" under EBITDA is adjusted EBITDA (same for SDE).
-      const target = (maps[ADJUSTED_OF[mapKey] && ADJUSTED_WORDS.test(v) ? ADJUSTED_OF[mapKey] : mapKey] ??= {});
+      // "adj EBITDA $6.1M" under EBITDA is adjusted EBITDA; "income before
+      // taxes" under net income is pre-tax income.
+      const routed = ADJUSTED_OF[mapKey] && ADJUSTED_WORDS.test(v)
+        ? ADJUSTED_OF[mapKey]
+        : NET_INCOME_MAPS.has(mapKey) && PRE_TAX_WORDS.test(v) ? "incomeBeforeTaxByYear" : mapKey;
+      const target = (maps[routed] ??= {});
       if (target[y] === undefined) target[y] = v;
     }
   };
@@ -364,9 +408,28 @@ export function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocu
     if (clean.inferred) inferred.add(k);
     let value = clean.value;
     // Headline figures: one period's figure only.
-    // An adjusted / normalised figure under the plain EBITDA key is adjusted EBITDA.
-    if ((k === "ebitda" || k === "EBITDA") && ADJUSTED_WORDS.test(value) && raw.adjustedEbitda === undefined) {
-      k = "adjustedEbitda";
+    if (k === "ebitda" || k === "EBITDA" || k === "adjustedEbitda") {
+      // Text that states both measures ("Reported EBITDA 2024: $5,274,900.
+      // Adjusted EBITDA 2024: $6,105,400. …"): each clause to its own measure.
+      const measures = splitEarningsMeasures(value);
+      if (measures) {
+        for (const [measure, text] of [["ebitda", measures.reported], ["adjustedEbitda", measures.adjusted]] as const) {
+          const years = splitMultiYearValue(text) ?? figuresByYear(text);
+          if (years) addYears(yearMapKeyFor(measure), measure, years);
+          else if (out[measure] === undefined && (measure === k || raw[measure] === undefined)) out[measure] = text;
+        }
+        continue;
+      }
+      // An adjusted / normalised figure under the plain EBITDA key is adjusted EBITDA.
+      if (k !== "adjustedEbitda" && ADJUSTED_WORDS.test(value)) {
+        if (raw.adjustedEbitda !== undefined) continue; // recorded under its own key already
+        k = "adjustedEbitda";
+      }
+    }
+    // Income before tax under net income is pre-tax income, not net income.
+    if ((k === "netIncome" || k === "netProfit") && PRE_TAX_WORDS.test(value)) {
+      if (raw.incomeBeforeTax !== undefined) continue;
+      k = "incomeBeforeTax";
     }
     const head = headlineKeyFor(k);
     if (head) {
@@ -380,6 +443,14 @@ export function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocu
         value = tagged.value;
         keyPeriods[k] = periodForYear(tagged.year, periodEnd);
         addYears(yearMapKeyFor(k), k, { [tagged.year]: tagged.value });
+      } else {
+        // "$426,100 (FY2024) - ties to the statements: …": the words stay, the
+        // year's figure goes on the map.
+        const lead = leadingYearFigure(value);
+        if (lead && !inferred.has(k)) {
+          keyPeriods[k] = periodForYear(lead.year, periodEnd);
+          addYears(yearMapKeyFor(k), k, { [lead.year]: lead.amount });
+        }
       }
     }
     out[k] = value;
@@ -475,6 +546,16 @@ const LEASE_COMPOSITE_PARTS: Array<{ key: string; label: string }> = [
   { key: "leaseRenewalOptions", label: "Renewal options" },
 ];
 
+/** The latest fiscal period a normalised extraction's figures are for (its by-year maps and tagged headlines), if any. */
+function latestFigurePeriod(data: ExtractedDocumentData): string | undefined {
+  const periods: string[] = Object.values((data._keyPeriods as Record<string, string> | undefined) ?? {});
+  for (const [k, v] of Object.entries(data)) {
+    if (!isYearMapKey(k) || !v || typeof v !== "object") continue;
+    for (const y of Object.keys(v as object)) if (/^(?:19|20)\d{2}$/.test(y)) periods.push(`${y}-12-31`);
+  }
+  return periods.sort().pop();
+}
+
 /** Who asserted an extraction: the source row and its kind. */
 export interface MergeSource {
   documentId?: string;
@@ -535,7 +616,10 @@ export function mergeExtractedData(
   const kind: SourceKind = o.source ?? "document";
   const documentId = o.documentId;
   const data = normaliseExtraction(incoming as Record<string, unknown>);
-  const period = normalisePeriod(o.period) ?? data._periodEnd;
+  // A document that states no period end (older extractions) is for the
+  // latest fiscal year its figures cover — FY2023 statements with FY2022
+  // comparatives are a 2023 source, not an undated one.
+  const period = normalisePeriod(o.period) ?? data._periodEnd ?? (kind === "document" ? latestFigurePeriod(data) : undefined);
   const dated = normalisePeriod(o.dated);
   const base: FieldSource = {
     source: kind,

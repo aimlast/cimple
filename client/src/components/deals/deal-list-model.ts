@@ -24,7 +24,7 @@ export interface DealListRow {
   revenueUnverified?: boolean;
   sde: number | null;
   /** The earnings figure for the card: SDE or EBITDA, labelled. */
-  earnings?: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean } | null;
+  earnings?: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean; year?: string } | null;
   readiness: { score: number; label: "Thin" | "Developing" | "Solid" | "Buyer-ready" } | null;
   nextStep: NextStep;
   counts: { documents: number; buyersWithAccess: number; buyerViews: number; openDiscrepancies: number };

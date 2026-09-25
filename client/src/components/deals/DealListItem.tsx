@@ -269,7 +269,11 @@ export function DealCard({ deal, actions }: { deal: DealListRow; actions: DealIt
         <div className="grid grid-cols-3 gap-3 pt-0.5">
           <Money label="Asking" value={asking} />
           <Money label="Revenue" value={revenue} unverified={deal.revenueUnverified} />
-          <Money label={earnings?.label ?? "SDE"} value={earningsText} unverified={earnings?.unverified} />
+          <Money
+            label={`${earnings?.label ?? "SDE"}${earnings && "year" in earnings && earnings.year ? ` · FY${earnings.year}` : ""}`}
+            value={earningsText}
+            unverified={earnings?.unverified}
+          />
         </div>
       )}
 
