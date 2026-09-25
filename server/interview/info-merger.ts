@@ -1,5 +1,6 @@
 import type { ExtractedInfo } from "@shared/schema";
 import { SOURCE_KINDS, type SourceKind } from "@shared/schema";
+import { sameNoteContent, isHousekeepingNote } from "@shared/private-notes";
 import type { ExtractedField, InterviewReasoning } from "./response-schema";
 import type { IndustryContext, LocationContext } from "./knowledge-base";
 
@@ -1149,6 +1150,8 @@ export interface PrivateNoteSource {
   reason?: string;
   /** Interview turn it was recorded on. */
   turn?: number;
+  /** The seller typed it in the intake questionnaire. */
+  questionnaire?: boolean;
 }
 
 export interface BrokerPrivateNote extends PrivateNoteSource {
@@ -1157,7 +1160,7 @@ export interface BrokerPrivateNote extends PrivateNoteSource {
   alsoFrom?: PrivateNoteSource[];
 }
 
-const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn"] as const;
+const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn", "questionnaire"] as const;
 
 function pickNoteSource(n: PrivateNoteSource): PrivateNoteSource {
   const out: PrivateNoteSource = {};
@@ -1170,9 +1173,9 @@ export function privateNoteText(note: string): string {
   return note.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
 }
 
-/** One identity per source: the document, or the seller's own sessions. */
+/** One identity per source: the document, the intake questionnaire, or the seller's own sessions. */
 function noteSourceId(s: PrivateNoteSource): string {
-  return s.documentId ? `doc:${s.documentId}` : "session";
+  return s.documentId ? `doc:${s.documentId}` : s.questionnaire ? "questionnaire" : "session";
 }
 
 /** A (note, source) pair's identity — what a turn save compares against the snapshot. */
@@ -1203,17 +1206,23 @@ function withSources(n: BrokerPrivateNote, sources: PrivateNoteSource[]): Broker
 }
 
 /**
- * Records `note` from `src` on `info` (mutates). A note already on file with
- * the same text gains `src` as another source instead of being skipped — the
- * old skip left the note depending on its first source alone. Returns true
- * when anything changed.
+ * Records `note` from `src` on `info` (mutates). A note already on file that
+ * says the same thing — the same text, or the same content in other words
+ * (sameNoteContent: "Owner had a cardiac event in 2024" / "Seller disclosed a
+ * 2024 heart event") — gains `src` as another source instead of a second
+ * entry; the old skip left the note depending on its first source alone.
+ * Returns true when anything changed.
  */
 export function addPrivateNote(info: Record<string, unknown>, note: string, src: PrivateNoteSource): boolean {
   const text = note.trim();
-  if (!text) return false;
+  if (!text || isHousekeepingNote(text)) return false; // "Sample document — fictional business" is not a note
   const notes = getPrivateNotes(info);
   const key = privateNoteText(text);
-  const idx = notes.findIndex((n) => privateNoteText(n.note) === key);
+  let idx = notes.findIndex((n) => privateNoteText(n.note) === key);
+  // A restatement merges only with a note worded by the same side: the note
+  // keeps its first source's words, and a broker-only CRM note's wording
+  // must never become what the seller-side (interview) view shows.
+  if (idx === -1) idx = notes.findIndex((n) => !!n.brokerOnly === !!src.brokerOnly && sameNoteContent(n.note, text));
   const source = pickNoteSource(src);
   if (idx === -1) {
     info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...source }];
@@ -1223,6 +1232,22 @@ export function addPrivateNote(info: Record<string, unknown>, note: string, src:
   if (sources.some((s) => noteSourceId(s) === noteSourceId(source))) return false;
   const next = [...notes];
   next[idx] = withSources(notes[idx], [...sources, source]);
+  info[BROKER_PRIVATE_NOTES_KEY] = next;
+  return true;
+}
+
+/**
+ * Folds notes on file that say the same thing (recorded before restatements
+ * were merged on write) into one entry each, keeping every source (mutates).
+ * Returns true when anything changed.
+ */
+export function compactPrivateNotes(info: Record<string, unknown>): boolean {
+  const notes = getPrivateNotes(info);
+  if (notes.length < 2) return false;
+  const scratch: Record<string, unknown> = {};
+  for (const n of notes) for (const s of privateNoteSources(n)) addPrivateNote(scratch, n.note, s);
+  const next = getPrivateNotes(scratch);
+  if (next.length === notes.length) return false;
   info[BROKER_PRIVATE_NOTES_KEY] = next;
   return true;
 }

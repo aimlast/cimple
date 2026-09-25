@@ -31,6 +31,9 @@ import {
   type SourceKind,
 } from "../interview/info-merger";
 import { agentConfig } from "../interview/config/load-config";
+import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
+import type { Deal } from "@shared/schema";
+import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, SPOKEN_KINDS } from "./extraction-guard";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -180,7 +183,50 @@ const SOURCE_GUIDANCE: Partial<Record<SourceKind, string>> = {
 - Never infer financials or size from engagement or marketing language.`,
 };
 
-function buildExtractionPrompt(text: string, category: string, subcategory: string | null | undefined, kind: SourceKind): string {
+/** A data point the deal's interview checklist records under a fixed key (see interview-plan.ts). */
+export interface ExtractionChecklistItem {
+  key: string;
+  label: string;
+}
+
+/** At most this many checklist keys are listed in the prompt. */
+const MAX_CHECKLIST_KEYS = 60;
+
+function checklistBlock(checklist: ExtractionChecklistItem[] | undefined): string {
+  const items = (checklist ?? []).filter((i) => i && /^[a-z][A-Za-z0-9]*$/.test(i.key)).slice(0, MAX_CHECKLIST_KEYS);
+  if (items.length === 0) return "";
+  return `
+
+THIS DEAL'S CHECKLIST KEYS: when the source answers one of these data points, record it under exactly this key (not a new name of your own):
+${items.map((i) => `- ${i.key}: ${i.label}`).join("\n")}`;
+}
+
+/**
+ * The deal's checklist data points (industry plan + broker-added items), for
+ * the extraction prompt — so a roof's condition lands on roofCondition, not
+ * an ad-hoc key coverage never credits.
+ */
+export function extractionChecklist(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline">): ExtractionChecklistItem[] {
+  const adj = coverageAdjustmentsForDeal(deal);
+  const out: ExtractionChecklistItem[] = [];
+  const seen = new Set<string>();
+  for (const items of Object.values(adj.add ?? {})) {
+    for (const i of items) {
+      if (seen.has(i.key) || adj.remove?.has(i.key)) continue;
+      seen.add(i.key);
+      out.push({ key: i.key, label: i.label });
+    }
+  }
+  return out;
+}
+
+function buildExtractionPrompt(
+  text: string,
+  category: string,
+  subcategory: string | null | undefined,
+  kind: SourceKind,
+  checklist?: ExtractionChecklistItem[],
+): string {
   const docType = subcategory ? `${category} / ${subcategory}` : category;
   const guidance = SOURCE_GUIDANCE[kind];
   const label = kind === "document" ? `${docType} document` : `${kind.replace("_", " ")} (${docType})`;
@@ -194,7 +240,11 @@ Extract all relevant fields. Include:
 - _documentType: what type of source this appears to be
 - _confidence: "high", "medium", or "low" based on how clear and direct the source is
 
-For FINANCIAL documents, extract: revenue, grossProfit, ebitda, sde, addbacks, netIncome, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes
+For FINANCIAL documents, extract the lines exactly as printed: revenue (operating revenue / sales only — investment income, interest income, gains and other non-operating income go under otherIncome, never into revenue), costOfSales, grossProfit, operatingExpenses, amortization, interestExpense, incomeTaxes, netIncome, ownerSalary (only when the owner's or management salary is its own printed line), dividendsPaid, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes. A figure for one fiscal year carries the year in its key (netIncome2024, grossProfit2023).
+
+NEVER CALCULATE. EBITDA, SDE (seller's discretionary earnings), adjusted EBITDA, add-backs, working capital, margins and every other figure worked out from other lines are recorded ONLY when the source itself prints that figure under that name (a line reading "EBITDA  $412,300", "Seller's discretionary earnings", "Normalization adjustments") — then copy the printed figure. Never add, subtract or divide lines to produce a figure, never write "calculated as …", never state a total the source does not print, and never record a figure that is only "included in" a larger line. Normalizing the earnings is the financial analysis's job, not yours.
+
+A count (fleetSize, employees, numberOfLocations, …) is a number of things, never a dollar amount: when the source gives only the dollar value of the vehicles or equipment, record that under its own key (e.g. vehiclesCost). Industry classification codes (NAICS, SIC) go under naicsCode — never as the industry or business type.
 
 For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, contracts, legalNotes, permitsLicenses (all licenses and permits)
 
@@ -218,7 +268,9 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
-PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.`;
+PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes, each stated once). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.
+Company transactions that involve the owner or their family are BUSINESS facts, not private notes — a buyer's due diligence needs them and the financial analysis reads them: dividends declared or paid (dividendsDeclared, with class, amount and date), shareholder loans and amounts due to or from shareholders (shareholderLoans), personal guarantees of company debt (personalGuarantees), related-party leases, contracts and family members on the payroll (relatedPartyTransactions), and the audit / review / compilation status (auditStatus). Record them under those keys.
+Ignore document housekeeping — "sample" or "fictional" labels, page footers, confidentiality stamps: it is neither a fact nor a note.${checklistBlock(checklist)}`;
 }
 
 /** Long sources (full-year email threads, hour-long calls) are read in full up to this size. */
@@ -242,8 +294,14 @@ const EXTRACTION_TOOL = {
   },
 };
 
-/** Keeps only string values (plus the revenueByYear map) — the merge contract. */
-function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocumentData {
+/**
+ * Keeps only string values (plus the revenueByYear map) — the merge contract
+ * — then applies the extraction guard (extraction-guard.ts): derived figures
+ * (SDE, EBITDA, add-backs, working capital, margins) survive only when the
+ * source prints them, calculations and count-as-dollars values are dropped,
+ * NAICS text moves to naicsCode. `sourceText` is the text the model read.
+ */
+export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: string | null, kind: SourceKind = "document"): ExtractedDocumentData {
   const out: ExtractedDocumentData = {};
   for (const [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined || v === "") continue;
@@ -266,7 +324,14 @@ function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     else if (Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(", ");
     else out[k] = JSON.stringify(v);
   }
-  return out;
+  const guarded = guardExtraction(out, sourceText, { spoken: SPOKEN_KINDS.has(kind) });
+  if (guarded.dropped.length > 0) {
+    // Keys and reasons only in production (values are the seller's business data).
+    const shown = (d: { key: string; reason: string }) =>
+      process.env.NODE_ENV === "production" ? `${d.key} (${d.reason})` : `${d.key} (${d.reason}: ${String(out[d.key] ?? "").slice(0, 120)})`;
+    console.log(`[extractor] dropped ${guarded.dropped.length} value(s): ${guarded.dropped.map(shown).join("; ")}`);
+  }
+  return guarded.data as ExtractedDocumentData;
 }
 
 export async function extractDocumentData(
@@ -275,6 +340,8 @@ export async function extractDocumentData(
   subcategory?: string | null,
   /** What kind of source this is — an email or call is read differently from a P&L. */
   kind: SourceKind = "document",
+  /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
+  opts: { checklist?: ExtractionChecklistItem[] } = {},
 ): Promise<ExtractedDocumentData> {
   if (!text || text.trim().length < 50) {
     return { _documentType: "unreadable", _confidence: "low" };
@@ -291,7 +358,7 @@ export async function extractDocumentData(
       tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
       messages: [{
         role: "user",
-        content: buildExtractionPrompt(text, category, subcategory, kind),
+        content: buildExtractionPrompt(text, category, subcategory, kind, opts.checklist),
       }],
     });
 
@@ -302,7 +369,7 @@ export async function extractDocumentData(
     if (response.stop_reason === "max_tokens") {
       console.warn(`[extractor] extraction hit the output limit — keeping what was recorded`);
     }
-    return normaliseExtraction(block.input as Record<string, unknown>);
+    return normaliseExtraction(block.input as Record<string, unknown>, text, kind);
   } catch (err) {
     console.error("[extractor] Claude extraction failed:", err);
     return { _documentType: category, _confidence: "low", summary: "Extraction failed" };
@@ -456,6 +523,16 @@ export function mergeExtractedData(
   for (const [key, value] of Object.entries(incoming)) {
     if (!value || key.startsWith("_")) continue;
     mergeValue(canonicalFieldName(key), value);
+  }
+
+  // A derived figure (SDE, EBITDA…) survives extraction only when the source
+  // printed it (extraction-guard.ts): the fact it became says so.
+  for (const stated of statedMetricKeys(incoming)) {
+    const key = canonicalFieldName(stated);
+    const s = getFieldSources(merged)[key];
+    if (s && !s.note && s.source === src.source && s.documentId === src.documentId && s.at === src.at) {
+      setFieldSource(merged, key, { ...s, note: STATED_METRIC_NOTE });
+    }
   }
 
   // Fold individual lease facts into the canonical leaseDetails narrative

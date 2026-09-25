@@ -1,18 +1,21 @@
 /**
  * InterviewReviewTab — Interview transcripts, coverage, and broker-private notes.
  */
+import { useState } from "react";
 import { useSearch } from "wouter";
 import { useDeal } from "@/contexts/DealContext";
 import { InterviewTranscriptPanel } from "@/components/deal/InterviewTranscriptPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import { ShieldAlert } from "lucide-react";
+import { ShieldAlert, ChevronDown, ChevronUp } from "lucide-react";
+import { groupSameNotes, isHousekeepingNote } from "@shared/private-notes";
 
 interface PrivateNoteSource {
   reason?: string;
   turn?: number;
   documentId?: string;
   brokerOnly?: boolean;
+  questionnaire?: boolean;
 }
 
 interface BrokerPrivateNote extends PrivateNoteSource {
@@ -22,15 +25,19 @@ interface BrokerPrivateNote extends PrivateNoteSource {
 }
 
 function sourceLabel(s: PrivateNoteSource): string {
-  const base = s.reason ? s.reason : "Recorded during the interview";
+  const base = s.reason ? s.reason : s.questionnaire ? "From the intake questionnaire" : "Recorded during the interview";
   return typeof s.turn === "number" && !s.documentId ? `${base} · turn ${s.turn}` : base;
 }
 
 /** "in Pipedrive note — …" / "said in the interview (turn 4)". */
 function alsoLabel(s: PrivateNoteSource): string {
+  if (s.questionnaire) return "in the intake questionnaire";
   if (!s.documentId) return typeof s.turn === "number" ? `said in the interview (turn ${s.turn})` : "said in the interview";
   return s.reason ? s.reason.replace(/^From /, "in ") : "in another source";
 }
+
+/** Notes shown before "Show more" — the card sits above the transcripts. */
+const VISIBLE_NOTES = 5;
 
 /**
  * Sensitive facts the interview agent recorded for the broker only — a seller
@@ -39,13 +46,24 @@ function alsoLabel(s: PrivateNoteSource): string {
  * outside every CIM-feeding path and shown nowhere else in the product.
  */
 function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
+  const [expanded, setExpanded] = useState(false);
   if (notes.length === 0) return null;
+  // Notes recorded before restatements were merged on write can say the same
+  // thing in other words — shown once, with every source that said it.
+  const groups = groupSameNotes(notes.filter((n) => !isHousekeepingNote(n.note))).map(({ note, same }) => ({
+    ...note,
+    alsoFrom: [...(note.alsoFrom ?? []), ...same.flatMap((s) => [s, ...(s.alsoFrom ?? [])])],
+  }));
+  if (groups.length === 0) return null;
+  const shown = expanded ? groups : groups.slice(0, VISIBLE_NOTES);
+  const hidden = groups.length - shown.length;
   return (
     <Card className="border-amber-600/30" data-testid="panel-broker-private-notes">
       <CardHeader className="pb-3">
         <CardTitle className="flex items-center gap-2 text-base">
           <ShieldAlert className="h-4 w-4 text-amber-500" />
           Broker-private notes
+          <span className="text-xs font-normal text-muted-foreground tabular-nums">{groups.length}</span>
           <Badge variant="outline" className="ml-auto text-[10px] font-normal">
             Never appears in any CIM
           </Badge>
@@ -58,7 +76,7 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {notes.map((n, i) => (
+        {shown.map((n, i) => (
           <div
             key={i}
             className="rounded-md border border-border bg-muted/40 px-3 py-2.5"
@@ -67,11 +85,21 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
             <p className="text-sm">{n.note}</p>
             <p className="text-[11px] text-muted-foreground mt-1">
               {sourceLabel(n)}
-              {(n.alsoFrom ?? []).length > 0 &&
-                ` · also ${(n.alsoFrom ?? []).map(alsoLabel).join(", ")}`}
+              {n.alsoFrom.length > 0 && ` · also ${n.alsoFrom.map(alsoLabel).join(", ")}`}
             </p>
           </div>
         ))}
+        {groups.length > VISIBLE_NOTES && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="flex items-center gap-1 text-xs text-teal hover:underline"
+            data-testid="button-toggle-private-notes"
+          >
+            {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+            {expanded ? "Show fewer" : `Show ${hidden} more`}
+          </button>
+        )}
       </CardContent>
     </Card>
   );

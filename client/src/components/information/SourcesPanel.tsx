@@ -24,22 +24,30 @@ import { queryClient } from "@/lib/queryClient";
 import { AlertCircle, ExternalLink, Loader2, Lock, Plus, Trash2 } from "lucide-react";
 import type { InformationSource } from "@shared/information";
 import type { DocumentSourceMeta, SourceKind } from "@shared/schema";
-import { KIND_META, formatShortDate } from "./source-kinds";
+import { KIND_META, formatShortDate, sourceDateValue } from "./source-kinds";
 import { informationKey, requestJson, useInformationAction } from "./useInformation";
 
 const PLATFORM: Record<string, string> = { zoom: "Zoom", meet: "Google Meet", teams: "Teams", cimple: "Cimple call", person: "In person", other: "Other" };
 
-export function metaLine(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): string {
+/**
+ * A source's date and the rest of its details (from → to, participants,
+ * platform…), apart: the list shows the date on its own so a long email
+ * address line can't truncate it away.
+ */
+export function metaParts(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): { when: string | null; rest: string } {
   const parts: string[] = [];
   if (meta?.from || meta?.to) parts.push([meta.from, meta.to].filter(Boolean).join(" → "));
   if (meta?.participants) parts.push(meta.participants);
   if (meta?.platform) parts.push(PLATFORM[meta.platform] ?? meta.platform);
   if (meta?.provider) parts.push(meta.provider.charAt(0).toUpperCase() + meta.provider.slice(1));
   if (meta?.durationMin) parts.push(`${meta.durationMin} min`);
-  const when = formatShortDate(date);
-  if (when) parts.push(when);
   if (kind === "website" && meta?.url) parts.push(meta.url.replace(/^https?:\/\//, ""));
-  return parts.join(" · ");
+  return { when: formatShortDate(date), rest: parts.join(" · ") };
+}
+
+export function metaLine(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): string {
+  const { when, rest } = metaParts(kind, meta, date);
+  return [when, rest].filter(Boolean).join(" · ");
 }
 
 function StatusBit({ status }: { status?: string }) {
@@ -74,11 +82,7 @@ export function SourcesPanel({
   /** Facts collected before source tracking that match no source. */
   untrackedFacts?: number;
 }) {
-  const sorted = [...sources].sort((a, b) => {
-    const ad = a.date ? +new Date(a.date) : 0;
-    const bd = b.date ? +new Date(b.date) : 0;
-    return bd - ad;
-  });
+  const sorted = [...sources].sort((a, b) => sourceDateValue(b.date) - sourceDateValue(a.date));
   return (
     <section className="rounded-lg border border-border bg-card" data-testid="sources-panel">
       <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border/60">
@@ -104,7 +108,7 @@ export function SourcesPanel({
           {sorted.map((s) => {
             const Icon = KIND_META[s.kind]?.icon ?? KIND_META.unknown.icon;
             const active = activeSourceId === s.id;
-            const line = metaLine(s.kind, s.meta, s.date);
+            const { when, rest } = metaParts(s.kind, s.meta, s.date);
             const openable = !!s.documentId || !!s.sessionId || s.kind === "website";
             return (
               <li key={s.id} className={`px-4 py-2.5 ${active ? "bg-teal/5" : ""}`}>
@@ -122,7 +126,8 @@ export function SourcesPanel({
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
                       <span>{KIND_META[s.kind]?.label ?? s.kind}</span>
-                      {line && <span className="truncate max-w-full">{line}</span>}
+                      {when && <span className="shrink-0 tabular-nums">{when}</span>}
+                      {rest && <span className="truncate min-w-0 max-w-full">{rest}</span>}
                       {s.visibility === "broker_only" && (
                         <span className="inline-flex items-center gap-0.5 text-teal"><Lock className="h-2.5 w-2.5" /> Broker only</span>
                       )}

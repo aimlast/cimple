@@ -9,6 +9,17 @@ import {
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
 import { questionnaireFacts } from "./questionnaire-facts";
+import {
+  answerHash,
+  getQuestionnaireScreen,
+  keywordSplit,
+  needsScreen,
+  screenQuestionnaireAnswers,
+  scrubUnscreenedAnswer,
+  unscreenedAnswers,
+  QUESTIONNAIRE_SCREEN_KEY,
+  type QuestionnaireScreen,
+} from "./questionnaire-privacy";
 import { buildInterviewSystemBlocks } from "./system-prompt";
 import type { InterviewResponse } from "./response-schema";
 import {
@@ -316,7 +327,11 @@ export async function startOrResumeSession(
   // "reasonForSale" — previously they never matched, so coverage showed the
   // section as missing and the agent asked again.)
   // (Re-read + write under the deal's facts lock, then use the saved copy.)
-  if (seedExtractedInfoFromQuestionnaire(deal as Parameters<typeof seedExtractedInfoFromQuestionnaire>[0])) {
+  // Answers still waiting for their privacy split are seeded (and split) too.
+  if (
+    seedExtractedInfoFromQuestionnaire(deal as Parameters<typeof seedExtractedInfoFromQuestionnaire>[0]) ||
+    unscreenedAnswers(deal as Parameters<typeof unscreenedAnswers>[0]).length > 0
+  ) {
     await seedQuestionnaireFacts(dealId);
     deal = (await storage.getDeal(dealId)) ?? deal;
   }
@@ -1581,12 +1596,16 @@ function countExtractedFields(deal: { extractedInfo: unknown }): { total: number
  * same-rank source (an email) or a fact the broker deleted.
  * Returns the new extractedInfo map when anything changed, else null.
  */
-export function seedExtractedInfoFromQuestionnaire(deal: {
-  questionnaireData?: unknown;
-  operationalSystems?: unknown;
-  employeeChart?: unknown;
-  extractedInfo: unknown;
-}): Record<string, unknown> | null {
+export function seedExtractedInfoFromQuestionnaire(
+  deal: {
+    questionnaireData?: unknown;
+    operationalSystems?: unknown;
+    employeeChart?: unknown;
+    extractedInfo: unknown;
+  },
+  /** Fresh model splits of intake answers (see screenQuestionnaireAnswers), cached on the deal. */
+  freshScreen: QuestionnaireScreen = {},
+): Record<string, unknown> | null {
   const facts = questionnaireFacts(deal);
   if (facts.length === 0) return null;
 
@@ -1595,7 +1614,28 @@ export function seedExtractedInfoFromQuestionnaire(deal: {
   const seeded = { ...existing };
   const at = new Date().toISOString();
 
-  for (const [key, value] of facts) {
+  // Answers that could carry a personal matter are split first
+  // (questionnaire-privacy.ts): only the public part becomes the fact, the
+  // personal detail becomes a broker-private note. Without a model split on
+  // file the keyword backstop decides.
+  const screen: QuestionnaireScreen = { ...getQuestionnaireScreen(existing), ...freshScreen };
+  if (Object.keys(freshScreen).length > 0) {
+    seeded[QUESTIONNAIRE_SCREEN_KEY] = screen;
+    added = true;
+  }
+
+  for (const [key, answer] of facts) {
+    let value = answer;
+    if (needsScreen(key, answer)) {
+      const cached = screen[key]?.hash === answerHash(answer) ? screen[key] : null;
+      const split = cached ?? keywordSplit(answer);
+      for (const note of split.privateNotes) {
+        if (addPrivateNote(seeded, note, { questionnaire: true, reason: "From the intake questionnaire" })) added = true;
+      }
+      if (split.publicValue !== answer.trim() && scrubUnscreenedAnswer(seeded, key, answer)) added = true;
+      if (!split.publicValue) continue;
+      value = split.publicValue;
+    }
     const current = seeded[key];
     const empty = current === null || current === undefined || current === "";
     // The seller's own typed answer outranks anything a model read from a
@@ -1644,11 +1684,16 @@ export function seedExtractedInfoFromQuestionnaire(deal: {
  * writes only the keys it changed.
  */
 export async function seedQuestionnaireFacts(dealId: string): Promise<string[]> {
+  // The privacy split runs before taking the facts lock (a model call must
+  // not hold up interview turns or document merges).
+  const pre = await storage.getDeal(dealId);
+  if (!pre) return [];
+  const fresh = await screenQuestionnaireAnswers(pre);
   return withDealFactsLock(dealId, async () => {
     const deal = await storage.getDeal(dealId);
     if (!deal) return [];
     const before = (deal.extractedInfo || {}) as Record<string, unknown>;
-    const seeded = seedExtractedInfoFromQuestionnaire(deal);
+    const seeded = seedExtractedInfoFromQuestionnaire(deal, fresh);
     if (!seeded) return [];
     // Saved whenever seeding changed anything — an intake answer that only
     // became another value (an alternate) or a corroboration is still news

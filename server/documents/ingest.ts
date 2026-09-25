@@ -19,7 +19,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
 import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { withDealFactsLock } from "./facts-lock";
@@ -222,7 +222,10 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     if (filePath && fs.existsSync(filePath)) text = await extractTextFromFile(filePath, doc.mimeType);
     if (!text && doc.extractedText) text = doc.extractedText;
 
-    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
+    const dealForChecklist = await storage.getDeal(doc.dealId);
+    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
+      checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+    });
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
     await storage.updateDocument(doc.id, {
       status: failed ? "failed" : "extracted",

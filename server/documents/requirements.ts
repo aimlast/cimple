@@ -306,6 +306,26 @@ function fileKeywords(fileName: string): Set<string> {
   return words;
 }
 
+/**
+ * Words too common in document names to identify a checklist row on their
+ * own: "Financial statements FY2023" shares "statements" with "Bank
+ * Statements (3 Months)", an email about a yard lease shares "lease" with
+ * "Commercial Lease Agreement". A match needs two shared words, or one
+ * distinguishing word.
+ */
+const GENERIC_NAME_WORDS = new Set([
+  "statement", "statements", "financial", "financials", "agreement", "agreements", "report", "reports",
+  "lease", "leases", "document", "documents", "records", "record", "schedule", "schedules", "contract",
+  "contracts", "details", "detail", "information", "info", "business", "company", "file", "files", "data",
+  "tax", "taxes", "return", "returns", "form", "forms", "letter", "letters", "notes", "policy", "policies",
+  "plan", "plans", "email", "thread", "call", "transcript", "renewal", "annual", "monthly", "quarterly", "bank",
+]);
+
+/** Only a document upload is matched to a checklist row by name (no kind = an older caller: a document). */
+export function autoLinkableKind(sourceKind: string | null | undefined): boolean {
+  return !sourceKind || sourceKind === "document";
+}
+
 interface LinkableRequirement {
   id: string;
   documentName: string;
@@ -330,20 +350,21 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
   const fileWords = fileKeywords(fileName);
   if (fileWords.size === 0) return undefined;
 
-  const candidates = requirements.filter((r) => {
-    if (r.status !== "missing") return false;
-    if (docCategory === "other") return true;
-    return docCategoryForRequirement(r.category) === docCategory;
-  });
+  // The category must match — an "other" upload is not a wildcard for every row.
+  const candidates = requirements.filter(
+    (r) => r.status === "missing" && docCategoryForRequirement(r.category) === docCategory,
+  );
 
   const scored = candidates
     .map((r) => {
-      const words = keywords(r.documentName);
-      const hits = words.filter((w) => fileWords.has(w)).length;
-      return { r, hits, total: words.length };
+      const words = Array.from(new Set(keywords(r.documentName)));
+      const shared = words.filter((w) => fileWords.has(w));
+      const distinguishing = shared.filter((w) => !GENERIC_NAME_WORDS.has(w)).length;
+      return { r, hits: shared.length, distinguishing, total: words.length };
     })
-    .filter((s) => s.hits > 0)
-    .sort((a, b) => b.hits - a.hits || (a.r.sortOrder ?? 0) - (b.r.sortOrder ?? 0));
+    // Two shared words, or one word that actually identifies the row.
+    .filter((s) => s.hits >= 2 || s.distinguishing >= 1)
+    .sort((a, b) => b.hits - a.hits || b.distinguishing - a.distinguishing || (a.r.sortOrder ?? 0) - (b.r.sortOrder ?? 0));
 
   const [best, second] = scored;
   if (!best) return undefined;
@@ -365,8 +386,14 @@ export async function linkUploadToRequirement(opts: {
   docCategory: string;
   uploadedBy: "broker" | "seller";
   requirementId?: string;
+  /** What kind of source the upload is — only a document is matched to a row by its name. */
+  sourceKind?: string;
 }): Promise<{ id: string; documentName: string; category: string } | null> {
   try {
+    // An email, a call transcript or a CRM note is never the requested
+    // document itself ("Email thread — yard lease renewal" is not the lease).
+    // An explicit row choice still counts.
+    if (!opts.requirementId && !autoLinkableKind(opts.sourceKind)) return null;
     const requirements = await storage.getDocumentRequirementsByDeal(opts.dealId);
     const target = opts.requirementId
       ? requirements.find((r) => r.id === opts.requirementId)

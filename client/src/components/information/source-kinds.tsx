@@ -18,6 +18,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import type { FactSourceInfo, FactSourceKind } from "@shared/information";
+import { formatShortDate } from "./source-dates";
 
 export const KIND_META: Record<FactSourceKind, { label: string; plural: string; icon: LucideIcon }> = {
   interview: { label: "Seller interview", plural: "Seller interview", icon: MessageSquare },
@@ -57,21 +58,11 @@ export const ADDABLE_KINDS = [
 ] as const;
 export type AddableKind = (typeof ADDABLE_KINDS)[number]["kind"] | "social";
 
-export function formatShortDate(iso: string | null | undefined, withYear = false): string | null {
-  if (!iso) return null;
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return null;
-  const now = new Date();
-  if (d.toDateString() === now.toDateString()) return "today";
-  const yesterday = new Date(now);
-  yesterday.setDate(now.getDate() - 1);
-  if (d.toDateString() === yesterday.toDateString()) return "yesterday";
-  return d.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    ...(withYear || d.getFullYear() !== now.getFullYear() ? { year: "numeric" } : {}),
-  });
-}
+// Date-only source dates ("2026-09-09") are calendar days, not UTC midnight — see source-dates.ts.
+export { formatShortDate, parseSourceDate, sourceDateValue } from "./source-dates";
+
+/** Notes on broker facts that came from the deal row (server/information/deal-mirror.ts MIRROR_NOTES / RECONCILED_NOTES). */
+const DEAL_DETAIL_NOTES = /^(Entered when the deal was created|Changed in the deal's details|.+ on the deal)$/;
 
 function stripExt(name: string): string {
   return name.replace(/\.[a-z0-9]{1,5}$/i, "");
@@ -113,6 +104,9 @@ function baseChipText(src: FactSourceInfo): string {
     case "broker": {
       const when = formatShortDate(src.at);
       if (src.note === "Resolved discrepancy") return `You · resolved ${when ?? ""}`.trim();
+      // The deal's own details (name, industry, price) entered at creation or in the deal form.
+      if (src.note === "Set in Valuation") return "You · valuation";
+      if (src.note && DEAL_DETAIL_NOTES.test(src.note)) return "You · deal details";
       if (src.note?.startsWith("Chose")) return `You · chose ${when ?? ""}`.trim();
       return `You · edited ${when ?? ""}`.trim();
     }

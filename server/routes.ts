@@ -1876,17 +1876,26 @@ Return JSON only.`,
         brokerId: req.session.brokerId,
       });
       let deal = await storage.createDeal(validatedData);
-      // An asking price entered at creation becomes the broker's fact too
-      // (one value with the Information tab — see information/deal-mirror.ts).
-      if (deal.askingPrice) {
-        try {
-          const { setMirroredDealFact } = await import("./information/facts");
-          const { MIRROR_NOTES } = await import("./information/deal-mirror");
-          await setMirroredDealFact(deal.id, "askingPrice", deal.askingPrice, MIRROR_NOTES.created);
-          deal = (await storage.getDeal(deal.id)) ?? deal;
-        } catch (e) {
-          console.warn("[deals] asking-price fact not recorded:", e);
-        }
+      // The name, industry and asking price entered at creation become the
+      // broker's facts too (one value with the Information tab — see
+      // information/deal-mirror.ts); a document's NAICS text or a CRM note
+      // never takes the industry or the name over.
+      try {
+        const { setMirroredDealFacts } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFacts(
+          deal.id,
+          {
+            businessName: deal.businessName,
+            industry: deal.industry,
+            ...(deal.subIndustry ? { subIndustry: deal.subIndustry } : {}),
+            ...(deal.askingPrice ? { askingPrice: deal.askingPrice } : {}),
+          },
+          MIRROR_NOTES.created,
+        );
+        deal = (await storage.getDeal(deal.id)) ?? deal;
+      } catch (e) {
+        console.warn("[deals] deal-detail facts not recorded:", e);
       }
 
       // Auto-populate document requirements from industry intelligence
@@ -2388,6 +2397,14 @@ Return JSON only.`,
       res.setTimeout(10 * 60 * 1000);
       const { reprocessDealDocuments } = await import("./documents/reprocess");
       const result = await reprocessDealDocuments(deal.id);
+      // Intake answers are re-seeded too — split for privacy, so an answer
+      // seeded before the split existed loses its personal detail.
+      try {
+        const { seedQuestionnaireFacts } = await import("./interview/session-manager");
+        await seedQuestionnaireFacts(deal.id);
+      } catch (e) {
+        console.warn("[reprocess] questionnaire re-seeding failed:", e);
+      }
       res.json(result);
     } catch (error: any) {
       console.error("Reprocess error:", error);
@@ -2540,6 +2557,19 @@ Return JSON only.`,
         const { setMirroredDealFact } = await import("./information/facts");
         const { MIRROR_NOTES } = await import("./information/deal-mirror");
         await setMirroredDealFact(req.params.id, "askingPrice", askingPrice, MIRROR_NOTES.valuation);
+        deal = (await storage.getDeal(req.params.id)) ?? deal;
+      }
+      // The broker renaming the deal or changing its industry: the facts follow
+      // (the column was written above; the fact is the broker's own value).
+      const identityPatch = Object.fromEntries(
+        (["businessName", "industry", "subIndustry"] as const)
+          .filter((k) => req.session.brokerId && k in (validatedData as Record<string, unknown>))
+          .map((k) => [k, (validatedData as Record<string, unknown>)[k]]),
+      );
+      if (Object.keys(identityPatch).length > 0) {
+        const { setMirroredDealFacts } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFacts(req.params.id, identityPatch, MIRROR_NOTES.edited);
         deal = (await storage.getDeal(req.params.id)) ?? deal;
       }
       // Intake answers become facts (source "questionnaire") as soon as the
@@ -2792,6 +2822,7 @@ Return JSON only.`,
         docCategory: category,
         uploadedBy,
         requirementId,
+        sourceKind: requestedKind,
       });
       if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
         const previous = await storage.getDocument(previousFileId);

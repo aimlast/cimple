@@ -25,7 +25,8 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { guardExtraction, isDerivedMetricKey, SPOKEN_KINDS } from "./extraction-guard";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
   getFieldSources,
@@ -44,7 +45,8 @@ import {
   SOURCE_META_KEYS,
   type FieldSource,
 } from "../interview/info-merger";
-import { documentKind, mergeableExtraction } from "./ingest";
+import { documentKind, mergeableExtraction, addPrivateNotes } from "./ingest";
+import { removePrivateNoteSource, compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 
 export async function reprocessDealDocuments(
@@ -67,12 +69,15 @@ export async function reprocessDealDocuments(
   // prompt applies; falls back to the previously stored extraction ONLY when
   // no fresh extraction happened — replaying both would append near-duplicate
   // stale phrasing under every narrative field (merge appends on difference).
+  const checklist = extractionChecklist(deal);
   const extractForDoc = async (
     doc: (typeof documents)[number],
   ): Promise<ExtractedDocumentData | null> => {
+    // A stored extraction replayed as-is still goes through the guard: an
+    // SDE or EBITDA an older prompt computed must not come back as a fact.
     const stored =
       doc.extractedData && typeof doc.extractedData === "object"
-        ? (doc.extractedData as ExtractedDocumentData)
+        ? (guardExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText, { spoken: SPOKEN_KINDS.has(documentKind(doc)) }).data as ExtractedDocumentData)
         : null;
 
     let text: string | null = null;
@@ -91,7 +96,7 @@ export async function reprocessDealDocuments(
 
     if (text) {
       try {
-        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc));
+        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
         // extractDocumentData never throws — API failures come back as a
         // stub ({_confidence:"low", summary:"Extraction failed"} or
         // {_documentType:"unreadable"}). A stub must not overwrite the
@@ -179,6 +184,17 @@ export async function reprocessDealDocuments(
       if (fresh.length > 0) addedSince[k] = fresh;
     }
     rebuilt[FIELD_ALTERNATES_KEY] = mergeAlternateMaps(rebuilt[FIELD_ALTERNATES_KEY] as Record<string, unknown>, addedSince);
+
+    // Private notes follow the re-extraction: each source's notes are what it
+    // says now (a business fact an older prompt filed as private — a
+    // dividend, a guarantee — is a fact now), and notes that say the same
+    // thing in other words are folded into one.
+    for (const { doc, data } of results) {
+      if (!data) continue;
+      removePrivateNoteSource(rebuilt, doc.id);
+      addPrivateNotes(rebuilt, data._privateNotes, doc);
+    }
+    compactPrivateNotes(rebuilt);
 
     await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);
 
@@ -309,6 +325,9 @@ export function overlayExistingFacts(
     }
 
     if (rowBacked && fresh !== undefined) continue; // fresh extraction wins
+    // A derived figure (SDE, EBITDA, add-backs…) a source row no longer
+    // yields was one an older prompt calculated — it goes, never kept.
+    if (rowBacked && isDerivedMetricKey(key)) continue;
     rebuilt[key] = value;
     if (src) {
       const kept: FieldSource = { ...src };

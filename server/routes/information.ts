@@ -55,7 +55,7 @@ async function loadView(dealId: string) {
 }
 
 function fail(res: Response, err: unknown, fallback: string) {
-  if (err instanceof FactError) return res.status(err.status).json({ error: err.message });
+  if (err instanceof FactError) return res.status(err.status).json({ error: err.message, ...(err.details ?? {}) });
   console.error(`[information] ${fallback}:`, err);
   return res.status(500).json({ error: fallback });
 }
