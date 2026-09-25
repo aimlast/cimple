@@ -15,7 +15,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { dealMedia, type BuyerAccess, type DealMedia } from "@shared/schema";
-import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { buildBuyerCim, ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { mediaIdsIn, normalizeMediaLayoutData, type MediaAssetRef, type MediaLayoutKey } from "@shared/cim-media";
 import { businessBrandingMediaIds } from "./templates";
@@ -95,7 +95,7 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
   if (hit && Date.now() - hit.at < VISIBLE_TTL_MS && hit.dealId === access.dealId) return hit;
   const ids = new Set<string>();
   const deal = await storage.getDeal(access.dealId);
-  if (deal && !(deal.ndaRequired && !access.ndaSigned)) {
+  if (deal && !ndaBlocksBuyer(deal, access)) {
     const mode = cimModeForAccessLevel(access.accessLevel);
     const [sections, overrides, media] = await Promise.all([
       storage.getCimSectionsByDeal(deal.id),

@@ -25,7 +25,7 @@ import { storage } from "../storage";
 import { cimSections, cimSectionOverrides, type CimSection, type CimSectionAiTask } from "@shared/schema";
 import { getCimLayout } from "@shared/cim-layouts";
 import { ensureDealCodename } from "./codenames";
-import { generateBlindOverrides, redactOneSection, type RedactionResult } from "./redaction-engine";
+import { generateBlindOverrides, redactOneSection, redactionErrorMessage, type RedactionResult } from "./redaction-engine";
 
 // ── Per-deal serial queue ────────────────────────────────────────────────
 const chains = new Map<string, Promise<unknown>>();
@@ -46,13 +46,37 @@ interface DealBlindState {
   lastErrorAt?: number;
 }
 const state = new Map<string, DealBlindState>();
-/** Sections whose last redaction failed → not retried until this time. */
-const sectionBackoff = new Map<string, number>();
-const BACKOFF_MS = 60_000;
+/**
+ * Sections whose last redaction failed → not retried until `until`. The wait
+ * grows with each consecutive failure (1 min → 5 → 30 → 2 h) so a section
+ * that keeps failing isn't re-sent to the AI on every buyer visit.
+ */
+interface SectionFailure {
+  dealId: string;
+  until: number;
+  failures: number;
+  error: string;
+}
+const sectionBackoff = new Map<string, SectionFailure>();
+const BACKOFF_STEPS_MS = [60_000, 5 * 60_000, 30 * 60_000, 2 * 60 * 60_000];
+/** A whole-CIM run that redacted nothing → the view room waits before trying again. */
+const fullBackoff = new Map<string, number>();
 const debounceTimers = new Map<string, NodeJS.Timeout>();
+
+function recordSectionFailure(dealId: string, sectionId: string, error: string): void {
+  const prev = sectionBackoff.get(sectionId);
+  const failures = (prev?.failures ?? 0) + 1;
+  const wait = BACKOFF_STEPS_MS[Math.min(failures, BACKOFF_STEPS_MS.length) - 1];
+  sectionBackoff.set(sectionId, { dealId, until: Date.now() + wait, failures, error });
+}
 
 export function blindRefreshState(dealId: string): DealBlindState {
   return state.get(dealId) ?? { running: false };
+}
+
+/** Why this section's blind version is held back (its last redaction failed), if it is. */
+export function blindSectionError(sectionId: string): string | null {
+  return sectionBackoff.get(sectionId)?.error ?? null;
 }
 
 /** True while a background AI write is filling this section (not buyer-ready). */
@@ -118,7 +142,7 @@ function needsRedaction(sections: CimSection[], overrideIds: Set<string>): CimSe
   return sections.filter((s) => {
     if (isBeingWritten(s)) return false;
     if (getCimLayout(s.layoutType)?.blind === "exclude") return false;
-    if ((sectionBackoff.get(s.id) ?? 0) > now) return false;
+    if ((sectionBackoff.get(s.id)?.until ?? 0) > now) return false;
     return !!s.blindStaleAt || !overrideIds.has(s.id);
   });
 }
@@ -148,12 +172,14 @@ async function refreshStaleSections(dealId: string): Promise<void> {
     for (let j = 0; j < batch.length; j++) {
       const r = results[j];
       if (r.status === "fulfilled") {
-        await commitOverride(batch[j], r.value);
+        if (await commitOverride(batch[j], r.value)) sectionBackoff.delete(batch[j].id);
       } else {
+        // Fail closed: no override is written, so the section stays held
+        // back from blind buyers until a redaction succeeds.
         failures++;
-        lastError = (r.reason as Error)?.message || "Redaction failed";
-        sectionBackoff.set(batch[j].id, Date.now() + BACKOFF_MS);
-        console.error(`[blind-sync] redaction failed for section ${batch[j].id}:`, r.reason);
+        lastError = redactionErrorMessage(r.reason);
+        recordSectionFailure(dealId, batch[j].id, lastError);
+        console.error(`[blind-sync] redaction failed for section ${batch[j].id}:`, (r.reason as Error)?.message ?? r.reason);
       }
     }
   }
@@ -181,6 +207,21 @@ export function scheduleBlindRefresh(dealId: string, delayMs = 1500): void {
   debounceTimers.set(dealId, timer);
 }
 
+/**
+ * These sections' blind versions still name something identifying (found by
+ * the view room's final check): drop just their blind overrides, mark them
+ * stale and redo them. Their DD versions are untouched.
+ */
+export async function redoLeakedBlind(dealId: string, sectionIds: string[]): Promise<void> {
+  if (sectionIds.length === 0) return;
+  await db.update(cimSections).set({ blindStaleAt: new Date() }).where(inArray(cimSections.id, sectionIds));
+  await db.delete(cimSectionOverrides).where(and(
+    inArray(cimSectionOverrides.cimSectionId, sectionIds),
+    eq(cimSectionOverrides.mode, "blind"),
+  ));
+  scheduleBlindRefresh(dealId, 0);
+}
+
 /** Content changed: mark stale and queue the re-redaction in one call. */
 export async function invalidateBlind(dealId: string, sectionIds: string[]): Promise<void> {
   await markSectionsBlindStale(sectionIds);
@@ -192,17 +233,25 @@ export async function invalidateBlind(dealId: string, sectionIds: string[]): Pro
  * unique one only if it never had one). Used by "Generate Blind" and by the
  * view room's first blind visit. Resolves with the number of sections done.
  */
-export function regenerateAllBlind(dealId: string): Promise<{ codename: string; count: number }> {
+export function regenerateAllBlind(dealId: string): Promise<{ codename: string; count: number; failed: number }> {
   return runExclusive(dealId, async () => {
     const deal = await storage.getDeal(dealId);
     if (!deal) throw new Error("Deal not found");
     const all = await storage.getCimSectionsByDeal(dealId);
     const sections = all.filter((s) => !isBeingWritten(s) && getCimLayout(s.layoutType)?.blind !== "exclude");
-    if (sections.length === 0) return { codename: deal.blindCodename || "", count: 0 };
+    if (sections.length === 0) return { codename: deal.blindCodename || "", count: 0, failed: 0 };
     state.set(dealId, { running: true });
     try {
       const codename = await ensureDealCodename(deal);
-      const { overrides } = await generateBlindOverrides(sections, deal as any, { codename });
+      const { overrides, failures } = await generateBlindOverrides(sections, deal as any, { codename });
+      if (overrides.length === 0 && failures.length > 0) {
+        // Nothing redacted: keep whatever blind version existed and report.
+        fullBackoff.set(dealId, Date.now() + BACKOFF_STEPS_MS[0]);
+        for (const f of failures) recordSectionFailure(dealId, f.cimSectionId, f.error);
+        throw new Error(`Couldn't create the blind version: ${failures[0].error}`);
+      }
+      // Sections that failed get NO override (the old one is deleted with
+      // the rest) — they're held back from blind buyers, never served raw.
       await storage.deleteCimSectionOverrides(dealId, "blind");
       const byId = new Map(sections.map((s) => [s.id, s]));
       let moved = false;
@@ -210,12 +259,20 @@ export function regenerateAllBlind(dealId: string): Promise<{ codename: string; 
         const section = byId.get(o.cimSectionId);
         if (!section) continue;
         if (!(await commitOverride(section, o))) moved = true;
+        sectionBackoff.delete(section.id);
       }
-      for (const s of sections) sectionBackoff.delete(s.id);
-      state.set(dealId, { running: false });
+      for (const f of failures) recordSectionFailure(dealId, f.cimSectionId, f.error);
+      fullBackoff.delete(dealId);
+      state.set(dealId, failures.length > 0
+        ? {
+            running: false,
+            lastError: `Couldn't update the blind version of ${failures.length} section${failures.length === 1 ? "" : "s"}: ${failures[0].error}`,
+            lastErrorAt: Date.now(),
+          }
+        : { running: false });
       // A section edited mid-run keeps its stale mark — catch it up.
       if (moved) scheduleBlindRefresh(dealId);
-      return { codename, count: overrides.length };
+      return { codename, count: overrides.length, failed: failures.length };
     } catch (err: any) {
       state.set(dealId, { running: false, lastError: err?.message || "Blind generation failed", lastErrorAt: Date.now() });
       throw err;
@@ -227,9 +284,22 @@ export function regenerateAllBlind(dealId: string): Promise<{ codename: string; 
 const fullInFlight = new Set<string>();
 export function regenerateAllBlindInBackground(dealId: string): void {
   if (fullInFlight.has(dealId)) return;
+  if ((fullBackoff.get(dealId) ?? 0) > Date.now()) return;
   fullInFlight.add(dealId);
   regenerateAllBlind(dealId)
     .then(({ count }) => console.log(`[blind-sync] generated ${count} blind overrides for deal ${dealId}`))
     .catch((err) => console.error(`[blind-sync] blind generation failed for deal ${dealId}:`, err))
     .finally(() => fullInFlight.delete(dealId));
+}
+
+/**
+ * The broker's "Retry": forget this deal's failure back-offs and redo what's
+ * missing now — the whole Blind CIM if none exists yet, else the held-back
+ * sections.
+ */
+export async function retryBlindNow(dealId: string): Promise<void> {
+  for (const [id, f] of Array.from(sectionBackoff.entries())) if (f.dealId === dealId) sectionBackoff.delete(id);
+  fullBackoff.delete(dealId);
+  if (await hasBlindVersion(dealId)) scheduleBlindRefresh(dealId, 0);
+  else regenerateAllBlindInBackground(dealId);
 }

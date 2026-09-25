@@ -15,8 +15,17 @@
  *     "exclude" are never served blind.
  *   - Tiers: a teaser buyer gets sections marked "full" as locked stubs —
  *     redacted title only, no content.
- *   - Blind section keys that contain a known business name are replaced
- *     (keys reach the page as data attributes and analytics ids).
+ *   - Fail closed: a blind section (or stub title) that still contains
+ *     anything identifying from the deal's facts — business name, a person,
+ *     the city or street, contacts (shared/blind-guard.ts) — is held back
+ *     and reported in `leaked` so the caller re-redacts it.
+ *   - Blind section keys are always neutral (`s_<id prefix>`): keys reach
+ *     the page as data attributes and analytics ids, and broker- or
+ *     AI-made keys are slugs of the title ("kitchener_clinic_team").
+ *     Analytics map them back with realSectionKeyMap().
+ *   - NDA: ndaBlocksBuyer() is the one rule every buyer path uses (view
+ *     room, Q&A chatbot, Q&A feed, media) — nothing CIM-derived before a
+ *     required NDA is signed.
  *   - Media sections (gallery, video, map) are rebuilt deterministically
  *     (shared/cim-media.ts): only this deal's uploads, only blind-safe media
  *     and region-only maps in the Blind CIM; a media section with nothing
@@ -31,6 +40,7 @@ import {
   sectionTier,
 } from "./cim-layouts";
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
+import { blindLeakTerms, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 
 export interface BuyerSection {
@@ -55,6 +65,32 @@ export interface BuyerCim {
   preparing: boolean;
   /** Blind sections held back until their redaction catches up. */
   heldBack: number;
+  /**
+   * Blind sections held back because their redacted version still names
+   * something identifying — the caller should re-redact them.
+   */
+  leaked: string[];
+}
+
+/**
+ * True when a buyer must not receive anything CIM-derived yet: the deal
+ * requires an NDA and this buyer hasn't signed it.
+ */
+export function ndaBlocksBuyer(
+  deal: { ndaRequired?: boolean | null },
+  access: { ndaSigned?: boolean | null },
+): boolean {
+  return !!deal.ndaRequired && !access.ndaSigned;
+}
+
+/** The neutral key a blind buyer sees for a section (never derived from its title). */
+export function blindSectionKey(sectionId: string): string {
+  return `s_${String(sectionId).replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
+}
+
+/** Neutral blind key → the section's real key, for analytics sent from a blind view. */
+export function realSectionKeyMap(sections: Array<{ id: string; sectionKey: string }>): Map<string, string> {
+  return new Map(sections.map((s) => [blindSectionKey(s.id), s.sectionKey]));
 }
 
 type DealLike = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null };
@@ -63,8 +99,6 @@ function writingInProgress(s: CimSection): boolean {
   const t = s.aiTask as { kind?: string; status?: string } | null;
   return !!t && t.kind === "write" && t.status !== "ready";
 }
-
-const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9]/g, "");
 
 /**
  * Pure: build the buyer's sections from the deal's rows. `overrides` must be
@@ -115,7 +149,7 @@ export function buildBuyerCim(input: {
       const data = mediaData(s, null);
       if (data) sections.push({ ...base(s), layoutData: data });
     }
-    return { mode, sections, preparing: false, heldBack: 0 };
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
   }
 
   const overrideMap = new Map(input.overrides.map((o) => [String(o.cimSectionId), o]));
@@ -135,34 +169,55 @@ export function buildBuyerCim(input: {
       const o = overrideMap.get(s.id);
       sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
     }
-    return { mode, sections, preparing: false, heldBack: 0 };
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
   }
 
   // ── Blind ──
   if (input.overrides.length === 0) {
-    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0 };
+    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [] };
   }
   const codename = deal.blindCodename || "Confidential Opportunity";
   const redactTitle = blindTitleRedactor(deal as any, codename);
-  const identifiers = blindIdentifiers(deal as any).map(norm).filter((n) => n.length >= 4);
+  const leakTerms = blindLeakTerms(deal as any, { codename });
   const teaser = (accessLevel ?? "teaser") === "teaser";
 
   const out: BuyerSection[] = [];
   let heldBack = 0;
-  const keyMap = new Map<string, string>();
-  visible.forEach((s, i) => {
+  const leaked: string[] = [];
+  // Real key → neutral key, for every section (relatedSections point at keys).
+  const keyMap = new Map(visible.map((s) => [s.sectionKey, blindSectionKey(s.id)]));
+  /** Serve it only if nothing identifying is left in what the buyer receives. */
+  const serve = (s: CimSection, section: BuyerSection) => {
+    // relatedSections carry the real (title-derived) keys — switch them to
+    // neutral ones before the check; unknown keys are dropped.
+    const data = section.layoutData as Record<string, unknown> | null;
+    if (data && Array.isArray(data.relatedSections)) {
+      section.layoutData = {
+        ...data,
+        relatedSections: (data.relatedSections as unknown[])
+          .map((k) => (typeof k === "string" ? keyMap.get(k) ?? null : null))
+          .filter((k): k is string => !!k),
+      };
+    }
+    const texts = [section.sectionTitle, section.aiDraftContent ?? "", section.brokerEditedContent ?? "", section.layoutData];
+    if (findBlindLeaks(texts, leakTerms).length > 0) {
+      heldBack++;
+      leaked.push(s.id);
+      return;
+    }
+    out.push(section);
+  };
+  visible.forEach((s) => {
     if (getCimLayout(s.layoutType)?.blind === "exclude") return;
     const o = overrideMap.get(s.id);
     if (!o || s.blindStaleAt) {
       heldBack++;
       return;
     }
-    const nk = norm(s.sectionKey);
-    const safeKey = identifiers.some((id) => nk.includes(id)) ? `section_${i + 1}` : s.sectionKey;
-    if (safeKey !== s.sectionKey) keyMap.set(s.sectionKey, safeKey);
+    const safeKey = blindSectionKey(s.id);
     const title = redactTitle((s.blindTitle || s.sectionTitle || "").trim());
     if (teaser && sectionTier(s) === "full") {
-      out.push({
+      serve(s, {
         id: s.id,
         dealId: s.dealId,
         sectionKey: safeKey,
@@ -181,25 +236,21 @@ export function buildBuyerCim(input: {
       // Built from the base items + the redacted words, never the AI's refs.
       const data = mediaData(s, o.layoutData);
       if (!data) return;
-      out.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null, sectionKey: safeKey, sectionTitle: title });
+      serve(s, { ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null, sectionKey: safeKey, sectionTitle: title });
       return;
     }
-    out.push({ ...base(s), ...pick(applySectionOverride(s, o, "blind")), sectionKey: safeKey, sectionTitle: title });
+    serve(s, { ...base(s), ...pick(applySectionOverride(s, o, "blind")), sectionKey: safeKey, sectionTitle: title });
   });
 
-  // relatedSections links follow renamed keys; links to sections the buyer
-  // can't see are dropped.
+  // relatedSections links to sections the buyer can't open are dropped.
   const servedKeys = new Set(out.filter((s) => !s.locked).map((s) => s.sectionKey));
   for (const s of out) {
     const data = s.layoutData as Record<string, unknown> | null;
     if (!data || !Array.isArray(data.relatedSections)) continue;
-    const related = (data.relatedSections as unknown[])
-      .map((k) => (typeof k === "string" ? keyMap.get(k) ?? k : null))
-      .filter((k): k is string => !!k && servedKeys.has(k));
-    s.layoutData = { ...data, relatedSections: related };
+    s.layoutData = { ...data, relatedSections: (data.relatedSections as string[]).filter((k) => servedKeys.has(k)) };
   }
 
-  return { mode, sections: out, preparing: false, heldBack };
+  return { mode, sections: out, preparing: false, heldBack, leaked };
 }
 
 function pick(s: { layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }) {

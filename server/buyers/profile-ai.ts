@@ -7,6 +7,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "../interview/config/load-config";
 import type { BlindDealSummary } from "./blind-deal-summary";
+import { findBlindLeaks, type BlindTerm } from "@shared/blind-guard";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -72,6 +73,8 @@ export interface EmailDraftInput {
   instructions: string | null;
   /** Names that must never appear (business / legal / owner names) — a draft containing one is discarded. */
   forbidden: string[];
+  /** The deal's full identity check (people, city, street, contacts — shared/blind-guard.ts). */
+  forbiddenTerms?: BlindTerm[];
 }
 
 export async function draftBuyerEmail(input: EmailDraftInput): Promise<{ subject: string; body: string }> {
@@ -116,7 +119,10 @@ export async function draftBuyerEmail(input: EmailDraftInput): Promise<{ subject
     const out = (block && block.type === "tool_use" ? block.input : {}) as { subject?: string; body?: string };
     if (out.subject && out.body) {
       const all = `${out.subject}\n${out.body}`.toLowerCase();
-      const leak = input.deal ? input.forbidden.find((n) => n.length >= 4 && all.includes(n.toLowerCase())) : undefined;
+      const leak = input.deal
+        ? input.forbidden.find((n) => n.length >= 4 && all.includes(n.toLowerCase()))
+          ?? findBlindLeaks(`${out.subject}\n${out.body}`, input.forbiddenTerms ?? [])[0]
+        : undefined;
       if (!leak) return { subject: out.subject.slice(0, 200), body: out.body.slice(0, 8000) };
       console.warn("[buyer-profile] email draft named the business — discarded for the blind-safe template");
     }

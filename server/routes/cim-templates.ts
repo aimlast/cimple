@@ -306,13 +306,15 @@ export function registerCimTemplateRoutes(app: Express): void {
         const base =
           (await findTemplate(brokerId, typeof req.body?.basedOn === "string" ? req.body.basedOn : null)) ??
           (await findTemplate(brokerId, await brokerDefaultTemplateId(brokerId)))!;
-        const title = sourceName.replace(/\.(pdf|docx|pptx)$/i, "").replace(/[_]+/g, " ").trim().slice(0, 50);
+        // Never named after the uploaded file: past CIMs are usually named
+        // after the business, which is another client's confidential deal.
+        const today = new Date().toLocaleDateString("en-CA", { year: "numeric", month: "short", day: "numeric" });
         const [row] = await db
           .insert(cimTemplates)
           .values({
             brokerId,
-            name: cleanName(req.body?.name, `Matched: ${title || "past CIM"}`),
-            description: `Follows the ${outline.sections.length}-section structure of ${sourceName}. Styled like ${base.name}.`,
+            name: cleanName(req.body?.name, `Matched structure — ${today}`),
+            description: `Follows the ${outline.sections.length}-section structure of the CIM you uploaded. Styled like ${base.name}.`,
             tokens: sanitizeTokens(base.tokens),
             sectionOutline: outline,
             basedOn: base.id,

@@ -16,6 +16,7 @@ import {
   type BrokerBuyerOverlay, type BrokerOverlayMeta, type BuyerAiSummary,
 } from "@shared/schema";
 import { blindIdentifiers } from "@shared/blind-identifiers";
+import { blindLeakTerms } from "@shared/blind-guard";
 import { requireBroker, getOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service";
@@ -291,6 +292,7 @@ export function registerBuyerProfileRoutes(app: Express): void {
         dealContext,
         instructions: body.instructions ?? null,
         forbidden: deal ? blindIdentifiers(deal as any) : [],
+        forbiddenTerms: deal ? blindLeakTerms(deal as any, { codename: (deal as any).blindCodename }) : [],
       });
       res.json({ ...draft, to: buyer.email, replyTo: brokerUser?.email ?? null, blindSafe: !!deal });
     } catch (err: any) {

@@ -251,6 +251,27 @@ export function regionFromAddress(address: unknown): string | null {
   return null;
 }
 
+/**
+ * True when the text names only a broad region — a province/state (name or
+ * code, optionally followed by a postal/ZIP code) or a country. Such words
+ * are allowed in a Blind CIM, so identity checks must not treat them as
+ * leaks (shared/blind-guard.ts).
+ */
+export function isRegionLabel(text: string): boolean {
+  const t = text.trim();
+  if (!t) return false;
+  const code = t
+    .replace(/\s+[A-Z]\d[A-Z]\s?\d[A-Z]\d$/i, "")
+    .replace(/\s+\d{5}(-\d{4})?$/, "")
+    .trim();
+  if (/^[A-Z]{2}$/.test(code) && (CA_PROVINCES[code] || US_STATES[code])) return true;
+  const n = normText(t);
+  if (COUNTRIES[n]) return true;
+  for (const name of Object.values(CA_PROVINCES)) if (isRegionName(n, name)) return true;
+  for (const name of Object.values(US_STATES)) if (isRegionName(n, name)) return true;
+  return false;
+}
+
 function isRegionName(seg: string, name: string): boolean {
   const k = normText(name);
   if (!seg.startsWith(k)) return false;
