@@ -44,17 +44,42 @@ import {
 
 type Info = Record<string, unknown>;
 
-/** Deal column ↔ fact key (same name). Extend with care: the column must be nullable text. */
-export const MIRRORED_FACT_COLUMNS = ["askingPrice"] as const;
+/**
+ * Deal column ↔ fact key (same name), text columns only. The business name,
+ * industry and sub-industry are the broker's own entry for the deal: an
+ * industry a tax return states as NAICS text ("541513 - Computer facilities
+ * management services") or a business name from a CRM note used to fill the
+ * fact instead. Now the deal's entry is the broker's fact and those values
+ * stay visible as other values.
+ */
+export const MIRRORED_FACT_COLUMNS = ["askingPrice", "businessName", "industry", "subIndustry"] as const;
 export type MirroredFactColumn = (typeof MIRRORED_FACT_COLUMNS)[number];
 export type MirrorColumnPatch = Partial<Record<MirroredFactColumn, string | null>>;
+/** The deal's mirrored columns (a deal row, or one with a pending patch applied). */
+export type MirrorColumns = { [K in MirroredFactColumn]?: string | null };
+
+/** Columns that can't be empty (NOT NULL): deleting the fact never clears them. */
+const REQUIRED_COLUMNS: ReadonlySet<MirroredFactColumn> = new Set<MirroredFactColumn>(["businessName", "industry"]);
 
 /** The note on a broker fact that came from the deal row rather than the Information tab. */
 export const MIRROR_NOTES = {
   valuation: "Set in Valuation",
   created: "Entered when the deal was created",
+  edited: "Changed in the deal's details",
   reconciled: "Asking price on the deal",
 } as const;
+
+/** The note on a fact lined up from the deal column (per column). */
+export const RECONCILED_NOTES: Record<MirroredFactColumn, string> = {
+  askingPrice: MIRROR_NOTES.reconciled,
+  businessName: "Business name on the deal",
+  industry: "Industry on the deal",
+  subIndustry: "Sub-industry on the deal",
+};
+
+export function isReconciledNote(note: string | undefined): boolean {
+  return !!note && Object.values(RECONCILED_NOTES).includes(note);
+}
 
 /** A fact value as column text: trimmed string, or null for nothing. */
 export function columnText(v: unknown): string | null {
@@ -89,7 +114,7 @@ const isBrokerFact = (info: Info, key: string) => getFieldSources(info)[key]?.so
  * this module free of facts.ts (which imports it).
  */
 export function reconcileMirroredFacts(
-  deal: Pick<Deal, MirroredFactColumn>,
+  deal: MirrorColumns,
   info: Info,
   setBrokerFact: (info: Info, key: string, value: unknown, extra?: { note?: string }) => void,
 ): { columnPatch: MirrorColumnPatch; infoChanged: boolean } {
@@ -101,10 +126,12 @@ export function reconcileMirroredFacts(
     if (sameValue(col, fact)) continue;
     if (!fact) {
       if (!col) continue;
-      // The broker deleted the fact → the column goes too.
-      if (getSuppressedKeys(info).includes(key)) columnPatch[key] = null;
-      else {
-        setBrokerFact(info, key, col, { note: MIRROR_NOTES.reconciled });
+      // The broker deleted the fact → the column goes too (a required
+      // column — the deal's name, its industry — stays on the deal).
+      if (getSuppressedKeys(info).includes(key)) {
+        if (!REQUIRED_COLUMNS.has(key)) columnPatch[key] = null;
+      } else {
+        setBrokerFact(info, key, col, { note: RECONCILED_NOTES[key] });
         infoChanged = true;
       }
       continue;
@@ -114,7 +141,7 @@ export function reconcileMirroredFacts(
     } else if (col) {
       // The column is the broker's own entry: it outranks the seller's or a
       // document's value, which stays as an alternate.
-      setBrokerFact(info, key, col, { note: MIRROR_NOTES.reconciled });
+      setBrokerFact(info, key, col, { note: RECONCILED_NOTES[key] });
       infoChanged = true;
     }
     // No column and a non-broker fact: nothing to mirror.
@@ -133,7 +160,7 @@ export function reconcileMirroredFacts(
  * Returns only real differences.
  */
 export function columnPatchAfterChange(
-  deal: Pick<Deal, MirroredFactColumn>,
+  deal: MirrorColumns,
   before: Info,
   after: Info,
 ): MirrorColumnPatch {
@@ -146,6 +173,7 @@ export function columnPatchAfterChange(
     if (!touched) continue;
     const col = columnText(deal[key]);
     const target = !next || isBrokerFact(after, key) ? next : sameValue(col, next) ? col : null;
+    if (target === null && REQUIRED_COLUMNS.has(key)) continue; // never empties the deal's name or industry
     if (col !== target) patch[key] = target;
   }
   return patch;
@@ -153,7 +181,14 @@ export function columnPatchAfterChange(
 
 /* ─── What the seller interview sees ─────────────────────────────────── */
 
-const DEAL_ROW_NOTES: ReadonlySet<string> = new Set(Object.values(MIRROR_NOTES));
+/**
+ * Mirrored columns whose deal-row value the interview never sees — the
+ * broker's listed price is a pricing decision, not something the seller
+ * said. The name and industry are plain facts about the business.
+ */
+const INTERVIEW_HIDDEN_COLUMNS = ["askingPrice"] as const;
+
+const DEAL_ROW_NOTES: ReadonlySet<string> = new Set([...Object.values(MIRROR_NOTES), ...Object.values(RECONCILED_NOTES)]);
 
 /**
  * True when the fact is the broker's price from the deal row (Valuation
@@ -180,7 +215,7 @@ export function isDealRowFact(info: Info, key: string): boolean {
  */
 export function interviewFactView<T extends Info>(info: T): T {
   let out: Info = info;
-  for (const key of MIRRORED_FACT_COLUMNS) {
+  for (const key of INTERVIEW_HIDDEN_COLUMNS) {
     if (!isDealRowFact(info, key)) continue;
     if (out === info) out = { ...info };
     const best = (getFieldAlternates(info)[key] ?? [])

@@ -22,7 +22,7 @@ import type {
   WebsiteItem,
 } from "@shared/information";
 import { computeCimReadiness } from "@shared/cim-readiness";
-import { buildSectionCoverage, SECTION_FIELD_MAP, isSubstantiveValue } from "../interview/knowledge-base";
+import { buildSectionCoverage, SECTION_FIELD_MAP, isSubstantiveValue, type CoverageFieldAdjustments } from "../interview/knowledge-base";
 import { coverageAdjustmentsForDeal, getInterviewPlan, fieldLabel } from "../interview/interview-plan";
 import { getSectionImportance } from "../interview/section-importance";
 import { getInterviewOutline } from "../interview/outline";
@@ -109,21 +109,63 @@ const DISPLAY_SECTION_HINTS: Record<string, string> = {
  * Last-resort display grouping for ad-hoc keys the interview or a document
  * minted (ownerSalary, cerecMill, activePatientCount…) — first match wins.
  * Display only: coverage and the interview are unaffected.
+ *
+ * Matched against the key split into words ("otherCurrentAssets" → "other
+ * current assets"), each term at a word start: "rent" used to match inside
+ * "current", filing currentHiring and otherCurrentAssets under Real estate.
  */
 const KEY_SECTION_PATTERNS: Array<[RegExp, string]> = [
-  [/^(companyName|ownerName|legalName|tradeName|dba|businessName)$/i, "overview"],
-  [/askingPrice|dealStructure|saleType|sellerFinanc|earnOut/i, "asking_price"],
-  [/revenueShare|revenueMix|Mix$|stream|services?$|products?$/i, "revenue_sources"],
-  [/equipment|software|system|supplier|vendor|inventory|mill|technolog|process/i, "operations"],
-  [/revenue|sales|ebitda|sde|profit|margin|income|expense|cost|wage|salary|payroll|depreciation|debt|loan|cash|fiscal|liabilit|receivable|payable|capex|addback|currency|tax/i, "financials"],
-  [/lease|rent|premises|sqft|squareFeet|property|building/i, "real_estate"],
-  [/licen|permit|compliance|regulat|insurance|accredit|certif/i, "permits_licenses"],
-  [/employee|staff|hygienist|associate|dentist|manager|team|personnel|contractor|owner(Role|Hours|Involvement)/i, "employees"],
-  [/patient|customer|client|market|referral|payer|demographic/i, "target_market"],
-  [/season|peak|slow/i, "seasonality"],
-  [/growth|expansion|opportunit/i, "growth_potential"],
-  [/training|transition|handover/i, "training_support"],
+  [/^(company name|owner name|legal name|trade name|dba|business name)$/, "overview"],
+  [/\basking price|\bdeal structure|\bsale type|\bseller financ|\bearn ?out/, "asking_price"],
+  [/\brevenue share|\brevenue mix|\bmix$|\bstreams?\b|\bservices?$|\bproducts?$/, "revenue_sources"],
+  [/\bequipment|\bsoftware|\bsystems?\b|\bsupplier|\bvendor|\binventor|\bmill\b|\btechnolog|\bprocess/, "operations"],
+  [/\brevenue|\bsales\b|\bebitda|\bsde\b|\bprofit|\bmargin|\bincome|\bexpense|\bcosts?\b|\bwages?\b|\bsalar|\bpayroll|\bdepreciat|\bamortiz|\bdebt|\bloans?\b|\bcash\b|\bfiscal|\bliabilit|\breceivable|\bpayable|\bcapex|\baddbacks?\b|\bcurrency|\btax|\bassets?\b|\bequity\b|\bdividend|\bworking capital/, "financials"],
+  [/\bhiring|\brecruit|\bemployee|\bstaff|\bhygienist|\bassociates?\b|\bdentist|\bmanager|\bteam\b|\bpersonnel|\bcontractor|\bowner (role|hours|involvement)|\bheadcount|\btechnicians?\b/, "employees"],
+  [/\blease|\brent\b|\brental|\bpremises|\bsqft\b|\bsquare (feet|footage)|\bpropert|\bbuilding|\broof|\butilit|\bfacilit|\bzoning/, "real_estate"],
+  [/\blicen|\bpermit|\bcompliance|\bregulat|\binsurance|\baccredit|\bcertif/, "permits_licenses"],
+  [/\bpatient|\bcustomer|\bclient|\bmarket|\breferral|\bpayer|\bdemographic/, "target_market"],
+  [/\bseason|\bpeak\b|\bslow\b/, "seasonality"],
+  [/\bgrowth|\bexpansion|\bopportunit/, "growth_potential"],
+  [/\btraining|\btransition|\bhandover/, "training_support"],
 ];
+
+/** "otherCurrentAssets" → "other current assets"; "ATMrevenue" → "atm revenue"; "sde2024" → "sde 2024". */
+export function keyAsWords(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+/** The display section an ad-hoc key's own words point to, or null. */
+export function patternSectionFor(key: string): string | null {
+  const words = keyAsWords(key);
+  return KEY_SECTION_PATTERNS.find(([re]) => re.test(words))?.[1] ?? null;
+}
+
+/**
+ * Where a fact is shown on the Information tab: the broker's own choice, the
+ * key's main section, the section whose checklist lists it (generic, then
+ * the deal's industry checklist / broker items), a known hint, then the
+ * key's own words.
+ */
+export function sectionForKey(
+  key: string,
+  ctx: { brokerSectionOf?: Record<string, string>; adjustments?: CoverageFieldAdjustments } = {},
+): string | null {
+  const broker = ctx.brokerSectionOf?.[key];
+  if (broker && CIM_SECTIONS.some((s) => s.key === broker)) return broker;
+  if (PRIMARY_SECTION[key]) return PRIMARY_SECTION[key];
+  for (const s of CIM_SECTIONS) {
+    if ((SECTION_FIELD_MAP[s.key] ?? []).includes(key)) return s.key;
+    if ((ctx.adjustments?.add?.[s.key] ?? []).some((x) => x.key === key)) return s.key;
+  }
+  if (DISPLAY_SECTION_HINTS[key]) return DISPLAY_SECTION_HINTS[key];
+  return patternSectionFor(key);
+}
 
 const LIVE_KINDS = new Set(["interview", "call", "video_call"]);
 
@@ -337,18 +379,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   );
   const coverageByKey = new Map(allCoverage.map((c) => [c.key, c]));
   const brokerSectionOf = (info[BROKER_SECTION_OF_KEY] as Record<string, string> | undefined) || {};
-  const validSections = new Set<string>(CIM_SECTIONS.map((s) => s.key));
-
-  const sectionFor = (key: string): string | null => {
-    if (brokerSectionOf[key] && validSections.has(brokerSectionOf[key])) return brokerSectionOf[key];
-    if (PRIMARY_SECTION[key]) return PRIMARY_SECTION[key];
-    for (const s of CIM_SECTIONS) {
-      if ((SECTION_FIELD_MAP[s.key] ?? []).includes(key)) return s.key;
-      if ((adjustments.add?.[s.key] ?? []).some((x) => x.key === key)) return s.key;
-    }
-    if (DISPLAY_SECTION_HINTS[key]) return DISPLAY_SECTION_HINTS[key];
-    return KEY_SECTION_PATTERNS.find(([re]) => re.test(key))?.[1] ?? null;
-  };
+  const sectionFor = (key: string): string | null => sectionForKey(key, { brokerSectionOf, adjustments });
 
   const bySection = new Map<string, string[]>();
   for (const key of factKeys) {

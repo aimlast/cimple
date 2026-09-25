@@ -25,7 +25,8 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
+import { isDerivedMetricKey } from "./extraction-guard";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
   getFieldSources,
@@ -49,7 +50,8 @@ import {
   SOURCE_META_KEYS,
   type FieldSource,
 } from "../interview/info-merger";
-import { addPrivateNotes, documentKind, mergeableExtraction, mergeSourceFor, rememberPeriodEnd } from "./ingest";
+import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, rememberPeriodEnd } from "./ingest";
+import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 import { cleanYearMap, effectiveRank, interimYears, isBrokerProcessKey, noteConflict, outranksFor, reconcileHeadlines, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
@@ -75,12 +77,16 @@ export async function reprocessDealDocuments(
   // prompt applies; falls back to the previously stored extraction ONLY when
   // no fresh extraction happened — replaying both would append near-duplicate
   // stale phrasing under every narrative field (merge appends on difference).
+  const checklist = extractionChecklist(deal);
   const extractForDoc = async (
     doc: (typeof documents)[number],
   ): Promise<ExtractedDocumentData | null> => {
+    // A stored extraction replayed as-is still goes through the guard (and
+    // the current structure): an SDE or EBITDA an older prompt computed must
+    // not come back as a fact.
     const stored =
       doc.extractedData && typeof doc.extractedData === "object"
-        ? (doc.extractedData as ExtractedDocumentData)
+        ? normaliseExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText ?? null, documentKind(doc))
         : null;
 
     let text: string | null = null;
@@ -99,7 +105,7 @@ export async function reprocessDealDocuments(
 
     if (text) {
       try {
-        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc));
+        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
         // extractDocumentData never throws — API failures come back as a
         // stub ({_confidence:"low", summary:"Extraction failed"} or
         // {_documentType:"unreadable"}). A stub must not overwrite the
@@ -161,11 +167,12 @@ export async function reprocessDealDocuments(
   const existing = (deal.extractedInfo as Record<string, unknown> | null) || {};
   let rebuilt = overlayExistingFacts(docsMerged, existing, ctx);
   // Headlines follow their by-year maps; every source entry carries its
-  // row's visibility; broker process data the fresh extractions set aside
-  // (referral source, fees…) joins the broker-private notes.
+  // row's visibility. Broker process data the fresh extractions set aside
+  // (referral source, fees…) is in their _privateNotes and joins the
+  // broker-private notes with the rest of each source's notes
+  // (refreshSourceNotes, under the lock below).
   reconcileHeadlines(rebuilt, ctx);
   rebuilt = stampSourceDetails(rebuilt, documents);
-  for (const { doc, data } of ordered) if (data?._privateNotes) addPrivateNotes(rebuilt, data._privateNotes, doc);
   const existingAlts = (existing[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
 
   // Re-extraction can take minutes. Re-read the deal and carry over anything
@@ -202,6 +209,17 @@ export async function reprocessDealDocuments(
       if (fresh.length > 0) addedSince[k] = fresh;
     }
     rebuilt[FIELD_ALTERNATES_KEY] = mergeAlternateMaps(rebuilt[FIELD_ALTERNATES_KEY] as Record<string, unknown>, addedSince);
+
+    // Private notes follow the re-extraction: each source's notes are what it
+    // says now, and notes that say the same thing in other words are folded
+    // into one (keeping every source's words). A note the fresh run simply
+    // didn't repeat is KEPT — a model run is not a correction, and the note
+    // may be the broker's only record of it. It goes only when this source
+    // now records it as a business fact (a dividend, a guarantee an older
+    // prompt filed as private), or when it is no note at all ("NDA in
+    // place", a sample-document label).
+    for (const { doc, data } of results) if (data) refreshSourceNotes(rebuilt, doc, data);
+    compactPrivateNotes(rebuilt);
 
     await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);
     // Material conflicts the rebuild saw become discrepancies (deduplicated).
@@ -322,6 +340,8 @@ export function overlayExistingFacts(
       for (const [y, v] of Object.entries(value)) {
         const ys = years[y];
         if (isRowBackedSource(ys)) {
+          // A derived figure's year the rows no longer yield was calculated by an older prompt.
+          if (isDerivedMetricKey(key)) continue;
           // A row's year is kept only if it is still a valid yearly figure
           // under the current rules ("FY25" → "2025"; a budget, an SDE
           // figure or "Last year" under revenue is dropped).
@@ -364,6 +384,24 @@ export function overlayExistingFacts(
     }
 
     if (rowBacked && fresh !== undefined) continue; // fresh extraction wins
+    // A derived figure (SDE, EBITDA, add-backs…) a source row no longer
+    // yields was one an older prompt calculated — it goes, never kept. On a
+    // by-year map only the rows' years go; years the broker or the seller
+    // set stay.
+    if (isDerivedMetricKey(key)) {
+      if (isMap(value) && src && fresh === undefined) {
+        const ys = resolvedYearSources(src, value, ctx.lookup);
+        const own = Object.keys(value).filter((y) => !isRowBackedSource(ys[y]));
+        if (own.length === 0) continue;
+        if (own.length < Object.keys(value).length) {
+          rebuilt[key] = Object.fromEntries(own.map((y) => [y, value[y]]));
+          const ownSources = Object.fromEntries(own.filter((y) => ys[y]).map((y) => [y, ys[y]]));
+          if (Object.values(ownSources).every((s) => isUntrackedSource(s))) clearSource(key);
+          else setFieldSource(rebuilt, key, summariseMapSource(ownSources)!);
+          continue;
+        }
+      } else if (rowBacked) continue;
+    }
     const keptSrc: FieldSource | null = src ? { ...src } : null;
     if (keptSrc && !rowBacked) delete keptSrc.documentId; // stray link from an older merge bug
     // The broker's and the seller's own values stay; a statement, lease or

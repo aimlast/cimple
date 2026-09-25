@@ -18,6 +18,8 @@ import {
   canonicalFieldName,
   isSuppressed,
   compareYearKeysDesc,
+  getFieldSources,
+  setFieldSource,
   SOURCE_META_KEYS,
   type FieldSource,
   type SourceKind,
@@ -45,6 +47,9 @@ import {
   type MergeContext,
 } from "./merge-policy";
 import { agentConfig } from "../interview/config/load-config";
+import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
+import type { Deal } from "@shared/schema";
+import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, SPOKEN_KINDS } from "./extraction-guard";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -202,7 +207,50 @@ const SOURCE_GUIDANCE: Partial<Record<SourceKind, string>> = {
 - Never infer financials or size from engagement or marketing language.`,
 };
 
-function buildExtractionPrompt(text: string, category: string, subcategory: string | null | undefined, kind: SourceKind): string {
+/** A data point the deal's interview checklist records under a fixed key (see interview-plan.ts). */
+export interface ExtractionChecklistItem {
+  key: string;
+  label: string;
+}
+
+/** At most this many checklist keys are listed in the prompt. */
+const MAX_CHECKLIST_KEYS = 60;
+
+function checklistBlock(checklist: ExtractionChecklistItem[] | undefined): string {
+  const items = (checklist ?? []).filter((i) => i && /^[a-z][A-Za-z0-9]*$/.test(i.key)).slice(0, MAX_CHECKLIST_KEYS);
+  if (items.length === 0) return "";
+  return `
+
+THIS DEAL'S CHECKLIST KEYS: when the source answers one of these data points, record it under exactly this key (not a new name of your own):
+${items.map((i) => `- ${i.key}: ${i.label}`).join("\n")}`;
+}
+
+/**
+ * The deal's checklist data points (industry plan + broker-added items), for
+ * the extraction prompt — so a roof's condition lands on roofCondition, not
+ * an ad-hoc key coverage never credits.
+ */
+export function extractionChecklist(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline">): ExtractionChecklistItem[] {
+  const adj = coverageAdjustmentsForDeal(deal);
+  const out: ExtractionChecklistItem[] = [];
+  const seen = new Set<string>();
+  for (const items of Object.values(adj.add ?? {})) {
+    for (const i of items) {
+      if (seen.has(i.key) || adj.remove?.has(i.key)) continue;
+      seen.add(i.key);
+      out.push({ key: i.key, label: i.label });
+    }
+  }
+  return out;
+}
+
+function buildExtractionPrompt(
+  text: string,
+  category: string,
+  subcategory: string | null | undefined,
+  kind: SourceKind,
+  checklist?: ExtractionChecklistItem[],
+): string {
   const docType = subcategory ? `${category} / ${subcategory}` : category;
   const guidance = SOURCE_GUIDANCE[kind];
   const label = kind === "document" ? `${docType} document` : `${kind.replace("_", " ")} (${docType})`;
@@ -216,14 +264,18 @@ Extract all relevant fields. Include:
 - _documentType: what type of source this appears to be
 - _confidence: "high", "medium", or "low" based on how clear and direct the source is
 
-For FINANCIAL documents, extract: revenue, grossProfit, ebitda, adjustedEbitda, sde, addbacks, netIncome, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes
-- ebitda is EBITDA as reported / before adjustments. A figure the source calls adjusted, normalised, recast or pro forma EBITDA goes ONLY in adjustedEbitda (and byYear.adjustedEbitda) — never in ebitda. When a source gives both, record both.
+For FINANCIAL documents, extract the lines exactly as printed: revenue (operating revenue / sales only — investment income, interest income, gains and other non-operating income go under otherIncome, never into revenue), costOfSales, grossProfit, operatingExpenses, amortization, interestExpense, incomeTaxes, netIncome, ownerSalary (only when the owner's or management salary is its own printed line), dividendsPaid, yearsOfData, revenueByYear (e.g. {"2022": "$1.2M", "2023": "$1.4M"}), keyFinancialNotes — and ebitda, adjustedEbitda, sde and addbacks only as the NEVER CALCULATE rule below allows.
+- ebitda is EBITDA as reported / before adjustments. A figure the source calls adjusted, normalised, recast or pro forma EBITDA goes ONLY in adjustedEbitda (and byYear.adjustedEbitda) — never in ebitda. When a source prints both, record both.
 - netIncome is net income after tax. Income before tax, operating income or one location's / segment's profit is not netIncome — use its own key (incomeBeforeTax, operatingIncome) or keyFinancialNotes.
+
+NEVER CALCULATE. EBITDA, SDE (seller's discretionary earnings), adjusted EBITDA, add-backs, working capital, margins and every other figure worked out from other lines are recorded ONLY when the source itself prints that figure under that name (a line reading "EBITDA  $412,300", "Seller's discretionary earnings", "Normalization adjustments") — then copy the printed figure. Never add, subtract or divide lines to produce a figure, never write "calculated as …", never state a total the source does not print, and never record a figure that is only "included in" a larger line. Normalizing the earnings is the financial analysis's job, not yours.
+
+A count (fleetSize, employees, numberOfLocations, …) is a number of things, never a dollar amount: when the source gives only the dollar value of the vehicles or equipment, record that under its own key (e.g. vehiclesCost). Industry classification codes (NAICS, SIC) go under naicsCode — never as the industry or business type.
 
 FISCAL PERIODS (any source that states figures):
 - periodEnd: the end date (YYYY-MM-DD) of the LATEST fiscal period the source reports figures for (e.g. "2024-12-31" for FY2024 statements).
 - revenue, grossProfit, ebitda, adjustedEbitda, sde, netIncome and the other plain figure fields hold ONLY the latest period's single figure — never a list of years, never a year in the field name (no netIncome2023, sde2024).
-- Every figure for each fiscal year goes in byYear: {"revenue": {"2024": "$3,318,600", "2023": "$3,082,400"}, "netIncome": {"2024": "…"}, "adjustedEbitda": {"2024": "…"}} (revenue also in revenueByYear). Key by the fiscal year-END year ("FY2023/24" → "2024"); leave out partial or relative periods (YTD, TTM, "last year" with no year).
+- Every figure for each fiscal year goes in byYear: {"revenue": {"2024": "$3,318,600", "2023": "$3,082,400"}, "netIncome": {"2024": "…"}, "grossProfit": {"2023": "…"}} (revenue also in revenueByYear). Key by the fiscal year-END year ("FY2023/24" → "2024"); leave out partial or relative periods (YTD, TTM, "last year" with no year). NEVER CALCULATE applies to every year too: an EBITDA, adjusted-EBITDA or SDE year goes in byYear only when the source prints that year's figure under that name.
 - revenueByYear holds revenue only — never SDE, EBITDA, profit or margin.
 
 BROKER PROCESS: how the business reached the broker (who referred it, the lead source), the broker's fee, commission, listing or engagement terms, earlier approaches or offers — these are not facts about the business: put them ONLY in _privateNotes.
@@ -250,7 +302,10 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
-PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.`;
+PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes. Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes. One short, factual note per matter: put everything the source says about that matter in the one note (the heart episode, the stent and "keep it out of the brochure" are one note, not three), and name whose matter it is ("Owner's wife…").
+Deal-process status and to-dos (an NDA or engagement letter signed, who attended or was copied, documents still to ask for, next steps), contact details (phone numbers, e-mail and office addresses) and the source's own confidentiality stamp are neither facts nor private notes: next steps go in actionItems, the rest stays in summary / keyFacts.
+Company transactions that involve the owner or their family are BUSINESS facts, not private notes — a buyer's due diligence needs them and the financial analysis reads them: dividends declared or paid (dividendsDeclared, with class, amount and date), shareholder loans and amounts due to or from shareholders (shareholderLoans), personal guarantees of company debt (personalGuarantees), related-party leases, contracts and family members on the payroll (relatedPartyTransactions), and the audit / review / compilation status (auditStatus). Record them under those keys.
+Ignore document housekeeping — "sample" or "fictional" labels, page footers, confidentiality stamps: it is neither a fact nor a note.${checklistBlock(checklist)}`;
 }
 
 /** Long sources (full-year email threads, hour-long calls) are read in full up to this size. */
@@ -342,8 +397,32 @@ function figuresByYear(text: string): Record<string, string> | null {
  * - broker process data (referral source, fees, prior approaches) goes to
  *   _privateNotes, never a fact;
  * - periodEnd → _periodEnd (ISO).
+ *
+ * With `sourceText` (the text the model read — null when none is on file)
+ * the extraction guard (extraction-guard.ts) runs FIRST, on the values as
+ * the model wrote them (their "calculated as …" wording intact): derived
+ * figures (SDE, EBITDA, add-backs, working capital, margins) survive only
+ * when the source prints them — by-year maps entry by entry —, calculations
+ * and count-as-dollars values are dropped, NAICS text moves to naicsCode.
+ * Without it (mergeExtractedData re-normalising an extraction that was
+ * guarded when it was read) only the structure above is applied.
  */
-export function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocumentData {
+export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: string | null, kind: SourceKind = "document"): ExtractedDocumentData {
+  if (sourceText === undefined) return structureExtraction(raw);
+  const guarded = guardExtraction(raw, sourceText, { spoken: SPOKEN_KINDS.has(kind), document: kind === "document" });
+  if (guarded.dropped.length > 0) {
+    // Keys and reasons only in production (values are the seller's business data).
+    // A map entry is reported as "sdeByYear.2024" / "byYear.sde.2024".
+    const valueAt = (path: string): unknown =>
+      path.split(".").reduce<unknown>((v, p) => (v && typeof v === "object" ? (v as Record<string, unknown>)[p] : undefined), raw);
+    const shown = (d: { key: string; reason: string }) =>
+      process.env.NODE_ENV === "production" ? `${d.key} (${d.reason})` : `${d.key} (${d.reason}: ${String(valueAt(d.key) ?? "").slice(0, 120)})`;
+    console.log(`[extractor] dropped ${guarded.dropped.length} value(s): ${guarded.dropped.map(shown).join("; ")}`);
+  }
+  return structureExtraction(guarded.data);
+}
+
+function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentData {
   const out: ExtractedDocumentData = {};
   const maps: Record<string, Record<string, string>> = {};
   const rejected: string[] = [];
@@ -499,6 +578,8 @@ export async function extractDocumentData(
   subcategory?: string | null,
   /** What kind of source this is — an email or call is read differently from a P&L. */
   kind: SourceKind = "document",
+  /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
+  opts: { checklist?: ExtractionChecklistItem[] } = {},
 ): Promise<ExtractedDocumentData> {
   if (!text || text.trim().length < 50) {
     return { _documentType: "unreadable", _confidence: "low" };
@@ -515,7 +596,7 @@ export async function extractDocumentData(
       tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
       messages: [{
         role: "user",
-        content: buildExtractionPrompt(text, category, subcategory, kind),
+        content: buildExtractionPrompt(text, category, subcategory, kind, opts.checklist),
       }],
     });
 
@@ -526,7 +607,7 @@ export async function extractDocumentData(
     if (response.stop_reason === "max_tokens") {
       console.warn(`[extractor] extraction hit the output limit — keeping what was recorded`);
     }
-    return normaliseExtraction(block.input as Record<string, unknown>);
+    return normaliseExtraction(block.input as Record<string, unknown>, text, kind);
   } catch (err) {
     console.error("[extractor] Claude extraction failed:", err);
     return { _documentType: category, _confidence: "low", summary: "Extraction failed" };
@@ -661,6 +742,27 @@ export function mergeExtractedData(
   for (const [key, value] of Object.entries(data)) {
     if (!value || key.startsWith("_")) continue;
     mergeValue(key, canonicalFieldName(key), value);
+  }
+
+  // A derived figure (SDE, EBITDA…) survives extraction only when the source
+  // printed it (extraction-guard.ts): the fact it became says so.
+  // The guard names the keys as the model wrote them (sde2024, byYear.ebitda);
+  // the structure above moved year figures onto by-year maps, and a map's
+  // latest year can be its headline.
+  const statedFacts = new Set<string>();
+  for (const stated of statedMetricKeys(data)) {
+    const suffixed = stated.startsWith("byYear.") ? { metric: stated.slice("byYear.".length) } : yearSuffixedKey(stated);
+    const key = suffixed ? yearMapKeyFor(suffixed.metric) : canonicalFieldName(stated);
+    statedFacts.add(key);
+    const head = HEADLINE_MAPS.find((h) => h.map === key)?.head;
+    if (head) statedFacts.add(canonicalFieldName(head));
+  }
+  for (const key of Array.from(statedFacts)) {
+    const s = getFieldSources(merged)[key];
+    // Only a fact this source wrote (another source's value keeps its own story).
+    if (s && !s.note && s.source === base.source && s.documentId === base.documentId && (documentId || s.at === base.at)) {
+      setFieldSource(merged, key, { ...s, note: STATED_METRIC_NOTE });
+    }
   }
 
   // Fold individual lease facts into the canonical leaseDetails narrative

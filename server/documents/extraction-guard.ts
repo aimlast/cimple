@@ -1,0 +1,436 @@
+/**
+ * extraction-guard.ts
+ *
+ * Mechanical checks on what the extractor recorded, before any of it can
+ * become a fact. The prompt asks for figures exactly as the source prints
+ * them; this module enforces it, because the model kept doing arithmetic:
+ *
+ *   - SDE, EBITDA, add-backs, working capital and margins are DERIVED
+ *     figures. A financial statement or tax return almost never prints
+ *     them, so the model computed them itself — with definition and
+ *     arithmetic errors ("SDE" = EBITDA + owner salary, amortization counted
+ *     twice) that went straight onto the CIM cover. A derived figure is now
+ *     kept only when the source itself names the metric AND prints the
+ *     figure; it is then flagged as stated (see STATED_METRICS_KEY).
+ *     Normalisation (SDE / adjusted EBITDA) belongs to the financial
+ *     analysis, the seller and the broker — never to extraction.
+ *   - Any figure written as a calculation ("calculated as …", "$X + $Y",
+ *     "included in $1.4M salaries") is not a stated value and is dropped.
+ *   - A count (fleet size, headcount…) that holds only a dollar amount is
+ *     the wrong fact ("Motor vehicles valued at $1,318,000" as fleetSize).
+ *   - Industry classification codes (NAICS / SIC text from a tax return)
+ *     are not the industry: they move to naicsCode.
+ *   - A metric acronym the source never uses ("…oil & gas, ebitda
+ *     agricultural…") is a model glitch and is removed from narrative text.
+ *
+ * Pure — no I/O. The extractor applies it to every extraction.
+ */
+
+import { SOURCE_META_KEYS } from "../interview/info-merger";
+import { mentionsPrivateMatter } from "../interview/questionnaire-privacy";
+import { businessFactForNote, noteRecordedAsFact } from "@shared/private-notes";
+
+/** Source kinds whose text is speech (figures said in words, not printed). */
+export const SPOKEN_KINDS: ReadonlySet<string> = new Set(["call", "video_call", "interview"]);
+
+/** Extraction key listing the derived metrics the source itself printed (comma-separated). */
+export const STATED_METRICS_KEY = "_statedMetrics";
+
+/** Note recorded on a fact whose derived figure the source printed. */
+export const STATED_METRIC_NOTE = "Stated in the source (not calculated)";
+
+type Extraction = Record<string, unknown>;
+
+/** "sde2024" → ["sde","2024"]; "ATMrevenue" → ["atm","revenue"]; "fy2024Ebitda" → ["fy2024","ebitda"]. */
+export function keyWords(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+interface DerivedMetric {
+  name: string;
+  /** Matches the key's words (joined by spaces). */
+  key: RegExp;
+  /** The source must use this term for the figure to count as printed. */
+  term: RegExp;
+}
+
+const DERIVED_METRICS: DerivedMetric[] = [
+  // "ccaDiscretionaryClaim" (a tax-return line) is not SDE — only discretionary earnings / cash flow are.
+  { name: "SDE", key: /\bsde\b|\bdiscretionary (?:earnings|cash)|\bsellers? discretionary\b|\bowner'?s? benefit\b/, term: /\bSDE\b|discretionary/i },
+  { name: "EBITDA", key: /\bebitda\b|\bebit\b/, term: /\bEBITDA\b|\bEBIT\b/i },
+  { name: "add-backs", key: /\badd ?backs?\b|\baddbacks?\b|\bnormali[sz]ation\b|\bnormali[sz]ed\b|\brecast\b/, term: /add[\s-]?backs?|normali[sz]|recast/i },
+  { name: "working capital", key: /\bworking capital\b/, term: /working capital/i },
+  { name: "margin", key: /\bmargins?\b/, term: /margin/i },
+];
+
+/** The derived metric a key names (SDE, EBITDA, add-backs, working capital, margin), or null. */
+export function derivedMetricOf(key: string): DerivedMetric | null {
+  const joined = keyWords(key).join(" ");
+  return DERIVED_METRICS.find((m) => m.key.test(joined)) ?? null;
+}
+
+export function isDerivedMetricKey(key: string): boolean {
+  return derivedMetricOf(key) !== null;
+}
+
+/**
+ * Wording that marks a figure as worked out (or not really there) rather
+ * than read off the page: "calculated as", "implied", "not separately
+ * stated", "included in $…", "= $Z".
+ */
+const WORKED_OUT_RE =
+  /\bcalculat(?:ed|ion|ing)\b|\bcomputed\b|\bderived\b|\bimplied\b|\bnot (?:separately|individually) (?:stated|disclosed|shown|broken out)\b|\bincluded in (?:the )?\$|=\s*\$?\s?\d/i;
+
+/**
+ * Arithmetic between figures: "$X + taxes $Y", "$X plus owner salary $Y",
+ * "$X / $Y". An amount must follow within a few words — "$9,700 plus HST"
+ * is a stated rent, not a sum.
+ */
+const ARITHMETIC_RE =
+  /\$\s?\d[\d,]*(?:\.\d+)?\s?[kmb]?\s*(?:\+|\bplus\b|\bminus\b|\bless\b|−)\s+(?:[A-Za-z'’&()-]+\s+){0,5}\$?\s?\d|\$\s?\d[\d,]*(?:\.\d+)?\s*\/\s*\$\s?\d/i;
+
+/**
+ * The narrow form for ordinary facts: only wording that can mean nothing
+ * but a worked-out or absent figure. ("Revenue derived from LTC homes",
+ * "commission calculated on gross sales" are plain statements.)
+ */
+const STATED_AS_CALCULATION_RE =
+  /\bcalculated (?:as|by|from|using)\b|\(calculated\b|\bcalculation:|\b(?:19|20)\d{2} calculation\b|\bcomputed (?:as|by|from)\b|=\s*\$\s?\d/i;
+
+/** "Not separately stated / disclosed": the source gives no figure of its own. */
+const NOT_SEPARATELY_RE = /\bnot (?:separately|individually) (?:stated|disclosed|shown|broken out)\b/i;
+
+/**
+ * True when a figure is one the source doesn't give on its own — the value
+ * only points at a larger line ("Included in $1,442,300 salaries and
+ * wages", "Owner salary included in $1.4M wages"). Not when the value has a
+ * figure of its own ("Inventory (~$180,000 at cost) included in the $3.2M
+ * asking price"), says what is NOT included ("Building not included in the
+ * $6.5M price"), is unsure ("unclear if included in $4.2M backlog"), or is
+ * about what a price, backlog or offer covers — those are stated deal
+ * terms, not figures.
+ */
+export function figureNotStatedOnItsOwn(clause: string): boolean {
+  if (NOT_SEPARATELY_RE.test(clause)) return true;
+  const m = /\bincluded in (?:the )?(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|b|million|thousand)?)\s*([^;.]*)/i.exec(clause);
+  if (!m) return false;
+  const before = clause.slice(0, m.index);
+  if (/\b(?:not|n['’]t|never|if|whether|unclear|unsure|possibly|maybe|may be|might be|could be|also|all|fully)\s+(?:\w+\s+){0,2}$/i.test(before)) return false;
+  if (amountsIn(before).length > 0) return false;
+  if (/^(?:\w+\s+){0,3}(?:price|backlog|offer|deal|consideration|valuation|purchase|sale|loi|package)\b/i.test(m[2])) return false;
+  return true;
+}
+
+/** True when the value is written as a calculation rather than a stated figure. */
+export function looksComputed(value: string): boolean {
+  return WORKED_OUT_RE.test(value) || ARITHMETIC_RE.test(value);
+}
+
+/** Keys that are prose about the source or the business (sentences, not one figure). */
+const NARRATIVE_KEYS = new Set([
+  "summary", "keyFacts", "redFlags", "keyFinancialNotes", "operationsNotes", "employeeNotes", "legalNotes",
+  "callNotes", "propertyNotes", "businessDescription", "companyHistory", "competitiveAdvantage", "strengths",
+  "growthOpportunities", "targetMarket", "customerBase", "revenueStreams", "keyProducts",
+]);
+
+function isNarrative(key: string, value: string): boolean {
+  return NARRATIVE_KEYS.has(key) || /Notes$/.test(key) || value.length > 240;
+}
+
+/** Terms a sentence must mention for the narrative strip to consider it (a derived-metric computation). */
+const DERIVED_TERM_RE = /\bEBITDA\b|\bSDE\b|discretionary|add[\s-]?backs?|working capital|margin|normali[sz]/i;
+
+/** Digits of every amount in `value`, in order ("$1,318,000" → "1318000"; "33.1%" → "33.1"). */
+function amountsIn(value: string): string[] {
+  const out: string[] = [];
+  const re = /\d[\d,]*(?:\.\d+)?/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(value))) {
+    const digits = m[0].replace(/,/g, "");
+    // Years and tiny numbers ("2024", "3 years") are not the figure.
+    if (/^(19|20)\d{2}$/.test(digits)) continue;
+    if (digits.replace(/\D/g, "").length < 2) continue;
+    out.push(digits);
+  }
+  return out;
+}
+
+/** The source text with thousands separators and spaces inside numbers removed, for figure lookups. */
+function normaliseSourceDigits(text: string): string {
+  return text.replace(/(\d)[,\s](?=\d{3}\b)/g, "$1");
+}
+
+/** True when the value's leading figure is printed in the source ("$845,252" ↔ "845,252" / "845252"). */
+function figurePrinted(value: string, sourceDigits: string): boolean {
+  const first = amountsIn(value)[0];
+  if (!first) return false;
+  const esc = first.replace(".", "\\.");
+  if (new RegExp(`(^|[^\\d.])${esc}(?![\\d])`).test(sourceDigits)) return true;
+  // "$1.2M" in the value, "1,200,000" in the source.
+  const m = value.match(/(\d+(?:\.\d+)?)\s?(k|m|million|thousand)\b/i);
+  if (m) {
+    const mult = /^m/i.test(m[2]) ? 1_000_000 : 1_000;
+    const whole = String(Math.round(parseFloat(m[1]) * mult));
+    if (new RegExp(`(^|[^\\d.])${whole}(?![\\d])`).test(sourceDigits)) return true;
+  }
+  return false;
+}
+
+/** True when every figure in `clause` is printed in the source (none worked out). */
+function allFiguresPrinted(clause: string, sourceDigits: string): boolean {
+  const figures = amountsIn(clause);
+  return figures.length > 0 && figures.every((f) => new RegExp(`(^|[^\\d.])${f.replace(".", "\\.")}(?![\\d])`).test(sourceDigits));
+}
+
+/** Keys that hold a number of things (vehicles, staff, locations) — never a dollar amount. */
+export function isCountKey(key: string): boolean {
+  if (/^(employees|totalEmployees|fullTimeCount|partTimeCount|headcount|numberOfLocations|locationCount)$/i.test(key)) return true;
+  const words = keyWords(key);
+  const last = words[words.length - 1] ?? "";
+  if (/^(count|headcount|qty|quantity)$/.test(last)) return true;
+  if (words[0] === "number" && words[1] === "of") return true;
+  if (last === "size" && /^(fleet|team|staff|crew|workforce|herd|salesforce)$/.test(words[words.length - 2] ?? "")) return true;
+  return false;
+}
+
+const CURRENCY_AMOUNT_RE =
+  /(?:US\$|C\$|CA\$|CAD\s?|USD\s?|[$€£])\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|b|million|thousand|billion)?\b|\d[\d,]*(?:\.\d+)?\s?(?:dollars|CAD|USD)\b/gi;
+
+/** A value whose only figures are money ("Motor vehicles valued at $1,318,000 gross"). */
+export function onlyCurrency(value: string): boolean {
+  if (!CURRENCY_AMOUNT_RE.test(value)) return false;
+  CURRENCY_AMOUNT_RE.lastIndex = 0;
+  const rest = value.replace(CURRENCY_AMOUNT_RE, " ");
+  CURRENCY_AMOUNT_RE.lastIndex = 0;
+  return !/\d/.test(rest);
+}
+
+/** Industry classification text from a tax return ("456110 — Pharmacies and drug stores (NAICS)"). */
+export function isClassificationCode(value: string): boolean {
+  return /\b(NAICS|SIC)\b/i.test(value) || /^\s*\d{4,6}\s*[-–—:]/.test(value);
+}
+
+/** Removes a metric acronym the source never uses from prose ("oil & gas, ebitda agricultural"). */
+function stripStrayMetricWords(value: string, sourceText: string): string {
+  let out = value;
+  for (const [word, present] of [
+    ["ebitda", /\bEBITDA\b/i],
+    ["sde", /\bSDE\b/i],
+  ] as const) {
+    if (present.test(sourceText)) continue;
+    out = out.replace(new RegExp(`\\s*\\b${word}\\b\\s*`, "gi"), " ");
+  }
+  return out.replace(/\s+([,.;])/g, "$1").replace(/,\s*,/g, ",").replace(/\s{2,}/g, " ").trim();
+}
+
+/** Drops sentences of prose that work out a derived metric ("EBITDA calculated as net income + …"). */
+function stripComputedSentences(value: string): string {
+  const sentences = value.split(/(?<=[.!?;])\s+/);
+  const kept = sentences.filter((s) => !(looksComputed(s) && DERIVED_TERM_RE.test(s)));
+  return kept.length === sentences.length ? value : kept.join(" ").trim();
+}
+
+export interface GuardResult {
+  data: Extraction;
+  /** Derived-metric keys the source itself printed (kept, flagged as stated). */
+  stated: string[];
+  /** What was removed and why (for logs and tests). */
+  dropped: Array<{ key: string; reason: string }>;
+}
+
+/**
+ * Applies the rules above to one extraction. `sourceText` is the text the
+ * extraction was read from; without it (a stored extraction replayed) the
+ * checks that need it fall back to the wording rules alone, and a derived
+ * figure with nothing to check it against is not kept.
+ */
+export function guardExtraction(
+  input: Extraction,
+  sourceText?: string | null,
+  /**
+   * A spoken source (a call or video-call transcript): the seller names the
+   * metric but says the figure in words ("about seven-eighty"), so the
+   * figure isn't matched against the text — a calculation is still dropped.
+   * `document`: the source is a document (statements, minute book, lease,
+   * tax return) — only there are company transactions filed as private
+   * notes promoted to facts (promoteBusinessNotes); an e-mail, call or CRM
+   * note about a guarantee is second-hand and full of deal process.
+   */
+  opts: { spoken?: boolean; document?: boolean } = {},
+): GuardResult {
+  const data: Extraction = {};
+  const stated: string[] = [];
+  const dropped: GuardResult["dropped"] = [];
+  const text = typeof sourceText === "string" ? sourceText : "";
+  const sourceDigits = normaliseSourceDigits(text);
+
+  /** Why a derived metric's figure can't be kept, or null when the source prints it. */
+  const derivedRejection = (metric: DerivedMetric, value: string): string | null => {
+    if (!text) return `${metric.name}: no source text to check it against`;
+    if (!metric.term.test(text)) return `${metric.name}: the source never names it — a calculated figure`;
+    if (opts.spoken ? looksComputed(value) : amountsIn(value).length > 0 && !figurePrinted(value, sourceDigits)) {
+      return opts.spoken ? `${metric.name}: written as a calculation` : `${metric.name}: the figure is not printed in the source`;
+    }
+    if (amountsIn(value).length === 0 && looksComputed(value)) return `${metric.name}: written as a calculation`;
+    return null;
+  };
+
+  /**
+   * A by-year map ({"2024": "$…"}), entry by entry: a derived metric's year
+   * is kept only when the source prints it; any year written as a
+   * calculation, or only "included in" a larger line, goes. `name` is the
+   * key reported in `stated` / `dropped`.
+   */
+  const guardYearMap = (name: string, metricKey: string, map: Record<string, unknown>): Record<string, unknown> | null => {
+    const metric = derivedMetricOf(metricKey);
+    const kept: Record<string, unknown> = {};
+    let printed = false;
+    for (const [year, v] of Object.entries(map)) {
+      if (v === null || v === undefined || v === "") continue;
+      if (typeof v !== "string" && typeof v !== "number") { kept[year] = v; continue; }
+      const value = String(v).trim();
+      if (!value) continue;
+      if (metric) {
+        const why = derivedRejection(metric, value);
+        if (why) { dropped.push({ key: `${name}.${year}`, reason: why }); continue; }
+        printed = true;
+      } else {
+        const first = value.split(/;\s|\.\s/)[0];
+        if (figureNotStatedOnItsOwn(first) || (STATED_AS_CALCULATION_RE.test(first) && !(text && allFiguresPrinted(first, sourceDigits)))) {
+          dropped.push({ key: `${name}.${year}`, reason: "written as a calculation, not a stated figure" });
+          continue;
+        }
+      }
+      kept[year] = v;
+    }
+    if (printed) stated.push(name);
+    return Object.keys(kept).length > 0 ? kept : null;
+  };
+
+  for (const [key, rawIn] of Object.entries(input)) {
+    if (key === STATED_METRICS_KEY) continue; // recomputed below
+    // By-year maps — the model's byYear block ({metric: {year: figure}}) and
+    // the *ByYear maps — are checked year by year.
+    if (!key.startsWith("_") && rawIn && typeof rawIn === "object" && !Array.isArray(rawIn)) {
+      if (key === "byYear") {
+        const out: Record<string, unknown> = {};
+        for (const [metricKey, m] of Object.entries(rawIn as Record<string, unknown>)) {
+          if (!m || typeof m !== "object" || Array.isArray(m)) { out[metricKey] = m; continue; }
+          const kept = guardYearMap(`byYear.${metricKey}`, metricKey, m as Record<string, unknown>);
+          if (kept) out[metricKey] = kept;
+        }
+        if (Object.keys(out).length > 0) data[key] = out;
+      } else {
+        const kept = guardYearMap(key, key, rawIn as Record<string, unknown>);
+        if (kept) data[key] = kept;
+      }
+      continue;
+    }
+    // A figure the model gave as a number is checked like its text.
+    const raw = typeof rawIn === "number" && !key.startsWith("_") ? String(rawIn) : rawIn;
+    // Bookkeeping, private notes and anything else that isn't text pass through.
+    if (key.startsWith("_") || typeof raw !== "string") {
+      data[key] = raw;
+      continue;
+    }
+    let value = raw.trim();
+    if (!value) continue;
+
+    const metric = derivedMetricOf(key);
+    if (metric) {
+      const why = derivedRejection(metric, value);
+      if (why) {
+        dropped.push({ key, reason: why });
+        continue;
+      }
+      data[key] = value;
+      stated.push(key);
+      continue;
+    }
+
+    if (SOURCE_META_KEYS.has(key)) {
+      // The source's own summary / key facts / red flags: shown on the source,
+      // never merged as deal facts — kept whole.
+    } else if (isNarrative(key, value)) {
+      value = stripComputedSentences(value);
+    } else if (
+      figureNotStatedOnItsOwn(value.split(/;\s|\.\s/)[0]) ||
+      // A calculation counts as stated when the source prints it that way
+      // (a lease reading "$11.50 per sq ft = $322,000 per annum").
+      (STATED_AS_CALCULATION_RE.test(value.split(/;\s|\.\s/)[0]) && !(text && allFiguresPrinted(value.split(/;\s|\.\s/)[0], sourceDigits)))
+    ) {
+      // Only when the value's own figure is the calculation: "Due from related
+      // parties $330,000; rent … included in $2,433,500" is a stated fact.
+      // An ordinary figure ("Included in $1,442,300 salaries and wages",
+      // "Approximately $606,100 (calculated as …)") that the source never
+      // states on its own. Plain "+" wording is left alone here: "$9,700
+      // plus $1,200 CAM" is how a lease states its rent.
+      dropped.push({ key, reason: "written as a calculation, not a stated figure" });
+      continue;
+    }
+    if (text) value = stripStrayMetricWords(value, text);
+    if (!value) {
+      dropped.push({ key, reason: "nothing left after removing calculations" });
+      continue;
+    }
+
+    if (isCountKey(key) && onlyCurrency(value)) {
+      dropped.push({ key, reason: "a count holding a dollar amount" });
+      continue;
+    }
+
+    if ((key === "industry" || key === "businessType" || key === "subIndustry") && isClassificationCode(value)) {
+      if (data.naicsCode === undefined && input.naicsCode === undefined) data.naicsCode = value;
+      dropped.push({ key, reason: "classification code → naicsCode" });
+      continue;
+    }
+
+    data[key] = value;
+  }
+
+  if (stated.length > 0) data[STATED_METRICS_KEY] = stated.join(",");
+  if (opts.document) promoteBusinessNotes(data);
+  return { data, stated, dropped };
+}
+
+/**
+ * Company transactions with the owner that the extractor filed as private
+ * notes anyway (an older prompt did it routinely: the Class D dividend, the
+ * personal guarantee on the term loan, the related-party lease, "unaudited
+ * compilation") become the business facts they are (mutates): the note's
+ * words are the fact, under dividendsDeclared / personalGuarantees /
+ * shareholderLoans / relatedPartyTransactions / auditStatus, or appended to
+ * the source's own fact of that family when the note adds something to it.
+ * A note that also names a personal matter or a negotiation position stays a
+ * note. Idempotent.
+ */
+export function promoteBusinessNotes(data: Extraction): void {
+  const raw = data._privateNotes;
+  const notes = Array.isArray(raw) ? raw.map((n) => String(n ?? "")) : typeof raw === "string" ? raw.split("\n") : [];
+  if (notes.length === 0) return;
+  const kept: string[] = [];
+  for (const note of notes.map((n) => n.trim()).filter(Boolean)) {
+    const fact = businessFactForNote(note);
+    if (!fact || mentionsPrivateMatter(note)) { kept.push(note); continue; }
+    if (noteRecordedAsFact(note, data)) continue; // the source already records it
+    const key = Object.keys(data).find((k) => !k.startsWith("_") && fact.family.test(k) && typeof data[k] === "string") ?? fact.canonical;
+    const current = typeof data[key] === "string" ? String(data[key]).trim() : "";
+    data[key] = current ? `${current}; ${note}` : note;
+  }
+  if (kept.length === notes.length) return;
+  if (kept.length > 0) data._privateNotes = Array.isArray(raw) ? kept : kept.join("\n");
+  else delete data._privateNotes;
+}
+
+/** The derived-metric keys an extraction recorded as printed in its source. */
+export function statedMetricKeys(extraction: Extraction): string[] {
+  const raw = extraction[STATED_METRICS_KEY];
+  return typeof raw === "string" ? raw.split(",").map((k) => k.trim()).filter(Boolean) : [];
+}

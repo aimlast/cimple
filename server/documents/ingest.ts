@@ -19,9 +19,18 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
-import { addPrivateNote, isSourceKind, sourceRowLookup, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
+import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
+import {
+  addPrivateNote,
+  isSourceKind,
+  privateNoteTextsFromSource,
+  removePrivateNoteSource,
+  sourceRowLookup,
+  SOURCE_META_KEYS,
+  type SourceKind,
+} from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
+import { noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { recordMergeConflicts } from "./merge-conflicts";
@@ -180,21 +189,47 @@ export function mergeableExtraction(_doc: Pick<Document, "visibility">, data: Ex
  * Each note carries its source's documentId (deleting the source removes
  * it) and, for a broker-only source, `brokerOnly: true`: those are the
  * broker's own notes and never reach the interview agent at all.
+ * `facts` is the same source's extraction: a note that only repeats a
+ * business fact the source also recorded (a dividend, a personal guarantee
+ * of company debt — noteRecordedAsFact) is the fact filed twice, not a note.
  */
 export function addPrivateNotes(
   info: Record<string, unknown>,
   raw: unknown,
   doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
+  facts?: Record<string, unknown>,
 ): void {
-  if (typeof raw !== "string" || !raw.trim()) return;
+  const list = Array.isArray(raw) ? raw.map((x) => String(x ?? "")) : typeof raw === "string" ? raw.split("\n") : [];
   const brokerOnly = isBrokerOnly(doc);
-  const lines = Array.from(new Set(raw.split("\n").map((n) => n.trim()).filter(Boolean))).slice(0, 10);
+  // At most 10 from one extraction; notes already on file (a reprocess re-adding them) all stay.
+  const lines = Array.from(new Set(list.map((n) => n.trim()).filter(Boolean))).slice(0, Array.isArray(raw) ? undefined : 10);
   // A note already on file (an earlier version of the same CRM note, another
   // email) gains this source too — so retiring or deleting that other source
   // leaves the note in place while this one still states it.
   for (const note of lines) {
+    if (facts && noteRecordedAsFact(note, facts)) continue;
     addPrivateNote(info, note, { reason: `From ${doc.name}`, documentId: doc.id, ...(brokerOnly ? { brokerOnly: true } : {}) });
   }
+}
+
+/**
+ * A re-read source's private notes (reprocess; mutates): what it says now,
+ * plus every note it stated before that the fresh run simply didn't repeat
+ * — a model run is not a correction, and the note may be the broker's only
+ * record of it. An earlier note goes only when this source now records it
+ * as a business fact (a dividend, a guarantee an older prompt filed as
+ * private), or when it is no note at all ("NDA in place", a sample label).
+ * Restatements fold into one note, keeping each wording.
+ */
+export function refreshSourceNotes(
+  info: Record<string, unknown>,
+  doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
+  data: Record<string, unknown>,
+): void {
+  const earlier = privateNoteTextsFromSource(info, doc.id);
+  removePrivateNoteSource(info, doc.id);
+  addPrivateNotes(info, data._privateNotes, doc, data);
+  addPrivateNotes(info, earlier.filter((t) => !noteRecordedAsFact(t, data)), doc);
 }
 
 // The per-deal facts queue lives in its own module so broker edits and the
@@ -260,7 +295,10 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     if (filePath && fs.existsSync(filePath)) text = await extractTextFromFile(filePath, doc.mimeType);
     if (!text && doc.extractedText) text = doc.extractedText;
 
-    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
+    const dealForChecklist = await storage.getDeal(doc.dealId);
+    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
+      checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+    });
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
     // A failed extraction (an API error, no credits) never replaces the
     // extraction on file — reprocess can still replay it.
@@ -305,7 +343,8 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
       mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
       documents,
     );
-    addPrivateNotes(merged, extracted._privateNotes, doc);
+    // A note that only repeats a business fact this source recorded is not a note.
+    addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
     const fieldsWritten = Object.keys(merged).filter(
       (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
     );

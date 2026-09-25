@@ -1,5 +1,6 @@
 import type { ExtractedInfo } from "@shared/schema";
 import { SOURCE_KINDS, type SourceKind } from "@shared/schema";
+import { sameNoteContent, withoutHousekeeping } from "@shared/private-notes";
 import type { ExtractedField, InterviewReasoning } from "./response-schema";
 import type { IndustryContext, LocationContext } from "./knowledge-base";
 
@@ -1301,6 +1302,14 @@ export interface PrivateNoteSource {
   reason?: string;
   /** Interview turn it was recorded on. */
   turn?: number;
+  /** The seller typed it in the intake questionnaire. */
+  questionnaire?: boolean;
+  /**
+   * This source's own words, when they differ from the note's (a restatement
+   * merged into the note on file). Kept so a merge never loses what the
+   * source said; it becomes the note's text if the first source goes.
+   */
+  wording?: string;
 }
 
 export interface BrokerPrivateNote extends PrivateNoteSource {
@@ -1309,7 +1318,7 @@ export interface BrokerPrivateNote extends PrivateNoteSource {
   alsoFrom?: PrivateNoteSource[];
 }
 
-const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn"] as const;
+const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn", "questionnaire", "wording"] as const;
 
 function pickNoteSource(n: PrivateNoteSource): PrivateNoteSource {
   const out: PrivateNoteSource = {};
@@ -1322,9 +1331,14 @@ export function privateNoteText(note: string): string {
   return note.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
 }
 
-/** One identity per source: the document, or the seller's own sessions. */
+/**
+ * One identity per source (the document, the intake questionnaire, or the
+ * seller's own sessions) and wording: one source saying two related things
+ * in different words keeps both.
+ */
 function noteSourceId(s: PrivateNoteSource): string {
-  return s.documentId ? `doc:${s.documentId}` : "session";
+  const id = s.documentId ? `doc:${s.documentId}` : s.questionnaire ? "questionnaire" : "session";
+  return s.wording ? `${id}|${privateNoteText(s.wording)}` : id;
 }
 
 /** A (note, source) pair's identity — what a turn save compares against the snapshot. */
@@ -1347,36 +1361,92 @@ function withSources(n: BrokerPrivateNote, sources: PrivateNoteSource[]): Broker
   const rest: Record<string, unknown> = { ...n };
   for (const f of SOURCE_FIELDS) delete rest[f];
   delete rest.alsoFrom;
+  let note = n.note;
+  let list = sources;
+  // The first source restated the note in its own words: those words are
+  // the note now, and every other source's implicit wording (the old text)
+  // is written out so nothing changes what it said.
+  if (sources[0]?.wording) {
+    note = sources[0].wording;
+    list = sources.map((s, i) => {
+      const { wording, ...bare } = s;
+      if (i === 0) return bare;
+      const said = wording ?? n.note;
+      return privateNoteText(said) === privateNoteText(note) ? bare : { ...bare, wording: said };
+    });
+  }
   return {
-    ...(rest as { note: string }),
-    ...sources[0],
-    ...(sources.length > 1 ? { alsoFrom: sources.slice(1) } : {}),
+    ...(rest as object),
+    note,
+    ...list[0],
+    ...(list.length > 1 ? { alsoFrom: list.slice(1) } : {}),
   };
 }
 
 /**
- * Records `note` from `src` on `info` (mutates). A note already on file with
- * the same text gains `src` as another source instead of being skipped — the
- * old skip left the note depending on its first source alone. Returns true
- * when anything changed.
+ * Records `note` from `src` on `info` (mutates). A note already on file that
+ * says the same thing — the same text, or the same content in other words
+ * (sameNoteContent: "Owner had a cardiac event in 2024" / "Seller disclosed a
+ * 2024 heart event") — gains `src` as another source instead of a second
+ * entry, with the source's own words kept on it when they differ, so no
+ * merge loses anything a source said; the old skip left the note depending
+ * on its first source alone. `src.wording`, when given, is the text (a
+ * source re-added from a note on file). Returns true when anything changed.
  */
 export function addPrivateNote(info: Record<string, unknown>, note: string, src: PrivateNoteSource): boolean {
-  const text = note.trim();
+  // "Sample document — fictional business", "NDA in place", "Ask for the WIP
+  // report" are not notes; a confidentiality stamp is cut from a longer note.
+  const text = withoutHousekeeping(src.wording ?? note);
   if (!text) return false;
   const notes = getPrivateNotes(info);
   const key = privateNoteText(text);
-  const idx = notes.findIndex((n) => privateNoteText(n.note) === key);
-  const source = pickNoteSource(src);
+  const texts = (n: BrokerPrivateNote) => [n.note, ...privateNoteSources(n).map((s) => s.wording).filter((w): w is string => !!w)];
+  let idx = notes.findIndex((n) => texts(n).some((t) => privateNoteText(t) === key));
+  // A restatement merges only with a note worded by the same side: the note
+  // keeps its first source's words, and a broker-only CRM note's wording
+  // must never become what the seller-side (interview) view shows.
+  if (idx === -1) idx = notes.findIndex((n) => !!n.brokerOnly === !!src.brokerOnly && texts(n).some((t) => sameNoteContent(t, text)));
+  const { wording: _given, ...bare } = pickNoteSource(src);
   if (idx === -1) {
-    info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...source }];
+    info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...bare }];
     return true;
   }
+  const source: PrivateNoteSource = privateNoteText(notes[idx].note) === key ? bare : { ...bare, wording: text };
   const sources = privateNoteSources(notes[idx]);
   if (sources.some((s) => noteSourceId(s) === noteSourceId(source))) return false;
   const next = [...notes];
   next[idx] = withSources(notes[idx], [...sources, source]);
   info[BROKER_PRIVATE_NOTES_KEY] = next;
   return true;
+}
+
+/**
+ * Folds notes on file that say the same thing (recorded before restatements
+ * were merged on write) into one entry each, keeping every source and its
+ * words (mutates); entries that are no notes at all (withoutHousekeeping)
+ * go. Returns true when anything changed.
+ */
+export function compactPrivateNotes(info: Record<string, unknown>): boolean {
+  const notes = getPrivateNotes(info);
+  if (notes.length === 0) return false;
+  const scratch: Record<string, unknown> = {};
+  for (const n of notes) {
+    for (const s of privateNoteSources(n)) addPrivateNote(scratch, n.note, s.wording ? s : { ...s, wording: n.note });
+  }
+  const next = getPrivateNotes(scratch);
+  if (JSON.stringify(next) === JSON.stringify(notes)) return false;
+  if (next.length > 0) info[BROKER_PRIVATE_NOTES_KEY] = next;
+  else delete info[BROKER_PRIVATE_NOTES_KEY];
+  return true;
+}
+
+/** Every wording `documentId` stated a private note in (its own words on each note it is a source of). */
+export function privateNoteTextsFromSource(info: Record<string, unknown>, documentId: string): string[] {
+  const out: string[] = [];
+  for (const n of getPrivateNotes(info)) {
+    for (const s of privateNoteSources(n)) if (s.documentId === documentId) out.push(s.wording ?? n.note);
+  }
+  return out;
 }
 
 /**

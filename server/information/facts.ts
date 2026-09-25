@@ -38,7 +38,7 @@ import {
   LEGACY_SOURCE_NOTE,
   type FieldSource,
 } from "../interview/info-merger";
-import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
+import { GENERIC_FIELD_LABELS, fieldLabel } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import { withDealFactsLock } from "../documents/facts-lock";
 import { LEAD_SOURCE_KINDS, WEBSITE_ACCEPTED_NOTE } from "./cim-facts";
@@ -47,7 +47,7 @@ import {
   columnPatchAfterChange,
   columnText,
   sameValue,
-  MIRROR_NOTES,
+  isReconciledNote,
   type MirroredFactColumn,
 } from "./deal-mirror";
 import type { Deal, Discrepancy } from "@shared/schema";
@@ -57,7 +57,7 @@ export const BROKER_SECTION_OF_KEY = "_brokerSectionOf";
 export const BROKER_FACT_LABELS_KEY = "_brokerFactLabels";
 
 export class FactError extends Error {
-  constructor(message: string, public status = 400) {
+  constructor(message: string, public status = 400, public details?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -187,20 +187,59 @@ export function keyFromLabel(label: string): string {
   return /^[a-z]/.test(key) ? key : `fact${key}`;
 }
 
-/** Broker adds a new fact to a section. Returns the key it was stored under. */
+/** The key a known field would be stored under for this label, or null for an ad-hoc label. */
+export function knownFieldForLabel(label: string): string | null {
+  const clean = label.trim();
+  // A known field's own label ("Annual revenue").
+  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === clean.toLowerCase())?.[0];
+  if (byLabel) return byLabel;
+  const raw = keyFromLabel(clean);
+  const key = canonicalFieldName(raw);
+  // An alias of a known field ("Revenue" → annualRevenue, "Headcount" → employees).
+  if (key !== raw) return key;
+  if (GENERIC_FIELD_LABELS[key] || KNOWN_EXTRACTED_FIELDS.has(key)) return key;
+  return null;
+}
+
+/** 409 payload when the broker adds a fact that is already on file under a known field. */
+export interface ExistingFactConflict {
+  existingKey: string;
+  existingLabel: string;
+  currentValue: string;
+}
+
+/**
+ * Broker adds a new fact to a section. Returns the key it was stored under.
+ * A label that names a field already on file ("Revenue" while annualRevenue
+ * holds a value) is refused with 409 and the existing fact — the broker
+ * updates that one instead of a second copy (annualRevenue2) that coverage,
+ * the deal card and the CIM would never read. Ad-hoc labels that happen to
+ * collide still get their own numbered key.
+ */
 export function addFact(info: Info, label: string, value: unknown, sectionKey: string | null): string {
   const cleanLabel = label.trim().slice(0, 120);
   if (!cleanLabel) throw new FactError("Give the fact a name");
   const text = String(value ?? "").trim();
   if (!text) throw new FactError("Enter a value");
-  // Reuse a canonical key when the label names a known field ("Annual revenue").
-  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === cleanLabel.toLowerCase())?.[0];
-  const base = byLabel ?? canonicalFieldName(keyFromLabel(cleanLabel), Object.keys(info));
+  // Reuse a canonical key when the label names a known field ("Annual revenue", "Revenue").
+  const known = knownFieldForLabel(cleanLabel);
+  const hasValue = (k: string) => info[k] !== undefined && info[k] !== null && info[k] !== "";
+  if (known && hasValue(known)) {
+    const existingLabel = GENERIC_FIELD_LABELS[known] ?? (info[BROKER_FACT_LABELS_KEY] as Record<string, string> | undefined)?.[known] ?? fieldLabel(known);
+    const current = info[known];
+    const details: ExistingFactConflict = {
+      existingKey: known,
+      existingLabel,
+      currentValue: typeof current === "string" ? current : serialize(current),
+    };
+    throw new FactError(`${existingLabel} is already on file — update it instead of adding a second one`, 409, details as unknown as Record<string, unknown>);
+  }
+  const base = known ?? canonicalFieldName(keyFromLabel(cleanLabel), Object.keys(info));
   let key = base;
   // A different fact already lives under this key — never overwrite it silently.
-  for (let n = 2; info[key] !== undefined && info[key] !== null && info[key] !== "" && !byLabel; n++) key = `${base}${n}`;
+  for (let n = 2; hasValue(key) && !known; n++) key = `${base}${n}`;
   setBrokerFact(info, key, text);
-  if (!byLabel && !GENERIC_FIELD_LABELS[key]) {
+  if (!known && !GENERIC_FIELD_LABELS[key]) {
     const labels = objectAt(info, BROKER_FACT_LABELS_KEY);
     labels[key] = cleanLabel;
     info[BROKER_FACT_LABELS_KEY] = labels;
@@ -494,17 +533,35 @@ export async function mutateDealInfo<T>(dealId: string, fn: (info: Info) => T): 
  * column follows through mutateDealInfo. Empty clears the fact (restorable).
  */
 export async function setMirroredDealFact(dealId: string, key: MirroredFactColumn, value: unknown, note: string): Promise<void> {
-  const text = columnText(value);
+  await setMirroredDealFacts(dealId, { [key]: value }, note);
+}
+
+/**
+ * Several deal columns set at once (deal creation, the deal's details form):
+ * each becomes the broker's fact in one update — the business name, the
+ * industry, the asking price. A value a document or CRM note gave stays as
+ * another value.
+ */
+export async function setMirroredDealFacts(
+  dealId: string,
+  values: Partial<Record<MirroredFactColumn, unknown>>,
+  note: string,
+): Promise<void> {
+  const entries = Object.entries(values) as Array<[MirroredFactColumn, unknown]>;
+  if (entries.length === 0) return;
   await mutateDealInfo(dealId, (info) => {
-    if (!text) {
-      if (columnText(info[key])) deleteFact(info, key);
-      return;
+    for (const [key, value] of entries) {
+      const text = columnText(value);
+      if (!text) {
+        if (columnText(info[key])) deleteFact(info, key);
+        continue;
+      }
+      const src = getFieldSources(info)[key];
+      // Already the broker's value — unless it was only just lined up from the
+      // column a moment ago (then give it the real reason: Valuation, creation).
+      if (sameValue(columnText(info[key]), text) && src?.source === "broker" && !isReconciledNote(src.note)) continue;
+      setBrokerFact(info, key, text, { note });
     }
-    const src = getFieldSources(info)[key];
-    // Already the broker's value — unless it was only just lined up from the
-    // column a moment ago (then give it the real reason: Valuation, creation).
-    if (sameValue(columnText(info[key]), text) && src?.source === "broker" && src.note !== MIRROR_NOTES.reconciled) return;
-    setBrokerFact(info, key, text, { note });
   });
 }
 

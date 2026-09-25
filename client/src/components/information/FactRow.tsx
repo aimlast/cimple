@@ -12,7 +12,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { Check, Loader2, Pencil, Trash2, Layers, X } from "lucide-react";
 import type { FactAlternate, FactSourceInfo, InformationFact } from "@shared/information";
 import { KIND_META, sourceChipText, formatShortDate, UNTRACKED_HINT, INFERRED_HINT } from "./source-kinds";
-import { useInformationAction } from "./useInformation";
+import { useInformationAction, RequestError } from "./useInformation";
 
 const LONG_TEXT = 260;
 
@@ -394,6 +394,9 @@ export function AddFactForm({
   const action = useInformationAction(dealId);
   const [label, setLabel] = useState(missingLabel ?? "");
   const [value, setValue] = useState("");
+  // The label names a fact already on file ("Revenue" while Annual revenue has
+  // a value): offer to update that one instead of adding a second copy.
+  const [existing, setExisting] = useState<{ key: string; label: string; value: string } | null>(null);
   const submit = () => {
     if (!value.trim() || (!missingKey && !label.trim())) return;
     const req = missingKey
@@ -404,9 +407,58 @@ export function AddFactForm({
         toast({ title: "Added", description: `${missingLabel ?? label.trim()} is on file.` });
         onDone();
       },
-      onError: (e) => toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" }),
+      onError: (e) => {
+        const body = e instanceof RequestError && e.status === 409 ? e.body : null;
+        if (body && typeof body.existingKey === "string") {
+          setExisting({
+            key: body.existingKey,
+            label: typeof body.existingLabel === "string" ? body.existingLabel : body.existingKey,
+            value: typeof body.currentValue === "string" ? body.currentValue : "",
+          });
+          return;
+        }
+        toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" });
+      },
     });
   };
+  const updateExisting = () => {
+    if (!existing || !value.trim()) return;
+    action.mutate(
+      { method: "PUT", path: `/facts/${encodeURIComponent(existing.key)}`, body: { value: value.trim() } },
+      {
+        onSuccess: () => {
+          toast({ title: "Updated", description: `${existing.label} now reads ${value.trim()}. The earlier value is kept as another value.` });
+          onDone();
+        },
+        onError: (e) => toast({ title: "Couldn't update it", description: (e as Error).message, variant: "destructive" }),
+      },
+    );
+  };
+  if (existing) {
+    return (
+      <div className="px-4 py-3 border-t border-border/40 bg-muted/20 space-y-2" data-testid="add-fact-existing">
+        <p className="text-sm">
+          <span className="font-medium">{existing.label}</span> is already on file
+          {existing.value ? (
+            <>
+              : <span className="text-muted-foreground break-words">{existing.value.length > 160 ? `${existing.value.slice(0, 160)}…` : existing.value}</span>
+            </>
+          ) : null}
+          .
+        </p>
+        <p className="text-xs text-muted-foreground">Update it to “{value.trim()}”? The current value stays available as another value.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1" onClick={updateExisting} disabled={action.isPending} data-testid="button-update-existing-fact">
+            {action.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            Update {existing.label.charAt(0).toLowerCase() + existing.label.slice(1)}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => setExisting(null)}>
+            <X className="h-3 w-3" /> Back
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="px-4 py-3 border-t border-border/40 bg-muted/20 space-y-2" data-testid="add-fact-form">
       {missingKey ? (
