@@ -23,6 +23,7 @@ import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { buildInformationView } from "../information/view";
 import {
   mutateDealInfo,
+  syncMirroredFacts,
   editFact,
   addFact,
   deleteFact,
@@ -66,6 +67,9 @@ function factKeyParam(req: Request): string {
 export function registerInformationRoutes(app: Express): void {
   app.get("/api/deals/:dealId/information", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      // A deal whose asking price on the deal row and on file disagree (from
+      // before the two were kept as one value) is lined up first.
+      await syncMirroredFacts(req.params.dealId);
       res.json(await loadView(req.params.dealId));
     } catch (err) {
       fail(res, err, "Couldn't load the collected information");

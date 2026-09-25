@@ -14,6 +14,7 @@
  *
  * The final score is a weighted blend: 60% deterministic + 40% AI qualitative.
  */
+import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -343,8 +344,9 @@ export async function matchBuyerToDeal(
     financialDetails.sde = { score: r.score, max: 100, note: `$${(dealSde / 1e3).toFixed(0)}K — ${r.note}` };
   }
 
-  // Asking price
-  const dealPrice = parseCurrency(deal.askingPrice) || parseCurrency(info.askingPrice);
+  // Asking price — the broker's listed price (a broker correction on the
+  // Information tab wins over a stale deal column), else the price on file.
+  const dealPrice = parseCurrency(effectiveAskingPrice({ askingPrice: deal.askingPrice ?? null, extractedInfo: info }));
   if (dealPrice && (criteria.askingPriceMin || criteria.askingPriceMax)) {
     const r = rangeScore(dealPrice, parseCurrency(criteria.askingPriceMin), parseCurrency(criteria.askingPriceMax));
     financialDetails.askingPrice = { score: r.score, max: 100, note: `$${(dealPrice / 1e6).toFixed(2)}M — ${r.note}` };

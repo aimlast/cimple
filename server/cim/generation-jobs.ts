@@ -18,6 +18,7 @@ import type { CimDocument } from "./layout-types";
 import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
+import { listedAskingPrice } from "../information/deal-mirror";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -85,7 +86,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     dealId: deal.id,
     businessName: deal.businessName,
     industry: deal.industry,
-    askingPrice: deal.askingPrice,
+    // The broker's listed price — a correction on the Information tab wins
+    // over the deal column; never a seller's or document's figure.
+    askingPrice: listedAskingPrice(deal),
     extractedInfo,
     scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
     questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,

@@ -35,6 +35,8 @@ import {
 } from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
+import type { CimGenerationGate } from "@shared/deal-progress";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import type { BrandingSettings, CimSectionOverride, Deal } from "@shared/schema";
@@ -114,6 +116,11 @@ export default function CIMDesigner() {
   const state = builder.query.data;
   const sections = state?.sections ?? [];
   const gate = useAiGate(dealId);
+  // Writing the WHOLE CIM also needs enough information — the same rule as
+  // the Overview, the CIM tab, the deal list and the server
+  // (shared/deal-progress cimGenerationGate). Per-section AI isn't gated by it.
+  const infoGate = useCimGenerationGate(dealId, deal?.interviewCompleted);
+  const wholeCimReason = gate.blockedReason ?? (infoGate.allowed ? null : infoGate.reason);
   const media = useMediaLibrary(dealId);
   const dealDesign = useDealDesign(dealId);
   const designPayload = dealDesign.data
@@ -299,6 +306,8 @@ export default function CIMDesigner() {
           <EmptyCim
             generating={generating}
             blockedReason={gate.blockedReason}
+            infoGate={infoGate}
+            interviewCompleted={!!deal.interviewCompleted}
             onGenerate={() => generateAll.mutate()}
             onAddBlank={() => openAdd(undefined)}
             generationView={generation}
@@ -448,8 +457,8 @@ export default function CIMDesigner() {
               size="sm"
               className="hidden lg:inline-flex h-8 text-xs gap-1.5 text-muted-foreground"
               onClick={() => setRegenAllOpen(true)}
-              disabled={generating || !!gate.blockedReason}
-              title={gate.blockedReason ?? "Rebuild every section from scratch"}
+              disabled={generating || !!gate.blockedReason || !infoGate.allowed}
+              title={wholeCimReason ?? "Rebuild every section from scratch"}
             >
               {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
               Regenerate all
@@ -685,10 +694,12 @@ function Notice({ tone, children, action }: { tone: "amber" | "blue"; children: 
 }
 
 function EmptyCim({
-  generating, blockedReason, onGenerate, onAddBlank, generationView,
+  generating, blockedReason, infoGate, interviewCompleted, onGenerate, onAddBlank, generationView,
 }: {
   generating: boolean;
   blockedReason: string | null;
+  infoGate: CimGenerationGate;
+  interviewCompleted: boolean;
   onGenerate: () => void;
   onAddBlank: () => void;
   generationView: ReturnType<typeof useCimGeneration>;
@@ -707,8 +718,16 @@ function EmptyCim({
         <>
           {generationView.job?.status === "failed" && <CimGenerationProgress view={generationView} className="text-left" />}
           {blockedReason && <p className="text-xs text-red-400">{blockedReason}</p>}
+          {!blockedReason && !infoGate.allowed && infoGate.reason && (
+            <p className="text-xs text-amber-500" data-testid="text-builder-needs-information">{infoGate.reason}</p>
+          )}
+          {!blockedReason && infoGate.allowed && !interviewCompleted && (
+            <p className="text-xs text-muted-foreground">
+              The seller interview isn't finished — the CIM will be written from what you've collected so far.
+            </p>
+          )}
           <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
-            <Button className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5" onClick={onGenerate} disabled={generating || !!blockedReason}>
+            <Button className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5" onClick={onGenerate} disabled={generating || !!blockedReason || !infoGate.allowed} title={blockedReason ?? infoGate.reason ?? undefined}>
               {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Generate the CIM
             </Button>
             <Button variant="outline" onClick={onAddBlank}><Plus className="h-4 w-4 mr-1.5" /> Add a section</Button>

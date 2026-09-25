@@ -20,6 +20,7 @@ import {
 import { useDeal } from "@/contexts/DealContext";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { PanelError } from "@/components/deal/PanelError";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
@@ -46,6 +47,10 @@ export function CimTab() {
   const { data, isLoading, error, refetch } = useBuilderState(dealId, { poll: true });
   const generation = useCimGeneration(dealId);
   const gate = useAiGate(dealId);
+  // Enough information to write the CIM? The same rule as the Overview, the
+  // builder, the deal list and the server (shared/deal-progress).
+  const infoGate = useCimGenerationGate(dealId, deal.interviewCompleted);
+  const generateBlockedReason = gate.blockedReason ?? (infoGate.allowed ? null : infoGate.reason);
   const [regenOpen, setRegenOpen] = useState(false);
 
   const hasSections = (data?.sections.length ?? 0) > 0;
@@ -107,11 +112,11 @@ export function CimTab() {
             <Wand2 className="h-4 w-4" /> Open CIM builder
           </Button>
           {hasSections ? (
-            <Button variant="outline" className="gap-1.5" onClick={() => setRegenOpen(true)} disabled={running || !!gate.blockedReason} title={gate.blockedReason ?? undefined}>
+            <Button variant="outline" className="gap-1.5" onClick={() => setRegenOpen(true)} disabled={running || !!gate.blockedReason || !infoGate.allowed} title={generateBlockedReason ?? undefined}>
               <RefreshCw className={cn("h-4 w-4", running && "animate-spin")} /> Regenerate all
             </Button>
           ) : (
-            <Button variant="outline" className="gap-1.5" onClick={() => generate.mutate()} disabled={running || !!gate.blockedReason || !deal.interviewCompleted} title={gate.blockedReason ?? (!deal.interviewCompleted ? "Complete the interview first" : undefined)} data-testid="button-generate-cim-tab">
+            <Button variant="outline" className="gap-1.5" onClick={() => generate.mutate()} disabled={running || !!gate.blockedReason || !infoGate.allowed} title={generateBlockedReason ?? undefined} data-testid="button-generate-cim-tab">
               {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />} Generate CIM
             </Button>
           )}
@@ -125,8 +130,13 @@ export function CimTab() {
           {gate.blockingCount > 0 && <DiscrepancyPanel dealId={dealId} />}
         </div>
       )}
-      {!hasSections && !deal.interviewCompleted && (
-        <p className="text-xs text-muted-foreground">Complete the seller interview first (Overview → Phase 2); the CIM is written from what it collects.</p>
+      {!gate.blockedReason && !infoGate.allowed && infoGate.reason && (
+        <p className="text-xs text-amber-500" data-testid="text-cim-needs-information">{infoGate.reason}</p>
+      )}
+      {!hasSections && !gate.blockedReason && infoGate.allowed && !deal.interviewCompleted && (
+        <p className="text-xs text-muted-foreground" data-testid="text-cim-without-interview">
+          The seller interview isn't finished — the CIM will be written from what you've collected so far.
+        </p>
       )}
 
       {hasSections && (

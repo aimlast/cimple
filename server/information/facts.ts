@@ -32,6 +32,14 @@ import {
   type FieldSource,
 } from "../interview/info-merger";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
+import {
+  reconcileMirroredFacts,
+  columnPatchAfterChange,
+  columnText,
+  sameValue,
+  MIRROR_NOTES,
+  type MirroredFactColumn,
+} from "./deal-mirror";
 import type { Discrepancy } from "@shared/schema";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
@@ -306,15 +314,57 @@ export function applyResolutionToInfo(info: Info, d: Pick<Discrepancy, "field" |
 /**
  * Re-read-then-merge write: loads the deal's CURRENT extractedInfo, applies
  * the mutation, saves. Keeps each broker action atomic against interview
- * turns and document ingestion running at the same time.
+ * turns and document ingestion running at the same time. Deal columns that
+ * mirror a fact (deals.askingPrice) are written in the same update.
  */
 export async function mutateDealInfo<T>(dealId: string, fn: (info: Info) => T): Promise<T> {
   const deal = await storage.getDeal(dealId);
   if (!deal) throw new FactError("Deal not found", 404);
   const info = { ...((deal.extractedInfo as Info | null) || {}) };
+  // Deal columns that are also facts (the asking price) are one value: line
+  // the two copies up first, then let the column follow whatever the broker
+  // changed — in the same update (see deal-mirror.ts).
+  const { columnPatch } = reconcileMirroredFacts(deal, info, setBrokerFact);
+  const before = structuredClone(info);
   const result = fn(info);
-  await storage.updateDeal(dealId, { extractedInfo: info } as any);
+  const after = columnPatchAfterChange({ ...deal, ...columnPatch }, before, info);
+  await storage.updateDeal(dealId, { extractedInfo: info, ...columnPatch, ...after } as any);
   return result;
+}
+
+/**
+ * A deal column that mirrors a fact was set outside the Information tab
+ * (Valuation step, deal creation): record it as the broker's fact — the
+ * column follows through mutateDealInfo. Empty clears the fact (restorable).
+ */
+export async function setMirroredDealFact(dealId: string, key: MirroredFactColumn, value: unknown, note: string): Promise<void> {
+  const text = columnText(value);
+  await mutateDealInfo(dealId, (info) => {
+    if (!text) {
+      if (columnText(info[key])) deleteFact(info, key);
+      return;
+    }
+    const src = getFieldSources(info)[key];
+    // Already the broker's value — unless it was only just lined up from the
+    // column a moment ago (then give it the real reason: Valuation, creation).
+    if (sameValue(columnText(info[key]), text) && src?.source === "broker" && src.note !== MIRROR_NOTES.reconciled) return;
+    setBrokerFact(info, key, text, { note });
+  });
+}
+
+/**
+ * Reconcile a deal's mirrored columns and facts if (and only if) they
+ * disagree — called when the Information tab loads, so a deal whose copies
+ * drifted before the mirror rule shows one value everywhere.
+ */
+export async function syncMirroredFacts(dealId: string): Promise<boolean> {
+  const deal = await storage.getDeal(dealId);
+  if (!deal) return false;
+  const probe = structuredClone((deal.extractedInfo as Info | null) || {});
+  const { columnPatch, infoChanged } = reconcileMirroredFacts(deal, probe, setBrokerFact);
+  if (!infoChanged && Object.keys(columnPatch).length === 0) return false;
+  await mutateDealInfo(dealId, () => undefined);
+  return true;
 }
 
 /** PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the fact on file. */

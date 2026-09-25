@@ -19,7 +19,7 @@ import type { InterviewCall, InterviewBot } from "@shared/schema";
 import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-profile";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
-import { DEAL_PHASES, computeNextStep, isDealPhase, phaseIndex } from "@shared/deal-progress";
+import { DEAL_PHASES, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
@@ -27,8 +27,10 @@ import { invalidateBlind, regenerateAllBlind, regenerateAllBlindInBackground, sc
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
 import { isBuyerAccessLevel } from "@shared/cim-layouts";
 import multer from "multer";
-import { registerDealListRoutes, loadDealSideFacts, moneyValue } from "./routes/deal-list.js";
+import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
+import { listedAskingPrice } from "./information/deal-mirror";
+import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
@@ -1834,11 +1836,26 @@ Return JSON only.`,
     try {
       const { insertDealSchema } = await import("@shared/schema");
       // Owner is always the logged-in broker — a client-supplied brokerId is ignored.
+      // demoKey marks seeded demo/QA deals (kept out of the industry-wide
+      // learning loops) — set only by the seeding code, never by a client.
+      const { demoKey: _demoKey, ...body } = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
       const validatedData = insertDealSchema.parse({
-        ...req.body,
+        ...body,
         brokerId: req.session.brokerId,
       });
-      const deal = await storage.createDeal(validatedData);
+      let deal = await storage.createDeal(validatedData);
+      // An asking price entered at creation becomes the broker's fact too
+      // (one value with the Information tab — see information/deal-mirror.ts).
+      if (deal.askingPrice) {
+        try {
+          const { setMirroredDealFact } = await import("./information/facts");
+          const { MIRROR_NOTES } = await import("./information/deal-mirror");
+          await setMirroredDealFact(deal.id, "askingPrice", deal.askingPrice, MIRROR_NOTES.created);
+          deal = (await storage.getDeal(deal.id)) ?? deal;
+        } catch (e) {
+          console.warn("[deals] asking-price fact not recorded:", e);
+        }
+      }
 
       // Auto-populate document requirements from industry intelligence
       if (deal.industry) {
@@ -1952,11 +1969,11 @@ Return JSON only.`,
       // list uses (shared/deal-progress computeNextStep), so the dashboard and
       // the list never disagree about whose move it is. (Replaces the old
       // pendingReviewCIMs, keyed off deals.status, which nothing ever set.)
-      const sideFacts = await loadDealSideFacts(allDeals);
+      const sideFacts = await loadDealSideFacts(allDeals, { confidence: true });
       const yourMove = allDeals
         .map((deal) => {
           const facts = sideFacts.get(deal.id);
-          const step = computeNextStep(deal, facts?.extras);
+          const step = dealNextStep(deal, facts);
           return { deal, step, lastActivityMs: facts?.lastActivityMs ?? new Date(deal.createdAt).getTime() };
         })
         .filter(({ step }) => step.owner === "you")
@@ -2477,9 +2494,21 @@ Return JSON only.`,
         validatedData.ndaSignedIp = null;
         (validatedData as any).ndaSignedBy = null;
       }
+      // The asking price is one value with the fact on the Information tab:
+      // it's written as the broker's fact and the column follows (see
+      // server/information/deal-mirror.ts) — never the column alone.
+      const askingPriceSet = req.session.brokerId && "askingPrice" in (validatedData as Record<string, unknown>);
+      const askingPrice = (validatedData as Record<string, unknown>).askingPrice;
+      if (askingPriceSet) delete (validatedData as Record<string, unknown>).askingPrice;
       let deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
+      }
+      if (askingPriceSet) {
+        const { setMirroredDealFact } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFact(req.params.id, "askingPrice", askingPrice, MIRROR_NOTES.valuation);
+        deal = (await storage.getDeal(req.params.id)) ?? deal;
       }
       // Intake answers become facts (source "questionnaire") as soon as the
       // seller saves them — the broker's Information tab and the readiness
@@ -5186,7 +5215,7 @@ Return JSON only.`,
             dealId,
             businessName: deal.businessName,
             industry: deal.industry,
-            askingPrice: deal.askingPrice,
+            askingPrice: listedAskingPrice(deal),
             extractedInfo,
             scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
             questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
@@ -5226,7 +5255,7 @@ Return JSON only.`,
           questionnaireData: deal.questionnaireData as Record<string, any> | null,
           scrapedData: (deal as any).scrapedData as Record<string, any> | null,
           description: deal.description,
-          askingPrice: deal.askingPrice,
+          askingPrice: listedAskingPrice(deal),
         };
         if (!CIM_SECTION_PROMPTS[sectionKey]) {
           return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
@@ -5253,6 +5282,14 @@ Return JSON only.`,
       // Returns 202 immediately; the client follows progress via
       // GET /api/deals/:dealId/cim-generation. The job keeps running if the
       // broker leaves the page (the old single request was dropped with it).
+      // Enough information to write from? A completed interview, or a
+      // readiness score of "Developing" or better from any mix of sources
+      // (calls, CRM, documents, the Information tab) — the same rule the
+      // Overview, CIM tab and builder show (shared/deal-progress).
+      const infoGate = await checkCimGenerationGate(deal);
+      if (!infoGate.allowed) {
+        return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
+      }
       try {
         const job = await startCimGeneration(deal, "content");
         return res.status(202).json({ started: true, job });
@@ -6142,6 +6179,14 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the layout");
+      // Enough information to write from? A completed interview, or a
+      // readiness score of "Developing" or better from any mix of sources
+      // (calls, CRM, documents, the Information tab) — the same rule the
+      // Overview, CIM tab and builder show (shared/deal-progress).
+      const infoGate = await checkCimGenerationGate(deal);
+      if (!infoGate.allowed) {
+        return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
+      }
 
       // Background job — see generation-jobs.ts. 202 now, progress via GET
       // /api/deals/:dealId/cim-generation.
@@ -6266,18 +6311,10 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      const { buildSectionCoverage } = await import("./interview/knowledge-base");
-      const { db } = await import("./db");
-      const { interviewSessions } = await import("@shared/schema");
-      const { eq: eqOp, desc: descOp } = await import("drizzle-orm");
-      const [latest] = await db.select().from(interviewSessions)
-        .where(eqOp(interviewSessions.dealId, deal.id))
-        .orderBy(descOp(interviewSessions.lastActivityAt)).limit(1);
-      const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
-      const confidence = meta._confidenceLevels as Record<string, string> | undefined;
-      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
+      // Same computation the CIM generation gate checks (cim/generation-gate).
+      const { readiness, sections } = await computeDealReadiness(deal);
       res.json({
-        readiness: computeCimReadiness(sections),
+        readiness,
         sections: sections.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
       });
     } catch (error: any) {

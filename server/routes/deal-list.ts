@@ -38,6 +38,7 @@ import { getInterviewOutline } from "../interview/outline.js";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan.js";
 import { typedNumericValues } from "../interview/info-merger";
 import { getLiveCimGenerationStatus } from "../cim/generation-jobs";
+import { effectiveAskingPrice } from "../information/deal-mirror";
 
 /* ─── Types ─────────────────────────────────────────────────────────── */
 
@@ -359,10 +360,26 @@ function readinessFor(d: SlimDeal, confidence?: Record<string, string>): DealLis
   }
 }
 
+/**
+ * Next step for the dashboard's "your move" list — the same rule as the
+ * list rows, including the readiness-aware "can the CIM be written yet?"
+ * gate (the score is only needed for a phase-3 deal without an interview).
+ */
+export function dealNextStep(
+  d: DealProgressInput & Pick<SlimDeal, "extractedInfo" | "sectionImportance" | "interviewOutline" | "interviewPlan">,
+  facts: DealSideFacts | undefined,
+) {
+  const needsScore = d.phase === "phase3_content_creation" && !d.interviewCompleted;
+  const readinessScore = needsScore ? readinessFor(d as unknown as SlimDeal, facts?.confidence)?.score ?? null : null;
+  return computeNextStep(d, { ...(facts?.extras ?? {}), readinessScore });
+}
+
 function toListRow(d: SlimDeal, facts: DealSideFacts | undefined): DealListRow {
   const info = (d.extractedInfo || {}) as Record<string, unknown>;
   const extras = facts?.extras ?? {};
-  const askingText = d.askingPrice?.trim() || (typeof info.askingPrice === "string" ? info.askingPrice.trim() : "") || null;
+  // One value with the Information tab (see information/deal-mirror.ts).
+  const askingText = effectiveAskingPrice({ askingPrice: d.askingPrice, extractedInfo: info });
+  const readiness = readinessFor(d, facts?.confidence);
   return {
     id: d.id,
     businessName: d.businessName,
@@ -383,8 +400,10 @@ function toListRow(d: SlimDeal, facts: DealSideFacts | undefined): DealListRow {
     askingPriceValue: moneyValue(askingText),
     annualRevenue: moneyValue(info.annualRevenue) ?? latestYearValue(info.revenueByYear),
     sde: moneyValue(info.sde),
-    readiness: readinessFor(d, facts?.confidence),
-    nextStep: computeNextStep(d as unknown as DealProgressInput, extras),
+    readiness,
+    // The readiness score decides "can the CIM be written yet?" when the
+    // interview isn't complete — the same rule as every Generate button.
+    nextStep: computeNextStep(d as unknown as DealProgressInput, { ...extras, readinessScore: readiness?.score ?? null }),
     counts: {
       documents: facts?.documents ?? 0,
       buyersWithAccess: extras.buyersWithAccess ?? 0,
