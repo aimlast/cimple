@@ -27,6 +27,7 @@ import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
+import { CrmBuyerSyncCard } from "@/components/buyers/CrmBuyerSyncCard";
 import {
   Users, Plus, Upload, Search, Building2,
   ShieldCheck, Target, ExternalLink,
@@ -100,7 +101,14 @@ const TIER_STYLES: Record<Tier, { bg: string; label: string }> = {
 
 interface BuyerDetail {
   buyer: BuyerRow & { buyerCriteria: Record<string, any> | null; createdAt: string; lastLoginAt: string | null };
-  contact: { id: string; tags: string[]; notes: string | null; source: string; addedAt: string } | null;
+  contact: {
+    id: string; tags: string[]; notes: string | null; source: string; addedAt: string;
+    crmProvider?: string | null; crmSyncedAt?: string | null;
+    crmProfile?: {
+      background?: string | null; inferred?: string[];
+      inquiries?: Array<{ title: string; stage?: string | null; status?: string | null }>;
+    } | null;
+  } | null;
   deals: Array<{ dealId: string; businessName: string; lastAccessedAt: string | null; viewCount: number; decision: string | null }>;
 }
 
@@ -122,6 +130,8 @@ const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
   self_signup: { label: "Self-signup", color: "bg-green-500/15 text-green-400 border-green-500/30" },
   broker_invited: { label: "Invited", color: "bg-teal/15 text-teal border-teal/30" },
   crm_imported: { label: "CRM", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
+  nda: { label: "Signed NDA", color: "bg-teal/15 text-teal border-teal/30" },
+  nda_signed: { label: "Signed NDA", color: "bg-teal/15 text-teal border-teal/30" },
 };
 
 // Broker identity comes from the server session — no client-side broker id.
@@ -213,6 +223,8 @@ export default function Buyers() {
       </div>
 
       <div className="flex-1 p-6 space-y-6">
+        <CrmBuyerSyncCard />
+
         {/* Stats row */}
         <div className="grid grid-cols-4 gap-3">
           <StatCard label="Total buyers" value={stats.total} icon={<Users className="h-3.5 w-3.5" />} />
@@ -1013,6 +1025,33 @@ function BuyerDetailDrawer({
                       Background
                     </div>
                     <p className="text-xs text-foreground/80 leading-relaxed">{data.buyer.background}</p>
+                  </div>
+                )}
+
+                {data.contact?.crmProfile && (
+                  <div className="rounded-md border border-orange-500/25 bg-orange-500/5 p-3 space-y-2" data-testid="buyer-crm-profile">
+                    <div className="flex items-center justify-between text-2xs font-medium uppercase tracking-wide text-muted-foreground">
+                      <span>From your Pipedrive · private to you</span>
+                      {data.contact.crmSyncedAt && <span className="normal-case tracking-normal">synced {formatRelative(data.contact.crmSyncedAt)}</span>}
+                    </div>
+                    {data.contact.crmProfile.background && (
+                      <p className="text-xs text-foreground/80 leading-relaxed">{data.contact.crmProfile.background}</p>
+                    )}
+                    {!!data.contact.crmProfile.inquiries?.length && (
+                      <div>
+                        <div className="text-2xs text-muted-foreground mb-1">Listings they asked about</div>
+                        <ul className="space-y-0.5 text-xs">
+                          {data.contact.crmProfile.inquiries.slice(0, 8).map((q, i) => (
+                            <li key={i} className="truncate">{q.title}{q.stage ? <span className="text-muted-foreground"> · {q.stage}</span> : null}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
+                    {!!data.contact.crmProfile.inferred?.length && (
+                      <p className="text-2xs text-muted-foreground">
+                        Worked out from their CRM history rather than stated: {data.contact.crmProfile.inferred.join(", ")}. Whatever the buyer tells us themselves (e.g. on the NDA) replaces it.
+                      </p>
+                    )}
                   </div>
                 )}
 

@@ -16,6 +16,8 @@ import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } fr
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
 import type { InterviewCall, InterviewBot } from "@shared/schema";
+import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-profile";
+import { blindTitleRedactor } from "@shared/blind-identifiers";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
@@ -32,7 +34,7 @@ import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -304,7 +306,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
 
       res.json({
-        buyers: list.map(({ buyerUser, contact, dealCount, lastActivityAt }) => {
+        buyers: list.map(({ buyerUser: ownProfile, contact, dealCount, lastActivityAt }) => {
+          // Broker's private CRM profile fills gaps under what the buyer entered.
+          const buyerUser = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
           // Profile-only composite score (no deal context — match-fit weight
           // is redistributed across profile/engagement/proofOfFunds).
           const score = calculateQualifiedLeadScore({ buyer: buyerUser });
@@ -327,6 +331,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
             tags: contact?.tags ?? [],
             notes: contact?.notes ?? null,
             contactId: contact?.id ?? null,
+            crmSynced: !!contact?.crmProfile,
+            crmProvider: contact?.crmProvider ?? null,
             addedAt: contact?.addedAt ?? buyerUser.createdAt,
             dealCount,
             lastActivityAt,
@@ -348,10 +354,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/broker/buyers/:buyerId", requireBroker, async (req, res) => {
     try {
       const brokerId = req.session.brokerId!;
-      const buyer = await storage.getBuyerUser(req.params.buyerId);
-      if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+      const ownProfile = await storage.getBuyerUser(req.params.buyerId);
+      if (!ownProfile) return res.status(404).json({ error: "Buyer not found" });
 
-      const contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
+      const contact = await storage.getBrokerBuyerContact(brokerId, ownProfile.id);
+      const buyer = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
 
       // List all buyerAccess rows for this buyer, then filter to those
       // on the broker's deals.
@@ -396,6 +403,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           notes: contact.notes,
           source: contact.source,
           addedAt: contact.addedAt,
+          crmProvider: contact.crmProvider ?? null,
+          crmSyncedAt: contact.crmSyncedAt ?? null,
+          crmProfile: contact.crmProfile ?? null,
         } : null,
         deals: dealsWithAccess,
       });
@@ -791,7 +801,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
       // Score every buyer in parallel (skipAI for speed; broker can request
       // a deeper rescore for the top N later if desired)
-      const scored = await Promise.all(list.map(async ({ buyerUser, contact, lastActivityAt }) => {
+      const scored = await Promise.all(list.map(async ({ buyerUser: ownProfile, contact, lastActivityAt }) => {
+        const buyerUser = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
         const criteria: any = {
           ...(buyerUser.buyerCriteria as any || {}),
           targetIndustries: buyerUser.targetIndustries || [],
@@ -2772,6 +2783,62 @@ Return JSON only.`,
     }
   });
 
+  // ── CRM buyer sync: the broker's CRM buyer contacts → matchable buyer
+  // profiles (private to the broker; nobody is emailed). See server/crm/buyer-sync.ts.
+  app.get("/api/integrations/pipedrive/buyer-sync", requireBroker, async (req, res) => {
+    try {
+      const { getPipedriveIntegration, getLiveBuyerSyncStatus, getPipedriveBuyerSyncOptions } = await import("./crm/buyer-sync.js");
+      const brokerId = req.session.brokerId!;
+      const integration = await getPipedriveIntegration(brokerId);
+      if (!integration) return res.json({ connected: false });
+      const saved = ((integration.config as any) || {}).buyerSync || {};
+      let options: any = null;
+      if (req.query.options === "1") {
+        options = await getPipedriveBuyerSyncOptions(integration.accessToken!).catch((err) => {
+          console.error("[buyer-sync] options failed:", err);
+          return { pipelines: [], labels: [], error: "Couldn't read your Pipedrive pipelines — try again shortly." };
+        });
+      }
+      const contacts = (await storage.getBrokerBuyerContacts(brokerId)).filter((c) => c.crmProfile);
+      res.json({
+        connected: true,
+        settings: saved.settings ?? null,
+        status: getLiveBuyerSyncStatus(brokerId) ?? saved.status ?? null,
+        lastSuccessAt: saved.lastSuccessAt ?? null,
+        syncedCount: contacts.length,
+        options,
+      });
+    } catch (err) {
+      console.error("[buyer-sync] status failed:", err);
+      res.status(500).json({ error: "Couldn't read the buyer sync status" });
+    }
+  });
+
+  app.post("/api/integrations/pipedrive/buyer-sync", requireBroker, async (req, res) => {
+    try {
+      const body = z.object({
+        mode: z.enum(["pipelines", "labels", "all"]),
+        pipelineIds: z.array(z.number().int()).optional(),
+        labelIds: z.array(z.number().int()).optional(),
+        auto: z.boolean().default(true),
+      }).parse(req.body);
+      if (body.mode === "pipelines" && !body.pipelineIds?.length) return res.status(400).json({ error: "Pick at least one pipeline" });
+      if (body.mode === "labels" && !body.labelIds?.length) return res.status(400).json({ error: "Pick at least one label" });
+      const { startPipedriveBuyerSync } = await import("./crm/buyer-sync.js");
+      const result = await startPipedriveBuyerSync(req.session.brokerId!, body);
+      if (!result.started) {
+        return res.status(result.reason === "already_running" ? 409 : 400).json({
+          error: result.reason === "already_running" ? "A sync is already running" : "Connect Pipedrive first",
+        });
+      }
+      res.status(202).json({ started: true });
+    } catch (err: any) {
+      if (err?.name === "ZodError") return res.status(400).json({ error: "Invalid sync settings" });
+      console.error("[buyer-sync] start failed:", err);
+      res.status(500).json({ error: "Couldn't start the sync" });
+    }
+  });
+
   app.patch("/api/integrations/:id", requireBroker, async (req, res) => {
     try {
       const owned = await getOwnedIntegration(req.params.id, req.session.brokerId);
@@ -4228,16 +4295,11 @@ Return JSON only.`,
         if (overrides.length > 0) {
           // Section titles are NOT stored in the override (which only holds
           // layoutData + content), so redact them here with the same codename.
-          const identifiers = [
-            deal.businessName,
-            (deal.extractedInfo as Record<string, any> | null)?.ownerName,
-            (deal.extractedInfo as Record<string, any> | null)?.locations,
-          ].filter((v): v is string => typeof v === "string" && v.length > 0);
-          const nameRegex = blindMode && identifiers.length > 0
-            ? new RegExp(identifiers.map((s) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"), "gi")
-            : null;
-          const redactTitle = (t: string) =>
-            nameRegex && codename ? t.replace(nameRegex, codename) : t;
+          // Every known name variant (company/legal/trade/brand names, owner,
+          // website) — see shared/blind-identifiers.ts.
+          const redactTitle = blindMode
+            ? blindTitleRedactor(deal as any, codename)
+            : (t: string) => t;
 
           const overrideMap = new Map(overrides.map(o => [o.cimSectionId, o]));
           sections = baseSections.map(s => {
@@ -4297,10 +4359,66 @@ Return JSON only.`,
   });
 
   // Buyer signs NDA
+  // The buyer profile step of the NDA: what's already on file for this buyer
+  // (their own profile only — never the broker's private CRM notes).
+  app.get("/api/view/:token/buyer-profile", async (req, res) => {
+    try {
+      const access = await storage.getBuyerAccessByToken(req.params.token);
+      if (!access || access.revokedAt) return res.status(404).json({ error: "Invalid token" });
+      const buyer = access.buyerUserId
+        ? await storage.getBuyerUser(access.buyerUserId)
+        : await storage.getBuyerUserByEmail(access.buyerEmail.toLowerCase().trim());
+      const c = (buyer?.buyerCriteria as Record<string, any>) || {};
+      res.json({
+        email: access.buyerEmail,
+        complete: !!buyer && hasMatchableProfile(buyer),
+        onFile: buyer ? {
+          name: buyer.name || access.buyerName || "",
+          phone: buyer.phone || "",
+          company: buyer.company || access.buyerCompany || "",
+          title: buyer.title || "",
+          buyerType: buyer.buyerType || null,
+          background: buyer.background || "",
+          lookingFor: c.lookingFor || "",
+          targetIndustries: buyer.targetIndustries || [],
+          targetLocations: buyer.targetLocations || [],
+          priceMin: c.askingPriceMin ? Number(c.askingPriceMin) : null,
+          priceMax: c.askingPriceMax ? Number(c.askingPriceMax) : null,
+          hasProofOfFunds: !!buyer.hasProofOfFunds,
+        } : { name: access.buyerName || "", company: access.buyerCompany || "" },
+      });
+    } catch (err) {
+      console.error("[nda-profile] read failed:", err);
+      res.status(500).json({ error: "Couldn't load your profile" });
+    }
+  });
+
   app.post("/api/view/:token/sign-nda", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
       if (!access) return res.status(404).json({ error: "Invalid token" });
+      if (access.revokedAt) return res.status(403).json({ error: "Access revoked" });
+
+      // Signing the NDA and giving us your buyer profile are one step: either
+      // a new/updated profile, or a confirmation of the one already on file.
+      let profile = null;
+      if (req.body?.profile) {
+        const parsed = ndaBuyerProfileSchema.safeParse(req.body.profile);
+        if (!parsed.success) {
+          const issue = parsed.error.issues[0];
+          return res.status(400).json({ error: issue?.message || "Please complete the form", field: issue?.path?.[0] ?? null });
+        }
+        profile = parsed.data;
+      } else {
+        const buyer = access.buyerUserId
+          ? await storage.getBuyerUser(access.buyerUserId)
+          : await storage.getBuyerUserByEmail(access.buyerEmail.toLowerCase().trim());
+        if (!req.body?.confirmProfile || !buyer || !hasMatchableProfile(buyer)) {
+          return res.status(400).json({ error: "Please tell us a little about yourself first", code: "profile_required" });
+        }
+      }
+      const { applyNdaProfile } = await import("./buyers/nda-profile.js");
+      await applyNdaProfile(access, profile);
 
       await storage.updateBuyerAccess(access.id, {
         ndaSigned: true,

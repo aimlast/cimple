@@ -1412,6 +1412,10 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  async getBrokerBuyerContacts(brokerId: string): Promise<BrokerBuyerContact[]> {
+    return db.select().from(brokerBuyerContacts).where(eq(brokerBuyerContacts.brokerId, brokerId));
+  }
+
   async upsertBrokerBuyerContact(data: InsertBrokerBuyerContact): Promise<BrokerBuyerContact> {
     // If a row already exists for this (broker, buyer) pair, return it unchanged.
     // Otherwise insert a new one. This is how auto-population (via deal access)

@@ -32,6 +32,15 @@
         "NODE_ENV": "production",
         "SESSION_SECRET": "localtest"
       }
+    },
+    {
+      "name": "Cimple (fake Pipedrive)",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/ik/Documents/GitHub/cimple/.claude/worktrees/zen-gauss && exec /Users/ik/.npm-global/bin/railway run --service cimple -- sh -c 'export $(grep ^DATABASE_URL= /Users/ik/Documents/GitHub/cimple/.env | xargs) NODE_ENV=development PORT=5084 UPLOADS_DIR=/tmp/cimple-uploads PIPEDRIVE_API_BASE=http://localhost:5099 RESEND_API_KEY= TWILIO_ACCOUNT_SID=; exec node node_modules/.bin/tsx server/index.ts'"
+      ],
+      "port": 5084
     }
   ]
 }
