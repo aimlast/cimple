@@ -129,6 +129,8 @@ export interface DeletedFact {
   displayValue: string;
   source: FactSourceInfo;
   deletedAt: string;
+  /** Why it was removed when it wasn't the broker ("Withdrawn by the seller in the interview"). */
+  note?: string;
 }
 
 export interface WebsiteItem {

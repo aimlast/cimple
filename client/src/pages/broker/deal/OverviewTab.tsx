@@ -17,6 +17,7 @@ import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
+import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
@@ -1443,6 +1444,7 @@ function Phase2Center() {
                 >
                   <Pencil className="h-3 w-3" /> Add more detail
                 </Button>
+                <ReopenInterviewButton dealId={dealId} />
               </div>
             )}
             {!deal.interviewCompleted && (

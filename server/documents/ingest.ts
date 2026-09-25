@@ -20,6 +20,7 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { recordFactSpeakers } from "../interview/fact-guards";
 import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { withDealFactsLock } from "./facts-lock";
@@ -239,6 +240,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
       if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
       const before = (deal.extractedInfo as Record<string, unknown>) || {};
       const merged = mergeExtractedData(before, mergeableExtraction(doc, extracted), { documentId: doc.id, source: kind });
+      recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
       addPrivateNotes(merged, extracted._privateNotes, doc);
       const fieldsWritten = Object.keys(merged).filter(
         (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),

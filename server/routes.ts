@@ -1317,6 +1317,20 @@ Return JSON only.`,
     }
   });
 
+  // Broker: reopen a finished interview (e.g. one that ended too early) —
+  // the deal shows the interview in progress again and the seller's link
+  // opens the conversation instead of the "complete" card.
+  app.post("/api/interview/:dealId/reopen", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { reopenInterview } = await import("./interview/session-manager");
+      await reopenInterview(req.params.dealId);
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Interview reopen error:", error);
+      res.status(500).json({ error: "Couldn't reopen the interview" });
+    }
+  });
+
   // Short-lived Deepgram key so the browser can stream the room's audio for
   // speaker-separated live transcription (in-person broker-led mode). The
   // real key stays on the server; this one expires in minutes.
@@ -4111,7 +4125,8 @@ Return JSON only.`,
         ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
         : 0;
       const hasActiveSession = sessions.some((s) => s.status === "active");
-      const hasCompletedSession = sessions.some((s) => s.status === "completed");
+      // A session the broker reopened no longer counts as the interview being done.
+      const hasCompletedSession = sessions.some((s) => s.status === "completed" && !(s.extractedInfo as any)?._reopenedAt);
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
 
       // Document requirements

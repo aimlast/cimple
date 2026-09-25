@@ -26,6 +26,7 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { recordFactSpeakers } from "../interview/fact-guards";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
   getFieldSources,
@@ -133,6 +134,7 @@ export async function reprocessDealDocuments(
   for (const { doc, data } of results) {
     if (data) {
       docsMerged = mergeExtractedData(docsMerged, mergeableExtraction(doc, data), { documentId: doc.id, source: documentKind(doc) });
+      recordFactSpeakers(docsMerged, data._speakers, doc.id); // who said it, on calls
       documentsReprocessed++;
     }
   }

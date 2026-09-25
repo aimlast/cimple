@@ -161,12 +161,14 @@ const SOURCE_GUIDANCE: Partial<Record<SourceKind, string>> = {
 - Attribute every statement to its speaker. The SELLER's statements about the business are facts. The BROKER's lines are questions or prompts — never facts on their own.
 - A broker statement becomes a fact only when the seller clearly agrees with it ("yes, that's right").
 - If speakers are not labelled, use context (the person describing their own business is the seller); when you cannot tell who said something, leave it out.
-- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.`,
+- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.
+- Record who said each business fact in _speakers, keyed by the field name you used: {"equipmentCondition": "Luis Ortega (operations manager)", "annualRevenue": "Gord Halvorsen (seller)"}. Mark the seller's own statements "(seller)". Facts stated by anyone else on the call (a manager, partner, accountant) are recorded with that person as the speaker — never attributed to the seller.`,
   video_call: `THIS SOURCE IS A VIDEO-CALL TRANSCRIPT (Zoom / Google Meet / Teams / Cimple call between the broker and the seller).
 - Attribute every statement to its speaker. The SELLER's statements about the business are facts. The BROKER's lines are questions or prompts — never facts on their own.
 - A broker statement becomes a fact only when the seller clearly agrees with it.
 - When you cannot tell who said something, leave it out.
-- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.`,
+- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.
+- Record who said each business fact in _speakers, keyed by the field name you used: {"equipmentCondition": "Luis Ortega (operations manager)", "annualRevenue": "Gord Halvorsen (seller)"}. Mark the seller's own statements "(seller)". Facts stated by anyone else on the call (a manager, partner, accountant) are recorded with that person as the speaker — never attributed to the seller.`,
   crm: `THIS SOURCE IS THE BROKER'S OWN CRM NOTE (Pipedrive / HubSpot / Salesforce record, activity or note).
 - These are the broker's second-hand notes about the seller and the business — useful leads, not verified facts. Extract them faithfully as written; they will be confirmed with the seller later.
 - Do not upgrade hedged wording ("approx.", "thinks", "~") into firm figures — keep the hedge in the value.
@@ -238,6 +240,8 @@ const EXTRACTION_TOOL = {
       redFlags: { type: "string" },
       revenueByYear: { type: "object", additionalProperties: { type: "string" } },
       _privateNotes: { type: "array", items: { type: "string" } },
+      // Call / video-call transcripts: field → "Name (role)" of who said it.
+      _speakers: { type: "object", additionalProperties: { type: "string" } },
     },
   },
 };
@@ -247,7 +251,7 @@ function normaliseExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
   const out: ExtractedDocumentData = {};
   for (const [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined || v === "") continue;
-    if (k === "revenueByYear" && typeof v === "object" && !Array.isArray(v)) {
+    if ((k === "revenueByYear" || k === "_speakers") && typeof v === "object" && !Array.isArray(v)) {
       const map: Record<string, string> = {};
       for (const [y, amount] of Object.entries(v as Record<string, unknown>)) {
         if (amount !== null && amount !== undefined && amount !== "") map[y] = String(amount);
