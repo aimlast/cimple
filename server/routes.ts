@@ -42,6 +42,8 @@ import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProv
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
+import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
+import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -308,49 +310,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // List all buyer contacts for a broker
   app.get("/api/broker/buyers", requireBroker, async (req, res) => {
     try {
-      const brokerId = req.session.brokerId!;
-      const list = await storage.getBrokerBuyerContactList(brokerId);
-      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
-
-      res.json({
-        buyers: list.map(({ buyerUser: ownProfile, contact, dealCount, lastActivityAt }) => {
-          // Broker's private CRM profile fills gaps under what the buyer entered.
-          const buyerUser = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
-          // Profile-only composite score (no deal context — match-fit weight
-          // is redistributed across profile/engagement/proofOfFunds).
-          const score = calculateQualifiedLeadScore({ buyer: buyerUser });
-          return {
-            id: buyerUser.id,
-            email: buyerUser.email,
-            name: buyerUser.name,
-            phone: buyerUser.phone,
-            company: buyerUser.company,
-            title: buyerUser.title,
-            linkedinUrl: buyerUser.linkedinUrl,
-            buyerType: buyerUser.buyerType,
-            background: buyerUser.background,
-            liquidFunds: buyerUser.liquidFunds,
-            hasProofOfFunds: buyerUser.hasProofOfFunds,
-            targetIndustries: buyerUser.targetIndustries,
-            targetLocations: buyerUser.targetLocations,
-            profileCompletionPct: buyerUser.profileCompletionPct,
-            source: contact?.source ?? buyerUser.source ?? "deal",
-            tags: contact?.tags ?? [],
-            notes: contact?.notes ?? null,
-            contactId: contact?.id ?? null,
-            crmSynced: !!contact?.crmProfile,
-            crmProvider: contact?.crmProvider ?? null,
-            addedAt: contact?.addedAt ?? buyerUser.createdAt,
-            dealCount,
-            lastActivityAt,
-            qualifiedScore: {
-              total: score.total,
-              tier: score.tier,
-              reasons: score.reasons,
-            },
-          };
-        }),
-      });
+      // Merged profile (broker overlay > buyer's own > CRM) with engagement on
+      // the broker's deals feeding the score — see server/buyers/profile-view.ts.
+      const { buildBrokerBuyerList } = await import("./buyers/profile-view.js");
+      res.json({ buyers: await buildBrokerBuyerList(req.session.brokerId!) });
     } catch (err: any) {
       console.error("Error fetching broker buyer list:", err);
       res.status(500).json({ error: "Failed to fetch buyer list" });
@@ -361,11 +324,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/broker/buyers/:buyerId", requireBroker, async (req, res) => {
     try {
       const brokerId = req.session.brokerId!;
+      // Only buyers already on this broker's list — never any buyer by id.
+      if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
       const ownProfile = await storage.getBuyerUser(req.params.buyerId);
       if (!ownProfile) return res.status(404).json({ error: "Buyer not found" });
 
       const contact = await storage.getBrokerBuyerContact(brokerId, ownProfile.id);
-      const buyer = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
+      const buyer = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null, contact?.brokerProfile as BrokerBuyerOverlay | null);
 
       // List all buyerAccess rows for this buyer, then filter to those
       // on the broker's deals.
@@ -464,7 +429,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updates.targetLocations = body.targetLocations as any;
         }
         if (Object.keys(updates).length > 0) {
-          buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+          buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "broker_import"));
         }
       } else if (body.sendInvite) {
         // Create via invite flow (sends set-password email)
@@ -492,6 +457,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (Object.keys(extraUpdates).length > 0) {
           buyerUser = await storage.updateBuyerUser(buyerUser.id, extraUpdates);
         }
+        if (buyerUser && invited.isNew) {
+          buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import") } as any)) || buyerUser;
+        }
       } else {
         // Create a buyer row without sending an invite email
         buyerUser = await storage.createBuyerUser({
@@ -517,6 +485,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           resetToken: null,
           resetTokenExpiresAt: null,
         } as any);
+        buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import") } as any)) || buyerUser;
       }
 
       if (!buyerUser) {
@@ -633,7 +602,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!buyerUser.buyerType && buyerType) updates.buyerType = buyerType;
             if (!buyerUser.liquidFunds && liquidFunds) updates.liquidFunds = liquidFunds;
             if (Object.keys(updates).length > 0) {
-              buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+              buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "csv"));
             }
           } else if (body.sendInvites) {
             const invited = await inviteBuyerUser({
@@ -655,6 +624,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (targetLocations.length > 0) extra.targetLocations = targetLocations as any;
             if (Object.keys(extra).length > 0) {
               buyerUser = await storage.updateBuyerUser(buyerUser.id, extra);
+            }
+            if (buyerUser && invited.isNew) {
+              buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv") } as any)) || buyerUser;
             }
             status = "created";
           } else {
@@ -681,6 +653,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               resetToken: null,
               resetTokenExpiresAt: null,
             } as any);
+            buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv") } as any)) || buyerUser;
             status = "created";
           }
 
@@ -726,6 +699,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notes: z.string().nullable().optional(),
       });
       const updates = schema.parse(req.body);
+      if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
 
       let contact = await storage.getBrokerBuyerContact(brokerId, req.params.buyerId);
       if (!contact) {
@@ -905,48 +879,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branding = await storage.getBrandingByBroker(deal.brokerId);
       const brokerCompany = (branding as any)?.companyName || "";
 
-      const extracted: any = (deal as any).extractedInfo || {};
       // PRE-NDA outreach must be blind-safe: no business name, no city, no
       // exact figures (observed leak: "Harbourline Dental Group… Kitchener…
       // $2M revenue, $628K SDE" in a cold email). Bands + region only.
-      const band = (raw: unknown): string | null => {
-        const n = typeof raw === "string" ? typedNumericValues(raw).find((t) => t.kind === "currency")?.value : null;
-        if (!n) return null;
-        if (n < 500_000) return "under $500K";
-        if (n < 1_000_000) return "$500K–$1M";
-        if (n < 2_000_000) return "$1M–$2M";
-        if (n < 5_000_000) return "$2M–$5M";
-        if (n < 10_000_000) return "$5M–$10M";
-        return "$10M+";
-      };
-      const regionOf = (loc: unknown): string | null => {
-        const text = typeof loc === "string" ? loc : loc && typeof loc === "object" ? Object.values(loc as Record<string, unknown>).filter((v) => typeof v === "string").join(" ") : "";
-        const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming";
-        const m = new RegExp("\\b(Ontario|Quebec|British Columbia|Alberta|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Newfoundland|Prince Edward Island|" + US_STATES + "|\\bON\\b|\\bQC\\b|\\bBC\\b|\\bAB\\b|\\bMB\\b|\\bSK\\b|\\bNS\\b|\\bNB\\b|\\bNL\\b|\\bPE\\b)").exec(text);
-        const map: Record<string, string> = { ON: "Ontario", QC: "Quebec", BC: "British Columbia", AB: "Alberta", MB: "Manitoba", SK: "Saskatchewan", NS: "Nova Scotia", NB: "New Brunswick", NL: "Newfoundland", PE: "Prince Edward Island" };
-        return m ? (map[m[1]] ?? m[1]) : null;
-      };
-      const yearsBand = (raw: unknown): string | null => {
-        const n = typeof raw === "string" ? parseInt((raw.match(/\d+/) || [""])[0], 10) : NaN;
-        if (!Number.isFinite(n)) return null;
-        return n >= 20 ? "20+ years established" : n >= 10 ? "10+ years established" : n >= 5 ? "5+ years established" : null;
-      };
+      const { blindDealSummary } = await import("./buyers/blind-deal-summary.js");
       const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
       const brokerName = brokerUser?.name || "Your broker";
-      const dealSummary = {
-        codename: (deal as any).blindCodename || "a confidential opportunity",
-        industry: deal.industry,
-        subIndustry: (deal as any).subIndustry,
-        region: regionOf(extracted.locationSite || extracted.location || (deal as any).location),
-        revenueBand: band(extracted.annualRevenue),
-        sdeBand: band(extracted.sde),
-        tenure: yearsBand(extracted.yearsOperating),
-      };
+      const dealSummary = blindDealSummary(deal);
+      // Only buyers on this broker's own list can be drafted to.
+      const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
       // Draft each email in parallel
       const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
-        const buyer = await storage.getBuyerUser(buyerUserId);
-        if (!buyer) return null;
+        if (!listed.has(buyerUserId)) return null;
+        const ownBuyer = await storage.getBuyerUser(buyerUserId);
+        if (!ownBuyer) return null;
+        // The broker's effective view of the buyer (their edits > buyer's own > CRM).
+        const contactRow = await storage.getBrokerBuyerContact(req.session.brokerId!, buyerUserId);
+        const buyer = mergeBuyerProfile(ownBuyer, contactRow?.crmProfile as CrmBuyerProfile | null, contactRow?.brokerProfile as BrokerBuyerOverlay | null);
 
         const buyerProfile = {
           name: buyer.name,
@@ -1053,17 +1003,21 @@ Return JSON only.`,
 
       const branding = await storage.getBrandingByBroker(deal.brokerId);
       const brokerCompany = (branding as any)?.companyName || "Cimple";
+      // Only buyers on this broker's own list can be emailed from here.
+      const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
+      const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
       const results = await Promise.all(outreach.map(async (item) => {
-        const buyer = await storage.getBuyerUser(item.buyerUserId);
+        const buyer = listed.has(item.buyerUserId) ? await storage.getBuyerUser(item.buyerUserId) : undefined;
         if (!buyer) {
           return { buyerUserId: item.buyerUserId, status: "failed", error: "Buyer not found" };
         }
 
-        // Render plain-text body into a simple HTML wrapper
+        // Render plain-text body into a simple HTML wrapper (escaped — the
+        // broker's text is never interpreted as HTML).
         const htmlBody = item.body
           .split("\n\n")
-          .map(p => `<p style="margin:0 0 16px 0;color:#333;font-size:14px;line-height:1.6;">${p.replace(/\n/g, "<br/>")}</p>`)
+          .map(p => `<p style="margin:0 0 16px 0;color:#333;font-size:14px;line-height:1.6;">${esc(p).replace(/\n/g, "<br/>")}</p>`)
           .join("");
         const html = `
 <!DOCTYPE html>
@@ -1074,7 +1028,7 @@ Return JSON only.`,
     ${htmlBody}
   </div>
   <p style="text-align:center;color:#999;font-size:11px;margin-top:16px;">
-    Sent via Cimple on behalf of ${brokerCompany}
+    Sent via Cimple on behalf of ${esc(brokerCompany)}
   </p>
 </body>
 </html>`;
@@ -2800,7 +2754,7 @@ Return JSON only.`,
   // profiles (private to the broker; nobody is emailed). See server/crm/buyer-sync.ts.
   app.get("/api/integrations/pipedrive/buyer-sync", requireBroker, async (req, res) => {
     try {
-      const { getPipedriveIntegration, getLiveBuyerSyncStatus, getPipedriveBuyerSyncOptions } = await import("./crm/buyer-sync.js");
+      const { getPipedriveIntegration, effectiveBuyerSyncStatus, getPipedriveBuyerSyncOptions } = await import("./crm/buyer-sync.js");
       const brokerId = req.session.brokerId!;
       const integration = await getPipedriveIntegration(brokerId);
       if (!integration) return res.json({ connected: false });
@@ -2816,7 +2770,7 @@ Return JSON only.`,
       res.json({
         connected: true,
         settings: saved.settings ?? null,
-        status: getLiveBuyerSyncStatus(brokerId) ?? saved.status ?? null,
+        status: effectiveBuyerSyncStatus(brokerId, saved.status),
         lastSuccessAt: saved.lastSuccessAt ?? null,
         syncedCount: contacts.length,
         options,
@@ -4452,8 +4406,19 @@ Return JSON only.`,
     try {
       const existingAccess = await storage.getBuyerAccess(req.params.id);
       if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
-      const { dealId: _d, accessToken: _t, id: _i, ...accessUpdates } = req.body || {};
+      const { dealId: _d, accessToken: _t, id: _i, accessEvents: _e, ...accessUpdates } = req.body || {};
       if (typeof accessUpdates.expiresAt === "string") accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+      // Keep a short history of broker actions on the link (buyer profile timeline).
+      const history = [...(((existingAccess as any).accessEvents as BuyerAccessEvent[] | null) ?? [])];
+      const nowIso = new Date().toISOString();
+      if (accessUpdates.expiresAt instanceof Date && !isNaN(accessUpdates.expiresAt.getTime())
+        && (!existingAccess.expiresAt || accessUpdates.expiresAt.getTime() > new Date(existingAccess.expiresAt).getTime())) {
+        history.push({ type: "extended", at: nowIso, expiresAt: accessUpdates.expiresAt.toISOString() });
+      }
+      if (typeof accessUpdates.accessLevel === "string" && accessUpdates.accessLevel !== existingAccess.accessLevel) {
+        history.push({ type: "level_changed", at: nowIso, accessLevel: accessUpdates.accessLevel });
+      }
+      if (history.length !== (((existingAccess as any).accessEvents as unknown[] | null) ?? []).length) accessUpdates.accessEvents = history.slice(-50);
       const access = await storage.updateBuyerAccess(req.params.id, accessUpdates);
       if (!access) {
         return res.status(404).json({ error: "Buyer access not found" });
@@ -4926,6 +4891,9 @@ Return JSON only.`,
         });
         buyerUserId = invited.user.id;
         isNewAccount = invited.isNew;
+        if (invited.isNew) {
+          await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id) } as any).catch(() => {});
+        }
       }
 
       const accessToken = crypto.randomUUID();
@@ -5700,6 +5668,9 @@ Return JSON only.`,
           try {
             buyerUser = await storage.getBuyerUser(b.buyerUserId);
             if (buyerUser) {
+              // Same effective profile as Suggested buyers (broker edits > own > CRM).
+              const contactRow = await storage.getBrokerBuyerContact(req.session.brokerId!, buyerUser.id);
+              buyerUser = mergeBuyerProfile(buyerUser, contactRow?.crmProfile as CrmBuyerProfile | null, contactRow?.brokerProfile as BrokerBuyerOverlay | null);
               profile = {
                 buyerType: buyerUser.buyerType,
                 profileCompletionPct: buyerUser.profileCompletionPct,

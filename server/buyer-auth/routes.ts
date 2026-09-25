@@ -19,8 +19,51 @@ import { sendDirectEmail } from "../notifications/service.js";
 import {
   calculateBuyerProfileCompletion,
   toPublicBuyerUser,
+  buyerCriteriaSchema,
+  cleanBuyerCriteria,
+  withFieldSources,
+  initialFieldSources,
+  BUYER_CRITERIA_FIELDS,
   type BuyerUser,
 } from "@shared/schema";
+
+// The buyer's own profile editor. The client sends its whole form; only these
+// keys are read, each type-checked. Unknown keys are ignored.
+const optText = (max: number) => z.string().trim().max(max).nullable().optional();
+const tagList = z.array(z.string().trim().min(1).max(120)).max(40).nullable().optional();
+const buyerSelfProfileSchema = z.object({
+  name: z.string().trim().min(1, "Your name is required").max(160).optional(),
+  phone: optText(60),
+  company: optText(200),
+  title: optText(160),
+  linkedinUrl: optText(300),
+  buyerType: optText(40),
+  background: optText(4000),
+  liquidFunds: optText(80),
+  hasProofOfFunds: z.boolean().nullable().optional(),
+  targetIndustries: tagList,
+  targetLocations: tagList,
+  buyerCriteria: z.record(z.unknown()).nullable().optional(),
+}).strip();
+
+/**
+ * Validate the criteria object key by key. A value that's invalid but
+ * unchanged from what's stored (older data) is kept as-is so it never blocks
+ * a save; an invalid NEW value is rejected with the field's name.
+ */
+function validateCriteria(next: Record<string, unknown>, stored: Record<string, unknown>): { ok: true; value: Record<string, any> } | { ok: false; error: string } {
+  const shape = (buyerCriteriaSchema as any).shape as Record<string, z.ZodTypeAny>;
+  const out: Record<string, any> = {};
+  for (const [k, v] of Object.entries(next)) {
+    const def = shape[k];
+    if (!def) continue;                                   // unknown key — dropped
+    const r = def.safeParse(v);
+    if (r.success) out[k] = r.data;
+    else if (JSON.stringify(v) === JSON.stringify(stored[k])) out[k] = v;
+    else return { ok: false, error: `“${BUYER_CRITERIA_FIELDS[k]?.label ?? k}” isn't a valid value` };
+  }
+  return { ok: true, value: cleanBuyerCriteria(out) };
+}
 
 const BCRYPT_ROUNDS = 10;
 const RESET_TOKEN_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
@@ -162,6 +205,7 @@ export function registerBuyerAuthRoutes(app: Express) {
           passwordHash,
           name,
           source: "self_signup",
+          fieldSources: initialFieldSources({ name }, "buyer"),
           emailVerified: false,
           profileCompletionPct: calculateBuyerProfileCompletion({ name }),
           buyerCriteria: {},
@@ -239,24 +283,32 @@ export function registerBuyerAuthRoutes(app: Express) {
   // UPDATE PROFILE
   app.patch("/api/buyer-auth/me", requireBuyer, async (req, res) => {
     try {
-      const body = req.body || {};
-      const allowed = [
-        "name", "phone", "company", "title", "linkedinUrl",
-        "buyerCriteria", "targetIndustries", "targetLocations",
-        "buyerType", "background", "liquidFunds", "hasProofOfFunds",
-      ];
+      const parsed = buyerSelfProfileSchema.safeParse(req.body || {});
+      if (!parsed.success) {
+        const issue = parsed.error.issues[0];
+        return res.status(400).json({ error: issue?.message && issue.message !== "Required" ? issue.message : `Please check “${issue?.path?.join(".")}”` });
+      }
       const updates: any = {};
-      for (const key of allowed) {
-        if (body[key] !== undefined) updates[key] = body[key];
+      for (const [key, value] of Object.entries(parsed.data)) {
+        if (value !== undefined) updates[key] = value;
       }
 
       const current = await storage.getBuyerUser(req.session.buyerId!);
       if (!current) return res.status(404).json({ error: "Account not found" });
 
+      if (updates.buyerCriteria !== undefined) {
+        const v = validateCriteria((updates.buyerCriteria as Record<string, unknown>) || {}, (current.buyerCriteria as Record<string, unknown>) || {});
+        if (!v.ok) return res.status(400).json({ error: v.error });
+        updates.buyerCriteria = v.value;
+      }
+      for (const k of ["targetIndustries", "targetLocations"]) if (updates[k] === null) updates[k] = [];
+      if (updates.hasProofOfFunds === null) delete updates.hasProofOfFunds;
+
       const merged = { ...current, ...updates };
       updates.profileCompletionPct = calculateBuyerProfileCompletion(merged);
 
-      const updated = await storage.updateBuyerUser(req.session.buyerId!, updates);
+      // Record that the buyer wrote whatever this save actually changed.
+      const updated = await storage.updateBuyerUser(req.session.buyerId!, withFieldSources(current, updates, "buyer"));
       res.json({ user: toPublicBuyerUser(updated!) });
     } catch (error: any) {
       console.error("Update profile error:", error);

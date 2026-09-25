@@ -1,18 +1,17 @@
 /**
  * Buyers — broker's personal contact list of buyers.
  *
- * Aggregates buyers from three sources (auto-populated, not just manual):
- *   1. Buyers granted access to any of this broker's deals
- *   2. Buyers manually added via the "Add buyer" form
- *   3. Buyers imported via CSV (or CRM in future)
+ * Aggregates buyers from every route in (auto-populated, not just manual):
+ * deal access, NDAs signed, manual adds, CSV imports and the CRM sync.
  *
- * Supports filter by source / buyer type / profile status, free-text search,
- * and a detail drawer showing the buyer's profile and per-deal engagement.
+ * Search, filter (source / type / interest), sort (last activity, name,
+ * profile, score). Each buyer opens their full profile page
+ * (/broker/buyers/:id — BuyerProfilePage).
  */
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { useLocation } from "wouter";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -20,17 +19,15 @@ import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
-import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
 import { apiRequest } from "@/lib/queryClient";
 import { CrmBuyerSyncCard } from "@/components/buyers/CrmBuyerSyncCard";
 import {
-  Users, Plus, Upload, Search, Building2,
-  ShieldCheck, Target, ExternalLink,
+  Users, Plus, Upload, Search,
+  ShieldCheck, Target, ChevronRight, ArrowUpDown,
   Sparkles, UserPlus, AlertCircle, RefreshCw,
 } from "lucide-react";
 
@@ -62,6 +59,7 @@ async function requestJson<T = any>(method: string, url: string, body?: unknown)
 
 // ── Types ──────────────────────────────────────────────────────────────────
 type Tier = "hot" | "warm" | "cool" | "cold";
+type Interest = "hot" | "warm" | "cold" | "not_interested";
 
 interface BuyerRow {
   id: string;
@@ -79,12 +77,15 @@ interface BuyerRow {
   targetLocations: string[];
   profileCompletionPct: number;
   source: string;
+  hasAccount: boolean;
   tags: string[];
   notes: string | null;
+  interestStatus: Interest | null;
   contactId: string | null;
   addedAt: string;
   dealCount: number;
   lastActivityAt: string | null;
+  latestDecision: string | null;
   qualifiedScore: {
     total: number;
     tier: Tier;
@@ -99,18 +100,12 @@ const TIER_STYLES: Record<Tier, { bg: string; label: string }> = {
   cold: { bg: "bg-muted/30 text-muted-foreground border-border",       label: "Cold" },
 };
 
-interface BuyerDetail {
-  buyer: BuyerRow & { buyerCriteria: Record<string, any> | null; createdAt: string; lastLoginAt: string | null };
-  contact: {
-    id: string; tags: string[]; notes: string | null; source: string; addedAt: string;
-    crmProvider?: string | null; crmSyncedAt?: string | null;
-    crmProfile?: {
-      background?: string | null; inferred?: string[];
-      inquiries?: Array<{ title: string; stage?: string | null; status?: string | null }>;
-    } | null;
-  } | null;
-  deals: Array<{ dealId: string; businessName: string; lastAccessedAt: string | null; viewCount: number; decision: string | null }>;
-}
+const INTEREST_STYLES: Record<Interest, { label: string; chip: string; dot: string }> = {
+  hot: { label: "Hot", chip: "border-red-500/30 bg-red-500/10 text-red-400", dot: "bg-red-400" },
+  warm: { label: "Warm", chip: "border-amber-500/30 bg-amber-500/10 text-amber-400", dot: "bg-amber-400" },
+  cold: { label: "Cold", chip: "border-sky-500/30 bg-sky-500/10 text-sky-400", dot: "bg-sky-400" },
+  not_interested: { label: "Not interested", chip: "border-border bg-muted/40 text-muted-foreground", dot: "bg-muted-foreground/60" },
+};
 
 const BUYER_TYPE_LABELS: Record<string, string> = {
   individual: "Individual",
@@ -121,17 +116,25 @@ const BUYER_TYPE_LABELS: Record<string, string> = {
   private_equity: "Private equity",
 };
 
+// How the buyer came into the broker's list (server: listSource in profile-view.ts).
 const SOURCE_LABELS: Record<string, { label: string; color: string }> = {
-  manual: { label: "Manual", color: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
+  manual: { label: "Added by you", color: "bg-blue-500/15 text-blue-400 border-blue-500/30" },
   csv: { label: "CSV import", color: "bg-purple-500/15 text-purple-400 border-purple-500/30" },
   crm: { label: "CRM", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
+  nda: { label: "Signed NDA", color: "bg-sky-500/15 text-sky-400 border-sky-500/30" },
   deal: { label: "Deal access", color: "bg-teal/15 text-teal border-teal/30" },
-  signup: { label: "Self-signup", color: "bg-green-500/15 text-green-400 border-green-500/30" },
   self_signup: { label: "Self-signup", color: "bg-green-500/15 text-green-400 border-green-500/30" },
-  broker_invited: { label: "Invited", color: "bg-teal/15 text-teal border-teal/30" },
-  crm_imported: { label: "CRM", color: "bg-orange-500/15 text-orange-400 border-orange-500/30" },
-  nda: { label: "Signed NDA", color: "bg-teal/15 text-teal border-teal/30" },
-  nda_signed: { label: "Signed NDA", color: "bg-teal/15 text-teal border-teal/30" },
+};
+
+type SortKey = "activity" | "name" | "completion" | "score";
+const SORTS: Record<SortKey, { label: string; cmp: (a: BuyerRow, b: BuyerRow) => number }> = {
+  activity: {
+    label: "Last activity",
+    cmp: (a, b) => (b.lastActivityAt ? +new Date(b.lastActivityAt) : 0) - (a.lastActivityAt ? +new Date(a.lastActivityAt) : 0) || +new Date(b.addedAt) - +new Date(a.addedAt),
+  },
+  name: { label: "Name", cmp: (a, b) => a.name.localeCompare(b.name) },
+  completion: { label: "Profile completeness", cmp: (a, b) => b.profileCompletionPct - a.profileCompletionPct },
+  score: { label: "Lead score", cmp: (a, b) => (b.qualifiedScore?.total ?? 0) - (a.qualifiedScore?.total ?? 0) },
 };
 
 // Broker identity comes from the server session — no client-side broker id.
@@ -150,12 +153,24 @@ function formatRelative(iso: string | null): string {
   return `${Math.floor(d / 365)}y ago`;
 }
 
+function InterestChip({ value }: { value: Interest | null }) {
+  if (!value) return <span className="text-xs text-muted-foreground/50">—</span>;
+  const s = INTEREST_STYLES[value];
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full border px-1.5 py-px text-2xs font-medium leading-4 whitespace-nowrap ${s.chip}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${s.dot}`} />{s.label}
+    </span>
+  );
+}
+
 // ── Main page ──────────────────────────────────────────────────────────────
 export default function Buyers() {
+  const [, setLocation] = useLocation();
   const [search, setSearch] = useState("");
   const [sourceFilter, setSourceFilter] = useState<string>("all");
   const [typeFilter, setTypeFilter] = useState<string>("all");
-  const [selectedBuyerId, setSelectedBuyerId] = useState<string | null>(null);
+  const [interestFilter, setInterestFilter] = useState<string>("all");
+  const [sort, setSort] = useState<SortKey>("activity");
   const [addOpen, setAddOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -170,14 +185,16 @@ export default function Buyers() {
     const q = search.trim().toLowerCase();
     return buyers.filter(b => {
       if (q) {
-        const hay = `${b.name} ${b.email} ${b.company ?? ""}`.toLowerCase();
+        const hay = `${b.name} ${b.email} ${b.company ?? ""} ${(b.tags ?? []).join(" ")}`.toLowerCase();
         if (!hay.includes(q)) return false;
       }
       if (sourceFilter !== "all" && b.source !== sourceFilter) return false;
       if (typeFilter !== "all" && b.buyerType !== typeFilter) return false;
+      if (interestFilter === "none" && b.interestStatus) return false;
+      if (interestFilter !== "all" && interestFilter !== "none" && b.interestStatus !== interestFilter) return false;
       return true;
-    });
-  }, [buyers, search, sourceFilter, typeFilter]);
+    }).sort(SORTS[sort].cmp);
+  }, [buyers, search, sourceFilter, typeFilter, interestFilter, sort]);
 
   const stats = useMemo(() => {
     const withProfile = buyers.filter(b => b.profileCompletionPct >= 50).length;
@@ -186,11 +203,13 @@ export default function Buyers() {
     return { total: buyers.length, withProfile, withPOF, active };
   }, [buyers]);
 
+  const open = (id: string) => setLocation(`/broker/buyers/${id}`);
+
   return (
     <div className="flex flex-col min-h-screen bg-background">
       {/* Header */}
-      <div className="border-b border-border px-6 py-5">
-        <div className="flex items-center justify-between gap-4">
+      <div className="border-b border-border px-4 sm:px-6 py-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <h1 className="text-xl font-semibold text-foreground flex items-center gap-2">
               <Users className="h-5 w-5 text-teal" />
@@ -222,11 +241,11 @@ export default function Buyers() {
         </div>
       </div>
 
-      <div className="flex-1 p-6 space-y-6">
+      <div className="flex-1 p-4 sm:p-6 space-y-5 sm:space-y-6">
         <CrmBuyerSyncCard />
 
         {/* Stats row */}
-        <div className="grid grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <StatCard label="Total buyers" value={stats.total} icon={<Users className="h-3.5 w-3.5" />} />
           <StatCard label="With profile" value={stats.withProfile} icon={<Target className="h-3.5 w-3.5" />} />
           <StatCard label="Proof of funds" value={stats.withPOF} icon={<ShieldCheck className="h-3.5 w-3.5" />} />
@@ -235,10 +254,10 @@ export default function Buyers() {
 
         {/* Filters + Search */}
         <div className="flex items-center gap-2 flex-wrap">
-          <div className="relative flex-1 min-w-[240px]">
+          <div className="relative w-full sm:flex-1 sm:min-w-[240px]">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
-              placeholder="Search by name, email, or company..."
+              placeholder="Search by name, email, company or tag..."
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               className="pl-8 h-9"
@@ -246,20 +265,18 @@ export default function Buyers() {
             />
           </div>
           <Select value={sourceFilter} onValueChange={setSourceFilter}>
-            <SelectTrigger className="w-[160px] h-9" data-testid="select-source-filter">
+            <SelectTrigger className="w-[calc(50%-4px)] sm:w-[150px] h-9" data-testid="select-source-filter">
               <SelectValue placeholder="Source" />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value="all">All sources</SelectItem>
-              <SelectItem value="manual">Manual</SelectItem>
-              <SelectItem value="csv">CSV import</SelectItem>
-              <SelectItem value="deal">Deal access</SelectItem>
-              <SelectItem value="self_signup">Self-signup</SelectItem>
-              <SelectItem value="broker_invited">Invited</SelectItem>
+              {Object.entries(SOURCE_LABELS).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v.label}</SelectItem>
+              ))}
             </SelectContent>
           </Select>
           <Select value={typeFilter} onValueChange={setTypeFilter}>
-            <SelectTrigger className="w-[180px] h-9" data-testid="select-type-filter">
+            <SelectTrigger className="w-[calc(50%-4px)] sm:w-[160px] h-9" data-testid="select-type-filter">
               <SelectValue placeholder="Buyer type" />
             </SelectTrigger>
             <SelectContent>
@@ -269,9 +286,32 @@ export default function Buyers() {
               ))}
             </SelectContent>
           </Select>
+          <Select value={interestFilter} onValueChange={setInterestFilter}>
+            <SelectTrigger className="w-[calc(50%-4px)] sm:w-[150px] h-9" data-testid="select-interest-filter">
+              <SelectValue placeholder="Interest" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Any interest</SelectItem>
+              {Object.entries(INTEREST_STYLES).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v.label}</SelectItem>
+              ))}
+              <SelectItem value="none">Not set</SelectItem>
+            </SelectContent>
+          </Select>
+          <Select value={sort} onValueChange={(v) => setSort(v as SortKey)}>
+            <SelectTrigger className="w-[calc(50%-4px)] sm:w-[180px] h-9" data-testid="select-sort">
+              <ArrowUpDown className="h-3.5 w-3.5 mr-1.5 text-muted-foreground shrink-0" />
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {Object.entries(SORTS).map(([k, v]) => (
+                <SelectItem key={k} value={k}>{v.label}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </div>
 
-        {/* Table */}
+        {/* List */}
         <Card>
           <CardContent className="p-0">
             {isLoading ? (
@@ -290,108 +330,143 @@ export default function Buyers() {
             ) : filtered.length === 0 ? (
               <EmptyState hasBuyers={buyers.length > 0} onAdd={() => setAddOpen(true)} onImport={() => setImportOpen(true)} />
             ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow className="hover:bg-transparent">
-                    <TableHead className="text-xs">Name</TableHead>
-                    <TableHead className="text-xs">Company</TableHead>
-                    <TableHead className="text-xs">Type</TableHead>
-                    <TableHead className="text-xs">Score</TableHead>
-                    <TableHead className="text-xs">Profile</TableHead>
-                    <TableHead className="text-xs">Source</TableHead>
-                    <TableHead className="text-xs">Deals</TableHead>
-                    <TableHead className="text-xs">Last activity</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
+              <>
+                {/* Phone: stacked rows */}
+                <ul className="divide-y divide-border md:hidden">
                   {filtered.map((b) => (
-                    <TableRow
-                      key={b.id}
-                      className="cursor-pointer hover:bg-muted/30"
-                      onClick={() => setSelectedBuyerId(b.id)}
-                      data-testid={`row-buyer-${b.id}`}
-                    >
-                      <TableCell>
-                        <div className="flex flex-col">
-                          <span className="text-sm font-medium text-foreground">{b.name}</span>
-                          <span className="text-xs text-muted-foreground">{b.email}</span>
-                        </div>
-                      </TableCell>
-                      <TableCell className="text-sm text-muted-foreground">
-                        {b.company ?? "—"}
-                      </TableCell>
-                      <TableCell>
-                        {b.buyerType ? (
-                          <Badge variant="outline" className="text-xs font-normal">
-                            {BUYER_TYPE_LABELS[b.buyerType] ?? b.buyerType}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        {b.qualifiedScore ? (
-                          <Badge
-                            variant="outline"
-                            className={`text-2xs font-normal ${TIER_STYLES[b.qualifiedScore.tier].bg}`}
-                            title={b.qualifiedScore.reasons.join(" · ")}
-                          >
-                            {TIER_STYLES[b.qualifiedScore.tier].label} · {b.qualifiedScore.total}
-                          </Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell>
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1 bg-muted rounded-full overflow-hidden">
-                            <div
-                              className="h-full bg-teal transition-all"
-                              style={{ width: `${b.profileCompletionPct}%` }}
-                            />
+                    <li key={b.id}>
+                      <button type="button" className="flex w-full items-center gap-3 px-4 py-3 text-left active:bg-muted/40" onClick={() => open(b.id)} data-testid={`row-buyer-${b.id}`}>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 min-w-0">
+                            <span className="truncate text-sm font-medium text-foreground">{b.name}</span>
+                            {b.hasProofOfFunds && <ShieldCheck className="h-3 w-3 shrink-0 text-teal" />}
+                            {b.interestStatus && <InterestChip value={b.interestStatus} />}
                           </div>
-                          <span className="text-2xs text-muted-foreground tabular-nums">
-                            {b.profileCompletionPct}%
-                          </span>
-                          {b.hasProofOfFunds && (
-                            <ShieldCheck className="h-3 w-3 text-teal" />
-                          )}
+                          <p className="truncate text-xs text-muted-foreground">{[b.company, b.buyerType ? BUYER_TYPE_LABELS[b.buyerType] ?? b.buyerType : null].filter(Boolean).join(" · ") || b.email}</p>
+                          <div className="mt-1 flex items-center gap-2 text-2xs text-muted-foreground tabular-nums">
+                            {b.qualifiedScore && <span className={`rounded-full border px-1.5 ${TIER_STYLES[b.qualifiedScore.tier].bg}`}>Score {b.qualifiedScore.total}</span>}
+                            <span>{b.profileCompletionPct}% profile</span>
+                            {b.dealCount > 0 && <span>{b.dealCount} deal{b.dealCount === 1 ? "" : "s"}</span>}
+                            <span>{formatRelative(b.lastActivityAt)}</span>
+                          </div>
                         </div>
-                      </TableCell>
-                      <TableCell>
-                        <Badge
-                          variant="outline"
-                          className={`text-2xs font-normal ${SOURCE_LABELS[b.source]?.color ?? "bg-muted/30"}`}
-                        >
-                          {SOURCE_LABELS[b.source]?.label ?? b.source}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm tabular-nums">
-                        {b.dealCount > 0 ? (
-                          <Badge variant="secondary" className="text-2xs">{b.dealCount}</Badge>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">—</span>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-xs text-muted-foreground tabular-nums">
-                        {formatRelative(b.lastActivityAt)}
-                      </TableCell>
-                    </TableRow>
+                        <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground" />
+                      </button>
+                    </li>
                   ))}
-                </TableBody>
-              </Table>
+                </ul>
+
+                {/* Tablet / desktop: table */}
+                <div className="hidden md:block">
+                  <Table>
+                    <TableHeader>
+                      <TableRow className="hover:bg-transparent">
+                        <TableHead className="text-xs">Name</TableHead>
+                        <TableHead className="text-xs">Company</TableHead>
+                        <TableHead className="text-xs">Type</TableHead>
+                        <TableHead className="text-xs">Interest</TableHead>
+                        <TableHead className="text-xs">Lead score</TableHead>
+                        <TableHead className="text-xs">Profile</TableHead>
+                        <TableHead className="text-xs hidden lg:table-cell">Source</TableHead>
+                        <TableHead className="text-xs">Deals</TableHead>
+                        <TableHead className="text-xs">Last activity</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {filtered.map((b) => (
+                        <TableRow
+                          key={b.id}
+                          className="cursor-pointer hover:bg-muted/30 group"
+                          onClick={() => open(b.id)}
+                          onKeyDown={(e) => { if (e.key === "Enter") open(b.id); }}
+                          tabIndex={0}
+                          data-testid={`row-buyer-${b.id}`}
+                        >
+                          <TableCell>
+                            <div className="flex flex-col min-w-0">
+                              <span className="text-sm font-medium text-foreground group-hover:text-teal transition-colors">{b.name}</span>
+                              <span className="text-xs text-muted-foreground truncate max-w-[220px]">{b.email}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="text-sm text-muted-foreground">
+                            {b.company ?? "—"}
+                          </TableCell>
+                          <TableCell>
+                            {b.buyerType ? (
+                              <Badge variant="outline" className="text-xs font-normal whitespace-nowrap">
+                                {BUYER_TYPE_LABELS[b.buyerType] ?? b.buyerType}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell><InterestChip value={b.interestStatus} /></TableCell>
+                          <TableCell>
+                            {b.qualifiedScore ? (
+                              <Badge
+                                variant="outline"
+                                className={`text-2xs font-normal whitespace-nowrap ${TIER_STYLES[b.qualifiedScore.tier].bg}`}
+                                title={`Lead score ${b.qualifiedScore.total}/100 (${b.qualifiedScore.tier}) — profile, proof of funds and engagement${b.qualifiedScore.reasons.length ? ": " + b.qualifiedScore.reasons.join(" · ") : ""}`}
+                              >
+                                {b.qualifiedScore.total}
+                              </Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell>
+                            <div className="flex items-center gap-2">
+                              <div className="w-14 h-1 bg-muted rounded-full overflow-hidden">
+                                <div
+                                  className="h-full bg-teal transition-all"
+                                  style={{ width: `${b.profileCompletionPct}%` }}
+                                />
+                              </div>
+                              <span className="text-2xs text-muted-foreground tabular-nums">
+                                {b.profileCompletionPct}%
+                              </span>
+                              {b.hasProofOfFunds && (
+                                <ShieldCheck className="h-3 w-3 text-teal" />
+                              )}
+                            </div>
+                          </TableCell>
+                          <TableCell className="hidden lg:table-cell">
+                            <Badge
+                              variant="outline"
+                              className={`text-2xs font-normal whitespace-nowrap ${SOURCE_LABELS[b.source]?.color ?? "bg-muted/30"}`}
+                            >
+                              {SOURCE_LABELS[b.source]?.label ?? b.source}
+                            </Badge>
+                          </TableCell>
+                          <TableCell className="text-sm tabular-nums">
+                            {b.dealCount > 0 ? (
+                              <Badge variant="secondary" className="text-2xs">{b.dealCount}</Badge>
+                            ) : (
+                              <span className="text-xs text-muted-foreground">—</span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-xs text-muted-foreground tabular-nums whitespace-nowrap">
+                            {formatRelative(b.lastActivityAt)}
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </>
             )}
           </CardContent>
         </Card>
+        {!isLoading && !error && filtered.length > 0 && (
+          <p className="text-2xs text-muted-foreground">
+            Showing {filtered.length} of {buyers.length} buyer{buyers.length === 1 ? "" : "s"} · sorted by {SORTS[sort].label.toLowerCase()}
+          </p>
+        )}
       </div>
 
-      {/* Dialogs + drawer */}
+      {/* Dialogs */}
       <AddBuyerDialog open={addOpen} onOpenChange={setAddOpen} />
       <ImportCsvDialog open={importOpen} onOpenChange={setImportOpen} />
-      <BuyerDetailDrawer
-        buyerId={selectedBuyerId}
-        onClose={() => setSelectedBuyerId(null)}
-      />
     </div>
   );
 }
@@ -884,262 +959,5 @@ function ImportCsvDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// ── Buyer detail drawer ────────────────────────────────────────────────────
-function BuyerDetailDrawer({
-  buyerId,
-  onClose,
-}: {
-  buyerId: string | null;
-  onClose: () => void;
-}) {
-  const { toast } = useToast();
-  const qc = useQueryClient();
-  const [, setLocation] = useLocation();
-
-  const { data, isLoading, error, refetch, isFetching } = useQuery<BuyerDetail>({
-    queryKey: ["/api/broker/buyers", buyerId],
-    queryFn: () => apiRequest("GET", `/api/broker/buyers/${buyerId}`).then(r => r.json()),
-    enabled: !!buyerId,
-  });
-
-  const [notes, setNotes] = useState("");
-  const [tagsText, setTagsText] = useState("");
-
-  // Initialize editable state once data arrives (seeded off the buyer id so
-  // opening a different buyer re-initializes).
-  useEffect(() => {
-    if (data) {
-      setNotes(data.contact?.notes ?? "");
-      setTagsText((data.contact?.tags ?? []).join(", "));
-    }
-  }, [data?.buyer?.id]);
-
-  const saveMutation = useMutation({
-    mutationFn: async () => {
-      if (!buyerId) return;
-      const tags = tagsText.split(",").map(s => s.trim()).filter(Boolean);
-      return requestJson("PATCH", `/api/broker/buyers/${buyerId}`, {
-        tags,
-        notes: notes.trim() || null,
-      });
-    },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers", buyerId] });
-      qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
-      toast({ title: "Saved", description: "Tags and notes updated." });
-    },
-    onError: (err: Error) =>
-      toast({ title: "Failed to save", description: err.message, variant: "destructive" }),
-  });
-
-  return (
-    <Sheet open={!!buyerId} onOpenChange={(o) => !o && onClose()}>
-      <SheetContent className="w-full sm:max-w-xl overflow-y-auto">
-        {error ? (
-          <div className="mt-6">
-            <SheetHeader>
-              <SheetTitle className="text-lg">Buyer details</SheetTitle>
-              <SheetDescription>Something went wrong loading this buyer.</SheetDescription>
-            </SheetHeader>
-            <ErrorState
-              title="Couldn't load this buyer"
-              message={error instanceof Error ? error.message : undefined}
-              retrying={isFetching}
-              onRetry={() => refetch()}
-            />
-          </div>
-        ) : isLoading || !data ? (
-          <div className="space-y-3 mt-6">
-            <Skeleton className="h-8 w-2/3" />
-            <Skeleton className="h-4 w-1/2" />
-            <Skeleton className="h-32 w-full mt-6" />
-          </div>
-        ) : (
-          <>
-            <SheetHeader className="space-y-1">
-              <SheetTitle className="text-lg flex items-center gap-2">
-                {data.buyer.name}
-                {data.buyer.hasProofOfFunds && (
-                  <ShieldCheck className="h-4 w-4 text-teal" />
-                )}
-              </SheetTitle>
-              <SheetDescription>{data.buyer.email}</SheetDescription>
-              {data.buyer.company && (
-                <div className="flex items-center gap-1 text-xs text-muted-foreground">
-                  <Building2 className="h-3 w-3" />
-                  {data.buyer.company}
-                  {data.buyer.title && ` · ${data.buyer.title}`}
-                </div>
-              )}
-            </SheetHeader>
-
-            <Tabs defaultValue="profile" className="mt-6">
-              <TabsList className="grid grid-cols-3 w-full">
-                <TabsTrigger value="profile" className="text-xs">Profile</TabsTrigger>
-                <TabsTrigger value="deals" className="text-xs">Deals ({data.deals.length})</TabsTrigger>
-                <TabsTrigger value="notes" className="text-xs">Notes</TabsTrigger>
-              </TabsList>
-
-              <TabsContent value="profile" className="space-y-4 mt-4">
-                <div className="grid grid-cols-2 gap-3 text-xs">
-                  <DetailField label="Buyer type" value={data.buyer.buyerType ? BUYER_TYPE_LABELS[data.buyer.buyerType] ?? data.buyer.buyerType : "—"} />
-                  <DetailField label="Profile" value={`${data.buyer.profileCompletionPct}% complete`} />
-                  <DetailField label="Phone" value={data.buyer.phone ?? "—"} />
-                  <DetailField label="LinkedIn" value={data.buyer.linkedinUrl ?? "—"} />
-                  <DetailField label="Liquid funds" value={data.buyer.liquidFunds ?? "—"} />
-                  <DetailField label="Proof of funds" value={data.buyer.hasProofOfFunds ? "Yes" : "No"} />
-                </div>
-
-                {Array.isArray(data.buyer.targetIndustries) && data.buyer.targetIndustries.length > 0 && (
-                  <div>
-                    <div className="text-2xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                      Target industries
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {data.buyer.targetIndustries.map((i) => (
-                        <Badge key={i} variant="secondary" className="text-2xs font-normal">{i}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {Array.isArray(data.buyer.targetLocations) && data.buyer.targetLocations.length > 0 && (
-                  <div>
-                    <div className="text-2xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                      Target locations
-                    </div>
-                    <div className="flex flex-wrap gap-1">
-                      {data.buyer.targetLocations.map((l) => (
-                        <Badge key={l} variant="secondary" className="text-2xs font-normal">{l}</Badge>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {data.buyer.background && (
-                  <div>
-                    <div className="text-2xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5">
-                      Background
-                    </div>
-                    <p className="text-xs text-foreground/80 leading-relaxed">{data.buyer.background}</p>
-                  </div>
-                )}
-
-                {data.contact?.crmProfile && (
-                  <div className="rounded-md border border-orange-500/25 bg-orange-500/5 p-3 space-y-2" data-testid="buyer-crm-profile">
-                    <div className="flex items-center justify-between text-2xs font-medium uppercase tracking-wide text-muted-foreground">
-                      <span>From your Pipedrive · private to you</span>
-                      {data.contact.crmSyncedAt && <span className="normal-case tracking-normal">synced {formatRelative(data.contact.crmSyncedAt)}</span>}
-                    </div>
-                    {data.contact.crmProfile.background && (
-                      <p className="text-xs text-foreground/80 leading-relaxed">{data.contact.crmProfile.background}</p>
-                    )}
-                    {!!data.contact.crmProfile.inquiries?.length && (
-                      <div>
-                        <div className="text-2xs text-muted-foreground mb-1">Listings they asked about</div>
-                        <ul className="space-y-0.5 text-xs">
-                          {data.contact.crmProfile.inquiries.slice(0, 8).map((q, i) => (
-                            <li key={i} className="truncate">{q.title}{q.stage ? <span className="text-muted-foreground"> · {q.stage}</span> : null}</li>
-                          ))}
-                        </ul>
-                      </div>
-                    )}
-                    {!!data.contact.crmProfile.inferred?.length && (
-                      <p className="text-2xs text-muted-foreground">
-                        Worked out from their CRM history rather than stated: {data.contact.crmProfile.inferred.join(", ")}. Whatever the buyer tells us themselves (e.g. on the NDA) replaces it.
-                      </p>
-                    )}
-                  </div>
-                )}
-
-                <div className="pt-3 border-t border-border flex items-center justify-between text-2xs text-muted-foreground">
-                  <span>Added {formatRelative(data.contact?.addedAt ?? data.buyer.createdAt)}</span>
-                  {data.buyer.lastLoginAt && (
-                    <span>Last login {formatRelative(data.buyer.lastLoginAt)}</span>
-                  )}
-                </div>
-              </TabsContent>
-
-              <TabsContent value="deals" className="mt-4">
-                {data.deals.length === 0 ? (
-                  <div className="py-8 text-center text-xs text-muted-foreground">
-                    This buyer hasn't been granted access to any of your deals yet.
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {data.deals.map((d) => (
-                      <div
-                        key={d.dealId}
-                        className="border border-border rounded-md p-3 hover:bg-muted/30 cursor-pointer transition-colors"
-                        onClick={() => setLocation(`/deal/${d.dealId}`)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-sm font-medium text-foreground">{d.businessName}</span>
-                          <ExternalLink className="h-3 w-3 text-muted-foreground" />
-                        </div>
-                        <div className="flex items-center gap-3 mt-1 text-2xs text-muted-foreground">
-                          <span>{d.viewCount} view{d.viewCount === 1 ? "" : "s"}</span>
-                          <span>·</span>
-                          <span>Last: {formatRelative(d.lastAccessedAt)}</span>
-                          {d.decision && (
-                            <>
-                              <span>·</span>
-                              <Badge variant="outline" className="text-2xs font-normal">
-                                {d.decision}
-                              </Badge>
-                            </>
-                          )}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </TabsContent>
-
-              <TabsContent value="notes" className="space-y-3 mt-4">
-                <div>
-                  <Label className="text-xs">Tags</Label>
-                  <Input
-                    value={tagsText}
-                    onChange={(e) => setTagsText(e.target.value)}
-                    placeholder="key, private-equity, warm"
-                  />
-                  <p className="text-2xs text-muted-foreground mt-0.5">Comma-separated</p>
-                </div>
-                <div>
-                  <Label className="text-xs">Private notes</Label>
-                  <Textarea
-                    value={notes}
-                    onChange={(e) => setNotes(e.target.value)}
-                    placeholder="Internal notes about this buyer..."
-                    rows={6}
-                  />
-                </div>
-                <Button
-                  size="sm"
-                  onClick={() => saveMutation.mutate()}
-                  disabled={saveMutation.isPending}
-                  data-testid="button-save-notes"
-                >
-                  {saveMutation.isPending ? "Saving..." : "Save"}
-                </Button>
-              </TabsContent>
-            </Tabs>
-          </>
-        )}
-      </SheetContent>
-    </Sheet>
-  );
-}
-
-function DetailField({ label, value }: { label: string; value: string }) {
-  return (
-    <div>
-      <div className="text-2xs font-medium text-muted-foreground uppercase tracking-wide">{label}</div>
-      <div className="text-sm text-foreground mt-0.5 truncate">{value}</div>
-    </div>
   );
 }

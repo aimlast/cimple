@@ -77,12 +77,22 @@ export async function sendDirectEmail(
   subject: string,
   html: string,
   cc?: string[],
+  opts: {
+    /** Where the recipient's "Reply" goes (e.g. the broker's own inbox). */
+    replyTo?: string | null;
+    /** Display name on the From line, e.g. "Jane Smith via Cimple" (the address stays ours). */
+    fromName?: string | null;
+  } = {},
 ): Promise<boolean> {
   const apiKey = process.env.RESEND_API_KEY;
   if (!apiKey) {
-    console.log(`[notify:email] (no RESEND_API_KEY) → ${to}${cc?.length ? ` (cc: ${cc.join(", ")})` : ""}: ${subject}`);
+    console.log(`[notify:email] (no RESEND_API_KEY) → ${to}${cc?.length ? ` (cc: ${cc.join(", ")})` : ""}${opts.replyTo ? ` (reply-to: ${opts.replyTo})` : ""}: ${subject}`);
     return false;
   }
+  const defaultFrom = process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.ca>";
+  const fromAddress = (defaultFrom.match(/<([^>]+)>/)?.[1] || defaultFrom).trim();
+  const safeName = opts.fromName ? opts.fromName.replace(/["<>\r\n]/g, "").trim().slice(0, 80) : "";
+  const from = safeName ? `${safeName} <${fromAddress}>` : defaultFrom;
   try {
     const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
@@ -91,9 +101,10 @@ export async function sendDirectEmail(
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.ca>",
+        from,
         to: [to],
         cc: cc && cc.length > 0 ? cc : undefined,
+        reply_to: opts.replyTo ? [opts.replyTo] : undefined,
         subject,
         html,
       }),

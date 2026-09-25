@@ -17,7 +17,10 @@
  *   - Nobody is emailed. A new buyer_users row is created with contact basics
  *     only and no password; it becomes a real account only if the broker
  *     later invites them or they sign up themselves.
- *   - What the buyer enters themselves always wins (mergeBuyerProfile).
+ *   - What the buyer enters themselves wins over the CRM profile, and the
+ *     broker's own edits win over both (mergeBuyerProfileWithSources).
+ *   - Every extracted field keeps a short quote from the record it came from
+ *     (crm_profile.evidence) so the profile page can show why.
  *
  * Unchanged CRM records are skipped cheaply (crm_sync_key), so the scheduled
  * re-sync mostly costs a few API reads per contact and no model calls.
@@ -27,7 +30,7 @@ import { createHash } from "crypto";
 import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import {
-  BUYER_CRITERIA_SECTIONS,
+  BUYER_CRITERIA_SECTIONS, initialFieldSources, withFieldSources,
   type BuyerUser, type CrmBuyerProfile, type Integration,
 } from "@shared/schema";
 
@@ -154,6 +157,11 @@ const EXTRACT_TOOL: Anthropic.Tool = {
               items: { type: "string" },
               description: "Names of fields you inferred rather than read directly (e.g. targetIndustries taken from the listings they enquired about).",
             },
+            evidence: {
+              type: "object",
+              description: "For EVERY field you filled (buyerType, liquidFunds, hasProofOfFunds, targetIndustries, targetLocations and each criteria key, keyed by that name): a short verbatim quote (max ~20 words) from the note, custom field or deal title it came from. For inferred fields, quote the listing title(s).",
+              additionalProperties: { type: "string" },
+            },
           },
           required: ["ref", "targetIndustries", "targetLocations", "criteria", "inferred"],
         },
@@ -198,6 +206,16 @@ async function extractProfiles(batch: ExtractInput[]): Promise<Map<string, CrmBu
       else if (def.type === "multiselect" || def.type === "tags") { const arr = (Array.isArray(v) ? v : [v]).map(String).filter((x) => !def.options || def.options.includes(x)); if (arr.length) criteria[k] = arr; }
     }
     const strs = (v: unknown) => (Array.isArray(v) ? v.map(String).map((s) => s.trim()).filter(Boolean).slice(0, 12) : []);
+    // Evidence per field that was actually filled, keyed like the profile
+    // page's sources (top-level name or "criteria.<key>").
+    const TOP = new Set(["buyerType", "background", "liquidFunds", "hasProofOfFunds", "targetIndustries", "targetLocations"]);
+    const evidence: Record<string, string> = {};
+    for (const [k, q] of Object.entries((b.evidence && typeof b.evidence === "object" ? b.evidence : {}) as Record<string, unknown>)) {
+      if (typeof q !== "string" || !q.trim()) continue;
+      const key = TOP.has(k) ? k : criteria[k] !== undefined ? `criteria.${k}` : null;
+      if (!key) continue;
+      evidence[key] = q.replace(/\s+/g, " ").trim().slice(0, 240);
+    }
     out.set(String(b.ref), {
       buyerType: b.buyerType ?? null,
       background: typeof b.background === "string" ? b.background.slice(0, 600) : null,
@@ -207,6 +225,7 @@ async function extractProfiles(batch: ExtractInput[]): Promise<Map<string, CrmBu
       targetLocations: strs(b.targetLocations),
       buyerCriteria: criteria,
       inferred: strs(b.inferred),
+      evidence,
     });
   }
   return out;
@@ -218,6 +237,20 @@ const running = new Map<string, BuyerSyncStatus>();
 
 export function getLiveBuyerSyncStatus(brokerId: string): BuyerSyncStatus | undefined {
   return running.get(brokerId);
+}
+
+/**
+ * The status to show: the live one while this process runs the sync, else the
+ * saved one — except a saved "running" with nothing running here means the
+ * server restarted mid-sync, which is reported as failed (never an endless spinner).
+ */
+export function effectiveBuyerSyncStatus(brokerId: string, saved: BuyerSyncStatus | null | undefined): BuyerSyncStatus | null {
+  const live = running.get(brokerId);
+  if (live) return live;
+  if (saved?.state === "running") {
+    return { ...saved, state: "failed", message: "The last sync was interrupted (the server restarted). Run it again to finish." };
+  }
+  return saved ?? null;
 }
 
 async function saveSyncState(integration: Integration, patch: { settings?: BuyerSyncSettings; status?: BuyerSyncStatus; lastSuccessAt?: string }) {
@@ -322,8 +355,10 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
     try { profiles = await extractProfiles(batch); } catch (err) { console.error("[buyer-sync] extraction failed:", err); }
     for (const b of batch) {
       const p = profiles.get(b.ref);
-      if (!p) { status.errors!++; continue; }
-      await b.apply(p).catch((err) => { console.error("[buyer-sync] save failed:", err); status.errors!++; });
+      // Every candidate counts as processed exactly once, success or not, so
+      // progress always reaches the total.
+      if (!p) { status.errors!++; status.processed!++; continue; }
+      await b.apply(p).catch((err) => { console.error("[buyer-sync] save failed:", err); status.errors!++; status.processed!++; });
     }
   };
 
@@ -348,6 +383,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
           linkedinUrl: null, buyerCriteria: {}, targetIndustries: [] as any, targetLocations: [] as any, buyerType: null,
           background: null, liquidFunds: null, hasProofOfFunds: false, profileCompletionPct: 0, emailVerified: false,
           source: "crm_imported", invitedByBroker: brokerId, invitedByDeal: null, resetToken: null, resetTokenExpiresAt: null,
+          fieldSources: initialFieldSources({ name, phone: firstPhone(person), company: orgName, title: person.job_title ?? null }, "crm"),
         } as any);
         created = true;
       } else {
@@ -355,7 +391,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
         if (!buyer.phone && firstPhone(person)) fill.phone = firstPhone(person);
         if (!buyer.company && orgName) fill.company = orgName;
         if (!buyer.title && person.job_title) fill.title = person.job_title;
-        if (Object.keys(fill).length) buyer = (await storage.updateBuyerUser(buyer.id, fill)) || buyer;
+        if (Object.keys(fill).length) buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, fill, "crm"))) || buyer;
       }
       let contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
       if (!contact) {
