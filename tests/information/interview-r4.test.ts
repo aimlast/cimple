@@ -267,6 +267,8 @@ const baseDeal: any = {
     assert.equal(names("$1.6M — CRM note"), true);
     assert.equal(names("$1.6M floor — CRM note — call with owner"), true, "a distinctive private title anywhere");
     assert.equal(names("$1.82M — 2024 P&L.pdf"), false);
+    assert.equal(names("$1.6M — Email (Mar 3)"), true, "a generic private title inside the side's source label");
+    assert.equal(names("Owner's email says the floor is $1.6M"), true, "no source label: fail closed");
 
     const discrepancies: any[] = [
       { id: "x1", field: "marketingSpend", status: "ask_seller", interviewValue: "Email marketing $40K — Questionnaire", documentValue: "$55K — 2024 P&L.pdf", documentId: "pl", severity: "minor", aiExplanation: "Email marketing spend differs", suggestedResolution: "Ask which is right" },
@@ -282,7 +284,7 @@ const baseDeal: any = {
     const prompt = renderKnowledgeBaseForPrompt(kb);
     assert.doesNotMatch(prompt, /1\.6M|CRM floor/);
   }
-  ok("discrepancy sides: generic titles only count as the side's own source label");
+  ok("discrepancy sides: generic titles are judged on the side's source label; no label fails closed");
 
   console.log(`\n${n} groups passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

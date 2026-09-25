@@ -100,11 +100,18 @@ export function privateSourceMatcher(documents: Array<Pick<Document, "visibility
   }
   const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const distinctiveRes = distinctive.map((n) => new RegExp(`(^|[^a-z0-9à-ÿ])${escape(n)}($|[^a-z0-9à-ÿ])`, "i"));
+  const genericRes = generic.map((n) => new RegExp(`(^|[^a-z0-9à-ÿ])${escape(n)}($|[^a-z0-9à-ÿ])`, "i"));
   return (text: string | null | undefined): boolean => {
     if (!text) return false;
     const t = norm(text);
     if (distinctiveRes.some((re) => re.test(t))) return true;
-    return generic.some((n) => t === n || t.endsWith(` — ${n}`) || t.endsWith(` - ${n}`) || t.endsWith(` – ${n}`) || t.endsWith(`(${n})`));
+    // A generic title ("Email", "CRM note") is judged on the side's SOURCE
+    // label — the part after the last " — " ("$1.6M — Email (Mar 3)") — so
+    // "email campaigns" in a value doesn't hide it. With no source label the
+    // whole text is checked: when in doubt the value is hidden, never shown.
+    const parts = t.split(/\s[—–-]\s/);
+    const label = parts.length > 1 ? parts[parts.length - 1] : t;
+    return genericRes.some((re) => re.test(label));
   };
 }
 

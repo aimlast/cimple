@@ -300,8 +300,8 @@ export function assembleKnowledgeBase(
   // it asks the seller for the figure without hinting at it.
   // (A side is private when its row is broker-only, or when it names a
   // broker-only source — financial-analysis values carry the source's name.)
-  // (A generic title — "Email", "CRM note" — only counts when it IS the
-  // side's source label, never because the value mentions the word.)
+  // (A generic title — "Email", "CRM note" — is judged on the side's source
+  // label; a side with no label fails closed.)
   const namesPrivateSource = privateSourceMatcher(documents);
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")

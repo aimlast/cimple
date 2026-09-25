@@ -423,7 +423,14 @@ function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
       // "Handles Scheduling", "Oversees Estimating" — a verb, not a first name.
       const wordy = name.some((x) => STRONG_NOT_A_NAME_ENDING.test(x.key)) || /s$/i.test(name[0].text);
       let ok = false;
-      if (startsEntry && !groupWord && !wordy) {
+      // Two or more unfamiliar capitalised words in a people fact are a name
+      // wherever they sit — mid-sentence too ("our hygienist Xiaoling Wu has
+      // been with us 12 years"). Phrases with any everyday or job word never
+      // qualify here ("Patient Care Coordinator", "Kitchen Staff").
+      const unfamiliarRun = name.length >= 2 && name.every((x) => !everyday(x) && !isStop(x));
+      if (!startsEntry && !groupWord && !wordy && unfamiliarRun && (!next || isStop(next))) {
+        ok = true;
+      } else if (startsEntry && !groupWord && !wordy) {
         if (name.length >= 2) {
           // Followed by a job ("Xiaoling Wu Office Manager") only when every word is unfamiliar.
           ok = next ? name.every((x) => !everyday(x)) && isStop(next) : wholeEntryEnd;
@@ -572,6 +579,9 @@ function distinctiveCores(name: string): string[] {
   const out: string[] = [];
   const consider = (words: string[]) => {
     if (words.length === all.length) return;
+    // A business named after its province/state/country ("Ontario Plumbing
+    // Services") — the region may stay in a Blind CIM, so it is never a core.
+    if (isRegionLabel(words.join(" "))) return;
     const folded = words.map((w) => foldForMatch(w)).filter(Boolean);
     if (folded.length === 0 || folded.every((f) => isEverydayWord(f))) return;
     if (folded.length === 1 && folded[0].length < 5) return;
