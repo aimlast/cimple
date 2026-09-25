@@ -58,6 +58,38 @@ const cust = checkSectionFigures(byTitle(sections.hallucinated, "Customer Divers
 assert.ok(cust.some((m) => /"Fraser Valley Dairy Co-op" is not a name on file/.test(m)), `invented customer: ${cust.join(" | ")}`);
 assert.ok(!cust.some((m) => /(Alderbrook|Kestrel)[^"]*" is not a name/.test(m)), "real customers pass");
 
+// A waterfall that starts at the bridge's net income must use the bridge's lines: $433,000 is on
+// file ("Interest and bank charges"), but the bridge's interest line is $395,000.
+const pacificBridge = [
+  { year: "2024", label: "Adjusted EBITDA", start: 972960, steps: [395000, 293240, 1950000, -78000, 72000, 55000, -64000, 165000, 62000], totals: [3596200, 3823200] },
+];
+const knownWithBridge = knownFiguresFrom(kbSource, pacificBridge);
+const origBridge = checkSectionFigures(byTitle(sections.hallucinated, "EBITDA Normalization & Adjustments"), knownWithBridge);
+assert.ok(origBridge.some((m) => /bar "Interest Expense" \(433,000\) is not a line of the Adjusted EBITDA bridge for 2024/.test(m)), origBridge.join(" | "));
+assert.ok(origBridge.some((m) => /"Adjusted EBITDA \(FY2024\)" \(3,900,200\) is not the Adjusted EBITDA total for 2024/.test(m)));
+assert.deepEqual(checkSectionFigures(byTitle(sections.checkerRun, "Adjusted EBITDA Reconciliation"), knownWithBridge), [], "the real bridge passes");
+// Neighbouring lines grouped into one bar are still the bridge's lines.
+assert.deepEqual(
+  checkSectionFigures(
+    {
+      sectionTitle: "Bridge",
+      layoutType: "waterfall_chart",
+      layoutData: {
+        items: [
+          { label: "Net income", value: "$972,960", type: "start" },
+          { label: "Interest, taxes and D&A", value: "$2,638,240", type: "add" },
+          { label: "Yard rent to market", value: "($78,000)", type: "subtract" },
+          { label: "One-time items", value: "$127,000", type: "add" },
+          { label: "Gain on disposal", value: "($64,000)", type: "subtract" },
+          { label: "Adjusted EBITDA", value: "$3,596,200", type: "total" },
+        ],
+      },
+    },
+    knownFiguresFrom(`${kbSource}\n2,638,240 127,000`, pacificBridge),
+  ),
+  [],
+);
+
 // ── 4. Names: the whole name, legal endings aside ──
 const names = knownFiguresFrom("Hauled berries from Fraser Valley farms. Alderbrook Grocery Distributors Ltd. is 22%. Tidewater Beverage Co. 6%.");
 assert.equal(nameOnFile("Fraser Valley Dairy Co-op", names), false);

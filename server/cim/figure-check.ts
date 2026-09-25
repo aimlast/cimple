@@ -58,23 +58,39 @@ export function parseFigures(text: string): Figure[] {
 }
 
 /** The numbers a section may use: everything written in the knowledge base. */
+/** One year of the analysis's EBITDA/SDE bridge: a waterfall starting at its net income must use its lines. */
+export interface KnownBridge {
+  year: string;
+  /** "Adjusted EBITDA" / "SDE". */
+  label: string;
+  /** Net income, where the bridge starts. */
+  start: number;
+  /** Every approved add-back / deduction amount for the year (SDE-only ones too). */
+  steps: number[];
+  /** The totals a bar may show: the adjusted metric, and SDE when there is one. */
+  totals: number[];
+}
+
 export interface KnownFigures {
   money: Figure[];
   percent: Figure[];
   /** Normalised knowledge-base text, for name look-ups. */
   text: string;
+  /** The analysis bridge, year by year (when the deal has one). */
+  bridges?: KnownBridge[];
 }
 
 export function normalizeForLookup(s: string): string {
   return ` ${s.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()} `;
 }
 
-export function knownFiguresFrom(kbText: string): KnownFigures {
+export function knownFiguresFrom(kbText: string, bridges?: KnownBridge[]): KnownFigures {
   const figs = parseFigures(kbText);
   return {
     money: figs.filter((f) => f.kind !== "percent"),
     percent: figs.filter((f) => f.kind === "percent"),
     text: normalizeForLookup(kbText),
+    bridges: bridges && bridges.length > 0 ? bridges : undefined,
   };
 }
 
@@ -468,6 +484,47 @@ function reconcileWaterfall(section: SectionLike): string[] {
   return out;
 }
 
+/**
+ * A waterfall that starts at a net income the analysis bridges from must use
+ * that year's bridge lines. A figure that is on file under another label
+ * (Pacific: "Interest and bank charges $433,000" shown as the interest
+ * add-back, where the bridge has $395,000) traces as a number but is not a
+ * line of the bridge.
+ */
+function bridgeLines(section: SectionLike, known: KnownFigures): string[] {
+  if (!known.bridges?.length) return [];
+  const d = (section.layoutData ?? {}) as Record<string, any>;
+  const unit = str(d.unit);
+  const items = asArr(d.items)
+    .map((it) => ({ label: str(it?.label), type: str(it?.type), a: amountOf(withChartUnit(str(it?.value), unit)) }))
+    .filter((it) => it.a);
+  const first = items[0];
+  if (!first || (first.type && first.type !== "start")) return [];
+  const within = (x: number, a: Amount) => Math.abs(Math.abs(x) - Math.abs(a.value)) <= a.tol + 1e-6 * Math.max(1, Math.abs(x));
+  const bridge = known.bridges.find((b) => within(b.start, first.a!));
+  if (!bridge) return [];
+  // A bar may group neighbouring lines ("One-time items" = two one-time costs).
+  const sums: number[] = [];
+  for (let i = 0; i < bridge.steps.length; i++) {
+    let s = 0;
+    for (let j = i; j < bridge.steps.length; j++) {
+      s += bridge.steps[j];
+      sums.push(s);
+    }
+  }
+  const out: string[] = [];
+  for (const it of items.slice(1)) {
+    if (it.type === "total") {
+      if (!bridge.totals.some((t) => within(t, it.a!))) {
+        out.push(`"${it.label}" (${fmt(Math.abs(it.a!.value))}) is not the ${bridge.label} total for ${bridge.year} (${bridge.totals.map((t) => fmt(t)).join(" / ")})`);
+      }
+    } else if (!sums.some((s) => within(s, it.a!))) {
+      out.push(`bar "${it.label}" (${fmt(Math.abs(it.a!.value))}) is not a line of the ${bridge.label} bridge for ${bridge.year}`);
+    }
+  }
+  return out;
+}
+
 // ── Names ────────────────────────────────────────────────────────────────
 
 const COMPANY_SUFFIX = /\b(inc|ltd|llc|llp|corp|corporation|co|co-op|cooperative|co-operative|limited|group|holdings|partners|lp|plc|gmbh)\b\.?/i;
@@ -526,7 +583,7 @@ export function checkSectionFigures(section: SectionLike, known: KnownFigures): 
   const issues = [
     ...unknownFigures(section, known).map((m) => `no source for ${m}`),
     ...(section.layoutType === "financial_table" ? reconcileTable(section) : []),
-    ...(section.layoutType === "waterfall_chart" ? reconcileWaterfall(section) : []),
+    ...(section.layoutType === "waterfall_chart" ? [...reconcileWaterfall(section), ...bridgeLines(section, known)] : []),
     ...unknownNames(section, known),
   ];
   return issues;

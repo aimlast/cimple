@@ -313,6 +313,22 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
   return out.filter((l) => l !== "").join("\n");
 }
 
+/** The bridge year by year, for the figure check's waterfall test (figure-check KnownBridge). */
+export function knownBridges(fin: CimFinancials | null | undefined): Array<{ year: string; label: string; start: number; steps: number[]; totals: number[] }> {
+  const b = fin?.bridge;
+  if (!b) return [];
+  const label = b.metric === "ebitda" ? "Adjusted EBITDA" : "SDE";
+  return b.years
+    .filter((y) => typeof b.netIncome[y] === "number" && typeof b.adjusted[y] === "number")
+    .map((y) => ({
+      year: y,
+      label,
+      start: b.netIncome[y],
+      steps: [...b.addbacks, ...b.sdeOnly].map((a) => a.amounts?.[y] ?? 0).filter((x) => x !== 0),
+      totals: [b.adjusted[y], ...(b.sde && typeof b.sde[y] === "number" ? [b.sde[y]] : [])],
+    }));
+}
+
 /**
  * Headline figures from the analysis, for the conflict check against the
  * facts' canonical figures: latest-year revenue and the adjusted metric.

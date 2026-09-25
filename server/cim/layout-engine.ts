@@ -12,7 +12,7 @@ import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "
 import { normalizeLocationMap, normText } from "@shared/cim-media";
 import type { CimSectionOutline } from "@shared/cim-theme";
 import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-block";
-import { analysisHeadlines, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
+import { analysisHeadlines, knownBridges, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
 import { checkSectionFigures, figureWarningText, knownFiguresFrom, parseFigures, type KnownFigures } from "./figure-check";
 import { screenFactsForCim, screenText, type HeldFact } from "./sensitive-facts";
 import { repairInferredYears } from "./fact-dates";
@@ -175,7 +175,7 @@ function buildSharedSystem(params: CimLayoutParams): SharedSystem {
     cache_control: { type: "ephemeral" },
     // Figures are checked against the source blocks only — never against
     // leads, earlier AI drafts or the unverified scrape.
-    known: knownFiguresFrom(kb.sourceText),
+    known: knownFiguresFrom(kb.sourceText, knownBridges(params.financials)),
     kbWarnings: kb.warnings,
     today: params.today ?? new Date(),
   };
@@ -382,7 +382,7 @@ export function sectionFigureWarnings(
   section: { sectionTitle: string; layoutType: string; layoutData: unknown; tags?: unknown },
 ): string[] {
   const kb = assembleKnowledgeBase(params);
-  return checkSectionFigures(section, knownFiguresFrom(kb.sourceText));
+  return checkSectionFigures(section, knownFiguresFrom(kb.sourceText, knownBridges(params.financials)));
 }
 
 /** The subset of a stored section needed to rebuild one of its siblings. */
