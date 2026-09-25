@@ -14,6 +14,7 @@
  * fingerprint): re-running only re-checks what changed. Broker-facing only —
  * nothing here is ever shown to a buyer.
  */
+import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
 import { storage } from "../storage";
@@ -42,7 +43,7 @@ export function dealBrief(deal: Deal): string {
   const info = ((deal as any).extractedInfo || {}) as Record<string, unknown>;
   const lines = [
     `Industry: ${deal.industry || "unknown"}${(deal as any).subIndustry ? ` / ${(deal as any).subIndustry}` : ""}`,
-    (deal as any).askingPrice ? `Asking price: ${(deal as any).askingPrice}` : "",
+    effectiveAskingPrice(deal) ? `Asking price: ${effectiveAskingPrice(deal)}` : "",
   ];
   for (const [k, v] of Object.entries(info)) {
     if (k.startsWith("_")) continue;             // broker-private notes / provenance

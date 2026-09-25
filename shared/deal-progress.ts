@@ -115,6 +115,53 @@ export interface DealProgressExtras {
   buyersWithAccess?: number;
   /** Buyers who opened the CIM and haven't decided yet. */
   buyersViewing?: number;
+  /** Information quality (0–100, shared/cim-readiness). Unknown → the interview decides. */
+  readinessScore?: number | null;
+}
+
+/* ─── Can the AI write the CIM now? ──────────────────────────────────── */
+
+/**
+ * Information quality a deal needs before the AI writes a whole CIM when the
+ * seller interview hasn't been completed: "Developing" or better on the
+ * readiness score (shared/cim-readiness). Below it the CIM would be mostly
+ * placeholders.
+ */
+export const CIM_GENERATION_MIN_READINESS = 35;
+
+export interface CimGenerationGate {
+  allowed: boolean;
+  /** Still waiting for the readiness score (client only) — keep Generate off, no message. */
+  pending: boolean;
+  /** Plain-words reason when not allowed. */
+  reason: string | null;
+}
+
+/**
+ * THE rule for "can the AI write (or rewrite) the whole CIM now?" — used by
+ * the Overview, the CIM tab, the CIM builder, computeNextStep and enforced by
+ * the server on generate-content / generate-layout.
+ *
+ * The interview is not required: brokers now collect information through
+ * calls, CRM, documents and the Information tab too. What's required is
+ * enough information — a completed interview, or a readiness score of
+ * CIM_GENERATION_MIN_READINESS or more from any mix of sources. Critical
+ * discrepancies are a separate gate (with its own load-error handling).
+ */
+export function cimGenerationGate(
+  deal: Pick<DealProgressInput, "interviewCompleted">,
+  readinessScore: number | null | undefined,
+): CimGenerationGate {
+  if (deal.interviewCompleted) return { allowed: true, pending: false, reason: null };
+  if (readinessScore === null || readinessScore === undefined) return { allowed: false, pending: true, reason: null };
+  if (readinessScore >= CIM_GENERATION_MIN_READINESS) return { allowed: true, pending: false, reason: null };
+  return {
+    allowed: false,
+    pending: false,
+    reason:
+      `Not enough information to write a CIM yet (information quality ${readinessScore}/100). ` +
+      "Finish the seller interview, or add documents, calls or facts on the Information tab.",
+  };
 }
 
 /* ─── Checklist (drives the Overview accordion + stepper) ────────────── */
@@ -244,7 +291,13 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
     case "phase3_content_creation": {
       if (!hasCimDraft(deal, extras)) {
         if (extras.cimGenerating) return { label: "Cimple is writing the CIM", owner: "none", href: overview };
-        if (!deal.interviewCompleted) return interviewStep();
+        // Same rule as the Generate buttons: a finished interview OR enough
+        // information from any source. With no seller in the loop yet the
+        // broker's move is to add information (or invite the seller).
+        if (!cimGenerationGate(deal, extras.readinessScore).allowed) {
+          if (!invited && !extras.interviewStarted) return you("add information or invite the seller", `${base}/information`);
+          return interviewStep();
+        }
         if (openCritical > 0) return conflicts();
         return you("generate the CIM");
       }

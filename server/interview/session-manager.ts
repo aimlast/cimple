@@ -66,6 +66,7 @@ import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
+import { interviewFactView, isDealRowFact } from "../information/deal-mirror";
 
 // =====================
 // Types
@@ -804,11 +805,13 @@ export async function processTurn(
   const valuationFishing = VALUATION_FISHING_RE.test(sellerMessage);
   // Belt-and-suspenders on fishing turns: ANY currency figure ≥ $10K in the
   // reply that neither the seller just said nor the file already holds is a
-  // leak — this catches figures the pattern list can't anticipate.
+  // leak — this catches figures the pattern list can't anticipate. (The
+  // broker's listed price from the deal row is not on the seller's file, so
+  // quoting it to the seller counts as a leak too.)
   const sanctionedText =
     sellerMessage +
     " " +
-    Object.entries((deal.extractedInfo || {}) as Record<string, unknown>)
+    Object.entries(interviewFactView((deal.extractedInfo || {}) as Record<string, unknown>))
       .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
       .map(([, v]) => v)
       .join(" ");
@@ -918,8 +921,16 @@ export async function processTurn(
   // the most important gap, so the seller sees a natural transition — not a
   // dead stop.
   if (aiResponse.shouldEnd && !forcedEnd) {
+    // A seller answer to a field that holds the broker's deal-row price is
+    // kept beside it (see the provenance block below) — count it here too.
+    const prospectiveInfo: Record<string, unknown> = { ...(merged as Record<string, unknown>) };
+    for (const c of changes) {
+      if (isDealRowFact(existingExtracted, c.fieldName)) {
+        recordAlternate(prospectiveInfo, c.fieldName, c.newValue, { source: "interview", at: new Date().toISOString() });
+      }
+    }
     const prospectiveKb = assembleKnowledgeBase(
-      { ...deal, extractedInfo: merged } as typeof deal,
+      { ...deal, extractedInfo: prospectiveInfo } as typeof deal,
       documents,
       tasks,
       session,
@@ -1011,19 +1022,24 @@ export async function processTurn(
     ...openDeferrals(priorLedger).map((d) => d.topic),
     ...aiResponse.reasoning.resolvedDeferrals,
   ];
+  // The broker's listed price from the deal row is never "the value on
+  // record" to the seller — reconcile against what the seller's file holds.
+  const sellerSideInfo = interviewFactView(existingExtracted);
+  const onRecord = (c: FieldChange): unknown =>
+    isDealRowFact(existingExtracted, c.fieldName) ? sellerSideInfo[c.fieldName] : c.previousValue;
   const conflictDeferrals = changes
     .filter(
       (c) =>
         HIGH_STAKES_FIELDS.has(c.fieldName) &&
-        c.previousValue &&
+        onRecord(c) &&
         c.previousConfidence !== "approximate" &&
         c.previousConfidence !== "inferred" &&
         !reconcileSettledTopics.some((t) => topicsMatch(t, `reconcile ${c.fieldName}`)) &&
-        numbersMateriallyConflict(String(c.previousValue), String(c.newValue)),
+        numbersMateriallyConflict(String(onRecord(c)), String(c.newValue)),
     )
     .map((c) => ({
       topic: `reconcile ${c.fieldName}`,
-      reason: `seller's latest figure (${c.newValue}) differs materially from the value already on record (${c.previousValue}) — confirm which is right and why they differ (e.g. gross vs net, or an intentional update)`,
+      reason: `seller's latest figure (${c.newValue}) differs materially from the value already on record (${String(onRecord(c))}) — confirm which is right and why they differ (e.g. gross vs net, or an intentional update)`,
       whereInfoLives: "",
     }));
   if (conflictDeferrals.length > 0) {
@@ -1148,8 +1164,13 @@ export async function processTurn(
       const prev = priorSources[c.fieldName];
       if (prev?.source === "broker" && c.previousValue !== null && c.previousValue !== undefined) {
         mergedInfo[c.fieldName] = existingExtracted[c.fieldName];
-        if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
-        else delete updatedConfidence[c.fieldName];
+        // The broker's deal-row price is hidden from the interview, which
+        // sees this seller answer in its place (interviewFactView) — so the
+        // interview keeps the seller's confidence in it, as before.
+        if (!isDealRowFact(existingExtracted, c.fieldName)) {
+          if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+          else delete updatedConfidence[c.fieldName];
+        }
         recordAlternate(mergedInfo, c.fieldName, c.newValue, turnSrc);
         continue;
       }

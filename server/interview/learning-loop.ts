@@ -338,6 +338,13 @@ export async function runInterviewLearningLoop(
       console.warn(`[interview-learning-loop] Deal ${dealId} not found`);
       return;
     }
+    // Demo / QA deals never feed the industry-wide insights every broker's
+    // interviews read (they're keyed by industry only and can't be removed
+    // per deal afterwards).
+    if (deal.demoKey) {
+      console.log(`[interview-learning-loop] Skipped demo deal ${dealId} (${deal.demoKey})`);
+      return;
+    }
 
     const sellerProfile = (deal.sellerProfile as SellerCommunicationProfile | null) || null;
 

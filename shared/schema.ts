@@ -335,6 +335,11 @@ export const deals = pgTable("deals", {
   
   // Metadata
   // @anchor:deals-cols:seed
+  // Set on seeded demo / QA deals (a stable key the seeding code uses to find
+  // and refresh its own deals). Such deals are kept out of the industry-wide
+  // learning loops (interview_insights, engagement_insights) shared by every
+  // broker. Broker-internal: never sent to a seller or a buyer.
+  demoKey: text("demo_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });

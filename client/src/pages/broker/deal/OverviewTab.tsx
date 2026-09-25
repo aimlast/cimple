@@ -13,6 +13,7 @@ import { useDeal } from "@/contexts/DealContext";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
@@ -20,7 +21,6 @@ import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
 import type { DealSellerContact } from "@shared/schema";
-import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -1597,16 +1597,14 @@ function Phase3Center() {
   // page). This tab follows it via useCimGeneration for the progress bar;
   // the "CIM ready" toast comes from the app-wide CimGenerationWatcher.
   const generation = useCimGeneration(dealId);
-  // Importance-weighted information quality — replaces the raw field count.
-  const { data: readinessData } = useQuery<{ readiness: CimReadiness }>({
-    queryKey: ["/api/deals", dealId, "cim-readiness"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/cim-readiness`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load CIM readiness");
-      return r.json();
-    },
-  });
-  const readiness = readinessData?.readiness;
+  // Importance-weighted information quality — replaces the raw field count —
+  // and the shared "enough information to write the CIM?" rule: a finished
+  // interview, or enough collected from any source (calls, CRM, documents,
+  // the Information tab). Same rule as the CIM tab, the builder, the deal
+  // list and the server.
+  const infoGate = useCimGenerationGate(dealId, deal.interviewCompleted);
+  const readiness = infoGate.readiness;
+  const infoBlockReason = infoGate.allowed ? null : infoGate.reason;
   const generate = useMutation({
     mutationFn: () =>
       apiJson<{ started: boolean }>(
@@ -1677,20 +1675,6 @@ function Phase3Center() {
       toast({ title: "Couldn't advance", description: e.message, variant: "destructive" }),
   });
 
-  if (!deal.interviewCompleted) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <AlertCircle className="h-8 w-8 text-muted-foreground/30 mb-3" />
-        <p className="text-sm font-medium text-muted-foreground">
-          Interview required first
-        </p>
-        <p className="text-xs text-muted-foreground/60 mt-1">
-          Complete the AI interview in Phase 2 before generating content.
-        </p>
-      </div>
-    );
-  }
-
   // Without the sections list we can't tell "not generated yet" from "failed
   // to load" — and the former branch offers a Generate button that would
   // wipe and rebuild an existing CIM. Show the error instead.
@@ -1722,7 +1706,7 @@ function Phase3Center() {
         {readiness ? (
           <CimReadinessCard
             readiness={readiness}
-            hint={`${totalDataFields} data fields on file (${extractedCount} from the interview and documents, ${scrapedCount} from the public scrape). ${readiness.criticalGap ? "Closing the critical gaps before generating will produce a stronger CIM; you can still generate now and edit." : "Ready to generate."}`}
+            hint={`${totalDataFields} data fields on file (${extractedCount} from the interview and documents, ${scrapedCount} from the public scrape). ${!infoGate.allowed ? "Add more before generating — see below." : readiness.criticalGap ? "Closing the critical gaps before generating will produce a stronger CIM; you can still generate now and edit." : "Ready to generate."}`}
           />
         ) : (
           <div
@@ -1768,6 +1752,16 @@ function Phase3Center() {
               {blockReason}
             </p>
           )}
+          {!blockReason && infoBlockReason && (
+            <p className="text-xs text-amber-500 mb-3 max-w-md mx-auto" data-testid="text-generate-needs-information">
+              {infoBlockReason}
+            </p>
+          )}
+          {!blockReason && !infoBlockReason && infoGate.allowed && !deal.interviewCompleted && (
+            <p className="text-xs text-muted-foreground mb-3 max-w-md mx-auto" data-testid="text-generate-without-interview">
+              The seller interview isn't finished — the CIM will be written from what you've collected so far. You can regenerate after the interview.
+            </p>
+          )}
           {generation.isRunning ? (
             <CimGenerationProgress view={generation} className="max-w-md mx-auto" />
           ) : (
@@ -1778,8 +1772,8 @@ function Phase3Center() {
               <Button
                 className="bg-teal text-teal-foreground hover:bg-teal/90"
                 onClick={() => generate.mutate()}
-                disabled={generate.isPending || generationBlocked}
-                title={blockReason ?? undefined}
+                disabled={generate.isPending || generationBlocked || !infoGate.allowed}
+                title={blockReason ?? infoBlockReason ?? undefined}
                 data-testid="button-generate-content"
               >
                 {generate.isPending ? (
@@ -1802,7 +1796,7 @@ function Phase3Center() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h2 className="text-lg font-semibold tracking-tight">
             Your CIM
@@ -1818,8 +1812,13 @@ function Phase3Center() {
               {blockReason.replace(/before generating\.$/, "before regenerating.")}
             </p>
           )}
+          {!blockReason && infoBlockReason && (
+            <p className="text-xs text-amber-500 mt-1 max-w-xl" data-testid="text-regenerate-needs-information">
+              Regenerating is off for now. {infoBlockReason} You can still edit, approve and advance this CIM.
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
             deal.phase === "phase4_design_finalization" ? (
               <span className="text-xs font-medium text-success flex items-center gap-1">
@@ -1874,8 +1873,8 @@ function Phase3Center() {
             onClick={() => setRegenConfirmOpen(true)}
             // Same gate as the first Generate button — critical discrepancies
             // block every generation, not just the first.
-            disabled={generate.isPending || generation.isRunning || generationBlocked}
-            title={blockReason ?? undefined}
+            disabled={generate.isPending || generation.isRunning || generationBlocked || !infoGate.allowed}
+            title={blockReason ?? infoBlockReason ?? undefined}
             data-testid="button-regenerate-content"
           >
             <RefreshCw
@@ -2341,6 +2340,22 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
+  // A CIM made only in the builder (sections, no generation stamp) is still
+  // a draft — the checklist counts it like the deal list does. Only fetched
+  // when the deal row alone can't tell.
+  const needsSectionCount =
+    (deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
+    !deal.cimContent && !deal.cimLayoutGeneratedAt;
+  const { data: checklistSections } = useQuery<CimSection[]>({
+    queryKey: ["/api/deals", dealId, "cim-sections"],
+    enabled: needsSectionCount,
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/cim-sections`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load CIM sections");
+      return r.json();
+    },
+  });
+  const checklistGeneration = useCimGeneration(dealId);
 
   const phaseComponents: Record<string, React.ReactNode> = {
     phase1_info_collection: <Phase1Center />,
@@ -2363,6 +2378,8 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
         // (phases.ts) rather than asserting "not invited".
         const items = phase.items(deal, {
           invited: invitesError ? undefined : invites.length > 0,
+          hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
+          cimGenerating: checklistGeneration.isRunning,
         });
         const required = items.filter((i) => !i.optional);
         const doneCount = required.filter((i) => i.done).length;

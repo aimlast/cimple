@@ -40,6 +40,9 @@ export async function aggregateEngagementInsights(
   ]);
 
   if (!deal?.industry) return;
+  // Demo / QA deals never feed the industry-wide engagement insights the
+  // layout engine reads for every broker's CIMs.
+  if (deal.demoKey) return;
 
   const industry = deal.industry;
 

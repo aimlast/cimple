@@ -7,6 +7,7 @@ import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, getPrivateNotes, privateNoteSources, type FieldSource, type PrivateNoteSource } from "./info-merger";
+import { interviewFactView } from "../information/deal-mirror";
 
 // =====================
 // Types
@@ -269,7 +270,12 @@ export function assembleKnowledgeBase(
   latestSession: InterviewSession | null,
   resolvedDiscrepancies: Discrepancy[] = [],
 ): KnowledgeBase {
-  const baseExtractedInfo = (deal.extractedInfo as Partial<ExtractedInfo>) || {};
+  // The broker's listed asking price from the deal row is not something the
+  // seller said — the interview sees the seller-side value instead (and keeps
+  // asking for the seller's own expectation when there is none).
+  const baseExtractedInfo = interviewFactView(
+    ((deal.extractedInfo as Partial<ExtractedInfo>) || {}) as Record<string, unknown>,
+  ) as Partial<ExtractedInfo>;
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
   // Overlay resolved discrepancy values — corrected values win over raw extractedInfo
