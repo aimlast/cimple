@@ -234,8 +234,10 @@ export async function runPersonaScenario(config: ScenarioConfig): Promise<Scenar
 
   log("Submitting questionnaire data...");
   try {
+    // Broker PATCH no longer accepts a wholesale extractedInfo (provenance
+    // must be kept) — submit it as intake answers, like the seller wizard.
     const res = await api.updateDeal(dealId, {
-      extractedInfo: seller.questionnaireData,
+      questionnaireData: seller.questionnaireData,
     });
     responseTimes.push(res.responseTime);
     costTracker.trackRequest(`/api/deals/${dealId}`, res.responseTime);

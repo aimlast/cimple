@@ -1,380 +1,354 @@
-import { useState } from "react";
-import { Link, useLocation, useSearch } from "wouter";
-import { useQuery } from "@tanstack/react-query";
-import {
-  Plus, Search, ArrowRight, Clock, AlertCircle, CheckCircle2, Zap, Radio, X, RefreshCw, Building2,
-} from "lucide-react";
-import { Input } from "@/components/ui/input";
-import { Button } from "@/components/ui/button";
-import { formatDistanceToNow } from "date-fns";
-import type { Deal } from "@shared/schema";
-
-/* ─── Phase metadata ─── */
-const PHASES = [
-  { key: "phase1_info_collection",    short: "Phase 1", label: "Info Collection"  },
-  { key: "phase2_platform_intake",    short: "Phase 2", label: "Platform Intake"  },
-  { key: "phase3_content_creation",   short: "Phase 3", label: "Content Creation" },
-  { key: "phase4_design_finalization", short: "Phase 4", label: "Design & Final"  },
-];
-
-/* ─── Derive deal urgency + contextual line ─── */
-type DealUrgency = "action" | "progress" | "waiting" | "live";
-
 /**
- * CTA labels use navigation phrasing ("Open to publish") and each one links
- * to the surface where that action actually lives — the card never pretends
- * to perform the action itself.
+ * /broker/deals — the broker's deal list.
+ *
+ * Built on GET /api/deals/list (slim rows with next step, readiness, money,
+ * counts and a real last-activity time). The broker chooses how to see it:
+ * group (phase / whose move / industry / status), sort, filters, cards or a
+ * compact table, and whether archived deals show. Choices are remembered in
+ * this browser. `?phase=` deep links (dashboard pipeline) still filter.
  */
-interface DealMeta {
-  urgency: DealUrgency;
-  statusLine: string;
-  cta: { label: string; href: string };
+import { useEffect, useMemo, useState } from "react";
+import { useLocation, useSearch } from "wouter";
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { AlertCircle, Archive, Building2, Plus, RefreshCw, SearchX, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import { ToastAction } from "@/components/ui/toast";
+import { useToast } from "@/hooks/use-toast";
+import { apiRequest, queryClient } from "@/lib/queryClient";
+import { DEAL_PHASES, isDealPhase } from "@shared/deal-progress";
+import {
+  filterDeals,
+  groupDeals,
+  loadPrefs,
+  savePrefs,
+  sortDeals,
+  type DealListPrefs,
+  type DealListRow,
+} from "@/components/deals/deal-list-model";
+import { DealCard, DealTableHeader, DealTableRow, type DealItemActions } from "@/components/deals/DealListItem";
+import { ActiveFilterChips, DealListToolbar } from "@/components/deals/DealListToolbar";
+
+// Archived rows are always fetched so "Show archived" and the Status group
+// are instant; the server filters them for every other caller.
+const LIST_KEY = ["/api/deals/list?includeArchived=1"];
+
+function invalidateDealCaches() {
+  queryClient.invalidateQueries({ queryKey: LIST_KEY });
+  queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/broker/dashboard"] });
 }
 
-function getDealMeta(deal: Deal): DealMeta {
-  const overview = `/deal/${deal.id}/overview`;
-  const designer = `/deal/${deal.id}/design`;
-  const interview = `/deal/${deal.id}/interview`;
-  const buyers = `/deal/${deal.id}/buyers`;
-
-  if (deal.isLive) {
-    return { urgency: "live", statusLine: "Live — shared with buyers", cta: { label: "Open buyers", href: buyers } };
-  }
-  const lastActivity = deal.updatedAt
-    ? formatDistanceToNow(new Date(deal.updatedAt), { addSuffix: true })
-    : "recently";
-
-  switch (deal.phase) {
-    case "phase1_info_collection": {
-      if (!deal.ndaSigned) return { urgency: "action",   statusLine: "NDA not yet signed",                        cta: { label: "Open deal", href: overview } };
-      if (!deal.sqCompleted) return { urgency: "waiting", statusLine: `Awaiting questionnaire · ${lastActivity}`, cta: { label: "Open deal", href: overview } };
-      if (!deal.valuationCompleted) return { urgency: "action", statusLine: "Valuation pending",                  cta: { label: "Open deal", href: overview } };
-      return { urgency: "action", statusLine: "Phase 1 complete — advance to intake",                             cta: { label: "Open to advance", href: overview } };
-    }
-    case "phase2_platform_intake": {
-      if (!deal.interviewCompleted) return { urgency: "action",   statusLine: "AI interview not started",         cta: { label: "Start interview", href: interview } };
-      return { urgency: "progress", statusLine: `Interview complete · ${lastActivity}`,                           cta: { label: "Open deal", href: overview } };
-    }
-    case "phase3_content_creation": {
-      if (!deal.cimContent) return { urgency: "action",           statusLine: "CIM content not yet generated",    cta: { label: "Open to generate", href: overview } };
-      if (!deal.contentApprovedByBroker) return { urgency: "action", statusLine: "Awaiting your review",          cta: { label: "Open to review", href: overview } };
-      if (!deal.contentApprovedBySeller) return { urgency: "waiting", statusLine: `Awaiting seller approval · ${lastActivity}`, cta: { label: "Open deal", href: overview } };
-      return { urgency: "progress", statusLine: "Content approved — ready for design",                            cta: { label: "Open designer", href: designer } };
-    }
-    case "phase4_design_finalization": {
-      if (!deal.designApprovedByBroker) return { urgency: "action",  statusLine: "Design needs your approval",    cta: { label: "Open designer", href: designer } };
-      if (!deal.designApprovedBySeller) return { urgency: "waiting", statusLine: "Awaiting seller sign-off",      cta: { label: "Open deal", href: overview } };
-      return { urgency: "action", statusLine: "Ready to publish live",                                            cta: { label: "Open to publish", href: overview } };
-    }
-    default:
-      return { urgency: "waiting", statusLine: `Updated ${lastActivity}`, cta: { label: "Open deal", href: overview } };
-  }
-}
-
-/* ─── Deal card ─── */
-function DealCard({ deal }: { deal: Deal }) {
+export default function ActiveCIMs() {
   const [, setLocation] = useLocation();
-  const { urgency, statusLine, cta } = getDealMeta(deal);
-  const phase = PHASES.find(p => p.key === deal.phase);
+  const { toast } = useToast();
+  const searchString = useSearch();
+  const [search, setSearch] = useState("");
+  const [prefs, setPrefs] = useState<DealListPrefs>(() => {
+    const saved = loadPrefs();
+    const deepPhase = new URLSearchParams(window.location.search).get("phase");
+    return isDealPhase(deepPhase) ? { ...saved, phases: [deepPhase] } : saved;
+  });
+  const [pendingArchive, setPendingArchive] = useState<DealListRow | null>(null);
 
-  const handleCTA = (e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    setLocation(cta.href);
+  // `?phase=` from the dashboard pipeline cells (also on in-app navigation
+  // while this page is mounted). Unknown values are ignored.
+  useEffect(() => {
+    const deepPhase = new URLSearchParams(searchString).get("phase");
+    if (isDealPhase(deepPhase)) {
+      setPrefs((p) => (p.phases.length === 1 && p.phases[0] === deepPhase ? p : { ...p, phases: [deepPhase] }));
+    }
+  }, [searchString]);
+
+  const updatePrefs = (patch: Partial<DealListPrefs>) => {
+    setPrefs((prev) => {
+      const next = { ...prev, ...patch };
+      savePrefs(next);
+      return next;
+    });
+    // Keep the URL honest: a single phase filter is shareable, anything else clears it.
+    if (patch.phases) {
+      const url = patch.phases.length === 1 ? `/broker/deals?phase=${encodeURIComponent(patch.phases[0])}` : "/broker/deals";
+      if (url !== `/broker/deals${searchString ? `?${searchString}` : ""}`) setLocation(url, { replace: true });
+    }
   };
 
-  /* Status line colour — teal for action, muted otherwise */
-  const statusColor =
-    urgency === "action" ? "text-teal/80" :
-    urgency === "live"   ? "text-success/80" :
-    "text-muted-foreground";
-
-  return (
-    <Link href={`/deal/${deal.id}`}>
-      <div
-        className={`
-          group relative flex items-center gap-4 px-6 py-3.5 border-b border-border
-          cursor-pointer transition-colors duration-100
-          ${urgency === "action" ? "hover:bg-teal/[0.03]" : "hover:bg-accent/30"}
-        `}
-        data-testid={`deal-card-${deal.id}`}
-      >
-        {/* Urgency accent — left edge rule for action items */}
-        {urgency === "action" && (
-          <div className="absolute left-0 top-1/4 bottom-1/4 w-[2px] rounded-r bg-teal/40" />
-        )}
-
-        {/* Status dot */}
-        <div className={`
-          rounded-full shrink-0 transition-all
-          ${urgency === "action"   ? "h-2 w-2 bg-teal" :
-            urgency === "progress" ? "h-2 w-2 bg-blue" :
-            urgency === "live"     ? "h-2 w-2 bg-success" :
-                                     "h-1.5 w-1.5 bg-muted-foreground/30"}
-        `} />
-
-        {/* Main info */}
-        <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 mb-0.5">
-            <span className="text-sm font-medium text-foreground truncate leading-snug">
-              {deal.businessName}
-            </span>
-            {deal.industry && (
-              <span className="shrink-0 text-2xs bg-muted text-muted-foreground rounded px-1.5 py-0.5 leading-none">
-                {deal.industry}
-              </span>
-            )}
-          </div>
-          <p className={`text-xs truncate leading-snug ${statusColor}`}>{statusLine}</p>
-        </div>
-
-        {/* Phase badge */}
-        <div className="shrink-0 hidden sm:flex flex-col items-end gap-px">
-          <span className="text-2xs font-medium text-muted-foreground/70">{phase?.short ?? "—"}</span>
-          <span className="text-2xs text-muted-foreground/40">{phase?.label ?? deal.phase}</span>
-        </div>
-
-        {/* CTA — slides in on hover */}
-        <button
-          onClick={handleCTA}
-          className={`
-            shrink-0 flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-md
-            translate-x-1 opacity-0 group-hover:translate-x-0 group-hover:opacity-100
-            focus-visible:translate-x-0 focus-visible:opacity-100
-            transition-all duration-150
-            ${urgency === "action" || urgency === "live"
-              ? "bg-teal/10 text-teal hover:bg-teal/15"
-              : "bg-accent text-muted-foreground hover:text-foreground"
-            }
-          `}
-          data-testid={`deal-cta-${deal.id}`}
-        >
-          {cta.label}
-          <ArrowRight className="h-3 w-3" />
-        </button>
-      </div>
-    </Link>
-  );
-}
-
-/* ─── Deal group ─── */
-function DealGroup({ label, icon, deals }: { label: string; icon: React.ReactNode; deals: Deal[] }) {
-  return (
-    <div>
-      <div className="flex items-center gap-2 px-6 py-2 sticky top-0 bg-background/98 backdrop-blur-sm z-10">
-        {icon}
-        <span className="text-2xs font-semibold uppercase tracking-[0.08em] text-muted-foreground/70">{label}</span>
-        <span className="text-2xs tabular-nums text-muted-foreground/40 font-medium">{deals.length}</span>
-      </div>
-      {deals.map(deal => (
-        <DealCard key={deal.id} deal={deal} />
-      ))}
-    </div>
-  );
-}
-
-/* ─── Page ─── */
-export default function ActiveCIMs() {
-  const [search, setSearch] = useState("");
-  const [, setLocation] = useLocation();
-
-  // `?phase=` comes from the dashboard pipeline cells (and the stat cells
-  // below). Only known phase keys are honored; anything else is ignored.
-  const searchString = useSearch();
-  const requestedPhase = new URLSearchParams(searchString).get("phase");
-  const phaseFilter = PHASES.find(p => p.key === requestedPhase) ?? null;
-  const setPhaseFilter = (key: string | null) =>
-    setLocation(key ? `/broker/deals?phase=${encodeURIComponent(key)}` : "/broker/deals", { replace: true });
-
-  const { data: deals = [], isLoading, error, refetch, isFetching } = useQuery<Deal[]>({ queryKey: ["/api/deals"] });
-
-  const filteredDeals = deals.filter(d => {
-    if (phaseFilter && d.phase !== phaseFilter.key) return false;
-    const q = search.toLowerCase();
-    if (!q) return true;
-    return d.businessName.toLowerCase().includes(q) || (d.industry?.toLowerCase().includes(q) ?? false);
+  const { data: rows = [], isLoading, error, refetch, isFetching } = useQuery<DealListRow[]>({
+    queryKey: LIST_KEY,
   });
 
-  const actionDeals   = filteredDeals.filter(d => getDealMeta(d).urgency === "action");
-  const progressDeals = filteredDeals.filter(d => getDealMeta(d).urgency === "progress");
-  const waitingDeals  = filteredDeals.filter(d => getDealMeta(d).urgency === "waiting");
-  const liveDeals     = filteredDeals.filter(d => getDealMeta(d).urgency === "live");
+  const archive = useMutation({
+    mutationFn: async (deal: DealListRow) => {
+      await apiRequest("POST", `/api/deals/${deal.id}/archive`);
+      return deal;
+    },
+    onSuccess: (deal) => {
+      invalidateDealCaches();
+      setPendingArchive(null);
+      toast({
+        title: `Archived ${deal.businessName}`,
+        description: prefs.showArchived ? undefined : "Turn on “Show archived” to see it again.",
+        action: (
+          <ToastAction altText="Undo archive" onClick={() => restore.mutate({ deal, quiet: true })}>
+            Undo
+          </ToastAction>
+        ),
+      });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't archive the deal", description: e.message, variant: "destructive" }),
+  });
 
-  const phaseCounts = PHASES.map(p => ({
-    ...p,
-    count: deals.filter(d => d.phase === p.key).length,
-  }));
-  const liveCount  = deals.filter(d => d.isLive).length;
-  const totalDeals = deals.length;
-  const isFiltering = !!search || !!phaseFilter;
+  const restore = useMutation({
+    mutationFn: async ({ deal }: { deal: DealListRow; quiet?: boolean }) => {
+      await apiRequest("POST", `/api/deals/${deal.id}/unarchive`);
+      return deal;
+    },
+    onSuccess: (deal, { quiet }) => {
+      invalidateDealCaches();
+      if (!quiet) toast({ title: `Restored ${deal.businessName}`, description: "It's back in your active deals." });
+    },
+    onError: (e: Error) => toast({ title: "Couldn't restore the deal", description: e.message, variant: "destructive" }),
+  });
+
+  const actions: DealItemActions = {
+    onArchive: (deal) => setPendingArchive(deal),
+    onRestore: (deal) => restore.mutate({ deal }),
+  };
+
+  /* ─── Derived ─── */
+  const active = useMemo(() => rows.filter((d) => !d.archivedAt), [rows]);
+  const archivedCount = rows.length - active.length;
+  const liveCount = active.filter((d) => d.isLive).length;
+  const yourMoveCount = active.filter((d) => d.nextStep.owner === "you").length;
+  const phaseCounts = DEAL_PHASES.map((p) => ({ ...p, count: active.filter((d) => d.phase === p.key).length }));
+  const industries = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const d of prefs.showArchived ? rows : active) if (d.industry) m.set(d.industry, (m.get(d.industry) ?? 0) + 1);
+    // Keep a selected industry listed even if its only deals were archived.
+    for (const i of prefs.industries) if (!m.has(i)) m.set(i, 0);
+    return Array.from(m, ([name, count]) => ({ name, count })).sort((a, b) => a.name.localeCompare(b.name));
+  }, [rows, active, prefs.showArchived, prefs.industries]);
+
+  const visible = useMemo(() => sortDeals(filterDeals(rows, prefs, search), prefs.sort), [rows, prefs, search]);
+  const groups = useMemo(() => groupDeals(visible, prefs.groupBy), [visible, prefs.groupBy]);
+  const filtering = !!search.trim() || prefs.phases.length > 0 || prefs.industries.length > 0 || prefs.liveOnly;
+
+  const clearFilters = () => {
+    setSearch("");
+    updatePrefs({ phases: [], industries: [], liveOnly: false });
+  };
 
   return (
     <div className="flex flex-col h-full min-h-screen">
-
       {/* ── Header ── */}
-      <div className="px-6 pt-6 pb-5 border-b border-border">
-
-        {/* Title row */}
-        <div className="flex items-start justify-between gap-4 mb-6">
-          <div>
+      <div className="px-4 sm:px-6 pt-6 pb-5 border-b border-border">
+        <div className="flex items-start justify-between gap-4 mb-5">
+          <div className="min-w-0">
             <h1 className="text-xl font-semibold tracking-tight text-foreground">Deals</h1>
             <p className="text-sm text-muted-foreground mt-0.5">
-              {totalDeals === 0
-                ? "No deals in pipeline yet"
-                : `${totalDeals} deal${totalDeals !== 1 ? "s" : ""} in pipeline`}
+              {isLoading
+                ? "Loading…"
+                : active.length === 0
+                  ? archivedCount > 0 ? "No active deals" : "No deals yet"
+                  : `${active.length} active deal${active.length !== 1 ? "s" : ""}${
+                      yourMoveCount > 0 ? ` · ${yourMoveCount} waiting on you` : ""
+                    }`}
             </p>
           </div>
-          <div className="flex items-center gap-2 mt-0.5">
-            <Button
-              size="sm"
-              onClick={() => setLocation("/broker/new-deal")}
-              className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shadow-sm"
-              data-testid="button-new-deal"
-            >
-              <Plus className="h-3.5 w-3.5" />
-              New Deal
-            </Button>
-          </div>
+          <Button
+            size="sm"
+            onClick={() => setLocation("/broker/new-deal")}
+            className="h-8 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shadow-sm shrink-0"
+            data-testid="button-new-deal"
+          >
+            <Plus className="h-3.5 w-3.5" />
+            New Deal
+          </Button>
         </div>
 
-        {/* Pipeline stats — clicking a phase filters the list */}
-        <div className="flex items-end gap-0 overflow-x-auto">
+        {/* Pipeline strip — clicking a phase filters to it */}
+        <div className="flex items-end overflow-x-auto scrollbar-none -mx-1 px-1">
           {phaseCounts.map((p) => {
-            const active = phaseFilter?.key === p.key;
+            const on = prefs.phases.length === 1 && prefs.phases[0] === p.key;
             return (
               <button
                 key={p.key}
                 type="button"
-                onClick={() => setPhaseFilter(active ? null : p.key)}
-                aria-pressed={active}
-                title={active ? "Clear phase filter" : `Show only ${p.short} deals`}
-                className={`
-                  flex flex-col items-start shrink-0 pr-6 mr-6 border-r border-border last:border-0 last:mr-0
-                  text-left rounded-sm transition-colors
-                  ${active ? "" : "hover:opacity-80"}
-                `}
+                onClick={() => updatePrefs({ phases: on ? [] : [p.key] })}
+                aria-pressed={on}
+                title={on ? "Show all phases" : `Show only ${p.label}`}
+                className="flex flex-col items-start shrink-0 pr-5 mr-5 border-r border-border text-left transition-opacity hover:opacity-80"
                 data-testid={`stat-phase-${p.key}`}
               >
-                <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 ${active ? "text-teal" : "text-muted-foreground/60"}`}>
+                <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 ${on ? "text-teal" : "text-muted-foreground/60"}`}>
                   {p.short}
                 </span>
-                <span className={`text-3xl font-bold tabular-nums leading-none ${active ? "text-teal" : "text-foreground"}`}>
-                  {p.count}
+                <span className={`text-2xl font-semibold tabular-nums leading-none ${on ? "text-teal" : "text-foreground"}`}>
+                  {isLoading ? "–" : p.count}
                 </span>
-                <span className="text-[11px] text-muted-foreground/60 mt-1.5">{p.label}</span>
+                <span className="text-[11px] text-muted-foreground/70 mt-1.5 whitespace-nowrap">{p.label}</span>
               </button>
             );
           })}
-
-          {/* Divider */}
-          <div className="w-px self-stretch bg-border mx-2 shrink-0" />
-
-          {/* Live */}
-          <div className="flex flex-col shrink-0 pl-4">
-            <span className="text-[10px] font-semibold text-success/70 uppercase tracking-[0.1em] mb-1">
-              Live
-            </span>
-            <span className="text-3xl font-bold tabular-nums leading-none text-success">
-              {liveCount}
-            </span>
-            <span className="text-[11px] text-muted-foreground/60 mt-1.5">Published</span>
-          </div>
-        </div>
-      </div>
-
-      {/* ── Search & filter bar ── */}
-      <div className="px-6 py-3 border-b border-border flex items-center gap-3 flex-wrap">
-        <div className="relative flex-1 max-w-sm min-w-[200px]">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/50 pointer-events-none" />
-          <Input
-            placeholder="Search deals..."
-            value={search}
-            onChange={e => setSearch(e.target.value)}
-            className="pl-8 h-8 text-sm bg-muted/60 border-0 focus-visible:ring-1 focus-visible:ring-teal/40 placeholder:text-muted-foreground/50"
-            data-testid="input-search"
-          />
-        </div>
-
-        {/* Active phase filter chip — clearable */}
-        {phaseFilter && (
           <button
             type="button"
-            onClick={() => setPhaseFilter(null)}
-            className="inline-flex items-center gap-1.5 h-7 pl-2.5 pr-1.5 rounded-full bg-teal/10 text-teal text-xs font-medium hover:bg-teal/15 transition-colors"
-            data-testid="chip-phase-filter"
+            onClick={() => updatePrefs({ liveOnly: !prefs.liveOnly })}
+            aria-pressed={prefs.liveOnly}
+            title={prefs.liveOnly ? "Show all deals" : "Show only live deals"}
+            className="flex flex-col items-start shrink-0 text-left transition-opacity hover:opacity-80"
+            data-testid="stat-live"
           >
-            {phaseFilter.short} · {phaseFilter.label}
-            <X className="h-3 w-3" />
+            <span className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 text-success/70">Live</span>
+            <span className="text-2xl font-semibold tabular-nums leading-none text-success">{isLoading ? "–" : liveCount}</span>
+            <span className={`text-[11px] mt-1.5 ${prefs.liveOnly ? "text-success" : "text-muted-foreground/70"}`}>
+              {prefs.liveOnly ? "Showing live only" : "With buyers"}
+            </span>
           </button>
-        )}
-
-        {/* Result count when filtering */}
-        {isFiltering && !isLoading && !error && (
-          <span className="text-xs text-muted-foreground shrink-0">
-            {filteredDeals.length} result{filteredDeals.length !== 1 ? "s" : ""}
-          </span>
-        )}
+        </div>
       </div>
 
-      {/* ── Deal list ── */}
+      {/* ── Toolbar ── */}
+      <div className="px-4 sm:px-6 py-3 border-b border-border space-y-2">
+        <DealListToolbar
+          prefs={prefs}
+          onChange={updatePrefs}
+          search={search}
+          onSearch={setSearch}
+          industries={industries}
+          archivedCount={archivedCount}
+        />
+        <ActiveFilterChips prefs={prefs} onChange={updatePrefs} />
+      </div>
+
+      {/* ── List ── */}
       <div className="flex-1 overflow-auto scrollbar-thin">
         {isLoading ? (
-          <div className="px-6 py-5 space-y-px">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-[58px] rounded-sm bg-muted/40 animate-pulse" />
-            ))}
-          </div>
+          <LoadingState view={prefs.view} />
         ) : error ? (
           <ErrorState
             message={error instanceof Error ? error.message : undefined}
             retrying={isFetching}
             onRetry={() => refetch()}
           />
-        ) : filteredDeals.length === 0 ? (
+        ) : visible.length === 0 ? (
           <EmptyState
-            searching={!!search}
-            phaseLabel={phaseFilter ? `${phaseFilter.short} · ${phaseFilter.label}` : null}
-            onClearPhase={() => setPhaseFilter(null)}
+            kind={
+              rows.length === 0 ? "none"
+              : filtering ? "filtered"
+              : active.length === 0 && !prefs.showArchived ? "allArchived"
+              : "none"
+            }
+            archivedCount={archivedCount}
+            onClear={clearFilters}
+            onShowArchived={() => updatePrefs({ showArchived: true })}
             onNewDeal={() => setLocation("/broker/new-deal")}
           />
         ) : (
-          <div>
-            {actionDeals.length > 0 && (
-              <DealGroup
-                label="Needs action"
-                icon={<Zap className="h-3 w-3 text-teal/70" />}
-                deals={actionDeals}
-              />
+          <div className="px-4 sm:px-6 py-4 space-y-6">
+            {filtering && (
+              <p className="text-xs text-muted-foreground -mb-2">
+                {visible.length} match{visible.length !== 1 ? "es" : ""}
+              </p>
             )}
-            {progressDeals.length > 0 && (
-              <DealGroup
-                label="In progress"
-                icon={<Radio className="h-3 w-3 text-blue/70" />}
-                deals={progressDeals}
-              />
-            )}
-            {waitingDeals.length > 0 && (
-              <DealGroup
-                label="Waiting"
-                icon={<Clock className="h-3 w-3 text-muted-foreground/50" />}
-                deals={waitingDeals}
-              />
-            )}
-            {liveDeals.length > 0 && (
-              <DealGroup
-                label="Live"
-                icon={<CheckCircle2 className="h-3 w-3 text-success/70" />}
-                deals={liveDeals}
-              />
-            )}
+            {groups.map((g) => (
+              <section key={g.key} aria-label={g.label || "Deals"}>
+                {g.label && (
+                  <div className="flex items-baseline gap-2 mb-2.5">
+                    <h2 className="text-2xs font-semibold uppercase tracking-[0.1em] text-muted-foreground">{g.label}</h2>
+                    <span className="text-2xs tabular-nums text-muted-foreground/50">{g.rows.length}</span>
+                    {g.hint && <span className="text-2xs text-muted-foreground/50 truncate hidden sm:inline">· {g.hint}</span>}
+                  </div>
+                )}
+                {prefs.view === "cards" ? (
+                  <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+                    {g.rows.map((d) => (
+                      <DealCard key={d.id} deal={d} actions={actions} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-border/70 overflow-hidden bg-card/40">
+                    <DealTableHeader />
+                    {g.rows.map((d) => (
+                      <DealTableRow key={d.id} deal={d} actions={actions} />
+                    ))}
+                  </div>
+                )}
+              </section>
+            ))}
           </div>
         )}
       </div>
+
+      {/* ── Archive confirm ── */}
+      <AlertDialog open={!!pendingArchive} onOpenChange={(o) => !o && !archive.isPending && setPendingArchive(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Archive {pendingArchive?.businessName}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  It leaves your deal list and dashboard. Nothing is deleted — documents, the interview and the CIM
+                  stay as they are, and you can restore it any time from “Show archived”.
+                </p>
+                {pendingArchive?.isLive && (
+                  <p className="rounded-md border border-teal/30 bg-teal/5 px-3 py-2 text-foreground/90">
+                    This deal is live. Buyer links keep working, but new buyer questions and approvals for it won't
+                    show on your dashboard while it's archived.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={archive.isPending}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                if (pendingArchive) archive.mutate(pendingArchive);
+              }}
+              disabled={archive.isPending}
+              data-testid="button-confirm-archive"
+            >
+              {archive.isPending ? "Archiving…" : "Archive deal"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
 
-/* ─── Error state — distinct from "no deals" ─── */
+/* ─── States ──────────────────────────────────────────────────────────── */
+
+function LoadingState({ view }: { view: DealListPrefs["view"] }) {
+  return (
+    <div className="px-4 sm:px-6 py-4" aria-busy="true">
+      {view === "cards" ? (
+        <div className="grid gap-3 grid-cols-1 md:grid-cols-2 xl:grid-cols-3">
+          {[0, 1, 2, 3].map((i) => (
+            <div key={i} className="h-[178px] rounded-xl border border-border/60 bg-muted/30 animate-pulse" />
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-px">
+          {[0, 1, 2, 3, 4].map((i) => (
+            <div key={i} className="h-12 rounded-sm bg-muted/30 animate-pulse" />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function ErrorState({ message, retrying, onRetry }: { message?: string; retrying: boolean; onRetry: () => void }) {
   return (
     <div className="flex flex-col items-center justify-center py-24 text-center px-6" role="alert" data-testid="deals-error">
@@ -385,14 +359,7 @@ function ErrorState({ message, retrying, onRetry }: { message?: string; retrying
       <p className="text-xs text-muted-foreground max-w-[280px]">
         {message || "The server didn't respond. Check your connection and try again."}
       </p>
-      <Button
-        size="sm"
-        variant="outline"
-        onClick={onRetry}
-        disabled={retrying}
-        className="mt-5"
-        data-testid="button-retry-deals"
-      >
+      <Button size="sm" variant="outline" onClick={onRetry} disabled={retrying} className="mt-5" data-testid="button-retry-deals">
         <RefreshCw className={`h-3.5 w-3.5 mr-1.5 ${retrying ? "animate-spin" : ""}`} />
         {retrying ? "Retrying..." : "Retry"}
       </Button>
@@ -400,51 +367,64 @@ function ErrorState({ message, retrying, onRetry }: { message?: string; retrying
   );
 }
 
-/* ─── Empty state ─── */
 function EmptyState({
-  searching,
-  phaseLabel,
-  onClearPhase,
+  kind,
+  archivedCount,
+  onClear,
+  onShowArchived,
   onNewDeal,
 }: {
-  searching: boolean;
-  phaseLabel: string | null;
-  onClearPhase: () => void;
+  kind: "none" | "filtered" | "allArchived";
+  archivedCount: number;
+  onClear: () => void;
+  onShowArchived: () => void;
   onNewDeal: () => void;
 }) {
-  const filtering = searching || !!phaseLabel;
+  const content = {
+    none: {
+      icon: Building2,
+      title: "No deals yet",
+      body: "Create a deal, invite the seller, and Cimple takes it from questionnaire to a buyer-ready CIM.",
+    },
+    filtered: {
+      icon: SearchX,
+      title: "No deals match",
+      body: "No deal fits what you've picked. Clear the search and filters to see every deal.",
+    },
+    allArchived: {
+      icon: Archive,
+      title: "All caught up",
+      body: `Every deal is archived (${archivedCount}). Start a new one, or bring an archived deal back.`,
+    },
+  }[kind];
+  const Icon = content.icon;
   return (
-    <div className="flex flex-col items-center justify-center py-24 text-center px-6">
+    <div className="flex flex-col items-center justify-center py-24 text-center px-6" data-testid={`deals-empty-${kind}`}>
       <div className="h-11 w-11 rounded-xl bg-teal/8 border border-teal/15 flex items-center justify-center mb-4">
-        <Building2 className="h-5 w-5 text-teal/50" />
+        <Icon className="h-5 w-5 text-teal/60" />
       </div>
-      <p className="text-sm font-medium text-foreground mb-1">
-        {phaseLabel && !searching
-          ? `No deals in ${phaseLabel}`
-          : filtering ? "No matching deals" : "No deals yet"}
-      </p>
-      <p className="text-xs text-muted-foreground max-w-[240px]">
-        {phaseLabel && !searching
-          ? "Nothing is sitting in this phase right now."
-          : filtering
-            ? "Try a different search term or clear the filter."
-            : "Create your first deal to start the CIM process"}
-      </p>
-      {phaseLabel ? (
-        <Button size="sm" variant="outline" onClick={onClearPhase} className="mt-5" data-testid="button-clear-phase-filter">
-          <X className="h-3.5 w-3.5 mr-1.5" />
-          Show all deals
-        </Button>
-      ) : !searching ? (
-        <Button
-          size="sm"
-          onClick={onNewDeal}
-          className="mt-5 bg-teal text-teal-foreground hover:bg-teal/90 shadow-sm"
-        >
-          <Plus className="h-3.5 w-3.5 mr-1.5" />
-          New Deal
-        </Button>
-      ) : null}
+      <p className="text-sm font-medium text-foreground mb-1">{content.title}</p>
+      <p className="text-xs text-muted-foreground max-w-[300px]">{content.body}</p>
+      <div className="mt-5 flex items-center gap-2">
+        {kind === "filtered" ? (
+          <Button size="sm" variant="outline" onClick={onClear} data-testid="button-clear-filters">
+            <X className="h-3.5 w-3.5 mr-1.5" />
+            Clear filters
+          </Button>
+        ) : (
+          <>
+            <Button size="sm" onClick={onNewDeal} className="bg-teal text-teal-foreground hover:bg-teal/90 shadow-sm">
+              <Plus className="h-3.5 w-3.5 mr-1.5" />
+              New Deal
+            </Button>
+            {kind === "allArchived" && (
+              <Button size="sm" variant="outline" onClick={onShowArchived}>
+                Show archived
+              </Button>
+            )}
+          </>
+        )}
+      </div>
     </div>
   );
 }

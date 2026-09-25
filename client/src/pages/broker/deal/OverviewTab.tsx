@@ -1054,7 +1054,9 @@ Signed electronically via the Cimple platform.`;
         </div>
       ))}
 
-      {requiredDone && (
+      {/* Only on a Phase 1 deal — on a later deal this expanded accordion
+          would move it backwards (the server refuses that anyway). */}
+      {requiredDone && deal.phase === "phase1_info_collection" && (
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-teal">
@@ -1590,8 +1592,9 @@ function Phase2Center() {
       </div>
 
       {/* Advance to Content Creation — the clear next step once the interview
-          is done. Previously there was no path from here to CIM generation. */}
-      {deal.interviewCompleted && (
+          is done. Previously there was no path from here to CIM generation.
+          Hidden once the deal is past Seller Intake (it would move it back). */}
+      {deal.interviewCompleted && getPhaseIndex(deal.phase) < getPhaseIndex("phase3_content_creation") && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div>
             <p className="text-sm font-medium">Ready to build the CIM</p>

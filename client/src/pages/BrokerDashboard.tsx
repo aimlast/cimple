@@ -37,7 +37,8 @@ interface DashboardData {
     pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string }>;
     unansweredQuestions: Array<{ dealId: string; dealName: string; questionPreview: string; askedAt: string }>;
     stalledInterviews: Array<{ dealId: string; dealName: string; lastActivity: string; daysSinceActivity: number }>;
-    pendingReviewCIMs: Array<{ dealId: string; dealName: string }>;
+    /** Deals whose next step is the broker's (shared/deal-progress computeNextStep). */
+    yourMove: Array<{ dealId: string; dealName: string; label: string; href: string; lastActivity: string }>;
     pendingDocuments: Array<{ dealId: string; dealName: string; count: number }>;
   };
   activity: Array<{
@@ -170,12 +171,14 @@ export default function BrokerDashboard() {
     time?: string;
   };
 
+  // Wording follows the deal list's owners: "Your move: …" is the broker's
+  // step, "Waiting on the seller: …" is a nudge-worthy wait.
   const actionRows: ActionRow[] = [
     ...actions.pendingApprovals.map((a): ActionRow => ({
       key: `approval-${a.dealId}-${a.buyerName}`,
       icon: ShieldCheck,
       tint: "brass",
-      label: "Buyer approval needed",
+      label: "Your move: approve a buyer",
       detail: `${a.buyerName}${a.buyerCompany ? ` (${a.buyerCompany})` : ""} · ${a.dealName}`,
       href: `/deal/${a.dealId}/buyers`,
       time: a.submittedAt,
@@ -184,33 +187,34 @@ export default function BrokerDashboard() {
       key: `qa-${q.dealId}-${i}`,
       icon: MessageSquare,
       tint: "brass",
-      label: "Q&A needs a response",
+      label: "Your move: answer a buyer question",
       detail: `"${q.questionPreview}" · ${q.dealName}`,
       href: `/deal/${q.dealId}/qa`,
       time: q.askedAt,
+    })),
+    ...(actions.yourMove ?? []).map((m): ActionRow => ({
+      key: `move-${m.dealId}`,
+      icon: ArrowRight,
+      tint: "brass",
+      label: `Your move: ${m.label}`,
+      detail: m.dealName,
+      href: m.href,
+      time: m.lastActivity,
     })),
     ...actions.stalledInterviews.map((s): ActionRow => ({
       key: `stalled-${s.dealId}`,
       icon: Mic,
       tint: "amber",
-      label: `Interview quiet for ${s.daysSinceActivity} days`,
-      detail: s.dealName,
+      label: `Waiting on the seller: interview quiet for ${s.daysSinceActivity} days`,
+      detail: `${s.dealName} · a nudge may help`,
       href: `/deal/${s.dealId}/overview`,
       time: s.lastActivity,
-    })),
-    ...actions.pendingReviewCIMs.map((c): ActionRow => ({
-      key: `cim-${c.dealId}`,
-      icon: FileText,
-      tint: "brass",
-      label: "CIM ready for your review",
-      detail: c.dealName,
-      href: `/deal/${c.dealId}/overview`,
     })),
     ...actions.pendingDocuments.map((d): ActionRow => ({
       key: `docs-${d.dealId}`,
       icon: FileText,
       tint: "neutral",
-      label: `${d.count} required ${d.count === 1 ? "document" : "documents"} missing`,
+      label: `Waiting on the seller: ${d.count} required ${d.count === 1 ? "document" : "documents"}`,
       detail: d.dealName,
       href: `/deal/${d.dealId}/overview`,
     })),

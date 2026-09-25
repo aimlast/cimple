@@ -221,6 +221,10 @@ export const deals = pgTable("deals", {
   // Phases: phase1_info_collection, phase2_platform_intake, phase3_content_creation, phase4_design_finalization
   status: text("status").notNull().default("draft"),
   // @anchor:deals-cols:list
+  // Set = the broker archived the deal: hidden from the deal list (unless
+  // "Show archived"), the dashboard and GET /api/deals. Restorable; buyer
+  // links and the CIM keep working. See server/routes/deal-list.ts.
+  archivedAt: timestamp("archived_at"),
   // Status within phase: draft, in_progress, pending_review, approved, completed
   
   // Phase 1 data

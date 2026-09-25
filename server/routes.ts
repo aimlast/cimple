@@ -20,10 +20,11 @@ import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-pr
 import { blindTitleRedactor } from "@shared/blind-identifiers";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
+import { DEAL_PHASES, computeNextStep, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
-import { registerDealListRoutes } from "./routes/deal-list.js";
+import { registerDealListRoutes, loadDealSideFacts, moneyValue } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
@@ -1811,7 +1812,8 @@ Return JSON only.`,
   app.get("/api/deals", requireBroker, async (req, res) => {
     try {
       // Scope is ALWAYS the session broker — never a client-supplied param.
-      const deals = await storage.getAllDeals(req.session.brokerId);
+      // Archived deals are left out (the deal list's /api/deals/list can show them).
+      const deals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
       res.json(deals);
     } catch (error: any) {
       console.error("Error fetching deals:", error);
@@ -1819,7 +1821,9 @@ Return JSON only.`,
     }
   });
 
-  app.get("/api/deals/:id", requireBroker, async (req, res) => {
+  app.get("/api/deals/:id", requireBroker, async (req, res, next) => {
+    // GET /api/deals/list lives in routes/deal-list.ts, registered after this.
+    if (req.params.id === "list") return next();
     try {
       const deal = await getOwnedDeal(req.params.id, req.session.brokerId);
       if (!deal) {
@@ -1866,25 +1870,19 @@ Return JSON only.`,
   // ── Broker dashboard ──────────────────────────────────────────────────
   app.get("/api/broker/dashboard", requireBroker, async (req, res) => {
     try {
-      const allDeals = await storage.getAllDeals(req.session.brokerId);
+      // Archived deals are out of the dashboard entirely (pipeline, stats,
+      // attention list and activity) — the broker put them away.
+      const allDeals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
+      // "$2.5M" must count as 2,500,000 (the old digit-strip read it as 2.5).
+      const askingValue = (d: { askingPrice: string | null }) => moneyValue(d.askingPrice) ?? 0;
 
-      // ─ Pipeline snapshot: group deals by phase ─
-      const phaseLabels: Record<string, string> = {
-        phase1_info_collection: "Info Collection",
-        phase2_platform_intake: "Platform Intake",
-        phase3_content_creation: "Content Creation",
-        phase4_design_finalization: "Design Finalization",
-      };
-      const phaseKeys = Object.keys(phaseLabels);
-      const pipeline = phaseKeys.map((phase) => {
+      // ─ Pipeline snapshot: group deals by phase (labels: shared/deal-progress) ─
+      const pipeline = DEAL_PHASES.map(({ key: phase, label }) => {
         const phaseDeals = allDeals.filter((d) => d.phase === phase);
-        const totalAskingPrice = phaseDeals.reduce((sum, d) => {
-          const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
-          return sum + (isNaN(price) ? 0 : price);
-        }, 0);
+        const totalAskingPrice = phaseDeals.reduce((sum, d) => sum + askingValue(d), 0);
         return {
           phase,
-          label: phaseLabels[phase],
+          label,
           dealCount: phaseDeals.length,
           totalAskingPrice,
           deals: phaseDeals.map((d) => ({
@@ -1898,10 +1896,7 @@ Return JSON only.`,
 
       // ─ Quick stats ─
       const activeDeals = allDeals.filter((d) => d.status !== "completed");
-      const totalPipelineValue = activeDeals.reduce((sum, d) => {
-        const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
-        return sum + (isNaN(price) ? 0 : price);
-      }, 0);
+      const totalPipelineValue = activeDeals.reduce((sum, d) => sum + askingValue(d), 0);
       const avgDaysInPhase = activeDeals.length > 0
         ? Math.round(
             activeDeals.reduce((sum, d) => {
@@ -1928,7 +1923,6 @@ Return JSON only.`,
       let newBuyersThisWeek = 0;
       const pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string }> = [];
       const unansweredQuestions: Array<{ dealId: string; dealName: string; questionPreview: string; askedAt: string }> = [];
-      const pendingReviewCIMs: Array<{ dealId: string; dealName: string }> = [];
 
       for (const { deal, access, approvals, questions } of perDealData) {
         // New buyers this week
@@ -1958,12 +1952,28 @@ Return JSON only.`,
             });
           }
         }
-
-        // CIMs ready for broker review
-        if (deal.status === "pending_review") {
-          pendingReviewCIMs.push({ dealId: deal.id, dealName: deal.businessName });
-        }
       }
+
+      // Deals whose next step is the broker's — the same definition the deal
+      // list uses (shared/deal-progress computeNextStep), so the dashboard and
+      // the list never disagree about whose move it is. (Replaces the old
+      // pendingReviewCIMs, keyed off deals.status, which nothing ever set.)
+      const sideFacts = await loadDealSideFacts(allDeals);
+      const yourMove = allDeals
+        .map((deal) => {
+          const facts = sideFacts.get(deal.id);
+          const step = computeNextStep(deal, facts?.extras);
+          return { deal, step, lastActivityMs: facts?.lastActivityMs ?? new Date(deal.createdAt).getTime() };
+        })
+        .filter(({ step }) => step.owner === "you")
+        .sort((a, b) => b.lastActivityMs - a.lastActivityMs)
+        .map(({ deal, step, lastActivityMs }) => ({
+          dealId: deal.id,
+          dealName: deal.businessName,
+          label: step.label,
+          href: step.href ?? `/deal/${deal.id}/overview`,
+          lastActivity: new Date(lastActivityMs).toISOString(),
+        }));
 
       // Stalled interviews (active sessions with no activity in 3+ days)
       const { db } = await import("./db");
@@ -2008,7 +2018,10 @@ Return JSON only.`,
           dealName: dealMap.get(dealId) || "Unknown",
           count,
         }))
-        .filter((d) => d.count > 0);
+        // Shown as "Waiting on the seller", so only where a seller has been
+        // invited and the deal isn't live yet (an uninvited deal already
+        // reads "Your move: invite the seller").
+        .filter((d) => d.count > 0 && sideFacts.get(d.dealId)?.extras.invited && !allDeals.find((x) => x.id === d.dealId)?.isLive);
 
       // ─ Recent activity feed (last 48 hours, cap at 20) ─
       const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -2107,7 +2120,7 @@ Return JSON only.`,
           pendingApprovals,
           unansweredQuestions,
           stalledInterviews,
-          pendingReviewCIMs,
+          yourMove,
           pendingDocuments,
         },
         activity,
@@ -2355,14 +2368,28 @@ Return JSON only.`,
     }
   });
 
-  // Dual-auth PATCH: a broker session can update any field of a deal they
-  // own; a seller (identified by their invite token in the X-Seller-Token
-  // header) can update only the intake fields on the deal their token maps
-  // to. Everyone else gets 401/404.
+  // Dual-auth PATCH: a broker session can update the broker-editable fields
+  // below on a deal they own; a seller (identified by their invite token in
+  // the X-Seller-Token header) can update only the intake fields on the deal
+  // their token maps to. Everyone else gets 401/404.
   const SELLER_PATCHABLE_FIELDS = new Set([
     "questionnaireData",
     "operationalSystems",
     "employeeChart",
+  ]);
+  // What the broker UI actually sends (Overview checklist, approvals, publish,
+  // phase advance; the intake wizard when a broker previews the seller view),
+  // plus the plain deal-detail fields. Everything else has its own endpoint:
+  // ownership (brokerId) never moves, extractedInfo is written only through
+  // provenance-aware paths, archive via /archive, generation state by jobs.
+  const BROKER_PATCHABLE_FIELDS = new Set([
+    ...Array.from(SELLER_PATCHABLE_FIELDS),
+    "businessName", "industry", "subIndustry", "location", "description", "websiteUrl",
+    "askingPrice", "ndaSigned", "sqCompleted", "valuationCompleted", "engagementSent",
+    "phase", "isLive",
+    "contentApprovedByBroker", "contentApprovedBySeller",
+    "designApprovedByBroker", "designApprovedBySeller",
+    "designTemplateId", "ndaRequired", "watermarkText",
   ]);
   app.patch("/api/deals/:id", async (req, res) => {
     try {
@@ -2373,7 +2400,30 @@ Return JSON only.`,
       if (req.session.brokerId) {
         const owned = await getOwnedDeal(req.params.id, req.session.brokerId);
         if (!owned) return res.status(404).json({ error: "Deal not found" });
-        allowedBody = req.body;
+        const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+        const { allowBackward, ...fields } = body;
+        if ("brokerId" in fields || "id" in fields) {
+          return res.status(400).json({ error: "A deal's id and owner can't be changed" });
+        }
+        const rejected = Object.keys(fields).filter((k) => !BROKER_PATCHABLE_FIELDS.has(k));
+        if (rejected.length > 0) {
+          return res.status(400).json({ error: `These fields can't be changed here: ${rejected.join(", ")}` });
+        }
+        // Phases only move forward unless the caller deliberately asks to
+        // move back. An earlier phase's "Advance" button on an expanded
+        // accordion used to silently drag a phase-4 deal back to phase 2.
+        if (fields.phase !== undefined) {
+          if (!isDealPhase(fields.phase)) {
+            return res.status(400).json({ error: "Unknown phase" });
+          }
+          if (phaseIndex(fields.phase) < phaseIndex(owned.phase) && allowBackward !== true) {
+            return res.status(409).json({
+              error: `This deal is already past that step — it's in ${DEAL_PHASES[phaseIndex(owned.phase)]?.label ?? "a later phase"}.`,
+              code: "phase_backward",
+            });
+          }
+        }
+        allowedBody = fields;
       } else {
         const sellerToken = req.headers["x-seller-token"];
         if (typeof sellerToken === "string" && sellerToken.length > 0) {

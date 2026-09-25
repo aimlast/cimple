@@ -16,6 +16,7 @@ import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
+import { phaseIndex } from "@shared/deal-progress";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -134,7 +135,9 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   };
   if (mode === "content") {
     updates.cimContent = cimContent;
-    updates.phase = "phase3_content_creation";
+    // Moves an earlier deal into Content Creation; a full regenerate on a
+    // Design-phase deal must not drag it back to phase 3.
+    if (phaseIndex(deal.phase) < phaseIndex("phase3_content_creation")) updates.phase = "phase3_content_creation";
   }
   await storage.updateDeal(deal.id, updates as any);
 }
