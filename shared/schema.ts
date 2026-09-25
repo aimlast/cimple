@@ -157,6 +157,51 @@ export interface CimGenerationStatus {
   completedTitles: string[];
 }
 
+/** One buyer's AI deep-check verdict for a deal. */
+export interface BuyerDeepCheckResult {
+  verdict: "strong" | "good" | "possible" | "unlikely";
+  fitScore: number;                 // 0-100
+  whyFit: string;                   // specific reason, broker-facing
+  watchOuts: string[];              // 0-2 concerns
+  outreachAngle: string | null;     // blind-safe hook for the outreach email
+  buyerKey: string;                 // profile fingerprint — re-check only when it changes
+  checkedAt: string;
+}
+export interface BuyerDeepCheck {
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  dealKey: string;                  // fingerprint of the deal facts used
+  total: number;
+  done: number;
+  skipped?: number;                 // clear mismatches not sent to the AI
+  error?: string;
+  results: Record<string, BuyerDeepCheckResult>;
+}
+
+export interface ExternalAcquirer {
+  name: string;
+  type: "strategic" | "private_equity" | "family_office" | "search_fund" | "other";
+  headquarters?: string | null;
+  website?: string | null;
+  whyInterested: string;
+  evidence?: string[];              // e.g. recent acquisitions in the space
+  contact?: string | null;          // only when found on a cited page — never invented
+  sources: string[];                // URLs
+  inYourList?: boolean;
+}
+export interface ExternalAcquirerSearch {
+  status: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  mode?: "web" | "knowledge";       // web = searched and cited; knowledge = model memory only
+  results: ExternalAcquirer[];
+  note?: string | null;             // why few/none fit (e.g. seller prefers individual buyers)
+  channels?: Array<{ name: string; how: string; url?: string | null }>;
+  includeExcluded?: boolean;        // broker asked to include buyer types the seller ruled out
+  error?: string;
+}
+
 export const deals = pgTable("deals", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   brokerId: varchar("broker_id").notNull(),
@@ -248,6 +293,12 @@ export const deals = pgTable("deals", {
   // Industry-specific data checklist per CIM section (what the interview is
   // trying to capture for THIS kind of business). See server/interview/interview-plan.ts.
   interviewPlan: jsonb("interview_plan").$type<InterviewPlan>(),
+  // AI deep check of every buyer who passes the first-pass match against this
+  // deal (server/matching/deep-check.ts). Broker-facing only.
+  buyerDeepCheck: jsonb("buyer_deep_check").$type<BuyerDeepCheck>(),
+  // Likely acquirers from outside the broker's buyer list, researched on the
+  // web (server/matching/external-acquirers.ts). Broker-facing only.
+  externalAcquirers: jsonb("external_acquirers").$type<ExternalAcquirerSearch>(),
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section

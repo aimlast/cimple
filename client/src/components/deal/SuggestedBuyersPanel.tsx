@@ -75,6 +75,15 @@ interface SuggestedBuyer {
     };
   };
   lastActivityAt: string | null;
+  passesFirstPass?: boolean;
+  rankScore?: number;
+  aiCheck?: {
+    verdict: "strong" | "good" | "possible" | "unlikely";
+    fitScore: number;
+    whyFit: string;
+    watchOuts: string[];
+    checkedAt: string;
+  } | null;
 }
 
 interface SuggestedBuyersResponse {
@@ -83,7 +92,20 @@ interface SuggestedBuyersResponse {
   industry: string;
   suggested: SuggestedBuyer[];
   totalCandidates: number;
+  firstPassCount?: number;
+  deepCheck?: {
+    status: "running" | "done" | "failed";
+    total: number; done: number; skipped: number;
+    startedAt: string; finishedAt: string | null; error: string | null;
+  } | null;
 }
+
+const VERDICT_STYLES: Record<string, { label: string; cls: string }> = {
+  strong:   { label: "Strong fit",   cls: "bg-teal/15 text-teal border-teal/40" },
+  good:     { label: "Good fit",     cls: "bg-teal/10 text-teal/90 border-teal/25" },
+  possible: { label: "Possible fit", cls: "bg-muted/30 text-muted-foreground border-border" },
+  unlikely: { label: "Unlikely fit", cls: "bg-muted/20 text-muted-foreground/70 border-border" },
+};
 
 interface Draft {
   buyerUserId: string;
@@ -151,6 +173,23 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   const { data, isLoading, refetch } = useQuery<SuggestedBuyersResponse>({
     queryKey: ["/api/deals", dealId, "suggested-buyers"],
     enabled: !!dealId,
+    // Poll while the AI deep check is working through the list.
+    refetchInterval: (q) => ((q.state.data as SuggestedBuyersResponse | undefined)?.deepCheck?.status === "running" ? 3000 : false),
+  });
+  const deepRunning = data?.deepCheck?.status === "running";
+
+  const deepCheckMutation = useMutation({
+    mutationFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/buyer-deep-check`, { method: "POST", credentials: "include" });
+      const body = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(body.error || "Couldn't start the deep check");
+      return body;
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "suggested-buyers"] });
+      toast({ description: "AI deep check started — results fill in as each buyer is reviewed." });
+    },
+    onError: (e: Error) => toast({ variant: "destructive", description: e.message }),
   });
 
   const { data: historyData } = useQuery<{ history: OutreachHistoryItem[] }>({
@@ -279,10 +318,27 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
             Suggested buyers
           </h3>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Ranked by qualified-lead score. Cimple drafts the email — you review, edit, and send.
+            {data?.deepCheck
+              ? "Ranked by the AI deep check, then qualified-lead score. Cimple drafts the email — you review, edit, and send."
+              : "Ranked by qualified-lead score. Cimple drafts the email — you review, edit, and send."}
           </p>
         </div>
         <div className="flex items-center gap-1.5">
+          <Button
+            size="sm"
+            className="bg-teal text-teal-foreground hover:bg-teal/90"
+            disabled={deepRunning || deepCheckMutation.isPending || !(data?.firstPassCount)}
+            onClick={() => deepCheckMutation.mutate()}
+            title="The AI reads every buyer who matches this CIM against its full verified facts"
+            data-testid="button-deep-check"
+          >
+            {deepRunning ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Sparkles className="h-3 w-3 mr-1" />}
+            {deepRunning
+              ? `Checking ${data?.deepCheck?.done ?? 0} of ${data?.deepCheck?.total ?? 0}…`
+              : data?.deepCheck
+                ? "Re-run AI deep check"
+                : `AI deep check${data?.firstPassCount ? ` (${data.firstPassCount} buyers)` : ""}`}
+          </Button>
           <Button
             variant="outline"
             size="sm"
@@ -294,6 +350,16 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
           </Button>
         </div>
       </div>
+
+      {data?.deepCheck && (
+        <div className="rounded-md border border-border bg-muted/10 px-3 py-2 text-2xs text-muted-foreground" data-testid="deep-check-status">
+          {deepRunning
+            ? `The AI is reviewing every buyer who matches this CIM — ${data.deepCheck.done} of ${data.deepCheck.total} done.`
+            : data.deepCheck.status === "failed"
+              ? (data.deepCheck.error || "The deep check didn't finish — run it again to continue where it stopped.")
+              : `AI deep check: ${data.deepCheck.total} matching buyer${data.deepCheck.total === 1 ? "" : "s"} reviewed against the full CIM facts${data.deepCheck.skipped ? ` · ${data.deepCheck.skipped} clear mismatch${data.deepCheck.skipped === 1 ? "" : "es"} skipped` : ""}${data.deepCheck.error ? ` · ${data.deepCheck.error}` : ""}. Re-run after the CIM or buyer profiles change — only what changed is re-checked.`}
+        </div>
+      )}
 
       {/* Stat row */}
       <div className="grid grid-cols-4 gap-2">
@@ -624,6 +690,22 @@ function BuyerRow({
             </Badge>
           )}
         </div>
+
+        {/* AI deep-check verdict */}
+        {buyer.aiCheck && (
+          <div className="space-y-0.5" data-testid={`ai-check-${buyer.buyerUserId}`}>
+            <div className="flex items-start gap-1.5">
+              <Badge variant="outline" className={`shrink-0 text-2xs font-normal ${VERDICT_STYLES[buyer.aiCheck.verdict]?.cls ?? ""}`}>
+                <Sparkles className="h-2.5 w-2.5 mr-0.5" />
+                {VERDICT_STYLES[buyer.aiCheck.verdict]?.label ?? buyer.aiCheck.verdict} · {buyer.aiCheck.fitScore}
+              </Badge>
+              <span className="text-xs text-foreground/85 leading-snug">{buyer.aiCheck.whyFit}</span>
+            </div>
+            {buyer.aiCheck.watchOuts.length > 0 && (
+              <div className="text-2xs text-amber-400/90 pl-1">Watch: {buyer.aiCheck.watchOuts.join(" · ")}</div>
+            )}
+          </div>
+        )}
 
         {/* Match dimensions */}
         {buyer.match && buyer.match.criteriaMatched > 0 && (
