@@ -8,14 +8,20 @@ import type { CimSection, CimSectionAiTask } from "@shared/schema";
 export type BlindStatus = "fresh" | "updating" | "held" | "none" | "excluded";
 
 /** A section row as the builder receives it. */
-export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHistory" | "accessTier"> {
+export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHistory" | "accessTier" | "figureWarnings"> {
   accessTier: "teaser" | "full";
   aiTask: CimSectionAiTask | null;
   historyCount: number;
   lastChange: { reason: string; at: string } | null;
   blindStatus: BlindStatus;
   blindError?: string | null;
+  /** DD version: "stale" = edited since it was written; "missing" = added after the DD CIM. DD buyers see the named content for both. */
+  ddStatus: DdStatus;
+  /** Figures or names the check couldn't trace to the deal's information. */
+  figureWarnings: string[];
 }
+
+export type DdStatus = "none" | "fresh" | "stale" | "missing" | "excluded";
 
 export interface BuilderState {
   sections: BuilderSection[];
@@ -25,7 +31,8 @@ export interface BuilderState {
    * reason is in `error`, and on the row's `blindError`).
    */
   blind: { generated: boolean; codename: string | null; running: boolean; error: string | null; updating: number; held: number };
-  dd: { generated: boolean };
+  /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
+  dd: { generated: boolean; outOfDate: number; running: boolean };
   buyers: { total: number; byLevel: Record<string, number> };
   deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
 }

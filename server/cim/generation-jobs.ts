@@ -16,10 +16,11 @@ import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
 import { templateForDeal } from "./templates";
-import type { CimGenerationStatus, Deal } from "@shared/schema";
+import type { CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
+import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -76,9 +77,10 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     (deal.extractedInfo as Record<string, unknown>) || {},
     resolvedDiscrepancies,
   );
-  const [branding, insights] = await Promise.all([
+  const [branding, insights, analyses] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
+    storage.getFinancialAnalysesByDeal(deal.id).catch((): FinancialAnalysis[] => []),
   ]);
   // The deal's design template may carry the brokerage's house structure
   // ("Match my existing CIM") — the planner follows it.
@@ -101,6 +103,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
       ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor }
       : null,
     sectionOutline: template?.sectionOutline ?? null,
+    // The broker-reviewed financial analysis (else the latest completed one):
+    // statement tables and bridges are copied from it, never rebuilt.
+    financials: buildCimFinancials(pickAnalysisForCim(analyses)),
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({
@@ -136,6 +141,7 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
       aiDraftContent: section.aiDraftContent || null,
       isVisible: section.isVisible,
       brokerApproved: false,
+      figureWarnings: section.figureWarnings?.length ? section.figureWarnings : null,
     });
     if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
   }

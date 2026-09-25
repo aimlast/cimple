@@ -6,8 +6,9 @@
  * (title-only redaction) and an edited section kept serving its old override.
  * Now:
  *   - Every content change (create, duplicate, edit, rewrite, convert,
- *     regenerate) calls markSectionsBlindStale(): the section's blind/DD
- *     overrides are dropped and `blindStaleAt` is stamped.
+ *     regenerate) calls markSectionsBlindStale(): the section's blind
+ *     override is dropped and `blindStaleAt` is stamped; its DD override is
+ *     kept but stamped stale (`ddStaleAt`).
  *   - The view room serves a section in blind mode ONLY when it has an
  *     override and `blindStaleAt` is null; anything else is held back and
  *     triggers scheduleBlindRefresh().
@@ -115,14 +116,21 @@ export function isBeingWritten(section: Pick<CimSection, "aiTask">): boolean {
 }
 
 /**
- * Content of these sections changed: drop their blind/DD overrides and stamp
- * them stale. Call BEFORE scheduleBlindRefresh(). Returns the stamp.
+ * Content of these sections changed: drop their blind overrides and stamp
+ * them stale. Their DD versions are KEPT but stamped stale too (ddStaleAt):
+ * a DD buyer is served the current named content for them until the broker
+ * refreshes the DD version (dd-enrichment refreshSectionDd) — an edit used
+ * to delete the DD version silently. Call BEFORE scheduleBlindRefresh().
+ * Returns the stamp.
  */
 export async function markSectionsBlindStale(sectionIds: string[]): Promise<Date> {
   const now = new Date();
   if (sectionIds.length === 0) return now;
-  await db.update(cimSections).set({ blindStaleAt: now }).where(inArray(cimSections.id, sectionIds));
-  await db.delete(cimSectionOverrides).where(inArray(cimSectionOverrides.cimSectionId, sectionIds));
+  await db.update(cimSections).set({ blindStaleAt: now, ddStaleAt: now }).where(inArray(cimSections.id, sectionIds));
+  await db.delete(cimSectionOverrides).where(and(
+    inArray(cimSectionOverrides.cimSectionId, sectionIds),
+    eq(cimSectionOverrides.mode, "blind"),
+  ));
   for (const id of sectionIds) sectionBackoff.delete(id);
   return now;
 }

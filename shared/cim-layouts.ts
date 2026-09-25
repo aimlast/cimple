@@ -91,8 +91,8 @@ const LAYOUTS = [
     blind: "redact",
     family: "cover",
     planner: true,
-    aiSpec: "cover_page: { businessName, tagline?, industry?, location?, askingPrice?, revenue?, ebitda?, earningsLabel?, preparedBy?, date?, confidentialLabel? }",
-    aiUse: "— ebitda holds the headline earnings figure; earningsLabel says what it is (\"SDE\", \"EBITDA\", \"Adjusted EBITDA\") and MUST match the figure. Never put an SDE number under an EBITDA label. Put only the number in ebitda (e.g. \"$628,000\"), the name in earningsLabel.",
+    aiSpec: "cover_page: { businessName, tagline?, industry?, location?, askingPrice?, revenue?, ebitda?, earningsLabel?, confidentialLabel? }",
+    aiUse: "— ebitda holds the headline earnings figure; earningsLabel says what it is (\"SDE\", \"EBITDA\", \"Adjusted EBITDA\") and MUST match the figure. Never put an SDE number under an EBITDA label. Put only the number in ebitda (e.g. \"$628,000\"), the name in earningsLabel. The date and \"Prepared by\" are added by the system (the month it is written; the brokerage) — never include them.",
     defaultData: (ctx) => ({
       businessName: ctx.businessName || "Business name",
       tagline: "",

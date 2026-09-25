@@ -184,7 +184,11 @@ export function CimTab() {
                 icon={<ShieldCheck className="h-4 w-4" />}
                 title="Due diligence"
                 who="Due-diligence buyers"
-                status={data.dd.generated ? <span className="text-success">Ready</span> : <span className="text-muted-foreground">Not generated</span>}
+                status={!data.dd.generated
+                  ? <span className="text-muted-foreground">Not generated</span>
+                  : (data.dd.outOfDate ?? 0) > 0
+                    ? <span className="text-blue-400">{data.dd.outOfDate} section{data.dd.outOfDate === 1 ? "" : "s"} out of date</span>
+                    : <span className="text-success">Ready</span>}
                 detail="The named CIM plus customer names and verification notes."
                 onPreview={() => openBuilder("due_diligence")}
                 action={{
