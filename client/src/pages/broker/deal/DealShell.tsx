@@ -46,7 +46,7 @@ const TABS = [
 type TabKey = (typeof TABS)[number]["key"];
 
 const TAB_TRIGGER_CLASS =
-  "rounded-none border-b-2 border-transparent data-[active=true]:border-teal data-[active=true]:text-teal px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer";
+  "shrink-0 whitespace-nowrap rounded-none border-b-2 border-transparent data-[active=true]:border-teal data-[active=true]:text-teal px-4 py-2.5 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors cursor-pointer";
 
 /* ═══════════════════════════════════════════
    PHASE STEPPER (horizontal — header)
@@ -155,7 +155,7 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
       </div>
 
       {/* ── Tab bar ── */}
-      <div className="flex bg-transparent border-b border-border h-auto p-0 w-full justify-start px-5 shrink-0">
+      <div className="flex bg-transparent border-b border-border h-auto p-0 w-full justify-start px-5 shrink-0 overflow-x-auto scrollbar-thin">
         {TABS.map((tab) => (
           <button
             key={tab.key}

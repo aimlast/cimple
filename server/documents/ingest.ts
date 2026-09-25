@@ -1,0 +1,208 @@
+/**
+ * ingest.ts — one pipeline for every source of information about a deal.
+ *
+ * A "source" is a documents row of any kind: an uploaded document, an email,
+ * a phone/in-person call transcript, a video-call transcript, a CRM note, a
+ * website page or a social-media post (documents.sourceKind). Each is parsed
+ * (files) or taken as text, read by the supporting model with a prompt that
+ * knows what kind of source it is (who is speaking, what counts as a fact),
+ * and merged into deals.extractedInfo with provenance
+ * {source: kind, documentId, at} — see mergeExtractedData / SOURCE_RANK.
+ *
+ *   createAndIngestSource({...})  → creates the row, then ingests it
+ *   ingestDocument(documentId)    → (re)ingests an existing row
+ *
+ * Used by the upload route, the Information tab's "Add source", and other
+ * workstreams (CRM seller sync, demo seeding).
+ */
+import fs from "fs";
+import path from "path";
+import { storage } from "../storage";
+import { extractTextFromFile } from "./parser";
+import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
+import { isSourceKind, type SourceKind } from "../interview/info-merger";
+import type { Document, DocumentSourceMeta } from "@shared/schema";
+
+export type SourceVisibility = "shared" | "broker_only";
+
+const uploadsDir = () => process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
+
+/** Parser category for a kind when the caller doesn't pick one. */
+export function defaultCategoryForKind(kind: SourceKind): string {
+  switch (kind) {
+    case "call":
+    case "video_call":
+      return "transcripts";
+    case "website":
+    case "social":
+      return "marketing";
+    default:
+      return "other";
+  }
+}
+
+/** Kinds whose rows are broker-private unless the caller says otherwise. */
+export function defaultVisibilityForKind(kind: SourceKind): SourceVisibility {
+  return kind === "crm" ? "broker_only" : "shared";
+}
+
+/** documents.sourceKind as a SourceKind (legacy rows → "document"). */
+export function documentKind(doc: Pick<Document, "sourceKind">): SourceKind {
+  return isSourceKind(doc.sourceKind) ? doc.sourceKind : "document";
+}
+
+export function isBrokerOnly(doc: Pick<Document, "visibility">): boolean {
+  return doc.visibility === "broker_only";
+}
+
+/** Only the documented metadata keys, as trimmed strings (durationMin a number). */
+export function cleanSourceMeta(raw: unknown): DocumentSourceMeta | null {
+  if (!raw || typeof raw !== "object") return null;
+  const r = raw as Record<string, unknown>;
+  const out: DocumentSourceMeta = {};
+  for (const key of ["from", "to", "subject", "date", "participants", "url", "platform", "provider", "recordType", "recordId"] as const) {
+    const v = r[key];
+    if (typeof v === "string" && v.trim()) out[key] = v.trim().slice(0, 500);
+    else if (typeof v === "number") out[key] = String(v);
+  }
+  const d = Number(r.durationMin);
+  if (Number.isFinite(d) && d > 0) out.durationMin = Math.round(d);
+  return Object.keys(out).length > 0 ? out : null;
+}
+
+/** Absolute path of a row's file under the uploads volume, or null. */
+export function resolveDocumentPath(doc: Pick<Document, "fileUrl">): string | null {
+  const relative = (doc.fileUrl || "").replace(/^\/uploads\//, "");
+  if (!relative || relative.includes("..")) return null;
+  return path.join(uploadsDir(), relative);
+}
+
+function safeStem(title: string): string {
+  return title.replace(/[^a-zA-Z0-9-_ ]/g, " ").replace(/\s+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "source";
+}
+
+export interface CreateSourceInput {
+  dealId: string;
+  kind: SourceKind;
+  /** Display title ("Email from Dr. Patel — Mar 3", "Discovery call"). */
+  title: string;
+  /** Pasted text — stored as a .txt file so it can be opened like any upload. */
+  text?: string;
+  /** A file already on disk (e.g. a multer upload). Copied under uploads/docs when outside it. */
+  filePath?: string;
+  originalName?: string;
+  mimeType?: string;
+  meta?: DocumentSourceMeta | null;
+  visibility?: SourceVisibility;
+  uploadedBy?: string;
+  /** Parser category (financials, legal, …). Defaults from the kind. */
+  category?: string;
+  subcategory?: string | null;
+  /** true: return right after the row exists and ingest in the background. */
+  background?: boolean;
+}
+
+/**
+ * Creates a documents row for a source and ingests it. Awaits the extraction
+ * unless `background` is set; either way the returned row is the created one
+ * (re-read after ingestion when awaited, so status reflects the result).
+ */
+export async function createAndIngestSource(input: CreateSourceInput): Promise<Document> {
+  const kind: SourceKind = isSourceKind(input.kind) ? input.kind : "document";
+  const docsDir = path.join(uploadsDir(), "docs");
+  fs.mkdirSync(docsDir, { recursive: true });
+
+  let filename: string;
+  let fileSize: number | undefined;
+  let mimeType = input.mimeType ?? null;
+  if (input.filePath) {
+    const abs = path.resolve(input.filePath);
+    if (path.dirname(abs) === path.resolve(docsDir)) {
+      filename = path.basename(abs);
+    } else {
+      filename = `src_${Date.now()}_${Math.random().toString(36).slice(2, 8)}${path.extname(abs)}`;
+      fs.copyFileSync(abs, path.join(docsDir, filename));
+    }
+    try { fileSize = fs.statSync(path.join(docsDir, filename)).size; } catch { /* size is optional */ }
+  } else if (typeof input.text === "string" && input.text.trim()) {
+    filename = `src_${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${safeStem(input.title)}.txt`;
+    fs.writeFileSync(path.join(docsDir, filename), input.text, "utf-8");
+    fileSize = Buffer.byteLength(input.text, "utf-8");
+    mimeType = "text/plain";
+  } else {
+    throw new Error("A source needs text or a file");
+  }
+
+  const title = (input.title || input.originalName || "Untitled source").trim().slice(0, 200);
+  const doc = await storage.createDocument({
+    dealId: input.dealId,
+    uploadedBy: input.uploadedBy ?? "broker",
+    name: title,
+    originalName: (input.originalName || title).slice(0, 200),
+    category: input.category || defaultCategoryForKind(kind),
+    subcategory: input.subcategory ?? null,
+    fileUrl: `/uploads/docs/${filename}`,
+    fileSize: fileSize ?? null,
+    mimeType,
+    status: "pending",
+    sourceKind: kind,
+    sourceMeta: cleanSourceMeta(input.meta) ?? null,
+    visibility: input.visibility ?? defaultVisibilityForKind(kind),
+  } as any);
+
+  if (input.background) {
+    ingestDocument(doc.id).catch((err) => console.error(`[ingest] background ingest failed for ${doc.id}:`, err));
+    return doc;
+  }
+  await ingestDocument(doc.id);
+  return (await storage.getDocument(doc.id)) ?? doc;
+}
+
+export interface IngestResult {
+  status: "extracted" | "failed" | "missing";
+  /** Keys this source newly asserted or replaced on the deal. */
+  fieldsWritten: string[];
+}
+
+/**
+ * (Re)ingests an existing documents row: parse the file (falling back to the
+ * stored text), extract with the kind-aware prompt, merge into the deal with
+ * provenance. The deal is re-read immediately before the write so an
+ * interview turn or another upload finishing meanwhile is never clobbered.
+ */
+export async function ingestDocument(documentId: string): Promise<IngestResult> {
+  const doc = await storage.getDocument(documentId);
+  if (!doc) return { status: "missing", fieldsWritten: [] };
+  const kind = documentKind(doc);
+  try {
+    await storage.updateDocument(doc.id, { status: "parsing" } as any);
+    let text = "";
+    const filePath = resolveDocumentPath(doc);
+    if (filePath && fs.existsSync(filePath)) text = await extractTextFromFile(filePath, doc.mimeType);
+    if (!text && doc.extractedText) text = doc.extractedText;
+
+    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
+    const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
+    await storage.updateDocument(doc.id, {
+      status: failed ? "failed" : "extracted",
+      extractedText: text,
+      extractedData: extracted,
+      isProcessed: !failed,
+    } as any);
+    if (failed) return { status: "failed", fieldsWritten: [] };
+
+    const deal = await storage.getDeal(doc.dealId);
+    if (!deal) return { status: "extracted", fieldsWritten: [] };
+    const before = (deal.extractedInfo as Record<string, unknown>) || {};
+    const merged = mergeExtractedData(before, extracted, { documentId: doc.id, source: kind });
+    const fieldsWritten = Object.keys(merged).filter(
+      (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
+    );
+    await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
+    return { status: "extracted", fieldsWritten };
+  } catch (err) {
+    console.error(`[ingest] failed for doc ${documentId}:`, err);
+    await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});
+    return { status: "failed", fieldsWritten: [] };
+  }
+}

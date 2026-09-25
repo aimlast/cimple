@@ -6,7 +6,7 @@ import fs from "fs";
 import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf } from "./interview";
+import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
@@ -30,8 +30,6 @@ import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
-import { extractTextFromFile } from "./documents/parser.js";
-import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
@@ -257,6 +255,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const deal = await storage.getDeal(doc.dealId);
         if (deal && deal.brokerId === req.session.brokerId) return next();
       }
+      // Broker-only sources (CRM notes, private emails) are never served to
+      // the seller, whatever token they hold.
+      if ((doc as any).visibility === "broker_only") return res.status(401).json({ error: "Not authorized" });
       const token = (req.query.token as string) || (req.headers["x-seller-token"] as string);
       if (token) {
         const invite = await storage.getSellerInviteByToken(token);
@@ -1301,7 +1302,7 @@ Return JSON only.`,
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
       const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
-      const result = await startOrResumeSession(dealId, { conductedBy });
+      const result = await startOrResumeSession(dealId, { conductedBy, conductedVia: parseConductedVia(req.body?.conductedVia) });
       res.json(result);
     } catch (error: any) {
       console.error("Interview start error:", error);
@@ -1574,6 +1575,8 @@ Return JSON only.`,
 
       const result = await processTurn(dealId, sessionId, message, undefined, {
         correctionOf: parseCorrectionOf(req.body.correctionOf),
+        conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+        conductedVia: parseConductedVia(req.body?.conductedVia),
       });
       res.json(result);
     } catch (error: any) {
@@ -1616,6 +1619,7 @@ Return JSON only.`,
           {
             correctionOf: parseCorrectionOf(req.body.correctionOf),
             conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+            conductedVia: parseConductedVia(req.body?.conductedVia),
           },
         );
         send({ type: "done", result });
@@ -2433,9 +2437,20 @@ Return JSON only.`,
         validatedData.ndaSignedIp = null;
         (validatedData as any).ndaSignedBy = null;
       }
-      const deal = await storage.updateDeal(req.params.id, validatedData);
+      let deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
+      }
+      // Intake answers become facts (source "questionnaire") as soon as the
+      // seller saves them — the broker's Information tab and the readiness
+      // score shouldn't wait for the interview to start.
+      if (["questionnaireData", "operationalSystems", "employeeChart"].some((k) => (validatedData as Record<string, unknown>)[k] !== undefined)) {
+        try {
+          const { seedQuestionnaireFacts } = await import("./interview/session-manager");
+          if ((await seedQuestionnaireFacts(req.params.id)).length > 0) deal = (await storage.getDeal(req.params.id)) ?? deal;
+        } catch (e) {
+          console.warn("[intake] questionnaire seeding failed:", e);
+        }
       }
       res.json(deal);
     } catch (error: any) {
@@ -2570,33 +2585,12 @@ Return JSON only.`,
     },
   });
 
-  async function parseDocumentAsync(
-    docId: string,
-    filePath: string,
-    mimeType: string | null,
-    category: string,
-    subcategory: string | null,
-    dealId: string
-  ) {
-    try {
-      await storage.updateDocument(docId, { status: "parsing" } as any);
-      const text = await extractTextFromFile(filePath, mimeType);
-      const extracted = await extractDocumentData(text, category, subcategory);
-      await storage.updateDocument(docId, {
-        status: "extracted",
-        extractedText: text,
-        extractedData: extracted,
-        isProcessed: true,
-      } as any);
-      const deal = await storage.getDeal(dealId);
-      if (deal) {
-        const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted, docId);
-        await storage.updateDeal(dealId, { extractedInfo: merged } as any);
-      }
-    } catch (err) {
-      console.error(`[parser] failed for doc ${docId}:`, err);
-      await storage.updateDocument(docId, { status: "failed" } as any).catch(() => {});
-    }
+  // Parse + extract + merge with provenance — see server/documents/ingest.ts.
+  // Fire-and-forget: the row's status flips pending → parsing → extracted/failed.
+  function parseDocumentAsync(docId: string) {
+    import("./documents/ingest")
+      .then(({ ingestDocument }) => ingestDocument(docId))
+      .catch((err) => console.error(`[parser] failed for doc ${docId}:`, err));
   }
 
   app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
@@ -2651,6 +2645,20 @@ Return JSON only.`,
       // Pasted text carries its own title; keep it verbatim as the display
       // name. Only the on-disk filename (doc_<ts>.ext) needs sanitising.
       const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
+      // Provenance v2: the broker says what kind of source this is (email,
+      // call transcript, CRM note…) and who may see it. A seller's upload is
+      // always a shared document.
+      const { isSourceKind } = await import("./interview/info-merger");
+      const { cleanSourceMeta, defaultVisibilityForKind } = await import("./documents/ingest");
+      const requestedKind = uploadedBy === "broker" && isSourceKind(req.body.sourceKind) ? req.body.sourceKind : "document";
+      let sourceMeta: ReturnType<typeof cleanSourceMeta> = null;
+      if (uploadedBy === "broker" && typeof req.body.sourceMeta === "string" && req.body.sourceMeta.trim()) {
+        try { sourceMeta = cleanSourceMeta(JSON.parse(req.body.sourceMeta)); } catch { sourceMeta = null; }
+      }
+      const visibility =
+        uploadedBy === "broker" && (req.body.visibility === "broker_only" || req.body.visibility === "shared")
+          ? req.body.visibility
+          : uploadedBy === "broker" ? defaultVisibilityForKind(requestedKind) : "shared";
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
         uploadedBy,
@@ -2659,7 +2667,12 @@ Return JSON only.`,
         category,
         subcategory: subcategory || null,
         fileUrl: `/uploads/docs/${req.file.filename}`,
+        fileSize: req.file.size ?? null,
+        mimeType: req.file.mimetype || null,
         status: "pending",
+        sourceKind: requestedKind,
+        sourceMeta,
+        visibility,
       } as any);
 
       // Credit the upload against the checklist: the explicit row when one
@@ -2667,7 +2680,9 @@ Return JSON only.`,
       // broker dropping "2023 P&L.pdf" counts toward the financials row).
       // When the seller replaces their own earlier upload, that file goes.
       const previousFileId = targetRequirement?.uploadedFileId ?? null;
-      const linkedRequirement = await linkUploadToRequirement({
+      // A broker-only source is never credited on the seller's checklist
+      // (the seller would see its name there).
+      const linkedRequirement = visibility === "broker_only" ? null : await linkUploadToRequirement({
         dealId: req.params.dealId,
         docId: doc.id,
         fileName: displayName,
@@ -2683,7 +2698,7 @@ Return JSON only.`,
         }
       }
 
-      parseDocumentAsync(doc.id, req.file.path, req.file.mimetype, category, subcategory || null, req.params.dealId);
+      parseDocumentAsync(doc.id);
       res.json({ ...doc, linkedRequirement });
     } catch (error: any) {
       console.error("Upload error:", error);
@@ -2695,8 +2710,7 @@ Return JSON only.`,
     try {
       const doc = await storage.getDocument(req.params.id);
       if (!doc || !(await ownsDeal(req, doc.dealId))) return res.status(404).json({ error: "Document not found" });
-      const filePath = path.join(uploadsDir, (doc.fileUrl || "").replace(/^\/uploads\//, ""));
-      parseDocumentAsync(doc.id, filePath, null, doc.category || "other", doc.subcategory || null, doc.dealId);
+      parseDocumentAsync(doc.id);
       res.json({ status: "parsing" });
     } catch (error: any) {
       res.status(500).json({ error: "Parse failed" });
@@ -3992,8 +4006,9 @@ Return JSON only.`,
       const totalRequired = requiredDocs.length;
       const docPct = totalRequired > 0 ? Math.round((uploadedRequired / totalRequired) * 100) : 0;
 
-      // Uploaded documents
-      const allDocs = await storage.getDocumentsByDeal(deal.id);
+      // Uploaded documents — broker-only sources (CRM notes, private emails)
+      // never reach the seller.
+      const allDocs = (await storage.getDocumentsByDeal(deal.id)).filter((d) => (d as any).visibility !== "broker_only");
 
       // Pending seller approvals
       const pendingQuestions = await db.select().from(buyerQuestions)
@@ -6511,6 +6526,17 @@ Return JSON only.`,
       }
       const updated = await storage.updateDiscrepancy(req.params.id, updates);
       if (!updated) return res.status(404).json({ error: "Discrepancy not found" });
+      // The broker's resolution becomes the fact on file (source "broker"),
+      // with the conflicting values kept as alternates — not just a read-time
+      // overlay. (The overlays in the KB/generation paths keep working.)
+      if (updated.status === "resolved" && typeof updated.resolvedValue === "string" && updated.resolvedValue.trim()) {
+        try {
+          const { applyDiscrepancyResolution } = await import("./information/facts");
+          await applyDiscrepancyResolution(updated);
+        } catch (e) {
+          console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
+        }
+      }
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update discrepancy" });

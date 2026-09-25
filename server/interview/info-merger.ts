@@ -1,4 +1,5 @@
 import type { ExtractedInfo } from "@shared/schema";
+import { SOURCE_KINDS, type SourceKind } from "@shared/schema";
 import type { ExtractedField, InterviewReasoning } from "./response-schema";
 import type { IndustryContext, LocationContext } from "./knowledge-base";
 
@@ -583,24 +584,125 @@ function getShouldOverwrite(
   return newRank >= existingRank;
 }
 
+// ── Field provenance (v2) ──────────────────────────────────────────────
+// Who asserted each extractedInfo value, and exactly where. Lives under
+// underscore keys so it is excluded from every CIM/analysis path.
+//
+// Authority (higher wins): broker 7 > interview 6 > call 5 = video_call 5 >
+// questionnaire 4 = email 4 > document 3 > crm 2 > website 1 = social 1 >
+// system 0. An unknown kind ranks 0 (never NaN). The broker's own edit is
+// final; the seller's words outrank anything a model read; second-hand notes
+// (CRM) and public marketing (website, social) rank lowest.
+//
+// Old entries ({source:"interview"|"questionnaire"|"document", documentId?,
+// years?}) are a strict subset of this shape and read unchanged.
+export type { SourceKind };
+export { SOURCE_KINDS };
+/** @deprecated use SourceKind — kept so older imports keep compiling. */
+export type FieldSourceKind = SourceKind;
 
-// ── Field provenance ───────────────────────────────────────────────────
-// Who asserted each extractedInfo value. Lives under an underscore key so it
-// is excluded from every CIM/analysis path. Authority: interview (the seller
-// said it) > questionnaire (the seller typed it) > document (a model read it).
-// Without this, a transcript's guess landed first and the seller's own intake
-// answer was silently ignored; documents appended onto each other with
-// newlines; and deleting a document left its facts behind.
-export type FieldSourceKind = "interview" | "questionnaire" | "document";
 export interface FieldSource {
-  source: FieldSourceKind;
+  source: SourceKind;
+  /** The documents row (document, email, call transcript, CRM note, …) that asserted it. */
   documentId?: string;
   /** Map fields (revenueByYear): which document asserted each sub-key. */
   years?: Record<string, string>;
+  /** Interview / call session that captured it, and the seller turn number. */
+  sessionId?: string;
+  turn?: number;
+  /** ISO timestamp of the write. */
+  at?: string;
+  /** Short human note ("Resolved discrepancy", "Accepted from website"). */
+  note?: string;
+  /** The words the value came from, when known. */
+  excerpt?: string;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
-const SOURCE_RANK: Record<FieldSourceKind, number> = { interview: 3, questionnaire: 2, document: 1 };
+/** Keys the broker deleted — merges from non-broker sources skip them. */
+export const BROKER_SUPPRESSED_KEY = "_brokerSuppressed";
+
+export const SOURCE_RANK: Record<SourceKind, number> = {
+  broker: 7,
+  interview: 6,
+  call: 5,
+  video_call: 5,
+  questionnaire: 4,
+  email: 4,
+  document: 3,
+  crm: 2,
+  website: 1,
+  social: 1,
+  system: 0,
+};
+
+export function isSourceKind(kind: unknown): kind is SourceKind {
+  return typeof kind === "string" && (SOURCE_KINDS as readonly string[]).includes(kind);
+}
+
+/** Authority of a source kind; anything unknown (or missing) ranks 0. */
+export function sourceRank(kind: unknown): number {
+  return isSourceKind(kind) ? SOURCE_RANK[kind] : 0;
+}
+
+/** True for kinds that are the seller speaking live (typed or spoken). */
+export function isLiveSellerKind(kind: unknown): boolean {
+  return kind === "interview" || kind === "call" || kind === "video_call";
+}
+
+const KIND_LABEL: Record<SourceKind, string> = {
+  interview: "Seller interview",
+  call: "Call",
+  video_call: "Video call",
+  questionnaire: "Questionnaire",
+  email: "Email",
+  document: "Document",
+  crm: "CRM note",
+  website: "Website",
+  social: "Social media",
+  broker: "Broker edit",
+  system: "System",
+};
+
+function shortDate(iso: string | undefined): string | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return null;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * One-line, broker-facing description of a fact's source:
+ * "Seller interview · turn 12", "Document · 2024 Compilation.pdf",
+ * "Email · Mar 3", "CRM note", "Website", "Broker edit · Sep 24".
+ * `documentName` resolves a documentId to the source's title.
+ */
+export function describeSource(
+  src: Partial<FieldSource> | null | undefined,
+  documentName?: (id: string) => string | undefined,
+): string {
+  if (!src || !isSourceKind(src.source)) return "Source not recorded";
+  const kind = src.source;
+  const base = KIND_LABEL[kind];
+  const name = src.documentId && documentName ? documentName(src.documentId) : undefined;
+  switch (kind) {
+    case "interview":
+    case "call":
+    case "video_call":
+      if (name) return `${base} · ${name}`;
+      return typeof src.turn === "number" ? `${base} · turn ${src.turn}` : base;
+    case "email": {
+      const when = shortDate(src.at);
+      return name ? `${base} · ${name}` : when ? `${base} · ${when}` : base;
+    }
+    case "broker": {
+      const when = shortDate(src.at);
+      return src.note ? `${base} · ${src.note}` : when ? `${base} · ${when}` : base;
+    }
+    default:
+      return name ? `${base} · ${name}` : base;
+  }
+}
 
 export function getFieldSources(info: Record<string, unknown>): Record<string, FieldSource> {
   const raw = info[FIELD_SOURCES_KEY];
@@ -609,32 +711,115 @@ export function getFieldSources(info: Record<string, unknown>): Record<string, F
 export function setFieldSource(info: Record<string, unknown>, key: string, src: FieldSource): void {
   info[FIELD_SOURCES_KEY] = { ...getFieldSources(info), [key]: src };
 }
+
+export function getSuppressedKeys(info: Record<string, unknown>): string[] {
+  const raw = info[BROKER_SUPPRESSED_KEY];
+  return Array.isArray(raw) ? raw.filter((k): k is string => typeof k === "string") : [];
+}
+/** True when the broker deleted this fact — only the broker (or the seller, live) may bring it back. */
+export function isSuppressed(info: Record<string, unknown>, key: string): boolean {
+  const base = key.includes(".") ? key.slice(0, key.indexOf(".")) : key;
+  return getSuppressedKeys(info).includes(base);
+}
+
 /** True when an incoming write of kind `incoming` may replace the current value of `key`. */
-export function sourceAllowsOverwrite(info: Record<string, unknown>, key: string, incoming: FieldSourceKind): boolean {
+export function sourceAllowsOverwrite(info: Record<string, unknown>, key: string, incoming: SourceKind): boolean {
+  if (incoming !== "broker" && isSuppressed(info, key)) return false;
   const cur = getFieldSources(info)[key];
   // Untracked legacy value (captured before provenance existed): it was most
   // likely the seller's own interview answer, so only a fresh interview
-  // statement may replace it — never a document, never the older intake form.
-  if (!cur) return incoming === "interview";
-  return SOURCE_RANK[incoming] >= SOURCE_RANK[cur.source];
+  // statement (or the broker) may replace it — never a document, a call
+  // transcript or the older intake form.
+  if (!cur) return sourceRank(incoming) >= SOURCE_RANK.interview;
+  return sourceRank(incoming) >= sourceRank(cur.source);
 }
+
+export interface FieldAlternate extends FieldSource {
+  /** The losing value — JSON-stringified when it wasn't a string. */
+  value: string;
+}
+
+export function getFieldAlternates(info: Record<string, unknown>): Record<string, FieldAlternate[]> {
+  const raw = info[FIELD_ALTERNATES_KEY];
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, FieldAlternate[]>) : {};
+}
+
 /** Records a value that lost the precedence contest so nothing is silently discarded. */
 export function recordAlternate(info: Record<string, unknown>, key: string, value: unknown, src: FieldSource): void {
-  const raw = info[FIELD_ALTERNATES_KEY];
-  const alts = raw && typeof raw === "object" && !Array.isArray(raw) ? { ...(raw as Record<string, unknown[]>) } : {};
+  if (value === null || value === undefined || value === "") return;
+  const alts = { ...getFieldAlternates(info) } as Record<string, unknown[]>;
   const list = Array.isArray(alts[key]) ? [...(alts[key] as unknown[])] : [];
   const serialized = typeof value === "string" ? value : JSON.stringify(value);
-  if (!list.some((a) => (a as { value?: string }).value === serialized)) list.push({ value: serialized, ...src });
+  if (!list.some((a) => (a as { value?: string }).value === serialized)) list.push({ ...src, value: serialized });
   alts[key] = list;
   info[FIELD_ALTERNATES_KEY] = alts;
 }
-/** Removes every field (and alternate) that a deleted document asserted. */
+
+/**
+ * Legacy repair: an old merge bug spread a string into an object, leaving
+ * values like {"0":"{","1":"\"","2":"2",…} on some deals (seen on
+ * revenueByYear). Rebuilds the original string — and parses it back into a
+ * map when it was JSON — so readers never show the character soup.
+ */
+export function repairCharIndexedValue(value: unknown): unknown {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+  const map = value as Record<string, unknown>;
+  const indexed: string[] = [];
+  for (let i = 0; Object.prototype.hasOwnProperty.call(map, String(i)); i++) {
+    const ch = map[String(i)];
+    if (typeof ch !== "string" || ch.length > 1) return value;
+    indexed.push(ch);
+  }
+  if (indexed.length < 2) return value;
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(map)) if (!/^\d+$/.test(k) || Number(k) >= indexed.length) rest[k] = v;
+  const text = indexed.join("");
+  let repaired: unknown = text;
+  if (/^[\[{]/.test(text)) {
+    try { repaired = JSON.parse(text); } catch { /* keep the text */ }
+  }
+  if (Object.keys(rest).length === 0) return repaired;
+  return repaired && typeof repaired === "object" && !Array.isArray(repaired) ? { ...(repaired as object), ...rest } : rest;
+}
+
+/** Parses an alternate's stored value back (objects were JSON-stringified). */
+export function parseAlternateValue(value: string): unknown {
+  if (/^[\[{]/.test(value)) {
+    try { return JSON.parse(value); } catch { /* keep string */ }
+  }
+  return value;
+}
+
+/** Merges two alternates maps key by key (union by value) — no list is lost. */
+export function mergeAlternateMaps(
+  a: Record<string, unknown> | undefined,
+  b: Record<string, unknown> | undefined,
+): Record<string, unknown[]> {
+  const out: Record<string, unknown[]> = {};
+  for (const src of [a || {}, b || {}]) {
+    for (const [k, list] of Object.entries(src)) {
+      if (!Array.isArray(list)) continue;
+      const cur = out[k] ?? [];
+      for (const entry of list) {
+        const v = (entry as { value?: string }).value;
+        if (!cur.some((e) => (e as { value?: string }).value === v)) cur.push(entry);
+      }
+      out[k] = cur;
+    }
+  }
+  return out;
+}
+
+/**
+ * Removes every field (and alternate) that a deleted source asserted — any
+ * documents-backed kind (document, email, call / video-call transcript, CRM
+ * note, website/social item) — then promotes the best surviving alternate.
+ */
 export function removeDocumentFields(info: Record<string, unknown>, documentId: string): { info: Record<string, unknown>; removed: string[] } {
   const out = { ...info };
-  const sources = getFieldSources(out);
+  const sources = { ...getFieldSources(out) };
   const removed: string[] = [];
   for (const [key, src] of Object.entries(sources)) {
-    if (src.source !== "document") continue;
     // Map field with per-sub-key contributors: strip only this document's years
     if (src.years && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
       const map = { ...(out[key] as Record<string, unknown>) };
@@ -648,7 +833,7 @@ export function removeDocumentFields(info: Record<string, unknown>, documentId: 
       else {
         out[key] = map;
         const remaining = Object.values(years);
-        sources[key] = { source: "document", documentId: remaining[0], years };
+        sources[key] = { ...src, documentId: remaining[0], years };
         removed.push(`${key}:${documentId}`);
       }
       continue;
@@ -672,13 +857,13 @@ export function removeDocumentFields(info: Record<string, unknown>, documentId: 
     // field going blank and the interview re-asking it.
     for (const key of removed) {
       if (key.includes(":") || out[key] !== undefined) continue;
-      const list = alts[key] as Array<{ value: string; source: FieldSourceKind; documentId?: string }> | undefined;
+      if (isSuppressed(out, key)) continue;
+      const list = alts[key] as FieldAlternate[] | undefined;
       if (!list || list.length === 0) continue;
-      const best = [...list].sort((a, b) => (SOURCE_RANK[b.source] ?? 0) - (SOURCE_RANK[a.source] ?? 0))[0];
-      let value: unknown = best.value;
-      if (typeof value === "string" && /^[\[{]/.test(value)) { try { value = JSON.parse(value); } catch { /* keep string */ } }
-      out[key] = value;
-      sources[key] = { source: best.source, ...(best.documentId ? { documentId: best.documentId } : {}) };
+      const best = [...list].sort((a, b) => sourceRank(b.source) - sourceRank(a.source))[0];
+      const { value, ...bestSrc } = best;
+      out[key] = parseAlternateValue(value);
+      sources[key] = bestSrc as FieldSource;
       alts[key] = list.filter((a) => a !== best);
       if ((alts[key] as unknown[]).length === 0) delete alts[key];
     }
@@ -687,3 +872,4 @@ export function removeDocumentFields(info: Record<string, unknown>, documentId: 
   }
   return { info: out, removed };
 }
+

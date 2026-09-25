@@ -218,7 +218,7 @@ export function AIConversationInterface({
         const res = await fetch(`/api/interview/${dealId}/start`, {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify(conductedBy ? { conductedBy } : {}),
+          body: JSON.stringify(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
         });
 
         if (!res.ok) {
@@ -532,7 +532,7 @@ export function AIConversationInterface({
           message: cleanedInput,
           sessionId,
           ...(userMessage.correctionOf ? { correctionOf: userMessage.correctionOf } : {}),
-          ...(conductedBy ? { conductedBy } : {}),
+          ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
         }),
         signal: controller.signal,
       });

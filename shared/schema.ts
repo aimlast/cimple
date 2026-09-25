@@ -369,6 +369,14 @@ export const documents = pgTable("documents", {
   promisedAt: timestamp("promised_at"), // when seller promised to provide
   
   // @anchor:documents-cols:info
+  // Provenance v2 — what kind of source this row is (document, email, call,
+  // video_call, crm, website, social…; see SourceKind below), its metadata
+  // (from/to/date/participants/url…), and who may see it. 'broker_only' rows
+  // are never listed or served to the seller and never quoted to the seller
+  // by the interview agent (e.g. CRM notes).
+  sourceKind: text("source_kind").default("document"),
+  sourceMeta: jsonb("source_meta").$type<DocumentSourceMeta>(),
+  visibility: text("visibility").default("shared"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1914,6 +1922,35 @@ export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSele
 
 // @anchor:schema-tail:info
 // (information workstream)
+
+/**
+ * Provenance v2 — every extractedInfo fact records the kind of source that
+ * asserted it (extractedInfo._fieldSources[key].source). Authority order
+ * lives in server/interview/info-merger.ts (SOURCE_RANK).
+ */
+export const SOURCE_KINDS = [
+  "interview", "call", "video_call", "questionnaire", "email", "document",
+  "crm", "website", "social", "broker", "system",
+] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+/** documents.sourceMeta — optional details about where a source came from. */
+export interface DocumentSourceMeta {
+  from?: string;
+  to?: string;
+  subject?: string;
+  /** ISO date (or yyyy-mm-dd) the email was sent / call happened / note was written. */
+  date?: string;
+  participants?: string;
+  durationMin?: number;
+  url?: string;
+  /** zoom | meet | teams | cimple | phone | in_person … */
+  platform?: string;
+  /** CRM or mail provider (pipedrive, hubspot, gmail…). */
+  provider?: string;
+  recordType?: string;
+  recordId?: string;
+}
 
 // @anchor:schema-tail:crm
 // (crm-seller workstream)
