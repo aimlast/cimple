@@ -20,9 +20,9 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
-import { isSourceKind, type SourceKind } from "../interview/info-merger";
+import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
-import { SOURCE_META_KEYS } from "../information/view";
+import { withDealFactsLock } from "./facts-lock";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -160,51 +160,44 @@ export async function createAndIngestSource(input: CreateSourceInput): Promise<D
 }
 
 /**
- * What of a source's extraction may become deal-level facts. A broker-only
- * source's own summary / red flags / concerns describe the broker's private
- * notes, not the business — they stay on the source (Sources panel) and
- * never become deal-level keys the interview agent would see.
+ * What of a source's extraction may become deal-level facts. Every source's
+ * own summary / key facts / red flags / seller concerns / action items /
+ * call notes describe that source (or the broker's to-dos), not the
+ * business: they stay on the source row (documents.extractedData, shown in
+ * the Sources panel) and never become deal-level keys that the CIM writer or
+ * the interview agent would read as facts.
  */
-export function mergeableExtraction(doc: Pick<Document, "visibility">, data: ExtractedDocumentData): ExtractedDocumentData {
-  if (!isBrokerOnly(doc)) return data;
+export function mergeableExtraction(_doc: Pick<Document, "visibility">, data: ExtractedDocumentData): ExtractedDocumentData {
   return Object.fromEntries(Object.entries(data).filter(([k]) => !SOURCE_META_KEYS.has(k))) as ExtractedDocumentData;
 }
 
 /**
  * Sensitive personal matters the extractor kept out of the business fields
  * (health, family…) join the deal's broker-private notes — shown to the
- * broker on the Interview tab, known to the interview agent as "never
- * repeat", and excluded from every CIM path ("_" keys).
+ * broker on the Interview tab and excluded from every CIM path ("_" keys).
+ * Each note carries its source's documentId (deleting the source removes
+ * it) and, for a broker-only source, `brokerOnly: true`: those are the
+ * broker's own notes and never reach the interview agent at all.
  */
-function addPrivateNotes(info: Record<string, unknown>, raw: unknown, doc: Pick<Document, "id" | "name" | "sourceKind">): void {
+export function addPrivateNotes(
+  info: Record<string, unknown>,
+  raw: unknown,
+  doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
+): void {
   if (typeof raw !== "string" || !raw.trim()) return;
-  const existing = Array.isArray(info._brokerPrivateNotes) ? (info._brokerPrivateNotes as Array<{ note: string }>) : [];
-  const fresh = raw
-    .split("\n")
-    .map((n) => n.trim())
-    .filter((n) => n && !existing.some((e) => e.note === n))
-    .slice(0, 10)
-    .map((note) => ({ note, reason: `From ${doc.name}`, documentId: doc.id }));
-  if (fresh.length > 0) info._brokerPrivateNotes = [...existing, ...fresh];
-}
-
-const factLocks = new Map<string, Promise<unknown>>();
-
-/**
- * Runs `fn` after any other in-process read-merge-write of the same deal's
- * facts has finished (a simple per-deal queue).
- */
-export async function withDealFactsLock<T>(dealId: string, fn: () => Promise<T>): Promise<T> {
-  const prev = factLocks.get(dealId) ?? Promise.resolve();
-  const run = prev.catch(() => {}).then(fn);
-  const tail = run.catch(() => {});
-  factLocks.set(dealId, tail);
-  try {
-    return await run;
-  } finally {
-    if (factLocks.get(dealId) === tail) factLocks.delete(dealId);
+  const brokerOnly = isBrokerOnly(doc);
+  const lines = Array.from(new Set(raw.split("\n").map((n) => n.trim()).filter(Boolean))).slice(0, 10);
+  // A note already on file (an earlier version of the same CRM note, another
+  // email) gains this source too — so retiring or deleting that other source
+  // leaves the note in place while this one still states it.
+  for (const note of lines) {
+    addPrivateNote(info, note, { reason: `From ${doc.name}`, documentId: doc.id, ...(brokerOnly ? { brokerOnly: true } : {}) });
   }
 }
+
+// The per-deal facts queue lives in its own module so broker edits and the
+// interview turn (which can't import this pipeline) share it.
+export { withDealFactsLock };
 
 export interface IngestResult {
   status: "extracted" | "failed" | "missing";

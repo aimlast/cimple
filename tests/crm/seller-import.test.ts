@@ -83,8 +83,8 @@ ok("sellerSafeDeal whitelists the seller pages' fields only");
 // ── Broker-only sources: per-source notes never become deal facts ──
 const extraction: any = { annualRevenue: "$1.4M", summary: "Broker note: seller had a health scare", redFlags: "x", sellerConcerns: "y", keyFacts: "z" };
 assert.deepEqual(Object.keys(mergeableExtraction({ visibility: "broker_only" } as any, extraction)), ["annualRevenue"]);
-assert.equal(mergeableExtraction({ visibility: "shared" } as any, extraction), extraction);
-ok("mergeableExtraction strips summary/red flags/concerns from broker-only sources");
+assert.deepEqual(Object.keys(mergeableExtraction({ visibility: "shared" } as any, extraction)), ["annualRevenue"]);
+ok("mergeableExtraction strips summary/red flags/concerns from every source");
 
 // ── Interview labels ──
 const info = {

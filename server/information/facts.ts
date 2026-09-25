@@ -27,11 +27,19 @@ import {
   getSuppressedKeys,
   describeSource,
   sourceRank,
+  displaceCorroborations,
+  isRowBackedSource,
+  isUntrackedSource,
+  isFactKey,
   BROKER_SUPPRESSED_KEY,
   FIELD_ALTERNATES_KEY,
+  LEGACY_SOURCE_NOTE,
   type FieldSource,
 } from "../interview/info-merger";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
+import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
+import { withDealFactsLock } from "../documents/facts-lock";
+import { LEAD_SOURCE_KINDS, WEBSITE_ACCEPTED_NOTE } from "./cim-facts";
 import type { Discrepancy } from "@shared/schema";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
@@ -91,14 +99,17 @@ export function coerceBrokerValue(current: unknown, input: unknown): unknown {
 
 /** Writes a broker value (edit, resolution, chosen alternate) keeping the displaced one. */
 export function setBrokerFact(info: Info, key: string, value: unknown, extra: Partial<FieldSource> = {}): void {
-  const current = info[key];
+  // A legacy character-indexed value is kept (as an alternate) repaired,
+  // never as the soup — adopting it later must not re-corrupt the fact.
+  const current = repairCharIndexedValue(info[key]);
   const curSrc = getFieldSources(info)[key];
   const empty = current === null || current === undefined || current === "";
   if (!empty && serialize(current) !== serialize(value)) {
-    recordAlternate(info, key, current, curSrc ?? { source: "system", note: "Recorded before sources were tracked" });
+    recordAlternate(info, key, current, curSrc ?? { source: "system", note: LEGACY_SOURCE_NOTE });
   }
   info[key] = value;
   setFieldSource(info, key, { source: "broker", at: new Date().toISOString(), ...extra });
+  displaceCorroborations(info, key, value);
   dropAlternateValue(info, key, serialize(value));
   unsuppress(info, key);
   const deleted = objectAt(info, BROKER_DELETED_KEY);
@@ -106,6 +117,53 @@ export function setBrokerFact(info: Info, key: string, value: unknown, extra: Pa
     delete deleted[key];
     info[BROKER_DELETED_KEY] = deleted;
   }
+}
+
+/**
+ * The broker sets ONE entry of a map fact (a single year of revenue) — by
+ * choosing another source's figure or resolving a discrepancy. The map's
+ * recorded source becomes the broker; every other year keeps its
+ * contributor in `years` (years the old recorded document owned are listed
+ * explicitly, so deleting that document still removes exactly those), and
+ * the broker's year has no contributor — no document delete or re-extraction
+ * can take it away. The displaced figure is kept as that year's alternate.
+ */
+export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string): void {
+  const repaired = repairCharIndexedValue(info[parent]);
+  if (repaired !== undefined && repaired !== null && repaired !== "" && !isPlainMap(repaired)) {
+    throw new FactError("That fact isn't a list of values by year — edit the whole fact instead");
+  }
+  const map: Record<string, unknown> = isPlainMap(repaired) ? { ...repaired } : {};
+  const prevSrc = getFieldSources(info)[parent];
+  const years: Record<string, string> = { ...(prevSrc?.years || {}) };
+  // Unlisted years belong to the recorded source — list them when that
+  // source is a document, because the map is about to be re-labelled.
+  if (prevSrc && isRowBackedSource(prevSrc)) {
+    for (const y of Object.keys(map)) if (!years[y]) years[y] = prevSrc.documentId!;
+  }
+  const previous = map[sub];
+  const altKey = `${parent}.${sub}`;
+  if (previous !== undefined && previous !== null && previous !== "" && serialize(previous) !== serialize(value)) {
+    const contributor = years[sub];
+    const prevYearSrc: FieldSource = contributor
+      ? { source: prevSrc && isRowBackedSource(prevSrc) ? prevSrc.source : "document", documentId: contributor }
+      : prevSrc && !isUntrackedSource(prevSrc)
+        ? (({ years: _y, documentId: _d, ...rest }) => rest)(prevSrc)
+        : { source: "system", note: LEGACY_SOURCE_NOTE };
+    recordAlternate(info, altKey, previous, prevYearSrc);
+  }
+  map[sub] = value;
+  delete years[sub];
+  displaceCorroborations(info, altKey, value);
+  dropAlternateValue(info, altKey, serialize(value));
+  info[parent] = map;
+  setFieldSource(info, parent, {
+    source: "broker",
+    at: new Date().toISOString(),
+    note,
+    ...(Object.keys(years).length ? { years } : {}),
+  });
+  unsuppress(info, parent);
 }
 
 /** Broker edits a fact's value. */
@@ -174,6 +232,26 @@ export function deleteFact(info: Info, key: string): void {
   if (!suppressed.includes(key)) info[BROKER_SUPPRESSED_KEY] = [...suppressed, key];
 }
 
+/**
+ * A fact the broker deleted has a value again — the seller re-stated it
+ * live, or the broker accepted a website value. The deleted entry is
+ * retired: its value becomes an alternate (still one click to adopt) instead
+ * of the fact being listed as both live and deleted.
+ */
+export function retireDeletedEntry(info: Info, key: string): void {
+  const deleted = objectAt(info, BROKER_DELETED_KEY);
+  const entry = deleted[key] as { value: unknown; source: FieldSource | null } | undefined;
+  if (!entry) return;
+  const value = repairCharIndexedValue(entry.value);
+  const now = repairCharIndexedValue(info[key]);
+  if (value !== undefined && value !== null && value !== "" && serialize(value) !== serialize(now)) {
+    recordAlternate(info, key, value, entry.source ?? { source: "system", note: LEGACY_SOURCE_NOTE });
+  }
+  delete deleted[key];
+  if (Object.keys(deleted).length > 0) info[BROKER_DELETED_KEY] = deleted;
+  else delete info[BROKER_DELETED_KEY];
+}
+
 /** Undo a delete. If a value arrived since, the restored one becomes an alternate. */
 export function restoreFact(info: Info, key: string): void {
   const deleted = objectAt(info, BROKER_DELETED_KEY);
@@ -181,12 +259,13 @@ export function restoreFact(info: Info, key: string): void {
   if (!entry) throw new FactError("Nothing to restore for that fact", 404);
   unsuppress(info, key);
   const current = info[key];
-  const src: FieldSource = entry.source ?? { source: "system", note: "Recorded before sources were tracked" };
+  const src: FieldSource = entry.source ?? { source: "system", note: LEGACY_SOURCE_NOTE };
+  const restored = repairCharIndexedValue(entry.value); // never restore character soup
   if (current === undefined || current === null || current === "") {
-    info[key] = entry.value;
+    info[key] = restored;
     if (entry.source) setFieldSource(info, key, entry.source);
-  } else if (serialize(current) !== serialize(entry.value)) {
-    recordAlternate(info, key, entry.value, src);
+  } else if (serialize(repairCharIndexedValue(current)) !== serialize(restored)) {
+    recordAlternate(info, key, restored, src);
   }
   delete deleted[key];
   if (Object.keys(deleted).length > 0) info[BROKER_DELETED_KEY] = deleted;
@@ -203,27 +282,16 @@ export function useAlternate(info: Info, altKey: string, index: number): void {
   if (!Array.isArray(list) || !list[index]) throw new FactError("That value is no longer available", 404);
   const alt = list[index];
   const note = `Chose ${describeSource(alt)}`;
+  const chosen = repairCharIndexedValue(parseAlternateValue(alt.value));
   const dot = altKey.indexOf(".");
   if (dot > 0) {
-    const parent = altKey.slice(0, dot);
-    const sub = altKey.slice(dot + 1);
-    const map = objectAt(info, parent);
-    const previous = map[sub];
-    map[sub] = parseAlternateValue(alt.value);
-    const altsCopy = { ...alts } as Record<string, unknown[]>;
-    altsCopy[altKey] = list.filter((_, i) => i !== index);
-    if (previous !== undefined && previous !== null && previous !== "") {
-      const prevSrc = getFieldSources(info)[parent];
-      altsCopy[altKey].push({ ...(prevSrc ?? { source: "system" }), value: serialize(previous) });
-    }
-    if (altsCopy[altKey].length === 0) delete altsCopy[altKey];
-    info[FIELD_ALTERNATES_KEY] = altsCopy;
-    info[parent] = map;
-    setFieldSource(info, parent, { ...(getFieldSources(info)[parent] ?? { source: "broker" }), source: "broker", at: new Date().toISOString(), note });
-    unsuppress(info, parent);
+    // One year of a map: the broker's pick is theirs — no longer tied to
+    // either document, so deleting the rejected (or the chosen) source
+    // never takes it away.
+    setBrokerMapEntry(info, altKey.slice(0, dot), altKey.slice(dot + 1), chosen, note);
     return;
   }
-  setBrokerFact(info, altKey, parseAlternateValue(alt.value), { note });
+  setBrokerFact(info, altKey, chosen, { note });
 }
 
 /** Scraped website fields → the fact key "Accept into facts" writes. */
@@ -240,13 +308,28 @@ export function websiteFactKey(field: string): string {
 
 /**
  * Broker accepts a scraped website value. It lands as a fact with source
- * "website" (public, unverified — the interview still confirms it). If a
+ * "website" and `acceptedByBroker` — ranked as the website (the interview,
+ * a document or a broker edit still replaces it), but the broker vouched for
+ * it, so the CIM writers use it as a fact rather than an unconfirmed lead. If a
  * stronger source already holds the fact, it's kept as an alternate instead.
  */
 export function acceptWebsiteFact(info: Info, field: string, value: string): { key: string; addedAs: "fact" | "alternate" } {
-  const key = websiteFactKey(field);
+  const result = acceptWebsiteValue(info, websiteFactKey(field), value);
+  // The broker is bringing a deleted fact back: the deleted value stays
+  // available as another value instead of a separate "deleted" entry that
+  // would show the fact as both live and deleted.
+  retireDeletedEntry(info, result.key);
+  return result;
+}
+
+function acceptWebsiteValue(info: Info, key: string, value: string): { key: string; addedAs: "fact" | "alternate" } {
   unsuppress(info, key);
-  const src: FieldSource = { source: "website", at: new Date().toISOString(), note: "Accepted by you from the website" };
+  const src: FieldSource = {
+    source: "website",
+    at: new Date().toISOString(),
+    note: WEBSITE_ACCEPTED_NOTE,
+    acceptedByBroker: true,
+  };
   const current = info[key];
   const empty = current === null || current === undefined || current === "";
   if (empty) {
@@ -257,6 +340,9 @@ export function acceptWebsiteFact(info: Info, field: string, value: string): { k
   if (serialize(current) === value) {
     const cur = getFieldSources(info)[key];
     if (!cur) setFieldSource(info, key, src);
+    // The same value from a lead (a CRM note): the broker has now vouched
+    // for it — the CIM may state it — while it keeps its real source.
+    else if (LEAD_SOURCE_KINDS.has(cur.source) && !cur.acceptedByBroker) setFieldSource(info, key, { ...cur, acceptedByBroker: true });
     return { key, addedAs: "fact" };
   }
   const cur = getFieldSources(info)[key];
@@ -264,43 +350,116 @@ export function acceptWebsiteFact(info: Info, field: string, value: string): { k
     recordAlternate(info, key, current, cur);
     info[key] = value;
     setFieldSource(info, key, src);
+    displaceCorroborations(info, key, value);
     return { key, addedAs: "fact" };
   }
   recordAlternate(info, key, value, src);
   return { key, addedAs: "alternate" };
 }
 
-/** Free-text discrepancy field ("Annual Revenue", "annualRevenue") → fact key. */
-export function discrepancyFactKey(field: string, info: Info): string | null {
-  const trimmed = (field || "").trim();
-  if (!trimmed) return null;
-  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === trimmed.toLowerCase())?.[0];
-  if (byLabel) return byLabel;
-  const raw = /^[a-z][A-Za-z0-9]*$/.test(trimmed) ? trimmed : keyFromLabel(trimmed);
-  return canonicalFieldName(raw, Object.keys(info).filter((k) => !k.startsWith("_")));
+/** Where a discrepancy resolution lands: a fact, or one year of a map fact. */
+export interface DiscrepancyTarget {
+  key: string;
+  /** Year (sub-key) of a map fact — "2024" of revenueByYear. */
+  sub?: string;
 }
 
-/** Pure part of writing a discrepancy resolution into the deal's facts. */
+/**
+ * "2024 Revenue", "FY2024 revenue", "Revenue 2024", "Total sales (2024)" →
+ * "2024". The financial analysis names its per-year figures this way.
+ */
+export function revenueYearOfField(field: string): string | null {
+  const t = (field || "").trim();
+  const metric = String.raw`(?:(?:total|gross|annual)\s+)?(?:revenues?|sales)`;
+  const year = String.raw`(?:FY\s*)?((?:19|20)\d{2})`;
+  const m =
+    t.match(new RegExp(`^${year}\\s+${metric}$`, "i")) ??
+    t.match(new RegExp(`^${metric}\\s*[,:(\\-–—]?\\s*${year}\\s*\\)?$`, "i"));
+  return m ? m[1] : null;
+}
+
+/**
+ * Free-text discrepancy field → the fact it is about, or null when it names
+ * no fact the deal has or the CIM knows ("2024 SDE", a routed question's
+ * full text…). A resolution with no target stays a resolution (the
+ * read-time overlays still apply it) — it never mints a junk fact such as
+ * "fact2024Revenue" or "whatWereTheOwnerSWages".
+ */
+export function discrepancyFactTarget(field: string, info: Info): DiscrepancyTarget | null {
+  const trimmed = (field || "").trim();
+  if (!trimmed) return null;
+  const year = revenueYearOfField(trimmed);
+  if (year) {
+    const cur = repairCharIndexedValue(info.revenueByYear);
+    // The seller's own free-text revenue history is never turned into a map.
+    if (cur === undefined || cur === null || cur === "" || isPlainMap(cur)) return { key: "revenueByYear", sub: year };
+    return null;
+  }
+  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === trimmed.toLowerCase())?.[0];
+  if (byLabel) return { key: byLabel };
+  const factKeys = Object.keys(info).filter(isFactKey);
+  const raw = /^[a-z][A-Za-z0-9]*$/.test(trimmed) ? trimmed : keyFromLabel(trimmed);
+  const key = canonicalFieldName(raw, factKeys);
+  if (factKeys.includes(key) || GENERIC_FIELD_LABELS[key] || KNOWN_EXTRACTED_FIELDS.has(key) || key === "revenueByYear") return { key };
+  return null;
+}
+
+/** @deprecated use discrepancyFactTarget — kept for older callers (the parent fact key). */
+export function discrepancyFactKey(field: string, info: Info): string | null {
+  return discrepancyFactTarget(field, info)?.key ?? null;
+}
+
+/** "$1,894,000 — 2024 P&L" → "$1,894,000" (the financial analysis appends where a value came from). */
+function bareDiscrepancyValue(v: string): string {
+  const idx = v.indexOf(" — ");
+  return (idx > 0 ? v.slice(0, idx) : v).trim();
+}
+
+/** The kind of source a financial-analysis value label names ("… — Seller interview"). */
+function kindFromValueLabel(v: string): FieldSource["source"] {
+  const label = v.indexOf(" — ") > 0 ? v.slice(v.indexOf(" — ") + 3).toLowerCase() : "";
+  if (/interview|seller said|told/.test(label)) return "interview";
+  if (/questionnaire|intake/.test(label)) return "questionnaire";
+  if (/e-?mail/.test(label)) return "email";
+  return "document";
+}
+
+/**
+ * Pure part of writing a discrepancy resolution into the deal's facts.
+ * Returns the fact key written ("revenueByYear.2024" for one year of a map),
+ * or null when the discrepancy names no fact (nothing is written then).
+ */
 export function applyResolutionToInfo(info: Info, d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source">): string | null {
-  const key = discrepancyFactKey(d.field, info);
+  const target = discrepancyFactTarget(d.field, info);
   const resolved = (d.resolvedValue || "").trim();
-  if (!key || !resolved) return null;
-  setBrokerFact(info, key, coerceBrokerValue(info[key], resolved), { note: "Resolved discrepancy" });
-  // The conflicting values the broker ruled on stay visible as alternates.
-  if (d.interviewValue && d.interviewValue.trim() !== resolved) {
-    recordAlternate(info, key, d.interviewValue.trim(), {
-      source: d.source === "financial_analysis" ? "document" : "interview",
-      note: "Conflicting value (discrepancy)",
-    });
+  if (!target || !resolved) return null;
+  const financial = d.source === "financial_analysis";
+  const note = "Resolved discrepancy";
+  const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
+  if (target.sub) setBrokerMapEntry(info, target.key, target.sub, resolved, note);
+  else setBrokerFact(info, target.key, coerceBrokerValue(info[target.key], resolved), { note });
+  // The conflicting values the broker ruled on stay visible as alternates —
+  // bare figures (the " — source" label stripped) under their real kind.
+  const conflicting: Array<{ raw: string | null; src: FieldSource }> = [
+    {
+      raw: d.interviewValue,
+      src: { source: financial ? kindFromValueLabel(d.interviewValue || "") : "interview", note: "Conflicting value (discrepancy)" },
+    },
+    {
+      raw: d.documentValue,
+      src: {
+        source: financial ? kindFromValueLabel(d.documentValue || "") : "document",
+        ...(d.documentId ? { documentId: d.documentId } : {}),
+        note: "Conflicting value (discrepancy)",
+      },
+    },
+  ];
+  for (const { raw, src } of conflicting) {
+    if (!raw || !raw.trim()) continue;
+    const value = financial ? bareDiscrepancyValue(raw) : raw.trim();
+    if (value && value !== resolved) recordAlternate(info, altKey, value, src);
   }
-  if (d.documentValue && d.documentValue.trim() !== resolved) {
-    recordAlternate(info, key, d.documentValue.trim(), {
-      source: "document",
-      ...(d.documentId ? { documentId: d.documentId } : {}),
-      note: "Conflicting value (discrepancy)",
-    });
-  }
-  return key;
+  return altKey;
 }
 
 /**
@@ -309,12 +468,16 @@ export function applyResolutionToInfo(info: Info, d: Pick<Discrepancy, "field" |
  * turns and document ingestion running at the same time.
  */
 export async function mutateDealInfo<T>(dealId: string, fn: (info: Info) => T): Promise<T> {
-  const deal = await storage.getDeal(dealId);
-  if (!deal) throw new FactError("Deal not found", 404);
-  const info = { ...((deal.extractedInfo as Info | null) || {}) };
-  const result = fn(info);
-  await storage.updateDeal(dealId, { extractedInfo: info } as any);
-  return result;
+  // Same per-deal queue as document ingestion and the interview turn's
+  // save: no two read-modify-writes of the facts interleave.
+  return withDealFactsLock(dealId, async () => {
+    const deal = await storage.getDeal(dealId);
+    if (!deal) throw new FactError("Deal not found", 404);
+    const info = { ...((deal.extractedInfo as Info | null) || {}) };
+    const result = fn(info);
+    await storage.updateDeal(dealId, { extractedInfo: info } as any);
+    return result;
+  });
 }
 
 /** PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the fact on file. */

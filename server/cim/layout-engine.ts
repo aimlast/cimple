@@ -7,6 +7,8 @@ import {
   plannerLayouts,
 } from "@shared/cim-layouts";
 import { agentConfig } from "../interview/config/load-config";
+import { isFactKey } from "../interview/info-merger";
+import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "../information/cim-facts";
 import { normalizeLocationMap, normText } from "@shared/cim-media";
 import type { CimSectionOutline } from "@shared/cim-theme";
 
@@ -769,7 +771,7 @@ CONTENT STYLE RULES (every string in layoutData and aiDraftContent):
  * buildKnowledgeBase
  * Serialises all collected deal data into a structured string for the AI prompt.
  */
-function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): string {
+export function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): string {
   const parts: string[] = [];
 
   parts.push(`BUSINESS: ${params.businessName}`);
@@ -792,14 +794,18 @@ function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): st
   }
 
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
-    parts.push("\n--- INTERVIEW DATA ---");
-    for (const [key, value] of Object.entries(params.extractedInfo)) {
-      // "_"-prefixed keys are broker-private / session-meta (e.g.
-      // _brokerPrivateNotes) and must NEVER feed CIM generation.
-      if (key.startsWith("_")) continue;
-      if (value && String(value).trim()) {
-        parts.push(`${formatKey(key)}: ${value}`);
-      }
+    // "_"-prefixed keys (broker-private notes, provenance) and per-source
+    // notes (a source's summary / red flags / to-dos) never feed CIM
+    // generation; facts only a CRM note, the website or social media
+    // asserted are leads, listed apart so they're never written as fact.
+    const { confirmed, leads } = splitFactsForCim(params.extractedInfo);
+    if (confirmed.length > 0) {
+      parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
+      for (const [key, value] of confirmed) parts.push(`${formatKey(key)}: ${factValueText(value)}`);
+    }
+    if (leads.length > 0) {
+      parts.push(`\n--- ${CIM_LEADS_HEADING} ---`);
+      for (const [key, value] of leads) parts.push(`${formatKey(key)}: ${factValueText(value)}`);
     }
   }
 
@@ -897,7 +903,9 @@ function collectCanonicalFigures(params: CimLayoutParams): string[] {
   for (const src of sources) {
     if (!src) continue;
     for (const [key, value] of Object.entries(src)) {
-      if (key.startsWith("_") || !isScalar(value)) continue;
+      if (!isFactKey(key) || !isScalar(value)) continue;
+      // A figure only a CRM note / the website asserted is never canonical.
+      if (src === params.extractedInfo && isLeadFact(params.extractedInfo, key)) continue;
       const bare = key.replace(/[^a-z]/gi, "");
       const hit = FIGURE_PATTERNS.find((p) => p.test.test(bare));
       if (!hit || seen.has(hit.label)) continue;
@@ -918,7 +926,7 @@ function collectJurisdiction(params: CimLayoutParams): string[] {
   for (const src of sources) {
     if (!src) continue;
     for (const [key, value] of Object.entries(src)) {
-      if (key.startsWith("_") || !isScalar(value)) continue;
+      if (!isFactKey(key) || !isScalar(value)) continue;
       const bare = key.replace(/[^a-z]/gi, "");
       if (!JURISDICTION_KEYS.test(bare)) continue;
       const label = formatKey(key);

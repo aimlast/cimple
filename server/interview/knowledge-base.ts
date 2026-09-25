@@ -5,8 +5,8 @@ import { getSectionImportance, renderSectionImportanceForPrompt } from "./sectio
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
-import type { SellerCommunicationProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, type FieldSource } from "./info-merger";
+import { profileSafeForInterview, type SellerCommunicationProfile } from "./eq-profiler";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, getPrivateNotes, privateNoteSources, type FieldSource, type PrivateNoteSource } from "./info-merger";
 
 // =====================
 // Types
@@ -277,6 +277,32 @@ export function assembleKnowledgeBase(
   // already reconciled against uploaded documents. (ask_seller rows have no
   // resolvedValue, so they never overlay — they become priority topics below.)
   const extractedInfo: Partial<ExtractedInfo> = { ...baseExtractedInfo };
+  // Broker-private notes the agent may hold: ones the seller disclosed (in
+  // the interview, or in a source the seller shared). Notes taken from a
+  // broker-only source (the broker's CRM notes, private emails) are the
+  // broker's own — never in the agent's prompt, so they can never be quoted
+  // or alluded to — and notes whose source was deleted are gone.
+  {
+    const raw = (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
+    if (Array.isArray(raw)) {
+      const docVisibility = new Map(documents.map((d) => [d.id, d.visibility]));
+      // A note may come from several sources; the agent holds it when at
+      // least one of them is the seller's own (a session, a shared source),
+      // credited to that source — never to the broker's private one.
+      const sellerSide = (s: PrivateNoteSource) => {
+        if (s.brokerOnly) return false;
+        if (!s.documentId) return true;
+        const vis = docVisibility.get(s.documentId);
+        return vis !== undefined && vis !== "broker_only";
+      };
+      const safe = getPrivateNotes(extractedInfo as Record<string, unknown>).flatMap((n) => {
+        const src = privateNoteSources(n).find(sellerSide);
+        return src ? [{ note: n.note, ...src }] : [];
+      });
+      if (safe.length > 0) (extractedInfo as Record<string, unknown>)._brokerPrivateNotes = safe;
+      else delete (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
+    }
+  }
   for (const d of resolvedDiscrepancies) {
     if (d.resolvedValue && d.field) {
       (extractedInfo as Record<string, unknown>)[d.field] = d.resolvedValue;
@@ -327,7 +353,9 @@ export function assembleKnowledgeBase(
     outline,
     conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
     industryContext: null, // Set by the AI on first turn, stored on session
-    sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
+    // A profile built before broker-only sources were excluded keeps only
+    // its style fields until it is rebuilt (its free text could quote them).
+    sellerProfile: profileSafeForInterview((deal.sellerProfile as SellerCommunicationProfile | null) || null, documents),
     questionnaireData,
     operationalSystems: parseOperationalSystems(deal),
     // Broker-only sources are never named to the seller.
@@ -470,8 +498,10 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // and re-asked them — sellers noticed every time. This block makes every
   // known fact first-class with a hard do-not-re-ask imperative.
   {
+    // Per-source notes (a source's summary, red flags, the broker's action
+    // items…) are not business facts and never listed as "known".
     const known = Object.entries(kb.extractedInfo).filter(
-      ([k, v]) => !k.startsWith("_") && isSubstantiveValue(v),
+      ([k, v]) => isFactKey(k) && isSubstantiveValue(v),
     );
     if (known.length > 0) {
       const conf = kb.fieldConfidence ?? {};

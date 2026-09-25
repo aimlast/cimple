@@ -806,8 +806,9 @@ async function runImport(dealId: string, token: string, link: DealCrmLink, statu
           status.failed = (status.failed ?? 0) + 1;
           return;
         }
-        // A changed item replaces its old source and the facts that came
-        // from it (an equal-ranked value from the new version steps in).
+        // A changed item replaces its old source and the facts only it
+        // stated: a value the new version repeats is a corroboration and
+        // survives; a value it changed was kept as an alternate and steps in.
         if (existingDoc) await retireDocument(existingDoc);
         imported[item.key] = { documentId: doc.id, version: item.version };
         if (doc.status === "failed") status.failed = (status.failed ?? 0) + 1;
@@ -878,8 +879,11 @@ async function retireDocument(doc: Document): Promise<void> {
     await withDealFactsLock(doc.dealId, async () => {
       const deal = await storage.getDeal(doc.dealId);
       if (!deal) return;
-      const { info, removed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, doc.id);
-      if (removed.length > 0) await storage.updateDeal(doc.dealId, { extractedInfo: info } as any);
+      // Facts the new version repeats were recorded as corroborations when
+      // it was ingested, so they stay; only what the old version alone said
+      // goes. Saved whenever anything was cleaned (alternates, notes too).
+      const { info, changed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, doc.id);
+      if (changed) await storage.updateDeal(doc.dealId, { extractedInfo: info } as any);
     });
   } catch (err) {
     console.warn(`[crm-seller] couldn't retire superseded source ${doc.id}:`, err);

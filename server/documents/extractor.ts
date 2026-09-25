@@ -22,6 +22,11 @@ import {
   sourceRank,
   recordAlternate,
   isSuppressed,
+  isUntrackedSource,
+  noteSameValue,
+  displaceCorroborations,
+  repairCharIndexedValue,
+  LEGACY_SOURCE_NOTE,
   type FieldSource,
   type SourceKind,
 } from "../interview/info-merger";
@@ -364,7 +369,8 @@ export function mergeExtractedData(
 
   const mergeValue = (key: string, value: unknown) => {
     if (isSuppressed(merged, key)) return; // the broker deleted it — stays deleted
-    const current = merged[key];
+    // A legacy character-indexed revenue map is repaired before merging.
+    const current = key === "revenueByYear" ? repairCharIndexedValue(merged[key]) : merged[key];
     if (key === "revenueByYear") {
       // Deep merge ONLY when both sides are maps — spreading a string
       // produced a character-indexed object that broke buyer matching.
@@ -373,20 +379,42 @@ export function mergeExtractedData(
       if (current && !curIsObj) { recordAlternate(merged, key, value, src); return; } // seller's own text stands
       if (!incObj) { if (!current) { merged[key] = value; setFieldSource(merged, key, src); } else recordAlternate(merged, key, value, src); return; }
       // Per-year contributors: never overwrite a year already on file; each
-      // year remembers its document so deleting one P&L removes only its years.
+      // year this source fills remembers the source row, so deleting one P&L
+      // removes only its years. The map's recorded source (the broker, the
+      // seller, a first document) is never re-labelled here — it keeps its
+      // kind and its own documentId — and a year another source already
+      // stated becomes a corroboration (same figure) or an alternate
+      // (different figure).
       const curObj = curIsObj ? { ...(current as Record<string, string>) } : {};
-      const prevSrc = getFieldSources(merged)[key];
-      const years: Record<string, string> = { ...(prevSrc?.years || {}) };
+      const hasYears = Object.keys(curObj).length > 0;
+      const prevSrc = hasYears ? getFieldSources(merged)[key] : undefined;
+      const recorded: FieldSource = prevSrc
+        ?? (hasYears ? { source: "system", note: LEGACY_SOURCE_NOTE } : { ...src }); // a legacy map stays untracked
+      const years: Record<string, string> = { ...(recorded.years || {}) };
       for (const [y, v] of Object.entries(incObj)) {
-        if (curObj[y] === undefined || curObj[y] === "") { curObj[y] = v; if (documentId) years[y] = documentId; }
-        else if (String(curObj[y]) !== String(v)) recordAlternate(merged, `${key}.${y}`, v, src);
+        if (v === undefined || v === null || v === "") continue;
+        if (curObj[y] === undefined || curObj[y] === "") {
+          curObj[y] = v;
+          if (documentId) years[y] = documentId;
+          continue;
+        }
+        if (String(curObj[y]) !== String(v)) { recordAlternate(merged, `${key}.${y}`, v, src); continue; }
+        // Same figure from another source: remembered, so deleting the
+        // year's recorded contributor leaves the figure standing.
+        const contributor = years[y];
+        const yearSrc: FieldSource | null = contributor
+          ? { source: recorded.source, documentId: contributor }
+          : isUntrackedSource(recorded) ? null : recorded;
+        noteSameValue(merged, `${key}.${y}`, src, {
+          current: curObj[y],
+          recorded: yearSrc,
+          // A stronger source stating a document's year takes the year over.
+          setRecorded: (s) => { if (s.documentId) years[y] = s.documentId; else delete years[y]; },
+        });
       }
       merged[key] = curObj;
-      setFieldSource(merged, key, {
-        ...(prevSrc ?? src),
-        documentId: prevSrc?.documentId ?? documentId,
-        ...(Object.keys(years).length ? { years } : {}),
-      });
+      const { years: _prevYears, ...base } = recorded;
+      setFieldSource(merged, key, { ...base, ...(Object.keys(years).length ? { years } : {}) });
       return;
     }
     const empty = current === null || current === undefined || current === "";
@@ -399,15 +427,26 @@ export function mergeExtractedData(
     // with newlines. A strictly higher authority replaces the value (the old
     // one becomes an alternate); an equal or lower one is kept as the
     // alternate for the discrepancy engine and the broker's review.
-    if (String(current) === String(value)) return;
+    const same = typeof current === "object" || typeof value === "object"
+      ? JSON.stringify(current) === JSON.stringify(value) // String() would call every two objects equal
+      : String(current) === String(value);
+    if (same) {
+      // The same value from another source is remembered as a corroboration
+      // (or, when it ranks higher, becomes the recorded source) — deleting
+      // either source then leaves the fact standing.
+      noteSameValue(merged, key, src);
+      return;
+    }
     const cur = getFieldSources(merged)[key];
-    const outranks = cur
-      ? sourceRank(kind) > sourceRank(cur.source)
+    const outranks = !isUntrackedSource(cur)
+      ? sourceRank(kind) > sourceRank(cur!.source)
       : sourceAllowsOverwrite(merged, key, kind);
     if (outranks) {
-      recordAlternate(merged, key, current, cur ?? { source: "system", note: "Recorded before sources were tracked" });
+      recordAlternate(merged, key, current, cur ?? { source: "system", note: LEGACY_SOURCE_NOTE });
       merged[key] = value;
       setFieldSource(merged, key, src);
+      // Sources that agreed with the old value now differ from the new one.
+      displaceCorroborations(merged, key, value);
       return;
     }
     recordAlternate(merged, key, value, src);
