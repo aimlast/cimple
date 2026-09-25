@@ -766,24 +766,30 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/deals/:dealId/suggested-buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
+      const { scoreBuyersForDeal, topDimensions, passesFirstPass, reachedBuyers } = await import("./matching/suggested.js");
+      const { isDeepCheckRunning } = await import("./matching/deep-check.js");
+      // Read "is it running" BEFORE the deal: the job writes its final state
+      // and only then stops running, so a stored "running" with no live job
+      // is a real failure — checked the other way round, a check that just
+      // finished read as failed.
+      const deepRunning = isDeepCheckRunning(dealId);
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-
-      const { scoreBuyersForDeal, topDimensions, passesFirstPass } = await import("./matching/suggested.js");
-      const { isDeepCheckRunning } = await import("./matching/deep-check.js");
 
       const [scoredRaw, existingOutreach, existingAccess] = await Promise.all([
         scoreBuyersForDeal(deal),
         storage.getDealOutreachByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
       ]);
-      const contactedBuyerIds = new Set(existingOutreach.map(o => o.buyerUserId));
-      const accessBuyerIds = new Set(existingAccess.filter(a => a.buyerUserId).map(a => a.buyerUserId as string));
+      // Matched on account id AND email: access rows aren't linked to the
+      // buyer's account until they verify, so id-only missed them.
+      const reached = reachedBuyers(existingOutreach, existingAccess);
       const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
 
       const scored = scoredRaw.map((s) => {
         const { buyer: buyerUser, contact, breakdown, score, lastActivityAt } = s;
         const aiCheck = deep?.results?.[buyerUser.id] ?? null;
+        const { alreadyHasAccess, alreadyContacted } = reached(buyerUser);
         // With an AI verdict, rank on it (60%) blended with the lead score.
         const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
         return {
@@ -798,8 +804,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           targetIndustries: buyerUser.targetIndustries,
           source: contact?.source ?? "deal",
           tags: contact?.tags ?? [],
-          alreadyHasAccess: accessBuyerIds.has(buyerUser.id),
-          alreadyContacted: contactedBuyerIds.has(buyerUser.id),
+          alreadyHasAccess,
+          alreadyContacted,
           passesFirstPass: passesFirstPass(s),
           match: breakdown ? {
             criteriaMatched: breakdown.criteriaMatched,
@@ -839,7 +845,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         suggested: scored,
         totalCandidates: scored.length,
         deepCheck: deep ? {
-          status: isDeepCheckRunning(dealId) ? "running" : deep.status === "running" ? "failed" : deep.status,
+          status: deepRunning ? "running" : deep.status === "running" ? "failed" : deep.status,
           total: deep.total, done: deep.done, skipped: deep.skipped ?? 0,
           startedAt: deep.startedAt, finishedAt: deep.finishedAt ?? null, error: deep.error ?? null,
         } : null,
@@ -853,11 +859,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Likely acquirers from outside the broker's list (web research, cited).
   app.get("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
+    const { isExternalSearchRunning } = await import("./matching/external-acquirers.js");
+    const searchRunning = isExternalSearchRunning(req.params.dealId); // before the read — see suggested-buyers
     const deal = await storage.getDeal(req.params.dealId);
     if (!deal) return res.status(404).json({ error: "Deal not found" });
-    const { isExternalSearchRunning } = await import("./matching/external-acquirers.js");
     const s = (deal.externalAcquirers as any) || null;
-    if (s && s.status === "running" && !isExternalSearchRunning(deal.id)) s.status = "failed";
+    if (s && s.status === "running" && !searchRunning) s.status = "failed";
     res.json(s ?? { status: "none", results: [] });
   });
   app.post("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
@@ -4727,10 +4734,13 @@ Return JSON only.`,
       // clock (fresh day-3/6/8 cycle) and leaves the buyer under review.
       if (decision === "need_more_time") {
         await storage.updateBuyerAccess(access.id, {
-          decision: null,
+          // Still deciding: back under review, so the reminder pipeline
+          // picks it up again (a NULL decision was never selected).
+          decision: "under_review",
           decisionAt: null,
           firstViewedAt: new Date(),
           reminderStage: "none",
+          lastReminderAt: null,
         } as any);
         await recordDecisionEvent("need_more_time");
         return res.json({ success: true, decision: "need_more_time" });
@@ -6210,60 +6220,27 @@ Return JSON only.`,
       const buyers = await storage.getBuyerAccessByDeal(dealId);
       const latestFA = await storage.getLatestFinancialAnalysis(dealId);
 
-      const { matchBuyerToDeal } = await import("./matching/engine.js");
-
-      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map(async (buyer: any) => {
-        const criteria = (buyer.buyerCriteria || {}) as any;
-        const hasCriteria = Object.keys(criteria).length > 0;
-
-        if (!hasCriteria) {
-          return {
-            buyerId: buyer.id,
-            buyerName: buyer.buyerName || "Unknown",
-            buyerEmail: buyer.buyerEmail,
-            buyerCompany: buyer.buyerCompany,
-            buyerType: buyer.buyerType,
-            matchScore: null,
-            breakdown: null,
-            noCriteria: true,
-          };
-        }
-
-        const breakdown = await matchBuyerToDeal(
-          criteria,
-          {
-            industry: deal.industry,
-            subIndustry: deal.subIndustry,
-            askingPrice: deal.askingPrice,
-            description: deal.description ?? null,
-            extractedInfo: (deal.extractedInfo || {}) as Record<string, any>,
-            financialAnalysis: latestFA ? {
-              reclassifiedPnl: latestFA.reclassifiedPnl,
-              normalization: latestFA.normalization,
-              workingCapital: latestFA.workingCapital,
-            } : undefined,
-          },
-          { skipAI: req.query.skipAI === "true" }
-        );
-
-        // Persist score
-        await storage.updateBuyerAccess(buyer.id, {
-          matchScore: breakdown.finalScore,
-          matchBreakdown: breakdown as any,
-        });
-
-        return {
-          buyerId: buyer.id,
-          buyerName: buyer.buyerName || "Unknown",
-          buyerEmail: buyer.buyerEmail,
-          buyerCompany: buyer.buyerCompany,
-          buyerType: buyer.buyerType,
-          prequalified: buyer.prequalified,
-          proofOfFunds: buyer.proofOfFunds,
-          matchScore: breakdown.finalScore,
-          breakdown,
-        };
-      }));
+      const { matchBuyerDealRow } = await import("./matching/match-run.js");
+      const dealForMatch = {
+        industry: deal.industry,
+        subIndustry: deal.subIndustry,
+        askingPrice: deal.askingPrice,
+        description: deal.description ?? null,
+        extractedInfo: (deal.extractedInfo || {}) as Record<string, any>,
+        financialAnalysis: latestFA ? {
+          reclassifiedPnl: latestFA.reclassifiedPnl,
+          normalization: latestFA.normalization,
+          workingCapital: latestFA.workingCapital,
+        } : undefined,
+      };
+      // One buyer failing (odd criteria, an AI hiccup, a write error) never
+      // fails the batch — that buyer comes back with an error instead.
+      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map((buyer: any) =>
+        matchBuyerDealRow(buyer, dealForMatch, {
+          skipAI: req.query.skipAI === "true",
+          persist: (id, patch) => storage.updateBuyerAccess(id, patch as any).then(() => undefined),
+        }),
+      ));
 
       results.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       res.json(results);

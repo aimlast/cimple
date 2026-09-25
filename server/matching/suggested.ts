@@ -76,6 +76,31 @@ export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
 }
 
 /**
+ * Who has already been reached on this deal. An access grant links the
+ * buyer's account only once they verify their email (before the NDA a row
+ * can carry just the address), so both sides are matched on the account id
+ * AND on the lower-cased email — a buyer who has access is never suggested
+ * as if they didn't.
+ */
+export function reachedBuyers(
+  outreach: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
+  access: Array<{ buyerUserId?: string | null; buyerEmail?: string | null }>,
+): (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean; alreadyContacted: boolean } {
+  const norm = (e?: string | null) => (e || "").trim().toLowerCase();
+  const ids = (rows: typeof outreach) => new Set(rows.map((r) => r.buyerUserId).filter((x): x is string => !!x));
+  const emails = (rows: typeof outreach) => new Set(rows.map((r) => norm(r.buyerEmail)).filter(Boolean));
+  const accessIds = ids(access), accessEmails = emails(access);
+  const contactedIds = ids(outreach), contactedEmails = emails(outreach);
+  return (buyer) => {
+    const email = norm(buyer.email);
+    return {
+      alreadyHasAccess: accessIds.has(buyer.id) || (!!email && accessEmails.has(email)),
+      alreadyContacted: contactedIds.has(buyer.id) || (!!email && contactedEmails.has(email)),
+    };
+  };
+}
+
+/**
  * "Matches the CIM in the first place": not an excluded industry, and not a
  * clear rule-based mismatch (2+ criteria testable and none met). Buyers with
  * nothing testable but a written profile still qualify — only the AI can

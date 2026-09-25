@@ -16,8 +16,15 @@
  */
 import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
+import { agentConfig } from "../interview/config/load-config";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+type AiCreate = (params: any) => Promise<{ content: any[] }>;
+let aiCreate: AiCreate = (params) => anthropic.messages.create(params) as any;
+/** Tests replace the model call (no network). */
+export function setMatchingAiForTests(fn: AiCreate | null): void {
+  aiCreate = fn ?? ((params) => anthropic.messages.create(params) as any);
+}
 
 export interface BuyerCriteria {
   // Financial
@@ -100,6 +107,8 @@ export interface MatchBreakdown {
     overallAssessment: string;     // 1-2 sentence AI summary
     score: number;                 // 0-100 overall AI score
   };
+  /** Set when the AI qualitative pass ran but produced no usable score. */
+  aiQualitativeUnavailable?: string;
 
   // Meta
   deterministicScore: number;
@@ -253,6 +262,163 @@ export function industryMatches(dealText: string, targets: string[]): boolean {
     const tl = target.toLowerCase();
     return Object.keys(INDUSTRY_FAMILIES).some((f) => dealFamilies.has(f) && (containsTerm(tl, f) || (f === "healthcare" && /\b(health|medical)\b/.test(tl))));
   });
+}
+
+// Words that narrow an exclusion without naming an industry ("New-build
+// construction", "pure-play retail") — dropped before the all-words test.
+const EXCLUSION_QUALIFIERS = new Set([
+  "new", "build", "built", "newbuild", "ground", "up", "only", "pure", "play", "primarily", "mainly", "mostly",
+  "heavy", "focused", "focus", "based", "type", "style", "commercial-only", "residential-only",
+]);
+
+/**
+ * Exclusions that are nothing but a sector's name ("Healthcare", "Healthcare
+ * services", "Home services", "Food & beverage") — written with the filler
+ * words ("services", "business", "and") taken out. Such an exclusion covers
+ * the whole family: a buyer who rules out "Healthcare" is ruling out a
+ * pharmacy. Anything more specific ("Healthcare delivery", "New-build
+ * construction", "Home care") is not a bare sector name and stays strict.
+ */
+const SECTOR_NAMES: Record<string, string[]> = {
+  healthcare: ["healthcare", "health", "health care", "medical", "medicine", "healthcare medical", "health wellness", "health care medical", "healthcare delivery", "health care delivery", "care delivery"],
+  "home services": ["home", "home services", "home service", "home trades", "home improvement"],
+  construction: ["construction", "contracting", "construction contracting", "construction trades", "trades construction"],
+  "food service": ["food", "food service", "food beverage", "f b", "hospitality", "restaurant food"],
+  "professional services": ["professional", "professional services"],
+  manufacturing: ["manufacturing", "manufacturer", "manufacturers"],
+  retail: ["retail", "retailer", "retailers", "retail trade"],
+  automotive: ["automotive", "auto"],
+  "business services": ["business services", "b2b", "b2b services"],
+};
+
+/**
+ * The families a deal belongs to, for exclusions. Same as `familiesOf`, except
+ * that trades which are usually service businesses (plumbing, electrical,
+ * roofing, renovation) don't make a deal "construction": a buyer who rules out
+ * construction means project-based building, not a residential HVAC and
+ * plumbing service company.
+ */
+const CONSTRUCTION_FOR_EXCLUSION = ["construction", "contractor", "contracting", "general contractor", "homebuild", "home builder", "excavat", "paving", "concrete", "framing", "drywall"];
+function exclusionFamiliesOf(text: string): Set<string> {
+  const out = familiesOf(text);
+  out.delete("construction");
+  if (CONSTRUCTION_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("construction");
+  return out;
+}
+
+/** The family an exclusion names outright, if it is just a sector name. */
+function bareSector(phrase: string): string | null {
+  const all = words(phrase);
+  const core = all.filter((w) => !INDUSTRY_FILLER.has(w)).join(" ");
+  const full = all.join(" ");
+  for (const [family, names] of Object.entries(SECTOR_NAMES)) {
+    if (names.includes(core) || names.includes(full)) return family;
+  }
+  return null;
+}
+
+/**
+ * Does a buyer's EXCLUDED industry rule this deal out? Stricter than
+ * `industryMatches` (which suits targets): the whole exclusion phrase must
+ * appear in the deal's industry label, or every one of its meaningful words
+ * must — qualifiers like "new"/"build" ignored. Industry-family widening
+ * applies only when the exclusion is just a sector's name. "New-build
+ * construction" does not exclude a residential HVAC service business;
+ * "construction" excludes a general contractor; "Healthcare" excludes a
+ * pharmacy; "Home services" excludes an HVAC business.
+ */
+export function excludedIndustryMatches(dealIndustryText: string, exclusions: string[]): boolean {
+  const hay = dealIndustryText.toLowerCase();
+  if (!hay.trim()) return false;
+  let dealFamilies: Set<string> | null = null;
+  return exclusions.some((raw) => {
+    const phrase = String(raw || "").toLowerCase().trim();
+    if (!phrase) return false;
+    if (new RegExp(`\\b${escapeRegex(phrase)}\\b`).test(hay)) return true;
+    const sector = bareSector(phrase);
+    if (sector && (dealFamilies ??= exclusionFamiliesOf(hay)).has(sector)) return true;
+    const meaningful = words(phrase).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w) && !EXCLUSION_QUALIFIERS.has(w));
+    return meaningful.length > 0 && meaningful.every((w) => containsTerm(hay, w));
+  });
+}
+
+// ── AI qualitative scoring ─────────────────────────────────────────────────
+
+export const AI_DIMENSIONS = [
+  "growthAlignment", "competitiveMoat", "managementDepth", "customerHealth", "strategicFit", "reasonForSaleRisk",
+] as const;
+
+const AI_SCORE_TOOL = {
+  name: "score_match",
+  description: "Scores for how well the business matches the buyer's qualitative criteria.",
+  input_schema: {
+    type: "object",
+    properties: {
+      growthAlignment: { type: "number", description: "0-10 how well growth potential matches buyer expectations" },
+      competitiveMoat: { type: "number", description: "0-10 strength of competitive advantages and defensibility" },
+      managementDepth: { type: "number", description: "0-10 management team strength and owner dependency risk" },
+      customerHealth: { type: "number", description: "0-10 customer diversification, retention, recurring revenue quality" },
+      strategicFit: { type: "number", description: "0-10 how well this fits as platform/add-on/strategic acquisition" },
+      reasonForSaleRisk: { type: "number", description: "0-10 how clean and low-risk the reason for sale is" },
+      overallAssessment: { type: "string", description: "1-2 sentence summary of match quality" },
+    },
+    required: [...AI_DIMENSIONS, "overallAssessment"],
+  },
+};
+
+/**
+ * The first complete JSON object in a model reply — tolerant of code fences
+ * and of prose before or after it ("{…}\n\nNote: …").
+ */
+export function firstJsonObject(text: string): any {
+  const t = (text || "").replace(/```[a-zA-Z]*\r?\n?/g, "");
+  const start = t.indexOf("{");
+  if (start < 0) throw new Error("No JSON object in reply");
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return JSON.parse(t.slice(start, i + 1));
+  }
+  throw new Error("Unterminated JSON object in reply");
+}
+
+/**
+ * The AI's six 0-10 dimensions, coerced and clamped. A dimension the model
+ * left out, nulled or wrote as "N/A" is skipped; with fewer than 4 usable
+ * dimensions there is no AI score at all (null) — never NaN.
+ */
+export function scoreAiDimensions(parsed: any): { dims: Partial<Record<(typeof AI_DIMENSIONS)[number], number>>; score: number } | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const dims: Partial<Record<(typeof AI_DIMENSIONS)[number], number>> = {};
+  let sum = 0, n = 0;
+  for (const k of AI_DIMENSIONS) {
+    const raw = parsed[k];
+    if (raw === null || raw === undefined || typeof raw === "boolean") continue;
+    if (typeof raw === "string" && !/\d/.test(raw)) continue;
+    const v = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(v)) continue;
+    const c = Math.min(10, Math.max(0, v));
+    dims[k] = c;
+    sum += c;
+    n++;
+  }
+  if (n < 4) return null;
+  const score = Math.round((sum / (n * 10)) * 100);
+  return Number.isFinite(score) ? { dims, score } : null;
+}
+
+/** Only finite integers 0-100 may be persisted as a match score. */
+export function finiteScore(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : null;
 }
 
 const LOCATION_FILLER = new Set(["north", "northern", "south", "southern", "east", "eastern", "west", "western", "central", "greater", "area", "region", "metro", "the", "and", "of", "near", "around", "within", "anywhere", "in", "province", "state"]);
@@ -447,7 +613,7 @@ export async function matchBuyerToDeal(
   }
 
   if (criteria.excludedIndustries && criteria.excludedIndustries.length > 0) {
-    const excluded = industryMatches([dealIndustry, deal.subIndustry].filter(Boolean).join(" · "), criteria.excludedIndustries);
+    const excluded = excludedIndustryMatches([dealIndustry, deal.subIndustry].filter(Boolean).join(" · "), criteria.excludedIndustries);
     if (excluded) {
       industryDetails.excluded = { score: 0, max: 100, note: `${dealIndustry} — EXCLUDED industry` };
     }
@@ -569,6 +735,7 @@ export async function matchBuyerToDeal(
 
   // ── AI QUALITATIVE SCORING ─────────────────────────────────────────────────
   let aiQualitative: MatchBreakdown["aiQualitative"];
+  let aiQualitativeUnavailable: string | undefined;
   let aiScore = 0;
 
   if (!options?.skipAI && criteriaTested > 0 && process.env.ANTHROPIC_API_KEY) {
@@ -610,10 +777,13 @@ export async function matchBuyerToDeal(
         platformAcquisition: criteria.platformAcquisition,
       }, null, 0);
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 600,
-        system: `You are an M&A analyst scoring how well a business matches a buyer's qualitative criteria. Score each dimension 0-10. Be critical — only give 8+ for genuinely strong matches. Return ONLY valid JSON.`,
+      const response = await aiCreate({
+        model: agentConfig.models.supportingAgents,
+        max_tokens: 1000,
+        temperature: 0,
+        system: `You are an M&A analyst scoring how well a business matches a buyer's qualitative criteria. Score each dimension 0-10. Be critical — only give 8+ for genuinely strong matches. When the buyer states nothing for a dimension, score how attractive the business is on it for a typical buyer of this kind. Always give a number.`,
+        tools: [AI_SCORE_TOOL as any],
+        tool_choice: { type: "tool", name: AI_SCORE_TOOL.name },
         messages: [{
           role: "user",
           content: `Score this deal against the buyer's qualitative criteria.
@@ -622,38 +792,37 @@ DEAL PROFILE:
 ${dealProfile}
 
 BUYER QUALITATIVE CRITERIA:
-${buyerProfile}
-
-Return JSON:
-{
-  "growthAlignment": <0-10 how well growth potential matches buyer expectations>,
-  "competitiveMoat": <0-10 strength of competitive advantages and defensibility>,
-  "managementDepth": <0-10 management team strength and owner dependency risk>,
-  "customerHealth": <0-10 customer diversification, retention, recurring revenue quality>,
-  "strategicFit": <0-10 how well this fits as platform/add-on/strategic acquisition>,
-  "reasonForSaleRisk": <0-10 how clean and low-risk the reason for sale is>,
-  "overallAssessment": "<1-2 sentence summary of match quality>"
-}`,
+${buyerProfile}`,
         }],
       });
 
-      const raw = response.content[0].type === "text" ? response.content[0].text : "";
-      const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
-      aiQualitative = parsed;
-      aiScore = Math.round(
-        ((parsed.growthAlignment + parsed.competitiveMoat + parsed.managementDepth +
-          parsed.customerHealth + parsed.strategicFit + parsed.reasonForSaleRisk) / 60) * 100
-      );
-      aiQualitative!.score = aiScore;
+      const toolBlock = response.content.find((b: any) => b.type === "tool_use");
+      const textBlock = response.content.find((b: any) => b.type === "text");
+      const parsed: any = toolBlock && toolBlock.type === "tool_use"
+        ? toolBlock.input
+        : firstJsonObject(textBlock && textBlock.type === "text" ? textBlock.text : "");
+      const scored = scoreAiDimensions(parsed);
+      if (scored) {
+        aiScore = scored.score;
+        aiQualitative = {
+          ...(scored.dims as any),
+          overallAssessment: typeof parsed.overallAssessment === "string" ? parsed.overallAssessment.slice(0, 500) : "",
+          score: aiScore,
+        };
+      } else {
+        aiQualitativeUnavailable = "AI scoring unavailable — the reply had too few usable scores.";
+      }
     } catch (err) {
-      console.error("[matching] AI qualitative scoring failed:", err);
+      console.error("[matching] AI qualitative scoring failed:", (err as Error)?.message ?? err);
+      aiQualitativeUnavailable = "AI scoring unavailable — the AI didn't answer.";
     }
   }
 
   // ── FINAL BLEND ────────────────────────────────────────────────────────────
-  const finalScore = aiQualitative
-    ? Math.round(deterministicScore * 0.6 + aiScore * 0.4)
-    : deterministicScore;
+  const safeDeterministic = finiteScore(deterministicScore) ?? 0;
+  const finalScore = finiteScore(
+    aiQualitative ? safeDeterministic * 0.6 + aiScore * 0.4 : safeDeterministic,
+  ) ?? safeDeterministic;
 
   // Data completeness — how many deal fields were available
   const keyFields = ["annualRevenue", "ebitda", "sde", "operatingMargins", "revenueGrowth",
@@ -670,7 +839,8 @@ Return JSON:
     dealStructureFit,
     qualificationFit,
     aiQualitative,
-    deterministicScore,
+    ...(aiQualitativeUnavailable ? { aiQualitativeUnavailable } : {}),
+    deterministicScore: safeDeterministic,
     aiScore,
     finalScore,
     criteriaMatched: Object.values(financialDetails).concat(Object.values(industryDetails), Object.values(locationDetails), Object.values(opDetails), Object.values(dsDetails))
