@@ -188,11 +188,16 @@ export function inferFieldSources(input: InferInputs): Record<string, InferredFi
     const value = info[key];
 
     // Recorded live-session source without its session (before per-session
-    // tracking): link it to the session that captured the key.
+    // tracking): link it to the session that captured the key — only ever a
+    // session of the SAME kind. The kind was recorded; linking an "interview"
+    // fact to a broker-led call would make the chip and the source list
+    // disagree, so with no same-kind session it stays unlinked (it is then
+    // counted under the "AI interview" row for pre-session facts).
     if (!isUntrackedSource(recorded)) {
-      if (LIVE.has(recorded.source) && !recorded.sessionId && !recorded.documentId && sessions.length > 0) {
-        const sameKind = sessions.filter((s) => s.kind === recorded.source);
-        const pool = sameKind.length > 0 ? sameKind : sessions;
+      const pool = LIVE.has(recorded.source) && !recorded.sessionId && !recorded.documentId
+        ? sessions.filter((s) => s.kind === recorded.source)
+        : [];
+      if (pool.length > 0) {
         const byConf = [...pool].reverse().find((s) => s.confidenceKeys.has(key));
         const mention = firstMention(pool, value, byConf);
         const session = byConf ?? mention?.session ?? pool[pool.length - 1];

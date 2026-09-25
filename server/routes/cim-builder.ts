@@ -27,7 +27,7 @@ import {
 } from "@shared/cim-layouts";
 import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/routes";
 import {
-  blindRefreshState,
+  summarizeBlindRows,
   blindSectionError,
   retryBlindNow,
   invalidateBlind,
@@ -143,15 +143,18 @@ export function registerCimBuilderRoutes(app: Express): void {
       const active = buyers.filter((b) => !b.revokedAt);
       const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
       for (const b of active) byLevel[b.accessLevel || "teaser"] = (byLevel[b.accessLevel || "teaser"] ?? 0) + 1;
-      const blind = blindRefreshState(deal.id);
+      const blind = summarizeBlindRows(deal.id, rows);
       res.json({
         sections: rows,
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
           running: blind.running,
-          error: blind.lastError ?? null,
-          updating: rows.filter((r) => r.blindStatus === "updating" || r.blindStatus === "held").length,
+          error: blind.error,
+          /** Sections waiting for their redaction (not held back). */
+          updating: blind.updating,
+          /** Sections whose redaction failed — blind buyers don't get them until one succeeds. */
+          held: blind.held,
         },
         dd: { generated: ddOverrides.length > 0 },
         buyers: { total: active.length, byLevel },

@@ -40,6 +40,13 @@ function runExclusive<T>(dealId: string, fn: () => Promise<T>): Promise<T> {
 }
 
 // ── State reported to the builder ────────────────────────────────────────
+/**
+ * `lastError` is for failures of a whole run (an exception, or a full
+ * generation that redacted nothing). A failed SECTION is not recorded here:
+ * it lives in `sectionBackoff` until that section is actually redacted (or
+ * edited), so a later run that succeeds for other sections can't make a
+ * held-back section look like it is merely "updating".
+ */
 interface DealBlindState {
   running: boolean;
   lastError?: string;
@@ -74,9 +81,31 @@ export function blindRefreshState(dealId: string): DealBlindState {
   return state.get(dealId) ?? { running: false };
 }
 
-/** Why this section's blind version is held back (its last redaction failed), if it is. */
+/**
+ * Why this section's blind version is held back (its last redaction failed),
+ * if it is. Stays set until a redaction of it succeeds, the section is
+ * edited, or the broker clicks Retry — however other sections fare meanwhile.
+ */
 export function blindSectionError(sectionId: string): string | null {
   return sectionBackoff.get(sectionId)?.error ?? null;
+}
+
+/**
+ * The builder's blind summary from its section rows: held-back sections are
+ * reported apart from ones merely waiting for their redaction, and the error
+ * names the held ones for as long as any remain.
+ */
+export function summarizeBlindRows(
+  dealId: string,
+  rows: Array<{ blindStatus: string; blindError?: string | null }>,
+): { running: boolean; error: string | null; updating: number; held: number } {
+  const st = blindRefreshState(dealId);
+  const held = rows.filter((r) => r.blindStatus === "held");
+  const updating = rows.filter((r) => r.blindStatus === "updating").length;
+  const error = held.length > 0
+    ? `Couldn't make the blind version of ${held.length} section${held.length === 1 ? "" : "s"}: ${held[0].blindError || "the redaction failed"}`
+    : st.lastError ?? null;
+  return { running: st.running, error, updating, held: held.length };
 }
 
 /** True while a background AI write is filling this section (not buyer-ready). */
@@ -183,9 +212,9 @@ async function refreshStaleSections(dealId: string): Promise<void> {
       }
     }
   }
-  state.set(dealId, failures > 0
-    ? { running: false, lastError: `Couldn't update the blind version of ${failures} section${failures === 1 ? "" : "s"}: ${lastError}`, lastErrorAt: Date.now() }
-    : { running: false });
+  // Failed sections stay reported as held back through sectionBackoff.
+  state.set(dealId, { running: false });
+  if (lastError) console.warn(`[blind-sync] deal ${dealId}: ${failures} section(s) held back — ${lastError}`);
   console.log(`[blind-sync] deal ${dealId}: re-redacted ${todo.length - failures}/${todo.length} section(s) under ${codename}`);
 }
 
@@ -263,13 +292,8 @@ export function regenerateAllBlind(dealId: string): Promise<{ codename: string; 
       }
       for (const f of failures) recordSectionFailure(dealId, f.cimSectionId, f.error);
       fullBackoff.delete(dealId);
-      state.set(dealId, failures.length > 0
-        ? {
-            running: false,
-            lastError: `Couldn't update the blind version of ${failures.length} section${failures.length === 1 ? "" : "s"}: ${failures[0].error}`,
-            lastErrorAt: Date.now(),
-          }
-        : { running: false });
+      // Failed sections stay reported as held back through sectionBackoff.
+      state.set(dealId, { running: false });
       // A section edited mid-run keeps its stale mark — catch it up.
       if (moved) scheduleBlindRefresh(dealId);
       return { codename, count: overrides.length, failed: failures.length };

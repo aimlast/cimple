@@ -19,7 +19,12 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
 
 export interface BuilderState {
   sections: BuilderSection[];
-  blind: { generated: boolean; codename: string | null; running: boolean; error: string | null; updating: number };
+  /**
+   * `updating`: sections waiting for their redaction. `held`: sections whose
+   * redaction failed — blind buyers don't get them until one succeeds (their
+   * reason is in `error`, and on the row's `blindError`).
+   */
+  blind: { generated: boolean; codename: string | null; running: boolean; error: string | null; updating: number; held: number };
   dd: { generated: boolean };
   buyers: { total: number; byLevel: Record<string, number> };
   deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };

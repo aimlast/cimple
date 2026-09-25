@@ -17,14 +17,21 @@
  *               provinces/states/countries are allowed in a Blind CIM and skipped
  *   - contacts: email addresses and phone numbers
  *
- * Matching is whole-word on accent- and punctuation-folded text. Proper
- * nouns (people, places) match case-sensitively so "Hope" the receptionist
- * doesn't trip on "we hope"; business names and contacts match in any case.
- * Pure — used by the server (redaction, view room, Q&A, outreach) and the
- * broker's client-side preview.
+ * Role and profession phrases ("Licensed Plumbers: 4", "Registered Massage
+ * Therapists (6)", "Certified Welders") are never read as people — a Blind
+ * CIM must be able to say what the team does.
+ *
+ * Matching is whole-word on accent-, punctuation- and whitespace-folded text
+ * and ignores case: "KITCHENER", "Kitchener" and "kitchener" are all the
+ * city. The one exception is a person or place whose name is also an
+ * everyday word ("Market" Street, "Bill" the driver): its all-lowercase form
+ * is the word ("the market", "the bill"), so only a capitalised or all-caps
+ * occurrence counts. Pure — used by the server (redaction, view room, Q&A,
+ * outreach) and the broker's client-side preview.
  */
 import { blindIdentifiers } from "./blind-identifiers";
 import { isRegionLabel } from "./cim-media";
+import { EVERYDAY_NAME_WORDS, isPluralRole, isRoleWord } from "./blind-vocabulary";
 
 export type BlindTermKind = "name" | "person" | "place" | "contact";
 
@@ -32,20 +39,37 @@ export interface BlindTerm {
   /** The identifying text as it appears in the facts. */
   text: string;
   kind: BlindTermKind;
-  caseSensitive: boolean;
+  /**
+   * A one-word person or place name that is also an everyday word: an
+   * all-lowercase occurrence is the word, not the name. Every other term
+   * matches in any case.
+   */
+  common: boolean;
 }
 
 type AnyRecord = Record<string, unknown>;
 const isObj = (v: unknown): v is AnyRecord => !!v && typeof v === "object" && !Array.isArray(v);
 
-/** Accent- and punctuation-folded text with single spaces between words. */
-export function foldForMatch(s: string, caseSensitive: boolean): string {
+/** Letters NFKD doesn't decompose into a base letter + accent. */
+const TRANSLITERATE: Record<string, string> = {
+  ø: "o", Ø: "O", æ: "ae", Æ: "AE", œ: "oe", Œ: "OE", ß: "ss", ł: "l", Ł: "L", đ: "d", Đ: "D", ð: "d", Ð: "D", þ: "th", Þ: "TH", ı: "i",
+};
+
+/**
+ * Accent-, punctuation- and whitespace-folded text with single spaces
+ * between words (ASCII letters and digits only), lowercased unless
+ * `keepCase`. Invisible characters (soft hyphen, zero-width space) are
+ * dropped, so "Kitch\u00ADener" is "Kitchener".
+ */
+export function foldForMatch(s: string, keepCase = false): string {
   const t = s
+    .replace(/[\u00AD\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[øØæÆœŒßłŁđĐðÐþÞı]/g, (c) => TRANSLITERATE[c] ?? c)
     .normalize("NFKD")
-    .replace(/[̀-ͯ]/g, "")
+    .replace(/[\u0300-\u036f]/g, "")
     .replace(/[^A-Za-z0-9]+/g, " ")
     .trim();
-  return caseSensitive ? t : t.toLowerCase();
+  return keepCase ? t : t.toLowerCase();
 }
 
 // ── Vocabulary ────────────────────────────────────────────────────────────
@@ -112,14 +136,40 @@ const GENERIC_STREET_WORDS = new Set([
 /** Connector words allowed inside a place name ("Plaza on Fairway Road", "Niagara-on-the-Lake"). */
 const PLACE_CONNECTORS = new Set(["on", "of", "the", "de", "du", "la", "le", "les", "des", "and", "at", "sur", "upon", "in"]);
 
-const HONORIFIC = /\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof|Sir|Dame)\.?[ \t]+((?:[A-Z]\.[ \t]*)*[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+(?:[ \t]+[A-Z][A-Za-zÀ-ÖØ-öø-ÿ'’-]+){0,2})/g;
+// Letters, including accented ones ("Émilie", "Åberg"). JS \b is ASCII-only,
+// so word edges are written out as "not a letter" instead.
+const LETTER = "A-Za-zÀ-ÖØ-öø-ÿ";
+const UPPER = "A-ZÀ-ÖØ-Þ";
+const LOWER = "a-zà-öø-ÿ";
+const UPPER_START = new RegExp(`^[${UPPER}]`);
+const startsUpper = (w: string) => UPPER_START.test(w);
+const HONORIFIC = new RegExp(
+  `\\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof|Sir|Dame)\\.?[ \\t]+((?:[${UPPER}]\\.[ \\t]*)*[${UPPER}][${LETTER}'’-]+(?:[ \\t]+[${UPPER}][${LETTER}'’-]+){0,2})`,
+  "g",
+);
 /** One capitalised name word: "Anita", "McDonald", "O'Brien", "Jean-Luc". */
-const WORD = "[A-Z][a-zà-öø-ÿ]*(?:[A-Z][a-zà-öø-ÿ]+)?(?:['’-][A-Za-zà-öø-ÿ][a-zà-öø-ÿ]*)*";
-const NAME_RUN = new RegExp(`\\b${WORD}(?:[ \\t]+${WORD}){1,2}\\b`, "g");
+const WORD = `[${UPPER}][${LOWER}]*(?:[${UPPER}][${LOWER}]+)?(?:['’-][${LETTER}][${LOWER}]*)*`;
+/** A run of capitalised words ("Office Manager Sandra Lee", "Licensed Plumbers"). */
+const CAP_RUN = new RegExp(`(^|[^${LETTER}'’-])(${WORD}(?:[ \\t]+${WORD})*)(?![${LETTER}])`, "g");
 /** "Maria (office manager…", "Priya 7 years", "Maria, 9 years". */
-const SINGLE_NAME = new RegExp(`\\b(${WORD})(?=[ \\t]*\\(|,?[ \\t]+\\d+[ \\t]*(?:years?|yrs?)\\b)`, "g");
+const SINGLE_NAME = new RegExp(`(^|[^${LETTER}'’-])(${WORD})(?=[ \\t]*\\(|,?[ \\t]+\\d+[ \\t]*(?:years?|yrs?)\\b)`, "g");
 
-const isNameWord = (w: string) => w.length >= 2 && !NOT_NAME_WORDS.has(w.toLowerCase());
+/** Words that follow an organisation's or a place's name ("Kowalski Hospitality Inc", "Fairway Plaza"). */
+const ORG_WORDS = new Set([
+  "company", "co", "corporation", "corp", "inc", "incorporated", "ltd", "limited", "llc", "llp", "lp", "ulc", "group",
+  "holdings", "enterprises", "services", "solutions", "partners", "associates", "cpa", "bank", "trust", "insurance",
+  "dental", "medical", "health", "clinic", "practice", "plaza", "centre", "center", "mall", "building", "road",
+  "street", "avenue", "drive", "boulevard",
+]);
+
+const isNameWord = (w: string) => w.length >= 2 && !NOT_NAME_WORDS.has(w.toLowerCase()) && !isRoleWord(w);
+
+const NUMBER_WORDS = /^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|multiple|many|few|some)$/i;
+/** A head count just before the words: "4 ", "four ", "x3 ". */
+const COUNT_BEFORE = /(?:\b\d{1,4}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|multiple|many|few))[ \t]*[x×]?[ \t]*$/i;
+/** A head count just after the words: " (6)", ": 4", " x 3" — not a share, tenure or hours. */
+const COUNT_AFTER = /^[ \t]*(?:\([ \t]*\d{1,4}[ \t]*\)|[:=][ \t]*\d{1,4}(?![\d.,]|[ \t]*(?:%|percent|years?|yrs?|months?|hours?|hrs?)\b)|[x×][ \t]*\d{1,4}\b)/i;
+const pluralish = (w: string) => /s$/i.test(w) || isPluralRole(w);
 
 // ── Term extraction ───────────────────────────────────────────────────────
 
@@ -127,7 +177,7 @@ const isNameWord = (w: string) => w.length >= 2 && !NOT_NAME_WORDS.has(w.toLower
 export function honorificNames(text: string): string[] {
   const out: string[] = [];
   for (const m of Array.from(text.matchAll(HONORIFIC))) {
-    const words = m[1].split(/\s+/).filter((w) => !/^[A-Z]\.$/.test(w)).filter(isNameWord);
+    const words = m[1].split(/\s+/).filter((w) => !/^[A-ZÀ-ÖØ-Þ]\.$/.test(w)).filter(isNameWord);
     if (words.length === 0) continue;
     if (words.length >= 2) out.push(words.join(" "));
     const surname = words[words.length - 1];
@@ -136,24 +186,57 @@ export function honorificNames(text: string): string[] {
   return out;
 }
 
+/**
+ * A counted group of people — "4 Licensed Plumbers", "Registered Massage
+ * Therapists (6)", "Framers: 3". A person is never counted, so the words are
+ * a role, whatever they are.
+ */
+function isCountedGroup(text: string, at: number, run: string): boolean {
+  const words = run.split(/[ \t]+/);
+  if (!pluralish(words[words.length - 1])) return false;
+  if (NUMBER_WORDS.test(words[0])) return true;
+  const end = at + run.length;
+  return COUNT_BEFORE.test(text.slice(Math.max(0, at - 16), at)) || COUNT_AFTER.test(text.slice(end, end + 24));
+}
+
 /** People in a free-text people fact (plus the honorific names). */
 function peopleIn(text: string): string[] {
   const out = honorificNames(text);
-  for (const m of Array.from(text.matchAll(NAME_RUN))) {
-    const words = m[0].split(/\s+/);
-    if (!words.every(isNameWord)) continue;
-    out.push(words.join(" "));
-    const surname = words[words.length - 1];
-    if (surname.length >= 3 && !COMMON_WORD_SURNAMES.has(surname.toLowerCase())) out.push(surname);
+  for (const m of Array.from(text.matchAll(CAP_RUN))) {
+    const words = m[2].split(/[ \t]+/);
+    if (words.length < 2 || isCountedGroup(text, (m.index ?? 0) + m[1].length, m[2])) continue;
+    // Split the run at role words: "Office Manager Sandra Lee" → "Sandra Lee".
+    // Words just before a plural role describe it ("Early Childhood
+    // Educators", "Massage Therapists") — a group, not a person. Words just
+    // before "Inc"/"Group"/"Plaza"… name an organisation or a place: the
+    // whole name identifies, its last word alone ("Hospitality") doesn't.
+    let seg: string[] = [];
+    const flush = (next: string | undefined) => {
+      const describesGroup = next !== undefined && isPluralRole(next);
+      const namesOrg = next !== undefined && ORG_WORDS.has(next.toLowerCase());
+      if (seg.length >= 2 && seg.length <= 4 && !describesGroup) {
+        out.push(seg.join(" "));
+        const surname = seg[seg.length - 1];
+        if (!namesOrg && surname.length >= 3 && !COMMON_WORD_SURNAMES.has(surname.toLowerCase())) out.push(surname);
+      }
+      seg = [];
+    };
+    for (const w of words) {
+      if (isNameWord(w)) seg.push(w);
+      else flush(w);
+    }
+    flush(undefined);
   }
   for (const m of Array.from(text.matchAll(SINGLE_NAME))) {
-    const w = m[1];
+    const w = m[2];
     if (w.length < 3 || !isNameWord(w) || COMMON_WORD_SURNAMES.has(w.toLowerCase())) continue;
-    const at = m.index ?? 0;
+    const at = (m.index ?? 0) + m[1].length;
+    // "Framers (4)" — a head count, not a person.
+    if (isCountedGroup(text, at, w)) continue;
     // Part of a capitalised title ("Lead Programmer (Miguel…") — not a name.
-    if (/[A-Z][A-Za-zà-öø-ÿ'’-]*[ \t]+$/.test(text.slice(Math.max(0, at - 40), at))) continue;
+    if (/[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*[ \t]+$/.test(text.slice(Math.max(0, at - 40), at))) continue;
     // "Controller (Jennifer Wu, …)" — the name is inside the brackets, the word is a role.
-    if (/^[ \t]*\([ \t]*[A-Z]/.test(text.slice(at + w.length, at + w.length + 6))) continue;
+    if (/^[ \t]*\([ \t]*[A-ZÀ-ÖØ-Þ]/.test(text.slice(at + w.length, at + w.length + 6))) continue;
     out.push(w);
   }
   return out;
@@ -162,7 +245,7 @@ function peopleIn(text: string): string[] {
 /** A person's name held in a dedicated name field ({ name: "Maria" }). */
 function personField(v: string): string[] {
   const words = v.replace(/\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof)\.?\s+/g, "").split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 4 || !words.every((w) => /^[A-Z]/.test(w) && isNameWord(w))) return peopleIn(v);
+  if (words.length === 0 || words.length > 4 || !words.every((w) => startsUpper(w) && isNameWord(w))) return peopleIn(v);
   const out = [words.join(" ")];
   const last = words[words.length - 1];
   if (words.length > 1 && last.length >= 3 && !COMMON_WORD_SURNAMES.has(last.toLowerCase())) out.push(last);
@@ -173,32 +256,37 @@ function personField(v: string): string[] {
 const CA_POSTAL = /\b[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z] ?\d[ABCEGHJ-NPRSTV-Z]\d\b/gi;
 const UNIT_LINE = /^(?:unit|suite|ste|apt|apartment|floor|fl|bay|#)\b/i;
 
-/** Identifying pieces of a place fact: street line, street words, city, postal code. */
-function placesIn(value: string): { cs: string[]; ci: string[] } {
-  const cs: string[] = [];
-  const ci: string[] = [];
+/**
+ * Identifying pieces of a place fact: street lines and postal codes
+ * (`lines`), place names and distinctive street words (`names`). A dedicated
+ * city/town field (`anyCase`) is a place name however it was typed.
+ */
+function placesIn(value: string, anyCase = false): { names: string[]; lines: string[] } {
+  const names: string[] = [];
+  const lines: string[] = [];
+  const capital = (w: string) => startsUpper(w) || (anyCase && /^[a-zà-öø-ÿ]/.test(w));
   for (const line of value.split(/\n/)) {
-    for (const m of Array.from(line.matchAll(CA_POSTAL))) ci.push(m[0]);
+    for (const m of Array.from(line.matchAll(CA_POSTAL))) lines.push(m[0]);
     const segs = line.replace(CA_POSTAL, "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
     for (const seg of segs) {
       if (seg.length < 3 || isRegionLabel(seg) || UNIT_LINE.test(seg)) continue;
       if (/\d/.test(seg)) {
         // A street line — the line itself, and its distinctive words.
-        if (/[A-Za-z]{3,}/.test(seg)) ci.push(seg.replace(/^#?\s*/, ""));
+        if (/[A-Za-z]{3,}/.test(seg)) lines.push(seg.replace(/^#?\s*/, ""));
         for (const w of seg.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{5,}/g) || []) {
-          if (/^[A-Z]/.test(w) && !GENERIC_STREET_WORDS.has(w.toLowerCase()) && !isRegionLabel(w)) cs.push(w);
+          if (capital(w) && !GENERIC_STREET_WORDS.has(w.toLowerCase()) && !isRegionLabel(w)) names.push(w);
         }
         continue;
       }
       // A proper place name: capitalised words (with connectors), ≤ 5 words.
       const words = seg.split(/[\s-]+/).filter(Boolean);
-      if (words.length > 5 || !/^[A-Z]/.test(words[0])) continue;
-      if (!words.every((w) => /^[A-Z]/.test(w) || PLACE_CONNECTORS.has(w.toLowerCase()))) continue;
+      if (words.length > 5 || !capital(words[0])) continue;
+      if (!words.every((w) => capital(w) || PLACE_CONNECTORS.has(w.toLowerCase()))) continue;
       if (words.length === 1 && GENERIC_STREET_WORDS.has(words[0].toLowerCase())) continue;
-      cs.push(seg);
+      names.push(seg);
     }
   }
-  return { cs, ci };
+  return { names, lines };
 }
 
 const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|ceo|cfo|coo|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord)/i;
@@ -235,57 +323,66 @@ export function blindLeakTerms(
   opts: { codename?: string | null; extraPeople?: string[] } = {},
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
-  const terms: BlindTerm[] = [];
-  const add = (text: string, kind: BlindTermKind, caseSensitive: boolean) => {
+  const terms: Array<{ text: string; kind: BlindTermKind }> = [];
+  const add = (text: string, kind: BlindTermKind) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
-    terms.push({ text: t, kind, caseSensitive });
+    terms.push({ text: t, kind });
   };
 
-  for (const id of blindIdentifiers({ businessName: deal.businessName, extractedInfo: info as Record<string, any> })) add(id, "name", false);
+  for (const id of blindIdentifiers({ businessName: deal.businessName, extractedInfo: info as Record<string, any> })) add(id, "name");
 
   for (const [key, value] of Object.entries(info)) {
     if (key.startsWith("_")) continue;
     const strings = factStrings(value);
     if (strings.length === 0) continue;
     if (PERSON_KEY.test(key) && !/(salary|salaries|wages?|fees?|costs?|comp|compensation|pay|payroll|count|number|tenure|hours|involvement)$/i.test(key)) {
-      for (const s of strings) for (const p of s.nameField ? personField(s.text) : peopleIn(s.text)) add(p, "person", true);
+      for (const s of strings) for (const p of s.nameField ? personField(s.text) : peopleIn(s.text)) add(p, "person");
     } else if (/involvement/i.test(key)) {
       // Free prose about the owner — honorific names only.
-      for (const s of strings) for (const p of honorificNames(s.text)) add(p, "person", true);
+      for (const s of strings) for (const p of honorificNames(s.text)) add(p, "person");
     }
     if (PLACE_KEY.test(key) || PLACE_KEYS.has(key.toLowerCase())) {
       for (const s of strings) {
-        const { cs, ci } = placesIn(s.text);
-        cs.forEach((p) => add(p, "place", true));
-        ci.forEach((p) => add(p, "place", false));
+        // A city/town field ("city", "businessCity" — not "capacity"): a place however it's typed.
+        const cityField = /^(?:city|town|municipality)$|[a-z](?:City|Town|Municipality)$/.test(key);
+        const { names, lines } = placesIn(s.text, cityField);
+        [...names, ...lines].forEach((p) => add(p, "place"));
       }
     }
     if (CONTACT_KEY.test(key)) {
       for (const s of strings) {
         const t = s.text.trim();
-        if (/@/.test(t)) add(t, "contact", false);
-        else if ((t.match(/\d/g) || []).length >= 7) add(t, "contact", false);
+        if (/@/.test(t)) add(t, "contact");
+        else if ((t.match(/\d/g) || []).length >= 7) add(t, "contact");
       }
     }
   }
-  for (const p of opts.extraPeople ?? []) add(p, "person", true);
+  for (const p of opts.extraPeople ?? []) add(p, "person");
 
-  // De-duplicate on the folded form; drop anything inside the codename.
-  const code = opts.codename ? ` ${foldForMatch(opts.codename, false)} ` : "";
-  const seen = new Set<string>();
-  const out: BlindTerm[] = [];
+  // De-duplicate on the folded form (the stricter reading wins); drop
+  // anything inside the codename.
+  const code = opts.codename ? ` ${foldForMatch(opts.codename)} ` : "";
+  const byFold = new Map<string, BlindTerm>();
   for (const t of terms) {
-    const folded = foldForMatch(t.text, t.caseSensitive);
-    if (folded.replace(/ /g, "").length < 3) continue;
-    if (!t.caseSensitive && folded.replace(/ /g, "").length < 4) continue;
-    if (code && code.includes(` ${folded.toLowerCase()} `)) continue;
-    const k = `${t.caseSensitive ? "s" : "i"}:${folded}`;
-    if (seen.has(k)) continue;
-    seen.add(k);
-    out.push(t);
+    const folded = foldForMatch(t.text);
+    const letters = folded.replace(/ /g, "").length;
+    if (letters < 3) continue;
+    // Business names and contacts need 4+ characters ("Inc" alone isn't a name).
+    if ((t.kind === "name" || t.kind === "contact") && letters < 4) continue;
+    if (code && code.includes(` ${folded} `)) continue;
+    const common = (t.kind === "person" || t.kind === "place") && isEverydayWord(folded);
+    const prev = byFold.get(folded);
+    if (prev && (!prev.common || common)) continue;
+    byFold.set(folded, { text: t.text, kind: t.kind, common });
   }
-  return out;
+  return Array.from(byFold.values());
+}
+
+/** One-word person/place names that are also everyday words ("Bill", "Market", "Hope"). */
+function isEverydayWord(folded: string): boolean {
+  return !folded.includes(" ") &&
+    (EVERYDAY_NAME_WORDS.has(folded) || COMMON_WORD_SURNAMES.has(folded) || GENERIC_STREET_WORDS.has(folded) || NOT_NAME_WORDS.has(folded));
 }
 
 // ── Matching ──────────────────────────────────────────────────────────────
@@ -304,20 +401,35 @@ export function collectStrings(value: unknown, out: string[] = [], depth = 0): s
 }
 
 /**
- * The terms (their fact text) that appear in the given text(s). Empty =
- * nothing identifying found.
+ * The terms (their fact text) that appear in the given text(s), in any case
+ * ("KITCHENER", "kitchener"), across accents, punctuation and line breaks.
+ * An everyday-word term (`common`) counts only where it is capitalised or in
+ * capitals. Empty = nothing identifying found.
  */
 export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindTerm[]): string[] {
   if (terms.length === 0) return [];
   const all = typeof texts === "string" ? texts : collectStrings(texts).join("\n");
   if (!all) return [];
-  const cs = ` ${foldForMatch(all, true)} `;
-  const ci = cs.toLowerCase();
+  // Folded text is plain ASCII, so the lowercase copy lines up character for character.
+  const cased = ` ${foldForMatch(all, true)} `;
+  const lower = cased.toLowerCase();
   const hits: string[] = [];
   for (const t of terms) {
-    const f = foldForMatch(t.text, t.caseSensitive);
+    const f = foldForMatch(t.text);
     if (!f) continue;
-    if ((t.caseSensitive ? cs : ci).includes(` ${f} `)) hits.push(t.text);
+    const needle = ` ${f} `;
+    let at = lower.indexOf(needle);
+    if (at < 0) continue;
+    if (!t.common) {
+      hits.push(t.text);
+      continue;
+    }
+    for (; at >= 0; at = lower.indexOf(needle, at + 1)) {
+      if (cased.slice(at + 1, at + 1 + f.length) !== f) {
+        hits.push(t.text);
+        break;
+      }
+    }
   }
   return hits;
 }

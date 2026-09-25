@@ -5,7 +5,7 @@
  */
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { CheckCircle2, EyeOff, LayoutPanelLeft, Loader2, Lock, Wand2 } from "lucide-react";
+import { AlertTriangle, CheckCircle2, EyeOff, LayoutPanelLeft, Loader2, Lock, Wand2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { builderKey, builderRequest, type BuilderState } from "./api";
@@ -45,9 +45,11 @@ export function CimSummaryCard({ dealId }: { dealId: string }) {
         <span className="text-xs text-muted-foreground">
           Blind version:{" "}
           {data.blind.generated
-            ? data.blind.updating > 0
-              ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> updating {data.blind.updating}</span>
-              : <span className="text-foreground">{data.blind.codename ?? "ready"}</span>
+            ? data.blind.held > 0
+              ? <span className="text-red-400 inline-flex items-center gap-1" title={data.blind.error ?? undefined}><AlertTriangle className="h-3 w-3" /> {data.blind.held} held back</span>
+              : data.blind.updating > 0
+                ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> updating {data.blind.updating}</span>
+                : <span className="text-foreground">{data.blind.codename ?? "ready"}</span>
             : "not generated yet"}
         </span>
       </div>

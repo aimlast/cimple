@@ -130,7 +130,7 @@ export default function CIMDesigner() {
 
   const overrideMode = previewAs === "teaser" || previewAs === "full" ? "blind" : previewAs === "due_diligence" ? "dd" : null;
   const { data: overrides = [], isLoading: overridesLoading } = useQuery<CimSectionOverride[]>({
-    queryKey: ["/api/deals", dealId, "cim-overrides", overrideMode ?? "none", state?.blind.updating ?? 0, sections.length],
+    queryKey: ["/api/deals", dealId, "cim-overrides", overrideMode ?? "none", state?.blind.updating ?? 0, state?.blind.held ?? 0, sections.length],
     queryFn: () => builderRequest<CimSectionOverride[]>("GET", `/api/deals/${dealId}/cim-overrides/${overrideMode}`),
     enabled: !!dealId && !!overrideMode,
   });
@@ -292,6 +292,7 @@ export default function CIMDesigner() {
             hint={previewMeta.hint}
             blindGenerated={!!blind?.generated}
             blindUpdating={blind?.updating ?? 0}
+            blindHeld={blind?.held ?? 0}
             blindError={blind?.error ?? null}
             ddGenerated={!!state?.dd.generated}
             loading={overridesLoading}
@@ -394,14 +395,15 @@ export default function CIMDesigner() {
             <p className="hidden sm:block text-[10px] text-muted-foreground uppercase tracking-wider whitespace-nowrap">CIM builder</p>
           </div>
           {generation.isRunning && <CimGenerationProgress view={generation} compact className="hidden md:flex" />}
-          {blind?.generated && !blind.running && blind.error && blind.updating > 0 ? (
+          {/* Held back = a redaction failed: red until that section is actually redacted, whatever else runs. */}
+          {blind?.generated && (blind.held > 0 || (!blind.running && !!blind.error && blind.updating > 0)) ? (
             <button
               type="button"
               onClick={() => builder.refreshBlind.mutate(undefined as never)}
               className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-red-400 hover:underline"
-              title={`${blind.error}. Blind buyers don't see ${blind.updating === 1 ? "this section" : "these sections"} until the blind version is made. Click to retry.`}
+              title={`${blind.error}. Blind buyers don't see ${(blind.held || blind.updating) === 1 ? "this section" : "these sections"} until the blind version is made. Click to retry.`}
             >
-              <AlertTriangle className="h-3 w-3" /> Blind held back ({blind.updating}) · Retry
+              <AlertTriangle className="h-3 w-3" /> Blind held back ({blind.held || blind.updating}) · Retry
             </button>
           ) : blind?.generated && (blind.running || blind.updating > 0) && (
             <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-amber-500" title="Blind buyers see these sections once they're redacted">
@@ -655,12 +657,13 @@ export default function CIMDesigner() {
 
 // ── Preview banner (app chrome above the paper) ─────────────────────────
 function PreviewBanner({
-  previewAs, hint, blindGenerated, blindUpdating, blindError, ddGenerated, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
+  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
 }: {
   previewAs: PreviewAs;
   hint: string;
   blindGenerated: boolean;
   blindUpdating: number;
+  blindHeld: number;
   blindError: string | null;
   ddGenerated: boolean;
   loading: boolean;
@@ -684,11 +687,14 @@ function PreviewBanner({
           No blind version yet. Buyers on teaser or full links see “Preparing your confidential view” until it exists (it's also created automatically on the first visit).
         </Notice>
       )}
-      {blindView && blindGenerated && blindUpdating > 0 && (
-        <Notice tone="amber" action={blindError ? <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRetryBlind}>Retry</Button> : undefined}>
-          {blindError
-            ? blindError
-            : `${blindUpdating} section${blindUpdating === 1 ? " is" : "s are"} being redacted. Blind buyers see ${blindUpdating === 1 ? "it" : "them"} as soon as ${blindUpdating === 1 ? "it's" : "they're"} ready — never the un-redacted text.`}
+      {blindView && blindGenerated && (blindHeld > 0 || (blindUpdating > 0 && !!blindError)) && (
+        <Notice tone="amber" action={<Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRetryBlind}>Retry</Button>}>
+          {blindError}. Blind buyers don't see {(blindHeld || blindUpdating) === 1 ? "that section" : "those sections"} until {(blindHeld || blindUpdating) === 1 ? "it's" : "they're"} redacted — never the un-redacted text.
+        </Notice>
+      )}
+      {blindView && blindGenerated && blindUpdating > 0 && !blindError && (
+        <Notice tone="amber">
+          {`${blindUpdating} section${blindUpdating === 1 ? " is" : "s are"} being redacted. Blind buyers see ${blindUpdating === 1 ? "it" : "them"} as soon as ${blindUpdating === 1 ? "it's" : "they're"} ready — never the un-redacted text.`}
         </Notice>
       )}
       {previewAs === "due_diligence" && !ddGenerated && (

@@ -48,7 +48,9 @@ export function useCimBuilder(dealId: string) {
       const busy =
         s.sections.some((x) => x.aiTask?.status === "running") ||
         s.blind.running ||
-        (s.blind.generated && s.blind.updating > 0 && !s.blind.error);
+        // Held-back sections aren't counted in `updating`; stop polling only
+        // on a whole-run failure (an error with nothing held back).
+        (s.blind.generated && s.blind.updating > 0 && !(s.blind.error && !s.blind.held));
       return busy ? 2000 : false;
     },
   });

@@ -74,6 +74,15 @@ export function CimTab() {
     },
     onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
+  // Held-back blind sections: clear their back-off and redo them now.
+  const retryBlind = useMutation({
+    mutationFn: () => builderRequest("POST", `/api/deals/${dealId}/cim-blind/refresh`),
+    onSuccess: () => {
+      refetch();
+      toast({ title: "Retrying the blind version", description: "Blind buyers get those sections as soon as they're redacted." });
+    },
+    onError: (e) => toast({ title: "Couldn't retry the blind version", description: errorText(e), variant: "destructive" }),
+  });
 
   if (isLoading) {
     return (
@@ -159,6 +168,7 @@ export function CimTab() {
                 who="Teaser and Full buyers"
                 status={
                   !data.blind.generated ? <span className="text-amber-500">Not generated yet</span>
+                    : data.blind.held > 0 ? <span className="text-red-400 inline-flex items-center gap-1" title={data.blind.error ?? undefined}><AlertTriangle className="h-3 w-3" /> {data.blind.held} section{data.blind.held === 1 ? "" : "s"} held back</span>
                     : data.blind.updating > 0 ? <span className="text-amber-500 inline-flex items-center gap-1"><Loader2 className="h-3 w-3 animate-spin" /> Updating {data.blind.updating} section{data.blind.updating === 1 ? "" : "s"}</span>
                     : <span className="text-success">Ready</span>
                 }
@@ -166,7 +176,9 @@ export function CimTab() {
                 onPreview={() => openBuilder("teaser")}
                 action={!data.blind.generated
                   ? { label: "Generate", busy: version.isPending && version.variables === "blind", onClick: () => version.mutate("blind") }
-                  : undefined}
+                  : data.blind.held > 0
+                    ? { label: "Retry", busy: retryBlind.isPending, onClick: () => retryBlind.mutate() }
+                    : undefined}
               />
               <VersionCard
                 icon={<ShieldCheck className="h-4 w-4" />}

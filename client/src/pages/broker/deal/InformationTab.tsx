@@ -61,7 +61,9 @@ function matchesSource(src: FactSourceInfo, sourceId: string): boolean {
   if (sourceId === "questionnaire") return src.kind === "questionnaire";
   if (sourceId === "website") return src.kind === "website" && !src.documentId;
   if (sourceId === "broker") return src.kind === "broker";
-  if (sourceId === "interview") return src.kind === "interview" && !src.sessionId;
+  if (sourceId === "interview") return src.kind === "interview" && !src.sessionId && !src.documentId;
+  // Pre-session call facts ("legacy:call" / "legacy:video_call" rows).
+  if (sourceId.startsWith("legacy:")) return src.kind === sourceId.slice("legacy:".length) && !src.sessionId && !src.documentId;
   return src.documentId === sourceId;
 }
 

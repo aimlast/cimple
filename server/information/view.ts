@@ -189,9 +189,16 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     };
   };
 
-  const confidenceOf = (key: string, src: FieldSource | undefined): FactConfidence => {
+  const confidenceOf = (key: string, src: InferredFieldSource | undefined): FactConfidence => {
     const kind = src?.source;
     if (kind === "broker") return "confirmed";
+    // A fact collected before sources were tracked, now traced to the
+    // questionnaire / a document / the website: the interview's own label for
+    // it ("Approximate"…) still applies — the tracing only guesses the source.
+    if (src?.inferred && !LIVE_KINDS.has(kind ?? "")) {
+      const c = confidenceLevels[key];
+      if (c === "confirmed" || c === "approximate" || c === "inferred") return c;
+    }
     if (kind === "crm" || kind === "website" || kind === "social") return "unverified";
     if (!kind || LIVE_KINDS.has(kind)) {
       const c = confidenceLevels[key];
@@ -431,11 +438,18 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       turns,
     });
   });
-  // Facts recorded by the interview before per-session provenance existed
-  // (Linked to a session by inferFieldSources whenever one exists.)
-  const legacyInterview = factCountWhere((src) => LIVE_KINDS.has(src.source) && !src.sessionId && !src.documentId);
-  if (legacyInterview > 0) {
-    sourcesOut.push({ id: "interview", kind: "interview", title: "AI interview", date: null, meta: null, visibility: "shared", factCount: legacyInterview });
+  // Facts recorded by a live session before per-session provenance existed
+  // (linked to a session of the same kind by inferFieldSources whenever one
+  // exists) — one row per kind, so a fact is always counted under a row of
+  // the kind its chip shows.
+  const LEGACY_ROWS: Array<{ id: string; kind: SourceKind; title: string }> = [
+    { id: "interview", kind: "interview", title: "AI interview" },
+    { id: "legacy:call", kind: "call", title: "Interview together (call)" },
+    { id: "legacy:video_call", kind: "video_call", title: "Interview together (video call)" },
+  ];
+  for (const row of LEGACY_ROWS) {
+    const n = factCountWhere((src) => src.source === row.kind && !src.sessionId && !src.documentId);
+    if (n > 0) sourcesOut.push({ id: row.id, kind: row.kind, title: row.title, date: null, meta: null, visibility: "shared", factCount: n });
   }
   if (deal.questionnaireData || (counts.questionnaire ?? 0) > 0) {
     sourcesOut.push({

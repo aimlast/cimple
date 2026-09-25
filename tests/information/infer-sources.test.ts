@@ -126,4 +126,71 @@ test("view: per-source fact counts, inferred counts, earlier records", () => {
   assert.match(rev.source.label, /\(inferred\)$/);
 });
 
+test("a recorded interview fact is never linked to a session of another kind", () => {
+  const info = { ownerName: "Dr. Patel", staffCount: "12" };
+  const sessions = [session("call1", { ownerName: "confirmed", staffCount: "confirmed" }, ["I'm Dr. Patel, we have 12 people"])];
+  const out = inferFieldSources({
+    info,
+    sources: { ownerName: { source: "interview" }, staffCount: { source: "call" } },
+    factKeys: Object.keys(info),
+    documents: [],
+    sessions,
+    sessionKind: () => "call",
+    questionnaire: {},
+    scraped: null,
+  });
+  // Only call sessions exist: the "interview" fact stays unlinked…
+  assert.deepEqual(out.ownerName, { source: "interview" });
+  // …while a recorded "call" fact is linked to the call session.
+  assert.equal(out.staffCount.sessionId, "call1");
+  assert.equal(out.staffCount.sessionLinked, true);
+
+  // The view counts each fact under a row of its own kind.
+  const deal = { id: "d1", businessName: "X", extractedInfo: { ...info, _fieldSources: { ownerName: { source: "interview" }, staffCount: { source: "call" } } }, questionnaireData: null, scrapedData: null } as unknown as Deal;
+  const callSession = { ...sessions[0], extractedInfo: { _confidenceLevels: {}, _conductedBy: "broker_with_seller", _conductedVia: "person" } } as unknown as InterviewSession;
+  const v = buildInformationView({ deal, documents: [], sessions: [callSession] });
+  const by = Object.fromEntries(v.sources.map((s) => [s.id, s]));
+  assert.equal(by["session:call1"].kind, "call");
+  assert.equal(by["session:call1"].factCount, 1, "only the call fact is counted under the call session");
+  assert.equal(by.interview.factCount, 1, "the interview fact is counted under the AI interview row");
+  const facts = [...v.sections.flatMap((s) => s.facts), ...v.other];
+  const owner = facts.find((f) => f.key === "ownerName")!;
+  assert.equal(owner.source.kind, "interview");
+  assert.equal(owner.source.sessionId, undefined);
+});
+
+test("a legacy call fact with no call session is listed under its own kind, not as an AI interview", () => {
+  const info = { staffCount: "12", _fieldSources: { staffCount: { source: "video_call" } } };
+  const deal = { id: "d1", businessName: "X", extractedInfo: info, questionnaireData: null, scrapedData: null } as unknown as Deal;
+  const v = buildInformationView({ deal, documents: [], sessions: [session("ai1", {}, ["hello"])] });
+  const by = Object.fromEntries(v.sources.map((s) => [s.id, s]));
+  assert.equal(by.interview, undefined);
+  assert.equal(by["legacy:video_call"].kind, "video_call");
+  assert.equal(by["legacy:video_call"].factCount, 1);
+});
+
+test("a legacy fact traced to the questionnaire / a document keeps the interview's confidence label", () => {
+  const deal = {
+    id: "d1",
+    businessName: "X",
+    extractedInfo: { annualRevenue: "$2,013,000", leaseSqft: "2,650 sq ft", staffCount: "12" },
+    questionnaireData: { annualRevenue: "$2,013,000" },
+    scrapedData: null,
+  } as unknown as Deal;
+  const v = buildInformationView({
+    deal,
+    documents: [doc("lease", { leaseSqft: "2,650 sq ft" })],
+    // In the confidence map, but the seller never said these values.
+    sessions: [session("s1", { annualRevenue: "approximate", leaseSqft: "confirmed" }, ["hello there"])],
+  });
+  const facts = Object.fromEntries([...v.sections.flatMap((s) => s.facts), ...v.other].map((f) => [f.key, f]));
+  assert.equal(facts.annualRevenue.source.kind, "questionnaire");
+  assert.equal(facts.annualRevenue.source.inferred, true);
+  assert.equal(facts.annualRevenue.confidence, "approximate");
+  assert.equal(facts.leaseSqft.source.documentId, "lease");
+  assert.equal(facts.leaseSqft.confidence, "confirmed");
+  // Not in the map: a traced fact still reads as inferred.
+  assert.equal(facts.staffCount.confidence, "inferred");
+});
+
 console.log(`\n${passed} checks passed`);
