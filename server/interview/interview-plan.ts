@@ -246,6 +246,8 @@ export async function computeInterviewPlan(
   const existing = inflight.get(deal.id);
   if (existing) return existing;
 
+  // A plan built under older rules stays in use while this one is built.
+  const existingReady = "interviewPlan" in deal ? getInterviewPlan(deal as unknown as Pick<Deal, "industry" | "interviewPlan"> & { subIndustry?: string | null }) : null;
   const task = (async () => {
     try {
       const playbook = buildIndustryKnowledge(industry, subIndustry);
@@ -307,14 +309,17 @@ export async function computeInterviewPlan(
       const matched = items.filter((i) => i.answeredByKey);
       const verdicts = await verifyMatches(matched.map((i) => ({ label: i.label, value: String(info[i.answeredByKey!]) })));
       matched.forEach((item, idx) => { if (!verdicts[idx]) item.answeredByKey = null; });
-      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "ready", items };
+      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), rulesVersion: PLAN_RULES_VERSION, computedAt: new Date().toISOString(), status: "ready", items };
       await storage.updateDeal(deal.id, { interviewPlan: plan } as any);
       console.log(`[interview-plan] ${items.length} industry data points for deal ${deal.id} (${industry})`);
       return plan;
     } catch (err: any) {
       console.warn(`[interview-plan] build failed for deal ${deal.id}:`, err?.message || err);
       await storage.updateDeal(deal.id, {
-        interviewPlan: { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "failed", items: [] },
+        interviewPlan: {
+          // A failed REBUILD keeps the checklist the deal already had.
+          ...(existingReady ? { ...existingReady, failedRebuildAt: new Date().toISOString() } : { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "failed", items: [] }),
+        },
       } as any).catch(() => {});
       return null;
     } finally {
@@ -330,12 +335,29 @@ export function isPlanBuilding(dealId: string): boolean {
   return inflight.has(dealId);
 }
 
+/**
+ * Version of the checklist rules. 2: conditional probes whose condition
+ * doesn't hold are left out (and never critical when unsure).
+ */
+export const PLAN_RULES_VERSION = 2;
+
 /** Start a build in the background when the deal has an industry but no current checklist. */
 export function ensureInterviewPlan(
   deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "interviewPlan" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
 ): void {
-  if (!deal.industry || getInterviewPlan(deal) || inflight.has(deal.id)) return;
+  if (!deal.industry || inflight.has(deal.id)) return;
+  const current = getInterviewPlan(deal);
+  if (current) {
+    // Built under older rules (before conditional probes were dropped — a BC
+    // carrier's "CARB" item): rebuilt in the background, at most once an hour
+    // if it fails, while the old checklist stays in use.
+    if ((current.rulesVersion ?? 1) >= PLAN_RULES_VERSION) return;
+    const lastTry = (current as InterviewPlan & { failedRebuildAt?: string }).failedRebuildAt;
+    if (lastTry && Date.now() - new Date(lastTry).getTime() < 60 * 60 * 1000) return;
+    void computeInterviewPlan(deal, context);
+    return;
+  }
   // Don't hammer a failing build: retry at most once an hour.
   const stored = deal.interviewPlan as InterviewPlan | null | undefined;
   if (stored?.status === "failed" && industryKey(stored.industry) === industryKey(deal.industry)

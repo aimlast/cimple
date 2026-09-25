@@ -106,6 +106,8 @@ export interface InterviewPlan {
   subIndustry?: string | null;
   /** The deal's own sub-industry when the plan was built — a broker edit to it rebuilds the plan. */
   dealSubIndustry?: string | null;
+  /** Version of the checklist rules it was built under (older plans are rebuilt in the background). */
+  rulesVersion?: number;
   computedAt: string;
   status: "ready" | "failed";
   items: InterviewPlanItem[];

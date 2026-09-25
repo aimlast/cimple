@@ -17,7 +17,7 @@ import type { SectionCoverage } from "./knowledge-base";
 import type { DeferralEntry } from "./deferral-ledger";
 import { topicsMatch } from "./deferral-ledger";
 import type { SourceConflict, FlaggedRisk } from "./source-context";
-import { stemsOf } from "./source-context";
+import { stemsOf, MATERIAL_RISK_RE } from "./source-context";
 import { getFieldSources, isSourceKind } from "./info-merger";
 
 /** One question → answer exchange (any session of the deal, including this turn). */
@@ -80,11 +80,52 @@ const BASE_CRITICAL_ITEMS: Record<string, { label: string; keys: string[] }[]> =
 const substantive = (v: unknown) =>
   v !== null && v !== undefined && !(typeof v === "string" && (v.trim().length < 2 || /^(n\/a|none|unknown|tbd|not sure)$/i.test(v.trim())));
 
-/** A ledger entry (open or resolved) the agent created or that was settled — an explicit deferral counts as addressed. */
-function addressedInLedger(ledger: DeferralEntry[], ...topics: string[]): boolean {
-  return ledger.some(
-    (e) => (e.status === "resolved" || e.origin !== "source") && topics.some((t) => t && topicsMatch(e.topic, t)),
+/**
+ * When an entry made THIS turn may count as addressing an item: only when
+ * this turn's exchange was about it (the seller was just asked, or just
+ * spoke to it). A deferral or "resolved" minted in a goodbye message — the
+ * agent parking everything it never asked so it can end — is not an answer.
+ */
+export interface SameTurnContext {
+  /** The seller turn being processed (the ledger's createdAtTurn / resolvedAtTurn numbering). */
+  turn: number;
+  /** The question the seller just answered and the seller's message this turn. */
+  lastQuestion?: string;
+  sellerMessage?: string;
+}
+
+/** Stems of a topic label, without the ledger's prefixes ("risk:", "reconcile …"). */
+function topicStems(topic: string): Set<string> {
+  return stemsOf(
+    topic
+      .replace(/^(risk:|reconcile\s+|verify\s+)/i, "")
+      .replace(/([a-z0-9])([A-Z])/g, "$1 $2"),
   );
+}
+
+/** The text is about the topic: shares two of its words (or its only one). */
+function talksAbout(text: string | undefined, topic: string): boolean {
+  if (!text) return false;
+  const t = topicStems(topic);
+  if (t.size === 0) return false;
+  const x = stemsOf(text.replace(/([a-z0-9])([A-Z])/g, "$1 $2"));
+  let shared = 0;
+  t.forEach((w) => { if (x.has(w)) shared++; });
+  return shared >= Math.min(2, t.size);
+}
+
+/** An entry that counts as the item being addressed (see SameTurnContext). */
+function entryCounts(e: DeferralEntry, now?: SameTurnContext): boolean {
+  if (e.status === "open" && e.origin === "source") return false; // on the agenda, never raised
+  if (!now || e.earlierSession) return true;
+  const madeNow = e.status === "resolved" ? e.resolvedAtTurn === now.turn : e.createdAtTurn === now.turn;
+  if (!madeNow) return true;
+  return talksAbout(now.lastQuestion, e.topic) || talksAbout(now.sellerMessage, e.topic);
+}
+
+/** A ledger entry (open or resolved) the agent created or that was settled — an explicit deferral counts as addressed. */
+function addressedInLedger(ledger: DeferralEntry[], now: SameTurnContext | undefined, ...topics: string[]): boolean {
+  return ledger.some((e) => entryCounts(e, now) && topics.some((t) => t && topicsMatch(e.topic, t)));
 }
 
 /** A substantive seller answer to a question on this topic, in any session. */
@@ -92,14 +133,61 @@ export function discussed(exchanges: Exchange[], re: RegExp): boolean {
   return exchanges.some((x) => re.test(x.question) && x.answer.trim().split(/\s+/).length >= 3);
 }
 
-/** True when an exchange covered a flagged risk (the question shares its distinctive words). */
+/** Words that make a risk material ("termination", "lawsuit", "guarantee"…), as stems. */
+function materialStems(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().match(/[a-z][a-z'’-]{2,}/g) ?? []) {
+    if (MATERIAL_RISK_RE.test(w)) out.add(w.slice(0, 5));
+  }
+  return out;
+}
+
+/**
+ * True when an exchange covered a flagged risk: the question shares its
+ * distinctive words — and, when the risk names what makes it material (a
+ * termination right, a lawsuit, a guarantee), that too. A question about
+ * Alderbrook's revenue share doesn't cover "Alderbrook can terminate on 90
+ * days' notice".
+ */
 export function riskDiscussed(exchanges: Exchange[], risk: FlaggedRisk): boolean {
   const r = stemsOf(`${risk.label} ${risk.text}`);
+  const material = materialStems(`${risk.label} ${risk.text}`);
   return exchanges.some((x) => {
     const q = stemsOf(x.question);
     let shared = 0;
     q.forEach((w) => { if (r.has(w)) shared++; });
-    return shared >= 2 && shared / Math.max(1, q.size) >= 0.3 && x.answer.trim().split(/\s+/).length >= 3;
+    if (shared < 2 || x.answer.trim().split(/\s+/).length < 3) return false;
+    let hit = false;
+    material.forEach((m) => { if (q.has(m)) hit = true; });
+    // Asked about what makes it material (and the subject): covered, however
+    // long the question. Otherwise the question must be mostly about it.
+    if (hit) return true;
+    return material.size === 0 && shared / Math.max(1, q.size) >= 0.3;
+  });
+}
+
+/** Generic words in checklist labels that say nothing about which item it is. */
+const ITEM_NOISE = new Set(["any", "all", "list", "details", "detail", "status", "names", "name", "number", "count", "etc", "including", "whether", "current", "annual", "total", "type", "types", "level", "plan", "history"].map((w) => w.slice(0, 5)));
+
+/**
+ * A checklist item the seller already spoke to in some session: an earlier
+ * question shares its distinctive words (an acronym like CARB counts double)
+ * and got a real answer — "we don't run California lanes" answers "Any
+ * emissions deadlines (CARB, etc.)" even though nothing was recorded under
+ * the item's key.
+ */
+export function itemDiscussed(exchanges: Exchange[], label: string, key: string): boolean {
+  const words = `${label} ${key.replace(/([a-z0-9])([A-Z])/g, "$1 $2")}`.replace(/-/g, " ");
+  const stems = new Set(Array.from(stemsOf(words)).filter((w) => !ITEM_NOISE.has(w)));
+  const acronyms = new Set((label.match(/\b[A-Z][A-Z0-9&]{1,6}\b/g) ?? []).map((a) => a.toLowerCase().slice(0, 5)));
+  if (stems.size === 0) return false;
+  return exchanges.some((x) => {
+    if (x.answer.trim().split(/\s+/).length < 3) return false;
+    const q = stemsOf(x.question.replace(/-/g, " ")); // "CARB-compliant" names CARB
+    let shared = 0;
+    let acronymHit = false;
+    stems.forEach((w) => { if (q.has(w)) { shared++; if (acronyms.has(w)) acronymHit = true; } });
+    return (acronymHit && shared >= 1) || shared >= Math.max(2, Math.ceil(stems.size * 0.6));
   });
 }
 
@@ -115,6 +203,12 @@ export interface CompletionGapInput {
   risks?: FlaggedRisk[];
   /** How many flagged risks must be covered (most-flagged first). */
   riskLimit?: number;
+  /**
+   * The turn being decided (governance of a proposed end): deferrals and
+   * resolutions the agent records in this very turn count only when this
+   * turn's exchange was about them.
+   */
+  now?: SameTurnContext;
 }
 
 /**
@@ -139,7 +233,7 @@ export function completionBlockers(input: CompletionGapInput): string[] {
   // 1. Unreconciled critical conflicts between sources.
   for (const c of input.conflicts ?? []) {
     if (!c.critical) continue;
-    if (addressedInLedger(input.ledger, `reconcile ${c.key}`)) continue;
+    if (addressedInLedger(input.ledger, input.now, `reconcile ${c.key}`)) continue;
     out.push(`reconcile ${c.key} — ${c.values.map((v) => `"${v.value}" (${v.source})`).join(" vs ")}`);
   }
 
@@ -149,12 +243,13 @@ export function completionBlockers(input: CompletionGapInput): string[] {
     if (!critical || s.status === "missing") continue; // "missing" is governed separately
     for (const f of s.fields) {
       if (!f.critical || (f.value !== null && !f.unverified)) continue;
-      if (addressedInLedger(input.ledger, f.fieldName, f.label ?? "")) continue;
+      if (addressedInLedger(input.ledger, input.now, f.fieldName, f.label ?? "")) continue;
+      if (itemDiscussed(input.exchanges, f.label ?? "", f.fieldName)) continue;
       out.push(`${s.title}: ${f.label ?? f.fieldName} (record under ${f.fieldName})`);
     }
     for (const item of BASE_CRITICAL_ITEMS[s.key] ?? []) {
       if (item.keys.some(verified)) continue;
-      if (addressedInLedger(input.ledger, item.label, ...item.keys)) continue;
+      if (addressedInLedger(input.ledger, input.now, item.label, ...item.keys)) continue;
       out.push(`${s.title}: ${item.label}`);
     }
   }
@@ -166,13 +261,13 @@ export function completionBlockers(input: CompletionGapInput): string[] {
     );
     if (sellerFact) continue;
     if (discussed(input.exchanges, t.talk)) continue;
-    if (input.ledger.some((e) => t.talk.test(e.topic) || topicsMatch(e.topic, t.label))) continue;
+    if (input.ledger.some((e) => entryCounts(e, input.now) && (t.talk.test(e.topic) || topicsMatch(e.topic, t.label)))) continue;
     out.push(`seller-only topic: ${t.label}`);
   }
 
   // 4. Risks the sources flag (the most-flagged first).
   for (const r of (input.risks ?? []).slice(0, input.riskLimit ?? 6)) {
-    if (addressedInLedger(input.ledger, `risk: ${r.label}`)) continue;
+    if (addressedInLedger(input.ledger, input.now, `risk: ${r.label}`)) continue;
     if (riskDiscussed(input.exchanges, r)) continue;
     out.push(`risk: ${r.label}`);
   }

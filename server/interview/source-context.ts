@@ -183,7 +183,7 @@ function splitAt(text: string, strong: boolean): string[] {
 }
 
 /** Risks a buyer's diligence goes after first. */
-const MATERIAL_RISK_RE =
+export const MATERIAL_RISK_RE =
   /concentrat|terminat|for convenience|change of control|consent|lawsuit|litigation|claim|dismissal|settle|guarantee|union|retir|succession|leav(?:e|ing)|non-?compete|expir|renewal|lease|decline|loss|theft|audit|violation|warning|enforcement|recall|breach|default|covenant|capex|replace|aging|compet|depend/i;
 const NOT_A_RISK_RE = /^(none|n\/a|no (?:red flags|concerns|issues)|nothing|not (?:applicable|stated|identified))\b|none (?:explicitly |were )?(?:stated|identified|noted|found)|sample|fictional|demonstration/i;
 
@@ -334,7 +334,9 @@ export function headlineNumber(text: string): { value: number; percent: boolean 
 }
 
 function years(text: string): number[] {
-  return (text.match(/\b(?:19|20)\d{2}\b/g) ?? []).map(Number);
+  // "FY2024" names 2024 too (there is no word boundary between Y and 2); a
+  // figure's digits ("$2,019,500", "12019") are not a year.
+  return (text.match(/(?<![\d$,.])(?:19|20)\d{2}(?![\d,])/g) ?? []).map(Number);
 }
 
 /**
@@ -349,7 +351,7 @@ export function valuesMateriallyDiffer(
   a: string,
   b: string,
   /** Text naming each value's period when the value doesn't (its source's title, "Form 1120-S — tax year 2023"). */
-  context: { a?: string; b?: string } = {},
+  context: { a?: string; b?: string; asOf?: number } = {},
 ): boolean {
   const x = a.trim();
   const y = b.trim();
@@ -366,11 +368,18 @@ export function valuesMateriallyDiffer(
   if (x.length > 110 || y.length > 110) return false;
   // A proposed / expected figure vs the current one is a change, not a conflict.
   if (FUTURE_RE.test(x) !== FUTURE_RE.test(y)) return false;
+  // Adjusted vs reported (EBITDA $6.1M adjusted vs $5.27M reported), gross vs
+  // net, year-to-date vs a full year: different measures, not a conflict.
+  // (Values only: a source's TITLE can mention "adjusted" without its figure being adjusted.)
+  if (differentMeasure(x, y)) return false;
   // Different periods ("$7.96M at Dec 31, 2024" vs a 2023 return's figure)
   // are not a conflict — each year is its own fact.
   const ya = years(x).length ? years(x) : years(context.a ?? "");
   const yb = years(y).length ? years(y) : years(context.b ?? "");
   if (ya.length > 0 && yb.length > 0 && !ya.some((v) => yb.includes(v))) return false;
+  // One side dated to an older period, the other current ("38 presses" said
+  // now vs 34 in the FY2022 statements): the business changed in between.
+  if (stalePeriod(ya, yb, context) || stalePeriod(yb, ya, context)) return false;
   // Different scope ("212 employees plus temps" vs "16 employees in quality"):
   // when both describe their figure, their words must mostly agree ("26
   // trucks" vs "24 service vans" is still compared).
@@ -397,6 +406,47 @@ export function valuesMateriallyDiffer(
   return true;
 }
 
+/** Words that name WHICH measure a figure is: adjusted vs reported, gross vs net, part of a year vs a full year. */
+const MEASURE_QUALIFIERS: RegExp[] = [
+  /\b(adjusted|normali[sz]ed|recast|pro[ -]?forma|add[- ]?backs?|run[- ]?rate)\b/i,
+  /\b(gross)\b/i,
+  /\b(ytd|year[- ]to[- ]date|so far this year|jan(?:uary)?\s*[-–]\s*(?:may|jun|jul|aug|sep|oct|nov)|q[1-4]|quarterly|(?:this|last|per|each|the first|the second|the third|the fourth) quarter|monthly|per month|a month|\/mo)\b/i,
+];
+/** True when exactly one side names a qualifier the other lacks (adjusted vs reported, gross vs net, YTD vs full year). */
+export function differentMeasure(a: string, b: string): boolean {
+  return MEASURE_QUALIFIERS.some((re) => re.test(a) !== re.test(b));
+}
+
+/**
+ * One side is dated to a period OLDER than the deal's latest statements and
+ * the other isn't dated at all (said now): "38 presses" said on a call vs 34
+ * in the FY2022 statements, total debt in an email vs the 2023 return. What
+ * the seller says now is reconciled against the latest documents, never
+ * against an earlier year's — the business changed in between.
+ */
+function stalePeriod(older: number[], other: number[], context: { asOf?: number }): boolean {
+  if (older.length === 0 || other.length > 0 || context.asOf === undefined) return false;
+  return Math.max(...older) < context.asOf;
+}
+
+/** Titles of annual statements and returns — the documents that date "the latest year" of a deal. */
+const ANNUAL_STATEMENT_RE = /\b(fy|fiscal|financial statements?|statements?|tax return|t2|1120|1065|p&l|profit (?:and|&) loss|income statement|balance sheet|annual report|year[- ]end)\b/i;
+
+/**
+ * The deal's latest fiscal year: the newest year named in the title of an
+ * annual statement or tax return on file (FY2024 statements → 2024). A
+ * point-in-time report ("WIP as of May 31, 2025") or a call's date doesn't
+ * move it — a call in January 2026 still speaks against FY2024 statements.
+ */
+export function dealAsOfYear(documents: DocLike[]): number | undefined {
+  let latest: number | undefined;
+  for (const d of documents) {
+    if (!ANNUAL_STATEMENT_RE.test(d.name) || String(d.sourceKind || "document") !== "document") continue;
+    for (const y of years(d.name)) if (y <= new Date().getFullYear() + 1 && (latest === undefined || y > latest)) latest = y;
+  }
+  return latest;
+}
+
 /** Every figure in a value except years and date/address numbers. */
 function plainNumbers(text: string): number[] {
   return (stripLabelNumbers(text).replace(/\b(?:19|20)\d{2}\b/g, " ").match(/\d[\d,]*(?:\.\d+)?/g) ?? [])
@@ -416,6 +466,7 @@ const keyWords = (key: string) =>
  */
 export function detectAlternateConflicts(viewInfo: Record<string, unknown>, documents: DocLike[]): SourceConflict[] {
   const docs = new Map(documents.map((d) => [d.id, d]));
+  const asOf = dealAsOfYear(documents);
   const sources = getFieldSources(viewInfo);
   const alternates = getFieldAlternates(viewInfo);
   const out: SourceConflict[] = [];
@@ -443,7 +494,7 @@ export function detectAlternateConflicts(viewInfo: Record<string, unknown>, docu
       const spokenVsDoc =
         (SPOKEN_KINDS.has(winKind) && altKind === "document") || (winKind === "document" && SPOKEN_KINDS.has(altKind));
       if (!spokenVsDoc) continue;
-      if (!valuesMateriallyDiffer(key, win, alt.value, { a: winDoc?.name, b: altDoc?.name })) continue;
+      if (!valuesMateriallyDiffer(key, win, alt.value, { a: winDoc?.name, b: altDoc?.name, asOf })) continue;
       if (conflicting.some((c) => c.value === alt.value)) continue;
       conflicting.push(alt);
     }
@@ -541,31 +592,56 @@ export function buildPriorExchanges(
 // Source-text search
 // =====================
 
-interface Chunk { docId: string; docName: string; text: string; stems: Set<string> }
+interface Chunk { docId: string; docName: string; text: string; stems: Set<string>; words: string[] }
 
-/** Chunk stems: like stemsOf, but two-letter words stay (EV, ICE, AR). */
-function chunkStems(text: string): Set<string> {
-  return new Set(
-    (text.toLowerCase().match(/[a-z0-9][a-z0-9'’&-]*/g) ?? [])
-      .map((w) => w.replace(/['’]s$/, ""))
-      .filter((w) => w.length >= 2)
-      .map((w) => w.slice(0, 4)),
-  );
+/** Abbreviations sources use for the words questions use. */
+const WORD_ALIASES: Record<string, string> = {
+  tech: "technician", techs: "technician", mgmt: "management", mgr: "manager", reps: "representative", rep: "representative",
+  emp: "employee", emps: "employee", yrs: "year", yr: "year", qty: "quantity", ft: "foot", sqft: "foot", approx: "approximately",
+  cust: "customer", custs: "customer", admin: "administration", ops: "operation", mfg: "manufacturing", acct: "account",
+};
+/**
+ * A word as the search compares it: lower-case, no possessive or hyphen,
+ * singular ("complaints" → complaint, "techs" → technician). Whole words, not
+ * prefixes — "clinicians" is not "clinic", "fully" is not "full".
+ */
+export function searchWord(raw: string): string {
+  let w = raw.toLowerCase().replace(/['’]s$/, "").replace(/['’-]/g, "");
+  if (WORD_ALIASES[w]) return WORD_ALIASES[w];
+  if (w.length > 4 && w.endsWith("ies")) w = `${w.slice(0, -3)}y`;
+  else if (w.length > 4 && /(?:ss|x|z|ch|sh)es$/.test(w)) w = w.slice(0, -2);
+  else if (w.length > 3 && w.endsWith("s") && !/(?:ss|us|is)$/.test(w)) w = w.slice(0, -1);
+  return WORD_ALIASES[w] ?? w;
+}
+/** The words of a passage (two-letter words stay: EV, ICE, AR), in order. */
+function passageWords(text: string): string[] {
+  // PDF and spreadsheet text glue a label to its figure ("technicians22").
+  const unglued = text.replace(/([A-Za-z]{3,})(\d)/g, "$1 $2").replace(/(\d)([A-Za-z]{3,})/g, "$1 $2");
+  return (unglued.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? []).filter((w) => w.length >= 2).map(searchWord);
 }
 const chunkCache = new Map<string, Chunk[]>();
 
 function chunksFor(doc: DocLike): Chunk[] {
   const text = typeof doc.extractedText === "string" ? doc.extractedText : "";
   if (!text.trim()) return [];
-  const cacheKey = `${doc.id}:${text.length}:${String(doc.updatedAt ?? "")}`;
+  const cacheKey = `v4:${doc.id}:${text.length}:${String(doc.updatedAt ?? "")}`;
   const hit = chunkCache.get(cacheKey);
   if (hit) return hit;
-  // ~2-sentence windows (sentences or lines), overlapping by one.
-  const sentences = text.replace(/\r/g, "").split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter((s) => s.length > 3);
+  // Windows of a few sentences (or lines), overlapping. A question
+  // (the broker's "are the warehouse workers on payroll?") answers nothing,
+  // so questions are left out of the windows.
+  const sentences = text
+    .replace(/\r/g, "")
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.trim())
+    .filter((s) => s.length > 3 && !/\?["'”’)\]]*$/.test(s));
   const chunks: Chunk[] = [];
   for (let i = 0; i < sentences.length; i++) {
-    const windowText = (sentences[i] + (sentences[i + 1] ? ` ${sentences[i + 1]}` : "")).slice(0, 400);
-    chunks.push({ docId: doc.id, docName: doc.name, text: windowText, stems: chunkStems(windowText) });
+    // Up to three sentences (a short "Hillhurst lease." heading and the
+    // sentence after it belong together), capped in length.
+    const windowText = [sentences[i], sentences[i + 1], sentences[i + 2]].filter(Boolean).join(" ").slice(0, 450);
+    const words = passageWords(windowText);
+    chunks.push({ docId: doc.id, docName: doc.name, text: windowText, stems: new Set(words), words });
   }
   if (chunkCache.size > 400) chunkCache.clear();
   chunkCache.set(cacheKey, chunks);
@@ -598,8 +674,51 @@ export function questionTokens(text: string): { stems: Set<string>; names: Set<s
 
 export interface SourceHit { docId: string; docName: string; snippet: string; matched: string[] }
 
-/** Search stems are 4 characters, so "techs" meets "technicians" and "complaint" meets "complaints". */
-const searchStem = (s: string) => s.slice(0, 4);
+/** Up to ~300 characters of a passage, starting at the sentence where its matched words begin. */
+function snippetAround(text: string, matched: string[]): string {
+  if (text.length <= 300) return trim(text, 300);
+  const lower = text.toLowerCase();
+  const first = matched
+    .map((m) => lower.search(new RegExp(`\\b${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`)))
+    .filter((i) => i >= 0)
+    .sort((a, b) => a - b)[0];
+  if (first === undefined || first < 150) return trim(text, 300);
+  const sentenceStart = Math.max(text.lastIndexOf(". ", first) + 2, text.lastIndexOf("] ", first) + 2, first - 150, 0);
+  return trim(text.slice(sentenceStart), 300);
+}
+
+/** A question that asks for a quantity, a date or a duration. */
+const QUANTITY_QUESTION_RE = /\b(how many|how much|what (?:percentage|percent|share|portion|proportion|number|year|size)|how (?:long|old|big|large|often)|when (?:did|does|do|is|was|will)|what'?s the (?:count|number|total|size|age))\b/i;
+/** A figure: digits or a spelled number. */
+const FIGURE_RE = /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|hundred|thousand|million|dozen|half|quarter)\b/i;
+
+/** Question words that name no topic a passage could answer ("On the warehouse SIDE", "is it FULLY resolved"). */
+const SEARCH_NOISE = new Set(["side", "area", "part", "topic", "front", "piece", "point", "happen", "thing", "stuff", "handle", "going", "fully", "really", "actually", "current", "currently", "buyer", "need", "know"]);
+
+/** The topic words of a question clause, as searchWord forms (names and acronyms marked). */
+function probeWords(clause: string): { words: Set<string>; names: Set<string>; phrases: [string, string][] } {
+  const words = new Set<string>();
+  const names = new Set<string>();
+  const phrases: [string, string][] = [];
+  const raw = clause.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? [];
+  let prev: string | null = null;
+  raw.forEach((w, i) => {
+    const clean = w.replace(/['’]s$/i, "");
+    const lower = clean.toLowerCase();
+    const acronym = /^[A-Z][A-Z0-9&]{1,5}$/.test(clean);
+    const sw = searchWord(clean);
+    if (QUESTION_STOP.has(lower) || RISK_STOP.has(lower) || (!acronym && lower.length < 4) || SEARCH_NOISE.has(sw)) {
+      prev = null;
+      return;
+    }
+    words.add(sw);
+    // Two topic words in a row name one thing ("wrongful dismissal", "scrap rate").
+    if (prev) phrases.push([prev, sw]);
+    prev = sw;
+    if (acronym || (/^[A-Z][a-z]{2,}$/.test(clean) && i > 0 && !/[.!?]$/.test(raw[i - 1] ?? ""))) names.add(sw);
+  });
+  return { words, names, phrases };
+}
 
 /**
  * Finds the passage of a seller-visible source that already answers a
@@ -610,38 +729,105 @@ const searchStem = (s: string) => s.slice(0, 4);
  * broker-only rows are never searched.
  */
 export function searchSourcesFor(question: string, documents: DocLike[]): SourceHit | null {
+  return searchSourcesTop(question, documents, 1)[0] ?? null;
+}
+
+/** The best `n` passages (one per document) that may answer a question — see searchSourcesFor. */
+export function searchSourcesTop(question: string, documents: DocLike[], n: number): SourceHit[] {
   const clauses = question
+    // A lead-in ("On the warehouse side:", "Shifting to the lawsuit —") only
+    // names the topic; the ask is what follows.
+    .replace(/(^|[.!?]\s+)(?:on|about|for|regarding|turning to|shifting to|switching to|back to|speaking of|moving to|now|one more)\b[^:—–?]{0,60}[:—–]\s*/gi, "$1")
     .split(/[,;:—–]|\s-\s|\band\b|\bor\b|\?/i)
     .map((c) => c.trim())
     .filter((c) => c.length > 3);
+  const eligible = documents.filter((d) => isSellerVisible(d) && !LEAD_KINDS.has(String(d.sourceKind)));
+  // How common each word is across the deal's sources: a passage only
+  // answers a question when it shares a DISTINCTIVE word with it — a name,
+  // an acronym, or a word few passages use ("College", "deductible"), not
+  // just "clinic" and "location" in a clinic's own files.
+  const allChunks = eligible.flatMap((d) => chunksFor(d));
+  const df = new Map<string, number>();
+  for (const c of allChunks) c.stems.forEach((st) => df.set(st, (df.get(st) ?? 0) + 1));
+  const rareLimit = Math.max(3, Math.ceil(allChunks.length * 0.015));
   const probes = clauses
     .map((c) => {
-      const { stems, names } = questionTokens(c);
-      return { stems: new Set(Array.from(stems).map(searchStem)), names: new Set(Array.from(names).map(searchStem)) };
+      const { words, names, phrases } = probeWords(c);
+      return {
+        stems: words,
+        names,
+        phrases,
+        // "How many clinicians at each location?" is answered only by a
+        // passage that gives a number, not one that merely mentions clinics.
+        needsFigure: QUANTITY_QUESTION_RE.test(c) || QUANTITY_QUESTION_RE.test(question),
+      };
     })
     .filter((p) => p.stems.size > 0);
-  if (probes.length === 0) return null;
-  let best: { chunk: Chunk; matched: string[]; score: number } | null = null;
-  for (const d of documents) {
-    if (!isSellerVisible(d) || LEAD_KINDS.has(String(d.sourceKind))) continue;
+  if (probes.length === 0) return [];
+  const allWords = new Set(probes.flatMap((p) => Array.from(p.stems)));
+  const bestByDoc = new Map<string, { chunk: Chunk; matched: string[]; score: number }>();
+  for (const d of eligible) {
     for (const chunk of chunksFor(d)) {
-      for (const { stems, names } of probes) {
+      for (const { stems, names, phrases, needsFigure } of probes) {
+        if (needsFigure && !FIGURE_RE.test(chunk.text)) continue;
         const matched = Array.from(stems).filter((s) => chunk.stems.has(s));
+        // Weaker candidates, for the answer check to confirm: the clause's
+        // two-word subject found as a phrase in the passage ("the wrongful
+        // dismissal claim … settled"), or — for a how-many question — one of
+        // its rarer words next to a figure ("21 with robots").
+        const phraseHit = phrases.some(([a, b]) => {
+          const i = chunk.words.indexOf(a);
+          const j = chunk.words.indexOf(b);
+          return i >= 0 && j >= 0 && j - i >= 1 && j - i <= 2;
+        });
+        const figureHit =
+          needsFigure &&
+          matched.some((m) => {
+            if (m.length < 5 || (df.get(m) ?? 0) > rareLimit) return false;
+            const i = chunk.words.indexOf(m);
+            return chunk.words.slice(Math.max(0, i - 6), i + 7).some((w) => /\d/.test(w));
+          });
         const nameHit = Array.from(names).some((n) => chunk.stems.has(n));
+        // Distinctive: a name or acronym, a word few passages use, or the
+        // words together within a few words of each other ("most new
+        // patients now come from…").
+        const positions = matched.map((m) => chunk.words.indexOf(m)).filter((i) => i >= 0);
+        const span = positions.length >= 2 ? Math.max(...positions) - Math.min(...positions) : 99;
+        const close = span <= 6;
+        // (A short word — "come", "run" — is never distinctive on its own, however rare.)
+        const distinctive = nameHit || close || matched.some((m) => m.length >= 5 && (df.get(m) ?? 0) <= rareLimit);
+        if (!distinctive && !phraseHit && !figureHit) continue;
         const n = stems.size;
         const all = matched.length === n;
-        const ok =
+        const full =
           (n >= 2 && n <= 3 && all) ||
           (n > 3 && matched.length >= 3 && matched.length / n >= 0.6) ||
           (nameHit && (all || matched.length >= n - 1));
-        if (!ok) continue;
-        const score = matched.length + matched.length / n + (nameHit ? 1 : 0);
-        if (!best || score > best.score) best = { chunk, matched, score };
+        if (!full && !phraseHit && !figureHit) continue;
+        // Ties go to the passage where the words sit closest together.
+        // A spreadsheet row answers only a question about what it names;
+        // otherwise prose wins ("Resin comes mainly from two distributors…"
+        // over a customer-list row that says "supplier").
+        // …and to the passage that also speaks to the question's other clauses.
+        const alsoCovers = Array.from(allWords).filter((w) => !stems.has(w) && chunk.stems.has(w)).length;
+        // (For a how-many question, a figure right next to the word it counts.)
+        const isFigure = (w: string) => /\d/.test(w) && !/^(?:19|20)\d{2}$/.test(w);
+        const nearFigures = needsFigure
+          ? matched.filter((m) => {
+              const i = chunk.words.indexOf(m);
+              return chunk.words.slice(Math.max(0, i - 3), i + 4).some(isFigure);
+            }).length
+          : 0;
+        const score = nearFigures * 0.75 + (full ? 0 : -2) + matched.length + matched.length / n + (nameHit ? 1 : 0) + 1 / (1 + span) + alsoCovers * 0.5 - (!nameHit && TABLE_ROW_RE.test(chunk.text) ? 1.5 : 0);
+        const best = bestByDoc.get(d.id);
+        if (!best || score > best.score) bestByDoc.set(d.id, { chunk, matched, score });
       }
     }
   }
-  if (!best) return null;
-  return { docId: best.chunk.docId, docName: best.chunk.docName, snippet: trim(best.chunk.text, 300), matched: best.matched };
+  return Array.from(bestByDoc.values())
+    .sort((a, b) => b.score - a.score)
+    .slice(0, n)
+    .map((b) => ({ docId: b.chunk.docId, docName: b.chunk.docName, snippet: snippetAround(b.chunk.text, b.matched), matched: b.matched }));
 }
 
 // =====================
@@ -672,9 +858,16 @@ const GENERIC_CONTEXT = new Set(["about", "appro", "aroun", "rough", "total", "g
 
 const ADJECTIVES = /^(active|total|full|part|licensed|current|paying|service|company|power|registered|approximately|about|roughly|around)$/;
 
+/** Words just before a figure that make it an estimate. */
+const HEDGE_BEFORE_RE = /\b(probably|maybe|about|roughly|around|approximately|approx\.?|close to|nearly|almost|some|like|call it|give or take|or so)\s*$/i;
+/** A spreadsheet/CSV line: cells separated by tabs or bare commas. */
+const TABLE_ROW_RE = /\t|(?:[^,\s][^,]*,(?!\s)){2,}|^[^,]{1,40},\d/;
+/** Words right after a count that make it a subset ("24 drivers over 10 years", "12 techs with a licence", "5 of them"). */
+const SUBSET_AFTER_RE = /^\s*(?:over|under|with|who|that|which|having|of (?:them|those|these|our|the)|in (?:the|our)\s+\w+ (?:team|department|shop|crew)|on (?:the|our) \w+ (?:shift|team|crew)|at (?:the|our) \w+ (?:location|site|clinic|branch))\b/i;
+
 /** (figure, unit) pairs a text states: "3,100 members", "26 trucks", "18% of revenue". */
-export function figuresWithUnits(text: string): { value: number; unit: string; context: Set<string> }[] {
-  const out: { value: number; unit: string; context: Set<string> }[] = [];
+export function figuresWithUnits(text: string): { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean }[] {
+  const out: { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean }[] = [];
   const clean = stripLabelNumbers(text);
   const re = /(\d[\d,]*(?:\.\d+)?)\s*(%|percent\b|[a-z]+)(?:\s+(?:of\s+)?([a-z]+))?(?:\s+([a-z]+))?/gi;
   let m: RegExpExecArray | null;
@@ -692,7 +885,13 @@ export function figuresWithUnits(text: string): { value: number; unit: string; c
     if (/^(year|month|week|day|hour|minute|time|sq|square|ft|feet|km|mile|am|pm|k|m|mm|million|thousand|dollar|and|or|to|in|on|at|of|for|the|a)$/.test(unit.replace(/s$/, ""))) continue;
     const start = Math.max(0, m.index - 80);
     const context = stemsOf(clean.slice(start, m.index + m[0].length + 40));
-    out.push({ value, unit: unit.startsWith("%") ? unit : unitFamily(unit), context });
+    // Everything after the unit noun: "…drivers| over 10 years".
+    const after = clean.slice(m.index + (m[1].length + (clean.slice(m.index + m[1].length).match(/^\s*(?:%|percent\b|[a-z]+)/i)?.[0].length ?? 0)));
+    const subset = !unit.startsWith("%") && SUBSET_AFTER_RE.test(after);
+    // "probably 10 or 11", "about 26", "maybe 3,000", "25-30 people".
+    const before = clean.slice(Math.max(0, m.index - 30), m.index);
+    const hedged = HEDGE_BEFORE_RE.test(before) || /^\s*(?:or|to|-|–)\s*\d/.test(clean.slice(m.index + m[1].length)) || /\d\s*(?:or|to|-|–)\s*$/.test(before);
+    out.push({ value, unit: unit.startsWith("%") ? unit : unitFamily(unit), context, ...(subset ? { subset: true } : {}), ...(hedged ? { hedged: true } : {}) });
   }
   return out;
 }
@@ -706,8 +905,12 @@ export function figuresWithUnits(text: string): { value: number; unit: string; c
  * aren't checked here — they are the seller talking.
  */
 export function spokenFigureConflicts(sellerMessage: string, documents: DocLike[]): { said: string; docName: string; snippet: string }[] {
-  // A bare percentage ("9.4%, which…") says nothing about what it measures — skipped.
-  const said = figuresWithUnits(sellerMessage).filter((f) => f.value >= 2 && f.unit !== "%");
+  // Percentages are skipped: "7.5% of revenue" (drayage) and "6.4% of
+  // revenue" (a customer) are shares of different things, and a share of a
+  // NAMED customer is compared by crossSourceFigureConflicts. So is a count
+  // of a subset ("24 drivers over 10 years", "12 techs with their 313A"): it
+  // isn't the headline count of anything a document lists.
+  const said = figuresWithUnits(sellerMessage).filter((f) => f.value >= 2 && !f.unit.startsWith("%") && !f.subset);
   if (said.length === 0) return [];
   const out: { said: string; docName: string; snippet: string }[] = [];
   for (const f of said) {
@@ -721,13 +924,19 @@ export function spokenFigureConflicts(sellerMessage: string, documents: DocLike[
       const aboutUnit = (d.name.toLowerCase().match(/[a-z]+/g) ?? []).some((w) => unitFamily(w) === f.unit);
       let headlineSeen = false;
       for (const chunk of chunksFor(d)) {
+        // A table row ("Port drayage,14,…") is one line of a breakdown, not a
+        // statement of the total — never compared.
+        if (TABLE_ROW_RE.test(chunk.text)) continue;
         for (const g of figuresWithUnits(chunk.text)) {
-          if (g.unit !== f.unit) continue;
+          if (g.unit !== f.unit || g.subset) continue;
           const isHeadline = aboutUnit && !headlineSeen;
           if (aboutUnit) headlineSeen = true;
           const base = Math.max(f.value, g.value);
           const diff = Math.abs(f.value - g.value) / base;
           if (diff <= 0.04) { agrees = true; continue; }
+          // A hedged count ("probably 10 or 11 inspectors") a couple off the
+          // document's is the seller's estimate, not a conflict worth a stop.
+          if (f.hedged && Math.abs(f.value - g.value) <= 2 && base <= 30) { agrees = true; continue; }
           if (diff > 0.5) continue; // a different quantity altogether
           let shared = 0;
           f.context.forEach((w) => { if (g.context.has(w) && !/^\d/.test(w) && !GENERIC_CONTEXT.has(w) && !w.startsWith(f.unit.slice(0, 4))) shared++; });

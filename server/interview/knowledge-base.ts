@@ -8,7 +8,7 @@ import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
-import { resolvedNotes, overlayResolvedFacts, type ResolvedDiscrepancyNote } from "../cim/resolved-block";
+import { resolvedNotes, overlayResolvedFacts, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
   buildSourceDigests,
   buildFlaggedRisks,
@@ -16,12 +16,14 @@ import {
   crossSourceFigureConflicts,
   mergeDiscrepancyConflicts,
   buildPriorExchanges,
+  dealAsOfYear,
   type SourceDigest,
   type FlaggedRisk,
   type SourceConflict,
   type PriorExchange,
 } from "./source-context";
 import { reviewConflictsForDeal } from "./source-review";
+import { claimConflicts } from "./claim-conflicts";
 
 // =====================
 // Types
@@ -123,6 +125,9 @@ export interface KnowledgeBase {
   // Document requests the server dropped because the document is on file.
   droppedDocRequests?: string[];
 }
+
+/** A settled discrepancy as the interview sees it (resolvedPrivately: the final value is withheld — it came from the broker's own material). */
+export type ResolvedDiscrepancyNote = ResolvedNote & { resolvedPrivately?: boolean };
 
 /** Optional context assembleKnowledgeBase can use (older callers pass none). */
 export interface KnowledgeBaseExtras {
@@ -408,61 +413,66 @@ export function assembleKnowledgeBase(
   ) as Partial<ExtractedInfo>;
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
+  // Which side of a discrepancy (and which text written from it) came from
+  // the broker's own material. Fail closed: a side is private when the row's
+  // recorded side source says so (discrepancies.side_sources — brokerOnly, a
+  // CRM kind, or a broker-only row), when it names a broker-only source
+  // (legacy rows), or when its text cites the broker's own material ("per
+  // broker note", "CRM notes and site visit", "(broker normalized)").
+  const privacy = discrepancyPrivacy(documents);
+
   // Discrepancies the broker settled: a row naming a real fact key overlays
   // that fact (per-year rows update that year); every settled row is also
   // listed as a final value, so a narrative fact still repeating the losing
   // value reads as outdated (server/cim/resolved-block.ts — the same rules
   // the CIM writer uses). A label-named row no longer adds a pseudo-fact.
   // (ask_seller rows have no resolvedValue — they become priority topics.)
-  const resolvedValues = resolvedNotes(resolvedDiscrepancies.filter((d) => d.status !== "ask_seller"));
+  // Privacy: a losing value from a private side is never listed, and a final
+  // value that came FROM a private side (the broker's recast, a CRM note's
+  // figure) is neither listed nor overlaid — the agent only learns that the
+  // item is settled (resolvedPrivately), never the figure or where it came from.
+  const resolvedValues: ResolvedDiscrepancyNote[] = [];
+  for (const d of resolvedDiscrepancies) {
+    if (d.status === "ask_seller") continue;
+    const [note] = resolvedNotes([d]);
+    if (!note) continue;
+    const p = privacy(d);
+    const privateValues = [p.privateA ? d.interviewValue : null, p.privateB ? d.documentValue : null].filter((v): v is string => !!v);
+    const publicValues = [p.privateA ? null : d.interviewValue, p.privateB ? null : d.documentValue].filter((v): v is string => !!v);
+    const fromPrivate =
+      PRIVATE_MATERIAL_RE.test(note.resolvedValue) ||
+      p.namesPrivateSource(note.resolvedValue) ||
+      (privateValues.some((v) => sameFigure(note.resolvedValue, v)) && !publicValues.some((v) => sameFigure(note.resolvedValue, v)));
+    const field = PRIVATE_MATERIAL_RE.test(note.field) ? safeFieldLabel(note.field, note.factKey) : note.field;
+    if (fromPrivate) {
+      resolvedValues.push({ ...note, field, resolvedValue: "", supersededValues: [], resolvedPrivately: true });
+      continue;
+    }
+    resolvedValues.push({
+      ...note,
+      field,
+      supersededValues: note.supersededValues.filter(
+        (v) => !privateValues.some((pv) => pv.trim() === v.trim()) && !PRIVATE_MATERIAL_RE.test(v) && !p.namesPrivateSource(v),
+      ),
+    });
+  }
   const extractedInfo = overlayResolvedFacts(
     baseExtractedInfo as Record<string, unknown>,
-    resolvedValues,
+    resolvedValues.filter((n) => !n.resolvedPrivately),
   ) as Partial<ExtractedInfo>;
 
-  // Discrepancies the broker explicitly routed to the interview
-  // One side from a broker-only source (a CRM note, a private email): the
-  // agent never sees that side's value, or the explanation built from it —
-  // it asks the seller for the figure without hinting at it.
-  // (A side is private when its row is broker-only, or when it names a
-  // broker-only source — financial-analysis values carry the source's name.)
-  // (A generic title — "Email", "CRM note" — is judged on the side's source
-  // label; a side with no label fails closed.)
-  // Fail closed: a side is private when the row's recorded side source says
-  // so (discrepancies.side_sources — brokerOnly, a CRM kind, or a broker-only
-  // row), when it names a broker-only source (legacy rows), or when its text
-  // cites the broker's own material ("per broker note", "CRM notes and site
-  // visit"). Any private side hides the explanation and suggested approach
-  // too — they are written from both sides.
-  const namesPrivateSource = privateSourceMatcher(documents);
-  const mentionsPrivateTitle = privateSourceMatcher(documents, { distinctiveOnly: true });
-  const brokerOnlyDoc = (id: string | null | undefined) =>
-    !!id && documents.some((doc) => doc.id === id && doc.visibility === "broker_only");
-  const privateSide = (side: DiscrepancySide | undefined) =>
-    !!side && (side.brokerOnly === true || side.kind === "crm" || brokerOnlyDoc(side.documentId));
+  // Discrepancies the broker explicitly routed to the interview. One side
+  // from a broker-only source (a CRM note, a private email): the agent never
+  // sees that side's value, or the explanation built from it — it asks the
+  // seller for the figure without hinting at it. Any private side hides the
+  // explanation and suggested approach too — they are written from both sides.
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")
     .map((d) => {
-      const sides = (d.sideSources as { interview?: DiscrepancySide; document?: DiscrepancySide } | null) || {};
-      // documentId backs the second value (documentValue).
-      const privateA =
-        privateSide(sides.interview) || namesPrivateSource(d.interviewValue) || PRIVATE_MATERIAL_RE.test(d.interviewValue ?? "");
-      const privateB =
-        privateSide(sides.document) ||
-        namesPrivateSource(d.documentValue) ||
-        brokerOnlyDoc(d.documentId) ||
-        PRIVATE_MATERIAL_RE.test(d.documentValue ?? "") ||
-        PRIVATE_MATERIAL_RE.test(d.documentName ?? "");
-      const explanationPrivate =
-        PRIVATE_MATERIAL_RE.test(d.aiExplanation ?? "") ||
-        PRIVATE_MATERIAL_RE.test(d.suggestedResolution ?? "") ||
-        mentionsPrivateTitle(d.aiExplanation) ||
-        mentionsPrivateTitle(d.suggestedResolution);
+      const { privateA, privateB, explanationPrivate } = privacy(d);
       const privateSource = privateA || privateB || explanationPrivate;
       // The field label itself can carry a source note ("Employees (CRM notes)").
-      const field = PRIVATE_MATERIAL_RE.test(d.field)
-        ? (d.factKey || d.field.replace(/\s*\([^)]*\)/g, "").replace(PRIVATE_MATERIAL_GLOBAL_RE, "").trim() || "a figure")
-        : d.field;
+      const field = PRIVATE_MATERIAL_RE.test(d.field) ? safeFieldLabel(d.field, d.factKey) : d.field;
       return {
         field,
         valueA: privateA ? null : d.interviewValue,
@@ -484,17 +494,26 @@ export function assembleKnowledgeBase(
   // shared is labelled so the agent confirms it without citing the CRM.)
   const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
   for (const n of resolvedValues) {
-    if (n.factKey && !n.year) factSourceLabels[n.factKey] = "confirmed by the broker";
+    if (n.factKey && !n.year && !n.resolvedPrivately) factSourceLabels[n.factKey] = "confirmed by the broker";
   }
 
   // Sources: digests, flagged risks, conflicts (seller-visible only — the
   // view above already dropped broker-only alternates), earlier sessions.
   const sourceConflicts = dedupeConflicts([
     ...detectAlternateConflicts(baseExtractedInfo as Record<string, unknown>, documents),
+    ...claimConflicts(documents, baseExtractedInfo as Record<string, unknown>, {
+      // (Names only pick which lines of a seller-visible document to read —
+      // nothing from the full facts is shown.)
+      ownerNames: ownerNamesOf(deal, ((deal.extractedInfo as Record<string, unknown>) || {})),
+      asOf: dealAsOfYear(documents),
+    }),
     ...crossSourceFigureConflicts(documents),
     ...mergeDiscrepancyConflicts(extras.openDiscrepancies ?? [], documents),
     ...reviewConflictsForDeal(deal, documents),
-  ]).filter((c) => !resolvedValues.some((n) => n.factKey === c.key));
+  ])
+    // A conflict the broker already settled is not re-opened with the seller
+    // ("Alderbrook under 20%" vs 22% after the broker resolved it at 22%).
+    .filter((c) => !settledByBroker(c, resolvedDiscrepancies.filter((d) => d.status !== "ask_seller")));
   const currentSessionId = extras.currentSessionId ?? null;
   const priorSession =
     (extras.sessions ?? [])
@@ -556,8 +575,68 @@ interface DiscrepancySide { kind?: string; documentId?: string; brokerOnly?: boo
  * a site visit) — never shown to the seller, whatever the row's sources say.
  */
 export const PRIVATE_MATERIAL_RE =
-  /\b(?:crm|broker(?:'s|s')? (?:note|notes|recast|estimate|estimates|valuation|meeting|call notes|analysis)|per (?:the )?broker|pipedrive|hubspot|salesforce|site visit(?: notes?)?)\b/i;
+  /\b(?:crm|broker(?:'s|s')?\s+(?:note|notes|recast|estimate|estimates|valuation|meeting|call notes|analysis|normali[sz]ed|normali[sz]ation|adjusted|adjustments?|calc\w*|figures?|numbers?|view|opinion|model|working session)|per (?:the )?broker|pipedrive|hubspot|salesforce|site visit(?: notes?)?|working session)\b|\(broker\b[^)]*\)/i;
 const PRIVATE_MATERIAL_GLOBAL_RE = new RegExp(PRIVATE_MATERIAL_RE.source, "gi");
+
+/** A field label with any note about the broker's material removed ("Employees (CRM notes)" → "Employees"). */
+function safeFieldLabel(field: string, factKey: string | null | undefined): string {
+  return factKey || field.replace(/\s*\([^)]*\)/g, "").replace(PRIVATE_MATERIAL_GLOBAL_RE, "").replace(/\s+/g, " ").trim() || "a figure";
+}
+
+/** The significant figures a value states, scaled ("$3.9M" → 3,900,000; "$1,312K" → 1,312,000); years and labels ("FY24") left out. */
+function significantFigures(text: string): number[] {
+  const out: number[] = [];
+  const re = /(?<![A-Za-z0-9])(\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|mm|m|million|thousand|b|billion)?(?![A-Za-z0-9])(\s*%)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    let n = parseFloat(m[2].replace(/,/g, ""));
+    if (Number.isNaN(n)) continue;
+    const suffix = (m[3] || "").toLowerCase();
+    if (!m[1] && !suffix && !m[4] && n >= 1900 && n <= 2099 && Number.isInteger(n)) continue; // a year
+    const mult: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
+    if (suffix) n *= mult[suffix] ?? 1;
+    if (n >= 100 || m[4]) out.push(m[4] ? -n : n); // percentages kept apart (negative)
+  }
+  return out;
+}
+
+/** Two values share a significant figure ("$3,900,000" and "$3.9M (…)"; "$1,312,000 …" and "FY24 SDE $1,312K …"). */
+function sameFigure(a: string, b: string): boolean {
+  const xs = significantFigures(a);
+  const ys = significantFigures(b);
+  return xs.some((x) => ys.some((y) => Math.sign(x) === Math.sign(y) && Math.abs(x - y) / Math.max(Math.abs(x), Math.abs(y)) <= 0.005));
+}
+
+/**
+ * Privacy of a discrepancy's two sides and of the text written from them.
+ * Fail closed — see assembleKnowledgeBase.
+ */
+export function discrepancyPrivacy(documents: Array<Pick<Document, "id" | "visibility"> & { name?: string | null }>) {
+  const namesPrivateSource = privateSourceMatcher(documents);
+  const mentionsPrivateTitle = privateSourceMatcher(documents, { distinctiveOnly: true });
+  const brokerOnlyDoc = (id: string | null | undefined) =>
+    !!id && documents.some((doc) => doc.id === id && doc.visibility === "broker_only");
+  const privateSide = (side: DiscrepancySide | undefined) =>
+    !!side && (side.brokerOnly === true || side.kind === "crm" || brokerOnlyDoc(side.documentId));
+  return (d: Pick<Discrepancy, "interviewValue" | "documentValue" | "documentId" | "documentName" | "aiExplanation" | "suggestedResolution" | "sideSources">) => {
+    const sides = (d.sideSources as { interview?: DiscrepancySide; document?: DiscrepancySide } | null) || {};
+    // documentId backs the second value (documentValue).
+    const privateA =
+      privateSide(sides.interview) || namesPrivateSource(d.interviewValue) || PRIVATE_MATERIAL_RE.test(d.interviewValue ?? "");
+    const privateB =
+      privateSide(sides.document) ||
+      namesPrivateSource(d.documentValue) ||
+      brokerOnlyDoc(d.documentId) ||
+      PRIVATE_MATERIAL_RE.test(d.documentValue ?? "") ||
+      PRIVATE_MATERIAL_RE.test(d.documentName ?? "");
+    const explanationPrivate =
+      PRIVATE_MATERIAL_RE.test(d.aiExplanation ?? "") ||
+      PRIVATE_MATERIAL_RE.test(d.suggestedResolution ?? "") ||
+      mentionsPrivateTitle(d.aiExplanation) ||
+      mentionsPrivateTitle(d.suggestedResolution);
+    return { privateA, privateB, explanationPrivate, namesPrivateSource };
+  };
+}
 
 /** A fact the seller (or the broker) has stated — not only a document or lead. */
 export function sellerAnswered(info: Record<string, unknown>, key: string): boolean {
@@ -565,6 +644,56 @@ export function sellerAnswered(info: Record<string, unknown>, key: string): bool
   const src = getFieldSources(info)[key];
   return !!src && ["interview", "call", "video_call", "questionnaire", "broker"].includes(String(src.source));
 }
+
+/** The owner's names on file (facts and the deal's seller contact) — to find their pay in the tax returns. */
+function ownerNamesOf(deal: Deal, info: Record<string, unknown>): string[] {
+  const raw = [
+    info.ownerName, info.owner, info.sellerName, info.owners,
+    (deal as { sellerContact?: { name?: string } | null }).sellerContact?.name,
+    (deal as { sellerName?: string | null }).sellerName,
+  ];
+  const names = new Set<string>();
+  for (const v of raw) {
+    if (typeof v !== "string") continue;
+    for (const w of v.replace(/\b(Dr|Mr|Mrs|Ms)\.?\s/g, " ").match(/\b[A-Z][a-z]{2,}\b/g) ?? []) names.add(w);
+  }
+  return Array.from(names);
+}
+
+/**
+ * True when a resolved discrepancy already settles this conflict: it names
+ * the same fact key, or it is about the same thing (a shared name or two
+ * topic words) and carries one of the conflict's figures.
+ */
+export function settledByBroker(
+  c: SourceConflict,
+  rows: Array<Pick<Discrepancy, "field" | "factKey" | "interviewValue" | "documentValue" | "resolvedValue">>,
+): boolean {
+  const figures = (t: string) =>
+    (t.replace(/(?<!\d)(?:19|20)\d{2}(?!\d)/g, " ").match(/\d[\d,]*(?:\.\d+)?/g) ?? [])
+      .map((n) => parseFloat(n.replace(/,/g, "")))
+      .filter((n) => !Number.isNaN(n) && n >= 2);
+  const words = (t: string) =>
+    new Set((t.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().match(/[a-z]{4,}/g) ?? []).filter((w) => !SETTLE_NOISE.has(w)).map((w) => w.slice(0, 5)));
+  const cValues = c.values.map((v) => v.value).join(" ");
+  const cFigures = figures(cValues);
+  const cWords = words(`${c.key} ${c.topic}`);
+  const cNames = Array.from(new Set((cValues.match(/\b[A-Z][a-z]{3,}\b/g) ?? []).map((w) => w.toLowerCase())));
+  return rows.some((r) => {
+    const key = (r.factKey || r.field || "").trim();
+    if (key && key.toLowerCase() === c.key.toLowerCase()) return true;
+    const rText = `${r.field} ${r.interviewValue ?? ""} ${r.documentValue ?? ""} ${r.resolvedValue ?? ""}`;
+    const rWords = words(`${r.field} ${r.factKey ?? ""}`);
+    const rLower = rText.toLowerCase();
+    let sharedWords = 0;
+    cWords.forEach((w) => { if (rWords.has(w)) sharedWords++; });
+    const sharedName = cNames.some((n) => new RegExp(`\\b${n}\\b`).test(rLower));
+    if (!sharedName && sharedWords < 2) return false;
+    const rFigures = figures(rText);
+    return cFigures.some((x) => rFigures.some((y) => Math.abs(x - y) / Math.max(x, y) <= 0.01));
+  });
+}
+const SETTLE_NOISE = new Set(["with", "from", "that", "this", "said", "call", "email", "document", "about", "approximately", "percent", "percentage", "total", "value", "count", "number"]);
 
 /** One conflict per fact key (the first source wins: alternates, then merge, then review). */
 function dedupeConflicts(list: SourceConflict[]): SourceConflict[] {
@@ -768,6 +897,12 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     parts.push(`## SETTLED BY THE BROKER — final values (never re-ask, re-open or contradict)`);
     for (const n of kb.resolvedValues!) {
       const what = n.year ? `${n.factKey ?? n.field} (${n.year})` : (n.factKey ?? n.field);
+      if (n.resolvedPrivately) {
+        // The final figure came from the broker's own material: the agent
+        // knows only that it is settled — nothing to quote, nothing to re-open.
+        parts.push(`- ${what}: settled by the broker (the final figure is with the broker — don't quote a figure for it, don't ask the seller to re-state it, and don't mention where it came from)`);
+        continue;
+      }
       const old = n.supersededValues.length ? ` — replaces ${n.supersededValues.map((v) => `"${v}"`).join(", ")} (outdated)` : "";
       parts.push(`- ${what}: ${n.resolvedValue}${old}`);
     }

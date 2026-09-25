@@ -264,7 +264,16 @@ export async function callInterviewWithRecovery(
   /** When provided, the FIRST attempt streams the message field and emits each
    *  new text chunk here. Retries and governance re-calls never stream. */
   onDelta?: (chunk: string) => void,
-): Promise<{ response: InterviewResponse; degraded: boolean }> {
+  /**
+   * Streaming only: called once, as soon as the message field is complete
+   * (before the rest of the response — extracted facts, reasoning — is
+   * generated). Returning false stops the call there: the result is
+   * `rejected` with just that message, so the caller can ask for a rewrite
+   * without waiting for (or showing) the rest. Used by the re-ask guard, so
+   * a question that re-asks something on file is never shown to the seller.
+   */
+  onMessageComplete?: (message: string) => boolean | Promise<boolean>,
+): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean }> => {
@@ -297,7 +306,7 @@ export async function callInterviewWithRecovery(
   // validation to the non-streaming path.
   const streamAttempt = async (
     messages: InterviewCallParams["messages"],
-  ): Promise<{ response: InterviewResponse; valid: boolean }> => {
+  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean }> => {
     const stream = anthropic.messages.stream({
       model: params.model,
       max_tokens: params.maxTokens,
@@ -310,6 +319,7 @@ export async function callInterviewWithRecovery(
 
     let jsonBuf = "";
     let emitted = 0;
+    let checked = false;
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
@@ -320,6 +330,23 @@ export async function callInterviewWithRecovery(
         if (msg && msg.text.length > emitted) {
           onDelta!(msg.text.slice(emitted));
           emitted = msg.text.length;
+        }
+        if (msg?.complete && !checked && onMessageComplete) {
+          checked = true;
+          let keep = true;
+          try {
+            keep = await onMessageComplete(msg.text);
+          } catch (err) {
+            console.warn("[turn-guard] message-complete hook failed — continuing:", err);
+          }
+          if (!keep) {
+            // A listener, so the SDK doesn't report the deliberate abort as
+            // an unhandled rejection.
+            stream.on("abort", () => {});
+            stream.abort();
+            const { response } = normalizeInterviewResponse({ message: msg.text });
+            return { response, valid: false, rejected: true };
+          }
         }
       }
     }
@@ -341,6 +368,7 @@ export async function callInterviewWithRecovery(
     const first = onDelta
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
+    if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };
     if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");

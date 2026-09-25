@@ -105,14 +105,15 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
     const org = [doc({ id: "o", name: "Organizational chart", extractedText: "Headcount by function\nPlant manager and shift supervisors6\nPress operators and packers112\nSetup and process technicians22\nMaterial handling, shipping and receiving18" })];
     const compound = searchSourcesFor("Shifting to workforce structure: how is your headcount split across the three shifts, and roughly how many of those 212 are operators versus setup techs versus other roles?", org);
     assert.ok(compound && /Setup and process technicians22/.test(compound.snippet), "the org chart answers the role split");
-    assert.equal(searchSourcesFor("How many operators do you have on third shift?", org), null, "a clause the source doesn't answer");
+    // A weaker match (a rare word next to a figure) is only a candidate: the answer check decides.
+    assert.ok(findReasks("How many operators do you have on third shift?", { sellerMessage: "x", info: {}, documents: org, priorQA: [] }).every((f) => f.verify), "only a candidate for the answer check");
     assert.equal(searchSourcesFor("What would a market-rate CEO cost a buyer?", org), null);
     // A reply that already cites the source is fine.
     assert.equal(findReasks("The Zoom call mentions one College complaint in 2023 — has anything come up since?", { sellerMessage: "x", info: {}, documents: docs, priorQA: [] }).filter((x) => x.kind === "source_text").length, 0);
 
     const calls: any[] = [];
     const fake: any = { messages: { create: async (p: any) => { calls.push(p); return toolResponse(reply("The Zoom call mentions one College complaint in 2023 that was dismissed — anything since?")); } } };
-    const out = await applyReaskGuard(fake, { model: "m", maxTokens: 10, temperature: 1, system: [], messages: [{ role: "user", content: "Staff are licensed." }] }, reply("Any College complaints?") as any, { sellerMessage: "Staff are licensed.", info: {}, documents: docs, priorQA: [] });
+    const out = await applyReaskGuard(fake, { model: "m", maxTokens: 10, temperature: 1, system: [], messages: [{ role: "user", content: "Staff are licensed." }] }, reply("Any College complaints?") as any, { sellerMessage: "Staff are licensed.", info: {}, documents: docs, priorQA: [] }, async () => new Set(["1"]));
     assert.equal(out.recalled, true);
     assert.match(calls[0].messages.at(-1).content, /already says .*College complaint in 2023/);
     assert.match(out.response.message, /Zoom call mentions/);
@@ -204,7 +205,7 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
   ok("conflicts: seller-visible said-vs-written values render as CONFLICTS TO RECONCILE with both sources and go on the ledger; broker-only sides never do");
 
   {
-    const input = "FACTS: backlog: $4.2M [said on a call]\nSOURCES: WIP report: signed backlog $3.1M";
+    const input = "FACTS:\n- backlog: $4.2M [said on a call]\nSOURCES:\n### document: WIP report (WIP report)\nsummary: signed backlog $3.1M";
     const good = validateReviewConflicts([{ key: "backlog", topic: "backlog", critical: true, a: { value: "$4.2M", source: "said on a call" }, b: { value: "$3.1M signed", source: "document: WIP report" } }], input);
     assert.equal(good.length, 1);
     const invented = validateReviewConflicts([{ key: "backlog", topic: "backlog", critical: true, a: { value: "$4.2M", source: "call" }, b: { value: "$2.9M", source: "WIP" } }], input);
@@ -363,7 +364,7 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
     // Closing: answered field, or the agent resolved it.
     const closing = planTaskWrites({
       newTasks: [], documents: [], sellerMessage: "x", answeredKeys: new Set(["leaseExpiry"]),
-      existing: [{ id: "a", type: "follow_up", title: "Confirm lease expiry", relatedField: "leaseExpiry", description: "", status: "pending" }, ...existing],
+      existing: [{ id: "a", type: "follow_up", title: "Confirm lease expiry", relatedField: "leaseExpiry", description: "", status: "pending", createdBy: "ai_interview" }, ...existing.map((e) => ({ ...e, createdBy: "ai_interview" }))],
       resolvedTopics: ["Larkspur MSA change-of-control clause"],
     });
     assert.deepEqual(closing.close.sort(), ["a", "t1"]);

@@ -1623,7 +1623,9 @@ Return JSON only.`,
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
-      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      // (A reply still being typed out when the turn failed must not write
+      // after the response has ended.)
+      const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
 
       try {
         const result = await processTurn(
@@ -6362,12 +6364,11 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      // First look at the outline: review the sources for conflicts in the
-      // background, so the interview can open on them (never re-run here —
-      // the interview refreshes a stale review itself).
-      if (!(deal as { interviewSourceReview?: unknown }).interviewSourceReview) {
-        storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
-      }
+      // Review the sources for conflicts in the background, so the
+      // interview can open on them. A no-op while the stored review matches
+      // the current sources; a source added since gets reviewed now, before
+      // the seller's next session.
+      storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
       res.json(outlineView(deal));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load interview outline" });

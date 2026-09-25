@@ -32,6 +32,8 @@ export interface TaskPlan {
 }
 
 const open = (t: TaskLike) => t.status === "pending" || t.status === "in_progress";
+/** Tasks the interview itself created — the only ones it may merge into or close (the broker's own follow-ups are the broker's). */
+const byInterview = (t: TaskLike) => t.createdBy === "ai_interview";
 
 /** Stem overlap measured on the smaller side (0..1). */
 function similarity(a: string, b: string): number {
@@ -44,22 +46,43 @@ function similarity(a: string, b: string): number {
 }
 
 /** Words a request title adds that say nothing about which document it is. */
-const REQUEST_NOISE = /\b(get|obtain|request|upload|send|provide|copy|copies|of|the|a|an|latest|current|full|seller'?s?|please|document|documents|file|files|over|from|for|to)\b/gi;
+const REQUEST_NOISE = /\b(get|obtain|request|upload|send|provide|copy|copies|of|the|a|an|latest|current|full|seller'?s?|please|document|documents|file|files|over|from|for|to|signed|complete|updated|recent|most|your|our|his|her|their|any|all|again|too|also|anyway|if|you|need|it|as|well|me|us)\b/gi;
+/** Kinds of document — "report", "statements", "list": which document it is lies in the other words. */
+const DOCUMENT_KIND_STEMS = new Set(
+  ["report", "reports", "statement", "statements", "list", "lists", "summary", "schedule", "spreadsheet", "sheet", "workbook", "record", "records", "copy", "return", "returns", "pdf", "export", "breakdown", "detail", "details"].map((w) => w.slice(0, 5)),
+);
 
-/** A processed, seller-visible document the request asks for, if any. */
+/** Fiscal years a title names: "2024", "FY2024", "FY24", "fiscal 24". */
+export function yearsNamed(text: string): Set<number> {
+  const out = new Set<number>();
+  for (const m of Array.from(text.matchAll(/(?<![\d])((?:19|20)\d{2})(?![\d])/g))) out.add(Number(m[1]));
+  for (const m of Array.from(text.matchAll(/\bFY\s?'?(\d{2})\b/gi))) out.add(2000 + Number(m[1]));
+  return out;
+}
+
+/**
+ * A processed, seller-visible document the request asks for, if any. Every
+ * distinctive word of the request must be in the document's name ("Comfort
+ * Club cancellation report" is not the membership report), and every year it
+ * names too ("2024 T2" is not the 2023 T2). When in doubt the request stays —
+ * a duplicate request costs a click; a dropped one loses a document.
+ */
 export function documentOnFileFor(title: string, documents: DocLike[]): DocLike | null {
   const wanted = title.replace(REQUEST_NOISE, " ").replace(/\s+/g, " ").trim();
-  const w = stemsOf(wanted);
-  if (w.size === 0) return null;
+  const years = yearsNamed(wanted);
+  const w = new Set(Array.from(stemsOf(wanted.replace(/(?:\bFY|\bfiscal\s*)?(?:19|20)\d{2}\b|\bFY\s?'?\d{2}\b/gi, " "))).filter((x) => !/^\d+$/.test(x)));
+  const content = new Set(Array.from(w).filter((x) => !DOCUMENT_KIND_STEMS.has(x)));
+  if (content.size === 0) return null;
   for (const d of documents) {
     if (d.visibility === "broker_only") continue;
     if (d.isProcessed === false && d.status !== "processed") continue;
     const n = stemsOf(d.name);
-    let shared = 0;
-    w.forEach((x) => { if (n.has(x)) shared++; });
-    // Most of what the request names is in the document's name.
-    if (shared >= 2 && shared / w.size >= 0.6) return d;
-    if (w.size === 1 && shared === 1 && n.size <= 3) return d;
+    if (!Array.from(content).every((x) => n.has(x))) continue;
+    if (years.size > 0) {
+      const docYears = yearsNamed(d.name);
+      if (!Array.from(years).every((y) => docYears.has(y))) continue;
+    }
+    return d;
   }
   return null;
 }
@@ -112,6 +135,7 @@ export function planTaskWrites(args: {
   // (A request stays open when only the field has a value — the document
   // itself hasn't arrived.)
   for (const t of pending) {
+    if (!byInterview(t)) continue;
     const answered = t.type !== "document_request" && !!t.relatedField && args.answeredKeys.has(t.relatedField);
     const resolved = args.resolvedTopics.some((r) => r && (topicsMatch(r, t.title) || similarity(r, t.title) >= 0.8));
     const delivered = t.type === "document_request" && !!documentOnFileFor(t.title, args.documents);
@@ -142,7 +166,7 @@ export function planTaskWrites(args: {
       (e) => e.type === t.type && ((!!t.relatedField && e.relatedField === t.relatedField) || similarity(e.title, t.title) >= 0.6),
     );
     if (dup) {
-      if (!dup.id.startsWith("new:") && t.description && t.description !== dup.description) plan.update.push({ id: dup.id, description: t.description });
+      if (!dup.id.startsWith("new:") && byInterview(dup) && t.description && t.description !== dup.description) plan.update.push({ id: dup.id, description: t.description });
       continue;
     }
     plan.create.push(t);

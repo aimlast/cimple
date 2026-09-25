@@ -106,7 +106,12 @@ export function updateDeferralLedger(
       // Same topic again: refresh context; reopen if it had been resolved.
       if (d.reason) match.reason = d.reason;
       if (d.whereInfoLives) match.whereInfoLives = d.whereInfoLives;
-      // The agent deferring a source-minted item makes it a real deferral.
+      // The agent deferring a source-minted item makes it a real deferral —
+      // deferred now, not when the server put it on the agenda.
+      if (match.origin === "source") {
+        match.createdAtTurn = turn;
+        delete match.earlierSession;
+      }
       delete match.origin;
       if (declined) match.declined = true; // a decline is sticky
       if (match.status === "resolved") {
@@ -131,6 +136,18 @@ export function updateDeferralLedger(
 
 export function openDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
   return ledger.filter((e) => e.status === "open");
+}
+
+/**
+ * Open entries that are real deferrals — raised with the seller and set
+ * aside (or declined). Items the server put on the agenda from the sources
+ * (origin "source": a conflict to reconcile, a flagged risk) are NOT: they
+ * were never discussed, so they can't stand in for an answer (a "risk:
+ * COVID 2020 sales dropped" item must not count as a deferred revenue
+ * figure or a deferred Financial Summary).
+ */
+export function agentDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
+  return openDeferrals(ledger).filter((e) => e.origin !== "source");
 }
 
 /** Open entries the seller explicitly declined — hard-blocked from re-asking. */
