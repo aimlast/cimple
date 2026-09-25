@@ -13,7 +13,7 @@ import {
   Sector,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { CIM_DOC } from "../CimBrandingContext";
+import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
@@ -38,21 +38,6 @@ interface RendererProps {
   content: string;
   branding: CimBranding;
   section: CimSection;
-}
-
-function buildPalette(primary: string, accent: string): string[] {
-  // Tail colors are warm neutrals tuned for the paper document surface
-  return [
-    primary,
-    accent,
-    "#64b8a0",
-    "#94c9b8",
-    "#b8ddd4",
-    "#d4ede8",
-    CIM_DOC.neutral,
-    "#ABA697",
-    "#CFC9BB",
-  ];
 }
 
 interface CustomTooltipProps {
@@ -102,6 +87,9 @@ function renderActiveShape(props: any) {
 
 export function PieChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
+  const theme = useCimTheme();
+  const onPieEnter = useCallback((_: any, index: number) => setActiveIndex(index), []);
+  const onPieLeave = useCallback(() => setActiveIndex(undefined), []);
   const data: PieChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const rawData = data.data || [];
 
@@ -110,22 +98,19 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
     return <ProseFallback content={content} />;
   }
 
-  const primaryColor = branding.primaryHex || "#2dc88e";
-  const accentColor = branding.accentHex || "#1a9e72";
-  const palette = buildPalette(primaryColor, accentColor);
+  // One palette for every chart in the CIM (per-slice colours in the data
+  // are ignored so a template/brand change reaches every chart).
+  const palette = theme.chart;
 
   const isDonut = section.layoutType === "donut_chart" || !!(data.centerLabel || data.centerValue);
 
   const normalized = rawData.map((d, i) => ({
     ...d,
     value: typeof d.value === "string" ? parseFloat(d.value) || 0 : d.value,
-    color: d.color || palette[i % palette.length],
+    color: palette[i % palette.length],
   }));
 
   const total = normalized.reduce((sum, d) => sum + d.value, 0);
-
-  const onPieEnter = useCallback((_: any, index: number) => setActiveIndex(index), []);
-  const onPieLeave = useCallback(() => setActiveIndex(undefined), []);
 
   return (
     <div>

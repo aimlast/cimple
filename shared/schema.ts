@@ -319,6 +319,10 @@ export const deals = pgTable("deals", {
   // the section content was redacted to.
   blindCodename: text("blind_codename"),
   // @anchor:deals-cols:cim
+  // The business-for-sale's own branding on its CIM (cim-templates workstream):
+  // logo / cover photo (ids in deal_media) and colours. Normal & DD CIMs only —
+  // never sent to, or rendered for, a Blind buyer.
+  businessBranding: jsonb("business_branding").$type<import("./cim-theme").CimBusinessBranding>(),
 
   // Buyer access settings
   ndaRequired: boolean("nda_required").default(true),
@@ -508,6 +512,21 @@ export const cimSections = pgTable("cim_sections", {
   images: jsonb("images"),
 
   // @anchor:cim-sections-cols:cim
+  // CIM builder (see shared/cim-layouts.ts, server/cim/section-ops.ts).
+  // "teaser" | "full" — full sections show as locked stubs to teaser buyers.
+  // Nullable with a default so existing rows read as teaser (unchanged CIMs).
+  accessTier: text("access_tier").default("teaser"),
+  // Set whenever the section's content changes; cleared when its blind
+  // override has been regenerated for that exact revision. While set, the
+  // blind view room holds the section back (never serves stale/unredacted).
+  blindStaleAt: timestamp("blind_stale_at"),
+  // AI-redacted title written together with the blind override.
+  blindTitle: text("blind_title"),
+  // Background AI task on this section (write / regenerate / rewrite /
+  // convert) — CimSectionAiTask. Null when idle.
+  aiTask: jsonb("ai_task"),
+  // Undo stack of earlier versions (CimSectionSnapshot[], newest last, capped).
+  contentHistory: jsonb("content_history"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -838,6 +857,21 @@ export const brandingSettings = pgTable("branding_settings", {
   disclaimer: text("disclaimer"),
   
   // @anchor:branding-cols:cim
+  // CIM templates + brokerage branding (cim-templates workstream).
+  // Built-in template id (shared/cim-theme.ts) or a cim_templates.id.
+  defaultTemplateId: varchar("default_template_id"),
+  firmAddress: text("firm_address"),
+  firmPhone: text("firm_phone"),
+  firmEmail: text("firm_email"),
+  firmWebsite: text("firm_website"),
+  showDisclaimerPage: boolean("show_disclaimer_page").notNull().default(true),
+  showContactPage: boolean("show_contact_page").notNull().default(true),
+  // Forces one cover style across templates (null = each template's own).
+  coverStyle: text("cover_style"),
+  // primaryColor/accentColor/headingFont/bodyFont only reach the CIM when the
+  // broker switches them on (legacy rows hold untouched schema defaults).
+  useBrandColors: boolean("use_brand_colors").notNull().default(false),
+  useBrandFonts: boolean("use_brand_fonts").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -2366,6 +2400,86 @@ export type BuyerEmail = typeof buyerEmails.$inferSelect;
 export type InsertBuyerEmail = typeof buyerEmails.$inferInsert;
 
 // @anchor:schema-tail:cim
+/** A background AI task on one CIM section (cim_sections.ai_task). */
+export interface CimSectionAiTask {
+  id: string;
+  kind: "write" | "regenerate" | "rewrite" | "convert";
+  /** "ready" = a rewrite proposal waiting for the broker to apply or discard. */
+  status: "running" | "failed" | "ready";
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  request?: {
+    instructions?: string;
+    tones?: string[];
+    length?: "shorter" | "same" | "longer";
+    brief?: string;
+    layoutType?: string;
+  };
+  /** Rewrite result, same layout type as the section. */
+  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null };
+}
+
+/** One entry of a section's undo stack (cim_sections.content_history). */
+export interface CimSectionSnapshot {
+  at: string;
+  /** What replaced this version, in plain words ("AI rewrite", "Edited text"). */
+  reason: string;
+  sectionTitle: string;
+  layoutType: string;
+  layoutData: unknown;
+  aiDraftContent: string | null;
+  brokerEditedContent: string | null;
+}
+
+// ── CIM media library (cim-media workstream) ──────────────────────────────
+// Photos and videos a broker uploads for a deal's CIM (gallery / video
+// blocks). Files live under <UPLOADS_DIR>/private-media/<dealId>/ with
+// random names and are NEVER served statically — only through
+// GET /api/media/:id (owning broker, the deal's seller token, or a buyer
+// view token whose CIM shows the file). Blind-CIM buyers only ever get
+// files marked blind_safe (see shared/cim-media.ts).
+export const dealMedia = pgTable("deal_media", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  kind: text("kind").notNull(), // "image" | "video"
+  // Private path relative to UPLOADS_DIR ("private-media/<dealId>/<random>.jpg").
+  // Never sent to a browser.
+  fileUrl: text("file_url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  caption: text("caption"),
+  // The broker's statement that nothing in the file identifies the business.
+  blindSafe: boolean("blind_safe").notNull().default(false),
+  // Broker-only: the name the file had on the broker's computer.
+  originalName: text("original_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type DealMedia = typeof dealMedia.$inferSelect;
+export type InsertDealMedia = typeof dealMedia.$inferInsert;
+
+// ── CIM design templates (cim-templates workstream) ───────────────────────
+// A brokerage's custom templates. Built-in templates live in code
+// (shared/cim-theme.ts BUILTIN_TEMPLATES) and are never stored here.
+export const cimTemplates = pgTable("cim_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Full, validated CimThemeTokens (sanitizeTokens).
+  tokens: jsonb("tokens").notNull().$type<import("./cim-theme").CimThemeTokens>(),
+  // "Match my existing CIM": the ordered sections of the broker's past CIM,
+  // followed by the layout engine when planning a CIM with this template.
+  sectionOutline: jsonb("section_outline").$type<import("./cim-theme").CimSectionOutline>(),
+  // The template this one was cloned from (built-in id or cim_templates.id).
+  basedOn: varchar("based_on"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 // (cim workstreams)
 
 // @anchor:schema-tail:seed

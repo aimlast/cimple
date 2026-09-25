@@ -17,11 +17,16 @@ import {
   Building, Clock, Lock, AlertCircle, FileText,
 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { Deal, CimSection, BrandingSettings } from "@shared/schema";
+import type { Deal, CimSection } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
+import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
+import { CimSheet } from "@/components/cim/CimSheet";
+import { CimSectionHeading } from "@/components/cim/CimSectionHeading";
+import { CimContactPage, CimDisclaimerPage, withBrokeragePages } from "@/components/cim/CimFrontBackPages";
 import { StickyNav } from "@/components/cim/StickyNav";
 import { ExpandableSection } from "@/components/cim/ExpandableSection";
+import { CimMediaProvider } from "@/components/cim/CimMediaContext";
 import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/BuyerChatbot";
@@ -57,12 +62,21 @@ interface ViewData {
   sections: CimSection[];
   /** Published Q&A plus this buyer's own pending questions (whitelisted) */
   publishedQuestions: BuyerQuestionFeedItem[];
-  branding: BrandingSettings | null;
+  /** Whitelisted brokerage name / logo / disclaimer (never the settings row). */
+  branding: { companyName: string | null; logoUrl: string | null; disclaimer: string | null } | null;
+  /** Template + brokerage brand; business branding only in the named versions. */
+  design?: CimDesignPayload | null;
+  cimMode?: "blind" | "normal" | "dd";
   /** True when the server is withholding CIM content until the NDA is signed */
   ndaGate?: boolean;
   /** True when the blind (redacted) version is still being prepared */
   preparing?: boolean;
+  /** Sections held back until their redacted version is ready (just added/edited). */
+  pendingSections?: number;
 }
+
+/** A section the buyer's access level doesn't open yet (server sends title only). */
+const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
 async function readErrorBody(res: Response): Promise<{ error?: string }> {
@@ -73,8 +87,9 @@ async function readErrorBody(res: Response): Promise<{ error?: string }> {
 // Ink-colored literal (not a theme token) so it stays visible-but-subtle on
 // the paper document surface in BOTH app themes.
 function Watermark({ email }: { email: string }) {
+  // `cim-watermark` keeps it on printed pages (index.css print rules).
   return (
-    <div className="fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-[0.05]">
+    <div className="cim-watermark fixed inset-0 pointer-events-none z-50 overflow-hidden opacity-[0.05]">
       <div className="absolute inset-0 flex flex-wrap items-center justify-center gap-24 -rotate-45">
         {Array.from({ length: 24 }).map((_, i) => (
           <span
@@ -220,9 +235,13 @@ export default function BuyerViewRoom() {
       }
       return res.json();
     },
-    // While the redacted version is being prepared, poll until it's ready.
-    refetchInterval: (query) =>
-      (query.state.data as ViewData | undefined)?.preparing ? 4000 : false,
+    // While the redacted version is being prepared, poll until it's ready;
+    // more slowly while a few freshly edited sections catch up.
+    refetchInterval: (query) => {
+      const d = query.state.data as ViewData | undefined;
+      if (d?.preparing) return 4000;
+      return d?.pendingSections ? 10000 : false;
+    },
   });
 
   // The analytics endpoint authenticates every batch with the view-room
@@ -318,7 +337,14 @@ export default function BuyerViewRoom() {
     );
   }
 
-  const brandingCtx = buildBranding(brandingSettings, deal);
+  const brandingCtx = buildBranding(brandingSettings as any, deal);
+  // The CIM's design for this buyer's version (the server already dropped
+  // the business's branding for Blind buyers; buildCimDesign drops it again).
+  const cimMode = data.cimMode ?? "blind";
+  const design = buildCimDesign(data.design ?? null, cimMode);
+  const firmName = design.brokerage.firmName || brandingCtx.firmName;
+  const firmLogo = design.brokerage.logoUrl;
+  const disclaimerText = design.brokerage.disclaimer || brandingCtx.disclaimer;
 
   // Decide what to render: AI sections or legacy text fallback
   const visibleSections = sections.filter(s => s.isVisible);
@@ -336,9 +362,13 @@ export default function BuyerViewRoom() {
       <header className="sticky top-0 z-40 border-b border-border bg-background/95 backdrop-blur-sm">
         <div className="max-w-6xl mx-auto px-6 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-md bg-teal flex items-center justify-center shrink-0">
-              <Building className="h-4 w-4 text-teal-foreground" />
-            </div>
+            {firmLogo ? (
+              <img src={firmLogo} alt={firmName ? `${firmName} logo` : "Brokerage logo"} className="h-8 max-w-[110px] w-auto object-contain rounded bg-white px-1 shrink-0" />
+            ) : (
+              <div className="h-8 w-8 rounded-md bg-teal flex items-center justify-center shrink-0">
+                <Building className="h-4 w-4 text-teal-foreground" />
+              </div>
+            )}
             <div>
               <h1 className="font-semibold text-sm leading-tight">{deal.businessName}</h1>
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider">
@@ -386,7 +416,8 @@ export default function BuyerViewRoom() {
                         className="flex items-start gap-1.5 px-2 py-1.5 rounded text-xs text-muted-foreground hover:text-foreground hover:bg-muted/60 transition-colors leading-snug"
                       >
                         <span className="opacity-40 shrink-0 pt-px">{idx + 1}.</span>
-                        <span>{s.sectionTitle}</span>
+                        <span className={isLocked(s) ? "opacity-60" : undefined}>{s.sectionTitle}</span>
+                        {isLocked(s) && <Lock className="h-3 w-3 shrink-0 mt-0.5 opacity-50" aria-label="Locked" />}
                       </a>
                     ))
                   : legacySections.map((s, idx) => (
@@ -418,11 +449,29 @@ export default function BuyerViewRoom() {
 
           {/* ── Main CIM content ─────────────────────────────────────────────── */}
           <main className="flex-1 min-w-0">
+            {hasAiSections && !!data.pendingSections && (
+              <p className="mb-3 text-xs text-muted-foreground flex items-center gap-2" data-testid="view-pending-sections">
+                <span className="h-1.5 w-1.5 rounded-full bg-teal/60 animate-pulse" />
+                {data.pendingSections === 1
+                  ? "One more section is being finalized and will appear shortly."
+                  : `${data.pendingSections} more sections are being finalized and will appear shortly.`}
+              </p>
+            )}
             {hasAiSections ? (
               /* The document itself: one continuous theme-locked paper sheet.
                  App chrome around it (header, TOC, decision panel) keeps app tokens. */
-              <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
-                {visibleSections.map(section => (
+              /* Photos/videos load through /api/media/:id with this link's token. */
+              <CimMediaProvider value={{ buyerToken: token }}>
+              <CimDesignProvider design={design} sections={visibleSections}>
+              <CimSheet className="px-5 py-6 sm:px-10 sm:py-12">
+                {withBrokeragePages(visibleSections, {
+                  disclaimer: design.brokerage.showDisclaimerPage !== false,
+                  contact: design.brokerage.showContactPage !== false,
+                }).map(item => item.kind === "disclaimer" ? (
+                  <CimDisclaimerPage key={item.key} />
+                ) : item.kind === "contact" ? (
+                  <CimContactPage key={item.key} />
+                ) : (() => { const section = item.section; return (
                   /* scroll-mt clears the sticky header + section strip so
                      nav clicks, "See …" links and TOC anchors land the
                      heading below the chrome instead of under it. */
@@ -452,16 +501,17 @@ export default function BuyerViewRoom() {
                     />
                     </SectionBoundary>
                   </div>
-                ))}
-              </div>
+                ); })())}
+              </CimSheet>
+              </CimDesignProvider>
+              </CimMediaProvider>
             ) : legacySections.length > 0 ? (
               // Legacy text fallback — same theme-locked paper sheet
-              <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
+              <CimDesignProvider design={design}>
+              <CimSheet className="px-5 py-6 sm:px-10 sm:py-12">
                 {legacySections.map(section => (
                   <div key={section.key} id={`legacy-${section.key}`} data-track-section={section.key} className="scroll-mt-20">
-                    <h2 className="text-xl font-bold tracking-tight mb-4" style={{ color: brandingCtx.headingColor }}>
-                      {section.title}
-                    </h2>
+                    <CimSectionHeading title={section.title} />
                     <div className="prose prose-sm max-w-prose text-sm leading-[1.7]">
                       <div dangerouslySetInnerHTML={{
                         __html: (cimContent?.[section.key] || "").replace(/\n/g, "<br />"),
@@ -470,7 +520,8 @@ export default function BuyerViewRoom() {
                     <Separator className="mt-8" />
                   </div>
                 ))}
-              </div>
+              </CimSheet>
+              </CimDesignProvider>
             ) : (
               <div className="flex flex-col items-center justify-center py-24 text-center">
                 <FileText className="h-10 w-10 mb-4 opacity-20" />
@@ -507,15 +558,15 @@ export default function BuyerViewRoom() {
       {/* ── Footer ──────────────────────────────────────────────────────────── */}
       <footer className="border-t border-border mt-16 py-8">
         <div className="max-w-6xl mx-auto px-6 text-center space-y-1">
-          {brandingCtx.disclaimer && (
-            <p className="text-xs text-muted-foreground/70">{brandingCtx.disclaimer}</p>
+          {disclaimerText && !design.brokerage.showDisclaimerPage && (
+            <p className="text-xs text-muted-foreground/70">{disclaimerText}</p>
           )}
           <p className="text-xs text-muted-foreground/50">
             This document is confidential and intended solely for the named recipient.
             Unauthorized distribution or reproduction is strictly prohibited.
           </p>
-          {brandingCtx.firmName && (
-            <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {brandingCtx.firmName}</p>
+          {firmName && (
+            <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {firmName}</p>
           )}
         </div>
       </footer>

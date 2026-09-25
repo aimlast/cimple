@@ -30,14 +30,14 @@ interface RendererProps {
 
 function scoreColor(pct: number): string {
   if (pct >= 75) return "bg-success";
-  if (pct >= 50) return "bg-amber-500";
+  if (pct >= 50) return "bg-[hsl(var(--cim-caution))]";
   return "bg-destructive";
 }
 
 function scoreTextColor(pct: number): string {
   if (pct >= 75) return "text-success";
-  // amber-600 for adequate contrast on the paper surface
-  if (pct >= 50) return "text-amber-600";
+  // The template's caution colour (contrast-checked against its paper)
+  if (pct >= 50) return "text-[hsl(var(--cim-caution))]";
   return "text-destructive";
 }
 

@@ -15,6 +15,7 @@
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
+import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 
@@ -65,7 +66,7 @@ async function persist(job: CimGenerationJob) {
  * discrepancies onto extractedInfo (the broker's accepted values win);
  * layout mode uses extractedInfo as stored, matching the old endpoints.
  */
-async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
+export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
   const extractedInfo = { ...((deal.extractedInfo as Record<string, unknown>) || {}) };
   if (mode === "content") {
     const resolved = await storage.getResolvedDiscrepancies(deal.id);
@@ -77,6 +78,9 @@ async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<C
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
   ]);
+  // The deal's design template may carry the brokerage's house structure
+  // ("Match my existing CIM") — the planner follows it.
+  const template = await templateForDeal(deal, branding ?? null).catch(() => null);
   return {
     dealId: deal.id,
     businessName: deal.businessName,
@@ -91,6 +95,7 @@ async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<C
     brokerBranding: branding
       ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor }
       : null,
+    sectionOutline: template?.sectionOutline ?? null,
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({

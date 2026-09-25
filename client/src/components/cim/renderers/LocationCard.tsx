@@ -43,7 +43,7 @@ function LeaseTypePill({ type }: { type: string }) {
       isOwned
         ? "bg-teal-muted text-teal-muted-foreground"
         : isMtm
-        ? "bg-amber-500/10 text-amber-700 border border-amber-200"
+        ? "bg-[hsl(var(--cim-caution)/0.1)] text-[hsl(var(--cim-caution))] border border-[hsl(var(--cim-caution)/0.3)]"
         : "bg-muted text-muted-foreground"
     )}>
       {type}

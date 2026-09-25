@@ -173,27 +173,37 @@
    CIM DOCUMENT SURFACE — theme-locked "paper"
 
    The CIM is a document, not a UI surface. It must read as a
-   premium printed memorandum — warm paper, near-black ink —
-   IDENTICALLY in dark mode, light mode, and print.
+   premium printed memorandum IDENTICALLY in dark mode, light
+   mode, and print.
 
-   `.cim-doc` hard-sets its own palette and then remaps the app
-   theme tokens within its scope, so every existing bg-card /
-   text-foreground / text-muted-foreground / border-border /
-   text-teal usage inside the document resolves to the paper
-   palette regardless of the app theme. Values are deliberate
-   literals — never derived from the active theme.
+   `.cim-doc` sets its own palette and then remaps the app theme
+   tokens within its scope, so every bg-card / text-foreground /
+   text-muted-foreground / border-border / text-teal usage inside
+   the document resolves to the document palette regardless of the
+   app theme.
+
+   The palette comes from the CIM's design template (shared/cim-theme.ts):
+   hosts set `--cimt-*` custom properties on the sheet and on every
+   section root (CimDesignContext → themeStyle). Each `--cim-*` below
+   reads its `--cimt-*` value and falls back to Classic Paper — so a
+   CIM with no template configured looks exactly as it always has, and
+   nested `.cim-doc` scopes resolve to the same template instead of
+   resetting to the literals.
 ───────────────────────────────────────────── */
 .cim-doc {
-  /* ── Document palette (constant in both themes) ── */
-  --cim-paper: 43 50% 97%;          /* #FBF8F2 warm paper           */
-  --cim-card: 40 30% 99%;           /* #FEFDFB elevated card         */
-  --cim-ink: 38 14% 11%;            /* #201D18 near-black ink        */
-  --cim-ink-soft: 38 9% 25%;        /* #46423B secondary text        */
-  --cim-ink-muted: 40 8% 39%;       /* #6B665C captions / labels     */
-  --cim-line: 44 25% 85%;           /* #E3DED0 hairline borders      */
-  --cim-line-soft: 44 28% 89%;      /* #EBE7DB soft rules            */
-  --cim-stripe: 44 37% 92%;         /* #F2EEE3 table stripe / muted  */
-  --cim-brass: 38 55% 40%;          /* #9E752E brand-brass accent    */
+  /* ── Document palette (template → Classic Paper fallback) ── */
+  --cim-paper: var(--cimt-paper, 43 50% 97%);          /* #FBF8F2 warm paper   */
+  --cim-card: var(--cimt-card, 40 30% 99%);            /* #FEFDFB card         */
+  --cim-ink: var(--cimt-ink, 38 14% 11%);              /* #201D18 ink          */
+  --cim-ink-soft: var(--cimt-ink-soft, 38 9% 25%);     /* #46423B              */
+  --cim-ink-muted: var(--cimt-ink-muted, 40 8% 39%);   /* #6B665C              */
+  --cim-ink-faint: var(--cimt-ink-faint, 45 7% 51%);   /* #8C8779              */
+  --cim-line: var(--cimt-line, 44 25% 85%);            /* #E3DED0 hairlines    */
+  --cim-line-soft: var(--cimt-line-soft, 44 28% 89%);  /* #EBE7DB soft rules   */
+  --cim-stripe: var(--cimt-stripe, 44 37% 92%);        /* #F2EEE3 stripe       */
+  --cim-brass: var(--cimt-accent, 38 55% 40%);         /* #9E752E accent       */
+  --cim-heading: var(--cimt-heading, var(--cim-ink));
+  --cim-caution: var(--cimt-caution, 36 71% 42%);
 
   /* ── Remap app tokens inside the document ── */
   --background: var(--cim-paper);
@@ -220,41 +230,68 @@
   --accent: var(--cim-stripe);
   --accent-foreground: var(--cim-ink);
 
-  --destructive: 0 60% 42%;
+  --destructive: var(--cimt-negative, 0 60% 42%);
   --destructive-foreground: 0 0% 100%;
 
+  /* `teal` classes = the template accent (brass in Classic Paper) */
   --teal: var(--cim-brass);
-  --teal-foreground: 42 30% 96%;
-  --teal-muted: 40 45% 90%;
-  --teal-muted-foreground: 38 60% 26%;
+  --teal-foreground: var(--cimt-on-accent, 42 30% 96%);
+  --teal-muted: var(--cimt-accent-muted, 40 45% 90%);
+  --teal-muted-foreground: var(--cimt-accent-muted-fg, 38 60% 26%);
 
-  --success: 150 45% 30%;
+  --success: var(--cimt-positive, 150 45% 30%);
   --success-foreground: 0 0% 100%;
-  --success-muted: 145 40% 90%;
-  --success-muted-foreground: 150 50% 20%;
+  --success-muted: var(--cimt-positive-muted, 145 40% 90%);
+  --success-muted-foreground: var(--cimt-positive, 150 50% 20%);
 
-  --blue: 215 55% 38%;
+  /* `blue` classes = the template's second colour */
+  --blue: var(--cimt-accent2, 215 55% 38%);
   --blue-foreground: 0 0% 100%;
-  --blue-muted: 215 45% 91%;
-  --blue-muted-foreground: 215 60% 27%;
+  --blue-muted: var(--cimt-accent2-muted, 215 45% 91%);
+  --blue-muted-foreground: var(--cimt-accent2-muted-fg, 215 60% 27%);
 
-  --shadow-xs: 0 1px 2px 0 hsl(38 30% 20% / 0.05);
-  --shadow-sm: 0 1px 3px 0 hsl(38 30% 20% / 0.07), 0 1px 2px -1px hsl(38 30% 20% / 0.05);
-  --shadow: 0 4px 6px -1px hsl(38 30% 20% / 0.07), 0 2px 4px -2px hsl(38 30% 20% / 0.05);
-  --shadow-md: 0 8px 16px -4px hsl(38 30% 20% / 0.08), 0 3px 6px -3px hsl(38 30% 20% / 0.06);
-  --shadow-lg: 0 12px 24px -6px hsl(38 30% 20% / 0.10), 0 4px 8px -4px hsl(38 30% 20% / 0.07);
+  --shadow-xs: 0 1px 2px 0 hsl(var(--cimt-shadow, 38 30% 20%) / 0.05);
+  --shadow-sm: 0 1px 3px 0 hsl(var(--cimt-shadow, 38 30% 20%) / 0.07), 0 1px 2px -1px hsl(var(--cimt-shadow, 38 30% 20%) / 0.05);
+  --shadow: 0 4px 6px -1px hsl(var(--cimt-shadow, 38 30% 20%) / 0.07), 0 2px 4px -2px hsl(var(--cimt-shadow, 38 30% 20%) / 0.05);
+  --shadow-md: 0 8px 16px -4px hsl(var(--cimt-shadow, 38 30% 20%) / 0.08), 0 3px 6px -3px hsl(var(--cimt-shadow, 38 30% 20%) / 0.06);
+  --shadow-lg: 0 12px 24px -6px hsl(var(--cimt-shadow, 38 30% 20%) / 0.10), 0 4px 8px -4px hsl(var(--cimt-shadow, 38 30% 20%) / 0.07);
 
-  --chart-1: 38 55% 42%;
-  --chart-2: 150 45% 36%;
-  --chart-3: 215 60% 46%;
-  --chart-4: 260 40% 52%;
-  --chart-5: 15 65% 48%;
+  --chart-1: var(--cimt-chart-1, 38 55% 42%);
+  --chart-2: var(--cimt-chart-2, 150 45% 36%);
+  --chart-3: var(--cimt-chart-3, 215 60% 46%);
+  --chart-4: var(--cimt-chart-4, 260 40% 52%);
+  --chart-5: var(--cimt-chart-5, 15 65% 48%);
 
   /* ── Base document rendering ── */
   color-scheme: light;
   background-color: hsl(var(--cim-paper));
   color: hsl(var(--cim-ink));
+  font-family: var(--cimt-font-body, inherit);
   font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+}
+
+/* Template fonts: headings use the heading face; every other heading-ish
+   element (chart titles, card titles) stays on the body face. */
+.cim-doc .cim-heading,
+.cim-doc .cim-display {
+  font-family: var(--cimt-font-heading, inherit);
+}
+.cim-doc .cim-heading {
+  font-weight: var(--cimt-heading-weight, 700);
+  color: hsl(var(--cim-heading));
+}
+
+/* Template corner radius (Classic Paper = 8px → today's rounded-lg). */
+.cim-doc .rounded-sm { border-radius: calc(var(--cimt-radius, 8px) * 0.5); }
+.cim-doc .rounded { border-radius: calc(var(--cimt-radius, 8px) * 0.5); }
+.cim-doc .rounded-md { border-radius: calc(var(--cimt-radius, 8px) * 0.75); }
+.cim-doc .rounded-lg { border-radius: var(--cimt-radius, 8px); }
+.cim-doc .rounded-xl { border-radius: calc(var(--cimt-radius, 8px) * 1.5); }
+.cim-doc .rounded-2xl { border-radius: calc(var(--cimt-radius, 8px) * 2); }
+
+/* Vertical rhythm between sections (template density). */
+.cim-flow > * + * {
+  margin-top: var(--cimt-gap, 2.5rem);
 }
 
 /* The document "sheet" — one continuous piece of paper hosting
@@ -263,8 +300,8 @@
   border: 1px solid hsl(var(--cim-line));
   border-radius: 0.75rem;
   box-shadow:
-    0 1px 2px hsl(38 30% 15% / 0.06),
-    0 16px 40px -12px hsl(38 30% 15% / 0.12);
+    0 1px 2px hsl(var(--cimt-shadow, 38 30% 15%) / 0.06),
+    0 16px 40px -12px hsl(var(--cimt-shadow, 38 30% 15%) / 0.12);
 }
 
 /* A CIM section rendered standalone (outside a sheet — e.g. the
@@ -381,9 +418,9 @@
   .bg-background { background: white !important; }
   .bg-card { background: white !important; }
 
-  /* The document surface is already paper — flatten the sheet
-     chrome so print is pure white with no frame */
-  .cim-doc { background: white !important; }
+  /* Print-friendly: white paper (saves ink), no sheet frame — but the
+     cover, charts and colour bands print as designed. */
+  .cim-doc { background: white !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .cim-sheet {
     border: none !important;
     box-shadow: none !important;
@@ -391,8 +428,23 @@
     padding: 0 !important;
   }
 
-  /* Hide floating elements */
-  .fixed { display: none !important; }
+  /* Hide floating elements — except the CIM watermark, which must stay
+     on every printed page (security requirement). Fixed elements repeat
+     on each printed page in Chromium and Safari. */
+  .fixed:not(.cim-watermark) { display: none !important; }
+  .cim-watermark { display: block !important; }
+
+  /* The CIM print layout: the cover and the front pages each take a page;
+     sections never split across pages when they fit on one. */
+  .cim-print-page-break { break-after: page; page-break-after: always; }
+  .cim-print-root .cim-sheet { padding: 0 !important; }
+  .cim-print-root .cim-flow > * + * { margin-top: 1.75rem; }
+  .cim-print-cover { min-height: 245mm !important; }
+
+  /* App shells scroll inside fixed-height containers; in print the whole
+     document must flow onto as many pages as it needs. */
+  .h-screen { height: auto !important; }
+  .overflow-auto, .overflow-y-auto { overflow: visible !important; }
 
   /* Re-show the main content area */
   main { display: block !important; }
