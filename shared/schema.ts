@@ -189,6 +189,7 @@ export interface ExternalAcquirer {
   contact?: string | null;          // only when found on a cited page — never invented
   sources: string[];                // URLs
   inYourList?: boolean;
+  unverified?: boolean;             // named in the research but not tied to a returned source
 }
 export interface ExternalAcquirerSearch {
   status: "running" | "done" | "failed";
@@ -199,6 +200,7 @@ export interface ExternalAcquirerSearch {
   note?: string | null;             // why few/none fit (e.g. seller prefers individual buyers)
   channels?: Array<{ name: string; how: string; url?: string | null }>;
   includeExcluded?: boolean;        // broker asked to include buyer types the seller ruled out
+  droppedCount?: number;            // organisations left out because the research didn't back them
   error?: string;
 }
 

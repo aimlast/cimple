@@ -1227,7 +1227,8 @@ function Phase2Center() {
               >
                 Seller onboarding
               </p>
-              <ActorBadge who="seller" />
+              {/* Same rule as Phase 1: a finished step isn't waiting on anyone. */}
+              {!deal.questionnaireData && <ActorBadge who="seller" />}
             </div>
             <p className="text-xs text-muted-foreground">
               {deal.questionnaireData

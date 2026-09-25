@@ -11,6 +11,15 @@
  *
  * This service is idempotent — it tracks `reminderStage` on buyerAccess
  * so each email is sent exactly once. Run on a schedule (cron / setInterval).
+ *
+ * Rules that keep it honest:
+ *   - A buyer is only ever lapsed after the warning email went out
+ *     (reminderStage "warning_sent"); a buyer the pipeline reaches late
+ *     (server down, scheduler off) is warned first and lapses 48h later.
+ *   - "Need more time" puts the buyer back under review with a fresh clock
+ *     (firstViewedAt = now, reminderStage "none") — a new day-3/6/8 cycle.
+ *   - A cycle is never started for a first view older than the link's
+ *     30-day life: a "quick check-in" weeks later is noise.
  */
 import { storage } from "../storage";
 import { notify } from "../notifications/service";
@@ -20,6 +29,37 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_MS = 3 * DAY_MS; // day 3
 const WARNING_AFTER_MS = 6 * DAY_MS;  // day 6
 const LAPSE_AFTER_MS = 8 * DAY_MS;    // day 8
+const LAPSE_GRACE_MS = 2 * DAY_MS;    // the warning promises 48 hours
+const STALE_AFTER_MS = 30 * DAY_MS;   // never start a cycle this late
+
+export type ReminderAction = "none" | "reminder" | "warning" | "lapse";
+
+/**
+ * What the pipeline should do for one buyer-access row now. Pure — the
+ * scheduler and the tests share it.
+ */
+export function reminderActionFor(
+  access: Pick<BuyerAccess, "firstViewedAt" | "reminderStage" | "decision" | "revokedAt" | "expiresAt"> & { lastReminderAt?: Date | string | null },
+  now: number = Date.now(),
+): ReminderAction {
+  if (!access.firstViewedAt || access.revokedAt) return "none";
+  // Only buyers still deciding ("under_review"; NULL is the legacy
+  // need-more-time state) are ever reminded or lapsed.
+  if (access.decision && access.decision !== "under_review") return "none";
+  if (access.expiresAt && new Date(access.expiresAt).getTime() < now) return "none";
+  const age = now - new Date(access.firstViewedAt).getTime();
+  const stage = access.reminderStage || "none";
+  if (stage === "warning_sent") {
+    // Lapse only once the warning's 48 hours have passed.
+    const warnedAt = access.lastReminderAt ? new Date(access.lastReminderAt).getTime() : null;
+    const graceOver = warnedAt === null || now - warnedAt >= LAPSE_GRACE_MS;
+    return age >= LAPSE_AFTER_MS && graceOver ? "lapse" : "none";
+  }
+  if (stage === "none" && age >= STALE_AFTER_MS) return "none";
+  if (age >= WARNING_AFTER_MS) return "warning";          // day 6+, including late arrivals from "none"
+  if (stage === "none" && age >= REMINDER_AFTER_MS) return "reminder";
+  return "none";
+}
 
 // Direct email to the buyer (bypasses broker notification routing).
 // Uses the same Resend/Twilio fallback as the broker notification service.
@@ -82,6 +122,92 @@ function buildBuyerEmail(opts: {
 </html>`;
 }
 
+/**
+ * Act on one buyer-access row: send the due email and advance the stage, or
+ * lapse. Returns what it did. Exported so a single row can be exercised
+ * without running the whole pipeline.
+ */
+export async function processReminderForAccess(access: BuyerAccess, now: number, baseUrl: string): Promise<ReminderAction> {
+  const action = reminderActionFor(access as any, now);
+  if (action === "none") return action;
+  const deal: Deal | undefined = await storage.getDeal(access.dealId);
+  if (!deal) return "none";
+
+  const viewUrl = `${baseUrl}/view/${access.accessToken}`;
+  const buyerGreeting = access.buyerName ? `Hi ${access.buyerName.split(" ")[0]},` : "Hello,";
+
+  // ── Stage 1: Day 3 reminder ─────────────────────────────────
+  if (action === "reminder") {
+    const html = buildBuyerEmail({
+      businessName: deal.businessName,
+      viewUrl,
+      headline: `A quick check-in on ${deal.businessName}`,
+      body: `${buyerGreeting}<br/><br/>It's been a few days since you first reviewed the Confidential Information Memorandum for <strong>${deal.businessName}</strong>. When you have a moment, please let us know whether you'd like to move forward or if this opportunity isn't the right fit — the broker would appreciate your decision either way so they can coordinate next steps.`,
+      cta: "Review & share your decision",
+    });
+    await emailBuyer(access.buyerEmail, `Quick check-in — ${deal.businessName}`, html);
+    await storage.updateBuyerAccess(access.id, {
+      decision: "under_review",
+      reminderStage: "reminder_sent",
+      lastReminderAt: new Date(now),
+    } as any);
+    return action;
+  }
+
+  // ── Stage 2: Day 6 warning (or the first email for a late arrival) ──
+  if (action === "warning") {
+    const html = buildBuyerEmail({
+      businessName: deal.businessName,
+      viewUrl,
+      headline: `Final follow-up on ${deal.businessName}`,
+      body: `${buyerGreeting}<br/><br/>We still haven't received a response regarding <strong>${deal.businessName}</strong>. If we don't hear back within the next 48 hours, this opportunity will be automatically marked as <strong>lapsed</strong> and the sell-side will be informed that you're no longer actively evaluating the business.<br/><br/>If you'd still like to explore this opportunity, please let us know by selecting a decision on the CIM.`,
+      cta: "Share your decision now",
+    });
+    await emailBuyer(access.buyerEmail, `Final follow-up — ${deal.businessName}`, html);
+    await storage.updateBuyerAccess(access.id, {
+      decision: "under_review",
+      reminderStage: "warning_sent",
+      lastReminderAt: new Date(now),
+    } as any);
+    return action;
+  }
+
+  // ── Stage 3: Day 8+ auto-lapse (only after the warning) ─────
+  await storage.updateBuyerAccess(access.id, {
+    decision: "lapsed",
+    decisionAt: new Date(now),
+    decisionReason: "Auto-lapsed — no response after reminder + warning emails",
+    lastReminderAt: new Date(now),
+  } as any);
+
+  // Final courtesy email to the buyer
+  const buyerHtml = buildBuyerEmail({
+    businessName: deal.businessName,
+    viewUrl,
+    headline: `${deal.businessName} has been marked as lapsed`,
+    body: `${buyerGreeting}<br/><br/>Because we didn't receive a decision from you within the review window, this opportunity has been automatically marked as lapsed and the sell-side has been informed. If this was a mistake or you'd still like to explore <strong>${deal.businessName}</strong>, please contact the broker directly and they can reactivate your access.`,
+    cta: "Open the CIM",
+  });
+  await emailBuyer(access.buyerEmail, `${deal.businessName} — marked as lapsed`, buyerHtml);
+
+  // Notify broker + seller team
+  const buyerLabel = access.buyerName
+    ? `${access.buyerName}${access.buyerCompany ? ` (${access.buyerCompany})` : ""}`
+    : access.buyerEmail;
+  await notify(deal.id, "buyer_decision_lapsed", {
+    title: `${buyerLabel} — opportunity lapsed (no response)`,
+    body: `${buyerLabel} reviewed the ${deal.businessName} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
+    actionUrl: `/deal/${deal.id}`,
+    businessName: deal.businessName,
+    metadata: {
+      buyerAccessId: access.id,
+      decision: "lapsed",
+      reason: "auto_lapsed_no_response",
+    },
+  });
+  return action;
+}
+
 interface RunStats {
   checked: number;
   reminderSent: number;
@@ -105,90 +231,10 @@ export async function runDecisionReminders(): Promise<RunStats> {
 
     for (const access of pending) {
       try {
-        if (!access.firstViewedAt) continue;
-        const age = now - new Date(access.firstViewedAt).getTime();
-        const stage = access.reminderStage || "none";
-        const deal: Deal | undefined = await storage.getDeal(access.dealId);
-        if (!deal) continue;
-
-        const viewUrl = `${baseUrl}/view/${access.accessToken}`;
-        const buyerGreeting = access.buyerName ? `Hi ${access.buyerName.split(" ")[0]},` : "Hello,";
-
-        // ── Stage 1: Day 3 reminder ─────────────────────────────────
-        if (stage === "none" && age >= REMINDER_AFTER_MS && age < WARNING_AFTER_MS) {
-          const html = buildBuyerEmail({
-            businessName: deal.businessName,
-            viewUrl,
-            headline: `A quick check-in on ${deal.businessName}`,
-            body: `${buyerGreeting}<br/><br/>It's been a few days since you first reviewed the Confidential Information Memorandum for <strong>${deal.businessName}</strong>. When you have a moment, please let us know whether you'd like to move forward or if this opportunity isn't the right fit — the broker would appreciate your decision either way so they can coordinate next steps.`,
-            cta: "Review & share your decision",
-          });
-          await emailBuyer(access.buyerEmail, `Quick check-in — ${deal.businessName}`, html);
-          await storage.updateBuyerAccess(access.id, {
-            reminderStage: "reminder_sent",
-            lastReminderAt: new Date(),
-          } as any);
-          stats.reminderSent++;
-          continue;
-        }
-
-        // ── Stage 2: Day 6 warning ──────────────────────────────────
-        if ((stage === "none" || stage === "reminder_sent") && age >= WARNING_AFTER_MS && age < LAPSE_AFTER_MS) {
-          const html = buildBuyerEmail({
-            businessName: deal.businessName,
-            viewUrl,
-            headline: `Final follow-up on ${deal.businessName}`,
-            body: `${buyerGreeting}<br/><br/>We still haven't received a response regarding <strong>${deal.businessName}</strong>. If we don't hear back within the next 48 hours, this opportunity will be automatically marked as <strong>lapsed</strong> and the sell-side will be informed that you're no longer actively evaluating the business.<br/><br/>If you'd still like to explore this opportunity, please let us know by selecting a decision on the CIM.`,
-            cta: "Share your decision now",
-          });
-          await emailBuyer(access.buyerEmail, `Final follow-up — ${deal.businessName}`, html);
-          await storage.updateBuyerAccess(access.id, {
-            reminderStage: "warning_sent",
-            lastReminderAt: new Date(),
-          } as any);
-          stats.warningSent++;
-          continue;
-        }
-
-        // ── Stage 3: Day 8+ auto-lapse ──────────────────────────────
-        if (age >= LAPSE_AFTER_MS && (access.decision === "under_review" || !access.decision)) {
-          await storage.updateBuyerAccess(access.id, {
-            decision: "lapsed",
-            decisionAt: new Date(),
-            decisionReason: "Auto-lapsed — no response after reminder + warning emails",
-            reminderStage: "warning_sent",
-            lastReminderAt: new Date(),
-          } as any);
-
-          // Final courtesy email to the buyer
-          const buyerHtml = buildBuyerEmail({
-            businessName: deal.businessName,
-            viewUrl,
-            headline: `${deal.businessName} has been marked as lapsed`,
-            body: `${buyerGreeting}<br/><br/>Because we didn't receive a decision from you within the review window, this opportunity has been automatically marked as lapsed and the sell-side has been informed. If this was a mistake or you'd still like to explore <strong>${deal.businessName}</strong>, please contact the broker directly and they can reactivate your access.`,
-            cta: "Open the CIM",
-          });
-          await emailBuyer(access.buyerEmail, `${deal.businessName} — marked as lapsed`, buyerHtml);
-
-          // Notify broker + seller team
-          const buyerLabel = access.buyerName
-            ? `${access.buyerName}${access.buyerCompany ? ` (${access.buyerCompany})` : ""}`
-            : access.buyerEmail;
-          await notify(deal.id, "buyer_decision_lapsed", {
-            title: `${buyerLabel} — opportunity lapsed (no response)`,
-            body: `${buyerLabel} reviewed the ${deal.businessName} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
-            actionUrl: `/deal/${deal.id}`,
-            businessName: deal.businessName,
-            metadata: {
-              buyerAccessId: access.id,
-              decision: "lapsed",
-              reason: "auto_lapsed_no_response",
-            },
-          });
-
-          stats.lapsed++;
-          continue;
-        }
+        const action = await processReminderForAccess(access, now, baseUrl);
+        if (action === "reminder") stats.reminderSent++;
+        else if (action === "warning") stats.warningSent++;
+        else if (action === "lapse") stats.lapsed++;
       } catch (err: any) {
         console.error(`[reminders] Error processing buyer ${access.id}:`, err);
         stats.errors++;

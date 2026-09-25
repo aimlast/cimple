@@ -698,8 +698,12 @@ export class DbStorage implements IStorage {
 
   async getBuyerAccessUnderReview(): Promise<BuyerAccess[]> {
     // Active buyers who have viewed the CIM but not yet made a decision.
-    // Used by the decision-reminder pipeline to escalate outreach.
-    const result = await db.select().from(buyerAccess).where(eq(buyerAccess.decision, "under_review"));
+    // Used by the decision-reminder pipeline to escalate outreach. A NULL
+    // decision with a fresh reminder clock is what "Need more time" used to
+    // write — those rows are still deciding and re-enter the cycle.
+    const result = await db.select().from(buyerAccess).where(
+      sql`(${buyerAccess.decision} = 'under_review' OR (${buyerAccess.decision} IS NULL AND ${buyerAccess.reminderStage} = 'none'))`,
+    );
     return result.filter(b => !b.revokedAt && b.firstViewedAt);
   }
 
