@@ -1,4 +1,5 @@
 import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy } from "@shared/schema";
+import { speakerRole, speakerFirstName } from "./fact-guards";
 import { CIM_SECTIONS } from "@shared/schema";
 import type { SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 import { getSectionImportance, renderSectionImportanceForPrompt } from "./section-importance";
@@ -419,9 +420,20 @@ function describeFactSource(
     case "interview":
       return withConf("from the seller in the interview");
     case "call":
-      return doc ? `from a call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a call with the broker");
-    case "video_call":
-      return doc ? `from a video-call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a video call with the broker");
+    case "video_call": {
+      // No transcript row: the seller spoke live in a broker-led session.
+      if (!doc) return withConf(src.source === "call" ? "from a call with the broker" : "from a video call with the broker");
+      // A transcript: say WHO said it — a manager's statement put to the
+      // seller as "you mentioned" is a misattribution (QA harvest).
+      const rawPlatform = (doc.sourceMeta as { platform?: string } | null)?.platform;
+      const platform = rawPlatform ? ({ zoom: "Zoom", meet: "Google Meet", teams: "Teams", cimple: "Cimple" } as Record<string, string>)[rawPlatform] : undefined;
+      const what = `from the ${docDate ? `${docDate} ` : ""}${platform ? `${platform} ` : ""}${src.source === "call" ? "call" : "video call"}`;
+      const role = speakerRole(src.speaker);
+      if (role === "seller") return `${what} — said by the seller`;
+      if (role === "joint") return `${what} — said by ${src.speaker} (attribute it to them by name, e.g. "you and ${speakerFirstName(src.speaker!)} mentioned")`;
+      if (role === "other") return `${what} — said by ${src.speaker}, not the seller (say "${speakerFirstName(src.speaker!)} mentioned", never "you mentioned")`;
+      return `${what} (speaker not recorded — say "from the call", not "you mentioned")`;
+    }
     case "questionnaire":
       return "from the seller's intake questionnaire";
     case "broker":

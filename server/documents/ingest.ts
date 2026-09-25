@@ -20,6 +20,7 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
+import { recordFactSpeakers } from "../interview/fact-guards";
 import {
   addPrivateNote,
   isSourceKind,
@@ -343,6 +344,7 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
       mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
       documents,
     );
+    recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
     // A note that only repeats a business fact this source recorded is not a note.
     addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
     const fieldsWritten = Object.keys(merged).filter(

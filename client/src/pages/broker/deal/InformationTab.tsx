@@ -482,6 +482,7 @@ export function InformationTab() {
                         <p className="text-xs font-medium text-muted-foreground">{d.label}</p>
                         <p className="text-sm text-muted-foreground/80 line-through decoration-muted-foreground/40 break-words line-clamp-2">{d.displayValue}</p>
                         <div className="mt-1"><SourceChip source={d.source} size="xs" /></div>
+                        {d.note && <p className="mt-1 text-[11px] text-muted-foreground/80">{d.note}</p>}
                       </div>
                       <Button
                         size="sm"

@@ -27,6 +27,7 @@ import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
 import { isDerivedMetricKey } from "./extraction-guard";
+import { recordFactSpeakers } from "../interview/fact-guards";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
   getFieldSources,
@@ -156,6 +157,7 @@ export async function reprocessDealDocuments(
   for (const { doc, data } of ordered) {
     if (data) {
       docsMerged = mergeExtractedData(docsMerged, mergeableExtraction(doc, data), mergeSourceFor(doc, data), ctx);
+      recordFactSpeakers(docsMerged, data._speakers, doc.id); // who said it, on calls
       documentsReprocessed++;
     }
   }

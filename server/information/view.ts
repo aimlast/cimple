@@ -567,13 +567,14 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   }
 
   // Deleted facts (restorable)
-  const deletedRaw = (info[BROKER_DELETED_KEY] as Record<string, { value: unknown; source: FieldSource | null; at: string }> | undefined) || {};
+  const deletedRaw = (info[BROKER_DELETED_KEY] as Record<string, { value: unknown; source: FieldSource | null; at: string; note?: string }> | undefined) || {};
   const deleted: DeletedFact[] = Object.entries(deletedRaw).map(([key, d]) => ({
     key,
     label: labelOf(key),
     displayValue: displayValue(d?.value),
     source: sourceInfo(d?.source ?? null),
     deletedAt: d?.at ?? "",
+    ...(typeof d?.note === "string" && d.note ? { note: d.note } : {}),
   }));
 
   // Website (scraped, unverified) with accept status

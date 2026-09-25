@@ -33,7 +33,27 @@ import {
   containsValuationFigures,
   CHIP_FIGURE_RE,
   stripFillerPreamble,
+  sellerDeclinedWrapUp,
+  sellerAskedQuestion,
+  leaksInternalMachinery,
+  scrubInternalMachinery,
+  asksQuestion,
+  fallbackQuestion,
+  whyItMattersFits,
+  finalizeOpeningMessage,
 } from "./turn-guard";
+import {
+  detectRetraction,
+  applySellerRetractions,
+  restatesWithdrawnValue,
+  guessRetractedFields,
+  whoHoldsTheAnswer,
+  applyDateFidelityGuard,
+  applyLegalGroundingGuard,
+  findLegalAssertions,
+  discrepanciesSettledByRetraction,
+  type RetractedValue,
+} from "./fact-guards";
 import {
   mergeExtractedFields,
   updateIndustryContext,
@@ -631,6 +651,11 @@ export async function processTurn(
     typeof sessionMeta._checkpointStreak === "number" ? sessionMeta._checkpointStreak : 0;
   const priorDegradedTurns =
     typeof sessionMeta._degradedTurns === "number" ? sessionMeta._degradedTurns : 0;
+  // Values the seller withdrew earlier in this session (see fact-guards.ts) —
+  // they must never be recorded again from the conversation history.
+  const priorRetracted: RetractedValue[] = Array.isArray(sessionMeta._retracted)
+    ? (sessionMeta._retracted as RetractedValue[]).filter((r) => r && typeof r.key === "string" && typeof r.value === "string")
+    : [];
 
   // Render the agent's own outstanding deferrals into the dynamic prompt block
   // so it can circle back — the model's context alone forgets them.
@@ -787,6 +812,18 @@ export async function processTurn(
     });
   }
 
+  // Statements the seller withdrew earlier this session are still in the
+  // transcript — name them so the agent neither records nor repeats them.
+  if (priorRetracted.length > 0) {
+    systemBlocks.push({
+      type: "text",
+      text:
+        `# WITHDRAWN BY THE SELLER\n` +
+        `The seller took these back earlier in this conversation. They are NOT facts: never record them again, never repeat them back, and don't ask the seller to re-guess — the real answer comes from the person or document they named.\n` +
+        priorRetracted.map((r) => `- ${r.key}: "${r.value.slice(0, 160)}" (withdrawn at turn ${r.turn})`).join("\n"),
+    });
+  }
+
   const callParams = {
     model: INTERVIEW_MODEL,
     maxTokens: agentConfig.api.maxTokens,
@@ -877,36 +914,44 @@ export async function processTurn(
   // Chips with dollar/multiple anchors are banned on fishing turns AND on
   // asking-price-expectation questions (agent-invented "$500-700K range"
   // chips anchor the seller exactly like a stated opinion — QA-caught).
-  const asksPriceExpectation =
-    /asking price|price expectation|price in mind|hoping to (?:get|sell)|ballpark.{0,20}(?:price|mind)|range you(?:'d| would) want/i.test(
-      aiResponse.message,
-    );
-  if (valuationFishing || asksPriceExpectation) {
-    aiResponse.suggestedAnswers = aiResponse.suggestedAnswers.filter((chip) => {
-      if (!CHIP_FIGURE_RE.test(chip)) return true;
-      const num = chip.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
-      return num ? sellerMessage.includes(num) : false;
-    });
-  }
-
-  // FILLER GUARD: sellers read dozens of replies in a sitting — a recap or
-  // grade of their last answer ("Got it — $1.1M, that's a solid foundation")
-  // in front of every question is exhausting and nobody talks that way. The
-  // prompt forbids it; this strips it mechanically when the model slips,
-  // leaving the question. Clarifications, reconciliations, and empathy
-  // openers are preserved (see stripFillerPreamble). When the seller asked
-  // something, the opening may be the answer ("Yes — I have $2.3M down as
-  // your asking price.") and is never stripped — an unanswered question
-  // reads as being ignored — but praise of the question and a recap/grade
-  // that answers nothing still go (question mode, keyed on the seller's
-  // message).
-  if (!degraded) {
-    const stripped = stripFillerPreamble(aiResponse.message, { sellerMessage });
-    if (stripped !== aiResponse.message) {
-      console.log(
-        `[session-manager] Filler guard trimmed a recap/praise sentence on session ${sessionId}: "${aiResponse.message.trim().slice(0, 160)}" → "${stripped.slice(0, 80)}…"`,
+  // (Re-applied whenever a corrective rewrite replaces the chips.)
+  const filterFigureChips = () => {
+    const asksPriceExpectation =
+      /asking price|price expectation|price in mind|hoping to (?:get|sell)|ballpark.{0,20}(?:price|mind)|range you(?:'d| would) want/i.test(
+        aiResponse.message,
       );
-      aiResponse.message = stripped;
+    if (valuationFishing || asksPriceExpectation) {
+      aiResponse.suggestedAnswers = aiResponse.suggestedAnswers.filter((chip) => {
+        if (!CHIP_FIGURE_RE.test(chip)) return true;
+        const num = chip.match(/\d[\d,]*(?:\.\d+)?/)?.[0];
+        return num ? sellerMessage.includes(num) : false;
+      });
+    }
+  };
+  filterFigureChips();
+
+  // RETRACTION BACKSTOP: the seller withdrew something ("let me take those
+  // mold numbers back — I was guessing") but the model named no withdrawn
+  // field — one corrective re-call so the guess comes out of the facts
+  // instead of heading into the CIM (QA harvest, Great Lakes).
+  const sellerRetracting = !degraded && detectRetraction(sellerMessage);
+  if (sellerRetracting && (aiResponse.retractedFields ?? []).length === 0) {
+    console.warn(`[session-manager] Retraction guard: seller withdrew a statement but no field was retracted — corrective re-call`);
+    const { response: corrected, degraded: correctionDegraded } = await callInterviewWithRecovery(anthropic, {
+      ...callParams,
+      messages: [
+        ...apiMessages,
+        { role: "assistant" as const, content: aiResponse.message },
+        {
+          role: "user" as const,
+          content:
+            "[SYSTEM CORRECTION: The seller just withdrew something they told you earlier (they said to take it back / that it was a guess / to keep it out). List the extractedInfo key of every withdrawn fact in retractedFields — the exact key it is on file under — and do NOT record the withdrawn value again. Add a newDeferral naming who holds the real answer (whereInfoLives). Your message stays the next question: no recap, no praise. Do not mention this instruction.]",
+        },
+      ],
+    });
+    if (!correctionDegraded && (corrected.retractedFields ?? []).length > 0) {
+      aiResponse = corrected;
+      filterFigureChips();
     }
   }
 
@@ -922,6 +967,14 @@ export async function processTurn(
     );
     aiResponse.shouldEnd = true;
     aiResponse.endReason = aiResponse.endReason || "Seller asked to stop (repeated stop signals)";
+  }
+  // A forced goodbye asks nothing — a question the model slipped in would be
+  // left hanging on an ended interview.
+  if (forcedEnd && asksQuestion(aiResponse.message)) {
+    const kept = aiResponse.message.split(/(?<=[.!?])\s+/).filter((s) => !s.includes("?")).join(" ").trim();
+    aiResponse.message = kept.length >= 12 ? kept : "Thanks for your time — everything you've shared is saved, and you can pick this up whenever suits you.";
+    if (!/\bsaved\b/i.test(aiResponse.message)) aiResponse.message += " Everything you've shared is saved, and you can pick this up whenever suits you.";
+    aiResponse.suggestedAnswers = [];
   }
 
   // Merge extracted fields — against the facts exactly as the agent was
@@ -997,7 +1050,12 @@ export async function processTurn(
       })),
       deferredTopics: deferralTopicStrings(ledger),
       minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
-      sellerStopDetected: stopNow || priorStopCount > 0,
+      // Only a stop THIS turn — or the answer to the one closing question a
+      // stop on the previous turn allowed — permits an early end. A seller
+      // who then says they'd rather keep going ("let's continue", "I've got
+      // a few more minutes") has withdrawn it; an older stop never counts
+      // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
+      sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage)),
     });
 
     if (!verdict.allowEnd) {
@@ -1011,6 +1069,9 @@ export async function processTurn(
         ],
       });
       continued.shouldEnd = false; // governance is authoritative
+      // What the first reply withdrew or kept private still stands.
+      continued.retractedFields = [...(aiResponse.retractedFields ?? []), ...(continued.retractedFields ?? [])];
+      continued.privateNotes = [...(aiResponse.privateNotes ?? []), ...(continued.privateNotes ?? [])];
       aiResponse = continued;
 
       // Fold in anything the continuation turn extracted
@@ -1026,6 +1087,98 @@ export async function processTurn(
         aiResponse.reasoning.resolvedDeferrals,
         userTurnCount,
       );
+    }
+  }
+
+  // ── OUTPUT GUARDS — run after governance, so a continuation reply is held
+  // to the same rules as the first one. ──
+  if (!degraded) {
+    // FILLER GUARD: sellers read dozens of replies in a sitting — a recap or
+    // grade of their last answer ("That's a realistic read —", "Good — a
+    // clean Phase I removes a major due diligence risk for buyers.") in front
+    // of every question is exhausting and nobody talks that way. The prompt
+    // forbids it; this strips it mechanically, leaving the question.
+    // Clarifications, reconciliations, empathy, privacy promises and document
+    // requests are kept (see stripFillerPreamble). When the seller asked
+    // something, the opening may be the answer and is never stripped. A
+    // goodbye keeps its recap and loses its praise.
+    const applyFiller = (msg: string) => stripFillerPreamble(msg, { sellerMessage, closing: aiResponse.shouldEnd });
+    const stripped = applyFiller(aiResponse.message);
+    if (stripped !== aiResponse.message) {
+      console.log(
+        `[session-manager] Filler guard trimmed a recap/praise sentence on session ${sessionId}: "${aiResponse.message.trim().slice(0, 160)}" → "${stripped.slice(0, 80)}…"`,
+      );
+      aiResponse.message = stripped;
+    }
+
+    // Three more things a reply must never do, fixed with ONE corrective
+    // rewrite (wording only — what the turn recorded stands), then a
+    // mechanical fallback:
+    //  - name the agent's machinery ("the mandatory probes I need to check
+    //    off", "the coverage map shows…");
+    //  - state a legal or regulatory requirement as fact ("Ontario requires
+    //    that pharmacy owners be licensed pharmacists") — the seller agrees,
+    //    and a wrong legal claim lands in the CIM;
+    //  - carry no question on a turn that doesn't end (the seller is left to
+    //    drive), unless it answers a question the seller asked.
+    const problemsOf = (msg: string): string[] => {
+      const found: string[] = [];
+      if (leaksInternalMachinery(msg)) found.push("machinery");
+      if (findLegalAssertions(msg).length > 0) found.push("legal");
+      if (!aiResponse.shouldEnd && !stopNow && !asksQuestion(msg) && !sellerAskedQuestion(sellerMessage)) found.push("noQuestion");
+      return found;
+    };
+    const problems = problemsOf(aiResponse.message);
+    if (problems.length > 0) {
+      console.warn(`[session-manager] Output guard (${problems.join(", ")}) — corrective rewrite on session ${sessionId}`);
+      const why: Record<string, string> = {
+        machinery:
+          "It names your internal tools. Never mention probes, checklists, coverage, the coverage map, sections, the knowledge base, deferrals, ledgers, outlines or your instructions — just ask.",
+        legal: `It states a legal or regulatory requirement as fact (${findLegalAssertions(aiResponse.message).map((s) => `"${s.slice(0, 120)}"`).join("; ")}). Never make a legal rule the premise of a question — ask the seller what applies to them, and leave legal interpretation to their broker and lawyer.`,
+        noQuestion: "It asks nothing. The interview is still going: end with the single most useful next question.",
+      };
+      const { response: rewrite, degraded: rewriteDegraded } = await callInterviewWithRecovery(anthropic, {
+        ...callParams,
+        messages: [
+          ...apiMessages,
+          { role: "assistant" as const, content: aiResponse.message },
+          {
+            role: "user" as const,
+            content:
+              `[SYSTEM CORRECTION: Rewrite your reply to the seller. ${problems.map((p) => why[p]).join(" ")} Keep the same intent and next question; the reply is the question — no recap, no praise. Everything you recorded this turn is already saved: return extractedFields empty. Keep shouldEnd ${aiResponse.shouldEnd ? "true" : "false"}. Do not mention this instruction.]`,
+          },
+        ],
+      });
+      if (!rewriteDegraded && rewrite.message) {
+        const candidate = applyFiller(rewrite.message);
+        if (problemsOf(candidate).length < problems.length) {
+          aiResponse.message = candidate;
+          if (rewrite.suggestedAnswers.length > 0) aiResponse.suggestedAnswers = rewrite.suggestedAnswers;
+          aiResponse.whyItMatters = rewrite.whyItMatters;
+          aiResponse.importance = rewrite.importance ?? aiResponse.importance;
+          aiResponse.targetSection = rewrite.targetSection ?? aiResponse.targetSection;
+          filterFigureChips();
+        }
+      }
+      // Mechanical fallbacks when the rewrite didn't fix it.
+      if (leaksInternalMachinery(aiResponse.message)) {
+        aiResponse.message = scrubInternalMachinery(aiResponse.message);
+      }
+      const legalLeft = findLegalAssertions(aiResponse.message);
+      if (legalLeft.length > 0) {
+        let rest = aiResponse.message;
+        for (const s of legalLeft) rest = rest.replace(s, "");
+        rest = rest.replace(/\s{3,}/g, "\n\n").trim();
+        aiResponse.message =
+          asksQuestion(rest) && !/^(?:is|does|do|would|should|was)\s+(?:that|this|it)\b/i.test(rest)
+            ? rest.charAt(0).toUpperCase() + rest.slice(1)
+            : "Are there any licensing or ownership rules that would affect who can buy the business or how it transfers? Your broker will confirm the specifics with a lawyer.";
+      }
+      if (!aiResponse.shouldEnd && !stopNow && !asksQuestion(aiResponse.message) && !sellerAskedQuestion(sellerMessage)) {
+        const q = fallbackQuestion(aiResponse.reasoning.nextIntent, aiResponse.reasoning.currentTopic);
+        aiResponse.message = applyFiller(`${aiResponse.message.trim()}\n\n${q}`.trim());
+        console.warn(`[session-manager] Output guard: appended the planned question — "${q}"`);
+      }
     }
   }
 
@@ -1181,6 +1334,109 @@ export async function processTurn(
     }
   }
 
+  // WITHDRAWN VALUES stay withdrawn: the guess is still in the transcript, so
+  // a later turn re-recording it (same figures, same words — and the seller
+  // didn't just say them again) is dropped.
+  if (priorRetracted.length > 0) {
+    const reRecorded = changes.filter((c) =>
+      priorRetracted.some((r) => r.key === c.fieldName && restatesWithdrawnValue(c.newValue, r.value, sellerMessage)),
+    );
+    if (reRecorded.length > 0) {
+      console.warn(`[session-manager] Retraction guard: dropped a re-recorded withdrawn value: ${reRecorded.map((c) => c.fieldName).join(", ")}`);
+      changes = changes.filter((c) => !reRecorded.includes(c));
+      for (const c of reRecorded) {
+        if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+        else delete updatedConfidence[c.fieldName];
+      }
+    }
+  }
+
+  // RETRACTIONS this turn — the fields the model named, or (backstop) the
+  // facts the seller's previous answer wrote that this withdrawal talks
+  // about. Applied to the saved facts under the lock below; nothing this turn
+  // re-records them, and the broker gets a deferral naming who holds the
+  // real answer.
+  let retractions = (aiResponse.retractedFields ?? []).map((r) => ({
+    field: canonicalFieldName(r.field, Object.keys(existingExtracted)),
+    reason: r.reason,
+  }));
+  if (sellerRetracting && retractions.length === 0) {
+    retractions = guessRetractedFields(existingExtracted, sellerMessage, { sessionId, turn: userTurnCount }).map((field) => ({
+      field,
+      reason: "the seller withdrew their previous answer",
+    }));
+    if (retractions.length > 0) {
+      console.warn(`[session-manager] Retraction guard: model named no field — withdrawing ${retractions.map((r) => r.field).join(", ")} from the seller's previous answer`);
+    }
+  }
+  if (retractions.length > 0) {
+    const keys = new Set(retractions.map((r) => r.field));
+    changes = changes.filter((c) => !keys.has(c.fieldName));
+    for (const k of Array.from(keys)) delete updatedConfidence[k];
+    const holder = whoHoldsTheAnswer(sellerMessage);
+    const keyWords = (k: string) => new Set(k.replace(/([A-Z])/g, " $1").toLowerCase().split(/\s+/).filter((w) => w.length > 3).map((w) => w.slice(0, 5)));
+    const missing = Array.from(keys).filter((k) => {
+      const kw = keyWords(k);
+      return !aiResponse.reasoning.newDeferrals.some((d) =>
+        `${d.topic} ${d.whereInfoLives}`.toLowerCase().split(/[^a-z]+/).some((w) => w.length > 3 && kw.has(w.slice(0, 5))),
+      );
+    });
+    if (missing.length > 0) {
+      ledger = updateDeferralLedger(
+        ledger,
+        missing.map((k) => ({
+          topic: `${k} (the seller withdrew an estimate)`,
+          reason: `the seller took back what they said ("${sellerMessage.replace(/\s+/g, " ").slice(0, 140)}") — get the real answer, don't ask them to re-guess`,
+          whereInfoLives: holder,
+        })),
+        [],
+        userTurnCount,
+      );
+    }
+  }
+
+  // DATE-FIDELITY GUARD: a year the seller never said is resolved from
+  // today's date and their tense ("got the raise in October" → the most
+  // recent October), or downgraded with a verify deferral — never stored as
+  // the seller's confirmed word (QA harvest: "October 2024" for a raise in
+  // October 2025).
+  const onFileText = Object.entries(sellerView)
+    .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
+    .map(([, v]) => v as string)
+    .join(" ");
+  const dateFlags = applyDateFidelityGuard(changes, updatedConfidence, {
+    sellerMessage,
+    sessionSellerText: existingMessages.filter((m) => m.role === "user").map((m) => m.content).join("\n"),
+    prevAiMessage,
+    onFileText,
+  });
+  if (dateFlags.length > 0) {
+    console.warn(
+      `[session-manager] Date-fidelity guard: ${dateFlags.map((f) => `${f.fieldName} (${f.reason})`).join("; ")}`,
+    );
+    const toVerify = dateFlags.filter((f) => f.needsVerification);
+    if (toVerify.length > 0) {
+      ledger = updateDeferralLedger(
+        ledger,
+        toVerify.map((f) => ({
+          topic: `verify ${f.fieldName} date`,
+          reason: `automatic date check: ${f.reason}; captured as approximate — confirm when it happened`,
+          whereInfoLives: "",
+        })),
+        [],
+        userTurnCount,
+      );
+    }
+  }
+
+  // LEGAL CLAIMS THE AGENT INTRODUCED: the seller's "yes" to the agent's own
+  // legal assertion is not a verified fact — capped at inferred, and the
+  // broker gets a verify-with-counsel task (created with the turn's tasks).
+  const legalFlags = applyLegalGroundingGuard(changes, updatedConfidence, prevAiMessage);
+  if (legalFlags.length > 0) {
+    console.warn(`[session-manager] Legal-grounding guard: ${legalFlags.map((f) => `${f.fieldName} (${f.reason})`).join("; ")}`);
+  }
+
   // From here on: the deal's real facts with this turn's changes applied.
   const merged = applyTurn();
 
@@ -1263,6 +1519,7 @@ export async function processTurn(
   // turn changed, and check each changed fact against the FRESH copy.
   const snapshot = (deal.extractedInfo as Record<string, unknown>) || {};
   const mergedRec = merged as Record<string, unknown>;
+  let withdrawnNow: RetractedValue[] = [];
   await withDealFactsLock(dealId, async () => {
     const freshDeal = await storage.getDeal(dealId);
     const freshInfo = (freshDeal?.extractedInfo as Record<string, unknown>) || snapshot;
@@ -1278,8 +1535,35 @@ export async function processTurn(
         at: new Date().toISOString(),
       },
     });
+    // Withdrawn statements come out of the facts as they are NOW (the fresh
+    // copy): only a value that is still the seller's own words is removed.
+    if (retractions.length > 0) {
+      const r = applySellerRetractions(toSave, retractions, { turn: userTurnCount });
+      withdrawnNow = r.withdrawn;
+      console.log(
+        `[session-manager] Seller retraction on deal ${dealId}: removed ${r.removed.join(", ") || "—"}; document value restored for ${r.restoredFromDocument.join(", ") || "—"}; left alone (not the seller's words) ${r.skipped.join(", ") || "—"}`,
+      );
+    }
     await storage.updateDeal(dealId, { extractedInfo: toSave });
   });
+  // A conflict whose seller side the seller just withdrew no longer stands:
+  // left open it would block the CIM, and "accept the interview value" would
+  // write the guess back. (Settled rows are the broker's decision — untouched.)
+  if (withdrawnNow.length > 0) {
+    try {
+      const rows = await storage.getDiscrepanciesByDeal(dealId);
+      for (const id of discrepanciesSettledByRetraction(rows, withdrawnNow)) {
+        const row = rows.find((d) => d.id === id);
+        const note = `The seller withdrew this value in the interview (turn ${userTurnCount}).`;
+        await storage.updateDiscrepancy(id, {
+          status: "superseded",
+          brokerNotes: row?.brokerNotes ? `${row.brokerNotes}\n${note}` : note,
+        });
+      }
+    } catch (err) {
+      console.error(`[session-manager] Couldn't settle discrepancies for withdrawn values on deal ${dealId}:`, err);
+    }
+  }
 
   // Create any tasks
   for (const task of aiResponse.newTasks) {
@@ -1296,6 +1580,39 @@ export async function processTurn(
       aiAttempts: 1,
       aiExplanation: task.sellerExplanation,
     });
+  }
+  // A legal point the interviewer introduced and the seller agreed to: the
+  // broker confirms it with counsel before it reaches the CIM (one task per
+  // fact — never duplicated across turns).
+  for (const f of legalFlags) {
+    const title = `Verify with counsel: ${f.fieldName}`;
+    if (tasks.some((t) => t.title === title)) continue;
+    const value = changes.find((c) => c.fieldName === f.fieldName)?.newValue ?? "";
+    await storage.createTask({
+      dealId,
+      createdBy: "ai_interview",
+      assignedTo: null,
+      type: "follow_up",
+      title,
+      description: `The interviewer raised a legal point ("${f.introducedBy.slice(0, 200)}") and the seller agreed: "${value.slice(0, 300)}". It is recorded as unverified — confirm the rule with the seller's lawyer before it appears in the CIM.`,
+      relatedField: f.fieldName,
+      status: "pending",
+      priority: "medium",
+      aiAttempts: 1,
+      aiExplanation: "",
+    });
+  }
+
+  // "Why we ask this" must belong to the question actually asked — never on
+  // a goodbye or a wrap-up offer, never a rationale for a different topic —
+  // and, like the message, never states a legal rule as fact.
+  if (aiResponse.whyItMatters && !whyItMattersFits(aiResponse.message, aiResponse.whyItMatters, aiResponse.shouldEnd, prevAiMessage)) {
+    console.log(`[session-manager] Dropped a whyItMatters that doesn't match the question on session ${sessionId}`);
+    aiResponse.whyItMatters = undefined;
+  }
+  if (aiResponse.whyItMatters && findLegalAssertions(aiResponse.whyItMatters).length > 0) {
+    console.log(`[session-manager] Dropped a whyItMatters that states a legal rule as fact on session ${sessionId}`);
+    aiResponse.whyItMatters = undefined;
   }
 
   // Update session
@@ -1346,6 +1663,7 @@ export async function processTurn(
         _degradedTurns: degraded ? priorDegradedTurns + 1 : 0,
         _lastChips: aiResponse.suggestedAnswers,
         _confidenceLevels: updatedConfidence,
+        ...(priorRetracted.length + withdrawnNow.length > 0 ? { _retracted: [...priorRetracted, ...withdrawnNow] } : {}),
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
     })
@@ -1470,30 +1788,70 @@ async function generateOpeningMessage(
 
   let openingInstruction: string;
 
+  // The first question goes where it matters most: a conflict or flagged
+  // risk in what's on file, else a critical section that is still thin —
+  // never a mid-priority topic (QA harvest: openings went straight to a
+  // permits question with no greeting).
+  const criticalGaps = kb.sectionCoverage
+    .filter((s) => (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical") && s.status !== "well_covered")
+    .map((s) => `${s.title} (${s.key})`);
+  const aimAt =
+    ` Aim the first question at the single most important open item: a conflict between sources or a buyer risk flagged in the materials if there is one, otherwise a CRITICAL section that is still thin` +
+    (criticalGaps.length > 0 ? ` — currently: ${criticalGaps.slice(0, 6).join(", ")}` : "") +
+    `. Set importance and targetSection for it.`;
+  const noFiller = ` No inventory of what the materials contain, no praise, no explanation of the process.`;
+
   if (hasPriorSession) {
     openingInstruction = `The seller is returning to an ongoing conversation. One short welcome-back sentence, then go straight to the most important open gap or deferral as a question. Do not list what you already have. Do not repeat any question already answered. Three sentences maximum.`;
   } else if (hasQuestionnaireData && hasDocuments) {
-    openingInstruction = `This is the start of the interview. The seller already completed a questionnaire and uploaded documents. One sentence saying you've read them (no inventory of what they contain), then your first question — aimed where the questionnaire was thin. Three sentences maximum, no explanation of the process.`;
+    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read their questionnaire and documents. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
   } else if (hasQuestionnaireData) {
-    openingInstruction = `This is the start of the interview. The seller completed a questionnaire. One sentence saying you've read it (no inventory of what it contains — do not restate its figures or names), then your first question aimed where it was thin. Three sentences maximum, no explanation of the process.`;
+    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read their questionnaire — do not restate its figures or names. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
+  } else if (hasDocuments) {
+    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read the materials on file. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
   } else {
     openingInstruction = `This is the start of the interview and you have little background. One sentence of welcome that says what this is for (the document buyers will read about their business), then one broad opening question: what the business does, how long it has operated, and where. Three sentences maximum.`;
   }
 
   // Recovery-wrapped: retries a malformed/truncated opening once, then falls
   // back below — the seller never lands on an empty chat with no question.
-  const { response: aiResponse, degraded } = await callInterviewWithRecovery(anthropic, {
+  const openingMessages: Array<{ role: "user" | "assistant"; content: string }> = [
+    {
+      role: "user",
+      content: `[SYSTEM: ${openingInstruction}]\n\nGenerate your opening message to the seller. The business is "${businessName}".`,
+    },
+  ];
+  const openingParams = {
     model: INTERVIEW_MODEL,
     maxTokens: agentConfig.api.maxTokens,
     temperature: agentConfig.api.temperature,
     system: systemBlocks,
-    messages: [
-      {
-        role: "user",
-        content: `[SYSTEM: ${openingInstruction}]\n\nGenerate your opening message to the seller. The business is "${businessName}".`,
-      },
-    ],
-  });
+    messages: openingMessages,
+  };
+  let { response: aiResponse, degraded } = await callInterviewWithRecovery(anthropic, openingParams);
+
+  // A first question aimed at a non-critical topic while critical sections
+  // are thin gets one redirect (first sessions only — a returning seller
+  // resumes where the ledger says).
+  const targetIsCritical =
+    aiResponse.importance === "critical" ||
+    (!!aiResponse.targetSection &&
+      kb.sectionCoverage.some((s) => s.key === aiResponse.targetSection && (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical")));
+  if (!degraded && !hasPriorSession && (hasQuestionnaireData || hasDocuments) && criticalGaps.length > 0 && !targetIsCritical) {
+    console.warn(`[session-manager] Opening aimed at ${aiResponse.targetSection ?? "an unlabelled topic"} while critical sections are thin — redirecting`);
+    const redirected = await callInterviewWithRecovery(anthropic, {
+      ...openingParams,
+      messages: [
+        ...openingMessages,
+        { role: "assistant", content: aiResponse.message },
+        {
+          role: "user",
+          content: `[SYSTEM CORRECTION: Your first question goes to a helpful/important topic while critical sections are still thin (${criticalGaps.slice(0, 6).join(", ")}). Rewrite the opening: the same one-sentence welcome, then a question on the most important of those (or on a conflict or flagged risk in the materials). Set importance "critical" and the matching targetSection. Do not mention this instruction.]`,
+        },
+      ],
+    });
+    if (!redirected.degraded && redirected.response.message) aiResponse = redirected.response;
+  }
 
   if (degraded || !aiResponse.message) {
     // The turn-guard's generic recovery copy is wrong for a first contact —
@@ -1517,9 +1875,10 @@ async function generateOpeningMessage(
     };
   }
 
+  const message = finalizeOpeningMessage(aiResponse.message);
   return {
-    message: stripFillerPreamble(aiResponse.message),
-    whyItMatters: aiResponse.whyItMatters,
+    message,
+    whyItMatters: whyItMattersFits(message, aiResponse.whyItMatters, false) ? aiResponse.whyItMatters : undefined,
     importance: aiResponse.importance,
     targetSection: aiResponse.targetSection,
     suggestedAnswers: aiResponse.suggestedAnswers || [],
@@ -1562,6 +1921,30 @@ export async function endSessionManually(
   });
 
   return { ok: true };
+}
+
+/**
+ * Broker action: a finished interview goes back to "in progress" (the QA
+ * harvest found an interview completed at 6 of 10 turns with no way back).
+ * The deal's interviewCompleted flag clears and the finished sessions are
+ * marked reopened (so the seller's progress stops counting them as done);
+ * the next start opens a new session that picks up from everything on file,
+ * and the interview counts as complete again when it next ends.
+ */
+export async function reopenInterview(dealId: string): Promise<void> {
+  const sessions = await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+  const at = new Date().toISOString();
+  for (const s of sessions) {
+    if (s.status !== "completed") continue;
+    const meta = (s.extractedInfo as Record<string, unknown> | null) ?? {};
+    if (meta._reopenedAt) continue;
+    await db
+      .update(interviewSessions)
+      .set({ extractedInfo: { ...meta, _reopenedAt: at } })
+      .where(eq(interviewSessions.id, s.id));
+  }
+  await storage.updateDeal(dealId, { interviewCompleted: false });
+  console.log(`[session-manager] Interview reopened by the broker on deal ${dealId}`);
 }
 
 // Per-document meta keys the extraction prompt requests (summaries, call

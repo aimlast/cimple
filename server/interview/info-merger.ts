@@ -651,6 +651,12 @@ export interface FieldSource {
   /** The words the value came from, when known. */
   excerpt?: string;
   /**
+   * Call / video-call transcripts: who said it — "Luis Ortega (operations
+   * manager)". Lets the interview attribute a fact to the person who said it
+   * instead of telling the seller "you mentioned" (see fact-guards.ts).
+   */
+  speaker?: string;
+  /**
    * The broker explicitly accepted this value into the facts ("Accept into
    * facts" on a website claim): the kind still ranks as its source, but the
    * broker vouched for it, so CIM writers treat it as a fact, not a lead.

@@ -188,12 +188,14 @@ const SOURCE_GUIDANCE: Partial<Record<SourceKind, string>> = {
 - Attribute every statement to its speaker. The SELLER's statements about the business are facts. The BROKER's lines are questions or prompts — never facts on their own.
 - A broker statement becomes a fact only when the seller clearly agrees with it ("yes, that's right").
 - If speakers are not labelled, use context (the person describing their own business is the seller); when you cannot tell who said something, leave it out.
-- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.`,
+- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.
+- Record who said each business fact in _speakers, keyed by the field name you used: {"equipmentCondition": "Luis Ortega (operations manager)", "annualRevenue": "Gord Halvorsen (seller)"}. Mark the seller's own statements "(seller)". Facts stated by anyone else on the call (a manager, partner, accountant) are recorded with that person as the speaker — never attributed to the seller.`,
   video_call: `THIS SOURCE IS A VIDEO-CALL TRANSCRIPT (Zoom / Google Meet / Teams / Cimple call between the broker and the seller).
 - Attribute every statement to its speaker. The SELLER's statements about the business are facts. The BROKER's lines are questions or prompts — never facts on their own.
 - A broker statement becomes a fact only when the seller clearly agrees with it.
 - When you cannot tell who said something, leave it out.
-- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.`,
+- Also fill callDate, callParticipants, keyTopics, actionItems, sellerConcerns, followUpNeeded, callNotes.
+- Record who said each business fact in _speakers, keyed by the field name you used: {"equipmentCondition": "Luis Ortega (operations manager)", "annualRevenue": "Gord Halvorsen (seller)"}. Mark the seller's own statements "(seller)". Facts stated by anyone else on the call (a manager, partner, accountant) are recorded with that person as the speaker — never attributed to the seller.`,
   crm: `THIS SOURCE IS THE BROKER'S OWN CRM NOTE (Pipedrive / HubSpot / Salesforce record, activity or note).
 - These are the broker's second-hand notes about the seller and the business — useful leads, not verified facts. Extract them faithfully as written; they will be confirmed with the seller later.
 - Do not upgrade hedged wording ("approx.", "thinks", "~") into firm figures — keep the hedge in the value.
@@ -331,6 +333,8 @@ const EXTRACTION_TOOL = {
         additionalProperties: { type: "object", additionalProperties: { type: "string" } },
       },
       _privateNotes: { type: "array", items: { type: "string" } },
+      // Call / video-call transcripts: field → "Name (role)" of who said it.
+      _speakers: { type: "object", additionalProperties: { type: "string" } },
     },
   },
 };
@@ -449,9 +453,20 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     }
   };
 
+  // A figure moved to its own measure's key keeps who said it (_speakers).
+  const renamed: Record<string, string> = {};
   for (let [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined || v === "") continue;
     if (k === "periodEnd" || k === "_periodEnd" || k === "_keyPeriods" || k === "_inferredKeys") continue;
+    if (k === "_speakers") {
+      // Call / video-call transcripts: field → who said it (fact-guards.ts recordFactSpeakers).
+      if (isPlainObject(v)) {
+        const who: Record<string, string> = {};
+        for (const [f, name] of Object.entries(v)) if (typeof name === "string" && name.trim()) who[f] = name.trim();
+        if (Object.keys(who).length > 0) out._speakers = who;
+      }
+      continue;
+    }
     if (k === "_privateNotes") {
       // Kept apart (one per line) — ingestion routes them to the broker-private notes.
       const notes = (Array.isArray(v) ? v : String(v).split("\n")).map((x) => String(x ?? "").trim()).filter(Boolean);
@@ -502,12 +517,14 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
       // An adjusted / normalised figure under the plain EBITDA key is adjusted EBITDA.
       if (k !== "adjustedEbitda" && ADJUSTED_WORDS.test(value)) {
         if (raw.adjustedEbitda !== undefined) continue; // recorded under its own key already
+        renamed[k] = "adjustedEbitda";
         k = "adjustedEbitda";
       }
     }
     // Income before tax under net income is pre-tax income, not net income.
     if ((k === "netIncome" || k === "netProfit") && PRE_TAX_WORDS.test(value)) {
       if (raw.incomeBeforeTax !== undefined) continue;
+      renamed[k] = "incomeBeforeTax";
       k = "incomeBeforeTax";
     }
     const head = headlineKeyFor(k);
@@ -563,6 +580,10 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     out.keyFinancialNotes = typeof out.keyFinancialNotes === "string" && out.keyFinancialNotes
       ? `${out.keyFinancialNotes}\n${note}`
       : note;
+  }
+  if (isPlainObject(out._speakers)) {
+    const who = out._speakers as Record<string, string>;
+    for (const [from, to] of Object.entries(renamed)) if (who[from] && !who[to]) who[to] = who[from];
   }
   if (privateNotes.length > 0) out._privateNotes = Array.from(new Set(privateNotes)).join("\n");
   if (periodEnd) out._periodEnd = periodEnd;
