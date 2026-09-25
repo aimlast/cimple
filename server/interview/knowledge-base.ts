@@ -6,6 +6,7 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import type { SellerCommunicationProfile } from "./eq-profiler";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, type FieldSource } from "./info-merger";
 
 // =====================
 // Types
@@ -81,6 +82,11 @@ export interface KnowledgeBase {
   // must be presented as already-known (verify, never re-ask). Optional for
   // old callers/fixtures.
   fieldConfidence?: Record<string, string>;
+
+  // Where each known fact came from, as the bracketed label the agent sees
+  // ("from document: 2024 P&L.pdf", "from the broker's CRM notes — …").
+  // Built from extractedInfo._fieldSources. Optional for old callers/fixtures.
+  factSourceLabels?: Record<string, string>;
 }
 
 export interface AskSellerDiscrepancy {
@@ -90,6 +96,9 @@ export interface AskSellerDiscrepancy {
   severity: string;
   explanation: string | null;
   suggestedResolution: string | null;
+  /** One side came from a broker-only source (CRM note, private email/file):
+   *  confirm the figure with the seller, never mention or quote that source. */
+  privateSource?: boolean;
 }
 
 export interface LocationContext {
@@ -284,12 +293,22 @@ export function assembleKnowledgeBase(
       severity: d.severity,
       explanation: d.aiExplanation,
       suggestedResolution: d.suggestedResolution,
+      privateSource:
+        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only")) || undefined,
     }));
 
   // Per-field confidence lives on the session (interview turns write it) —
   // used to label coverage fields honestly instead of hardcoding "confirmed".
   const sessionMeta = (latestSession?.extractedInfo as Record<string, unknown> | null) || {};
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string> | undefined) ?? undefined;
+
+  // The real source of every known fact, labelled for the agent. Broker-only
+  // sources (CRM notes, private emails) are labelled so the agent confirms
+  // the fact with the seller without ever citing or quoting the source.
+  const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
+  for (const d of resolvedDiscrepancies) {
+    if (d.resolvedValue && d.field) factSourceLabels[d.field] = "confirmed by the broker";
+  }
   // Buyer importance per section — the industry-ranked map when one exists
   // for the deal's current industry, otherwise the base defaults.
   const sectionImportance = getSectionImportance(deal);
@@ -311,7 +330,8 @@ export function assembleKnowledgeBase(
     sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
     questionnaireData,
     operationalSystems: parseOperationalSystems(deal),
-    documents: documents.map(summarizeDocument),
+    // Broker-only sources are never named to the seller.
+    documents: documents.filter((d) => d.visibility !== "broker_only").map(summarizeDocument),
     outstandingTasks: tasks
       .filter((t) => t.status === "pending" || t.status === "in_progress")
       .map(summarizeTask),
@@ -321,7 +341,77 @@ export function assembleKnowledgeBase(
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
     askSellerDiscrepancies,
     fieldConfidence: confidenceLevels,
+    factSourceLabels,
   };
+}
+
+function shortDate(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return typeof value === "string" ? value : null;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * The bracketed source label for each known fact, e.g. "from the seller in
+ * the interview — confirmed", "from document: 2024 Compilation.pdf",
+ * "from an email, Mar 3, 2026", "from the website — unverified".
+ */
+export function buildFactSourceLabels(
+  info: Record<string, unknown>,
+  documents: Pick<Document, "id" | "name" | "createdAt" | "sourceKind" | "sourceMeta" | "visibility">[],
+  confidenceLevels?: Record<string, string>,
+): Record<string, string> {
+  const sources = getFieldSources(info);
+  const docs = new Map(documents.map((d) => [d.id, d]));
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(info)) {
+    if (key.startsWith("_")) continue;
+    const conf = confidenceLevels?.[key];
+    out[key] = describeFactSource(sources[key], docs, conf);
+  }
+  return out;
+}
+
+function describeFactSource(
+  src: FieldSource | undefined,
+  docs: Map<string, Pick<Document, "id" | "name" | "createdAt" | "sourceKind" | "sourceMeta" | "visibility">>,
+  conf: string | undefined,
+): string {
+  const withConf = (base: string) => (conf ? `${base} — ${conf}` : base);
+  if (!src || !isSourceKind(src.source)) {
+    // Untracked legacy value: the seller's interview answer when the session
+    // has a confidence for it, otherwise something on file before this interview.
+    return conf ? `seller ${conf}` : "on file before this interview";
+  }
+  const doc = src.documentId ? docs.get(src.documentId) : undefined;
+  const brokerOnly = doc?.visibility === "broker_only";
+  const docDate = shortDate((doc?.sourceMeta as { date?: string } | null)?.date ?? doc?.createdAt ?? src.at ?? null);
+  switch (src.source) {
+    case "interview":
+      return withConf("from the seller in the interview");
+    case "call":
+      return doc ? `from a call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a call with the broker");
+    case "video_call":
+      return doc ? `from a video-call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a video call with the broker");
+    case "questionnaire":
+      return "from the seller's intake questionnaire";
+    case "broker":
+      return "confirmed by the broker";
+    case "crm":
+      return "from the broker's CRM notes — confirm with the seller; never mention the CRM or quote it";
+    case "website":
+      return "from the website — unverified";
+    case "social":
+      return "from social media — unverified";
+    case "email":
+      if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
+      return `from an email${docDate ? `, ${docDate}` : ""}`;
+    case "document":
+    default:
+      if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
+      return doc ? `from document: ${doc.name}` : "from an uploaded document";
+  }
 }
 
 // =====================
@@ -348,6 +438,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
       if (d.valueB) parts.push(`    Value 2: ${d.valueB}`);
       if (d.explanation) parts.push(`    Why it matters: ${d.explanation}`);
       if (d.suggestedResolution) parts.push(`    Suggested approach: ${d.suggestedResolution}`);
+      if (d.privateSource) parts.push(`    ⚠ One value comes from the broker's private notes (CRM). Ask the seller to confirm the figure in your own words — never mention the CRM, the broker's notes or any document, and never quote the explanation above.`);
     }
     parts.push(``);
   }
@@ -385,18 +476,20 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     if (known.length > 0) {
       const conf = kb.fieldConfidence ?? {};
       parts.push(`## ⛔ ALREADY ANSWERED — DO NOT RE-ASK. CONFIRM OR DEEPEN ONLY.`);
-      parts.push(`Every fact below is already on file (from uploaded documents, the questionnaire, or earlier conversation). Before EVERY question you ask, scan this list:`);
+      parts.push(`Every fact below is already on file (from uploaded documents, emails, calls, the questionnaire, the broker, or earlier conversation) — each is labelled with where it came from. Before EVERY question you ask, scan this list:`);
       parts.push(`- If the fact you need is here, do NOT ask for it. Cite it and ask only for what is genuinely new (the delta): "Your P&L shows a 72/28 Shopify/Amazon split — has that shifted this year?"`);
-      parts.push(`- Values marked [from documents/questionnaire] came in before the interview: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Values that did not come from the seller in this interview (documents, emails, call transcripts, the questionnaire, the broker, or anything marked "on file before this interview") came in separately: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Values marked "unverified" or "confirm with the seller" are leads, not facts: confirm them naturally in passing (still never as an open re-ask). When a label says never to mention or quote its source, don't — ask as if you simply want to confirm the detail.`);
       parts.push(`- Your suggestedAnswers must be consistent with these values — never offer a guess at a number already on file.`);
       parts.push(`- When capturing new fields, REUSE these exact key names when the concept matches; only mint a new key for a genuinely new concept.`);
       parts.push(``);
-      for (const [key, value] of known) {
+      const sourceLabels = kb.factSourceLabels ?? {};
+      for (const [key, rawValue] of known) {
+        const value = repairCharIndexedValue(rawValue);
         const sessionConf = conf[key];
-        const label = sessionConf
-          ? `seller ${sessionConf}`
-          : "from documents/questionnaire";
-        parts.push(`- ${key}: ${String(value)}  [${label}]`);
+        const label = sourceLabels[key]
+          ?? (sessionConf ? `seller ${sessionConf}` : "from documents/questionnaire");
+        parts.push(`- ${key}: ${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}  [${label}]`);
       }
       parts.push(``);
     }

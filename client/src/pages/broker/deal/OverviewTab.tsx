@@ -17,6 +17,9 @@ import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
+import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
+import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
+import type { DealSellerContact } from "@shared/schema";
 import type { CimReadiness } from "@shared/cim-readiness";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -73,8 +76,10 @@ import {
   Eye,
   Undo2,
   Users,
+  Library,
+  ArrowRight,
 } from "lucide-react";
-import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
+import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
@@ -226,22 +231,17 @@ function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
 function DocumentUploadCard({
   openSignal,
 }: {
-  openSignal?: { category: string; tab: "file" | "paste"; nonce: number } | null;
+  openSignal?: AddSourcePreset | null;
 }) {
   const { dealId } = useDeal();
-  const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [docCategory, setDocCategory] = useState("financials");
-  const [uploadTab, setUploadTab] = useState<"file" | "paste">("file");
-  const [pasteText, setPasteText] = useState("");
-  const [pasteTitle, setPasteTitle] = useState("");
+  const [preset, setPreset] = useState<AddSourcePreset | null>(null);
 
-  // Other cards (e.g. the Calls tile) can pop this dialog open pre-configured.
+  // Other cards (e.g. the Calls tile) can pop the dialog open pre-configured.
   useEffect(() => {
     if (!openSignal) return;
-    setDocCategory(openSignal.category);
-    setUploadTab(openSignal.tab);
+    setPreset(openSignal);
     setUploadOpen(true);
   }, [openSignal]);
 
@@ -265,75 +265,10 @@ function DocumentUploadCard({
     const stillProcessing = new Set(docs.filter(isDocProcessing).map((d) => d.id));
     const finished = Array.from(processingIdsRef.current).some((id) => !stillProcessing.has(id));
     processingIdsRef.current = stillProcessing;
-    if (finished) queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+    if (finished) {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+    }
   }, [docs, dealId]);
-
-  const uploadDoc = useMutation({
-    mutationFn: async () => {
-      // Pasted text becomes a plain .txt upload — same pipeline. The title
-      // travels separately so the document keeps it verbatim ("—", commas
-      // and all); only the File name is sanitised for the wire.
-      const title = pasteTitle.trim();
-      const safeFileName =
-        title.replace(/[^a-zA-Z0-9-_ ]/g, " ").replace(/\s+/g, " ").trim() || "call-transcript";
-      const file =
-        uploadTab === "paste"
-          ? new File([pasteText], `${safeFileName}.txt`, { type: "text/plain" })
-          : docFile;
-      if (!file || (uploadTab === "paste" && !pasteText.trim()))
-        throw new Error(uploadTab === "paste" ? "Nothing pasted" : "No file selected");
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("category", docCategory);
-      if (uploadTab === "paste" && title) formData.append("title", title);
-      const r = await fetch(`/api/deals/${dealId}/documents/upload`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      // Multipart request, so apiJson doesn't apply — but the toast must
-      // still say why the server rejected it (type, size, session...).
-      const text = await r.text();
-      let body: Record<string, any> | null = null;
-      try {
-        body = text ? JSON.parse(text) : null;
-      } catch {
-        body = null;
-      }
-      if (!r.ok) {
-        throw new ApiError(
-          body && typeof body.error === "string"
-            ? body.error
-            : r.status === 401
-              ? "Your session has expired — please sign in again."
-              : `Upload failed (${r.status})`,
-          r.status,
-          body,
-        );
-      }
-      return body ?? {};
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "documents"],
-      });
-      toast({
-        title: "Document uploaded",
-        description: "Parsing will begin automatically.",
-      });
-      setDocFile(null);
-      setPasteText("");
-      setPasteTitle("");
-      setUploadOpen(false);
-    },
-    onError: (err: Error) => {
-      toast({
-        title: "Upload failed",
-        description: err.message,
-        variant: "destructive",
-      });
-    },
-  });
 
   const parsedCount = docs.filter(
     (d: any) => (d.status as string) === "extracted",
@@ -345,10 +280,10 @@ function DocumentUploadCard({
         <div className="flex items-start gap-3">
           <Upload className="h-[1.125rem] w-[1.125rem] text-teal mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Upload Documents</p>
+            <p className="text-sm font-medium">Add information</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Upload financials, P&L, tax returns, leases, and other key
-              documents. The AI will extract structured data automatically.
+              Documents, emails, call or video-call transcripts, CRM notes, web
+              pages — the AI reads each one and records where every fact came from.
             </p>
             {/* A failed list fetch must not read as "nothing uploaded yet". */}
             {docsError && (
@@ -392,18 +327,30 @@ function DocumentUploadCard({
                 )}
               </div>
             )}
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
-                onClick={() => setUploadOpen(true)}
+                onClick={() => {
+                  setPreset({ kind: "document", tab: "file", nonce: Date.now() });
+                  setUploadOpen(true);
+                }}
+                data-testid="button-open-upload"
               >
-                <Upload className="h-3 w-3" /> Upload File
+                <Upload className="h-3 w-3" /> Add a source
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                onClick={() => setLocation(`/deal/${dealId}/information`)}
+              >
+                <Library className="h-3 w-3" /> Collected information
               </Button>
               {docs.length > 0 && (
                 <span className="text-2xs text-muted-foreground">
-                  {docs.length} uploaded
-                  {parsedCount > 0 && ` · ${parsedCount} parsed`}
+                  {docs.length} source{docs.length === 1 ? "" : "s"}
+                  {parsedCount > 0 && ` · ${parsedCount} read`}
                 </span>
               )}
             </div>
@@ -411,101 +358,7 @@ function DocumentUploadCard({
         </div>
       </div>
 
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Upload Document</DialogTitle>
-            <DialogDescription>
-              Supported: PDF, Excel (.xlsx/.xls), Word (.docx), PowerPoint
-              (.pptx), text files
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-3 space-y-3">
-            <div className="flex gap-1 rounded-md bg-muted p-0.5 w-fit">
-              {(["file", "paste"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setUploadTab(t)}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    uploadTab === t
-                      ? "bg-card shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {t === "file" ? "Upload file" : "Paste text"}
-                </button>
-              ))}
-            </div>
-            {uploadTab === "file" ? (
-              <div className="space-y-1.5">
-                <Label className="text-xs">File</Label>
-                <Input
-                  type="file"
-                  accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
-                  onChange={(e) => setDocFile(e.target.files?.[0] || null)}
-                  className="h-9"
-                />
-              </div>
-            ) : (
-              <>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Title (optional)</Label>
-                  <Input
-                    placeholder="e.g. Seller call — July 15"
-                    value={pasteTitle}
-                    onChange={(e) => setPasteTitle(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Text</Label>
-                  <Textarea
-                    placeholder="Paste a call transcript, meeting notes, or any text — the AI extracts the key facts into the deal profile."
-                    value={pasteText}
-                    onChange={(e) => setPasteText(e.target.value)}
-                    className="min-h-[10rem] text-sm"
-                  />
-                </div>
-              </>
-            )}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Category</Label>
-              <Select value={docCategory} onValueChange={setDocCategory}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DOC_CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setUploadOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
-              onClick={() => uploadDoc.mutate()}
-              disabled={
-                (uploadTab === "file" ? !docFile : !pasteText.trim()) ||
-                uploadDoc.isPending
-              }
-            >
-              {uploadDoc.isPending ? "Uploading..." : "Upload & Parse"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AddSourceDialog dealId={dealId} open={uploadOpen} onOpenChange={setUploadOpen} preset={preset} />
     </>
   );
 }
@@ -562,7 +415,7 @@ function IntegrationPromptCard({
     {
       icon: Database,
       label: "CRM",
-      desc: "Connect Pipedrive for buyer prefill",
+      desc: "Import the seller's Pipedrive record",
       badge: "Available",
       badgeCls: "bg-teal/10 text-teal",
       onClick: () => setLocation("/broker/integrations"),
@@ -864,6 +717,12 @@ Signed electronically via the Cimple platform.`;
       testId: "button-invite-seller",
       action: () => {
         setInviteResult(null);
+        // Start from the seller's details on file (CRM / Information tab).
+        const contact = deal.sellerContact as DealSellerContact | null;
+        if (contact) {
+          setSellerName((v) => v || contact.name || "");
+          setSellerEmail((v) => v || contact.email || "");
+        }
         setInviteOpen(true);
       },
       actionLabel: "Invite Seller",
@@ -1551,15 +1410,46 @@ function Phase2Center() {
           )}
           <div className="flex-1">
             <p
-              className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-teal"}`}
+              className={`text-sm font-medium ${deal.interviewCompleted ? "text-foreground" : "text-teal"}`}
             >
-              AI interview
+              {deal.interviewCompleted ? "Interview complete" : "AI interview"}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {deal.interviewCompleted
-                ? "Completed — business profile built"
+                ? "The business profile is built — you can keep adding to it."
                 : "The AI conducts an adaptive interview to build the full business profile."}
             </p>
+            {deal.interviewCompleted && (
+              <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="interview-complete-links">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setLocation(`/deal/${dealId}/information`)}
+                  data-testid="button-view-collected-information"
+                >
+                  <Library className="h-3 w-3" /> View collected information
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setLocation(`/deal/${dealId}/interview-review`)}
+                  data-testid="button-view-transcript"
+                >
+                  <MessageSquare className="h-3 w-3" /> View transcript
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setLocation(`/deal/${dealId}/interview`)}
+                  data-testid="button-add-more-detail"
+                >
+                  <Pencil className="h-3 w-3" /> Add more detail
+                </Button>
+              </div>
+            )}
             {!deal.interviewCompleted && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button
@@ -1594,7 +1484,7 @@ function Phase2Center() {
       {/* Advance to Content Creation — the clear next step once the interview
           is done. Previously there was no path from here to CIM generation.
           Hidden once the deal is past Seller Intake (it would move it back). */}
-      {deal.interviewCompleted && getPhaseIndex(deal.phase) < getPhaseIndex("phase3_content_creation") && (
+      {deal.interviewCompleted && deal.phase === "phase2_platform_intake" && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div>
             <p className="text-sm font-medium">Ready to build the CIM</p>
@@ -2596,9 +2486,11 @@ export interface PhaseFocus {
 
 export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } = {}) {
   const { deal, dealId } = useDeal();
-  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(
-    new Set(),
-  );
+  const [, setLocation] = useLocation();
+  // Open/closed per phase. The current phase starts open and every other one
+  // closed, but all of them can be toggled — including the current one.
+  const [phaseOpen, setPhaseOpen] = useState<Record<string, boolean>>({});
+  const isPhaseOpen = (key: string) => phaseOpen[key] ?? deal.phase === key;
   // Header stepper → expand the target phase, then scroll once it has
   // rendered. Runs here (not on a timer in DealShell) so it also works when
   // the click navigated from another tab and this component mounted later.
@@ -2606,30 +2498,21 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   useEffect(() => {
     if (!phaseFocus) return;
     pendingScrollRef.current = phaseFocus.key;
-    setExpandedPhases((prev) => {
-      if (prev.has(phaseFocus.key)) return prev;
-      const next = new Set(prev);
-      next.add(phaseFocus.key);
-      return next;
-    });
+    setPhaseOpen((prev) => (prev[phaseFocus.key] ? prev : { ...prev, [phaseFocus.key]: true }));
   }, [phaseFocus]);
   useEffect(() => {
     const key = pendingScrollRef.current;
     if (!key) return;
-    // Wait for the card to actually be open (current phase is always open)
-    // so we scroll to the expanded content, not a collapsed header.
-    if (deal.phase !== key && !expandedPhases.has(key)) return;
+    // Wait for the card to actually be open so we scroll to the expanded
+    // content, not a collapsed header.
+    if (!isPhaseOpen(key)) return;
     const el = document.getElementById(`phase-section-${key}`);
     if (!el) return;
     pendingScrollRef.current = null;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  // Set by the Calls tile to pop the shared upload dialog pre-configured.
-  const [uploadSignal, setUploadSignal] = useState<{
-    category: string;
-    tab: "file" | "paste";
-    nonce: number;
-  } | null>(null);
+  // Set by the Calls tile to pop the shared Add source dialog pre-configured.
+  const [uploadSignal, setUploadSignal] = useState<AddSourcePreset | null>(null);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
@@ -2642,12 +2525,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   };
 
   const togglePhase = (key: string) => {
-    setExpandedPhases((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setPhaseOpen((prev) => ({ ...prev, [key]: !(prev[key] ?? deal.phase === key) }));
   };
 
   return (
@@ -2655,7 +2533,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
-        const isExpanded = isCurrentPhase || expandedPhases.has(phase.key);
+        const isExpanded = isPhaseOpen(phase.key);
         // On a failed invites fetch, fall back to questionnaire evidence
         // (phases.ts) rather than asserting "not invited".
         const items = phase.items(deal, {
@@ -2676,13 +2554,12 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
                   : "border-border/60 bg-muted/20"
             }`}
           >
+            <div className="flex items-center rounded-lg hover:bg-muted/30 transition-colors">
             <button
-              onClick={() => !isCurrentPhase && togglePhase(phase.key)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-left ${
-                !isCurrentPhase
-                  ? "cursor-pointer hover:bg-muted/30 transition-colors"
-                  : ""
-              } rounded-lg`}
+              onClick={() => togglePhase(phase.key)}
+              aria-expanded={isExpanded}
+              className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 text-left cursor-pointer rounded-lg"
+              data-testid={`phase-toggle-${phase.key}`}
             >
               {isComplete ? (
                 <CheckCircle2 className="h-4.5 w-4.5 text-success shrink-0" />
@@ -2725,13 +2602,29 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
                 </span>
               </div>
 
-              {!isCurrentPhase &&
-                (isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                ))}
             </button>
+            {phase.key === "phase3_content_creation" && (
+              <button
+                type="button"
+                onClick={() => setLocation(`/deal/${dealId}/information`)}
+                className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-teal hover:bg-teal/10 transition-colors"
+                data-testid="link-phase3-collected-information"
+              >
+                <Library className="h-3 w-3" />
+                <span className="hidden sm:inline">Collected information</span>
+                <span className="sm:hidden">Information</span>
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => togglePhase(phase.key)}
+              aria-label={isExpanded ? `Collapse ${phase.label}` : `Expand ${phase.label}`}
+              className="shrink-0 p-2 mr-2 rounded-md text-muted-foreground hover:text-foreground"
+            >
+              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            </div>
 
             {isExpanded && (
               <div className="px-4 pb-4 pt-1 border-t border-border/50">
@@ -2754,11 +2647,12 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
               the seller can add them at any time.
             </p>
           </div>
+          <CrmLinkCard dealId={dealId} variant="compact" />
           <DocumentUploadCard openSignal={uploadSignal} />
           <IntegrationPromptCard
             onOpenTranscripts={() =>
               setUploadSignal({
-                category: "transcripts",
+                kind: "call",
                 tab: "paste",
                 nonce: Date.now(),
               })

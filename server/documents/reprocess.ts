@@ -27,7 +27,14 @@ import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
-import { getFieldSources, FIELD_SOURCES_KEY, FIELD_ALTERNATES_KEY } from "../interview/info-merger";
+import {
+  getFieldSources,
+  mergeAlternateMaps,
+  FIELD_SOURCES_KEY,
+  FIELD_ALTERNATES_KEY,
+  BROKER_SUPPRESSED_KEY,
+} from "../interview/info-merger";
+import { documentKind, mergeableExtraction } from "./ingest";
 
 export async function reprocessDealDocuments(
   dealId: string,
@@ -73,7 +80,7 @@ export async function reprocessDealDocuments(
 
     if (text) {
       try {
-        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory);
+        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc));
         // extractDocumentData never throws — API failures come back as a
         // stub ({_confidence:"low", summary:"Extraction failed"} or
         // {_documentType:"unreadable"}). A stub must not overwrite the
@@ -104,14 +111,17 @@ export async function reprocessDealDocuments(
   // Claude calls run in bounded-parallel batches; merging happens afterwards
   // in stable document order so precedence stays deterministic.
   const BATCH_SIZE = 4;
-  const results: { id: string; data: ExtractedDocumentData | null }[] = [];
+  const results: { doc: (typeof documents)[number]; data: ExtractedDocumentData | null }[] = [];
   for (let i = 0; i < documents.length; i += BATCH_SIZE) {
     const batch = documents.slice(i, i + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map(async (d) => ({ id: d.id, data: await extractForDoc(d) })))));
+    results.push(...(await Promise.all(batch.map(async (d) => ({ doc: d, data: await extractForDoc(d) })))));
   }
-  for (const { id, data } of results) {
+  // Keys the broker deleted stay deleted — the merge skips them.
+  const suppressed = (deal.extractedInfo as Record<string, unknown> | null)?.[BROKER_SUPPRESSED_KEY];
+  if (Array.isArray(suppressed) && suppressed.length > 0) docsMerged[BROKER_SUPPRESSED_KEY] = suppressed;
+  for (const { doc, data } of results) {
     if (data) {
-      docsMerged = mergeExtractedData(docsMerged, data, id);
+      docsMerged = mergeExtractedData(docsMerged, mergeableExtraction(doc, data), { documentId: doc.id, source: documentKind(doc) });
       documentsReprocessed++;
     }
   }
@@ -128,15 +138,49 @@ export async function reprocessDealDocuments(
     if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY) continue;
     if (value === null || value === undefined || value === "") continue;
     const src = existingSources[key];
-    if (src?.source === "document" && rebuilt[key] !== undefined) continue; // fresh extraction wins
+    // A value asserted by a source row (document, email, call transcript,
+    // CRM note, …) is refreshed from that row's re-extraction; everything
+    // else — the seller's words, the questionnaire, broker edits, untracked
+    // legacy values — is kept as it was.
+    if (src?.documentId && rebuilt[key] !== undefined) continue; // fresh extraction wins
     rebuilt[key] = value;
     if (src) rebuiltSources[key] = src;
     else delete rebuiltSources[key]; // legacy value stays untracked (seller-authored by default)
   }
   rebuilt[FIELD_SOURCES_KEY] = rebuiltSources;
+  // Alternates: keep the ones not tied to a source row, then add the rebuilt
+  // set (which re-derives every source-row alternate from fresh extractions).
   const existingAlts = (existing[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
-  const rebuiltAlts = (docsMerged[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
-  rebuilt[FIELD_ALTERNATES_KEY] = { ...existingAlts, ...rebuiltAlts };
+  const keptAlts: Record<string, unknown[]> = {};
+  for (const [k, list] of Object.entries(existingAlts)) {
+    const kept = (Array.isArray(list) ? list : []).filter((a) => !(a as { documentId?: string }).documentId);
+    if (kept.length > 0) keptAlts[k] = kept;
+  }
+  rebuilt[FIELD_ALTERNATES_KEY] = mergeAlternateMaps(keptAlts, docsMerged[FIELD_ALTERNATES_KEY] as Record<string, unknown> | undefined);
+
+  // Re-extraction can take minutes. Re-read the deal and carry over anything
+  // that changed meanwhile (an interview turn, a broker edit, another upload)
+  // so this rebuild never clobbers it.
+  const latest = ((await storage.getDeal(dealId))?.extractedInfo as Record<string, unknown> | null) || {};
+  const latestSources = getFieldSources(latest);
+  const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
+  for (const key of Array.from(new Set([...Object.keys(latest), ...Object.keys(existing)]))) {
+    if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY) continue;
+    if (JSON.stringify(latest[key]) === JSON.stringify(existing[key])) continue;
+    if (latest[key] === undefined) { delete rebuilt[key]; delete finalSources[key]; continue; }
+    rebuilt[key] = latest[key];
+    if (latestSources[key]) finalSources[key] = latestSources[key];
+  }
+  rebuilt[FIELD_SOURCES_KEY] = finalSources;
+  // Alternates recorded since the rebuild started (not the stale ones it re-derived).
+  const latestAlts = (latest[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
+  const addedSince: Record<string, unknown[]> = {};
+  for (const [k, list] of Object.entries(latestAlts)) {
+    const before = new Set((existingAlts[k] ?? []).map((a) => (a as { value?: string }).value));
+    const fresh = (Array.isArray(list) ? list : []).filter((a) => !before.has((a as { value?: string }).value));
+    if (fresh.length > 0) addedSince[k] = fresh;
+  }
+  rebuilt[FIELD_ALTERNATES_KEY] = mergeAlternateMaps(rebuilt[FIELD_ALTERNATES_KEY] as Record<string, unknown>, addedSince);
 
   await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);
 

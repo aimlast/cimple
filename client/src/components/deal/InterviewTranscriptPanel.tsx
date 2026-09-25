@@ -2,7 +2,7 @@
  * InterviewTranscriptPanel — Shows all interview sessions for a deal
  * with full conversation transcripts the broker can read through.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -45,6 +45,9 @@ interface SessionSummary {
 
 interface InterviewTranscriptPanelProps {
   dealId: string;
+  /** Open this session and jump to one seller turn (links from the Information tab). */
+  focusSessionId?: string | null;
+  focusTurn?: number | null;
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
@@ -108,11 +111,27 @@ function statusLabel(status: string): string {
 
 // ── Message Bubble ────────────────────────────────────────────────────────────
 
-function MessageBubble({ message }: { message: ConversationMessage }) {
+function MessageBubble({
+  message,
+  turn,
+  anchorId,
+  highlighted,
+}: {
+  message: ConversationMessage;
+  /** Seller turn number (1-based) — what fact sources cite as "turn N". */
+  turn?: number;
+  anchorId?: string;
+  highlighted?: boolean;
+}) {
   const isAI = message.role === "ai";
 
   return (
-    <div className={`flex gap-3 ${isAI ? "" : "flex-row-reverse"}`}>
+    <div
+      id={anchorId}
+      className={`flex gap-3 scroll-mt-4 rounded-lg transition-colors ${isAI ? "" : "flex-row-reverse"} ${
+        highlighted ? "ring-1 ring-teal/60 bg-teal/5 p-2 -m-2" : ""
+      }`}
+    >
       {/* Avatar */}
       <div
         className={`flex-shrink-0 w-7 h-7 rounded-full flex items-center justify-center ${
@@ -132,6 +151,9 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
           <span className="text-[11px] font-medium text-muted-foreground/70">
             {isAI ? "Interviewer" : "Seller"}
           </span>
+          {typeof turn === "number" && (
+            <span className="text-[10px] text-muted-foreground/50">Turn {turn}</span>
+          )}
           <span className="text-[10px] text-muted-foreground/40">
             {formatTime(message.timestamp)}
           </span>
@@ -156,11 +178,37 @@ function MessageBubble({ message }: { message: ConversationMessage }) {
 
 // ── Session Card ──────────────────────────────────────────────────────────────
 
-function SessionCard({ session, index }: { session: SessionSummary; index: number }) {
-  const [expanded, setExpanded] = useState(false);
+function SessionCard({
+  session,
+  index,
+  focusTurn,
+  focused,
+}: {
+  session: SessionSummary;
+  index: number;
+  focusTurn?: number | null;
+  focused?: boolean;
+}) {
+  const [expanded, setExpanded] = useState(!!focused);
+  const cardRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!focused) return;
+    setExpanded(true);
+    // Wait for the transcript to render, then bring the cited turn into view.
+    const t = window.setTimeout(() => {
+      const target = focusTurn ? document.getElementById(`turn-${session.id}-${focusTurn}`) : null;
+      (target ?? cardRef.current)?.scrollIntoView({ behavior: "smooth", block: target ? "center" : "start" });
+    }, 150);
+    return () => window.clearTimeout(t);
+  }, [focused, focusTurn, session.id]);
+
+  // Seller turn number for each message; the AI question right before a
+  // highlighted turn is highlighted with it.
+  let userTurn = 0;
+  const turns = session.messages.map((m) => (m.role === "user" ? ++userTurn : undefined));
 
   return (
-    <div className="border border-border/50 rounded-lg overflow-hidden">
+    <div ref={cardRef} className={`border rounded-lg overflow-hidden scroll-mt-4 ${focused ? "border-teal/40" : "border-border/50"}`}>
       {/* Header (clickable) */}
       <button
         onClick={() => setExpanded(!expanded)}
@@ -217,9 +265,21 @@ function SessionCard({ session, index }: { session: SessionSummary; index: numbe
                 No messages in this session.
               </p>
             ) : (
-              session.messages.map((msg, i) => (
-                <MessageBubble key={i} message={msg} />
-              ))
+              session.messages.map((msg, i) => {
+                const turn = turns[i];
+                const isFocus =
+                  !!focused && !!focusTurn &&
+                  (turn === focusTurn || (msg.role === "ai" && turns[i + 1] === focusTurn));
+                return (
+                  <MessageBubble
+                    key={i}
+                    message={msg}
+                    turn={turn}
+                    anchorId={turn ? `turn-${session.id}-${turn}` : undefined}
+                    highlighted={isFocus}
+                  />
+                );
+              })
             )}
           </div>
 
@@ -246,6 +306,8 @@ function SessionCard({ session, index }: { session: SessionSummary; index: numbe
 
 export function InterviewTranscriptPanel({
   dealId,
+  focusSessionId,
+  focusTurn,
 }: InterviewTranscriptPanelProps) {
   const {
     data: sessions,
@@ -348,8 +410,15 @@ export function InterviewTranscriptPanel({
       </CardHeader>
 
       <CardContent className="space-y-3">
+        {/* Newest first; numbered in the order they happened (Session 1 = first). */}
         {sessions.map((session, i) => (
-          <SessionCard key={session.id} session={session} index={i} />
+          <SessionCard
+            key={session.id}
+            session={session}
+            index={sessions.length - 1 - i}
+            focused={focusSessionId === session.id}
+            focusTurn={focusSessionId === session.id ? focusTurn : null}
+          />
         ))}
       </CardContent>
     </Card>

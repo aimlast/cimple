@@ -31,6 +31,13 @@ import {
   getFieldSources,
   sourceAllowsOverwrite,
   recordAlternate,
+  getSuppressedKeys,
+  isSuppressed,
+  mergeAlternateMaps,
+  sourceRank,
+  BROKER_SUPPRESSED_KEY,
+  type FieldSource,
+  type SourceKind,
   numbersMateriallyConflict,
   typedNumericValues,
   HIGH_STAKES_FIELDS,
@@ -154,9 +161,28 @@ const INTERVIEW_MODEL = agentConfig.models.interviewAgent;
  */
 export type ConductedBy = "seller" | "broker_with_seller";
 
+/** How a broker-led session is happening — decides the provenance kind of what it captures. */
+export type ConductedVia = "person" | "cimple" | "zoom" | "meet" | "teams";
+const CONDUCTED_VIAS: readonly ConductedVia[] = ["person", "cimple", "zoom", "meet", "teams"];
+
+/** Validates a client-supplied conductedVia; anything else is "not given". */
+export function parseConductedVia(raw: unknown): ConductedVia | undefined {
+  return typeof raw === "string" && (CONDUCTED_VIAS as readonly string[]).includes(raw) ? (raw as ConductedVia) : undefined;
+}
+
+/**
+ * Provenance kind for facts a session captures: the seller typing in the AI
+ * interview → "interview"; a broker-led session in person → "call"; over the
+ * Cimple call or Zoom / Meet / Teams → "video_call".
+ */
+export function sessionSourceKind(conductedBy: ConductedBy, via: ConductedVia | undefined): SourceKind {
+  if (conductedBy !== "broker_with_seller") return "interview";
+  return via && via !== "person" ? "video_call" : "call";
+}
+
 export async function startOrResumeSession(
   dealId: string,
-  opts: { conductedBy?: ConductedBy } = {},
+  opts: { conductedBy?: ConductedBy; conductedVia?: ConductedVia } = {},
 ): Promise<TurnResult> {
   // Load the deal and all related data
   let deal = await storage.getDeal(dealId);
@@ -167,7 +193,7 @@ export async function startOrResumeSession(
   // like "reasonForSelling" are canonicalised to schema keys like
   // "reasonForSale" — previously they never matched, so coverage showed the
   // section as missing and the agent asked again.)
-  const seeded = seedExtractedInfoFromQuestionnaire(deal);
+  const seeded = seedExtractedInfoFromQuestionnaire(deal as Parameters<typeof seedExtractedInfoFromQuestionnaire>[0]);
   if (seeded) {
     await storage.updateDeal(dealId, { extractedInfo: seeded });
     deal = { ...deal, extractedInfo: seeded };
@@ -364,6 +390,7 @@ export async function startOrResumeSession(
       lastActivityAt: new Date(),
       extractedInfo: {
         _conductedBy: opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller",
+        ...(opts.conductedVia ? { _conductedVia: opts.conductedVia } : {}),
         _industryContext: seededIndustryContext,
         _deferredTopics: deferralTopicStrings(seededLedger),
         _deferralLedger: seededLedger,
@@ -417,6 +444,8 @@ export async function processTurn(
     /** Broker-led ("Interview together"): the broker reads questions aloud and
      *  the seller's spoken answers are captured. Changes phrasing rules. */
     conductedBy?: ConductedBy;
+    /** How a broker-led session is happening (in person / Cimple call / Zoom…). */
+    conductedVia?: ConductedVia;
   } = {},
 ): Promise<TurnResult> {
   // The seller's message is timestamped when it arrives, not when the AI
@@ -448,6 +477,7 @@ export async function processTurn(
   // can pick up a seller-started session and run the rest together.
   const conductedBy: ConductedBy = opts.conductedBy ?? (sessionMeta._conductedBy as ConductedBy | undefined) ?? "seller";
   kb.conductedBy = conductedBy;
+  const conductedVia: ConductedVia | undefined = opts.conductedVia ?? parseConductedVia(sessionMeta._conductedVia);
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string>) || {};
 
   // Durable deferral ledger + stop-signal counter (see deferral-ledger.ts and
@@ -981,9 +1011,39 @@ export async function processTurn(
     }
   }
 
-  // Provenance: everything the interview wrote this turn is the seller's own
-  // word — the highest authority, never to be displaced by a document.
-  for (const c of changes) setFieldSource(merged as Record<string, unknown>, c.fieldName, { source: "interview" });
+  // Provenance: everything this turn wrote is the seller's own word — typed
+  // in the interview, or spoken on a broker-led call / video call. Recorded
+  // with the session and turn so the broker can open the exact exchange.
+  // Two rules around it:
+  // - A value the BROKER set (edit or discrepancy resolution) is final: the
+  //   seller's differing statement is kept as an alternate for the broker to
+  //   adopt, never written over the broker's value.
+  // - The value this turn displaced from another source (a document, the
+  //   questionnaire, an email…) is kept as an alternate, never lost.
+  {
+    const mergedInfo = merged as Record<string, unknown>;
+    const kind = sessionSourceKind(conductedBy, conductedVia);
+    const at = new Date().toISOString();
+    const turnSrc: FieldSource = { source: kind, sessionId, turn: userTurnCount, at };
+    const priorSources = getFieldSources(existingExtracted);
+    const kept: FieldChange[] = [];
+    for (const c of changes) {
+      const prev = priorSources[c.fieldName];
+      if (prev?.source === "broker" && c.previousValue !== null && c.previousValue !== undefined) {
+        mergedInfo[c.fieldName] = existingExtracted[c.fieldName];
+        if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+        else delete updatedConfidence[c.fieldName];
+        recordAlternate(mergedInfo, c.fieldName, c.newValue, turnSrc);
+        continue;
+      }
+      if (prev && c.previousValue !== null && c.previousValue !== undefined && (prev.source !== kind || prev.documentId)) {
+        recordAlternate(mergedInfo, c.fieldName, c.previousValue, prev);
+      }
+      setFieldSource(mergedInfo, c.fieldName, turnSrc);
+      kept.push(c);
+    }
+    changes = kept;
+  }
 
   // Save to deal — re-read first. A document can finish parsing during the
   // 10–30 s model call; writing our stale snapshot back would erase its
@@ -1007,7 +1067,13 @@ export async function processTurn(
   toSave._fieldSources = savedSources;
   const freshAlts = (freshInfo._fieldAlternates as Record<string, unknown> | undefined) || {};
   const turnAlts = (mergedRec._fieldAlternates as Record<string, unknown> | undefined) || {};
-  if (Object.keys(freshAlts).length || Object.keys(turnAlts).length) toSave._fieldAlternates = { ...freshAlts, ...turnAlts };
+  if (Object.keys(freshAlts).length || Object.keys(turnAlts).length) toSave._fieldAlternates = mergeAlternateMaps(freshAlts, turnAlts);
+  // A fact the broker deleted comes back only when the seller states it
+  // again live — that is new information, and leaving it suppressed would
+  // make the interview ask for it forever.
+  const stillSuppressed = getSuppressedKeys(freshInfo).filter((k) => !changes.some((c) => c.fieldName === k));
+  if (stillSuppressed.length > 0) toSave[BROKER_SUPPRESSED_KEY] = stillSuppressed;
+  else delete toSave[BROKER_SUPPRESSED_KEY];
   await storage.updateDeal(dealId, {
     extractedInfo: toSave,
   });
@@ -1066,6 +1132,7 @@ export async function processTurn(
       questionsSkipped,
       extractedInfo: {
         _conductedBy: conductedBy,
+        ...(conductedVia ? { _conductedVia: conductedVia } : {}),
         _industryContext: updatedIndustryContext,
         // Open ledger topics — kept for the resume path and the learning
         // loop, which read _deferredTopics; the ledger itself is durable.
@@ -1319,41 +1386,123 @@ function countExtractedFields(deal: { extractedInfo: unknown }): { total: number
 }
 
 /**
- * Copies intake-questionnaire answers into extractedInfo (canonicalised key
- * names, coverage-known fields only, never overwriting existing values).
- * Returns the new extractedInfo map when anything was added, else null.
+ * Intake answers as coverage facts: the questionnaire's business basics
+ * (canonicalised keys, coverage-known fields only), plus the intake's systems
+ * list (→ operationalSystems) and staff list (→ employeeStructure, and the
+ * people flagged as key → keyEmployees).
  */
-function seedExtractedInfoFromQuestionnaire(deal: {
-  questionnaireData: unknown;
+function questionnaireFacts(deal: {
+  questionnaireData?: unknown;
+  operationalSystems?: unknown;
+  employeeChart?: unknown;
+}): Array<[string, string]> {
+  const out: Array<[string, string]> = [];
+  const questionnaire = deal.questionnaireData as Record<string, unknown> | null;
+  for (const [rawKey, rawValue] of Object.entries(questionnaire || {})) {
+    if (typeof rawValue !== "string" || rawValue.trim() === "") continue;
+    const key = canonicalFieldName(rawKey);
+    if (!KNOWN_EXTRACTED_FIELDS.has(key)) continue;
+    out.push([key, rawValue.trim()]);
+  }
+  const systems = deal.operationalSystems as Record<string, unknown> | null;
+  if (systems && typeof systems === "object") {
+    const labels: Record<string, string> = { accounting: "Accounting", crm: "CRM", pos: "POS", erp: "ERP", payroll: "Payroll" };
+    const parts: string[] = [];
+    for (const [k, label] of Object.entries(labels)) {
+      const v = systems[k];
+      if (typeof v === "string" && v.trim()) parts.push(`${label}: ${v.trim()}`);
+    }
+    const other = Array.isArray(systems.other) ? systems.other.map(String).map((x) => x.trim()).filter(Boolean) : [];
+    if (other.length > 0) parts.push(`Other: ${other.join(", ")}`);
+    if (parts.length > 0) out.push(["operationalSystems", parts.join("; ")]);
+  }
+  if (Array.isArray(deal.employeeChart)) {
+    const people = (deal.employeeChart as Array<Record<string, unknown>>)
+      .filter((e) => e && typeof e === "object" && typeof e.name === "string" && e.name.trim())
+      .map((e) => {
+        const role = typeof e.role === "string" && e.role.trim() ? ` — ${e.role.trim()}` : "";
+        const yrs = typeof e.yearsWithCompany === "string" && e.yearsWithCompany.trim() ? ` (${e.yearsWithCompany.trim()} yrs)` : "";
+        return { line: `${String(e.name).trim()}${role}${yrs}`, key: !!e.keyPerson };
+      });
+    if (people.length > 0) out.push(["employeeStructure", `Staff listed at intake: ${people.map((p) => p.line).join("; ")}`]);
+    const keyPeople = people.filter((p) => p.key);
+    if (keyPeople.length > 0) out.push(["keyEmployees", keyPeople.map((p) => p.line).join("; ")]);
+  }
+  return out;
+}
+
+/**
+ * Copies intake answers into extractedInfo with provenance
+ * {source:"questionnaire"}. The seller's own typed answer replaces a value
+ * that only a model read from a lower-ranked source (document, CRM note,
+ * website) — the displaced value is kept as an alternate — but never the
+ * seller's interview words, a broker edit, an untracked legacy value, a
+ * same-rank source (an email) or a fact the broker deleted.
+ * Returns the new extractedInfo map when anything changed, else null.
+ */
+export function seedExtractedInfoFromQuestionnaire(deal: {
+  questionnaireData?: unknown;
+  operationalSystems?: unknown;
+  employeeChart?: unknown;
   extractedInfo: unknown;
 }): Record<string, unknown> | null {
-  const questionnaire = deal.questionnaireData as Record<string, unknown> | null;
-  if (!questionnaire || Object.keys(questionnaire).length === 0) return null;
+  const facts = questionnaireFacts(deal);
+  if (facts.length === 0) return null;
 
   const existing = (deal.extractedInfo || {}) as Record<string, unknown>;
   let added = false;
   const seeded = { ...existing };
+  const at = new Date().toISOString();
 
-  for (const [rawKey, rawValue] of Object.entries(questionnaire)) {
-    if (typeof rawValue !== "string" || rawValue.trim() === "") continue;
-    const key = canonicalFieldName(rawKey);
-    if (!KNOWN_EXTRACTED_FIELDS.has(key)) continue;
+  for (const [key, value] of facts) {
     const current = seeded[key];
     const empty = current === null || current === undefined || current === "";
     // The seller's own typed answer outranks anything a model read from a
     // document (observed: a transcript's "Dr. Lee" blocked the intake's
     // "Dr. Rao" for the whole deal) — but never the seller's interview words.
     if (!empty) {
-      if (!sourceAllowsOverwrite(seeded, key, "questionnaire")) continue;
-      if (String(current) === rawValue.trim()) continue;
-      recordAlternate(seeded, key, current, getFieldSources(seeded)[key] ?? { source: "document" });
+      if (String(current) === value) continue;
+      const cur = getFieldSources(seeded)[key];
+      const outranked =
+        !sourceAllowsOverwrite(seeded, key, "questionnaire") ||
+        (!!cur && cur.source !== "questionnaire" && sourceRank(cur.source) >= sourceRank("questionnaire"));
+      if (outranked) {
+        // Keep the intake answer visible to the broker as another value.
+        if (!isSuppressed(seeded, key)) {
+          const before = JSON.stringify(seeded._fieldAlternates ?? null);
+          recordAlternate(seeded, key, value, { source: "questionnaire", at });
+          if (JSON.stringify(seeded._fieldAlternates ?? null) !== before) added = true;
+        }
+        continue;
+      }
+      recordAlternate(seeded, key, current, cur ?? { source: "document" });
+    } else if (isSuppressed(seeded, key)) {
+      continue; // the broker deleted this fact
     }
-    seeded[key] = rawValue.trim();
-    setFieldSource(seeded, key, { source: "questionnaire" });
+    seeded[key] = value;
+    setFieldSource(seeded, key, { source: "questionnaire", at });
     added = true;
   }
 
   return added ? seeded : null;
+}
+
+/**
+ * Seeds intake answers onto the deal right after the seller submits the
+ * intake (not only when the interview starts), so the broker's Information
+ * tab and the readiness score reflect them at once. Re-reads the deal and
+ * writes only the keys it changed.
+ */
+export async function seedQuestionnaireFacts(dealId: string): Promise<string[]> {
+  const deal = await storage.getDeal(dealId);
+  if (!deal) return [];
+  const before = (deal.extractedInfo || {}) as Record<string, unknown>;
+  const seeded = seedExtractedInfoFromQuestionnaire(deal);
+  if (!seeded) return [];
+  const changed = Object.keys(seeded).filter((k) => !k.startsWith("_") && JSON.stringify(seeded[k]) !== JSON.stringify(before[k]));
+  if (changed.length === 0) return [];
+  await storage.updateDeal(dealId, { extractedInfo: seeded });
+  return changed;
 }
 
 /**

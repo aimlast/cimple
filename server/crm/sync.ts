@@ -17,11 +17,14 @@
  */
 import { storage } from "../storage";
 import type { Deal, Integration, CrmStageMapping } from "@shared/schema";
+import { pd, PipedriveError } from "./pipedrive";
 
 export type SyncResult =
   | { status: "synced"; provider: string; action: string }
   | { status: "failed"; provider: string; error: string }
-  | { status: "not_configured" };
+  /** Nothing to do: no CRM connected, or the CRM is connected but this deal /
+   *  this decision has no stage mapping. `reason` is the broker-facing line. */
+  | { status: "not_configured"; provider?: string; reason?: string };
 
 export type BuyerAction = "interested" | "not_interested";
 
@@ -83,22 +86,27 @@ async function syncPipedrive(
 
   const mapping = (integration.config || {}) as CrmStageMapping;
   const pipedriveDealId = mapping.dealFieldMapping?.[deal.id];
+  // No stage mapping for this deal is a normal state (nothing to update), not
+  // a failure — reporting "failed" emailed the broker an alarming "CRM
+  // auto-update failed" on every buyer decision. Note: deals.crmLink (the
+  // seller's CRM record, used for importing information) is deliberately NOT
+  // used here — moving the seller's listing deal to "lost" because one buyer
+  // declined would be wrong.
   if (!pipedriveDealId) {
     return {
-      status: "failed",
+      status: "not_configured",
       provider: "pipedrive",
-      error: `No Pipedrive deal mapped for Cimple deal ${deal.id}. Link the deal in Settings → Integrations.`,
+      reason: "Pipedrive is connected, but this deal isn't set up for automatic pipeline updates, so nothing was changed in Pipedrive.",
     };
   }
 
   let stageId: number | string | undefined;
-  let newStatus: "open" | "lost" | "won" | undefined;
+  let newStatus: "open" | "lost" | undefined;
   let lostReason: string | undefined;
 
   switch (action) {
     case "interested":
       stageId = mapping.stageInterested;
-      newStatus = "open";
       break;
     case "not_interested":
       stageId = mapping.stageNotInterested;
@@ -107,11 +115,14 @@ async function syncPipedrive(
       break;
   }
 
+  // "Interested" without a stage has nothing meaningful to move (a PUT of
+  // status "open" alone changed nothing but was reported as "moved to the
+  // meeting stage"). "Not interested" still marks the deal lost.
   if (!stageId && !newStatus) {
     return {
-      status: "failed",
+      status: "not_configured",
       provider: "pipedrive",
-      error: "No stage mapping configured for this action. Configure stages in Settings → Integrations.",
+      reason: "Pipedrive is connected, but no pipeline stage is set for this decision, so nothing was changed in Pipedrive.",
     };
   }
 
@@ -121,19 +132,7 @@ async function syncPipedrive(
     if (newStatus) body.status = newStatus;
     if (lostReason) body.lost_reason = lostReason;
 
-    const res = await fetch(
-      `https://api.pipedrive.com/v1/deals/${pipedriveDealId}?api_token=${token}`,
-      {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      },
-    );
-
-    if (!res.ok) {
-      const errText = await res.text();
-      return { status: "failed", provider: "pipedrive", error: `Pipedrive API error: ${errText.slice(0, 200)}` };
-    }
+    await pd(token, `/v1/deals/${encodeURIComponent(String(pipedriveDealId))}`, {}, { method: "PUT", body });
 
     return {
       status: "synced",
@@ -141,7 +140,8 @@ async function syncPipedrive(
       action: action === "interested" ? "moved to buyer-meeting stage" : "marked as lost",
     };
   } catch (err: any) {
-    return { status: "failed", provider: "pipedrive", error: err?.message || "Unknown error" };
+    const message = err instanceof PipedriveError ? err.message : err?.message || "Unknown error";
+    return { status: "failed", provider: "pipedrive", error: message };
   }
 }
 
@@ -155,7 +155,7 @@ async function syncHubspot(
   // TODO: implement HubSpot deal stage update via v3 CRM API
   // PATCH /crm/v3/objects/deals/{dealId} with { properties: { dealstage: stageId } }
   console.log(`[crm:hubspot] stub — integration ${integration.id} action ${_action}`);
-  return { status: "failed", provider: "hubspot", error: "HubSpot CRM sync not yet implemented. Needs HUBSPOT_CLIENT_ID/SECRET." };
+  return { status: "not_configured", provider: "hubspot", reason: "Automatic HubSpot pipeline updates aren't available yet, so nothing was changed in HubSpot." };
 }
 
 // ── Salesforce adapter (stub) ───────────────────────────────────────────
@@ -167,7 +167,7 @@ async function syncSalesforce(
 ): Promise<SyncResult> {
   // TODO: Salesforce Opportunity.StageName update via REST API
   console.log(`[crm:salesforce] stub — integration ${integration.id} action ${_action}`);
-  return { status: "failed", provider: "salesforce", error: "Salesforce CRM sync not yet implemented. Needs SF_CLIENT_ID/SECRET." };
+  return { status: "not_configured", provider: "salesforce", reason: "Automatic Salesforce pipeline updates aren't available yet, so nothing was changed in Salesforce." };
 }
 
 // ── Main entry point ────────────────────────────────────────────────────

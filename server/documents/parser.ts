@@ -16,8 +16,19 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
     const pdfParse: (buf: Buffer) => Promise<{ text: string }> =
       (pdfMod as any).default ?? (pdfMod as any);
     const buffer = fs.readFileSync(filePath);
-    const data = await pdfParse(buffer);
-    return data.text || "";
+    try {
+      const data = await pdfParse(buffer);
+      return data.text || "";
+    } catch (err) {
+      // pdf-parse's pdf.js (v1.10, loaded once per process) rejects some
+      // valid PDFs with "bad XRef entry" — e.g. every PDF made with PDFKit.
+      // The newer pdf.js bundled with pdf-parse reads them.
+      try {
+        return await extractPdfWithNewerPdfjs(buffer);
+      } catch {
+        throw err;
+      }
+    }
   }
 
   // Excel (.xlsx / .xls)
@@ -53,4 +64,31 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
 
   // Unsupported — degrade gracefully
   return "";
+}
+
+/** Text of every page via pdf-parse's bundled pdf.js v2 (same line-joining as pdf-parse). */
+async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
+  const mod: any = await import("module");
+  const req = (mod.createRequire ?? mod.default.createRequire)(import.meta.url);
+  const pdfjs = req("pdf-parse/lib/pdf.js/v2.0.550/build/pdf.js");
+  pdfjs.disableWorker = true;
+  const task = pdfjs.getDocument(new Uint8Array(buffer));
+  const doc = await (task.promise ?? task);
+  let text = "";
+  try {
+    for (let i = 1; i <= doc.numPages; i++) {
+      const page = await doc.getPage(i);
+      const content = await page.getTextContent();
+      let lastY: number | undefined;
+      let pageText = "";
+      for (const item of content.items as Array<{ str: string; transform: number[] }>) {
+        pageText += lastY === undefined || lastY === item.transform[5] ? item.str : `\n${item.str}`;
+        lastY = item.transform[5];
+      }
+      text += `\n\n${pageText}`;
+    }
+  } finally {
+    doc.destroy?.();
+  }
+  return text;
 }

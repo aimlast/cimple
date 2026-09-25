@@ -1,6 +1,7 @@
 /**
  * InterviewReviewTab — Interview transcripts, coverage, and broker-private notes.
  */
+import { useSearch } from "wouter";
 import { useDeal } from "@/contexts/DealContext";
 import { InterviewTranscriptPanel } from "@/components/deal/InterviewTranscriptPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -58,6 +59,11 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
 
 export function InterviewReviewTab() {
   const { dealId, deal } = useDeal();
+  // ?session=<id>&turn=<n> — a fact's source link from the Information tab.
+  const params = new URLSearchParams(useSearch());
+  const focusSessionId = params.get("session");
+  const turnParam = Number(params.get("turn"));
+  const focusTurn = Number.isInteger(turnParam) && turnParam > 0 ? turnParam : null;
   const privateNotes: BrokerPrivateNote[] = Array.isArray(
     (deal.extractedInfo as Record<string, unknown> | null)?._brokerPrivateNotes,
   )
@@ -68,7 +74,7 @@ export function InterviewReviewTab() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
       <BrokerPrivateNotesPanel notes={privateNotes} />
-      <InterviewTranscriptPanel dealId={dealId} />
+      <InterviewTranscriptPanel dealId={dealId} focusSessionId={focusSessionId} focusTurn={focusTurn} />
     </div>
   );
 }

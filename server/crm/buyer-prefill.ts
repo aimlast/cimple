@@ -15,6 +15,8 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
+import { agentConfig } from "../interview/config/load-config";
+import { pdAll, pdData, htmlToText, personEmail, personPhone } from "./pipedrive";
 import type {
   BuyerCategory, BuyerFinancialCapability, BuyerPartner, Integration,
 } from "@shared/schema";
@@ -59,50 +61,50 @@ export interface BuyerSearchResult {
   source: "pipedrive" | "hubspot" | "salesforce";
 }
 
-// ── Pipedrive helpers ───────────────────────────────────────────────────
-
-async function pipedriveSearchPerson(token: string, query: string): Promise<any | null> {
-  const url = `https://api.pipedrive.com/v1/persons/search?term=${encodeURIComponent(query)}&fields=email,name&limit=1&api_token=${token}`;
-  const res = await fetch(url);
-  if (!res.ok) return null;
-  const data = await res.json() as any;
-  return data?.data?.items?.[0]?.item || null;
-}
+// ── Pipedrive helpers (all through ./pipedrive — honours PIPEDRIVE_API_BASE) ──
 
 async function pipedriveSearchPersons(token: string, query: string, limit = 8): Promise<any[]> {
-  const url = `https://api.pipedrive.com/v1/persons/search?term=${encodeURIComponent(query)}&fields=email,name,phone&limit=${limit}&api_token=${token}`;
-  const res = await fetch(url);
-  if (!res.ok) return [];
-  const data = await res.json() as any;
-  return (data?.data?.items || []).map((i: any) => i.item).filter(Boolean);
+  try {
+    const data = await pdData<any>(token, "/v1/persons/search", { term: query, fields: "email,name,phone", limit });
+    return (data?.items || []).map((i: any) => i.item).filter(Boolean);
+  } catch (err) {
+    console.warn("[buyer-prefill] person search failed:", (err as Error).message);
+    return [];
+  }
 }
 
-async function pipedriveGetFiles(token: string, personId: number): Promise<any[]> {
-  const res = await fetch(`https://api.pipedrive.com/v1/files?person_id=${personId}&api_token=${token}`);
-  if (!res.ok) return [];
-  const data = await res.json() as any;
-  return (data?.data || []).map((f: any) => ({
-    id: f.id,
-    name: f.name || f.file_name,
-    fileName: f.file_name,
-    fileType: f.file_type,
-    fileSize: f.file_size,
-    url: f.url,
-    addedAt: f.add_time,
-  }));
+async function pipedriveGetFiles(token: string, personId: number | string): Promise<any[]> {
+  try {
+    const files = await pdAll<any>(token, "/v1/files", { person_id: personId }, 100);
+    return files.map((f: any) => ({
+      id: f.id,
+      name: f.name || f.file_name,
+      fileName: f.file_name,
+      fileType: f.file_type,
+      fileSize: f.file_size,
+      url: f.url,
+      addedAt: f.add_time,
+    }));
+  } catch {
+    return [];
+  }
 }
 
-async function pipedriveGetPerson(token: string, personId: number): Promise<any | null> {
-  const res = await fetch(`https://api.pipedrive.com/v1/persons/${personId}?api_token=${token}`);
-  if (!res.ok) return null;
-  return (await res.json() as any)?.data || null;
+async function pipedriveGetPerson(token: string, personId: number | string): Promise<any | null> {
+  try {
+    return await pdData<any>(token, `/v1/persons/${encodeURIComponent(String(personId))}`);
+  } catch {
+    return null;
+  }
 }
 
-async function pipedriveGetNotes(token: string, personId: number): Promise<string[]> {
-  const res = await fetch(`https://api.pipedrive.com/v1/notes?person_id=${personId}&api_token=${token}`);
-  if (!res.ok) return [];
-  const data = await res.json() as any;
-  return (data?.data || []).map((n: any) => (n.content || "").replace(/<[^>]*>/g, " "));
+async function pipedriveGetNotes(token: string, personId: number | string): Promise<string[]> {
+  try {
+    const notes = await pdAll<any>(token, "/v1/notes", { person_id: personId }, 200);
+    return notes.map((n: any) => htmlToText(n.content)).filter(Boolean);
+  } catch {
+    return [];
+  }
 }
 
 // ── Claude structured parse ─────────────────────────────────────────────
@@ -162,7 +164,7 @@ Return only the JSON object, no prose, no markdown fences.`;
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-sonnet-4-5",
+      model: agentConfig.models.supportingAgents,
       max_tokens: 2000,
       temperature: 0,
       messages: [{ role: "user", content: prompt }],
@@ -215,12 +217,16 @@ export async function searchBuyersInCrm(brokerId: string, query: string): Promis
   }
 }
 
-export async function prefillBuyerFromCrm(brokerId: string, query: string): Promise<PrefillResult> {
+/**
+ * `recordId` (from a search result the broker picked) wins over `query` — a
+ * name search can match a different person with the same name.
+ */
+export async function prefillBuyerFromCrm(brokerId: string, query: string, recordId?: string | null): Promise<PrefillResult> {
   try {
     const integrations = await storage.getIntegrationsByBroker(brokerId);
     const pipedrive = integrations.find((i) => i.provider === "pipedrive" && i.status === "connected");
 
-    if (pipedrive) return await prefillPipedrive(pipedrive, query);
+    if (pipedrive) return await prefillPipedrive(pipedrive, query, recordId);
 
     // Stubs
     const hubspot = integrations.find((i) => i.provider === "hubspot" && i.status === "connected");
@@ -239,18 +245,19 @@ export async function prefillBuyerFromCrm(brokerId: string, query: string): Prom
   }
 }
 
-async function prefillPipedrive(integration: Integration, query: string): Promise<PrefillResult> {
+async function prefillPipedrive(integration: Integration, query: string, recordId?: string | null): Promise<PrefillResult> {
   const token = integration.accessToken;
   if (!token) {
     return { found: false, source: "pipedrive", fields: {}, warnings: ["Pipedrive access token missing"] };
   }
 
-  const person = await pipedriveSearchPerson(token, query);
+  const pickedId = recordId && /^\d+$/.test(String(recordId)) ? String(recordId) : null;
+  const person = pickedId ? await pipedriveGetPerson(token, pickedId) : (await pipedriveSearchPersons(token, query, 1))[0] ?? null;
   if (!person) {
-    return { found: false, source: "pipedrive", fields: {}, warnings: [`No Pipedrive contact matched "${query}"`] };
+    return { found: false, source: "pipedrive", fields: {}, warnings: [`No Pipedrive contact matched "${query || recordId}"`] };
   }
 
-  const details = await pipedriveGetPerson(token, person.id) || person;
+  const details = (pickedId ? person : await pipedriveGetPerson(token, person.id)) || person;
   const [notes, files] = await Promise.all([
     pipedriveGetNotes(token, person.id),
     pipedriveGetFiles(token, person.id),
@@ -260,8 +267,10 @@ async function prefillPipedrive(integration: Integration, query: string): Promis
   const ctxParts: string[] = [];
   ctxParts.push(`Pipedrive Person Record:`);
   ctxParts.push(`Name: ${details.name || ""}`);
-  if (details.primary_email?.[0]?.value) ctxParts.push(`Email: ${details.primary_email[0].value}`);
-  if (details.phone?.[0]?.value) ctxParts.push(`Phone: ${details.phone[0].value}`);
+  const email = personEmail(details);
+  const phone = personPhone(details);
+  if (email) ctxParts.push(`Email: ${email}`);
+  if (phone) ctxParts.push(`Phone: ${phone}`);
   if (details.org_name || details.org_id?.name) ctxParts.push(`Company: ${details.org_name || details.org_id.name}`);
   if (details.job_title) ctxParts.push(`Title: ${details.job_title}`);
   if (details.cc_email) ctxParts.push(`CC Email: ${details.cc_email}`);
@@ -285,8 +294,8 @@ async function prefillPipedrive(integration: Integration, query: string): Promis
   // Merge: prefer parsed fields, fall back to direct Pipedrive values
   const fields: PrefillResult["fields"] = {
     buyerName: parsedFields.buyerName || details.name || undefined,
-    buyerEmail: parsedFields.buyerEmail || details.primary_email?.[0]?.value || undefined,
-    buyerPhone: parsedFields.buyerPhone || details.phone?.[0]?.value || undefined,
+    buyerEmail: parsedFields.buyerEmail || email || undefined,
+    buyerPhone: parsedFields.buyerPhone || phone || undefined,
     buyerCompany: parsedFields.buyerCompany || details.org_name || details.org_id?.name || undefined,
     buyerTitle: parsedFields.buyerTitle || details.job_title || undefined,
     ...parsedFields,
