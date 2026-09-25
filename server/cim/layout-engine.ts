@@ -385,7 +385,7 @@ type SectionContent = { layoutData: Record<string, unknown>; aiDraftContent?: st
 async function callBuilderTool(sharedSystem: SystemBlock, task: string, userMessage: string): Promise<SectionContent | null> {
   const response = await anthropic.messages.create({
     model: MODEL,
-    max_tokens: 6000,
+    max_tokens: 10000,
     system: [sharedSystem, { type: "text", text: task }] as never,
     tools: [BUILDER_TOOL] as never,
     tool_choice: { type: "tool", name: "cim_section" },
@@ -566,22 +566,31 @@ export function outlineInstructions(outline: CimSectionOutline | null): string {
 
 async function generateManifest(sharedSystem: SystemBlock, outline: CimSectionOutline | null = null): Promise<ManifestEntry[]> {
   const houseStructure = outlineInstructions(outline);
-  const attempt = async (): Promise<ManifestEntry[] | null> => {
+  // A full plan (15–20 sections, each with reasoning and a brief) runs close
+  // to 4K output tokens; at a 4K cap it was cut off on every deal and the
+  // truncated tool call was thrown away (2026-09-26). Generous cap, and a
+  // terser second attempt if the plan still doesn't fit.
+  const attempt = async (terse: boolean): Promise<ManifestEntry[] | null> => {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 4000,
+      max_tokens: terse ? 12000 : 10000,
       system: [
         sharedSystem,
         {
           type: "text",
-          text: "# TASK\nPlan this CIM document. Output ONLY the section manifest via the cim_manifest tool — no layoutData yet. Be bespoke to this business: the section list should tell this business's story to a sophisticated buyer, including the industry-specific sections the rules require." + houseStructure,
+          text: "# TASK\nPlan this CIM document. Output ONLY the section manifest via the cim_manifest tool — no layoutData yet. Be bespoke to this business: the section list should tell this business's story to a sophisticated buyer, including the industry-specific sections the rules require." +
+            (terse ? "\nKeep it tight: aiLayoutReasoning is ONE short sentence and contentBrief is ONE line for every section." : "") +
+            houseStructure,
         },
       ] as never,
       tools: [MANIFEST_TOOL] as never,
       tool_choice: { type: "tool", name: "cim_manifest" },
       messages: [{ role: "user", content: "Produce the section manifest for this deal." }],
     });
-    if (response.stop_reason === "max_tokens") return null;
+    if (response.stop_reason === "max_tokens") {
+      console.warn(`[layout-engine] Manifest hit the output cap (${response.usage?.output_tokens} tokens)`);
+      return null;
+    }
     const block = response.content.find((b) => b.type === "tool_use");
     if (!block || block.type !== "tool_use") return null;
     const input = block.input as { sections?: unknown };
@@ -591,10 +600,10 @@ async function generateManifest(sharedSystem: SystemBlock, outline: CimSectionOu
     );
   };
 
-  const first = await attempt();
+  const first = await attempt(false);
   if (first && first.length > 0) return first;
-  console.warn("[layout-engine] Manifest generation failed — retrying once");
-  const second = await attempt();
+  console.warn("[layout-engine] Manifest generation failed — retrying once, terser");
+  const second = await attempt(true);
   if (second && second.length > 0) return second;
   throw new Error("CIM generation failed while planning the document. Please try again.");
 }
@@ -635,7 +644,7 @@ async function generateSection(
   const attempt = async (): Promise<{ layoutData: Record<string, unknown>; aiDraftContent?: string } | null> => {
     const response = await anthropic.messages.create({
       model: MODEL,
-      max_tokens: 6000,
+      max_tokens: 10000,
       system: [
         sharedSystem,
         {
@@ -909,6 +918,10 @@ function collectCanonicalFigures(params: CimLayoutParams): string[] {
       if (!isFactKey(key) || !isScalar(value)) continue;
       // A figure only a CRM note / the website asserted is never canonical.
       if (src === params.extractedInfo && isLeadFact(params.extractedInfo, key)) continue;
+      // Year-specific keys ("revenue2021", "ebitdaFy2022") are history, not
+      // the headline figure — stripping the digits used to make the oldest
+      // year the canonical revenue (2026-09-26).
+      if (/\d/.test(key)) continue;
       const bare = key.replace(/[^a-z]/gi, "");
       const hit = FIGURE_PATTERNS.find((p) => p.test.test(bare));
       if (!hit || seen.has(hit.label)) continue;
