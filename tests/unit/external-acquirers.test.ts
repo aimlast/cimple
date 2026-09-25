@@ -159,6 +159,29 @@ const shared = buildAcquirerList(
 );
 assert.equal(shared.results[0].whyInterested, "Bought a Delta, BC drayage firm.");
 
+// A surname that is also a state (the blind guard's `regionWord` terms, from
+// the cimblind stream) stays an identifier in the brief: the person is
+// neutralised, the place is kept, and the Region line is not read as a name.
+const montana: any = {
+  id: "d9",
+  businessName: "Big Sky Fencing LLC",
+  industry: "Construction",
+  subIndustry: "Residential & ranch fencing",
+  extractedInfo: {
+    ownerNames: "Joe Montana (100%)",
+    location: "Bozeman, Montana",
+    idealBuyer: "Someone who keeps the crew; Montana stays two years as a consultant; customers in Montana and Wyoming",
+    annualRevenue: "$2,400,000",
+  },
+};
+const mTerms = briefTerms(montana);
+assert.ok(mTerms.some((t) => t.text === "Montana" && t.regionWord), JSON.stringify(mTerms));
+const mb = blindBrief(montana).brief;
+assert.match(mb, /Region: Montana, United States/);
+assert.match(mb, /customers in Montana and Wyoming/);
+assert.ok(!/Montana stays/.test(mb), mb);
+assert.ok(!/Joe/.test(mb), mb);
+
 // Clipped at a sentence or word boundary, never mid-word.
 assert.equal(clip("Short.", 50), "Short.");
 assert.equal(clip("First sentence here. Second sentence that is long.", 30), "First sentence here.");

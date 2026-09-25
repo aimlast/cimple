@@ -69,12 +69,16 @@ function termPattern(text: string): RegExp {
   );
 }
 /** Replace a term with a neutral phrase that still reads well in its sentence. */
-function neutralise(text: string, term: string, kind: BlindTerm["kind"], capitalisedOnly: boolean): string {
+function neutralise(text: string, term: string, kind: BlindTerm["kind"], capitalisedOnly: boolean, regionWord?: BlindTerm): string {
   return text.replace(termPattern(term), (m, title: string | undefined, rel: string | undefined, core: string, poss: string | undefined, family: string | undefined, offset: number, whole: string) => {
     // Everyday-word terms count only capitalised — never rewrite the word itself.
     if (capitalisedOnly && core === core.toLowerCase()) return m;
     const before = whole.slice(0, offset);
     const after = whole.slice(offset + m.length);
+    // A surname that is also a province/state ("Dana Washington"): leave the
+    // place ("Washington State lanes", "customers in Montana") alone — the
+    // blind guard decides from the words around this one mention.
+    if (regionWord && !findBlindLeaks(`${before.slice(-40)}${m}${after.slice(0, 40)}`, [regionWord]).length) return m;
     const s = poss ? "’s" : "";
     const afterThe = /\bthe\s+$/i.test(before);
     if (kind === "person") {
@@ -217,7 +221,7 @@ export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: 
         o = o.replace(new RegExp(`\\b(the\\s+)?${escapeRe(surname)}(?:['’]s)?\\s+family\\b`, "gi"), "the owner’s family");
         continue;
       }
-      o = neutralise(o, t.text, t.kind, !!t.common);
+      o = neutralise(o, t.text, t.kind, !!t.common, t.regionWord ? t : undefined);
     }
     // People the facts don't list but the prose names ("son Manpreet", "Dr. Lee").
     if (!prose) return o;
@@ -253,11 +257,14 @@ const DEAL_WORDS = /^(?:buyers?|sellers?|owners?|purchasers?|acquirers?|investor
 /** The terms that would identify this deal, for the brief and the stored results. */
 export function briefTerms(deal: Deal): BlindTerm[] {
   // The province/state is part of the brief on purpose (Blind CIMs keep it
-  // too), so a region name the facts happen to list is not an identifier here.
+  // too), so a region name the facts happen to list is not an identifier here
+  // — except a person's surname that is also a region ("Dana Washington"):
+  // the blind guard marks it `regionWord` and counts it only where it means
+  // the person, so it stays.
   // Words about the deal itself ("Buyer", "Seller", "Owner") are never an
   // identifier, even when a loosely written fact makes one look like a place.
   const terms = blindLeakTerms(deal as any, { codename: (deal as any).blindCodename ?? null })
-    .filter((t) => !isRegionLabel(t.text) && !DEAL_WORDS.test(t.text.trim()));
+    .filter((t) => (t.regionWord || !isRegionLabel(t.text)) && !DEAL_WORDS.test(t.text.trim()));
   // People are talked about by first name ("son Manpreet stays on"): each
   // person's given name counts on its own too (capitalised only).
   const have = new Set(terms.map((t) => t.text.toLowerCase()));
@@ -312,7 +319,10 @@ export function blindBrief(deal: Deal): { brief: string; region: string | null; 
   ];
   const brief = lines.filter(Boolean).join("\n");
   // The fixed labels ("SELLER'S BUYER PREFERENCES") are ours; check what follows them.
-  const values = lines.filter(Boolean).map((l) => l.slice(l.indexOf(": ") + 2)).join("\n");
+  // The Region line is built from the fixed province/state list, never from
+  // free text, so it is not re-checked (a surname like "Washington" would
+  // otherwise read "Region: Washington" as the person).
+  const values = lines.filter((l) => l && !l.startsWith("Region: ")).map((l) => l.slice(l.indexOf(": ") + 2)).join("\n");
   if (briefLeaks(values, terms).length) throw new BlindBriefError("research brief still names the business");
   return { brief, region, withheld };
 }
