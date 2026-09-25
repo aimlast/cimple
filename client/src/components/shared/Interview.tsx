@@ -63,6 +63,12 @@ interface SectionCoverage {
   status: "well_covered" | "partial" | "missing";
   importance?: "critical" | "important" | "helpful";
   importanceReason?: string;
+  totalItems?: number;
+  openItems?: number;
+  openCriticalItems?: number;
+  unverifiedItems?: number;
+  sellerSourcedItems?: number;
+  documentedItems?: number;
 }
 
 const IMPORTANCE_SHORT = { critical: "Critical", important: "Important", helpful: "Helpful" } as const;
@@ -115,6 +121,10 @@ interface InterviewProps {
   /** May be async — the completion button stays in its "Saving..." state until it settles */
   onComplete?: () => void | Promise<void>;
   onBack?: () => void;
+  /** Continue a finished interview right away (the caller's "Add more detail"). */
+  resume?: boolean;
+  /** Where the finished interview's transcript can be read (broker). */
+  transcriptHref?: string;
 }
 
 export function Interview({
@@ -126,6 +136,8 @@ export function Interview({
   sellerToken,
   onComplete,
   onBack,
+  resume,
+  transcriptHref,
 }: InterviewProps) {
   const isTogether = mode === "together";
   const [sectionCoverage, setSectionCoverage] = useState<SectionCoverage[]>([]);
@@ -139,7 +151,11 @@ export function Interview({
   const [capturedTotal, setCapturedTotal] = useState(0);
   const [isCompleting, setIsCompleting] = useState(false);
   const [interviewEnded, setInterviewEnded] = useState(false);
-  const [panelOpen, setPanelOpen] = useState(mode === "broker");
+  // The coverage panel starts closed on a phone — at 256px it would leave the
+  // conversation a sliver (it opens from the header button).
+  const [panelOpen, setPanelOpen] = useState(
+    () => mode === "broker" && (typeof window === "undefined" || window.matchMedia("(min-width: 768px)").matches),
+  );
 
   const isBroker = mode !== "seller";
 
@@ -300,6 +316,8 @@ export function Interview({
             variant={isTogether ? "together" : "chat"}
             via={via}
             meetingLink={meetingLink}
+            resume={resume}
+            transcriptHref={transcriptHref}
           />
         </div>
 

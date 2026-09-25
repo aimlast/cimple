@@ -104,6 +104,10 @@ export interface InterviewPlanItem {
 export interface InterviewPlan {
   industry: string;
   subIndustry?: string | null;
+  /** The deal's own sub-industry when the plan was built — a broker edit to it rebuilds the plan. */
+  dealSubIndustry?: string | null;
+  /** Version of the checklist rules it was built under (older plans are rebuilt in the background). */
+  rulesVersion?: number;
   computedAt: string;
   status: "ready" | "failed";
   items: InterviewPlanItem[];
@@ -350,6 +354,11 @@ export const deals = pgTable("deals", {
   // @anchor:deals-cols:h-facts
   // @anchor:deals-cols:h-findisc
   // @anchor:deals-cols:h-interview
+  // Conflicts between the deal's seller-visible sources, found by the
+  // supporting model for the interview to reconcile with the seller
+  // (server/interview/source-review.ts): { fingerprint, computedAt, status,
+  // conflicts[] }. Rebuilt when the sources change.
+  interviewSourceReview: jsonb("interview_source_review"),
   // @anchor:deals-cols:h-cim
   // @anchor:deals-cols:h-misc
   // @anchor:deals-cols:seed

@@ -133,6 +133,18 @@ export function SourcesPanel({
                         <span className="inline-flex items-center gap-0.5 text-teal"><Lock className="h-2.5 w-2.5" /> Broker only</span>
                       )}
                       <StatusBit status={s.status} />
+                      {/* Read, but nothing came out of it (a scanned org chart, a photo of a list): the
+                          broker should open it — the interview can only use what's legible in it. */}
+                      {s.factCount === 0 && untrackedFacts === 0 && s.status !== "pending" && s.status !== "parsing" && s.status !== "failed" &&
+                        ["document", "call", "video_call", "email"].includes(s.kind) && (
+                          <span
+                            className="inline-flex items-center gap-1 text-amber-500"
+                            title="Nothing was extracted from this source. Open it to check it's readable — if it's a scan or a picture, add a typed or text copy."
+                            data-testid={`source-no-facts-${s.id}`}
+                          >
+                            <AlertCircle className="h-2.5 w-2.5" /> No facts found
+                          </span>
+                        )}
                     </div>
                     {/* What it gave beyond the facts recorded from it — a source that only confirmed others isn't "0 facts". */}
                     {((s.corroboratedCount ?? 0) > 0 || (s.alternateCount ?? 0) > 0) && (

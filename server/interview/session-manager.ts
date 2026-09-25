@@ -7,7 +7,7 @@ import {
   type ConversationMessage,
 } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
-import { assembleKnowledgeBase, type KnowledgeBase, type IndustryContext } from "./knowledge-base";
+import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage } from "./knowledge-base";
 import { questionnaireFacts } from "./questionnaire-facts";
 import {
   answerHash,
@@ -88,6 +88,7 @@ import { sellerProfileNeedsRebuild, carryBrokerProfileEdits } from "./eq-profile
 import {
   updateDeferralLedger,
   openDeferrals,
+  agentDeferrals,
   declinedDeferrals,
   deferralTopicStrings,
   topicsMatch,
@@ -101,6 +102,22 @@ import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isDealRowFact } from "../information/deal-mirror";
 import { sellerInterviewView } from "./seller-view";
+import { completionBlockers, type Exchange } from "./completion-gaps";
+import {
+  applyReaskGuard,
+  confirmFindings,
+  findReasks,
+  reaskCorrection,
+  echoesPassage,
+  priorQAFromSessions,
+  MAX_REWRITES,
+  type ReaskContext,
+  type ReaskFinding,
+} from "./reask-guard";
+import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
+import { ensureSourceReview } from "./source-review";
+import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
+import { getFieldAlternates } from "./info-merger";
 
 // =====================
 // Types
@@ -182,6 +199,11 @@ export interface TurnResult {
   shouldEnd: boolean;
   /** End reason if applicable */
   endReason?: string;
+  /**
+   * "completed": the interview is finished and no session was started
+   * (opening the page never starts one — the caller asks with resume).
+   */
+  status?: "completed";
 }
 
 // =====================
@@ -336,7 +358,12 @@ export function buildTurnSave(args: {
 
 export async function startOrResumeSession(
   dealId: string,
-  opts: { conductedBy?: ConductedBy; conductedVia?: ConductedVia } = {},
+  opts: {
+    conductedBy?: ConductedBy;
+    conductedVia?: ConductedVia;
+    /** The caller explicitly asked to continue a finished interview ("Continue interview"). */
+    resume?: boolean;
+  } = {},
 ): Promise<TurnResult> {
   // Load the deal and all related data
   let deal = await storage.getDeal(dealId);
@@ -361,6 +388,46 @@ export async function startOrResumeSession(
   const tasks = await storage.getTasksByDeal(dealId);
   const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
 
+  // Check for an existing active/paused session
+  const existingSessions = await db
+    .select()
+    .from(interviewSessions)
+    .where(eq(interviewSessions.dealId, dealId))
+    .orderBy(desc(interviewSessions.lastActivityAt));
+
+  let session = existingSessions.find(
+    (s) => s.status === "active" || s.status === "paused",
+  );
+
+  // A finished interview is never reopened by merely loading a page: the
+  // broker's interview page used to create a fresh session (and an Opus
+  // opening call that re-asked known facts) on every visit. Without an
+  // explicit resume, report the finished state and create nothing.
+  // (An empty session a previous visit left behind is closed.)
+  const lastCompleted = existingSessions.find((s) => s.status === "completed");
+  const liveWithAnswers = session && (session.messages as ConversationMessage[]).some((m) => m.role === "user");
+  if (!opts.resume && deal.interviewCompleted && lastCompleted && !liveWithAnswers) {
+    if (session) {
+      await db
+        .update(interviewSessions)
+        .set({ status: "completed", completedAt: new Date() })
+        .where(eq(interviewSessions.id, session.id));
+    }
+    const kb = assembleKnowledgeBase(deal, documents, tasks, lastCompleted, resolvedDiscrepancies);
+    const meta = (lastCompleted.extractedInfo as Record<string, unknown>) || {};
+    return {
+      message: "",
+      suggestedAnswers: [],
+      sessionId: lastCompleted.id,
+      captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+      sectionCoverage: kb.sectionCoverage.map(coverageForClient),
+      industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
+      deferredTopics: deferralTopicStrings(parseLedger(meta._deferralLedger)),
+      shouldEnd: true,
+      status: "completed",
+    };
+  }
+
   // Seller Communication Profile: generated when missing, and rebuilt when
   // it was built under older privacy rules or from a row the broker has
   // since made private (its free text could quote the broker's CRM notes or
@@ -379,16 +446,12 @@ export async function startOrResumeSession(
       });
   }
 
-  // Check for an existing active/paused session
-  const existingSessions = await db
-    .select()
-    .from(interviewSessions)
-    .where(eq(interviewSessions.dealId, dealId))
-    .orderBy(desc(interviewSessions.lastActivityAt));
-
-  let session = existingSessions.find(
-    (s) => s.status === "active" || s.status === "paused",
-  );
+  // Sources the interview reads: conflicts found by the supporting model are
+  // built in the background — usually already done (the broker's Overview
+  // starts it). A NEW session's opening waits for it briefly (below), since
+  // the opening goes to the most important conflict.
+  const sourceReviewRun = ensureSourceReview(deal, documents);
+  const openDiscrepancies = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "open");
 
   if (session) {
     const messages = session.messages as ConversationMessage[];
@@ -406,7 +469,11 @@ export async function startOrResumeSession(
       session = undefined as any;
     } else if (messages.length > 0) {
       // Resume existing session with real conversation history
-      const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies);
+      const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies, {
+        sessions: existingSessions,
+        currentSessionId: session.id,
+        openDiscrepancies,
+      });
 
       // Restore industry context from session metadata
       const sessionMeta = (session.extractedInfo as Record<string, unknown>) || {};
@@ -440,7 +507,7 @@ export async function startOrResumeSession(
         suggestedAnswers: pendingChips,
         sessionId: session.id,
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-        sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
+        sectionCoverage: kb.sectionCoverage.map(coverageForClient),
         industryContext: extractIndustryContextForFrontend(kb.industryContext),
         deferredTopics: resumeDeferred,
         shouldEnd: false,
@@ -469,11 +536,55 @@ export async function startOrResumeSession(
   // a returning seller and can welcome them back instead of starting fresh.
   const priorCompletedSession = existingSessions.find((s) => s.status === "completed") || null;
 
-  // Assemble knowledge base for the opening message
-  const kb = assembleKnowledgeBase(deal, documents, tasks, priorCompletedSession, resolvedDiscrepancies);
+  // The source review still running: give it up to SOURCE_REVIEW_WAIT_MS so
+  // the opening can raise a conflict it finds (it keeps running either way,
+  // and later turns pick it up).
+  if (sourceReviewRun) {
+    const review = await Promise.race([
+      sourceReviewRun.catch(() => null),
+      new Promise<null>((resolve) => setTimeout(() => resolve(null), SOURCE_REVIEW_WAIT_MS)),
+    ]);
+    if (review) deal = { ...deal, interviewSourceReview: review } as typeof deal;
+  }
+
+  // Assemble knowledge base for the opening message — with every earlier
+  // session's questions and answers, so a returning seller is never asked
+  // them again.
+  const kb = assembleKnowledgeBase(deal, documents, tasks, priorCompletedSession, resolvedDiscrepancies, {
+    sessions: existingSessions,
+    currentSessionId: session.id,
+    openDiscrepancies,
+  });
+
+  // The prior session's ledger (carried over — see below) and the items the
+  // sources put on the agenda (conflicts, flagged risks), so the opening can
+  // go straight to the most important open item.
+  const carriedMeta = (priorCompletedSession?.extractedInfo as Record<string, unknown> | null | undefined) ?? null;
+  const openingLedger = mintSourceItems(
+    parseLedger(carriedMeta?._deferralLedger).map((e) => ({ ...e, earlierSession: true })),
+    kb,
+    0,
+  );
+  applyLedgerToKb(kb, openingLedger);
+  kb.wrapUpBlockers = completionBlockers({
+    sectionCoverage: kb.sectionCoverage,
+    criticalSections: criticalSectionSet(kb),
+    info: kb.extractedInfo as Record<string, unknown>,
+    ledger: openingLedger,
+    exchanges: (kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
+    conflicts: kb.sourceConflicts,
+    risks: kb.flaggedRisks,
+  });
 
   // Generate the opening message
-  const openingResult = await generateOpeningMessage(kb, deal.businessName);
+  const openingResult = await generateOpeningMessage(kb, deal.businessName, {
+    sellerMessage: "",
+    info: kb.extractedInfo as Record<string, unknown>,
+    documents,
+    priorQA: priorQAFromSessions(existingSessions, session.id),
+    openDeferralTopics: [],
+    conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
+  });
 
   // Save the opening message to the session
   const aiMessage: ConversationMessage = {
@@ -503,7 +614,13 @@ export async function startOrResumeSession(
   // interview in two sittings must not lose their open deferrals (observed:
   // the ledger silently reset to [] on resume, so the broker's outstanding
   // items vanished and circle-backs never happened).
-  let seededLedger: DeferralEntry[] = parseLedger(priorMeta?._deferralLedger);
+  // (Entries keep their turn numbers from that sitting — marked as from an
+  // earlier session so the agent never calls them "earlier in this interview".)
+  let seededLedger: DeferralEntry[] = mintSourceItems(
+    parseLedger(priorMeta?._deferralLedger).map((e) => ({ ...e, earlierSession: true })),
+    kb,
+    0,
+  );
 
   // Pre-seeded conflict scan: when the questionnaire and a document disagree
   // materially on the same field BEFORE the interview starts, mint a
@@ -583,7 +700,7 @@ export async function startOrResumeSession(
     turnMessages: { ai: aiMessage },
     sessionId: session.id,
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-    sectionCoverage: kb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
+    sectionCoverage: kb.sectionCoverage.map(coverageForClient),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
     deferredTopics: deferralTopicStrings(seededLedger),
     shouldEnd: false,
@@ -626,9 +743,14 @@ export async function processTurn(
   const documents = await storage.getDocumentsByDeal(dealId);
   const tasks = await storage.getTasksByDeal(dealId);
   const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
+  const openDiscrepancies = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "open");
+  const dealSessions = await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+  const kbExtras = { sessions: dealSessions, currentSessionId: sessionId, openDiscrepancies };
+  // A source added mid-interview gets its conflicts reviewed for later turns.
+  ensureSourceReview(deal, documents);
 
   // Build the knowledge base
-  const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies);
+  const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies, kbExtras);
 
   // Restore persisted state from session metadata
   const sessionMeta = (session.extractedInfo as Record<string, unknown>) || {};
@@ -644,7 +766,16 @@ export async function processTurn(
 
   // Durable deferral ledger + stop-signal counter (see deferral-ledger.ts and
   // turn-guard.detectStopSignal). Legacy sessions without a ledger start empty.
-  const priorLedger: DeferralEntry[] = parseLedger(sessionMeta._deferralLedger);
+  // Conflicts and flagged risks the sources raise join the ledger (as
+  // "source" items) the first time they appear, so the agent can resolve
+  // them and governance can tell what is still open.
+  const priorLedger: DeferralEntry[] = mintSourceItems(
+    parseLedger(sessionMeta._deferralLedger),
+    kb,
+    (session.messages as ConversationMessage[]).filter((m) => m.role === "user").length,
+  );
+  applyLedgerToKb(kb, priorLedger);
+  kb.droppedDocRequests = Array.isArray(sessionMeta._droppedDocRequests) ? (sessionMeta._droppedDocRequests as string[]).slice(-8) : [];
   const priorStopCount =
     typeof sessionMeta._stopSignalCount === "number" ? sessionMeta._stopSignalCount : 0;
   const priorCheckpointStreak =
@@ -665,6 +796,7 @@ export async function processTurn(
     whereInfoLives: d.whereInfoLives,
     createdAtTurn: d.createdAtTurn,
     ...(d.declined ? { declined: true } : {}),
+    ...(d.earlierSession ? { earlierSession: true } : {}),
   }));
 
   // Build the conversation history for the API
@@ -691,6 +823,24 @@ export async function processTurn(
   // Add the new seller message
   apiMessages.push({ role: "user", content: modelFacingUserContent(sellerMessage, correctionOf) });
 
+  // Every question → answer so far: earlier sessions, this transcript, and
+  // this turn (the question just answered). Feeds the wrap-up checklist and
+  // the re-ask guard.
+  const thisSessionQA = exchangesOf([...existingMessages, { role: "user", content: sellerMessage, timestamp: receivedAt }]);
+  const allExchanges: Exchange[] = [
+    ...(kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
+    ...thisSessionQA,
+  ];
+  kb.wrapUpBlockers = completionBlockers({
+    sectionCoverage: kb.sectionCoverage,
+    criticalSections: criticalSectionSet(kb),
+    info: kb.extractedInfo as Record<string, unknown>,
+    ledger: priorLedger,
+    exchanges: allExchanges,
+    conflicts: kb.sourceConflicts,
+    risks: kb.flaggedRisks,
+  });
+
   // Build the system prompt with current knowledge base
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
@@ -709,16 +859,9 @@ export async function processTurn(
   // A section whose topic sits on the open ledger (deferred OR declined) is
   // ADDRESSED for triage purposes: the broker follow-up exists, and steering
   // the last question there re-presses what the seller already set aside.
-  const ledgerAddressed = (sectionKey: string): boolean => {
-    const patterns: Record<string, RegExp> = {
-      asking_price: /price|valuation|deal.?terms/i,
-      financials: /revenue|financial|margin|sde|ebitda|profit|earnings/i,
-      reason_for_sale: /reason.?for.?sale|why.*sell/i,
-    };
-    const re = patterns[sectionKey];
-    if (!re) return false;
-    return openDeferrals(priorLedger).some((d) => re.test(d.topic));
-  };
+  // (Only real deferrals: an item the server put on the agenda from the
+  // sources — a flagged risk mentioning revenue — was never discussed.)
+  const ledgerAddressed = (sectionKey: string): boolean => sectionDeferred(sectionKey, priorLedger);
   const missingCritical = kb.sectionCoverage
     .filter((s) => (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical") && s.status === "missing" && !ledgerAddressed(s.key))
     .map((s) => s.key);
@@ -740,7 +883,13 @@ export async function processTurn(
     );
     systemBlocks.push({
       type: "text",
-      text: buildStopSignalNudge(stopSignalCount, missingCritical, declinedTopics),
+      // The one closing question (if any) goes to the most critical gap: a
+      // missing critical section, else the top open wrap-up item.
+      text: buildStopSignalNudge(
+        stopSignalCount,
+        missingCritical.length > 0 ? missingCritical : (kb.wrapUpBlockers ?? []).slice(0, 3),
+        declinedTopics,
+      ),
     });
   }
 
@@ -749,26 +898,7 @@ export async function processTurn(
   // sequencing is fine early; sessions that end with zero financial core are
   // not. Skipped while a stop signal is active — the stop nudge already
   // triages to the same critical gaps.
-  const extractedNow = kb.extractedInfo as Record<string, unknown>;
-  // Profitability counts as covered when any margin/earnings field is present
-  // OR it sits on the deferral ledger (an explicit deferral is an answer).
-  const PROFIT_FIELDS = ["operatingMargins", "grossMargin", "sde", "ebitda", "netProfit", "netIncome", "cashFlow", "profitability"];
-  const hasProfitability =
-    PROFIT_FIELDS.some((f) => !!extractedNow[f]) ||
-    openDeferrals(priorLedger).some((d) => /profit|margin|sde|ebitda|earnings/i.test(d.topic));
-  const deferredPrice = openDeferrals(priorLedger).some((d) => /price|valuation/i.test(d.topic));
-  // An explicit revenue deferral ("accountant has the P&L") satisfies the
-  // checkpoint exactly like the price/profit escapes — without this the MUST
-  // escalation would order endless re-asks of a question the seller already
-  // deferred (review-caught).
-  const deferredRevenue = openDeferrals(priorLedger).some((d) =>
-    /revenue|sales|top.?line|p&l|financial/i.test(d.topic),
-  );
-  const missingBits = [
-    !extractedNow.annualRevenue && !deferredRevenue ? "a revenue figure or band (annualRevenue)" : null,
-    !hasProfitability ? "profitability — margins, SDE/EBITDA, or at least a directional sense (operatingMargins)" : null,
-    !extractedNow.askingPrice && !deferredPrice ? "the seller's asking-price expectation (askingPrice)" : null,
-  ].filter(Boolean);
+  const missingBits = financialCoreGaps(kb.extractedInfo as Record<string, unknown>, priorLedger);
   const checkpointActive = !stopNow && userTurnCount >= 8 && missingBits.length > 0;
   const checkpointStreak = checkpointActive ? priorCheckpointStreak + 1 : 0;
   if (checkpointActive) {
@@ -793,10 +923,29 @@ export async function processTurn(
   if (userTurnCount >= agentConfig.interview.maxTurnsBeforeEndCheck) {
     const triage = missingCritical.length > 0
       ? ` Critical sections still missing: ${missingCritical.join(", ")} — remaining questions go there first.`
-      : "";
+      : (kb.wrapUpBlockers ?? []).length > 0
+        ? ` Before you can wrap up: ${kb.wrapUpBlockers!.slice(0, 4).join("; ")} — remaining questions go there first.`
+        : "";
     systemBlocks.push({
       type: "text",
       text: `# PACING\nThis conversation has run ${userTurnCount} seller turns. Respect the seller's time: focus only on remaining [CRITICAL] gaps, convert everything else into broker follow-up tasks, and move toward a natural wrap-up.${triage}`,
+    });
+  }
+
+  // A figure the seller gave LAST turn that contradicts a document on file
+  // (the doc-conflict guard put it on the ledger): this turn reconciles it.
+  // On the streamed path the reply to that turn was already on screen when
+  // the conflict was detected, so this is where it gets raised.
+  const freshReconciles = agentDeferrals(priorLedger).filter(
+    (e) => /^reconcile\s/i.test(e.topic) && !e.earlierSession && e.createdAtTurn === userTurnCount - 1,
+  );
+  if (freshReconciles.length > 0 && !stopNow) {
+    systemBlocks.push({
+      type: "text",
+      text:
+        `# RECONCILE NOW\n` +
+        `Last turn the seller gave a figure that differs from what is on file — ${freshReconciles.map((e) => `${e.topic.replace(/^reconcile\s+/i, "")}: ${e.reason}`).join("; ")}. ` +
+        `Unless the seller just asked you something, your question this turn reconciles it: name both figures neutrally, attribute each only to its real source (never "your documents show" for a figure the seller said), and ask which is right and what explains the difference. When it's settled, list "reconcile <key>" in reasoning.resolvedDeferrals.`,
     });
   }
 
@@ -832,26 +981,22 @@ export async function processTurn(
     messages: apiMessages,
   };
 
-  // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
-  // retries once and then degrades gracefully instead of dead-ending the seller.
-  // onDelta streams the message text for display; the parsed result is still
-  // authoritative (governance/merge/persist below are unchanged).
-  let { response: aiResponse, degraded } = await callInterviewWithRecovery(
-    anthropic,
-    callParams,
-    onDelta,
-  );
-
-  // Degraded turn + stop signal: honor the stop WITHOUT a model call — the
-  // stop-wins rule cannot depend on the API being up (observed live: a seller
-  // typed "that's everything from me" twice during an outage and was asked
-  // to repeat themselves both times).
-  if (degraded && stopNow) {
-    aiResponse.message =
-      "Understood — thanks for your time today. Everything you've shared is saved, and you can pick this up again whenever suits you. Take care.";
-    aiResponse.shouldEnd = true;
-    aiResponse.endReason = "Seller requested to stop (honored during degraded turn)";
-  }
+  // RE-ASK GUARD context: every earlier question the seller answered (all
+  // sessions, in full, plus this transcript), the facts on file as the agent
+  // sees them, and the seller-visible sources.
+  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
+  const sellerView = sellerInterviewView(existingExtracted, documents);
+  const reaskCtx: ReaskContext = {
+    sellerMessage,
+    info: sellerView as Record<string, unknown>,
+    documents,
+    priorQA: [
+      ...priorQAFromSessions(dealSessions, sessionId),
+      ...thisSessionQA.map((x) => ({ ...x, where: "earlier in this session" })),
+    ],
+    openDeferralTopics: agentDeferrals(priorLedger).map((d) => d.topic),
+    conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
+  };
 
   // VALUATION-FIGURE GUARD: on fishing turns ("what's it worth", "what
   // multiple", "how much tax-free"), scan the outgoing reply — if it leaked a
@@ -864,8 +1009,6 @@ export async function processTurn(
   // the file as the interview sees it: the broker's listed price from the
   // deal row and figures from broker-only sources are not on the seller's
   // file, so quoting one to the seller counts as a leak too.)
-  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
-  const sellerView = sellerInterviewView(existingExtracted, documents);
   const sanctionedText =
     sellerMessage +
     " " +
@@ -885,6 +1028,79 @@ export async function processTurn(
       );
   const valuationLeak = (text: string): boolean =>
     containsValuationFigures(text) || (valuationFishing && unsanctionedFigure(text));
+  // A seller withdrawing something this turn ("take those numbers back") —
+  // the retraction backstop below may rewrite the reply.
+  const retractionInMessage = detectRetraction(sellerMessage);
+
+  // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
+  // retries once and then degrades gracefully instead of dead-ending the seller.
+  // Streaming: the message is checked the moment it is complete, BEFORE the
+  // seller sees it and before the rest of the response is generated — a
+  // question that re-asks something on file is stopped there and rewritten
+  // (the seller never watches a re-asked question appear and get replaced,
+  // and the rewrite doesn't wait for the discarded draft to finish). A
+  // message with no question (a goodbye, an answer) is held until the turn
+  // is final, so a governance override never swaps it on screen either.
+  // The parsed result stays authoritative (governance/merge/persist below).
+  const shown = createMessageRelease(onDelta);
+  let reaskAttempt = 0;
+  let pendingFindings: ReaskFinding[] = [];
+  const earlyFindings: ReaskFinding[] = [];
+  const checkMessage = async (text: string): Promise<boolean> => {
+    if (stopNow || !/\?/.test(text)) return true; // shown when the turn is final
+    // A draft a later guard will rewrite is held too (shown, fixed, when the
+    // turn is final) — never released and then swapped on screen: a
+    // valuation leak, the agent's machinery or a legal claim stated as fact
+    // (see OUTPUT GUARDS), or a turn where the seller withdrew something.
+    if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text) })) return true;
+    let found = findReasks(text, reaskCtx);
+    // After a rewrite only the sure findings count (a word-overlap candidate
+    // never forces a second rewrite); on the first draft a candidate stops
+    // the question only once the supporting model confirms it is answered.
+    // (The seller is waiting on this check: past STREAM_CHECK_TIMEOUT_MS the
+    // question goes out — the prompt's own rules still apply.)
+    found = reaskAttempt > 0 ? found.filter((f) => !f.verify) : await confirmFindings(found, text, undefined, STREAM_CHECK_TIMEOUT_MS);
+    // …plus a rewrite that parrots a quoted passage in the seller's or a
+    // transcript's voice.
+    const echoed = earlyFindings.find((f) => f.quote && echoesPassage(text, f.quote));
+    if (echoed) found.push({ kind: "echo", detail: `«${echoed.quote!.slice(0, 160)}»` });
+    if (found.length > 0 && reaskAttempt < MAX_REWRITES) {
+      pendingFindings = found;
+      return false;
+    }
+    shown.release(stripFillerPreamble(text, { sellerMessage }));
+    return true;
+  };
+  let conversation = [...apiMessages];
+  let first = await callInterviewWithRecovery(anthropic, callParams, shown.streaming, shown.streaming ? checkMessage : undefined);
+  while (first.rejected) {
+    earlyFindings.push(...pendingFindings);
+    console.warn(
+      `[session-manager] Re-ask guard (before display): ${pendingFindings.map((f) => `${f.kind}(${f.detail.slice(0, 60)})`).join("; ")} — rewrite ${reaskAttempt + 1}`,
+    );
+    conversation = [
+      ...conversation,
+      { role: "assistant" as const, content: first.response.message },
+      { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings) },
+    ];
+    reaskAttempt++;
+    first = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, checkMessage);
+  }
+  let { response: aiResponse, degraded } = first;
+
+  // Degraded turn + stop signal: honor the stop WITHOUT a model call — the
+  // stop-wins rule cannot depend on the API being up (observed live: a seller
+  // typed "that's everything from me" twice during an outage and was asked
+  // to repeat themselves both times).
+  if (degraded && stopNow) {
+    aiResponse.message =
+      "Understood — thanks for your time today. Everything you've shared is saved, and you can pick this up again whenever suits you. Take care.";
+    aiResponse.shouldEnd = true;
+    aiResponse.endReason = "Seller requested to stop (honored during degraded turn)";
+  }
+
+  // VALUATION-FIGURE GUARD (helpers defined before the model call, where the
+  // stream gate uses them): force ONE corrective re-call on a leak.
   if (!degraded && valuationFishing && valuationLeak(aiResponse.message)) {
     console.warn(
       `[session-manager] Valuation-figure guard: outgoing reply contains figures — corrective re-call`,
@@ -934,7 +1150,7 @@ export async function processTurn(
   // mold numbers back — I was guessing") but the model named no withdrawn
   // field — one corrective re-call so the guess comes out of the facts
   // instead of heading into the CIM (QA harvest, Great Lakes).
-  const sellerRetracting = !degraded && detectRetraction(sellerMessage);
+  const sellerRetracting = !degraded && retractionInMessage;
   if (sellerRetracting && (aiResponse.retractedFields ?? []).length === 0) {
     console.warn(`[session-manager] Retraction guard: seller withdrew a statement but no field was retracted — corrective re-call`);
     const { response: corrected, degraded: correctionDegraded } = await callInterviewWithRecovery(anthropic, {
@@ -951,6 +1167,33 @@ export async function processTurn(
     });
     if (!correctionDegraded && (corrected.retractedFields ?? []).length > 0) {
       aiResponse = corrected;
+      filterFigureChips();
+    }
+  }
+
+  // RE-ASK GUARD (after the fact): when nothing was shown yet — the plain
+  // /message endpoint, a non-streamed retry, a message with no question, a
+  // draft the stream gate held — the whole draft is checked here, including
+  // a figure the seller just gave that a document contradicts (it must be
+  // reconciled, not repeated). On the streamed path that last check can't
+  // re-call without swapping what the seller already read: the doc-conflict
+  // guard below puts it on the ledger instead and the next turn opens on it
+  // (RECONCILE NOW). Runs after the retraction backstop so it checks the
+  // reply that will actually go out; the OUTPUT GUARDS below (filler,
+  // machinery, legal, no question) then apply to whatever it produced.
+  if (!degraded && !stopNow && !aiResponse.shouldEnd && !shown.released) {
+    const guarded = await applyReaskGuard(anthropic, { ...callParams, messages: conversation }, aiResponse, reaskCtx);
+    if (guarded.recalled) {
+      console.warn(
+        `[session-manager] Re-ask guard: ${guarded.findings.map((f) => `${f.kind}(${f.detail.slice(0, 60)})`).join("; ")} — corrective re-call` +
+          (guarded.remaining.length ? `; still flagged after re-call: ${guarded.remaining.length}` : ""),
+      );
+      // What the draft withdrew or kept private still stands (the rewrite is
+      // about wording; applyReaskGuard already keeps its extractedFields).
+      const withdrawn = [...(aiResponse.retractedFields ?? []), ...(guarded.response.retractedFields ?? [])];
+      guarded.response.retractedFields = withdrawn.filter((r, i) => withdrawn.findIndex((x) => x.field === r.field) === i);
+      guarded.response.privateNotes = [...(aiResponse.privateNotes ?? []), ...(guarded.response.privateNotes ?? [])];
+      aiResponse = guarded.response;
       filterFigureChips();
     }
   }
@@ -1034,6 +1277,7 @@ export async function processTurn(
       tasks,
       session,
       resolvedDiscrepancies,
+      kbExtras,
     );
     const verdict = governCompletion({
       shouldEnd: aiResponse.shouldEnd,
@@ -1056,6 +1300,24 @@ export async function processTurn(
       // a few more minutes") has withdrawn it; an older stop never counts
       // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
       sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage)),
+      // Critical checklist items, seller-only topics, critical conflicts and
+      // flagged risks not yet discussed or deferred. (A very long interview
+      // is no longer held open for them — the seller's patience wins.)
+      blockingItems: userTurnCount < MAX_TURNS_HELD_OPEN
+        ? completionBlockers({
+            sectionCoverage: prospectiveKb.sectionCoverage,
+            criticalSections: criticalSectionSet(prospectiveKb),
+            info: prospectiveKb.extractedInfo as Record<string, unknown>,
+            ledger,
+            exchanges: allExchanges,
+            conflicts: kb.sourceConflicts,
+            risks: kb.flaggedRisks,
+            // A deferral or "resolved" the agent records in this very turn
+            // counts only if this turn's exchange was about it — parking
+            // every open item in the goodbye message is not covering it.
+            now: { turn: userTurnCount, lastQuestion: prevAiMessage ? questionPart(prevAiMessage) : undefined, sellerMessage },
+          })
+        : [],
     });
 
     if (!verdict.allowEnd) {
@@ -1243,19 +1505,31 @@ export async function processTurn(
   // against sellerInterviewView): never the broker's deal-row price or a
   // broker-only source's figure, which the seller must not hear about.
   const onRecord = (c: FieldChange): unknown => c.previousValue;
+  // Beyond the high-stakes fields: any fact whose value on record came from
+  // a document or email, or that has a document's value among its
+  // alternates (26 trucks said vs the fleet list's 24 vans + 2 owner cars).
+  const viewSources = getFieldSources(sellerView as Record<string, unknown>);
+  const docById = new Map(documents.map((d) => [d.id, d]));
+  const viewAlternates = getFieldAlternates(sellerView as Record<string, unknown>);
+  const documentBacked = (key: string) =>
+    ["document", "email"].includes(String(viewSources[key]?.source ?? "")) ||
+    (viewAlternates[key] ?? []).some((a) => a?.source === "document");
+  const materiallyDiffers = (c: FieldChange) =>
+    numbersMateriallyConflict(String(onRecord(c)), String(c.newValue)) ||
+    valuesMateriallyDiffer(c.fieldName, String(onRecord(c)), String(c.newValue));
   const conflictDeferrals = changes
     .filter(
       (c) =>
-        HIGH_STAKES_FIELDS.has(c.fieldName) &&
+        (HIGH_STAKES_FIELDS.has(c.fieldName) || documentBacked(c.fieldName)) &&
         onRecord(c) &&
         c.previousConfidence !== "approximate" &&
         c.previousConfidence !== "inferred" &&
         !reconcileSettledTopics.some((t) => topicsMatch(t, `reconcile ${c.fieldName}`)) &&
-        numbersMateriallyConflict(String(onRecord(c)), String(c.newValue)),
+        materiallyDiffers(c),
     )
     .map((c) => ({
       topic: `reconcile ${c.fieldName}`,
-      reason: `seller's latest figure (${c.newValue}) differs materially from the value already on record (${String(onRecord(c))}) — confirm which is right and why they differ (e.g. gross vs net, or an intentional update)`,
+      reason: `seller's latest figure (${c.newValue}) differs materially from the value already on record (${String(onRecord(c))}, ${sourceLabel(viewSources[c.fieldName], docById)}) — confirm which is right and why they differ (e.g. gross vs net, or an intentional update)`,
       whereInfoLives: "",
     }));
   if (conflictDeferrals.length > 0) {
@@ -1512,6 +1786,18 @@ export async function processTurn(
     changes = kept;
   }
 
+  // A conflict the seller has now spoken to (they stated the fact this turn)
+  // is reconciled — the new value and the old one are both on file for the
+  // broker. The agent can also resolve it explicitly (resolvedDeferrals).
+  {
+    const spokenKeys = new Set(changes.map((c) => c.fieldName.toLowerCase()));
+    const settled = ledger
+      .filter((e) => e.status === "open" && e.origin === "source" && /^reconcile\s/i.test(e.topic))
+      .filter((e) => spokenKeys.has(e.topic.replace(/^reconcile\s+/i, "").trim().toLowerCase()))
+      .map((e) => e.topic);
+    if (settled.length > 0) ledger = updateDeferralLedger(ledger, [], settled, userTurnCount);
+  }
+
   // Save to deal — re-read first, under the deal's facts lock (the same
   // queue broker edits and document ingestion use). A document can finish
   // parsing, or the broker can edit a fact, during the 10–30 s model call;
@@ -1565,8 +1851,22 @@ export async function processTurn(
     }
   }
 
-  // Create any tasks
-  for (const task of aiResponse.newTasks) {
+  // Tasks: no duplicates of an open follow-up, no request for a document
+  // already on file, an offered document becomes an upload request, and a
+  // follow-up the seller has now answered (or the agent resolved) closes.
+  // Facts the seller stated this turn (a follow-up on one of them is done).
+  const answeredKeys = new Set(
+    changes.map((c) => c.fieldName).filter((k) => sellerAnswered(merged as Record<string, unknown>, k)),
+  );
+  const taskPlan = planTaskWrites({
+    newTasks: aiResponse.newTasks,
+    existing: tasks,
+    documents: documents.filter((d) => d.visibility !== "broker_only"),
+    answeredKeys,
+    resolvedTopics: aiResponse.reasoning.resolvedDeferrals,
+    sellerMessage,
+  });
+  for (const task of taskPlan.create) {
     await storage.createTask({
       dealId,
       createdBy: "ai_interview",
@@ -1581,11 +1881,23 @@ export async function processTurn(
       aiExplanation: task.sellerExplanation,
     });
   }
+  for (const u of taskPlan.update) await storage.updateTask(u.id, { description: u.description });
+  for (const id of taskPlan.close) await storage.updateTask(id, { status: "completed", completedAt: new Date() } as any);
+  for (const id of taskPlan.remove) await storage.deleteTask(id);
+  if (taskPlan.dropped.length > 0 || taskPlan.close.length > 0 || taskPlan.remove.length > 0) {
+    console.log(
+      `[session-manager] Tasks on deal ${dealId}: ${taskPlan.create.length} created, ${taskPlan.update.length} merged into existing, ${taskPlan.close.length} closed, ${taskPlan.remove.length} duplicate(s) removed, ${taskPlan.dropped.length} request(s) dropped (already on file)`,
+    );
+  }
+  const droppedDocRequests = [
+    ...(kb.droppedDocRequests ?? []),
+    ...taskPlan.dropped.map((d) => `${d.title} → "${d.documentName}"`),
+  ].slice(-8);
   // A legal point the interviewer introduced and the seller agreed to: the
   // broker confirms it with counsel before it reaches the CIM (one task per
   // fact — never duplicated across turns).
   for (const f of legalFlags) {
-    const title = `Verify with counsel: ${f.fieldName}`;
+    const title = `${COUNSEL_TASK_PREFIX}${f.fieldName}`;
     if (tasks.some((t) => t.title === title)) continue;
     const value = changes.find((c) => c.fieldName === f.fieldName)?.newValue ?? "";
     await storage.createTask({
@@ -1640,7 +1952,7 @@ export async function processTurn(
   const questionsAnswered = (session.questionsAnswered ?? 0) +
     (Object.keys(aiResponse.extractedFields).length > 0 ? 1 : 0);
   const questionsSkipped = (session.questionsSkipped ?? 0) +
-    aiResponse.newTasks.filter((t) => t.type === "skipped_question").length;
+    taskPlan.create.filter((t) => t.type === "skipped_question").length;
 
   await db
     .update(interviewSessions)
@@ -1664,6 +1976,7 @@ export async function processTurn(
         _lastChips: aiResponse.suggestedAnswers,
         _confidenceLevels: updatedConfidence,
         ...(priorRetracted.length + withdrawnNow.length > 0 ? { _retracted: [...priorRetracted, ...withdrawnNow] } : {}),
+        ...(droppedDocRequests.length ? { _droppedDocRequests: droppedDocRequests } : {}),
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
     })
@@ -1696,9 +2009,12 @@ export async function processTurn(
 
   // Rebuild coverage with the updated extracted info
   const updatedDeal = await storage.getDeal(dealId);
-  const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies);
+  const updatedKb = assembleKnowledgeBase(updatedDeal!, documents, tasks, session, resolvedDiscrepancies, kbExtras);
   ensureSectionImportance(updatedDeal!, importanceContext(updatedIndustryContext));
   ensureInterviewPlan(updatedDeal!, { subIndustry: updatedIndustryContext?.subIndustry ?? null });
+
+  // A message held back (no question, or never streamed) is shown now, final.
+  await shown.finish(aiResponse.message);
 
   return {
     message: aiResponse.message,
@@ -1714,7 +2030,7 @@ export async function processTurn(
       updatedFields: changes.filter((c) => c.previousValue !== null).map((c) => c.fieldName),
       changes,
     },
-    sectionCoverage: updatedKb.sectionCoverage.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
+    sectionCoverage: updatedKb.sectionCoverage.map(coverageForClient),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
     // Derived from the durable ledger — stable and append-only until
     // resolved, so the broker-facing panel no longer flickers or loses items.
@@ -1778,6 +2094,8 @@ async function getSession(sessionId: string): Promise<InterviewSession | null> {
 async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
+  /** The re-ask guard's context: an opening never asks what the sources or an earlier session already answered. */
+  reask?: ReaskContext,
 ): Promise<{ message: string; whyItMatters?: string; importance?: InterviewResponse["importance"]; targetSection?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
@@ -1813,6 +2131,10 @@ async function generateOpeningMessage(
     openingInstruction = `This is the start of the interview and you have little background. One sentence of welcome that says what this is for (the document buyers will read about their business), then one broad opening question: what the business does, how long it has operated, and where. Three sentences maximum.`;
   }
 
+  // The most important open item goes first: a conflict between sources,
+  // then a risk the sources flag, then a critical gap.
+  openingInstruction += openingPriorityHint(kb);
+
   // Recovery-wrapped: retries a malformed/truncated opening once, then falls
   // back below — the seller never lands on an empty chat with no question.
   const openingMessages: Array<{ role: "user" | "assistant"; content: string }> = [
@@ -1832,9 +2154,14 @@ async function generateOpeningMessage(
 
   // A first question aimed at a non-critical topic while critical sections
   // are thin gets one redirect (first sessions only — a returning seller
-  // resumes where the ledger says).
+  // resumes where the ledger says). When the sources put a conflict or a
+  // flagged risk on the agenda, the opening is steered there (see
+  // openingPriorityHint) and such a question is often labelled "important"
+  // — only a "helpful" one is redirected then.
+  const agendaFirst = (kb.sourceConflicts ?? []).length + (kb.flaggedRisks ?? []).length > 0;
   const targetIsCritical =
     aiResponse.importance === "critical" ||
+    (agendaFirst && aiResponse.importance !== "helpful") ||
     (!!aiResponse.targetSection &&
       kb.sectionCoverage.some((s) => s.key === aiResponse.targetSection && (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical")));
   if (!degraded && !hasPriorSession && (hasQuestionnaireData || hasDocuments) && criticalGaps.length > 0 && !targetIsCritical) {
@@ -1851,6 +2178,17 @@ async function generateOpeningMessage(
       ],
     });
     if (!redirected.degraded && redirected.response.message) aiResponse = redirected.response;
+  }
+
+  // A returning seller's opening re-asked what the org chart already says
+  // ("You have 22 setup technicians — how are they split?") — the same guard
+  // as every turn, on the opening that will actually go out.
+  if (!degraded && reask && aiResponse.message) {
+    const guarded = await applyReaskGuard(anthropic, openingParams, aiResponse, reask);
+    if (guarded.recalled) {
+      console.warn(`[session-manager] Re-ask guard on the opening: ${guarded.findings.map((f) => `${f.kind}(${f.detail.slice(0, 60)})`).join("; ")}`);
+      aiResponse = guarded.response;
+    }
   }
 
   if (degraded || !aiResponse.message) {
@@ -2138,4 +2476,201 @@ function extractIndustryContextForFrontend(
     activeTopics: ctx.industrySpecificAreas,
     coveredTopics: ctx.coveredIndustryTopics ?? [],
   };
+}
+
+// =====================
+// Source items, wrap-up checklist, client coverage
+// =====================
+
+/**
+ * What the seller sees of a streamed turn. The message is released once —
+ * when the re-ask guard approves it (typed out in small chunks so it still
+ * reads like live text) or, for a held message, when the turn is final.
+ * Without a stream (the plain /message endpoint) everything is a no-op.
+ */
+export function createMessageRelease(onDelta?: (chunk: string) => void) {
+  let released = false;
+  let typing: Promise<void> = Promise.resolve();
+  const typeOut = (text: string) => {
+    if (!onDelta || !text) return;
+    const chunks = text.match(/\S+\s*/g) ?? [text];
+    typing = (async () => {
+      for (let i = 0; i < chunks.length; i += 3) {
+        onDelta(chunks.slice(i, i + 3).join(""));
+        if (i + 3 < chunks.length) await new Promise((r) => setTimeout(r, RELEASE_CHUNK_MS));
+      }
+    })();
+  };
+  return {
+    /** The delta sink to stream into (a no-op: text is released whole, once approved). */
+    streaming: onDelta ? (_chunk: string) => {} : undefined,
+    get released() {
+      return released;
+    },
+    release(text: string) {
+      if (released) return;
+      released = true;
+      typeOut(text);
+    },
+    /** End of turn: shows the final message if nothing was shown yet; waits for the typing to finish. */
+    async finish(finalMessage: string) {
+      if (!released) {
+        released = true;
+        typeOut(finalMessage);
+      }
+      await typing;
+    },
+  };
+}
+/**
+ * The stream gate: a streamed draft that a guard after the model call will
+ * rewrite is held (shown, fixed, when the turn is final) instead of being
+ * released and then swapped on the seller's screen — a valuation figure on
+ * a fishing turn, the agent's machinery or a legal claim stated as fact (the
+ * OUTPUT GUARDS), or any draft on a turn where the seller withdrew something
+ * (the retraction backstop may re-call).
+ */
+export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boolean; valuationLeak: boolean }): boolean {
+  return ctx.retractionInMessage || ctx.valuationLeak || leaksInternalMachinery(text) || findLegalAssertions(text).length > 0;
+}
+/** How long a streamed question waits for the answer check before it is shown anyway. */
+const STREAM_CHECK_TIMEOUT_MS = 4_000;
+/** Pause between released chunks of ~3 words (a 40-word question types out in ~0.4s). */
+const RELEASE_CHUNK_MS = 30;
+
+/**
+ * A critical section the seller explicitly set aside (deferred or declined)
+ * counts as addressed for triage. Only REAL deferrals count: an item the
+ * server put on the agenda from the sources ("risk: COVID 2020 sales
+ * dropped") was never discussed, so it can't stand in for revenue.
+ */
+export function sectionDeferred(sectionKey: string, ledger: DeferralEntry[]): boolean {
+  const patterns: Record<string, RegExp> = {
+    asking_price: /price|valuation|deal.?terms/i,
+    financials: /revenue|financial|margin|sde|ebitda|profit|earnings/i,
+    reason_for_sale: /reason.?for.?sale|why.*sell/i,
+  };
+  const re = patterns[sectionKey];
+  if (!re) return false;
+  return agentDeferrals(ledger).some((d) => re.test(d.topic));
+}
+
+/**
+ * What the financial-core checkpoint still lacks: a revenue figure, some
+ * profitability, the seller's price expectation — each satisfied by a value
+ * on file or an explicit deferral by the seller (never by a source-minted
+ * agenda item). Without the deferral escape the MUST escalation would order
+ * endless re-asks of a question the seller already deferred (review-caught).
+ */
+export function financialCoreGaps(extractedNow: Record<string, unknown>, ledger: DeferralEntry[]): string[] {
+  const deferrals = agentDeferrals(ledger);
+  const PROFIT_FIELDS = ["operatingMargins", "grossMargin", "sde", "ebitda", "netProfit", "netIncome", "cashFlow", "profitability"];
+  const hasProfitability =
+    PROFIT_FIELDS.some((f) => !!extractedNow[f]) || deferrals.some((d) => /profit|margin|sde|ebitda|earnings/i.test(d.topic));
+  const deferredPrice = deferrals.some((d) => /price|valuation/i.test(d.topic));
+  const deferredRevenue = deferrals.some((d) => /revenue|sales|top.?line|p&l|financial/i.test(d.topic));
+  return [
+    !extractedNow.annualRevenue && !deferredRevenue ? "a revenue figure or band (annualRevenue)" : null,
+    !hasProfitability ? "profitability — margins, SDE/EBITDA, or at least a directional sense (operatingMargins)" : null,
+    !extractedNow.askingPrice && !deferredPrice ? "the seller's asking-price expectation (askingPrice)" : null,
+  ].filter((x): x is string => !!x);
+}
+
+/** How long a new session's opening waits for a source review still being built. */
+const SOURCE_REVIEW_WAIT_MS = 25_000;
+/** Past this many seller turns, flagged items no longer hold the interview open on their own. */
+const MAX_TURNS_HELD_OPEN = 40;
+/** How many flagged risks go on the agenda (most-flagged first). */
+const RISK_AGENDA_LIMIT = 6;
+
+/**
+ * Adds the conflicts and flagged risks the sources raise to the ledger as
+ * "source" items (on the agenda, not yet raised) the first time they
+ * appear. Never re-mints one that already has an entry, open or resolved.
+ */
+export function mintSourceItems(ledger: DeferralEntry[], kb: Pick<KnowledgeBase, "sourceConflicts" | "flaggedRisks">, turn: number): DeferralEntry[] {
+  const fresh: { topic: string; reason: string }[] = [];
+  const known = (topic: string) => ledger.some((e) => e.topic.toLowerCase() === topic.toLowerCase());
+  for (const c of kb.sourceConflicts ?? []) {
+    const topic = `reconcile ${c.key}`;
+    if (!known(topic) && !fresh.some((f) => f.topic === topic)) {
+      fresh.push({ topic, reason: `sources disagree: ${c.values.map((v) => `"${v.value}" (${v.source})`).join(" vs ")}` });
+    }
+  }
+  for (const r of (kb.flaggedRisks ?? []).slice(0, RISK_AGENDA_LIMIT)) {
+    const topic = `risk: ${r.label}`;
+    if (!known(topic) && !fresh.some((f) => f.topic === topic)) fresh.push({ topic, reason: `flagged in ${r.sources[0]}` });
+  }
+  if (fresh.length === 0) return ledger;
+  // Appended as their own entries — never merged into an agent deferral
+  // whose label happens to contain the same words (the ledger's fuzzy
+  // matching would overwrite that deferral's reason and hide the item).
+  const ids = new Set(ledger.map((e) => e.id));
+  const added: DeferralEntry[] = fresh.map((f, i) => {
+    const base = `src_${f.topic.toLowerCase().replace(/[^a-z0-9]+/g, "_").slice(0, 60)}_t${turn}`;
+    const id = ids.has(base) ? `${base}_${i}` : base;
+    ids.add(id);
+    return { id, topic: f.topic, reason: f.reason, whereInfoLives: "", status: "open" as const, createdAtTurn: turn, origin: "source" as const };
+  });
+  return [...ledger.map((e) => ({ ...e })), ...added];
+}
+
+/**
+ * Shows only conflicts and risks still on the agenda (open source items);
+ * ones the agent resolved drop out, ones it deferred move to the deferral
+ * list. Risks beyond the agenda limit stay visible as context.
+ */
+export function applyLedgerToKb(kb: KnowledgeBase, ledger: DeferralEntry[]): void {
+  const state = (topic: string) => ledger.find((e) => e.topic.toLowerCase() === topic.toLowerCase());
+  const onAgenda = (topic: string) => {
+    const e = state(topic);
+    return !e || (e.status === "open" && e.origin === "source");
+  };
+  kb.sourceConflicts = (kb.sourceConflicts ?? []).filter((c) => onAgenda(`reconcile ${c.key}`));
+  kb.flaggedRisks = (kb.flaggedRisks ?? []).filter((r) => onAgenda(`risk: ${r.label}`));
+}
+
+/** Critical sections for this deal: the base floor plus the industry ranking. */
+function criticalSectionSet(kb: Pick<KnowledgeBase, "sectionCoverage">): Set<string> {
+  const out = new Set<string>(Array.from(CRITICAL_SECTIONS));
+  for (const s of kb.sectionCoverage) if (s.importance === "critical") out.add(s.key);
+  return out;
+}
+
+/** Question → answer pairs in one transcript (the AI's question, the seller's next message). */
+export function exchangesOf(messages: Pick<ConversationMessage, "role" | "content">[]): Exchange[] {
+  const out: Exchange[] = [];
+  for (let i = 0; i < messages.length - 1; i++) {
+    if (messages[i].role !== "ai" || messages[i + 1].role !== "user") continue;
+    out.push({ question: questionPart(messages[i].content), answer: messages[i + 1].content });
+  }
+  return out;
+}
+
+/** Section coverage as the client reads it (status, importance and item counts). */
+function coverageForClient(s: SectionCoverage) {
+  return {
+    key: s.key,
+    title: s.title,
+    status: s.status,
+    importance: s.importance,
+    importanceReason: s.importanceReason,
+    totalItems: s.totalItems,
+    openItems: s.openItems,
+    openCriticalItems: s.openCriticalItems,
+    unverifiedItems: s.unverifiedItems,
+    sellerSourcedItems: s.sellerSourcedItems,
+    documentedItems: s.documentedItems,
+  };
+}
+
+/** One sentence steering the opening question to the most important open item. */
+function openingPriorityHint(kb: KnowledgeBase): string {
+  const conflict = (kb.sourceConflicts ?? [])[0];
+  if (conflict) return ` Your question should go to the most important open item: the conflict on ${conflict.key} (see CONFLICTS TO RECONCILE) — ask about it neutrally.`;
+  const risk = (kb.flaggedRisks ?? [])[0];
+  if (risk) return ` Your question should go to the most important open item: the flagged risk "${risk.label}" (see RISKS FLAGGED IN THE SOURCES) — ask what happened and where it stands.`;
+  const blocker = (kb.wrapUpBlockers ?? [])[0];
+  if (blocker) return ` Your question should go to the most important open item: ${blocker}.`;
+  return "";
 }

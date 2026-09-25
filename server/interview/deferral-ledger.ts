@@ -31,6 +31,15 @@ export interface DeferralEntry {
    * hard-blocked: never re-asked this session, never the closing question.
    */
   declined?: boolean;
+  /**
+   * "source": minted by the server from the deal's sources (a conflict to
+   * reconcile, a flagged risk) — on the agent's agenda, but not yet raised
+   * with the seller, so it is not a deferral and not shown as one. Cleared
+   * when the agent explicitly defers it.
+   */
+  origin?: "source";
+  /** Carried over from an earlier session (its turn number is from that sitting). */
+  earlierSession?: boolean;
 }
 
 /**
@@ -97,6 +106,13 @@ export function updateDeferralLedger(
       // Same topic again: refresh context; reopen if it had been resolved.
       if (d.reason) match.reason = d.reason;
       if (d.whereInfoLives) match.whereInfoLives = d.whereInfoLives;
+      // The agent deferring a source-minted item makes it a real deferral —
+      // deferred now, not when the server put it on the agenda.
+      if (match.origin === "source") {
+        match.createdAtTurn = turn;
+        delete match.earlierSession;
+      }
+      delete match.origin;
       if (declined) match.declined = true; // a decline is sticky
       if (match.status === "resolved") {
         match.status = "open";
@@ -122,6 +138,18 @@ export function openDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
   return ledger.filter((e) => e.status === "open");
 }
 
+/**
+ * Open entries that are real deferrals — raised with the seller and set
+ * aside (or declined). Items the server put on the agenda from the sources
+ * (origin "source": a conflict to reconcile, a flagged risk) are NOT: they
+ * were never discussed, so they can't stand in for an answer (a "risk:
+ * COVID 2020 sales dropped" item must not count as a deferred revenue
+ * figure or a deferred Financial Summary).
+ */
+export function agentDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
+  return openDeferrals(ledger).filter((e) => e.origin !== "source");
+}
+
 /** Open entries the seller explicitly declined — hard-blocked from re-asking. */
 export function declinedDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
   return openDeferrals(ledger).filter((e) => e.declined === true);
@@ -132,7 +160,7 @@ export function declinedDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
  * Stable and append-only until resolved — no more per-turn flicker.
  */
 export function deferralTopicStrings(ledger: DeferralEntry[]): string[] {
-  return openDeferrals(ledger).map((e) =>
+  return openDeferrals(ledger).filter((e) => e.origin !== "source").map((e) =>
     e.reason ? `${e.topic} — ${e.reason}` : e.topic,
   );
 }

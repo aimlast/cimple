@@ -52,6 +52,8 @@ interface TurnResult {
   deferredTopics: string[];
   shouldEnd: boolean;
   endReason?: string;
+  /** "completed": the interview is finished and no session was started. */
+  status?: "completed";
 }
 
 interface AIConversationInterfaceProps {
@@ -67,6 +69,10 @@ interface AIConversationInterfaceProps {
   variant?: "chat" | "together";
   via?: string;
   meetingLink?: string;
+  /** The caller already chose to continue a finished interview ("Add more detail"). */
+  resume?: boolean;
+  /** Where the finished interview's transcript can be read (broker). */
+  transcriptHref?: string;
 }
 
 const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
@@ -112,6 +118,8 @@ export function AIConversationInterface({
   variant = "chat",
   via,
   meetingLink,
+  resume = false,
+  transcriptHref,
 }: AIConversationInterfaceProps) {
   const together = variant === "together";
   const conductedBy = together ? ("broker_with_seller" as const) : undefined;
@@ -180,6 +188,10 @@ export function AIConversationInterface({
   const [startError, setStartError] = useState<string | null>(null);
   // Bumped by "Try again" to re-run the start effect.
   const [startAttempt, setStartAttempt] = useState(0);
+  // The interview is finished and nothing was started: opening the page
+  // shows this state, and only "Continue interview" starts a new session.
+  const [finishedIdle, setFinishedIdle] = useState(false);
+  const resumeRef = useRef(resume);
   const [isFinished, setIsFinished] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
   const [confirmEndOpen, setConfirmEndOpen] = useState(false);
@@ -215,10 +227,15 @@ export function AIConversationInterface({
       setIsStarting(true);
       setStartError(null);
       try {
+        // A broker-led session is always an explicit start; otherwise a
+        // finished interview is continued only after "Continue interview".
         const res = await fetch(`/api/interview/${dealId}/start`, {
           method: "POST",
           headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
+          body: JSON.stringify({
+            ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
+            ...(resumeRef.current || together ? { resume: true } : {}),
+          }),
         });
 
         if (!res.ok) {
@@ -233,6 +250,14 @@ export function AIConversationInterface({
         }
 
         setSessionId(result.sessionId);
+
+        if (result.status === "completed") {
+          setFinishedIdle(true);
+          setIsFinished(true);
+          onTurnResult?.(result);
+          return;
+        }
+        setFinishedIdle(false);
 
         // If resuming, load full history
         if (result.message) {
@@ -293,6 +318,19 @@ export function AIConversationInterface({
     initSession();
     return () => { cancelled = true; };
   }, [dealId, startAttempt]);
+
+  const continueInterview = useCallback(() => {
+    resumeRef.current = true;
+    setFinishedIdle(false);
+    setIsFinished(false);
+    setIsStarting(true);
+    setStartError(null);
+    setMessages([]);
+    setSuggestedAnswers([]);
+    setSessionId(null);
+    initialScrollDoneRef.current = false;
+    setStartAttempt((n) => n + 1);
+  }, []);
 
   const retryStart = useCallback(() => {
     setIsStarting(true);
@@ -1135,6 +1173,39 @@ export function AIConversationInterface({
         <span className="text-sm">
           {businessName ? `Preparing overview for ${businessName}...` : "Starting overview..."}
         </span>
+      </div>
+    );
+  }
+
+  // Finished interview, nothing started: say so, offer to continue.
+  if (finishedIdle && !startError) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-6" data-testid="status-interview-complete">
+        <div className="max-w-md w-full rounded-lg border border-border bg-card p-6 text-center space-y-4">
+          <CheckCircle className="h-8 w-8 mx-auto text-success" />
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">This interview is complete</p>
+            <p className="text-xs text-muted-foreground">
+              Everything the seller said is saved. Continuing starts a new session that picks up from what's
+              already covered — nothing that was answered is asked again.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 justify-center">
+            <Button
+              onClick={continueInterview}
+              size="sm"
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              data-testid="button-continue-interview"
+            >
+              Continue interview
+            </Button>
+            {transcriptHref && (
+              <Button asChild size="sm" variant="outline" data-testid="button-read-transcript">
+                <a href={transcriptHref}>Read the transcript</a>
+              </Button>
+            )}
+          </div>
+        </div>
       </div>
     );
   }
