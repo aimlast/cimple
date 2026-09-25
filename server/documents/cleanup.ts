@@ -10,8 +10,25 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { removeDocumentFields } from "../interview/info-merger";
+import { withDealFactsLock } from "./facts-lock";
 
 const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
+
+/**
+ * Takes a deleted source's facts off its deal (re-read under the deal's
+ * facts lock). Saves whenever anything was cleaned — a source whose values
+ * all lost to stronger sources still leaves alternates / corroborations /
+ * private notes to drop. Returns the removed field keys.
+ */
+export async function removeSourceFacts(dealId: string, docId: string): Promise<string[]> {
+  return withDealFactsLock(dealId, async () => {
+    const deal = await storage.getDeal(dealId);
+    if (!deal) return [];
+    const { info, removed, changed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, docId);
+    if (changed) await storage.updateDeal(dealId, { extractedInfo: info } as any);
+    return removed;
+  });
+}
 
 export async function deleteDocumentAndProvenance(docId: string): Promise<string[]> {
   const doc = await storage.getDocument(docId);
@@ -21,12 +38,7 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
 
   let removed: string[] = [];
   try {
-    const deal = await storage.getDeal(doc.dealId);
-    if (deal) {
-      const result = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, docId);
-      removed = result.removed;
-      if (removed.length > 0) await storage.updateDeal(doc.dealId, { extractedInfo: result.info } as any);
-    }
+    removed = await removeSourceFacts(doc.dealId, docId);
   } catch (e) {
     console.warn("[documents] provenance cleanup failed:", e);
   }

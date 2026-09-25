@@ -70,6 +70,69 @@ export interface SellerCommunicationProfile {
 
   /** Broker corrections applied on top of the AI-generated profile */
   brokerOverrides?: Record<string, any>;
+
+  /**
+   * PROFILE_PRIVACY_VERSION when generated with broker-only sources (CRM
+   * notes, private emails) excluded. Older profiles may carry the broker's
+   * private notes (a negotiation floor, family names) — see
+   * sellerProfileNeedsRebuild.
+   */
+  privacyVersion?: number;
+}
+
+/** Profiles built without any broker-only source text carry this version. */
+export const PROFILE_PRIVACY_VERSION = 2;
+
+/**
+ * True when a stored profile was built before broker-only sources were
+ * excluded AND the deal has broker-only sources — its free-text fields
+ * (seller story, sensitive topics, personal insights) may quote the
+ * broker's private notes, so they must not reach the interview prompt and
+ * the profile should be rebuilt.
+ */
+export function sellerProfileNeedsRebuild(
+  profile: Partial<SellerCommunicationProfile> | null | undefined,
+  documents: Array<{ visibility?: string | null; sourceKind?: string | null }>,
+): boolean {
+  if (!profile || (profile.privacyVersion ?? 0) >= PROFILE_PRIVACY_VERSION) return false;
+  return documents.some((d) => d.visibility === "broker_only" || d.sourceKind === "crm");
+}
+
+const BROKER_EDITABLE_PROFILE_FIELDS = [
+  "communicationStyle", "emotionalState", "sellingReason", "sophistication",
+  "businessAttachment", "timeOrientation", "familyInvolvement",
+] as const;
+
+/**
+ * A rebuilt profile keeps what the broker set by hand on the old one: their
+ * notes (brokerOverrides) and the style fields they corrected.
+ */
+export function carryBrokerProfileEdits(
+  profile: SellerCommunicationProfile,
+  prior: Record<string, unknown> | null,
+): SellerCommunicationProfile {
+  const overrides = prior?.brokerOverrides;
+  if (!overrides || typeof overrides !== "object") return profile;
+  const out: SellerCommunicationProfile = { ...profile, brokerOverrides: overrides as Record<string, any> };
+  for (const field of BROKER_EDITABLE_PROFILE_FIELDS) {
+    const o = (overrides as Record<string, any>)[field];
+    const value = o && typeof o === "object" && "brokerValue" in o ? o.brokerValue : o;
+    if (typeof value === "string" && value) (out as any)[field] = value;
+  }
+  return out;
+}
+
+/**
+ * The profile as the interview agent may see it: a profile that needs a
+ * rebuild keeps only its style/category fields (no free text that could
+ * carry the broker's private notes).
+ */
+export function profileSafeForInterview(
+  profile: SellerCommunicationProfile | null,
+  documents: Array<{ visibility?: string | null; sourceKind?: string | null }>,
+): SellerCommunicationProfile | null {
+  if (!profile || !sellerProfileNeedsRebuild(profile, documents)) return profile;
+  return { ...profile, sensitiveTopics: [], personalInsights: [], sellerStory: "" };
 }
 
 // =====================
@@ -229,12 +292,15 @@ async function gatherDataSources(dealId: string): Promise<{
     notesParts.push(`Asking Price: ${deal.askingPrice}`);
   }
 
-  // The broker's CRM notes and activities about the seller (imported from
-  // Pipedrive or pasted as "CRM note") say a lot about how the seller
-  // communicates — they're the broker's own notes, so they belong here.
+  // Broker-only sources (CRM notes and activities, private emails) are the
+  // broker's own notes — negotiation positions, private judgements, family
+  // details the seller never shared with us. The profile goes into the
+  // interview agent's prompt, and broker-only content must never reach the
+  // seller through it, so NONE of it is read here. A CRM note the broker
+  // explicitly shared is fine.
   let dealDocs: Awaited<ReturnType<typeof storage.getDocumentsByDeal>> = [];
   try {
-    dealDocs = await storage.getDocumentsByDeal(dealId);
+    dealDocs = (await storage.getDocumentsByDeal(dealId)).filter((d) => d.visibility !== "broker_only");
   } catch {
     dealDocs = [];
   }
@@ -245,7 +311,7 @@ async function gatherDataSources(dealId: string): Promise<{
     .slice(0, 12_000);
   if (crmText) {
     notesParts.push(
-      `Broker's private CRM notes about the seller and the business (personal matters here — health, family, money — ` +
+      `CRM notes the broker shared about the seller and the business (personal matters here — health, family, money — ` +
         `belong under sensitive topics: never something the interviewer raises):\n${crmText}`,
     );
   }
@@ -286,7 +352,7 @@ async function gatherDataSources(dealId: string): Promise<{
   // 3. Documents — look for transcripts specifically
   let transcriptContent: string | null = null;
   try {
-    const docs = await storage.getDocumentsByDeal(dealId);
+    const docs = dealDocs; // shared sources only (see above)
     const transcripts = docs.filter((d) => d.category === "transcripts");
 
     if (transcripts.length > 0) {
@@ -482,6 +548,7 @@ function buildDefaultProfile(
     confidenceScore: 0.1,
     dataSources: [],
     generatedAt: new Date().toISOString(),
+    privacyVersion: PROFILE_PRIVACY_VERSION,
   };
 }
 
@@ -598,6 +665,7 @@ export async function generateSellerProfile(
       confidenceScore,
       dataSources: sources,
       generatedAt: new Date().toISOString(),
+      privacyVersion: PROFILE_PRIVACY_VERSION,
     };
 
     return profile;

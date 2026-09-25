@@ -39,7 +39,8 @@ import { notify, previewRecipients, sendDirectEmail } from "./notifications/serv
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
-import { removeDocumentFields, typedNumericValues } from "./interview/info-merger";
+import { typedNumericValues } from "./interview/info-merger";
+import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
@@ -133,14 +134,18 @@ async function generateSectionWithClaude(
     contextParts.push(`=== BROKER NOTES ===\n${data.description}`);
   }
 
-  const confirmed = Object.entries(data.extractedInfo).filter(
-    ([k, v]) => v && !k.startsWith("_"),
-  );
+  // Facts split by provenance: CRM notes / website / social claims are
+  // leads, never presented as confirmed; per-source notes and "_" keys are
+  // never CIM input.
+  const { confirmed, leads } = splitFactsForCim(data.extractedInfo);
   if (confirmed.length > 0) {
     contextParts.push(
-      `=== CONFIRMED (from seller interview) ===\n` +
-      confirmed.map(([k, v]) => `${k}: ${v}`).join("\n")
+      `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
+      confirmed.map(([k, v]) => `${k}: ${factValueText(v)}`).join("\n")
     );
+  }
+  if (leads.length > 0) {
+    contextParts.push(`=== ${CIM_LEADS_HEADING} ===\n` + leads.map(([k, v]) => `${k}: ${factValueText(v)}`).join("\n"));
   }
 
   if (data.questionnaireData && Object.keys(data.questionnaireData).length > 0) {
@@ -182,7 +187,7 @@ Style guidelines:
 - Use **bold** for key metrics, standout facts, or deal highlights
 - Never open with clichés like "proven track record", "well-established", "thriving", or "exciting opportunity"
 - If a section has very little data, write what you can and note clearly what information is pending — do not fabricate
-- Prioritize "CONFIRMED (from seller interview)" data above all other sources`,
+- Prioritize "CONFIRMED" data above all other sources; never state an "UNCONFIRMED LEADS" item as fact`,
     messages: [
       {
         role: "user",
@@ -1154,8 +1159,10 @@ Return JSON only.`,
   app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { generateSellerProfile } = await import("./interview/eq-profiler");
-      const profile = await generateSellerProfile(dealId);
+      const { generateSellerProfile, carryBrokerProfileEdits } = await import("./interview/eq-profiler");
+      const prior = ((await storage.getDeal(dealId))?.sellerProfile as Record<string, unknown> | null) || null;
+      // The broker's own notes and corrections survive a regenerate.
+      const profile = carryBrokerProfileEdits(await generateSellerProfile(dealId), prior);
       // Store on deal record
       await storage.updateDeal(dealId, { sellerProfile: profile } as any);
       res.json(profile);
@@ -2576,12 +2583,9 @@ Return JSON only.`,
       // The dialog promises "any data extracted from it will be removed" —
       // honour it via field provenance.
       try {
-        const dealRow = await storage.getDeal(existingDoc.dealId);
-        if (dealRow) {
-          const { info, removed } = removeDocumentFields((dealRow.extractedInfo as Record<string, unknown>) || {}, existingDoc.id);
-          if (removed.length > 0) await storage.updateDeal(existingDoc.dealId, { extractedInfo: info } as any);
-          return res.json({ success: true, removedFields: removed });
-        }
+        const { removeSourceFacts } = await import("./documents/cleanup");
+        const removed = await removeSourceFacts(existingDoc.dealId, existingDoc.id);
+        return res.json({ success: true, removedFields: removed });
       } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
       res.json({ success: true });
     } catch (error: any) {

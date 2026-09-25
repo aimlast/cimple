@@ -291,6 +291,19 @@ export function FactRow({
             )}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
               <SourceChip source={fact.source} onOpen={onOpenSource} />
+              {(fact.corroboratedBy?.length ?? 0) > 0 && (
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <span className="text-[11px] text-muted-foreground cursor-default" data-testid="fact-corroborated">
+                      Also in {fact.corroboratedBy!.length === 1 ? sourceChipText(fact.corroboratedBy![0]) : `${fact.corroboratedBy!.length} other sources`}
+                    </span>
+                  </TooltipTrigger>
+                  <TooltipContent className="max-w-xs text-xs">
+                    <span className="block mb-0.5">Other sources that say the same — if one is removed, the fact stays:</span>
+                    {fact.corroboratedBy!.map((s, i) => <span key={i} className="block text-muted-foreground">{s.label}</span>)}
+                  </TooltipContent>
+                </Tooltip>
+              )}
               {conf && (
                 <Tooltip>
                   <TooltipTrigger asChild>

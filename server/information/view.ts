@@ -32,20 +32,22 @@ import {
   describeSource,
   isSourceKind,
   repairCharIndexedValue,
+  isUntrackedSource,
+  serializeFactValue,
+  getFieldCorroborations,
+  SOURCE_META_KEYS,
   type FieldSource,
   type SourceKind,
 } from "../interview/info-merger";
 import { BROKER_DELETED_KEY, BROKER_SECTION_OF_KEY, BROKER_FACT_LABELS_KEY, websiteFactKey } from "./facts";
 
 /**
- * Per-source notes the extractor records (summaries, call logistics). Real
- * extractedInfo keys, but about a source rather than the business — shown on
- * the source in the Sources panel, never as facts.
+ * Per-source notes the extractor records (summaries, call logistics) — about
+ * a source rather than the business: shown on the source in the Sources
+ * panel, never as facts. Defined next to the provenance helpers so every
+ * consumer (ingest, CIM writers, interview prompt) filters the same set.
  */
-export const SOURCE_META_KEYS = new Set([
-  "summary", "keyFacts", "redFlags", "callNotes", "sellerConcerns", "actionItems",
-  "buyerInterests", "followUpNeeded", "keyTopics", "callDate", "callDuration", "callParticipants",
-]);
+export { SOURCE_META_KEYS };
 
 /** Labels for common extractor / ad-hoc keys the generic map doesn't name. */
 const EXTRA_LABELS: Record<string, string> = {
@@ -168,7 +170,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   const confidenceLevels = ((latest?.extractedInfo as Info | null)?._confidenceLevels as Record<string, string> | undefined) ?? {};
 
   const sourceInfo = (src: FieldSource | undefined | null): FactSourceInfo => {
-    if (!src || !isSourceKind(src.source) || (src.source === "system" && src.note === "Recorded before sources were tracked")) {
+    if (!src || !isSourceKind(src.source) || isUntrackedSource(src)) {
       return { kind: "unknown", label: "Recorded before sources were tracked" };
     }
     const documentName = src.documentId ? docName(src.documentId) : undefined;
@@ -210,11 +212,23 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   const alternatesFor = (key: string): FactAlternate[] => {
     const out: FactAlternate[] = [];
     const push = (altKey: string, subKey?: string) => {
+      // The value on file right now (a whole fact, or one year of a map) —
+      // an alternate stating it isn't "another value".
+      const currentRaw = subKey
+        ? (repairCharIndexedValue(info[key]) as Record<string, unknown> | undefined)?.[subKey]
+        : repairCharIndexedValue(info[key]);
+      const current = currentRaw === undefined || currentRaw === null ? null : serializeFactValue(currentRaw);
+      const seen = new Set<string>();
       (alternates[altKey] ?? []).forEach((a, index) => {
         if (!a || typeof a.value !== "string") return;
         const { value, ...src } = a;
         let parsed: unknown = value;
         if (/^[\[{]/.test(value)) { try { parsed = JSON.parse(value); } catch { /* keep text */ } }
+        // Older rows stored a corrupted map as character soup — repair it.
+        parsed = repairCharIndexedValue(parsed);
+        const shown = serializeFactValue(parsed);
+        if (shown === current || seen.has(shown)) return; // one row per distinct value
+        seen.add(shown);
         out.push({
           altKey,
           index,
@@ -232,9 +246,19 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     return out;
   };
 
+  // Sources that state exactly the value on file (whole facts only).
+  const corroborations = getFieldCorroborations(info);
+  const corroboratedBy = (key: string, value: unknown): FactSourceInfo[] => {
+    const now = serializeFactValue(value);
+    return (corroborations[key] ?? [])
+      .filter((c) => c && c.value === now)
+      .map(({ value: _v, ...src }) => sourceInfo(src as FieldSource));
+  };
+
   const makeFact = (key: string, extra: { industrySpecific?: boolean; critical?: boolean } = {}): InformationFact => {
     const value = repairCharIndexedValue(info[key]);
     const src = sources[key];
+    const agree = corroboratedBy(key, value);
     return {
       key,
       label: labelOf(key),
@@ -244,6 +268,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       source: sourceInfo(src),
       confidence: confidenceOf(key, src),
       alternates: alternatesFor(key),
+      ...(agree.length > 0 ? { corroboratedBy: agree } : {}),
       brokerEdited: src?.source === "broker",
       ...extra,
     };

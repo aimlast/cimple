@@ -50,6 +50,8 @@ export interface InformationFact {
   source: FactSourceInfo;
   confidence: FactConfidence;
   alternates: FactAlternate[];
+  /** Other sources that state the same value (deleting one keeps the fact). */
+  corroboratedBy?: FactSourceInfo[];
   brokerEdited: boolean;
   /** Industry checklist / broker-added item flags. */
   industrySpecific?: boolean;
