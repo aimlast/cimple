@@ -16,16 +16,39 @@ import { matchBuyerDealRow } from "../../server/matching/match-run";
 import { passesFirstPass, reachedBuyers } from "../../server/matching/suggested";
 
 async function main() {
-  // ── 1. Exclusions are strict (no family widening) ─────────────────────────
+  // ── 1. Exclusions: qualified phrases strict, bare sector names cover the sector ──
   assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service & replacement", ["New-build construction"]), false);
   assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service & replacement", ["New-construction mechanical"]), false);
   assert.equal(excludedIndustryMatches("Construction · General contractor", ["construction"]), true);
   assert.equal(excludedIndustryMatches("Construction · General contractor", ["New-build construction"]), true);
   assert.equal(excludedIndustryMatches("Healthcare · Dental practice", ["Healthcare"]), true);
-  // A family word alone doesn't exclude a member industry the buyer didn't name.
-  assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service", ["Home services"]), false);
   assert.equal(excludedIndustryMatches("Retail · Vape shop", ["cannabis", "vape"]), true);
   assert.equal(excludedIndustryMatches("", ["construction"]), false);
+  // A buyer who rules out a whole sector rules out its members, even when the
+  // deal's label never uses the sector word (Beacon Pharmacy, checker round 1).
+  const beacon = "Pharmacy · Independent community pharmacy with LTC/retirement home services (14 homes) and non-sterile compounding";
+  assert.equal(excludedIndustryMatches(beacon, ["Restaurants", "Retail", "Construction", "Healthcare"]), true);
+  assert.equal(excludedIndustryMatches(beacon, ["Consumer retail", "Restaurants", "Healthcare services", "Software"]), true);
+  assert.equal(excludedIndustryMatches(beacon, ["Health care"]), true);
+  assert.equal(excludedIndustryMatches(beacon, ["Medical"]), true);
+  assert.equal(excludedIndustryMatches("Healthcare · Physiotherapy & massage therapy clinics", ["Healthcare delivery"]), true);
+  assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service", ["Home services"]), true);
+  assert.equal(excludedIndustryMatches("Manufacturing · Custom metal fabrication", ["Manufacturing"]), true);
+  assert.equal(excludedIndustryMatches("Retail · Vape shop", ["Retail"]), true);
+  // …but a qualified phrase is not a sector name and stays strict.
+  assert.equal(excludedIndustryMatches(beacon, ["Front-store heavy convenience pharmacy"]), false);
+  assert.equal(excludedIndustryMatches(beacon, ["Residential renovation", "Home builders"]), false);
+  assert.equal(excludedIndustryMatches(beacon, ["Home care"]), false);
+  assert.equal(excludedIndustryMatches("Healthcare · Physiotherapy & massage therapy clinics", ["Cosmetic-only clinics", "Massage-only studios"]), false);
+  assert.equal(excludedIndustryMatches("Home Services · Residential HVAC installation & service + plumbing", ["Home care"]), false);
+  // "Construction" means project-based building, not a plumbing/HVAC service company.
+  assert.equal(excludedIndustryMatches("Home Services · Residential HVAC installation & service + plumbing", ["Construction"]), false);
+  assert.equal(excludedIndustryMatches("Home Services · Residential HVAC installation & service + plumbing", ["Construction (project-based)"]), false);
+  assert.equal(excludedIndustryMatches("Construction · Concrete forming & paving", ["Construction"]), true);
+  // A sector the deal isn't in excludes nothing.
+  assert.equal(excludedIndustryMatches(beacon, ["Manufacturing", "Food service"]), false);
+  assert.equal(excludedIndustryMatches("Transportation & Logistics · Regional trucking", ["Long-haul trucking"]), false);
+  assert.equal(excludedIndustryMatches("Transportation & Logistics · Regional trucking", ["Trucking"]), true);
 
   // End to end: the Lakeshore case keeps its best buyers in the first pass.
   const lakeshore = {

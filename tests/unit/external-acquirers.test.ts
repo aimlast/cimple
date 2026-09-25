@@ -71,6 +71,40 @@ assert.match(blindBrief(cafe).brief, /treat head baker well; keeps from-scratch 
 // Text that can't be made blind is left out, never sent.
 assert.equal(blindFreeText("", briefTerms(loose)), null);
 
+// Franchise and brand names that look like people stay — they are the
+// research's key signal and identify no single business (checker round 1).
+for (const brand of ["Tim Hortons", "Wendy's", "Harvey's", "Mary Brown's Chicken", "Jack Astor's", "Mr. Lube", "Mr. Sub", "Dairy Queen", "Dr. Oetker", "Sally Beauty", "Edward Jones", "Ben Moss"]) {
+  const franchise: any = {
+    businessName: "Acme Test Co",
+    industry: "Franchise",
+    subIndustry: `${brand} franchise`,
+    extractedInfo: { location: "Halifax, Nova Scotia", revenueStreams: `${brand} franchise sales`, idealBuyer: `Approved ${brand} franchise operator; son Manpreet stays on` },
+  };
+  const fb = blindBrief(franchise).brief;
+  assert.ok(fb.includes(`Industry: Franchise — ${brand} franchise`), fb);
+  assert.ok(fb.includes(`Services / revenue streams: ${brand} franchise sales`), fb);
+  assert.ok(fb.includes(`PREFERENCES (binding): Approved ${brand} franchise operator; the owner’s son stays on`), fb);
+  assert.ok(!/key person/.test(fb), fb);
+}
+// A brand followed by a franchise word is a brand even when the label doesn't name it,
+// and every later mention of it in the same text is too.
+const noLabel: any = { businessName: "Acme Test Co", industry: "Automotive", extractedInfo: { idealBuyer: "Mr. Lube franchisee preferred; Mr. Lube must approve the buyer. Dr. Patel (landlord) must consent." } };
+const nb = blindBrief(noLabel).brief;
+assert.match(nb, /Mr\. Lube franchisee preferred; Mr\. Lube must approve the buyer\. A key person \(landlord\) must consent\./);
+// People are still people: with a relation word, without a franchise word, or in a brand deal.
+const people: any = { businessName: "Acme Test Co", industry: "Franchise", subIndustry: "Wendy's franchise", extractedInfo: { idealBuyer: "A Wendy's operator who keeps Maria Gonzalez as GM and lets daughter Wendy stay" } };
+const pb = blindBrief(people).brief;
+assert.ok(!/maria|gonzalez/i.test(pb), pb);
+assert.ok(!/daughter Wendy/.test(pb), pb);
+assert.match(pb, /A Wendy's operator who keeps a key person as GM/);
+const branchMgr: any = { businessName: "Acme Test Co", industry: "Retail", extractedInfo: { idealBuyer: "Buyer who keeps Maria as branch manager and Priya's restaurant staff" } };
+const bm = blindBrief(branchMgr).brief;
+assert.ok(!/maria|priya/i.test(bm), bm);
+// The deal's own terms still win: a business named after its brand keeps it hidden.
+const ownBrand: any = { businessName: "Tim Hortons Bedford", industry: "Franchise", subIndustry: "Tim Hortons franchise", extractedInfo: { location: "Bedford, Nova Scotia", idealBuyer: "Approved Tim Hortons franchisee" } };
+const ob = blindBrief(ownBrand).brief;
+assert.ok(!/tim hortons|bedford/i.test(ob), ob);
+
 // ── 2. URLs compare normalised ────────────────────────────────────────────
 assert.equal(normaliseUrl("https://www.mullen-group.com/"), normaliseUrl("http://mullen-group.com"));
 assert.equal(normaliseUrl("https://WWW.Mullen-Group.com/news/?utm=1#x"), "mullen-group.com/news");

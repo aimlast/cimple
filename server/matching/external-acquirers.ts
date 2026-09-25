@@ -114,17 +114,97 @@ export function briefLeaks(text: string, terms: BlindTerm[]): string[] {
   return hits;
 }
 
+// Brands that look like people ("Tim Hortons", "Wendy's", "Mr. Lube",
+// "Dr. Oetker", "Edward Jones"). For a franchise resale the brand is the
+// research's key signal and identifies no single business, so the person
+// heuristics must leave it alone. A name counts as a brand when the deal's
+// industry label names it (the broker's own classification never names
+// people) or when it is directly followed by a franchise/dealer word. A name
+// after a relation word ("son Tim") is always a person. The deal's own terms
+// are applied before this and still win: a business named "Tim Hortons
+// Bedford" keeps its brand hidden.
+const BRAND_WORDS = [
+  "franchise", "franchises", "franchisee", "franchisees", "franchisor", "franchising", "dealer", "dealers", "dealership", "dealerships",
+  "distributor", "distributors", "distributorship", "branch", "branches", "licensee", "licensees", "brand", "banner", "outlet", "outlets",
+];
+// Case-sensitive on purpose: the one word allowed between the name and the
+// franchise word must be capitalised ("Mary Brown's Chicken franchise") or
+// "restaurant" ("Harvey's restaurant franchise"), so "keeps Maria as branch
+// manager" is not read as a brand.
+const BRAND_AFTER = new RegExp(
+  `^(?:['’]s)?(?:\\s+(?:[A-Z][${L}'’-]*|restaurants?))?\\s+(?:${BRAND_WORDS.flatMap((w) => [w, w[0].toUpperCase() + w.slice(1)]).join("|")})(?![${L}])`,
+);
+const RELATION_BEFORE = new RegExp(`\\b(?:${RELATION})\\s+$`, "i");
+
+/** The person-looking names in text, as bare names (no title, no "Ms." variants). */
+function nameCandidates(text: string): string[] {
+  const raw = [...honorificNames(text), ...peopleInFact(text, "prose")].map((p) => p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), "").trim());
+  return Array.from(new Set(raw.filter(Boolean))).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Hide brand names while the person heuristics run, then put them back.
+ * `known` = brands the industry label names (always brands, wherever they
+ * appear); any other name is a brand only where a franchise word follows it.
+ */
+function withBrandsMasked(text: string, known: string[], fn: (masked: string) => string): string {
+  const kept: string[] = [];
+  const pattern = (name: string) => {
+    const words = name.split(new RegExp(`[^${L}]+`)).filter(Boolean).map(escapeRe);
+    return words.length ? new RegExp(`(?<![${L}])((?:${TITLE})\\.?\\s+)?${words.join(`[^${L}]+`)}(?![${L}])`, "g") : null;
+  };
+  // A name is a brand when the label names it, or when any of its mentions
+  // here is followed by a franchise word — then every mention is the brand
+  // ("Mr. Lube franchise; Mr. Lube must approve the buyer").
+  const brands = new Set(known.map((k) => k.toLowerCase()));
+  for (const name of nameCandidates(text)) {
+    const re = pattern(name);
+    let hit: RegExpExecArray | null;
+    while (re && (hit = re.exec(text))) {
+      if (!RELATION_BEFORE.test(text.slice(0, hit.index)) && BRAND_AFTER.test(text.slice(hit.index + hit[0].length))) brands.add(name.toLowerCase());
+    }
+  }
+  let masked = text;
+  for (const name of Array.from(new Set([...known, ...nameCandidates(text)])).sort((a, b) => b.length - a.length)) {
+    const re = pattern(name);
+    if (!re || !brands.has(name.toLowerCase())) continue;
+    masked = masked.replace(re, (m, _title, offset: number, whole: string) =>
+      RELATION_BEFORE.test(whole.slice(0, offset)) ? m : `⟪${kept.push(m) - 1}⟫`,
+    );
+  }
+  return fn(masked).replace(/⟪(\d+)⟫/g, (_m, i) => kept[Number(i)] ?? "");
+}
+
+/** Brand names in the deal's industry label ("Franchise — Tim Hortons franchise"). */
+export function labelBrands(label: string): string[] {
+  let found: string[] = [];
+  withRegionsMasked(label, (masked) => {
+    found = nameCandidates(masked).filter((n) => {
+      const re = new RegExp(`(?<![${L}])${escapeRe(n)}(?![${L}])`, "g");
+      let hit: RegExpExecArray | null;
+      while ((hit = re.exec(masked))) {
+        if (!RELATION_BEFORE.test(masked.slice(0, hit.index).replace(new RegExp(`(?:${TITLE})\\.?\\s+$`, "i"), ""))) return true;
+      }
+      return false;
+    });
+    return masked;
+  });
+  return found;
+}
+
 /**
  * Free text from the facts made blind: every identifying term the facts
  * name (business names, people, city, street, contacts) and any titled or
  * known-given-name person in the prose is replaced with a neutral phrase.
+ * Brand names (see `withBrandsMasked`) are not people and stay.
  * Returns null when something identifying is still there — the caller
  * leaves the line out (fail closed).
  */
-export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: boolean } = {}): string | null {
+export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: boolean; brands?: string[] } = {}): string | null {
   // prose=false: only the deal's own terms — for AI output about OTHER
   // organisations, where the name heuristics would rewrite real names.
   const prose = opts.prose !== false;
+  const brands = opts.brands ?? [];
   const byLength = [...terms].sort((a, b) => b.text.length - a.text.length);
   let out = withRegionsMasked(text, (masked) => {
     let o = masked;
@@ -140,10 +220,14 @@ export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: 
       o = neutralise(o, t.text, t.kind, !!t.common);
     }
     // People the facts don't list but the prose names ("son Manpreet", "Dr. Lee").
-    for (const p of prose ? [...honorificNames(o), ...peopleInFact(o, "prose")].sort((a, b) => b.length - a.length) : []) {
-      o = neutralise(o, p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), ""), "person", false);
-    }
-    return o;
+    if (!prose) return o;
+    return withBrandsMasked(o, brands, (m) => {
+      let x = m;
+      for (const p of [...honorificNames(x), ...peopleInFact(x, "prose")].sort((a, b) => b.length - a.length)) {
+        x = neutralise(x, p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), ""), "person", false);
+      }
+      return x;
+    });
   });
   out = out
     .replace(/\b(a key person)(?:\s+a key person)+/g, "$1")
@@ -155,10 +239,12 @@ export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: 
   if (!out || briefLeaks(out, terms).length) return null;
   if (!prose) return out;
   let people = 0;
-  withRegionsMasked(out, (masked) => {
-    people = honorificNames(masked).length + peopleInFact(masked, "prose").length;
-    return masked;
-  });
+  withRegionsMasked(out, (masked) =>
+    withBrandsMasked(masked, brands, (m) => {
+      people = honorificNames(m).length + peopleInFact(m, "prose").length;
+      return m;
+    }),
+  );
   return people ? null : out;
 }
 
@@ -200,9 +286,11 @@ export function blindBrief(deal: Deal): { brief: string; region: string | null; 
   const info = ((deal as any).extractedInfo || {}) as Record<string, unknown>;
   const terms = briefTerms(deal);
   let withheld = 0;
+  const industryLabel = `${deal.industry || "unknown"}${(deal as any).subIndustry ? ` — ${(deal as any).subIndustry}` : ""}`;
+  const brands = labelBrands(industryLabel);
   const free = (label: string, raw: string, max: number): string => {
     if (!raw.trim()) return "";
-    const clean = blindFreeText(clip(raw, max * 2), terms);
+    const clean = blindFreeText(clip(raw, max * 2), terms, { brands });
     if (!clean) { withheld++; return ""; }
     return `${label}${clip(clean, max)}`;
   };
@@ -210,7 +298,7 @@ export function blindBrief(deal: Deal): { brief: string; region: string | null; 
   const m = REGION_RE.exec(locText);
   const region = m ? PROVINCES[m[1]] ?? m[1] : null;
   const country = region && Object.values(PROVINCES).includes(region) ? "Canada" : region ? "United States" : null;
-  const industry = free("", `${deal.industry || "unknown"}${(deal as any).subIndustry ? ` — ${(deal as any).subIndustry}` : ""}`, 240) || `${deal.industry && !briefLeaks(deal.industry, terms).length ? deal.industry : "unknown"}`;
+  const industry = free("", industryLabel, 240) || `${deal.industry && !briefLeaks(deal.industry, terms).length ? deal.industry : "unknown"}`;
   const lines = [
     `Industry: ${industry}`,
     free("Business type: ", txt(info.businessType), 200),

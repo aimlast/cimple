@@ -272,20 +272,71 @@ const EXCLUSION_QUALIFIERS = new Set([
 ]);
 
 /**
- * Does a buyer's EXCLUDED industry rule this deal out? Much stricter than
+ * Exclusions that are nothing but a sector's name ("Healthcare", "Healthcare
+ * services", "Home services", "Food & beverage") — written with the filler
+ * words ("services", "business", "and") taken out. Such an exclusion covers
+ * the whole family: a buyer who rules out "Healthcare" is ruling out a
+ * pharmacy. Anything more specific ("Healthcare delivery", "New-build
+ * construction", "Home care") is not a bare sector name and stays strict.
+ */
+const SECTOR_NAMES: Record<string, string[]> = {
+  healthcare: ["healthcare", "health", "health care", "medical", "medicine", "healthcare medical", "health wellness", "health care medical", "healthcare delivery", "health care delivery", "care delivery"],
+  "home services": ["home", "home services", "home service", "home trades", "home improvement"],
+  construction: ["construction", "contracting", "construction contracting", "construction trades", "trades construction"],
+  "food service": ["food", "food service", "food beverage", "f b", "hospitality", "restaurant food"],
+  "professional services": ["professional", "professional services"],
+  manufacturing: ["manufacturing", "manufacturer", "manufacturers"],
+  retail: ["retail", "retailer", "retailers", "retail trade"],
+  automotive: ["automotive", "auto"],
+  "business services": ["business services", "b2b", "b2b services"],
+};
+
+/**
+ * The families a deal belongs to, for exclusions. Same as `familiesOf`, except
+ * that trades which are usually service businesses (plumbing, electrical,
+ * roofing, renovation) don't make a deal "construction": a buyer who rules out
+ * construction means project-based building, not a residential HVAC and
+ * plumbing service company.
+ */
+const CONSTRUCTION_FOR_EXCLUSION = ["construction", "contractor", "contracting", "general contractor", "homebuild", "home builder", "excavat", "paving", "concrete", "framing", "drywall"];
+function exclusionFamiliesOf(text: string): Set<string> {
+  const out = familiesOf(text);
+  out.delete("construction");
+  if (CONSTRUCTION_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("construction");
+  return out;
+}
+
+/** The family an exclusion names outright, if it is just a sector name. */
+function bareSector(phrase: string): string | null {
+  const all = words(phrase);
+  const core = all.filter((w) => !INDUSTRY_FILLER.has(w)).join(" ");
+  const full = all.join(" ");
+  for (const [family, names] of Object.entries(SECTOR_NAMES)) {
+    if (names.includes(core) || names.includes(full)) return family;
+  }
+  return null;
+}
+
+/**
+ * Does a buyer's EXCLUDED industry rule this deal out? Stricter than
  * `industryMatches` (which suits targets): the whole exclusion phrase must
  * appear in the deal's industry label, or every one of its meaningful words
- * must — qualifiers like "new"/"build" ignored — and there is no widening by
- * industry family. "New-build construction" does not exclude a residential
- * HVAC service business; "construction" excludes a general contractor.
+ * must — qualifiers like "new"/"build" ignored. Industry-family widening
+ * applies only when the exclusion is just a sector's name. "New-build
+ * construction" does not exclude a residential HVAC service business;
+ * "construction" excludes a general contractor; "Healthcare" excludes a
+ * pharmacy; "Home services" excludes an HVAC business.
  */
 export function excludedIndustryMatches(dealIndustryText: string, exclusions: string[]): boolean {
   const hay = dealIndustryText.toLowerCase();
   if (!hay.trim()) return false;
+  let dealFamilies: Set<string> | null = null;
   return exclusions.some((raw) => {
     const phrase = String(raw || "").toLowerCase().trim();
     if (!phrase) return false;
     if (new RegExp(`\\b${escapeRegex(phrase)}\\b`).test(hay)) return true;
+    const sector = bareSector(phrase);
+    if (sector && (dealFamilies ??= exclusionFamiliesOf(hay)).has(sector)) return true;
     const meaningful = words(phrase).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w) && !EXCLUSION_QUALIFIERS.has(w));
     return meaningful.length > 0 && meaningful.every((w) => containsTerm(hay, w));
   });
