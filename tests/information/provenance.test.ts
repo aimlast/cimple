@@ -28,18 +28,22 @@ ok("describeSource");
 
 // merge: document fills empty, email outranks doc, crm doesn't, legacy protected, suppression
 let info: Record<string, unknown> = { reasonForSale: "Retiring" /* untracked legacy */ };
-info = mergeExtractedData(info, { annualRevenue: "$1.8M", reasonForSale: "Health" } as any, "doc1");
+info = mergeExtractedData(info, { annualRevenue: "$1.8M", targetMarket: "Local families", reasonForSale: "Health" } as any, "doc1");
 assert.equal(info.annualRevenue, "$1.8M");
 assert.equal(getFieldSources(info).annualRevenue.source, "document");
 assert.equal(getFieldSources(info).annualRevenue.documentId, "doc1");
 assert.ok(getFieldSources(info).annualRevenue.at);
 assert.equal(info.reasonForSale, "Retiring");
 assert.equal(getFieldAlternates(info).reasonForSale[0].value, "Health");
-info = mergeExtractedData(info, { annualRevenue: "$2.0M" } as any, { documentId: "email1", source: "email" });
-assert.equal(info.annualRevenue, "$2.0M", "email outranks document");
-assert.ok(getFieldAlternates(info).annualRevenue.some((a) => a.value === "$1.8M" && a.documentId === "doc1"));
-info = mergeExtractedData(info, { annualRevenue: "$5M", employees: "12" } as any, { documentId: "crm1", source: "crm" });
-assert.equal(info.annualRevenue, "$2.0M", "crm never displaces email");
+// A narrative claim: the seller's email outranks a document.
+info = mergeExtractedData(info, { targetMarket: "Families and seniors", annualRevenue: "$2.0M" } as any, { documentId: "email1", source: "email" });
+assert.equal(info.targetMarket, "Families and seniors", "email outranks document for a narrative claim");
+assert.ok(getFieldAlternates(info).targetMarket.some((a) => a.value === "Local families" && a.documentId === "doc1"));
+// A statement figure (founder decision A): the document stays, the email's figure is another value.
+assert.equal(info.annualRevenue, "$1.8M", "a document outranks an email for a statement figure");
+assert.ok(getFieldAlternates(info).annualRevenue.some((a) => a.value === "$2.0M" && a.documentId === "email1"));
+info = mergeExtractedData(info, { targetMarket: "Everyone", employees: "12" } as any, { documentId: "crm1", source: "crm" });
+assert.equal(info.targetMarket, "Families and seniors", "crm never displaces email");
 assert.equal(info.employees, "12");
 info._brokerSuppressed = ["seasonality"];
 info = mergeExtractedData(info, { seasonality: "Summer peak" } as any, { documentId: "doc2", source: "document" });
@@ -55,6 +59,8 @@ ok("revenueByYear per-year merge");
 
 // removeDocumentFields for an email source promotes the doc alternate back
 let r = removeDocumentFields(info, "email1");
+assert.equal(r.info.targetMarket, "Local families");
+assert.equal(getFieldSources(r.info).targetMarket.documentId, "doc1");
 assert.equal(r.info.annualRevenue, "$1.8M");
 assert.equal(getFieldSources(r.info).annualRevenue.documentId, "doc1");
 r = removeDocumentFields(r.info, "crm1");

@@ -38,6 +38,7 @@ import type {
   InformationSource,
   InformationView,
 } from "@shared/information";
+import { sourceCountText } from "@shared/information";
 import { FactRow, AddFactForm, SourceChip } from "@/components/information/FactRow";
 import { SourcesPanel, SourceViewer } from "@/components/information/SourcesPanel";
 import { AddSourceDialog } from "@/components/information/AddSourceDialog";
@@ -138,8 +139,8 @@ export function InformationTab() {
   };
 
   const readiness = view.readiness;
-  // Sources that actually account for facts (recorded or traced).
-  const sourceCount = view.sources.filter((s) => s.factCount > 0).length;
+  // One wording with the Sources panel: "8 sources · 6 contributed facts".
+  const sourcesText = sourceCountText(view.sources);
   const untracked = view.counts.unknown ?? 0;
   const inferredFacts = view.inferredFacts ?? 0;
   const activeSource = sourceFilter ? view.sources.find((s) => s.id === sourceFilter) : null;
@@ -177,19 +178,10 @@ export function InformationTab() {
             <h2 className="text-lg font-semibold tracking-tight">Collected information</h2>
             <p className="text-sm text-muted-foreground mt-1">{readiness.summary}</p>
             <p className="text-xs text-muted-foreground/80 mt-2 tabular-nums">
-              {untracked > 0 ? (
-                // "64 facts · 29 from 6 sources · 35 earlier records"
-                <>
-                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
-                  {sourceCount > 0 && <>{" · "}{view.totalFacts - untracked} from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
-                  {" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}
-                </>
-              ) : (
-                <>
-                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
-                  {sourceCount > 0 && <> from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
-                </>
-              )}
+              {/* "64 facts · 8 sources · 6 contributed facts · 35 earlier records" */}
+              {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
+              {view.sources.length > 0 && <>{" · "}{sourcesText}</>}
+              {untracked > 0 && <>{" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}</>}
               {missingCount > 0 && (
                 <>
                   {" · "}

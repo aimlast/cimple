@@ -31,6 +31,9 @@ import {
   repairCharIndexedValue,
   sourceRank,
   isRowBackedSource,
+  resolvedYearSources,
+  summariseMapSource,
+  sourceRowLookup,
   FIELD_SOURCES_KEY,
   FIELD_ALTERNATES_KEY,
   FIELD_CORROBORATIONS_KEY,
@@ -49,6 +52,7 @@ export function brokerPrivacy(documents: DocLike[]) {
   /** A value asserted by a broker-only row (or a CRM row that no longer exists). */
   const isPrivateSource = (src: Partial<FieldSource> | null | undefined): boolean => {
     if (!src) return false;
+    if (src.brokerOnly === true) return true;
     if (src.documentId && visibility.get(src.documentId) === "broker_only") return true;
     // CRM material is the broker's by default; one whose row is gone can't
     // be shown to have been shared.
@@ -124,6 +128,7 @@ function bestAlternate(list: FieldAlternate[] | undefined): FieldAlternate | und
 
 export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[]): T {
   const { isPrivateSource, isSellerSideNoteSource } = brokerPrivacy(documents);
+  const lookup = sourceRowLookup(documents);
   const out: Info = { ...info };
 
   // 1. Other values on file (alternates, corroborations): broker-only ones
@@ -166,19 +171,20 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
     if (src?.years && isMap(value)) {
       // Map fact (revenue by year): each year belongs to its contributor.
       const map = { ...value };
-      const years = { ...src.years };
+      // Each year read through its own source (info-merger yearSource): a
+      // broker-only / CRM year inside a map of statement figures is private.
+      const years = resolvedYearSources(src, map, lookup);
       let changed = false;
       for (const y of Object.keys(map)) {
-        const contributor = years[y] ?? (isRowBackedSource(src) ? src.documentId : undefined);
-        const privateYear = contributor
-          ? isPrivateSource({ source: src.source, documentId: contributor })
-          : isPrivateSource(src);
-        if (!privateYear) continue;
+        if (!isPrivateSource(years[y])) continue;
         changed = true;
         delete years[y];
         const alt = bestAlternate(alts[`${key}.${y}`]);
-        if (alt) map[y] = parseAlternateValue(alt.value);
-        else delete map[y];
+        if (alt) {
+          map[y] = parseAlternateValue(alt.value);
+          const { value: _v, ...altSrc } = alt;
+          years[y] = altSrc as FieldSource;
+        } else delete map[y];
       }
       if (!changed) continue;
       if (Object.keys(map).length === 0) {
@@ -187,10 +193,7 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
         continue;
       }
       viewed[key] = map;
-      const next: FieldSource = { ...src, years };
-      if (Object.keys(years).length === 0) delete next.years;
-      if (isPrivateSource(src)) delete next.documentId;
-      sources[key] = next;
+      sources[key] = summariseMapSource(years) ?? { ...src };
       continue;
     }
     if (!isPrivateSource(src)) continue;

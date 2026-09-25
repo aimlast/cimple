@@ -633,8 +633,13 @@ export interface FieldSource {
   source: SourceKind;
   /** The documents row (document, email, call transcript, CRM note, …) that asserted it. */
   documentId?: string;
-  /** Map fields (revenueByYear): which document asserted each sub-key. */
-  years?: Record<string, string>;
+  /**
+   * Map fields (revenueByYear, sdeByYear…): the source of each sub-key (year).
+   * Current writes store a full FieldSource per year; older rows store the
+   * bare documentId of the row that stated it. Always read through
+   * yearSource() / resolvedYearSources(), never directly.
+   */
+  years?: Record<string, YearEntry>;
   /** Interview / call session that captured it, and the seller turn number. */
   sessionId?: string;
   turn?: number;
@@ -650,6 +655,25 @@ export interface FieldSource {
    * broker vouched for it, so CIM writers treat it as a fact, not a lead.
    */
   acceptedByBroker?: boolean;
+  /**
+   * The fiscal period the value is for (ISO yyyy-mm-dd — a statement's
+   * period end), else the source's own date. Between two sources of equal
+   * authority the newer period wins (see server/documents/merge-policy.ts).
+   */
+  period?: string;
+  /** The source's own date (ISO yyyy-mm-dd: email sent, call held, statement signed) — the tie-break after period. */
+  dated?: string;
+  /** Asserted by a broker-only source row (documents.visibility = 'broker_only'); false = a shared row. */
+  brokerOnly?: boolean;
+  /** A dedicated source for this fact (the org chart for key employees, the lease for lease terms). */
+  specialist?: boolean;
+  /**
+   * The reader worked the value out ("implied", "calculated", a vague
+   * "Barrie area (address not stated)") rather than the source stating it:
+   * it fills an empty field but never displaces a value, and any explicit
+   * value replaces it.
+   */
+  valueInferred?: boolean;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
@@ -894,13 +918,20 @@ export function noteSameValue(
   info: Record<string, unknown>,
   key: string,
   src: FieldSource,
-  opts: { current?: unknown; recorded?: FieldSource | null; setRecorded?: (s: FieldSource) => void } = {},
+  opts: {
+    current?: unknown;
+    recorded?: FieldSource | null;
+    setRecorded?: (s: FieldSource) => void;
+    /** True when `src` should become the recorded source (default: a strictly higher kind rank). */
+    outranks?: (incoming: FieldSource, current: FieldSource) => boolean;
+  } = {},
 ): void {
   const cur = opts.recorded !== undefined ? opts.recorded : getFieldSources(info)[key];
   if (isUntrackedSource(cur)) return;
   if (originKey(cur!) === originKey(src)) return; // the same source re-read
   const value = serializeFactValue(repairCharIndexedValue(opts.current !== undefined ? opts.current : info[key]));
-  if (sourceRank(src.source) > sourceRank(cur!.source)) {
+  const takesOver = opts.outranks ? opts.outranks(src, cur!) : sourceRank(src.source) > sourceRank(cur!.source);
+  if (takesOver) {
     if (opts.setRecorded) opts.setRecorded(src);
     else setFieldSource(info, key, src);
     addCorroboration(info, key, value, cur!);
@@ -984,6 +1015,134 @@ export function mergeAlternateMaps(
   return out;
 }
 
+// ── Per-year provenance ─────────────────────────────────────────────────
+// A map fact (revenueByYear, sdeByYear, …) records who stated EACH year in
+// FieldSource.years: a full FieldSource per year (current writes) or, on
+// older rows, the bare documentId of the row that stated it. A year with no
+// entry belongs to the fact's recorded source (older rows only — current
+// writes list every year). The fact's own FieldSource is a display summary
+// (the source of its latest confirmed year, see summariseMapSource).
+//
+// Every per-year decision — which year the CIM may state, what the seller
+// interview sees, what a document delete removes, which figure a merge keeps
+// — reads the year's OWN source through yearSource() / resolvedYearSources(),
+// never the map's summary: a CRM or broker-only year inside a map of
+// statement figures stays a CRM / broker-only year.
+
+/** One year's source: a full FieldSource, or (older rows) the documentId that stated it. */
+export type YearEntry = string | FieldSource;
+
+/** The documents row behind one year entry, if any. */
+export function yearEntryDocId(e: YearEntry | null | undefined): string | undefined {
+  if (!e) return undefined;
+  return typeof e === "string" ? e || undefined : e.documentId;
+}
+
+/**
+ * Resolves a documents row to its kind and visibility — lets older bare-id
+ * year entries be read as the source they really are (a CRM note, a
+ * broker-only email) instead of inheriting the map's kind.
+ */
+export interface SourceRowLookup {
+  kindOf?: (documentId: string) => SourceKind | undefined;
+  brokerOnlyOf?: (documentId: string) => boolean | undefined;
+}
+
+/** Builds a SourceRowLookup from the deal's documents rows. */
+export function sourceRowLookup(
+  documents: Array<{ id: string; sourceKind?: string | null; visibility?: string | null }>,
+): SourceRowLookup {
+  const byId = new Map(documents.map((d) => [d.id, d]));
+  return {
+    kindOf: (id) => {
+      const d = byId.get(id);
+      if (!d) return undefined;
+      return isSourceKind(d.sourceKind) ? d.sourceKind : "document";
+    },
+    brokerOnlyOf: (id) => {
+      const d = byId.get(id);
+      return d ? d.visibility === "broker_only" : undefined;
+    },
+  };
+}
+
+/** The full source of one year of a map fact whose recorded source is `recorded`. */
+export function yearSource(
+  recorded: FieldSource | null | undefined,
+  year: string,
+  lookup?: SourceRowLookup,
+): FieldSource | null {
+  if (!recorded) return null;
+  const entry = recorded.years?.[year];
+  if (entry && typeof entry === "object") {
+    // A full entry — completed from its row when it doesn't say its visibility.
+    if (entry.documentId && entry.brokerOnly === undefined) {
+      const bo = lookup?.brokerOnlyOf?.(entry.documentId);
+      if (bo !== undefined) return { ...entry, brokerOnly: bo };
+    }
+    return entry;
+  }
+  const { years: _years, ...base } = recorded;
+  if (typeof entry === "string" && entry) {
+    // Older rows kept only the documentId. Its own row says what it is;
+    // without the row, the map's kind when the map was that kind of row.
+    const kind = lookup?.kindOf?.(entry) ?? (isRowBackedSource(recorded) ? recorded.source : "document");
+    const brokerOnly = lookup?.brokerOnlyOf?.(entry);
+    return { source: kind, documentId: entry, ...(brokerOnly !== undefined ? { brokerOnly } : {}) };
+  }
+  // Unlisted year (older rows): it belongs to the recorded source — never to
+  // a document an older merge bug stamped on a broker / interview source.
+  if (base.documentId && !isRowBackedSource(base)) delete base.documentId;
+  if (base.documentId && base.brokerOnly === undefined) {
+    const bo = lookup?.brokerOnlyOf?.(base.documentId);
+    if (bo !== undefined) return { ...base, brokerOnly: bo };
+  }
+  return base;
+}
+
+/** Every year of `map` with its full source (see yearSource). */
+export function resolvedYearSources(
+  recorded: FieldSource | null | undefined,
+  map: Record<string, unknown>,
+  lookup?: SourceRowLookup,
+): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const y of Object.keys(map)) {
+    const s = yearSource(recorded, y, lookup);
+    if (s) out[y] = s;
+  }
+  return out;
+}
+
+const SUMMARY_LEAD_KINDS: ReadonlySet<string> = new Set(["crm", "website", "social"]);
+
+/** Newest year first ("2024" before "2023"; non-year keys last). */
+export function compareYearKeysDesc(a: string, b: string): number {
+  const ya = /^\d{4}$/.test(a) ? Number(a) : -1;
+  const yb = /^\d{4}$/.test(b) ? Number(b) : -1;
+  return yb - ya || a.localeCompare(b);
+}
+
+/**
+ * The recorded source of a map fact, rebuilt from its per-year sources: the
+ * source of the latest year that isn't a lead or broker-only (else the
+ * latest year's), carrying every year's full source in `years`.
+ */
+export function summariseMapSource(yearSources: Record<string, FieldSource>): FieldSource | null {
+  const entries = Object.entries(yearSources).sort(([a], [b]) => compareYearKeysDesc(a, b));
+  if (entries.length === 0) return null;
+  const pick =
+    entries.find(([, s]) => !s.brokerOnly && !SUMMARY_LEAD_KINDS.has(String(s.source)) && !isUntrackedSource(s)) ??
+    entries[0];
+  const { years: _y, ...base } = pick[1];
+  const years: Record<string, FieldSource> = {};
+  for (const [y, s] of entries) {
+    const { years: _inner, ...clean } = s;
+    years[y] = clean;
+  }
+  return { ...base, years };
+}
+
 /**
  * Removes every field (and alternate) that a deleted source asserted — any
  * documents-backed kind (document, email, call / video-call transcript, CRM
@@ -1020,46 +1179,39 @@ export function removeDocumentFields(
 
   for (const [key, src] of Object.entries(sources)) {
     const ownsWhole = isRowBackedSource(src) && src.documentId === documentId;
-    // Map field with per-sub-key contributors: strip only this document's
-    // years (unlisted years belong to the recorded source).
+    // Map field with per-year sources: strip only this document's years,
+    // each read through yearSource (an unlisted year belongs to the
+    // recorded source; a broker / interview year never belongs to a row).
     if (src.years && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
       const map = { ...(repairCharIndexedValue(out[key]) as Record<string, unknown>) };
-      const years = { ...src.years };
+      const years = resolvedYearSources(src, map);
       let touched = false;
       // Only years whose figure actually went count as removed — a year
       // another source also stated stays on file under that source.
       let yearRemoved = false;
       for (const y of Object.keys(map)) {
-        const contributor = years[y] ?? (ownsWhole ? documentId : undefined);
-        if (contributor !== documentId) continue;
+        const ys = years[y];
+        if (!isRowBackedSource(ys) || ys.documentId !== documentId) continue;
         touched = true;
         const other = takeCorroboration(`${key}.${y}`, serializeFactValue(map[y]));
         if (other) {
           // Another source gave the same figure for this year — it stays.
-          if (other.documentId) years[y] = other.documentId;
-          else delete years[y];
+          const { value: _v, ...otherSrc } = other;
+          years[y] = otherSrc as FieldSource;
           continue;
         }
         delete map[y];
         delete years[y];
         yearRemoved = true;
       }
-      for (const [y, docId] of Object.entries(years)) if (docId === documentId && !(y in map)) delete years[y];
       if (!touched) {
-        if (src.documentId === documentId) { sources[key] = stripDocumentId(src); changed = true; }
+        if (src.documentId === documentId) { sources[key] = summariseMapSource(years) ?? stripDocumentId(src); changed = true; }
         continue;
       }
       changed = true;
       if (Object.keys(map).length === 0) { delete out[key]; delete sources[key]; removed.push(key); continue; }
       out[key] = map;
-      const next: FieldSource = { ...src, years };
-      if (Object.keys(years).length === 0) delete next.years;
-      if (src.documentId === documentId) {
-        const remaining = Object.values(years);
-        if (ownsWhole && remaining[0]) next.documentId = remaining[0];
-        else delete next.documentId;
-      }
-      sources[key] = next;
+      sources[key] = summariseMapSource(years) ?? stripDocumentId(src);
       if (yearRemoved) removed.push(`${key}:${documentId}`);
       continue;
     }

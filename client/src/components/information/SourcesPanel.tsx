@@ -23,6 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { AlertCircle, ExternalLink, Loader2, Lock, Plus, Trash2 } from "lucide-react";
 import type { InformationSource } from "@shared/information";
+import { sourceContributionText, sourceCountText } from "@shared/information";
 import type { DocumentSourceMeta, SourceKind } from "@shared/schema";
 import { KIND_META, formatShortDate } from "./source-kinds";
 import { informationKey, requestJson, useInformationAction } from "./useInformation";
@@ -84,7 +85,7 @@ export function SourcesPanel({
       <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border/60">
         <div>
           <h3 className="text-sm font-semibold">Sources</h3>
-          <p className="text-[11px] text-muted-foreground">{sources.length} source{sources.length === 1 ? "" : "s"}</p>
+          <p className="text-[11px] text-muted-foreground" data-testid="sources-count">{sourceCountText(sources)}</p>
           {untrackedFacts > 0 && (
             <p className="text-[11px] text-muted-foreground/80 mt-0.5 max-w-[15rem] leading-snug" data-testid="sources-untracked-note">
               {untrackedFacts} earlier fact{untrackedFacts === 1 ? "" : "s"} can't be traced to one of these.
@@ -128,6 +129,12 @@ export function SourcesPanel({
                       )}
                       <StatusBit status={s.status} />
                     </div>
+                    {/* What it gave beyond the facts recorded from it — a source that only confirmed others isn't "0 facts". */}
+                    {((s.corroboratedCount ?? 0) > 0 || (s.alternateCount ?? 0) > 0) && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground/80" data-testid={`source-contribution-${s.id}`}>
+                        {sourceContributionText(s)}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -151,7 +158,9 @@ export function SourcesPanel({
                     data-testid={`source-facts-${s.id}`}
                   >
                     {/* A bare "0 facts" reads as broken when earlier facts can't be traced, so show a dash then. */}
-                    {s.factCount === 0 && untrackedFacts > 0 ? "—" : `${s.factCount} fact${s.factCount === 1 ? "" : "s"}`}
+                    {s.factCount === 0 && ((s.corroboratedCount ?? 0) > 0 || (s.alternateCount ?? 0) > 0)
+                      ? "0 recorded"
+                      : s.factCount === 0 && untrackedFacts > 0 ? "—" : `${s.factCount} fact${s.factCount === 1 ? "" : "s"}`}
                   </button>
                 </div>
               </li>

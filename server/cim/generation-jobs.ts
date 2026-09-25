@@ -20,6 +20,7 @@ import type { CimGenerationStatus, Deal } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
+import { stampSourceDetails } from "../documents/merge-policy";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -72,9 +73,12 @@ async function persist(job: CimGenerationJob) {
 export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
   void mode;
   const resolvedDiscrepancies = resolvedNotes(await storage.getResolvedDiscrepancies(deal.id));
-  const extractedInfo = overlayResolvedFacts(
-    (deal.extractedInfo as Record<string, unknown>) || {},
-    resolvedDiscrepancies,
+  // Every source entry stamped with its row's visibility (facts1): a
+  // broker-only / CRM fact or year never reaches the writer, even on facts
+  // recorded before the stamp existed.
+  const extractedInfo = stampSourceDetails(
+    overlayResolvedFacts((deal.extractedInfo as Record<string, unknown>) || {}, resolvedDiscrepancies),
+    await storage.getDocumentsByDeal(deal.id),
   );
   const [branding, insights] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),

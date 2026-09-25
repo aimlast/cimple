@@ -4,15 +4,27 @@
  * - Only real business facts: "_" bookkeeping (provenance, broker-private
  *   notes) and per-source notes (a source's summary, red flags, the seller's
  *   worries, the broker's to-dos — SOURCE_META_KEYS) are never CIM input.
- * - Split by provenance: facts from the seller, the broker, the intake form,
- *   documents, emails and call transcripts are the fact base; facts that
- *   only came from second-hand or public sources — the broker's CRM notes,
- *   the business's website, social media — are UNCONFIRMED LEADS until the
- *   seller or broker confirms them (an interview answer or a document
- *   replaces them automatically; a broker edit makes them "broker"; a
- *   website claim the broker accepted into the facts is a fact).
+ * - Split by provenance, year by year for by-year maps: facts from the
+ *   seller, the broker, the intake form, documents, emails and call
+ *   transcripts are the fact base; facts only the business's website or
+ *   social media asserted are UNCONFIRMED LEADS until the seller or broker
+ *   confirms them (a website claim the broker accepted into the facts is a
+ *   fact).
+ * - Never CIM input at all: anything a broker-only source asserted (the
+ *   broker's CRM notes, private emails and files) and broker process data
+ *   (referral source, fees, prior approaches) — see isPrivateToBroker.
  */
-import { getFieldSources, isFactKey, repairCharIndexedValue, WEBSITE_ACCEPTED_SOURCE_NOTE, type FieldSource, type SourceKind } from "../interview/info-merger";
+import {
+  getFieldSources,
+  isFactKey,
+  repairCharIndexedValue,
+  yearSource,
+  WEBSITE_ACCEPTED_SOURCE_NOTE,
+  type FieldSource,
+  type SourceKind,
+  type SourceRowLookup,
+} from "../interview/info-merger";
+import { isBrokerProcessKey } from "../documents/merge-policy";
 
 /** Note the website "Accept into facts" action writes on the source. */
 export const WEBSITE_ACCEPTED_NOTE = WEBSITE_ACCEPTED_SOURCE_NOTE;
@@ -46,23 +58,97 @@ export function brokerAcceptedSource(src: FieldSource | undefined): boolean {
 }
 
 /**
+ * True when a source must never reach a CIM input (writer, DD, redaction):
+ * it came from a broker-only row (a CRM note, a private email or file —
+ * FieldSource.brokerOnly, stamped at merge time from documents.visibility;
+ * pass `brokerOnlyDocIds` for rows written before the stamp), or it is a
+ * CRM note not known to be shared. The broker's CRM notes are their own
+ * working notes — not even an "unconfirmed lead" for the writer. A value
+ * the broker accepted into the facts is theirs, and stays.
+ */
+export function isPrivateToBroker(src: Partial<FieldSource> | null | undefined, brokerOnlyDocIds?: ReadonlySet<string>): boolean {
+  if (!src) return false;
+  if (brokerAcceptedSource(src as FieldSource)) return false;
+  if (src.brokerOnly === true) return true;
+  if (src.documentId && brokerOnlyDocIds?.has(src.documentId)) return true;
+  return src.source === "crm" && src.brokerOnly !== false;
+}
+
+/** True for a public lead (website / social) the broker hasn't vouched for. */
+function isLeadSource(src: Partial<FieldSource> | null | undefined): boolean {
+  return !!src && LEAD_SOURCE_KINDS.has(src.source as SourceKind) && !brokerAcceptedSource(src as FieldSource);
+}
+
+/**
  * True when the fact's recorded source is a lead (CRM / website / social)
- * that the broker hasn't vouched for.
+ * that the broker hasn't vouched for, or a broker-only source — never a
+ * canonical figure.
  */
 export function isLeadFact(info: Record<string, unknown>, key: string): boolean {
   const src = getFieldSources(info)[key];
-  return !!src && LEAD_SOURCE_KINDS.has(src.source) && !brokerAcceptedSource(src);
+  if (!src) return false;
+  if (isPrivateToBroker(src)) return true;
+  return LEAD_SOURCE_KINDS.has(src.source) && !brokerAcceptedSource(src);
 }
 
-export function splitFactsForCim(info: Record<string, unknown> | null | undefined): CimFactSplit {
+export interface CimFactOptions {
+  /** documents rows that are broker-only (for sources written before FieldSource.brokerOnly existed). */
+  brokerOnlyDocIds?: ReadonlySet<string>;
+  /** Resolves older bare-id year entries to their row's kind / visibility. */
+  lookup?: SourceRowLookup;
+}
+
+/**
+ * The deal's facts as CIM input:
+ * - broker process data (referral source, fees, prior approaches) is never CIM input;
+ * - a fact (or one year of a by-year map) from a broker-only source or a
+ *   CRM note is left out entirely — never sent even as a lead;
+ * - website / social facts are UNCONFIRMED LEADS;
+ * - by-year maps split year by year on each year's own source, so a
+ *   CRM or broker-only year inside a map of statement figures never counts
+ *   as confirmed.
+ */
+export function splitFactsForCim(info: Record<string, unknown> | null | undefined, opts: CimFactOptions = {}): CimFactSplit {
   const out: CimFactSplit = { confirmed: [], leads: [] };
   if (!info) return out;
+  const sources = getFieldSources(info);
   for (const [key, raw] of Object.entries(info)) {
-    if (!isFactKey(key)) continue;
+    if (!isFactKey(key) || isBrokerProcessKey(key)) continue;
     const value = repairCharIndexedValue(raw);
     if (!hasValue(value)) continue;
-    (isLeadFact(info, key) ? out.leads : out.confirmed).push([key, value]);
+    const src = sources[key];
+    if (src?.years && value && typeof value === "object" && !Array.isArray(value)) {
+      const confirmed: Record<string, unknown> = {};
+      const leads: Record<string, unknown> = {};
+      for (const [y, v] of Object.entries(value as Record<string, unknown>)) {
+        const ys = yearSource(src, y, opts.lookup);
+        if (isPrivateToBroker(ys, opts.brokerOnlyDocIds)) continue;
+        (isLeadSource(ys) ? leads : confirmed)[y] = v;
+      }
+      if (Object.keys(confirmed).length > 0) out.confirmed.push([key, confirmed]);
+      if (Object.keys(leads).length > 0) out.leads.push([key, leads]);
+      continue;
+    }
+    if (isPrivateToBroker(src, opts.brokerOnlyDocIds)) continue;
+    (isLeadSource(src) ? out.leads : out.confirmed).push([key, value]);
   }
+  return out;
+}
+
+/**
+ * The deal's facts with everything a CIM must never see removed (see
+ * splitFactsForCim) — leads kept, in place. For CIM paths that read the
+ * facts object directly (DD enrichment, canonical figures).
+ */
+export function cimSafeFacts(info: Record<string, unknown> | null | undefined, opts: CimFactOptions = {}): Record<string, unknown> {
+  if (!info) return {};
+  const { confirmed, leads } = splitFactsForCim(info, opts);
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of confirmed) out[k] = v;
+  for (const [k, v] of leads) {
+    out[k] = out[k] && typeof out[k] === "object" && typeof v === "object" ? { ...(out[k] as object), ...(v as object) } : out[k] ?? v;
+  }
+  for (const [k, v] of Object.entries(info)) if (k.startsWith("_")) out[k] = v;
   return out;
 }
 
@@ -80,6 +166,6 @@ export function factValueText(value: unknown): string {
 
 /** Heading + instruction for the leads block, shared by both CIM writers. */
 export const CIM_LEADS_HEADING =
-  "UNCONFIRMED LEADS (from the broker's CRM notes, the business's website or social media — NOT confirmed by the seller). " +
+  "UNCONFIRMED LEADS (from the business's website or social media — NOT confirmed by the seller). " +
   "Never state these as fact and never use them as figures. Use one only as soft context consistent with the confirmed data, " +
   "or leave it out; if a section depends on one, say it is to be confirmed.";

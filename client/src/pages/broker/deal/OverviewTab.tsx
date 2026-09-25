@@ -344,7 +344,8 @@ function DocumentUploadCard({
               </Button>
               {docs.length > 0 && (
                 <span className="text-2xs text-muted-foreground">
-                  {docs.length} source{docs.length === 1 ? "" : "s"}
+                  {/* Documents, emails, transcripts and notes on file — the Information tab also counts interview sessions, the questionnaire and your edits as sources. */}
+                  {docs.length} document{docs.length === 1 ? "" : "s"}
                   {parsedCount > 0 && ` · ${parsedCount} read`}
                 </span>
               )}

@@ -177,6 +177,16 @@ export function FactRow({
     }
   }, [editing]);
 
+  // Year rows only when the years don't all come from one source (else the plain line reads better).
+  const yearRows: Array<[string, string, FactSourceInfo | undefined]> | null = (() => {
+    if (!fact.isMap || !fact.yearSources || !fact.value || typeof fact.value !== "object") return null;
+    const labels = new Set(Object.values(fact.yearSources).map((src) => src.label));
+    if (labels.size <= 1) return null;
+    return Object.entries(fact.value as Record<string, unknown>)
+      .sort(([a], [b]) => (/^\d{4}$/.test(a) && /^\d{4}$/.test(b) ? Number(b) - Number(a) : a.localeCompare(b)))
+      .map(([y, v]) => [y, typeof v === "string" ? v : JSON.stringify(v), fact.yearSources![y]]);
+  })();
+
   const startEdit = () => {
     setDraft(initialDraft(fact));
     setEditing(true);
@@ -294,19 +304,35 @@ export function FactRow({
           </div>
         ) : (
           <>
-            <p
-              className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${long && !expanded ? "line-clamp-4" : ""}`}
-              onDoubleClick={startEdit}
-            >
-              {fact.displayValue}
-            </p>
-            {long && (
+            {yearRows ? (
+              // By-year facts: each year with its own source — a CRM or
+              // private-note year among statement years is visible as such.
+              <ul className="space-y-1" onDoubleClick={startEdit} data-testid="fact-year-rows">
+                {yearRows.map(([year, v, src]) => (
+                  <li key={year} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-relaxed">
+                    <span className="break-words">
+                      <span className="text-muted-foreground tabular-nums">{year}:</span> {v}
+                    </span>
+                    {src && <SourceChip source={src} onOpen={onOpenSource} size="xs" />}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p
+                className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${long && !expanded ? "line-clamp-4" : ""}`}
+                onDoubleClick={startEdit}
+              >
+                {fact.displayValue}
+              </p>
+            )}
+            {long && !yearRows && (
               <button type="button" onClick={() => setExpanded((e) => !e)} className="text-[11px] text-muted-foreground hover:text-foreground mt-0.5">
                 {expanded ? "Show less" : "Show more"}
               </button>
             )}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <SourceChip source={fact.source} onOpen={onOpenSource} />
+              {/* Year rows carry their own sources; the summary chip would repeat one of them. */}
+              {!yearRows && <SourceChip source={fact.source} onOpen={onOpenSource} />}
               {(fact.corroboratedBy?.length ?? 0) > 0 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
