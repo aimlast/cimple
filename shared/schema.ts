@@ -2031,6 +2031,8 @@ export interface DocumentSourceMeta {
   provider?: string;
   recordType?: string;
   recordId?: string;
+  /** End (yyyy-mm-dd) of the latest fiscal period the source reports — set from its extraction. */
+  periodEnd?: string;
 }
 
 // @anchor:schema-tail:crm

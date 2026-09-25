@@ -19,10 +19,12 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
-import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
+import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
+import { addPrivateNote, isSourceKind, sourceRowLookup, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { withDealFactsLock } from "./facts-lock";
+import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
+import { recordMergeConflicts } from "./merge-conflicts";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -61,7 +63,7 @@ export function cleanSourceMeta(raw: unknown): DocumentSourceMeta | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const out: DocumentSourceMeta = {};
-  for (const key of ["from", "to", "subject", "date", "participants", "url", "platform", "provider", "recordType", "recordId"] as const) {
+  for (const key of ["from", "to", "subject", "date", "participants", "url", "platform", "provider", "recordType", "recordId", "periodEnd"] as const) {
     const v = r[key];
     if (typeof v === "string" && v.trim()) out[key] = v.trim().slice(0, 500);
     else if (typeof v === "number") out[key] = String(v);
@@ -199,6 +201,42 @@ export function addPrivateNotes(
 // interview turn (which can't import this pipeline) share it.
 export { withDealFactsLock };
 
+/**
+ * Who asserted a source's extraction, for mergeExtractedData: the row, its
+ * kind, its title (a dedicated source — the org chart, the lease — outranks
+ * passing mentions for its own facts), the fiscal period it reports (its
+ * extraction's periodEnd, else the one remembered on the row), its own date
+ * and whether it is broker-only. Ingestion and reprocess use the same one,
+ * so both decide every fact the same way.
+ */
+export function mergeSourceFor(
+  doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility" | "sourceMeta" | "createdAt" | "subcategory">,
+  extracted?: ExtractedDocumentData | null,
+): MergeSource {
+  const meta = (doc.sourceMeta as DocumentSourceMeta | null) ?? null;
+  const period = normalisePeriod(extracted?._periodEnd) ?? normalisePeriod(meta?.periodEnd);
+  const dated = normalisePeriod(meta?.date) ?? normalisePeriod(doc.createdAt ? new Date(doc.createdAt).toISOString() : undefined);
+  return {
+    documentId: doc.id,
+    source: documentKind(doc),
+    title: [doc.name, doc.subcategory].filter(Boolean).join(" · "),
+    ...(period ? { period } : {}),
+    ...(dated ? { dated } : {}),
+    brokerOnly: isBrokerOnly(doc),
+  };
+}
+
+/** The row's sourceMeta with the extraction's fiscal period end remembered (a documents patch), or {}. */
+export function rememberPeriodEnd(
+  doc: Pick<Document, "sourceMeta">,
+  extracted: ExtractedDocumentData | null | undefined,
+): { sourceMeta?: DocumentSourceMeta } {
+  const periodEnd = normalisePeriod(extracted?._periodEnd);
+  const meta = (doc.sourceMeta as DocumentSourceMeta | null) ?? {};
+  if (!periodEnd || meta.periodEnd === periodEnd) return {};
+  return { sourceMeta: { ...meta, periodEnd } };
+}
+
 export interface IngestResult {
   status: "extracted" | "failed" | "missing";
   /** Keys this source newly asserted or replaced on the deal. */
@@ -224,31 +262,59 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
 
     const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
+    // A failed extraction (an API error, no credits) never replaces the
+    // extraction on file — reprocess can still replay it.
+    const hadExtraction = !!doc.extractedData && typeof doc.extractedData === "object" &&
+      Object.keys(doc.extractedData as object).some((k) => !k.startsWith("_") && k !== "summary");
     await storage.updateDocument(doc.id, {
-      status: failed ? "failed" : "extracted",
+      status: failed ? (hadExtraction ? doc.status : "failed") : "extracted",
       extractedText: text,
-      extractedData: extracted,
-      isProcessed: !failed,
+      ...(failed && hadExtraction ? {} : { extractedData: extracted }),
+      isProcessed: failed ? (hadExtraction ? doc.isProcessed : false) : true,
+      ...(failed ? {} : rememberPeriodEnd(doc, extracted)),
     } as any);
     if (failed) return { status: "failed", fieldsWritten: [] };
-
-    // Serialised per deal: several sources finishing at once (a CRM import
-    // ingests a few in parallel) must not overwrite each other's facts.
-    return await withDealFactsLock(doc.dealId, async () => {
-      const deal = await storage.getDeal(doc.dealId);
-      if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
-      const before = (deal.extractedInfo as Record<string, unknown>) || {};
-      const merged = mergeExtractedData(before, mergeableExtraction(doc, extracted), { documentId: doc.id, source: kind });
-      addPrivateNotes(merged, extracted._privateNotes, doc);
-      const fieldsWritten = Object.keys(merged).filter(
-        (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
-      );
-      await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
-      return { status: "extracted" as const, fieldsWritten };
-    });
+    return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {
     console.error(`[ingest] failed for doc ${documentId}:`, err);
     await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});
     return { status: "failed", fieldsWritten: [] };
   }
+}
+
+/**
+ * Merges one source row's extraction into its deal's facts with provenance
+ * (the second half of ingestDocument; also used to replay a stored
+ * extraction). Serialised per deal; material conflicts still standing after
+ * the merge become discrepancies.
+ */
+export async function mergeExtractionIntoDeal(doc: Document, extracted: ExtractedDocumentData): Promise<IngestResult> {
+  // Serialised per deal: several sources finishing at once (a CRM import
+  // ingests a few in parallel) must not overwrite each other's facts.
+  const conflicts: MergeConflict[] = [];
+  let saved: Record<string, unknown> = {};
+  const documents = await storage.getDocumentsByDeal(doc.dealId);
+  const result = await withDealFactsLock(doc.dealId, async () => {
+    const deal = await storage.getDeal(doc.dealId);
+    if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
+    const before = (deal.extractedInfo as Record<string, unknown>) || {};
+    const ctx: MergeContext = { conflicts, lookup: sourceRowLookup(documents) };
+    // Every source entry carries its row's visibility (older entries too),
+    // so the CIM writers and the deal list can tell broker-only years apart.
+    const merged = stampSourceDetails(
+      mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
+      documents,
+    );
+    addPrivateNotes(merged, extracted._privateNotes, doc);
+    const fieldsWritten = Object.keys(merged).filter(
+      (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
+    );
+    await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
+    saved = merged;
+    return { status: "extracted" as const, fieldsWritten };
+  });
+  // Material conflicts still standing after the merge become discrepancies (deduplicated).
+  await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
+    console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
+  return result;
 }

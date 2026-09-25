@@ -198,12 +198,18 @@ function Counts({ deal }: { deal: DealListRow }) {
   );
 }
 
-function Money({ label, value }: { label: string; value: string | null }) {
+/** Shown on a figure only a CRM note, the website or a private note states. */
+const UNVERIFIED_HINT = "Only in your private notes or on the website so far — not yet confirmed by the seller or a document.";
+
+function Money({ label, value, unverified }: { label: string; value: string | null; unverified?: boolean }) {
   if (!value) return null;
   return (
-    <span className="flex flex-col min-w-0">
+    <span className="flex flex-col min-w-0" title={unverified ? UNVERIFIED_HINT : undefined}>
       <span className="text-2xs uppercase tracking-[0.08em] text-muted-foreground/70">{label}</span>
-      <span className="font-mono text-sm tabular-nums text-foreground">{value}</span>
+      <span className={`font-mono text-sm tabular-nums ${unverified ? "text-muted-foreground" : "text-foreground"}`}>
+        {unverified ? "~" : ""}{value}
+        {unverified && <span className="ml-1 font-sans text-2xs normal-case text-muted-foreground/70">unverified</span>}
+      </span>
     </span>
   );
 }
@@ -214,7 +220,9 @@ export function DealCard({ deal, actions }: { deal: DealListRow; actions: DealIt
   const open = useOpenDeal(deal);
   const asking = formatMoney(deal.askingPriceValue) ?? (deal.askingPrice && deal.askingPrice.length <= 14 ? deal.askingPrice : null);
   const revenue = formatMoney(deal.annualRevenue);
-  const sde = formatMoney(deal.sde);
+  // SDE on SDE-sized deals, EBITDA on larger ones — labelled (older servers send only sde).
+  const earnings = deal.earnings ?? (deal.sde ? { label: "SDE" as const, value: deal.sde } : null);
+  const earningsText = formatMoney(earnings?.value ?? null);
   const place = [deal.subIndustry || deal.industry, deal.region].filter(Boolean).join(" · ");
 
   return (
@@ -257,11 +265,15 @@ export function DealCard({ deal, actions }: { deal: DealListRow; actions: DealIt
 
       <NextStepLine deal={deal} />
 
-      {(asking || revenue || sde) && (
+      {(asking || revenue || earningsText) && (
         <div className="grid grid-cols-3 gap-3 pt-0.5">
           <Money label="Asking" value={asking} />
-          <Money label="Revenue" value={revenue} />
-          <Money label="SDE" value={sde} />
+          <Money label="Revenue" value={revenue} unverified={deal.revenueUnverified} />
+          <Money
+            label={`${earnings?.label ?? "SDE"}${earnings && "year" in earnings && earnings.year ? ` · FY${earnings.year}` : ""}`}
+            value={earningsText}
+            unverified={earnings?.unverified}
+          />
         </div>
       )}
 
@@ -334,7 +346,12 @@ export function DealTableRow({ deal, actions }: { deal: DealListRow; actions: De
         {deal.readiness && deal.readiness.score > 0 ? <ReadinessPill readiness={deal.readiness} /> : <span className="text-xs text-muted-foreground/40">—</span>}
       </span>
       <span className="hidden md:block text-right font-mono text-xs tabular-nums">{asking ?? <span className="text-muted-foreground/40">—</span>}</span>
-      <span className="hidden lg:block text-right font-mono text-xs tabular-nums">{revenue ?? <span className="text-muted-foreground/40">—</span>}</span>
+      <span
+        className={`hidden lg:block text-right font-mono text-xs tabular-nums ${deal.revenueUnverified ? "text-muted-foreground" : ""}`}
+        title={deal.revenueUnverified ? UNVERIFIED_HINT : undefined}
+      >
+        {revenue ? `${deal.revenueUnverified ? "~" : ""}${revenue}` : <span className="text-muted-foreground/40">—</span>}
+      </span>
       <span className="hidden md:block text-right text-2xs text-muted-foreground whitespace-nowrap">{timeAgo(deal.lastActivityAt)}</span>
       <span className="justify-self-end row-start-1 col-start-2 md:row-auto md:col-auto">
         <DealMenu deal={deal} actions={actions} />

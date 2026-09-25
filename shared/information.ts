@@ -65,6 +65,8 @@ export interface InformationFact {
   alternates: FactAlternate[];
   /** Other sources that state the same value (deleting one keeps the fact). */
   corroboratedBy?: FactSourceInfo[];
+  /** By-year facts (revenue by year): each year's own source. */
+  yearSources?: Record<string, FactSourceInfo>;
   brokerEdited: boolean;
   /** Industry checklist / broker-added item flags. */
   industrySpecific?: boolean;
@@ -102,6 +104,10 @@ export interface InformationSource {
   factCount: number;
   /** How many of factCount were traced by matching values, not recorded at the time. */
   inferredFactCount?: number;
+  /** Facts on file (recorded from another source) that this source states too. */
+  corroboratedCount?: number;
+  /** Facts for which this source gave a different value, kept as another value. */
+  alternateCount?: number;
   /** documents rows only */
   documentId?: string;
   status?: string;
@@ -159,4 +165,28 @@ export interface InformationView {
     scrapeSource: string | null;
     items: WebsiteItem[];
   } | null;
+}
+
+/**
+ * The one wording for "how many sources" — the Information tab header and
+ * the Sources panel both use it, so they never disagree:
+ * "8 sources · 6 contributed facts" (or "8 sources" when all did).
+ */
+export function sourceCountText(sources: ReadonlyArray<Pick<InformationSource, "factCount">>): string {
+  const total = sources.length;
+  const contributing = sources.filter((s) => s.factCount > 0).length;
+  const base = `${total} source${total === 1 ? "" : "s"}`;
+  return contributing === total ? base : `${base} · ${contributing} contributed facts`;
+}
+
+/**
+ * What one source gave, beyond the facts recorded from it:
+ * "3 recorded · confirms 5 · 2 other values" ("" when it gave nothing).
+ */
+export function sourceContributionText(s: Pick<InformationSource, "factCount" | "corroboratedCount" | "alternateCount">): string {
+  const parts: string[] = [];
+  if (s.factCount > 0) parts.push(`${s.factCount} recorded`);
+  if ((s.corroboratedCount ?? 0) > 0) parts.push(`confirms ${s.corroboratedCount}`);
+  if ((s.alternateCount ?? 0) > 0) parts.push(`${s.alternateCount} other value${s.alternateCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }

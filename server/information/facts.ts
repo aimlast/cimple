@@ -31,6 +31,8 @@ import {
   isRowBackedSource,
   isUntrackedSource,
   isFactKey,
+  resolvedYearSources,
+  summariseMapSource,
   BROKER_SUPPRESSED_KEY,
   FIELD_ALTERNATES_KEY,
   LEGACY_SOURCE_NOTE,
@@ -129,12 +131,13 @@ export function setBrokerFact(info: Info, key: string, value: unknown, extra: Pa
 
 /**
  * The broker sets ONE entry of a map fact (a single year of revenue) — by
- * choosing another source's figure or resolving a discrepancy. The map's
- * recorded source becomes the broker; every other year keeps its
- * contributor in `years` (years the old recorded document owned are listed
- * explicitly, so deleting that document still removes exactly those), and
- * the broker's year has no contributor — no document delete or re-extraction
- * can take it away. The displaced figure is kept as that year's alternate.
+ * choosing another source's figure or resolving a discrepancy. Only that
+ * year becomes the broker's (no document delete or re-extraction can take
+ * it away); every other year keeps its own full source (a CRM year stays a
+ * CRM year — it is never promoted to "broker-confirmed" by the broker's
+ * choice on another year). The map's recorded source is the summary of its
+ * years (see summariseMapSource). The displaced figure is kept as that
+ * year's alternate under its real kind.
  */
 export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string): void {
   const repaired = repairCharIndexedValue(info[parent]);
@@ -143,34 +146,24 @@ export function setBrokerMapEntry(info: Info, parent: string, sub: string, value
   }
   const map: Record<string, unknown> = isPlainMap(repaired) ? { ...repaired } : {};
   const prevSrc = getFieldSources(info)[parent];
-  const years: Record<string, string> = { ...(prevSrc?.years || {}) };
-  // Unlisted years belong to the recorded source — list them when that
-  // source is a document, because the map is about to be re-labelled.
-  if (prevSrc && isRowBackedSource(prevSrc)) {
-    for (const y of Object.keys(map)) if (!years[y]) years[y] = prevSrc.documentId!;
-  }
+  const legacy: FieldSource = { source: "system", note: LEGACY_SOURCE_NOTE };
+  // Every year's own source (older bare-id entries read as their row).
+  const years: Record<string, FieldSource> = prevSrc
+    ? resolvedYearSources(prevSrc, map)
+    : Object.fromEntries(Object.keys(map).map((y) => [y, legacy]));
   const previous = map[sub];
   const altKey = `${parent}.${sub}`;
   if (previous !== undefined && previous !== null && previous !== "" && serialize(previous) !== serialize(value)) {
-    const contributor = years[sub];
-    const prevYearSrc: FieldSource = contributor
-      ? { source: prevSrc && isRowBackedSource(prevSrc) ? prevSrc.source : "document", documentId: contributor }
-      : prevSrc && !isUntrackedSource(prevSrc)
-        ? (({ years: _y, documentId: _d, ...rest }) => rest)(prevSrc)
-        : { source: "system", note: LEGACY_SOURCE_NOTE };
+    const prevYearSrc = years[sub] && !isUntrackedSource(years[sub]) ? years[sub] : legacy;
     recordAlternate(info, altKey, previous, prevYearSrc);
   }
   map[sub] = value;
-  delete years[sub];
+  years[sub] = { source: "broker", at: new Date().toISOString(), note };
   displaceCorroborations(info, altKey, value);
   dropAlternateValue(info, altKey, serialize(value));
   info[parent] = map;
-  setFieldSource(info, parent, {
-    source: "broker",
-    at: new Date().toISOString(),
-    note,
-    ...(Object.keys(years).length ? { years } : {}),
-  });
+  const summary = summariseMapSource(years);
+  if (summary) setFieldSource(info, parent, summary);
   unsuppress(info, parent);
 }
 
