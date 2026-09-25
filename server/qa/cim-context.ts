@@ -9,13 +9,17 @@
  *    already answered ("What is the monthly rent?").
  *
  * 2. `buildBuyerQuestionFeed` — the Q&A feed a buyer is allowed to see:
- *    every published answer on the deal plus the requesting buyer's own
- *    still-pending questions (so they survive a reload), each flagged with
- *    ownership. Fields are whitelisted — the seller-approval token and the
- *    broker's unapproved draft never leave the server.
+ *    the published answers they're entitled to (answer scope + identity
+ *    check, shared/buyer-qa-scope.ts) plus the requesting buyer's own
+ *    questions (so they survive a reload), each flagged with ownership.
+ *    Fields are whitelisted — the seller-approval token and the broker's
+ *    unapproved draft never leave the server.
  */
 import { storage } from "../storage";
 import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
+import { blindLeakTerms } from "@shared/blind-guard";
+import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
+import type { BuyerQuestion } from "@shared/schema";
 
 type AnyRecord = Record<string, any>;
 
@@ -377,17 +381,45 @@ export interface BuyerQuestionFeedItem {
   isMine: boolean;
 }
 
+/** The buyer reading the feed. */
+export interface QaReader {
+  id: string;
+  accessLevel: string | null | undefined;
+}
+
+type QaDeal = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null };
+
 /**
- * Everything the requesting buyer may see: published Q&A from any buyer on
- * the deal, plus their own unanswered questions (answers withheld until
- * published). Ordered oldest → newest so the chat reads chronologically.
+ * Published rows another buyer's question may be answered from, or shown
+ * to `reader` in the feed: within the answer's scope (a teaser never gets
+ * an answer drawn from full-access sections; nobody gets another buyer's
+ * named-CIM answer), and — for a Blind reader — free of anything that
+ * identifies the business (shared/buyer-qa-scope.ts).
  */
-export async function buildBuyerQuestionFeed(dealId: string, buyerAccessId: string): Promise<BuyerQuestionFeedItem[]> {
-  const all = await storage.getQuestionsByDeal(dealId);
+export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Promise<BuyerQuestion[]> {
+  const [all, accesses] = await Promise.all([storage.getQuestionsByDeal(deal.id), storage.getBuyerAccessByDeal(deal.id)]);
+  const levelOf = new Map(accesses.map((a) => [a.id, a.accessLevel]));
+  const terms = blindLeakTerms(deal, { codename: deal.blindCodename });
+  return all.filter((q) => {
+    if (!q.isPublished || !(q.publishedAnswer || q.aiAnswer)) return false;
+    const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
+    return readerMaySeeRow(q, scope, reader, terms);
+  });
+}
+
+/**
+ * Everything the requesting buyer may see: published Q&A they're entitled
+ * to (see publishedQuestionsFor), plus their own questions (answers shown
+ * once answered, including ones kept private to them). Ordered oldest →
+ * newest so the chat reads chronologically.
+ */
+export async function buildBuyerQuestionFeed(deal: QaDeal, reader: QaReader): Promise<BuyerQuestionFeedItem[]> {
+  const [all, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
+  const visibleIds = new Set(visible.map((q) => q.id));
   const feed: BuyerQuestionFeedItem[] = [];
   for (const q of all) {
-    const isMine = !!q.buyerAccessId && q.buyerAccessId === buyerAccessId;
-    const published = !!q.isPublished && !!(q.publishedAnswer || q.aiAnswer);
+    const isMine = !!q.buyerAccessId && q.buyerAccessId === reader.id;
+    const published = visibleIds.has(q.id);
     if (!published && !isMine) continue;
     // The asker also sees an AI answer kept private to them (answered from
     // the named CIM — see the chatbot route).

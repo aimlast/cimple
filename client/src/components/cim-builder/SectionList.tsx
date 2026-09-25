@@ -211,6 +211,14 @@ function Row({
                 <Loader2 className="h-2.5 w-2.5 animate-spin" /> Blind
               </span>
             )}
+            {showBlindStatus && s.blindStatus === "held" && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-red-400 shrink-0"
+                title={`Blind buyers don't see this section: ${s.blindError || "its blind version couldn't be made"}. Edit the section or retry the blind version.`}
+              >
+                <AlertTriangle className="h-2.5 w-2.5" /> Blind held back
+              </span>
+            )}
           </div>
         </div>
         {s.brokerApproved && <CheckCircle2 className="h-3 w-3 text-teal shrink-0" aria-label="Approved" />}

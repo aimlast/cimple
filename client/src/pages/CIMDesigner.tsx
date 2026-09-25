@@ -385,7 +385,16 @@ export default function CIMDesigner() {
             <p className="text-[10px] text-muted-foreground uppercase tracking-wider">CIM builder</p>
           </div>
           {generation.isRunning && <CimGenerationProgress view={generation} compact className="hidden md:flex" />}
-          {blind?.generated && (blind.running || blind.updating > 0) && (
+          {blind?.generated && !blind.running && blind.error && blind.updating > 0 ? (
+            <button
+              type="button"
+              onClick={() => builder.refreshBlind.mutate(undefined as never)}
+              className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-red-400 hover:underline"
+              title={`${blind.error}. Blind buyers don't see ${blind.updating === 1 ? "this section" : "these sections"} until the blind version is made. Click to retry.`}
+            >
+              <AlertTriangle className="h-3 w-3" /> Blind held back ({blind.updating}) · Retry
+            </button>
+          ) : blind?.generated && (blind.running || blind.updating > 0) && (
             <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-amber-500" title="Blind buyers see these sections once they're redacted">
               <Loader2 className="h-3 w-3 animate-spin" /> Blind version updating ({blind.updating})
             </span>

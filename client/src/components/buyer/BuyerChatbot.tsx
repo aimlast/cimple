@@ -6,8 +6,10 @@
  * then the seller for approval.
  *
  * The seeded history is the buyer's full feed: published Q&A (theirs and
- * other buyers', labelled by ownership) plus their own questions still
- * waiting on the broker — so a reload never loses a pending question.
+ * other buyers', labelled by ownership), their own answered questions —
+ * including answers kept private to them — and their own questions still
+ * waiting on the broker, so a reload never loses or re-opens a question.
+ * The feed logic is pure and lives in ./chat-feed.ts.
  *
  * While any question is waiting on the broker, the widget polls the feed
  * so the answer lands in the open session instead of only appearing on
@@ -22,25 +24,16 @@ import {
   MessageCircle, X, Send, Loader2, Bot,
   HelpCircle, Clock, CheckCircle2,
 } from "lucide-react";
+import {
+  seedFromFeed,
+  resolvePolledFeed,
+  isPendingStatus,
+  PENDING_TEXT,
+  type BuyerQuestionFeedItem,
+  type ChatMessage,
+} from "./chat-feed";
 
-/**
- * One item of the buyer-facing Q&A feed (GET /api/view/:token →
- * publishedQuestions, GET /api/deals/:dealId/questions/published).
- * Whitelisted server shape — never the raw buyerQuestions row.
- */
-export interface BuyerQuestionFeedItem {
-  id: string;
-  question: string;
-  /** pending_ai | pending_broker | pending_seller | published | declined */
-  status: string;
-  isPublished: boolean;
-  aiAnswer: string | null;
-  publishedAnswer: string | null;
-  createdAt: string | Date;
-  updatedAt: string | Date;
-  /** True when this buyer asked the question */
-  isMine: boolean;
-}
+export type { BuyerQuestionFeedItem } from "./chat-feed";
 
 interface BuyerChatbotProps {
   dealId: string;
@@ -51,86 +44,8 @@ interface BuyerChatbotProps {
   questionFeed: BuyerQuestionFeedItem[];
 }
 
-interface ChatMessage {
-  id: string;
-  role: "buyer" | "ai" | "system";
-  content: string;
-  status?: "published" | "pending_broker" | "pending_seller" | "answered" | "declined";
-  /** Server-side question id — lets us pair an escalated question with its later answer */
-  questionId?: string;
-  /** Who asked a seeded question — other buyers' questions get a caption */
-  origin?: "mine" | "other";
-  timestamp: Date;
-}
-
 /** How often to check for a broker answer while a question is outstanding */
 const ANSWER_POLL_MS = 30_000;
-
-const PENDING_TEXT = "Forwarded to your broker.";
-const DECLINED_TEXT = "Your broker wasn't able to answer this one.";
-
-function isPendingStatus(status: string | undefined): boolean {
-  return status === "pending_broker" || status === "pending_seller" || status === "pending_ai";
-}
-
-/** Build the initial chat history (and the set of still-pending ids) from the feed. */
-function seedFromFeed(feed: BuyerQuestionFeedItem[], businessName: string) {
-  const messages: ChatMessage[] = [{
-    id: "welcome",
-    role: "system",
-    content: `Ask anything about ${businessName}. Answers come from the CIM; anything it doesn't cover goes to your broker.`,
-    timestamp: new Date(),
-  }];
-  const pendingIds: string[] = [];
-
-  for (const q of feed) {
-    const asked = new Date(q.createdAt);
-    if (q.isPublished) {
-      messages.push({
-        id: `pq-${q.id}`,
-        role: "buyer",
-        content: q.question,
-        status: "published",
-        questionId: q.id,
-        origin: q.isMine ? "mine" : "other",
-        timestamp: asked,
-      });
-      messages.push({
-        id: `pa-${q.id}`,
-        role: "ai",
-        content: q.publishedAnswer || q.aiAnswer || "",
-        status: "published",
-        questionId: q.id,
-        timestamp: asked,
-      });
-      continue;
-    }
-    if (!q.isMine) continue;
-
-    // The buyer's own unanswered question — keep it in the thread with its
-    // waiting state so it doesn't silently vanish on reload.
-    messages.push({
-      id: `pq-${q.id}`,
-      role: "buyer",
-      content: q.question,
-      questionId: q.id,
-      origin: "mine",
-      timestamp: asked,
-    });
-    const declined = q.status === "declined";
-    messages.push({
-      id: `ps-${q.id}`,
-      role: "system",
-      content: declined ? DECLINED_TEXT : PENDING_TEXT,
-      status: declined ? "declined" : "pending_broker",
-      questionId: q.id,
-      timestamp: asked,
-    });
-    if (!declined) pendingIds.push(q.id);
-  }
-
-  return { messages, pendingIds };
-}
 
 export function BuyerChatbot({
   dealId,
@@ -244,37 +159,15 @@ export function BuyerChatbot({
   useEffect(() => {
     const feed = answerPoll.data;
     if (!feed || pendingIds.length === 0) return;
-    const answered = feed.filter(
-      q => pendingIds.includes(q.id) && q.isPublished && (q.publishedAnswer || q.aiAnswer),
-    );
-    const declined = feed.filter(q => pendingIds.includes(q.id) && q.status === "declined");
-    if (answered.length === 0 && declined.length === 0) return;
-
-    setMessages(prev => {
-      const next = prev.map(m => {
-        if (!m.questionId || m.status === "published") return m;
-        if (answered.some(a => a.id === m.questionId)) return { ...m, status: "answered" as const };
-        if (m.role === "system" && declined.some(d => d.id === m.questionId)) {
-          return { ...m, status: "declined" as const, content: DECLINED_TEXT };
-        }
-        return m;
-      });
-      for (const a of answered) {
-        if (next.some(m => m.id === `pa-${a.id}`)) continue;
-        next.push({
-          id: `pa-${a.id}`,
-          role: "ai",
-          content: a.publishedAnswer || a.aiAnswer || "",
-          status: "published",
-          questionId: a.id,
-          timestamp: new Date(a.updatedAt || a.createdAt),
-        });
-      }
-      return next;
-    });
-    const resolved = new Set([...answered, ...declined].map(q => q.id));
+    // A question counts as answered once the buyer may read its answer —
+    // including answers kept private to them (see chat-feed.ts).
+    const result = resolvePolledFeed(feed, pendingIds, messages);
+    if (!result) return;
+    // Re-apply against the latest history so a message added meanwhile survives
+    setMessages(prev => resolvePolledFeed(feed, pendingIds, prev)?.messages ?? prev);
+    const resolved = new Set(result.resolvedIds);
     setPendingIds(prev => prev.filter(id => !resolved.has(id)));
-    if (!isOpen && answered.length > 0) setUnreadCount(prev => prev + answered.length);
+    if (!isOpen && result.answeredCount > 0) setUnreadCount(prev => prev + result.answeredCount);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [answerPoll.data]);
 

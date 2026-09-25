@@ -611,6 +611,9 @@ export const buyerQuestions = pgTable("buyer_questions", {
   similarQuestionIds: jsonb("similar_question_ids").default(sql`'[]'::jsonb`),
 
   isPublished: boolean("is_published").default(false),
+  // Who may read the answer (shared/buyer-qa-scope.ts): "all" | "full" |
+  // "private". Null on rows answered before scopes were recorded.
+  answerScope: text("answer_scope"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),

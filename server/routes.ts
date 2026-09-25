@@ -23,10 +23,12 @@ import { computeCimReadiness } from "@shared/cim-readiness";
 import { DEAL_PHASES, computeNextStep, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
-import { buildBuyerCim } from "@shared/cim-buyer-view";
-import { invalidateBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
+import { buildBuyerCim, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
+import { askerScope } from "@shared/buyer-qa-scope";
+import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
+import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
-import { isBuyerAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, isBuyerAccessLevel } from "@shared/cim-layouts";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
@@ -44,7 +46,7 @@ import { removeDocumentFields, typedNumericValues } from "./interview/info-merge
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
-import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
+import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
 import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
@@ -900,6 +902,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
       const brokerName = brokerUser?.name || "Your broker";
       const dealSummary = blindDealSummary(deal);
+      // Deterministic identity check on every draft (and on the deep-check
+      // hook fed into it): a draft naming the business, owner, staff, city,
+      // street or contacts is discarded for the blind-safe template.
+      const outreachTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
@@ -921,11 +927,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
         // The AI deep check's blind-safe hook for this buyer, when there is one.
         const deepResult = ((deal as any).buyerDeepCheck as BuyerDeepCheck | null)?.results?.[buyerUserId];
-        const outreachAngle = deepResult?.outreachAngle || null;
+        const rawAngle = deepResult?.outreachAngle || null;
+        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 ? rawAngle : null;
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
-        // template if the API is unavailable.
-        let subject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
+        // template if the API is unavailable or the draft isn't blind-safe.
+        const defaultSubject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
+        const templateBody = () => `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        let subject = defaultSubject;
         let body = "";
 
         try {
@@ -966,12 +975,21 @@ Return JSON only.`,
 
           const raw = aiResp.content[0].type === "text" ? aiResp.content[0].text : "";
           const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
-          if (parsed.subject) subject = parsed.subject;
-          if (parsed.body) body = parsed.body;
+          const aiSubject = typeof parsed.subject === "string" ? parsed.subject.trim() : "";
+          const aiBody = typeof parsed.body === "string" ? parsed.body.trim() : "";
+          const leaks = findBlindLeaks(`${aiSubject}\n${aiBody}`, outreachTerms);
+          if (aiBody && leaks.length === 0) {
+            if (aiSubject) subject = aiSubject;
+            body = aiBody;
+          } else if (leaks.length > 0) {
+            console.warn("[outreach] AI draft named identifying details — discarded for the blind-safe template");
+          }
         } catch (aiErr) {
           console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
-          // Deterministic fallback
-          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        }
+        if (!body) {
+          subject = defaultSubject;
+          body = templateBody();
         }
 
         return {
@@ -4227,6 +4245,15 @@ Return JSON only.`,
     regenerateAllBlindInBackground(deal.id);
   }
 
+  /** Blind view rooms use neutral section keys — map them back to the real ones. */
+  async function translateBlindSectionKeys(dealId: string, events: Array<{ sectionKey?: string | null }>): Promise<void> {
+    if (!events.some((e) => typeof e?.sectionKey === "string" && /^s_[0-9a-z]{12}$/.test(e.sectionKey))) return;
+    const map = realSectionKeyMap(await storage.getCimSectionsByDeal(dealId));
+    for (const e of events) {
+      if (typeof e?.sectionKey === "string" && map.has(e.sectionKey)) e.sectionKey = map.get(e.sectionKey)!;
+    }
+  }
+
   app.get("/api/view/:token", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
@@ -4303,12 +4330,15 @@ Return JSON only.`,
 
       // Buyers get a minimal whitelisted deal payload — never the raw deal
       // record (extractedInfo, broker notes, valuation data). Legacy
-      // cimContent only ships in normal mode: it has no redacted variant.
-      const publicDeal = {
+      // cimContent (the pre-builder prose map) is added below only where the
+      // page renders it: named CIM, NDA passed, and no CIM sections at all.
+      // It holds every section's text — hidden ones included — so it never
+      // ships alongside sections, and never before the NDA.
+      const publicDeal: { id: string; businessName: string; industry: string; cimContent: unknown } = {
         id: deal.id,
         businessName: displayName,
         industry: deal.industry,
-        cimContent: cimMode === "normal" ? deal.cimContent : null,
+        cimContent: null,
       };
 
       // Branding is whitelisted (never the settings row). The design payload
@@ -4325,8 +4355,9 @@ Return JSON only.`,
 
       // NDA gate — enforced server-side. Until the NDA is signed, no CIM
       // sections or Q&A leave the server (previously the full payload
-      // shipped and the gate was a client-side render decision).
-      if (deal.ndaRequired && !access.ndaSigned) {
+      // shipped and the gate was a client-side render decision). The same
+      // rule guards the chatbot, the Q&A feed and media (ndaBlocksBuyer).
+      if (ndaBlocksBuyer(deal, access)) {
         return res.json({
           access: freshAccess,
           deal: publicDeal,
@@ -4343,8 +4374,9 @@ Return JSON only.`,
       // (whitelisted fields — never the seller-approval token or broker draft).
       const [baseSections, publishedQuestions] = await Promise.all([
         storage.getCimSectionsByDeal(deal.id),
-        buildBuyerQuestionFeed(deal.id, access.id),
+        buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }),
       ]);
+      if (cimMode === "normal" && baseSections.length === 0) publicDeal.cimContent = deal.cimContent ?? null;
 
       // Which sections this buyer may receive, in which form — hidden
       // sections, per-section access tiers and blind freshness are all
@@ -4375,7 +4407,12 @@ Return JSON only.`,
       }
       // Sections whose blind version is behind their content (just added or
       // edited) are held back until re-redacted — make sure that is running.
-      if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
+      // A blind section that still names something identifying is withheld
+      // too, and its redaction is redone.
+      if (buyerCim.leaked.length > 0) {
+        console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
+        redoLeakedBlind(deal.id, buyerCim.leaked).catch((err) => console.error("[view] blind redo failed:", err));
+      } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
       res.json({
         access: freshAccess,
         deal: publicDeal,
@@ -5307,8 +5344,10 @@ Return JSON only.`,
       // Rebuilds every section's blind version under the deal's EXISTING
       // codename (a new, brokerage-unique one only if it never had one) —
       // outreach already sent under the codename keeps matching the CIM.
-      const { codename, count } = await regenerateAllBlind(dealId);
-      res.json({ success: true, overrideCount: count, codename });
+      // Sections whose redaction fails are held back from blind buyers
+      // (never served un-redacted) and reported here.
+      const { codename, count, failed } = await regenerateAllBlind(dealId);
+      res.json({ success: true, overrideCount: count, failedCount: failed, codename });
     } catch (error: any) {
       console.error("Error generating blind CIM:", error);
       res.status(500).json({ error: error.message || "Failed to generate blind CIM" });
@@ -5561,6 +5600,7 @@ Return JSON only.`,
       });
       
       const eventData = eventSchema.parse(req.body);
+      await translateBlindSectionKeys(buyerAccess.dealId, [eventData]);
       
       const event = await storage.createAnalyticsEvent({
         dealId: buyerAccess.dealId,
@@ -6693,7 +6733,7 @@ Return JSON only.`,
     try {
       const { dealId } = req.params;
       const { question, accessToken } = req.body;
-      if (!question?.trim()) return res.status(400).json({ error: "Question required" });
+      if (typeof question !== "string" || !question.trim()) return res.status(400).json({ error: "Question required" });
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -6702,18 +6742,36 @@ Return JSON only.`,
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) {
         return res.status(401).json({ error: "A valid view-room link is required to ask questions" });
       }
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Same NDA rule as the view room: nothing CIM-derived (answers or the
+      // shared Q&A) before a required NDA is signed.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Sign the NDA to ask questions about this business", code: "nda_required" });
+      }
       const buyerAccessId = access.id;
-      const chatMode = access.accessLevel === "due_diligence" ? "dd" : access.accessLevel === "loi" ? "normal" : "blind";
+      const chatMode = cimModeForAccessLevel(access.accessLevel);
+      // Who may later read this answer: a teaser's blind answer → everyone;
+      // a full-access buyer's → full-access buyers and up (it may quote
+      // sections locked for teasers); a named-CIM answer → the asker only.
+      const scope = askerScope(access.accessLevel);
+      const blindTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
+      /** Shared (published to other buyers) only within scope and only if it names nothing identifying. */
+      const shareableText = (answer: string) =>
+        scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
+      const reader = { id: access.id, accessLevel: access.accessLevel };
       storage.createAnalyticsEvent({
         dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
         eventData: { question: String(question).slice(0, 200) },
       } as any).catch(() => {});
 
-      // ── Step 1: Check knowledge base — has a similar question been answered before? ──
-      const publishedQs = await storage.getPublishedQuestions(dealId);
+      // ── Step 1: Check knowledge base — has a similar question been answered
+      // before? Only answers THIS buyer may read (scope + identity check):
+      // a teaser is never answered from a full-access buyer's answer.
+      const publishedQs = await publishedQuestionsFor(deal, reader);
       if (publishedQs.length > 0) {
         const kbContext = publishedQs
-          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer}`)
+          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer || q.aiAnswer}`)
           .join("\n\n");
 
         const similarityCheck = await anthropic.messages.create({
@@ -6736,8 +6794,9 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
           const matchedAnswer = matchText.slice(6).trim();
           // Find the matched Q ID for linking
           const matchedQ = publishedQs.find(q =>
-            matchedAnswer.includes(q.publishedAnswer?.slice(0, 50) || "___none___")
+            matchedAnswer.includes((q.publishedAnswer || q.aiAnswer)?.slice(0, 50) || "___none___")
           );
+          const share = shareableText(matchedAnswer);
 
           const saved = await storage.createBuyerQuestion({
             dealId,
@@ -6745,9 +6804,10 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
             question,
             aiAnswer: matchedAnswer,
             status: "published",
-            isPublished: true,
+            isPublished: share,
             publishedAnswer: matchedAnswer,
-            addedToKnowledgeBase: true,
+            addedToKnowledgeBase: share,
+            answerScope: scope,
             similarQuestionIds: matchedQ ? [matchedQ.id] : [],
           } as any);
 
@@ -6772,16 +6832,13 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // Same authority as the view room (shared/cim-buyer-view.ts):
       // hidden, locked (above the buyer's tier) and not-yet-redacted
       // sections never feed the answer.
-      const chatDeal = await storage.getDeal(dealId);
       const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
         storage.getCimSectionsByDeal(dealId),
         chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
         loadMediaAssets(dealId),
       ]);
-      const chatCim = chatDeal
-        ? buildBuyerCim({ deal: chatDeal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia })
-        : null;
-      const answerSections: AnswerSection[] = (chatCim?.sections ?? [])
+      const chatCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia });
+      const answerSections: AnswerSection[] = chatCim.sections
         .filter(s => !s.locked)
         .map(s => ({
           title: s.sectionTitle,
@@ -6808,9 +6865,9 @@ Do not speculate or add information not in the CIM.`,
 
       // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
       // business name, address or people — it goes to the asker only, never
-      // into the shared feed / knowledge base that blind buyers read. Only
-      // answers from the blind CIM are safe to share with every buyer.
-      const shareable = !needsEscalation && chatMode === "blind";
+      // into the shared feed / knowledge base that blind buyers read. A full-
+      // access buyer's answer is shared with full-access buyers only.
+      const shareable = !needsEscalation && shareableText(aiAnswer!);
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
@@ -6820,16 +6877,16 @@ Do not speculate or add information not in the CIM.`,
         isPublished: shareable,
         publishedAnswer: needsEscalation ? null : aiAnswer,
         addedToKnowledgeBase: shareable,
+        answerScope: scope,
       } as any);
 
       // Notify broker when question needs manual response
       if (needsEscalation) {
-        const deal = await storage.getDeal(dealId);
         notify(dealId, "buyer_question", {
           title: "New buyer question needs your response",
           body: `A buyer asked: "${question.slice(0, 100)}${question.length > 100 ? "..." : ""}"`,
           actionUrl: `/deal/${dealId}`,
-          businessName: deal?.businessName,
+          businessName: deal.businessName,
         }).catch(() => {});
       }
 
@@ -6853,9 +6910,15 @@ Do not speculate or add information not in the CIM.`,
       const tok = (req.headers["x-buyer-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : undefined);
       const access = tok ? await storage.getBuyerAccessByToken(tok) : undefined;
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) return res.status(401).json({ error: "A valid view-room link is required" });
-      // Published answers plus this buyer's own pending questions, so the
-      // chat survives a reload and the poll can pick up the broker's answer.
-      res.json(await buildBuyerQuestionFeed(dealId, access.id));
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Same NDA rule as the view room, which withholds this feed too.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Sign the NDA to see questions and answers", code: "nda_required" });
+      }
+      // Published answers this buyer may read plus their own questions, so
+      // the chat survives a reload and the poll can pick up the broker's answer.
+      res.json(await buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to get questions" });
     }
@@ -6897,6 +6960,9 @@ Do not speculate or add information not in the CIM.`,
       if (status !== undefined) updates.status = status;
       if (publishedAnswer !== undefined) updates.publishedAnswer = publishedAnswer;
       if (isPublished !== undefined) updates.isPublished = isPublished;
+      // Published by the broker on purpose → for every buyer (a Blind buyer
+      // still never sees it if it names the business — buyer-qa-scope.ts).
+      if (isPublished === true) updates.answerScope = "all";
 
       // Generate approval token when sending to seller
       if (status === "pending_seller") {
@@ -6979,6 +7045,7 @@ Do not speculate or add information not in the CIM.`,
           isPublished: true,
           publishedAnswer,
           addedToKnowledgeBase: true,
+          answerScope: "all",
         } as any);
         res.json({ success: true, status: "published" });
       } else {
@@ -7025,6 +7092,7 @@ Do not speculate or add information not in the CIM.`,
           isPublished: true,
           publishedAnswer: revision || undefined,
           addedToKnowledgeBase: true,
+          answerScope: "all",
         } as any);
 
         if (!question) return res.status(404).json({ error: "Question not found" });
@@ -7093,6 +7161,9 @@ Do not speculate or add information not in the CIM.`,
       const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
+      // Blind views send neutral section keys (s_<id>); record the real key
+      // so section analytics and the learning loop line up across versions.
+      await translateBlindSectionKeys(dealId, accepted);
 
       for (const event of accepted) {
         await storage.createAnalyticsEvent({
@@ -7116,7 +7187,7 @@ Do not speculate or add information not in the CIM.`,
       res.json({ received: events.length });
 
       // Fire-and-forget: aggregate section_exit events into engagementInsights
-      aggregateEngagementInsights(dealId, events, storage).catch(err =>
+      aggregateEngagementInsights(dealId, accepted, storage).catch(err =>
         console.warn("[learning-loop] aggregation error:", err)
       );
     } catch (error: any) {

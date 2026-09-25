@@ -4,7 +4,8 @@
  */
 import type { CimSection, CimSectionAiTask } from "@shared/schema";
 
-export type BlindStatus = "fresh" | "updating" | "none" | "excluded";
+/** "held" = the last redaction failed; blind buyers don't get the section until one succeeds. */
+export type BlindStatus = "fresh" | "updating" | "held" | "none" | "excluded";
 
 /** A section row as the builder receives it. */
 export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHistory" | "accessTier"> {
@@ -13,6 +14,7 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
   historyCount: number;
   lastChange: { reason: string; at: string } | null;
   blindStatus: BlindStatus;
+  blindError?: string | null;
 }
 
 export interface BuilderState {

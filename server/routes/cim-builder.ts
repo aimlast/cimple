@@ -28,6 +28,8 @@ import {
 import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/routes";
 import {
   blindRefreshState,
+  blindSectionError,
+  retryBlindNow,
   invalidateBlind,
   scheduleBlindRefresh,
 } from "../cim/blind-sync";
@@ -103,7 +105,11 @@ function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: b
         ? "none"
         : hasOverride && !s.blindStaleAt
           ? "fresh"
-          : "updating",
+          : blindSectionError(s.id)
+            ? "held"
+            : "updating",
+    /** Why the blind version is held back (last redaction failed), for the broker. */
+    blindError: excluded ? null : blindSectionError(s.id),
   };
 }
 
@@ -145,7 +151,7 @@ export function registerCimBuilderRoutes(app: Express): void {
           codename: deal.blindCodename ?? null,
           running: blind.running,
           error: blind.lastError ?? null,
-          updating: rows.filter((r) => r.blindStatus === "updating").length,
+          updating: rows.filter((r) => r.blindStatus === "updating" || r.blindStatus === "held").length,
         },
         dd: { generated: ddOverrides.length > 0 },
         buyers: { total: active.length, byLevel },
@@ -380,8 +386,13 @@ export function registerCimBuilderRoutes(app: Express): void {
   // ── Retry the blind version of stale sections now ──
   app.post("/api/deals/:dealId/cim-blind/refresh", requireBroker, requireOwnedDeal, aiLimiter, async (req, res) => {
     const deal = res.locals.deal as Deal;
-    scheduleBlindRefresh(deal.id, 0);
-    res.status(202).json({ started: true });
+    try {
+      await retryBlindNow(deal.id);
+      res.status(202).json({ started: true });
+    } catch (err) {
+      console.error("[cim-builder] blind retry failed:", err);
+      res.status(500).json({ error: "Couldn't retry the blind version" });
+    }
   });
 
   // ── Set several sections' access tier at once ──

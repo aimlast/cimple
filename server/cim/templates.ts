@@ -189,9 +189,11 @@ export async function designPayload(deal: Deal, mode: CimVersionMode): Promise<C
     brokerageBrand(deal.brokerId, branding),
   ]);
   return {
-    // A custom template's name is broker-typed free text (it could name the
-    // business), so Blind buyers never receive it.
-    template: { id: template.id, name: mode === "blind" && !template.builtIn ? "" : template.name, tokens: template.tokens },
+    // Buyers never receive the template's name, in any version: it's
+    // broker-typed free text that can name the business — or, for a
+    // "Match my existing CIM" template, another client's business. The
+    // page only needs the id and the tokens.
+    template: { id: template.id, name: "", tokens: template.tokens },
     brokerage,
     business: businessBrandingFor(deal, mode),
   };

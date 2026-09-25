@@ -20,6 +20,7 @@ import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import { scoreBuyersForDeal, passesFirstPass, type ScoredBuyer } from "./suggested";
 import type { BuyerDeepCheck, BuyerDeepCheckResult, CrmBuyerProfile, Deal } from "@shared/schema";
+import { blindLeakTerms, isBlindSafe } from "@shared/blind-guard";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BATCH = 6;
@@ -147,6 +148,7 @@ export async function startBuyerDeepCheck(dealId: string): Promise<{ started: bo
 
 async function runDeepCheck(deal: Deal) {
   const brief = dealBrief(deal);
+  const angleTerms = blindLeakTerms(deal as any, { codename: deal.blindCodename });
   const dealKey = hash(brief);
   const previous = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
   const reusable = previous && previous.dealKey === dealKey ? previous.results : {};
@@ -186,7 +188,8 @@ async function runDeepCheck(deal: Deal) {
             fitScore: Math.max(0, Math.min(100, Math.round(Number(r.fitScore) || 0))),
             whyFit: String(r.whyFit || "").slice(0, 500),
             watchOuts: (Array.isArray(r.watchOuts) ? r.watchOuts : []).map(String).slice(0, 2),
-            outreachAngle: r.outreachAngle ? String(r.outreachAngle).slice(0, 300) : null,
+            // Pre-NDA hook: dropped if it names anything identifying.
+            outreachAngle: r.outreachAngle && isBlindSafe(String(r.outreachAngle), angleTerms) ? String(r.outreachAngle).slice(0, 300) : null,
             buyerKey: item.key,
             checkedAt: new Date().toISOString(),
           };
