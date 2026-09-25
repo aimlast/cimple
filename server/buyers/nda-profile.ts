@@ -32,7 +32,7 @@ async function resolveBuyerUser(access: BuyerAccess, profile: NdaBuyerProfile | 
     targetLocations: [] as any, buyerType: null, background: null, liquidFunds: null, hasProofOfFunds: false,
     profileCompletionPct: 0, emailVerified: false, source: "nda_signed", invitedByBroker: brokerId,
     invitedByDeal: access.dealId, resetToken: null, resetTokenExpiresAt: null,
-    fieldSources: initialFieldSources({ name: profile.name, phone: profile.phone, company: profile.company ?? null, title: profile.title ?? null }, "nda", access.dealId),
+    fieldSources: initialFieldSources({ name: profile.name, phone: profile.phone, company: profile.company ?? null, title: profile.title ?? null }, "nda", access.dealId, brokerId),
   } as any);
 }
 
@@ -69,7 +69,7 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     if (profile.proofOfFunds === "yes") updates.hasProofOfFunds = true;
     if (profile.proofOfFunds === "no") updates.hasProofOfFunds = false;
     // Every field this changes is stamped as coming from this deal's NDA.
-    buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, updates, "nda", access.dealId))) || buyer;
+    buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, updates, "nda", access.dealId, brokerId))) || buyer;
   }
 
   await storage.updateBuyerAccess(access.id, {
@@ -102,7 +102,7 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
           targetLocations: (x.targetLocations.length ? x.targetLocations : current.targetLocations) as any,
           liquidFunds: current.liquidFunds || x.liquidFunds || null,
           buyerCriteria: criteria as any,
-        }, "nda", access.dealId));
+        }, "nda", access.dealId, brokerId));
       })
       .catch((err) => console.error("[nda-profile] criteria extraction failed:", err));
   }

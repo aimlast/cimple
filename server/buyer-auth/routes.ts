@@ -16,6 +16,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service.js";
+import { hashResetToken } from "./reset-token";
 import {
   calculateBuyerProfileCompletion,
   toPublicBuyerUser,
@@ -124,10 +125,12 @@ export async function inviteBuyerUser(opts: {
   businessName?: string | null;
   baseUrl: string;
 }): Promise<{ user: BuyerUser; isNew: boolean }> {
-  // Idempotent: if the email already has an account, return it
+  // Idempotent: if the email already has an account, return it — without
+  // any set-password/reset token pending on it (another brokerage's invite or
+  // the buyer's own reset request): a broker flow never sees or reuses it.
   const existing = await storage.getBuyerUserByEmail(opts.email);
   if (existing) {
-    return { user: existing, isNew: false };
+    return { user: { ...existing, resetToken: null, resetTokenExpiresAt: null }, isNew: false };
   }
 
   const resetToken = generateResetToken();
@@ -151,7 +154,7 @@ export async function inviteBuyerUser(opts: {
     source: "broker_invited",
     invitedByBroker: opts.invitedByBroker || null,
     invitedByDeal: opts.invitedByDeal || null,
-    resetToken,
+    resetToken: hashResetToken(resetToken), // plaintext lives only in the email link
     resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
   } as any);
 
@@ -375,7 +378,7 @@ export function registerBuyerAuthRoutes(app: Express) {
       if (user) {
         const resetToken = generateResetToken();
         await storage.updateBuyerUser(user.id, {
-          resetToken,
+          resetToken: hashResetToken(resetToken),
           resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
         } as any);
         const url = `${baseUrl(req)}/buyer/set-password/${resetToken}`;

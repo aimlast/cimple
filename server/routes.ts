@@ -7,6 +7,7 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
+import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
@@ -354,7 +355,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       if (!ownProfile) return res.status(404).json({ error: "Buyer not found" });
 
       const contact = await storage.getBrokerBuyerContact(brokerId, ownProfile.id);
-      const buyer = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null, contact?.brokerProfile as BrokerBuyerOverlay | null);
+      // Same broker view as the profile page: 3-layer merge, self-entered
+      // funds as a range, never the raw buyer_users row.
+      const { brokerBuyerCard } = await import("./buyers/profile-view.js");
+      const { loadBrokerScope } = await import("./buyers/provenance-scope.js");
+      const buyer = brokerBuyerCard(ownProfile, contact, await loadBrokerScope(brokerId));
 
       // List all buyerAccess rows for this buyer, then filter to those
       // on the broker's deals.
@@ -373,26 +378,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({
-        buyer: {
-          id: buyer.id,
-          email: buyer.email,
-          name: buyer.name,
-          phone: buyer.phone,
-          company: buyer.company,
-          title: buyer.title,
-          linkedinUrl: buyer.linkedinUrl,
-          buyerType: buyer.buyerType,
-          background: buyer.background,
-          liquidFunds: buyer.liquidFunds,
-          hasProofOfFunds: buyer.hasProofOfFunds,
-          targetIndustries: buyer.targetIndustries,
-          targetLocations: buyer.targetLocations,
-          buyerCriteria: buyer.buyerCriteria,
-          profileCompletionPct: buyer.profileCompletionPct,
-          source: contact?.source ?? buyer.source,
-          createdAt: buyer.createdAt,
-          lastLoginAt: buyer.lastLoginAt,
-        },
+        buyer,
         contact: contact ? {
           id: contact.id,
           tags: contact.tags,
@@ -453,7 +439,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updates.targetLocations = body.targetLocations as any;
         }
         if (Object.keys(updates).length > 0) {
-          buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "broker_import"));
+          buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "broker_import", null, body.brokerId));
         }
       } else if (body.sendInvite) {
         // Create via invite flow (sends set-password email)
@@ -482,7 +468,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           buyerUser = await storage.updateBuyerUser(buyerUser.id, extraUpdates);
         }
         if (buyerUser && invited.isNew) {
-          buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import") } as any)) || buyerUser;
+          buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import", null, body.brokerId) } as any)) || buyerUser;
         }
       } else {
         // Create a buyer row without sending an invite email
@@ -509,7 +495,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           resetToken: null,
           resetTokenExpiresAt: null,
         } as any);
-        buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import") } as any)) || buyerUser;
+        buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import", null, body.brokerId) } as any)) || buyerUser;
       }
 
       if (!buyerUser) {
@@ -524,7 +510,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notes: body.notes ?? null,
       });
 
-      res.json({ buyerUser, contact });
+      // Never the raw row: buyer_users carries the password hash, any pending
+      // set-password/reset token and the buyer's exact self-entered funds.
+      const { brokerBuyerCard } = await import("./buyers/profile-view.js");
+      const { loadBrokerScope } = await import("./buyers/provenance-scope.js");
+      res.json({ buyerUser: brokerBuyerCard(buyerUser, contact, await loadBrokerScope(body.brokerId)), contact });
     } catch (err: any) {
       if (err.name === "ZodError") {
         return res.status(400).json({ error: "Invalid buyer data", details: err.errors });
@@ -626,7 +616,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!buyerUser.buyerType && buyerType) updates.buyerType = buyerType;
             if (!buyerUser.liquidFunds && liquidFunds) updates.liquidFunds = liquidFunds;
             if (Object.keys(updates).length > 0) {
-              buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "csv"));
+              buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "csv", null, body.brokerId));
             }
           } else if (body.sendInvites) {
             const invited = await inviteBuyerUser({
@@ -650,7 +640,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               buyerUser = await storage.updateBuyerUser(buyerUser.id, extra);
             }
             if (buyerUser && invited.isNew) {
-              buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv") } as any)) || buyerUser;
+              buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv", null, body.brokerId) } as any)) || buyerUser;
             }
             status = "created";
           } else {
@@ -677,7 +667,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               resetToken: null,
               resetTokenExpiresAt: null,
             } as any);
-            buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv") } as any)) || buyerUser;
+            buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv", null, body.brokerId) } as any)) || buyerUser;
             status = "created";
           }
 
@@ -1274,6 +1264,15 @@ Return JSON only.`,
   });
 
   // Start or resume an interview session for a deal
+  // Interview responses: the owning broker gets the full turn result; a
+  // seller (admitted by their token) gets field names without values or
+  // guard reasons — those can quote broker-only sources (CRM notes, private
+  // emails). See server/interview/seller-safe-turn.ts.
+  const brokerOwnsInterview = async (req: Request, dealId: string) =>
+    !!req.session.brokerId && !!(await getOwnedDeal(dealId, req.session.brokerId));
+  const interviewResultFor = async <T extends object>(req: Request, dealId: string, result: T): Promise<T> =>
+    (await brokerOwnsInterview(req, dealId)) ? result : sellerSafeTurnResult(result as any);
+
   app.post("/api/interview/:dealId/start", async (req, res) => {
     try {
       const { dealId } = req.params;
@@ -1282,7 +1281,7 @@ Return JSON only.`,
       }
       const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
       const result = await startOrResumeSession(dealId, { conductedBy, conductedVia: parseConductedVia(req.body?.conductedVia) });
-      res.json(result);
+      res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview start error:", error);
       res.status(500).json({ error: error.message || "Failed to start interview" });
@@ -1557,7 +1556,7 @@ Return JSON only.`,
         conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
         conductedVia: parseConductedVia(req.body?.conductedVia),
       });
-      res.json(result);
+      res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview message error:", error);
       res.status(500).json({ error: error.message || "Failed to process message" });
@@ -1601,7 +1600,7 @@ Return JSON only.`,
             conductedVia: parseConductedVia(req.body?.conductedVia),
           },
         );
-        send({ type: "done", result });
+        send({ type: "done", result: await interviewResultFor(req, dealId, result) });
       } catch (err: any) {
         console.error("Interview stream error:", err);
         send({ type: "error", error: err.message || "Failed to process message" });
@@ -4474,8 +4473,23 @@ Return JSON only.`,
     try {
       const existingAccess = await storage.getBuyerAccess(req.params.id);
       if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
-      const { dealId: _d, accessToken: _t, id: _i, accessEvents: _e, ...accessUpdates } = req.body || {};
-      if (typeof accessUpdates.expiresAt === "string") accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+      // Only what a broker may change on a link. Everything else on the row —
+      // buyerUserId (the account link, which also decides "on your buyer
+      // list"), NDA, decision, reminder and view state — is written only by
+      // the server flows that earn it (grant, approval, NDA signing, view room).
+      const parsed = z.object({
+        accessLevel: z.string().optional(),
+        expiresAt: z.union([z.string(), z.null()]).optional(),
+        buyerName: z.string().trim().max(200).nullable().optional(),
+        buyerCompany: z.string().trim().max(200).nullable().optional(),
+      }).strip().safeParse(req.body ?? {});
+      if (!parsed.success) return res.status(400).json({ error: "Invalid update" });
+      const accessUpdates: Record<string, any> = {};
+      for (const [k, v] of Object.entries(parsed.data)) if (v !== undefined) accessUpdates[k] = v;
+      if (typeof accessUpdates.expiresAt === "string") {
+        accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+        if (isNaN(accessUpdates.expiresAt.getTime())) return res.status(400).json({ error: "Invalid expiry date" });
+      }
       // Access level decides which CIM version (and which sections) the buyer
       // sees — only the four known levels are accepted.
       if (accessUpdates.accessLevel !== undefined && !isBuyerAccessLevel(accessUpdates.accessLevel)) {
@@ -4969,7 +4983,7 @@ Return JSON only.`,
         buyerUserId = invited.user.id;
         isNewAccount = invited.isNew;
         if (invited.isNew) {
-          await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id) } as any).catch(() => {});
+          await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id, deal.brokerId) } as any).catch(() => {});
         }
       }
 

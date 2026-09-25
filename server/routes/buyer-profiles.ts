@@ -23,6 +23,7 @@ import {
   isBuyerInBrokerList, getContact, ensureContact, updateContact, recordBuyerEmail, getBuyerAccessOnBrokerDeals,
 } from "../buyers/profile-data";
 import { buildBuyerProfileView, buildBuyerTimeline, loadSummaryInput, mergedForBroker } from "../buyers/profile-view";
+import { loadBrokerScope } from "../buyers/provenance-scope";
 import { generateBuyerSummary, draftBuyerEmail, aiAvailable } from "../buyers/profile-ai";
 import { blindDealSummary } from "../buyers/blind-deal-summary";
 import { db } from "../db";
@@ -267,8 +268,8 @@ export function registerBuyerProfileRoutes(app: Express): void {
       const deal = body.dealId ? await getOwnedDeal(body.dealId, brokerId) : null;
       if (body.dealId && !deal) return res.status(404).json({ error: "Deal not found" });
 
-      const contact = await getContact(brokerId, buyer.id);
-      const { display } = mergedForBroker(buyer, contact);
+      const [contact, scope] = await Promise.all([getContact(brokerId, buyer.id), loadBrokerScope(brokerId)]);
+      const { display } = mergedForBroker(buyer, contact, scope);
       const [brokerUser, branding] = await Promise.all([storage.getUser(brokerId), storage.getBrandingByBroker(brokerId)]);
       let dealContext: { hasAccess: boolean; ndaSigned: boolean; decision: string | null } | null = null;
       if (deal) {

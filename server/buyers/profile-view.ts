@@ -9,10 +9,15 @@
  *   - Liquid funds the buyer typed on their own profile are promised to show
  *     as a range only — masked here, before anything reaches the browser or
  *     the AI summary.
+ *   - buyer_users is shared by every brokerage: its per-field provenance is
+ *     scoped to this broker (provenance-scope.ts) — another brokerage's deal
+ *     ids / imports are never returned, and never labelled as this broker's.
+ *   - The buyer row is never serialised: every response is a whitelist
+ *     (no passwordHash, reset token or raw field_sources).
  */
 import { createHash } from "crypto";
 import {
-  mergeBuyerProfileWithSources, buyerFundsRange, calculateBuyerProfileCompletion, BUYER_CRITERIA_FIELDS,
+  mergeBuyerProfileWithSources, buyerFundsRange, buyerValueIsSet, calculateBuyerProfileCompletion, BUYER_CRITERIA_FIELDS, BUYER_PROFILE_FIELDS,
   type BrokerBuyerContact, type BrokerBuyerOverlay, type BrokerOverlayMeta, type BuyerAccessEvent,
   type BuyerAiSummary, type BuyerUser, type CrmBuyerProfile, type MergedFieldSource,
 } from "@shared/schema";
@@ -26,21 +31,85 @@ import {
   approvalsFor, brokerBuyerEngagement, decisionEvents, emailsFor, engagementByAccess, getBrokerDeals,
   getBuyerAccessOnBrokerDeals, getContact, outreachFor, questionsFor, sectionTitles,
 } from "./profile-data";
+import {
+  accountSourceForBroker, legacySourceForBroker, loadBrokerScope, scopeFieldSources,
+  type BrokerScope, type ScopedFieldSources,
+} from "./provenance-scope";
 
 export const INTEREST_LABELS: Record<string, string> = { hot: "Hot", warm: "Warm", cold: "Cold", not_interested: "Not interested" };
 
-/** The broker-effective profile for a buyer, with sources and the funds mask applied. */
-export function mergedForBroker(buyer: BuyerUser, contact: BrokerBuyerContact | null | undefined) {
+/**
+ * The broker-effective profile for a buyer, with sources and the funds mask
+ * applied. Sources are scoped to `scope`'s broker: stamps another brokerage
+ * wrote on the shared row come back as a neutral "other" with no deal id.
+ * A self-entered (or unattributable) liquid-funds figure is masked to a range.
+ */
+export function mergedForBroker(buyer: BuyerUser, contact: BrokerBuyerContact | null | undefined, scope: BrokerScope) {
+  const ownSources = scopeFieldSources(buyer, contact, scope);
   const { profile, sources } = mergeBuyerProfileWithSources(
-    buyer,
+    { ...buyer, fieldSources: ownSources } as BuyerUser,
     (contact?.crmProfile as CrmBuyerProfile | null) ?? null,
     (contact?.brokerProfile as BrokerBuyerOverlay | null) ?? null,
     (contact?.brokerProfileMeta as BrokerOverlayMeta | null) ?? null,
   );
+  const legacyGuess = legacySourceForBroker(buyer, scope);
+  for (const [k, src] of Object.entries(sources)) {
+    if (src.layer !== "own" || !src.legacy) continue;
+    sources[k] = legacyGuess === "other" ? { source: "other", layer: "own", at: null } : { ...src, source: legacyGuess };
+  }
   const fundsSrc = sources.liquidFunds;
-  const fundsMasked = !!fundsSrc && fundsSrc.layer === "own" && fundsSrc.source === "buyer";
+  const fundsMasked = !!fundsSrc && fundsSrc.layer === "own" && (fundsSrc.source === "buyer" || fundsSrc.source === "other");
   const display = { ...profile, liquidFunds: fundsMasked ? buyerFundsRange(profile.liquidFunds) : profile.liquidFunds };
-  return { profile, display, sources, fundsMasked };
+  return { profile, display, sources, fundsMasked, ownSources, legacyGuess };
+}
+
+/**
+ * The buyer as any broker-facing response may carry it — a whitelist of the
+ * broker-effective profile (funds masked). Never the raw buyer_users row.
+ */
+export function brokerBuyerCard(buyer: BuyerUser, contact: BrokerBuyerContact | null | undefined, scope: BrokerScope) {
+  const { display, fundsMasked } = mergedForBroker(buyer, contact, scope);
+  return {
+    id: buyer.id,
+    email: buyer.email,
+    name: display.name,
+    phone: display.phone,
+    company: display.company,
+    title: display.title,
+    linkedinUrl: display.linkedinUrl,
+    buyerType: display.buyerType,
+    background: display.background,
+    liquidFunds: display.liquidFunds,
+    liquidFundsIsRange: fundsMasked,
+    hasProofOfFunds: display.hasProofOfFunds,
+    targetIndustries: display.targetIndustries ?? [],
+    targetLocations: display.targetLocations ?? [],
+    buyerCriteria: display.buyerCriteria ?? {},
+    profileCompletionPct: display.profileCompletionPct,
+    hasAccount: !!buyer.passwordHash,
+    source: contact?.source ?? accountSourceForBroker(buyer, scope),
+    createdAt: buyer.createdAt,
+    lastLoginAt: buyer.lastLoginAt,
+  };
+}
+
+/**
+ * The own layer's per-field sources for the profile page: every stamp (scoped)
+ * plus a best guess for values written before stamps existed.
+ */
+function ownLayerSources(buyer: BuyerUser, scoped: ScopedFieldSources, legacyGuess: string) {
+  const out: Record<string, { source: string; at: string | null; dealId?: string | null; legacy?: boolean }> = {};
+  for (const [k, s] of Object.entries(scoped)) out[k] = { ...s };
+  const guess = () => ({ source: legacyGuess, at: null, legacy: legacyGuess !== "other" });
+  for (const f of BUYER_PROFILE_FIELDS) {
+    if (out[f]) continue;
+    const v = (buyer as any)[f];
+    if (f === "hasProofOfFunds" ? v === true : buyerValueIsSet(v)) out[f] = guess();
+  }
+  for (const [k, v] of Object.entries((buyer.buyerCriteria as Record<string, unknown> | null) ?? {})) {
+    if (!out[`criteria.${k}`] && buyerValueIsSet(v)) out[`criteria.${k}`] = guess();
+  }
+  return out;
 }
 
 const label = (opts: readonly { value: string; label: string }[], v: string | null | undefined) =>
@@ -75,6 +144,7 @@ async function loadBuyerContext(brokerId: string, buyerId: string) {
   if (!buyer) return null;
   const [contact, brokerDeals] = await Promise.all([getContact(brokerId, buyerId), getBrokerDeals(brokerId)]);
   const dealById = new Map(brokerDeals.map((d) => [d.id, d]));
+  const scope: BrokerScope = { brokerId, dealIds: new Set(dealById.keys()) };
   const accesses = await getBuyerAccessOnBrokerDeals(brokerDeals.map((d) => d.id), buyer);
   const accessIds = accesses.map((a) => a.id);
   const [engagement, decisions, questions, outreach, emails, approvals, titles] = await Promise.all([
@@ -86,7 +156,7 @@ async function loadBuyerContext(brokerId: string, buyerId: string) {
     approvalsFor(brokerDeals.map((d) => d.id), buyer.email),
     sectionTitles(Array.from(new Set(accesses.map((a) => a.dealId)))),
   ]);
-  return { buyer, contact: contact ?? null, dealById, accesses, engagement, decisions, questions, outreach, emails, approvals, titles };
+  return { buyer, contact: contact ?? null, scope, dealById, accesses, engagement, decisions, questions, outreach, emails, approvals, titles };
 }
 
 type Ctx = NonNullable<Awaited<ReturnType<typeof loadBuyerContext>>>;
@@ -141,7 +211,7 @@ function ndaAnswerRows(ctx: Ctx) {
 
 /** Fingerprint of everything the AI summary reads — a changed key means the summary is stale. */
 export function summaryInput(ctx: Ctx) {
-  const { display, fundsMasked } = mergedForBroker(ctx.buyer, ctx.contact);
+  const { display, fundsMasked } = mergedForBroker(ctx.buyer, ctx.contact, ctx.scope);
   const crm = (ctx.contact?.crmProfile as CrmBuyerProfile | null) ?? null;
   const deals = dealRows(ctx).map((d) => ({
     deal: d.businessName, access: d.accessLevel, status: d.status, views: d.views, minutes: Math.round(d.seconds / 60),
@@ -180,20 +250,21 @@ export async function buildBuyerProfileView(brokerId: string, buyerId: string) {
   const ctx = await loadBuyerContext(brokerId, buyerId);
   if (!ctx) return null;
   const { buyer, contact } = ctx;
-  const { display, sources, fundsMasked } = mergedForBroker(buyer, contact);
+  const { display, sources, fundsMasked, ownSources, legacyGuess } = mergedForBroker(buyer, contact, ctx.scope);
   const crm = (contact?.crmProfile as CrmBuyerProfile | null) ?? null;
   const overlay = (contact?.brokerProfile as BrokerBuyerOverlay | null) ?? {};
   const ai = (contact?.aiSummary as BuyerAiSummary | null) ?? null;
   const { key } = summaryInput(ctx);
 
-  // The buyer's own layer as the broker may see it (self-entered funds → range).
-  const LEGACY: Record<string, string> = { crm_imported: "crm", nda_signed: "nda", broker_invited: "broker_import" };
-  const ownFundsSource = (buyer.fieldSources as any)?.liquidFunds?.source ?? LEGACY[buyer.source ?? ""] ?? "buyer";
+  // The buyer's own layer as the broker may see it (self-entered or
+  // unattributable funds → range).
+  const ownFundsSource = ownSources.liquidFunds?.source ?? legacyGuess;
+  const ownFundsMasked = ownFundsSource === "buyer" || ownFundsSource === "other";
   const own = {
     name: buyer.name, phone: buyer.phone, company: buyer.company, title: buyer.title, linkedinUrl: buyer.linkedinUrl,
     buyerType: buyer.buyerType, background: buyer.background,
-    liquidFunds: ownFundsSource === "buyer" ? buyerFundsRange(buyer.liquidFunds) : buyer.liquidFunds,
-    liquidFundsIsRange: ownFundsSource === "buyer" && !!buyer.liquidFunds,
+    liquidFunds: ownFundsMasked ? buyerFundsRange(buyer.liquidFunds) : buyer.liquidFunds,
+    liquidFundsIsRange: ownFundsMasked && !!buyer.liquidFunds,
     hasProofOfFunds: buyer.hasProofOfFunds,
     targetIndustries: buyer.targetIndustries ?? [], targetLocations: buyer.targetLocations ?? [],
     buyerCriteria: buyer.buyerCriteria ?? {},
@@ -205,7 +276,7 @@ export async function buildBuyerProfileView(brokerId: string, buyerId: string) {
       email: buyer.email,
       hasAccount: !!buyer.passwordHash,
       emailVerified: !!buyer.emailVerified,
-      accountSource: buyer.source,
+      accountSource: accountSourceForBroker(buyer, ctx.scope),
       createdAt: buyer.createdAt,
       lastLoginAt: buyer.lastLoginAt,
       profileCompletionPct: Math.max(calculateBuyerProfileCompletion(display), display.profileCompletionPct ?? 0),
@@ -221,7 +292,7 @@ export async function buildBuyerProfileView(brokerId: string, buyerId: string) {
     sources: sources as Record<string, MergedFieldSource>,
     layers: {
       own,
-      ownSources: buyer.fieldSources ?? {},
+      ownSources: ownLayerSources(buyer, ownSources, legacyGuess),
       crm: crm ? {
         provider: contact?.crmProvider ?? "pipedrive",
         recordId: contact?.crmRecordId ?? null,
@@ -389,10 +460,13 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
     groups.set(g, entry);
   };
   for (const [k, m] of Object.entries((contact?.brokerProfileMeta as BrokerOverlayMeta | null) ?? {})) addEdit("broker", k, m?.at);
-  for (const [k, s] of Object.entries((buyer.fieldSources as Record<string, { source: string; at: string; dealId?: string | null }> | null) ?? {})) addEdit(s.source, k, s.at, s.dealId);
+  // Scoped: another brokerage's writes on the shared row read as a neutral
+  // "profile updated" with no deal attached.
+  for (const [k, s] of Object.entries(scopeFieldSources(buyer, contact, ctx.scope))) addEdit(s.source, k, s.at, "dealId" in s ? s.dealId : null);
   const WHO: Record<string, string> = {
     broker: "You edited", buyer: "They updated their profile", nda: "Profile filled in from their NDA answers", broker_import: "You added profile details",
-    csv: "Profile details imported from CSV", crm: "Contact details copied from your CRM", approval: "Profile details from an approval request",
+    csv: "Profile details imported from your CSV", crm: "Contact details copied from your CRM", approval: "Profile details from an approval request",
+    other: "Their Cimple profile was updated",
   };
   for (const [g, e] of Array.from(groups.entries())) {
     // An NDA write is already on the timeline as "Signed the NDA".
@@ -407,24 +481,26 @@ export async function buildBuyerTimeline(brokerId: string, buyerId: string): Pro
 }
 
 /** Where a buyer came into the broker's list, in the Buyers page's vocabulary. */
-function listSource(contact: BrokerBuyerContact | null, buyer: BuyerUser, hasDeals: boolean): string {
+function listSource(contact: BrokerBuyerContact | null, buyer: BuyerUser, hasDeals: boolean, scope: BrokerScope): string {
   const s = contact?.source;
   if (s === "manual" || s === "csv" || s === "crm") return s;
   // A buyer who registered on Cimple themselves, then reached the broker through a deal / NDA.
   if (buyer.source === "self_signup" && buyer.passwordHash) return "self_signup";
   if (s === "nda") return s;
   if (hasDeals || s === "deal") return "deal";
-  if (buyer.source === "crm_imported") return "crm";
-  if (buyer.source === "nda_signed") return "nda";
+  // How the account started — only when it started with this broker.
+  const started = accountSourceForBroker(buyer, scope);
+  if (started === "crm_imported") return "crm";
+  if (started === "nda_signed") return "nda";
   return "manual";
 }
 
 /** GET /api/broker/buyers — the broker's list, merged (3 layers) and scored with engagement. */
 export async function buildBrokerBuyerList(brokerId: string) {
-  const list = await storage.getBrokerBuyerContactList(brokerId);
+  const [list, scope] = await Promise.all([storage.getBrokerBuyerContactList(brokerId), loadBrokerScope(brokerId)]);
   const engagement = await brokerBuyerEngagement(brokerId, list.map((l) => l.buyerUser));
   return list.map(({ buyerUser: own, contact, dealCount, lastActivityAt }) => {
-    const { display } = mergedForBroker(own, contact);
+    const { display, fundsMasked } = mergedForBroker(own, contact, scope);
     const e = engagement.get(own.id);
     const score = calculateQualifiedLeadScore({
       buyer: { ...display, hasProofOfFunds: !!display.hasProofOfFunds },
@@ -443,11 +519,12 @@ export async function buildBrokerBuyerList(brokerId: string) {
       buyerType: display.buyerType,
       background: display.background,
       liquidFunds: display.liquidFunds,
+      liquidFundsIsRange: fundsMasked,
       hasProofOfFunds: !!display.hasProofOfFunds,
       targetIndustries: display.targetIndustries,
       targetLocations: display.targetLocations,
       profileCompletionPct: display.profileCompletionPct,
-      source: listSource(contact, own, deals > 0),
+      source: listSource(contact, own, deals > 0, scope),
       hasAccount: !!own.passwordHash,
       tags: contact?.tags ?? [],
       notes: contact?.notes ?? null,

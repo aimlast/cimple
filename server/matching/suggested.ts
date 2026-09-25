@@ -8,6 +8,7 @@ import { matchBuyerToDeal, type MatchBreakdown } from "./engine";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
 import { type BrokerBuyerContact, type BuyerUser, type Deal } from "@shared/schema";
 import { mergedForBroker } from "../buyers/profile-view";
+import { loadBrokerScope } from "../buyers/provenance-scope";
 
 const DIMENSION_LABELS: Record<string, string> = {
   financialFit: "Financials",
@@ -43,9 +44,12 @@ export interface ScoredBuyer {
 }
 
 export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
-  const list = await storage.getBrokerBuyerContactList(deal.brokerId!);
+  const [list, scope] = await Promise.all([
+    storage.getBrokerBuyerContactList(deal.brokerId!),
+    loadBrokerScope(deal.brokerId!),
+  ]);
   return Promise.all(list.map(async ({ buyerUser, contact, lastActivityAt }) => {
-    const merged = mergedForBroker(buyerUser, contact);
+    const merged = mergedForBroker(buyerUser, contact, scope);
     const buyer = { ...merged.profile, hasProofOfFunds: !!merged.profile.hasProofOfFunds };
     const criteria: any = {
       ...((buyer.buyerCriteria as any) || {}),

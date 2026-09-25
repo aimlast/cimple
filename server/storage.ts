@@ -35,6 +35,7 @@ import {
 import { randomUUID } from "crypto";
 import { db } from "./db";
 import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
 // touching any of these recomputes profileCompletionPct (see updateBuyerUser).
@@ -1344,7 +1345,10 @@ export class DbStorage implements IStorage {
   }
 
   async getBuyerUserByResetToken(token: string): Promise<BuyerUser | undefined> {
-    const result = await db.select().from(buyerUsers).where(eq(buyerUsers.resetToken, token));
+    // Stored hashed (legacy rows: plaintext) — see buyer-auth/reset-token.ts.
+    const candidates = resetTokenLookupValues(token);
+    if (candidates.length === 0) return undefined;
+    const result = await db.select().from(buyerUsers).where(inArray(buyerUsers.resetToken, candidates));
     return result[0];
   }
 

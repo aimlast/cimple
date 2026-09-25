@@ -2077,7 +2077,13 @@ export interface DealSellerContact {
 
 /** Who wrote a field on the global buyer_users row. */
 export type BuyerFieldSourceKind = "buyer" | "nda" | "broker_import" | "csv" | "crm" | "approval";
-export interface BuyerFieldSource { source: BuyerFieldSourceKind; at: string; dealId?: string | null }
+/**
+ * `brokerId` is the brokerage whose action wrote the value (broker_import /
+ * csv / crm / approval / nda). buyer_users is one global row shared by every
+ * brokerage, so a broker is only ever shown stamps that are theirs — see
+ * server/buyers/provenance-scope.ts.
+ */
+export interface BuyerFieldSource { source: BuyerFieldSourceKind; at: string; dealId?: string | null; brokerId?: string | null }
 /** Keyed by top-level field name or "criteria.<key>". */
 export type BuyerFieldSources = Record<string, BuyerFieldSource>;
 
@@ -2140,7 +2146,8 @@ export interface BuyerAccessEvent {
   accessLevel?: string | null;
 }
 
-export type MergedFieldSourceKind = BuyerFieldSourceKind | "broker";
+/** "other" = on the buyer's global profile, written by someone other than this broker or the buyer (never named). */
+export type MergedFieldSourceKind = BuyerFieldSourceKind | "broker" | "other";
 export interface MergedFieldSource {
   source: MergedFieldSourceKind;
   layer: "overlay" | "own" | "crm";
@@ -2162,7 +2169,7 @@ export function buyerValueIsSet(v: unknown): boolean {
 }
 
 /** Best guess at who wrote an untracked value on the global row, from how the account started. */
-function legacyOwnSource(buyer: Pick<BuyerUser, "source">): BuyerFieldSourceKind {
+export function legacyOwnSource(buyer: Pick<BuyerUser, "source">): BuyerFieldSourceKind {
   switch (buyer.source) {
     case "crm_imported": return "crm";
     case "nda_signed": return "nda";
@@ -2300,14 +2307,14 @@ export function stampBuyerFieldSources(
   existing: unknown,
   keys: string[],
   source: BuyerFieldSourceKind,
-  opts: { dealId?: string | null; after?: Partial<BuyerUser> } = {},
+  opts: { dealId?: string | null; brokerId?: string | null; after?: Partial<BuyerUser> } = {},
 ): BuyerFieldSources {
   const next: BuyerFieldSources = { ...((existing as BuyerFieldSources | null) || {}) };
   const at = new Date().toISOString();
   const crit = (opts.after?.buyerCriteria as Record<string, any> | undefined) || undefined;
   for (const k of keys) {
     if (k.startsWith("criteria.") && crit && !buyerValueIsSet(crit[k.slice(9)])) { delete next[k]; continue; }
-    next[k] = { source, at, ...(opts.dealId ? { dealId: opts.dealId } : {}) };
+    next[k] = { source, at, ...(opts.dealId ? { dealId: opts.dealId } : {}), ...(opts.brokerId ? { brokerId: opts.brokerId } : {}) };
   }
   return next;
 }
@@ -2321,18 +2328,19 @@ export function withFieldSources(
   updates: Partial<BuyerUser>,
   source: BuyerFieldSourceKind,
   dealId?: string | null,
+  brokerId?: string | null,
 ): Partial<BuyerUser> {
   const keys = changedBuyerProfileKeys(current, updates);
   if (!keys.length) return updates;
   const after = { ...current, ...updates };
-  return { ...updates, fieldSources: stampBuyerFieldSources(current.fieldSources, keys, source, { dealId, after }) as any };
+  return { ...updates, fieldSources: stampBuyerFieldSources(current.fieldSources, keys, source, { dealId, brokerId, after }) as any };
 }
 
 /** Field sources for a brand-new buyer_users row created by `source`. */
-export function initialFieldSources(row: Partial<BuyerUser>, source: BuyerFieldSourceKind, dealId?: string | null): BuyerFieldSources {
+export function initialFieldSources(row: Partial<BuyerUser>, source: BuyerFieldSourceKind, dealId?: string | null, brokerId?: string | null): BuyerFieldSources {
   const keys: string[] = BUYER_PROFILE_FIELDS.filter((f) => (f === "hasProofOfFunds" ? row.hasProofOfFunds === true : buyerValueIsSet((row as any)[f])));
   for (const [k, v] of Object.entries((row.buyerCriteria as Record<string, any>) || {})) if (buyerValueIsSet(v)) keys.push(`criteria.${k}`);
-  return stampBuyerFieldSources({}, keys, source, { dealId });
+  return stampBuyerFieldSources({}, keys, source, { dealId, brokerId });
 }
 
 // Criteria validation (the buyer's own PATCH and the broker overlay). Numeric

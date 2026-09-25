@@ -89,7 +89,8 @@ export interface BuyerProfileResponse {
   sources: Record<string, MergedFieldSource>;
   layers: {
     own: ProfileFields & { liquidFundsIsRange?: boolean };
-    ownSources: Record<string, { source: string; at: string; dealId?: string | null }>;
+    /** Scoped to this broker: another brokerage's writes come back as source "other", no deal id. */
+    ownSources: Record<string, { source: string; at: string | null; dealId?: string | null; legacy?: boolean }>;
     crm: CrmLayer | null;
     overlay: Record<string, any>;
     overlayMeta: Record<string, { at: string }>;
@@ -151,6 +152,7 @@ export const SOURCE_META: Record<string, { label: string; chip: string; describe
   csv: { label: "CSV", chip: "border-purple-500/30 bg-purple-500/10 text-purple-400", describe: "From a CSV you imported" },
   broker_import: { label: "Added by you", chip: "border-border bg-muted/50 text-muted-foreground", describe: "Entered when you added this buyer" },
   approval: { label: "Approval", chip: "border-indigo-500/30 bg-indigo-500/10 text-indigo-400", describe: "From a buyer approval request" },
+  other: { label: "On their profile", chip: "border-border bg-muted/40 text-muted-foreground", describe: "Already on this buyer's Cimple profile" },
 };
 
 export const humanize = (s: string) =>

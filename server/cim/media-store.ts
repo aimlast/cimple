@@ -72,7 +72,12 @@ export async function cleanMediaLayoutForDeal(
 
 // ── Buyer access to one file ────────────────────────────────────────────
 
-interface Visible { at: number; dealId: string; ids: Set<string> }
+/**
+ * `access` fingerprints what the set was built from (level + NDA state): a
+ * broker downgrading/upgrading the link or the buyer signing the NDA changes
+ * it, so the next request rebuilds instead of serving the old tier's photos.
+ */
+interface Visible { at: number; dealId: string; access: string; ids: Set<string> }
 const visibleByToken = new Map<string, Visible>();
 const VISIBLE_TTL_MS = 30_000;
 
@@ -89,10 +94,12 @@ function accessUsable(access: BuyerAccess | undefined): access is BuyerAccess {
   return true;
 }
 
+const accessFingerprint = (a: BuyerAccess) => `${a.accessLevel}|${a.ndaSigned ? 1 : 0}`;
+
 /** Media ids shown in the CIM this buyer link currently receives. */
 async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visible> {
   const hit = visibleByToken.get(token);
-  if (hit && Date.now() - hit.at < VISIBLE_TTL_MS && hit.dealId === access.dealId) return hit;
+  if (hit && Date.now() - hit.at < VISIBLE_TTL_MS && hit.dealId === access.dealId && hit.access === accessFingerprint(access)) return hit;
   const ids = new Set<string>();
   const deal = await storage.getDeal(access.dealId);
   if (deal && !(deal.ndaRequired && !access.ndaSigned)) {
@@ -112,7 +119,7 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
       for (const id of businessBrandingMediaIds(deal)) ids.add(id);
     }
   }
-  const v = { at: Date.now(), dealId: access.dealId, ids };
+  const v = { at: Date.now(), dealId: access.dealId, access: accessFingerprint(access), ids };
   visibleByToken.set(token, v);
   if (visibleByToken.size > 5000) visibleByToken.clear();
   return v;

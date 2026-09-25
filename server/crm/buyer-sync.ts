@@ -383,7 +383,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
           linkedinUrl: null, buyerCriteria: {}, targetIndustries: [] as any, targetLocations: [] as any, buyerType: null,
           background: null, liquidFunds: null, hasProofOfFunds: false, profileCompletionPct: 0, emailVerified: false,
           source: "crm_imported", invitedByBroker: brokerId, invitedByDeal: null, resetToken: null, resetTokenExpiresAt: null,
-          fieldSources: initialFieldSources({ name, phone: firstPhone(person), company: orgName, title: person.job_title ?? null }, "crm"),
+          fieldSources: initialFieldSources({ name, phone: firstPhone(person), company: orgName, title: person.job_title ?? null }, "crm", null, brokerId),
         } as any);
         created = true;
       } else {
@@ -391,7 +391,7 @@ async function runSync(integration: Integration, settings: BuyerSyncSettings, st
         if (!buyer.phone && firstPhone(person)) fill.phone = firstPhone(person);
         if (!buyer.company && orgName) fill.company = orgName;
         if (!buyer.title && person.job_title) fill.title = person.job_title;
-        if (Object.keys(fill).length) buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, fill, "crm"))) || buyer;
+        if (Object.keys(fill).length) buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, fill, "crm", null, brokerId))) || buyer;
       }
       let contact = await storage.getBrokerBuyerContact(brokerId, buyer.id);
       if (!contact) {

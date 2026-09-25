@@ -46,8 +46,9 @@ export function lowerLayer(data: BuyerProfileResponse, key: string): { value: an
   const ownV = crit ? own.buyerCriteria?.[crit] : own[key];
   const crmV = crit ? crm.buyerCriteria?.[crit] : crm[key];
   const stamp = data.layers.ownSources?.[key];
-  const LEGACY: Record<string, string> = { crm_imported: "crm", nda_signed: "nda", broker_invited: "broker_import" };
-  const ownSource = { source: (stamp?.source ?? LEGACY[data.buyer.accountSource ?? ""] ?? "buyer") as any, layer: "own" as const, at: stamp?.at ?? null, dealId: stamp?.dealId ?? null, legacy: !stamp };
+  // The server sends a (broker-scoped) entry for every own value; the fallback only covers older responses.
+  const LEGACY: Record<string, string> = { crm_imported: "crm", nda_signed: "nda", broker_invited: "broker_import", other: "other" };
+  const ownSource = { source: (stamp?.source ?? LEGACY[data.buyer.accountSource ?? ""] ?? "buyer") as any, layer: "own" as const, at: stamp?.at ?? null, dealId: stamp?.dealId ?? null, legacy: stamp ? !!stamp.legacy : true };
   const ownCounts = key === "hasProofOfFunds" ? ownV === true || (ownV === false && !!stamp) : isSet(ownV);
   if (ownCounts) return { value: ownV, source: ownSource };
   const crmCounts = key === "hasProofOfFunds" ? typeof crmV === "boolean" : isSet(crmV);
