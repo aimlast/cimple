@@ -3,7 +3,8 @@
  * three versions (Normal / Blind / Due diligence) with previews, the design
  * (template, branding, cover and brokerage pages), what each kind of buyer
  * sees, and the way into the CIM builder. Generate / regenerate
- * follow the same discrepancy gate as everywhere else.
+ * follow the same discrepancy gate as everywhere else. The Blind card also
+ * sets the project codename pre-NDA buyers know the deal by.
  */
 import { useState } from "react";
 import { useLocation } from "wouter";
@@ -12,6 +13,10 @@ import {
   AlertTriangle, CheckCircle2, Eye, EyeOff, FileText, Loader2, Lock, RefreshCw, ShieldCheck, Sparkles, Users, Wand2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
@@ -173,6 +178,7 @@ export function CimTab() {
                     : <span className="text-success">Ready</span>
                 }
                 detail={data.blind.codename ? `Shown as “${data.blind.codename}”. Names, places and people are redacted.` : "Names, places and people redacted under a project codename."}
+                extra={<CodenameEditor dealId={dealId} codename={data.blind.codename} onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["/api/deals", dealId] }); }} />}
                 onPreview={() => openBuilder("teaser")}
                 action={!data.blind.generated
                   ? { label: "Generate", busy: version.isPending && version.variables === "blind", onClick: () => version.mutate("blind") }
@@ -282,13 +288,14 @@ export function CimTab() {
 }
 
 function VersionCard({
-  icon, title, who, status, detail, onPreview, action,
+  icon, title, who, status, detail, extra, onPreview, action,
 }: {
   icon: React.ReactNode;
   title: string;
   who: string;
   status: React.ReactNode;
   detail: string;
+  extra?: React.ReactNode;
   onPreview: () => void;
   action?: { label: string; busy: boolean; onClick: () => void };
 }) {
@@ -301,6 +308,7 @@ function VersionCard({
       </div>
       <p className="text-[11px] text-muted-foreground">For {who}</p>
       <p className="text-xs text-muted-foreground leading-relaxed flex-1">{detail}</p>
+      {extra}
       <div className="flex gap-2 pt-1">
         <Button size="sm" variant="outline" className="h-7 text-xs gap-1 flex-1" onClick={onPreview}>
           <Eye className="h-3 w-3" /> Preview
@@ -313,5 +321,81 @@ function VersionCard({
         )}
       </div>
     </div>
+  );
+}
+
+/**
+ * The Blind CIM's project codename: what pre-NDA buyers know the deal by
+ * (the blind cover, outreach, the view room). The server refuses a name that
+ * would identify the business or that another of the broker's deals uses,
+ * and carries a rename through the blind version and unsent outreach drafts.
+ */
+function CodenameEditor({ dealId, codename, onSaved }: { dealId: string; codename: string | null; onSaved: () => void }) {
+  const { toast } = useToast();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(codename ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const save = useMutation({
+    mutationFn: (next: string) => builderRequest<{ codename: string; updated: number }>("PATCH", `/api/deals/${dealId}/codename`, { codename: next }),
+    onSuccess: (r) => {
+      setOpen(false);
+      onSaved();
+      toast({
+        title: `Codename set to “${r.codename}”`,
+        description: r.updated > 0 ? "The blind CIM and unsent outreach drafts now use it." : "Blind buyers will see the deal under this name.",
+      });
+    },
+    onError: (e) => setError(errorText(e)),
+  });
+  const openDialog = () => {
+    setValue(codename ?? "");
+    setError(null);
+    setOpen(true);
+  };
+  const submit = (e: React.FormEvent) => {
+    e.preventDefault();
+    setError(null);
+    save.mutate(value);
+  };
+  return (
+    <>
+      <button type="button" className="self-start text-[11px] text-teal hover:underline" onClick={openDialog} data-testid="button-change-codename">
+        {codename ? "Change codename" : "Choose a codename"}
+      </button>
+      <Dialog open={open} onOpenChange={setOpen}>
+        <DialogContent className="sm:max-w-md">
+          <form onSubmit={submit} className="space-y-4">
+            <DialogHeader>
+              <DialogTitle>Project codename</DialogTitle>
+              <DialogDescription>
+                Buyers who haven't signed an NDA know the deal by this name — on the blind CIM's cover, in outreach and in their view room. Use a neutral word: nothing that points to the business, its owner or its town.
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1.5">
+              <Input
+                value={value}
+                onChange={(e) => { setValue(e.target.value); setError(null); }}
+                placeholder="Project Coastline"
+                maxLength={60}
+                autoFocus
+                aria-invalid={!!error}
+                data-testid="input-codename"
+              />
+              {error ? (
+                <p className="text-xs text-red-400" role="alert">{error}</p>
+              ) : (
+                <p className="text-[11px] text-muted-foreground">Changing it updates the blind CIM and any outreach drafts you haven't sent. Emails already sent keep the old name.</p>
+              )}
+            </div>
+            <DialogFooter className="gap-2 sm:gap-0">
+              <Button type="button" variant="ghost" onClick={() => setOpen(false)}>Cancel</Button>
+              <Button type="submit" className="bg-teal text-teal-foreground hover:bg-teal/90" disabled={save.isPending || !value.trim() || value.trim() === codename} data-testid="button-save-codename">
+                {save.isPending && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />} Save
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+    </>
   );
 }

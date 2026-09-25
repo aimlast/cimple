@@ -2,9 +2,11 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
 import {
   getCimLayout,
+  layoutDataProblems,
   layoutSpecsForPrompt,
   normalizeLayoutType,
   plannerLayouts,
+  tidyGeneratedLayout,
 } from "@shared/cim-layouts";
 import { agentConfig } from "../interview/config/load-config";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
@@ -343,7 +345,14 @@ async function checkAndRepairFigures(
         if (entry) {
           const repaired = await writeSectionContent(sharedSystem, { ...entry, layoutType: section.layoutType }, manifest, repairFeedback(issues)).catch(() => null);
           if (repaired) {
-            const candidate = { ...section, layoutData: repaired.layoutData, aiDraftContent: repaired.aiDraftContent };
+            // Same render-safety tidy as a first write (may change the layout).
+            const tidy = tidyGeneratedLayout(section.layoutType, repaired.layoutData);
+            const candidate = {
+              ...section,
+              layoutType: tidy.layoutType as LayoutType,
+              layoutData: tidy.layoutData,
+              aiDraftContent: repaired.aiDraftContent,
+            };
             const after = checkSectionFigures(candidate, sharedSystem.known);
             // Keep whichever version has fewer untraced figures.
             if (after.length <= issues.length) {
@@ -818,7 +827,10 @@ async function writeSectionContent(
     .map((m) => `${m.order}. ${m.sectionTitle} (${m.layoutType}) — ${m.contentBrief}`)
     .join("\n");
 
-  const attempt = async (): Promise<{ layoutData: Record<string, unknown>; aiDraftContent?: string } | null> => {
+  // `final`: the last try — data the renderer can't draw truthfully (a
+  // placeholder column, a scorecard of words) is repaired afterwards by
+  // tidyGeneratedLayout instead of being retried again.
+  const attempt = async (final = false): Promise<{ layoutData: Record<string, unknown>; aiDraftContent?: string } | null> => {
     const response = await callModel({
       model: MODEL,
       max_tokens: 10000,
@@ -843,6 +855,11 @@ async function writeSectionContent(
     if (!block || block.type !== "tool_use") return null;
     const input = block.input as { layoutData?: unknown; aiDraftContent?: unknown };
     if (!input.layoutData || typeof input.layoutData !== "object") return null;
+    const problems = layoutDataProblems(entry.layoutType, input.layoutData);
+    if (problems.length > 0 && !final) {
+      console.warn(`[layout-engine] Section "${entry.sectionKey}": ${problems.join("; ")}`);
+      return null;
+    }
     return {
       layoutData: input.layoutData as Record<string, unknown>,
       aiDraftContent: typeof input.aiDraftContent === "string" ? input.aiDraftContent : undefined,
@@ -854,12 +871,12 @@ async function writeSectionContent(
     result = await attempt();
     if (!result) {
       console.warn(`[layout-engine] Section "${entry.sectionKey}" invalid/truncated — retrying once`);
-      result = await attempt();
+      result = await attempt(true);
     }
   } catch (err) {
     console.error(`[layout-engine] Section "${entry.sectionKey}" generation error:`, err);
     try {
-      result = await attempt();
+      result = await attempt(true);
     } catch { /* fall through */ }
   }
   return result;
@@ -897,12 +914,15 @@ async function generateSection(
     };
   }
 
+  // Neutral org chart ids, header rows that carry figures, non-numeric
+  // scorecards and placeholder columns (shared/cim-layouts.ts).
+  const tidy = tidyGeneratedLayout(entry.layoutType, result.layoutData);
   return {
     sectionKey: entry.sectionKey,
     sectionTitle: entry.sectionTitle,
     order: entry.order,
-    layoutType: entry.layoutType as LayoutType,
-    layoutData: result.layoutData,
+    layoutType: tidy.layoutType as LayoutType,
+    layoutData: tidy.layoutData,
     aiDraftContent: result.aiDraftContent,
     aiLayoutReasoning: entry.aiLayoutReasoning,
     tags: entry.tags ?? [],

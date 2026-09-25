@@ -1,11 +1,17 @@
 /**
  * MetricGrid renderer
  * Grid of KPI cards with trend arrows and highlight accents.
+ *
+ * A figure never breaks mid-number ("$31,020,00 / 0"): in a 3- or 4-card
+ * row a long plain figure is shortened ("$31.02M", the exact figure in the
+ * tooltip) and the type steps down with the length. Words may wrap between
+ * words; numbers stay on one line.
  */
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
+import { compactFigure } from "./chartFormat";
 
 interface Metric {
   label: string;
@@ -59,6 +65,21 @@ function currencyPrefix(metric: { value: unknown; unit?: string }): string {
   return String(metric.value).trim().startsWith(sym) || /^[$€£¥]/.test(String(metric.value).trim()) ? "" : sym;
 }
 
+/** Type size for a value of this length (cards are narrow in 3–4 column rows). */
+export function metricValueClass(text: string, cols: number): string {
+  const len = text.length;
+  if (len <= 7 || (cols <= 2 && len <= 10)) return "text-xl sm:text-2xl";
+  if (len <= 10) return "text-lg sm:text-xl";
+  return "text-base sm:text-lg";
+}
+
+/** The value as a card shows it: currency prefix added, long figures shortened in narrow rows. */
+export function metricDisplayValue(metric: { value: unknown; unit?: string }, cols: number): { text: string; exact: string } {
+  const exact = currencyPrefix(metric) + String(metric.value ?? "");
+  const text = cols >= 3 && exact.length > 9 ? compactFigure(exact) : exact;
+  return { text, exact };
+}
+
 export function MetricGridRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: MetricGridLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const metrics = data.metrics || [];
@@ -102,9 +123,23 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
 
             {/* Value */}
             <div className="flex flex-wrap items-baseline gap-x-1.5 min-w-0">
-              <span className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">
-                {currencyPrefix(metric) + String(metric.value)}
-              </span>
+              {(() => {
+                const { text, exact } = metricDisplayValue(metric, cols);
+                const numeric = !/\s/.test(text.trim());
+                return (
+                  <span
+                    className={cn(
+                      "font-semibold tracking-tight text-foreground tabular-nums",
+                      metricValueClass(text, cols),
+                      // A number stays on one line; words wrap between words.
+                      numeric ? "whitespace-nowrap" : "break-words",
+                    )}
+                    title={text !== exact ? exact : undefined}
+                  >
+                    {text}
+                  </span>
+                );
+              })()}
               {metric.unit && !isCurrencyUnit(metric.unit) && (
                 <span className="text-xs text-muted-foreground font-medium">{metric.unit}</span>
               )}

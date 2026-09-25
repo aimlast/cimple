@@ -4537,7 +4537,7 @@ Return JSON only.`,
       // too, and its redaction is redone.
       if (buyerCim.leaked.length > 0) {
         console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
-        redoLeakedBlind(deal.id, buyerCim.leaked).catch((err) => console.error("[view] blind redo failed:", err));
+        redoLeakedBlind(deal.id, buyerCim.leaked, buyerCim.leakReasons).catch((err) => console.error("[view] blind redo failed:", err));
       } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
       res.json({
         access: freshAccess,
@@ -5372,6 +5372,8 @@ Return JSON only.`,
           { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
         );
         const updatedSection = await storage.updateCimSection(String(target.id), {
+          // Usually unchanged; a scorecard of words comes back as highlight cards.
+          layoutType: regenerated.layoutType,
           layoutData: regenerated.layoutData as any,
           aiDraftContent: regenerated.aiDraftContent || null,
           figureWarnings: regenerated.figureWarnings?.length ? regenerated.figureWarnings : null,

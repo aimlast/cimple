@@ -45,7 +45,7 @@
  * server (redaction, view room, Q&A, outreach) and the broker's preview.
  */
 import { blindIdentifiers } from "./blind-identifiers";
-import { isRegionLabel } from "./cim-media";
+import { REGION_NAMES, isRegionLabel, isRegionWord } from "./cim-media";
 import { GIVEN_NAMES } from "./blind-given-names";
 import {
   EVERYDAY_NAME_WORDS,
@@ -74,6 +74,14 @@ export interface BlindTerm {
    * "family" after it — never as the word on its own.
    */
   titled?: boolean;
+  /**
+   * A one-word surname that is also part of a province, state or country
+   * name ("Dana Washington", "Joe Montana", "Lisa York"): it counts
+   * wherever it stands for the person — everywhere except where the text
+   * uses it as the place ("Washington State lanes", "customers in
+   * Montana", "New York").
+   */
+  regionWord?: boolean;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -460,7 +468,9 @@ export function honorificNames(text: string): string[] {
 /** The people in a people fact ("Staff: Carlos Reyes (12), Ana Torres (4)"), or in prose about people. */
 export function peopleInFact(text: string, mode: ReadMode = "people"): string[] {
   const out: string[] = [];
-  for (const run of capitalRuns(text)) readRun(text, run, out, mode);
+  // "British Columbia (100%)" is a province, never "Mr. Columbia".
+  const masked = maskRegionNames(text);
+  for (const run of capitalRuns(masked)) readRun(masked, run, out, mode);
   return Array.from(new Set(out));
 }
 
@@ -503,6 +513,33 @@ const BARE_DOMAIN = /\b((?:[a-z0-9-]+\.)+(?:ca|com|net|org|biz|info|co|io|us|sho
 const PLATFORM_HOSTS = /^(?:gmail|googlemail|outlook|hotmail|live|msn|yahoo|icloud|me|mac|aol|protonmail|proton|shaw|rogers|bell|sympatico|telus|cogeco|videotron|eastlink|facebook|fb|instagram|linkedin|twitter|x|tiktok|youtube|youtu|yelp|google|goo|maps|bit|linktr|wa|pinterest|threads|square|squareup|wixsite|wordpress|shopify|godaddy)$/i;
 
 /**
+ * Province, state and country names blanked out with "~" so they are never
+ * read as a person, a street word or a town: every multi-word name
+ * ("British Columbia", "New York") and a one-word name ("Ontario", "Texas")
+ * standing on its own — not one inside a longer capitalised name ("Ontario
+ * Plumbing", "Georgia Wells") or one that is also a given name. Same length,
+ * so positions still line up with the original text.
+ */
+const REGION_MASK_RE = new RegExp(
+  `(?<![${LETTER}])(?:${[...REGION_NAMES]
+    .sort((a, b) => b.length - a.length)
+    .map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "[ \\t]+"))
+    .join("|")})(?![${LETTER}])`,
+  "g",
+);
+export function maskRegionNames(text: string): string {
+  return text.replace(REGION_MASK_RE, (m: string, offset: number, whole: string) => {
+    if (!/\s/.test(m)) {
+      const before = whole.slice(Math.max(0, offset - 40), offset);
+      const after = whole.slice(offset + m.length, offset + m.length + 40);
+      if (new RegExp(`[${UPPER}][${LETTER}'’.-]*[ \\t]+$`).test(before) || new RegExp(`^[ \\t]+[${UPPER}]`).test(after)) return m;
+      if (GIVEN_NAMES.has(foldForMatch(m))) return m;
+    }
+    return "~".repeat(m.length);
+  });
+}
+
+/**
  * Identifying pieces of a place fact: street lines and postal codes
  * (`lines`), place names and distinctive street words (`names`). A dedicated
  * city/town field (`anyCase`) is a place name however it was typed.
@@ -511,16 +548,23 @@ function placesIn(value: string, anyCase = false): { names: string[]; lines: str
   const names: string[] = [];
   const lines: string[] = [];
   const capital = (w: string) => startsUpper(w) || (anyCase && /^[a-zà-öø-ÿ]/.test(w));
-  for (const line of value.split(/\n/)) {
+  // "Surrey, British Columbia (head office … 19220 Campbell Ridge Drive; …)":
+  // the province is blanked first and brackets split segments, so neither
+  // "British" nor "Columbia" can ever become a street word or a town.
+  for (const line of maskRegionNames(value).split(/\n/)) {
     for (const m of Array.from(line.matchAll(CA_POSTAL))) lines.push(m[0]);
-    const segs = line.replace(CA_POSTAL, "").split(/[,;]/).map((s) => s.trim()).filter(Boolean);
+    const segs = line
+      .replace(CA_POSTAL, "")
+      .split(/[,;()\[\]]/)
+      .map((s) => s.replace(/~+/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
     for (const seg of segs) {
       if (seg.length < 3 || isRegionLabel(seg) || UNIT_LINE.test(seg)) continue;
       if (/\d/.test(seg)) {
         // A street line — the line itself, and its distinctive words.
         if (/[A-Za-z]{3,}/.test(seg)) lines.push(seg.replace(/^#?\s*/, ""));
         for (const w of seg.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{5,}/g) || []) {
-          if (capital(w) && !GENERIC_STREET_WORDS.has(w.toLowerCase()) && !isRegionLabel(w)) names.push(w);
+          if (capital(w) && !GENERIC_STREET_WORDS.has(w.toLowerCase()) && !isRegionLabel(w) && !isRegionWord(w)) names.push(w);
         }
         continue;
       }
@@ -597,10 +641,19 @@ function distinctiveCores(name: string): string[] {
 
 // ── Terms ────────────────────────────────────────────────────────────────
 
-const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|ceo|cfo|coo|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord|seller|bookkeeper|receptionist|nurse|crew|worker|heir)/i;
+const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord|seller|bookkeeper|receptionist|nurse|crew|worker|heir)/i;
+/** "ceoName", "CFO", "coo_contact" — the acronyms as their own word only ("provinceOfOperation" holds "ceO"). */
+function hasExecutiveAcronym(key: string): boolean {
+  const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[^A-Za-z0-9]+/g, " ").toLowerCase().split(" ");
+  return words.some((w) => /^(?:ceo|cfo|coo|cto)s?$/.test(w));
+}
 const NOT_PEOPLE_KEY = /(salary|salaries|wages?|fees?|costs?|comp|compensation|pay|payroll|count|number|tenure|hours|involvement)$/i;
 const PLACE_KEY = /(address|street|city|town|municipality|postal|zip)/i;
-const PLACE_KEYS = new Set(["locations", "location", "primarylocation", "businesslocation", "headquarters", "headoffice", "premises", "sitelocation"]);
+const PLACE_KEYS = new Set([
+  "locations", "location", "primarylocation", "businesslocation", "headquarters", "headoffice", "premises", "sitelocation",
+  "locationsite", "facilitylocation", "officelocation", "headofficelocation", "storelocation", "shoplocation",
+  "plantlocation", "warehouselocation", "clinicallocation", "cliniclocation",
+]);
 const CONTACT_KEY = /(email|phone|fax|mobile|cell)/i;
 const WEB_KEY = /(website|web|url|domain|site|social|facebook|instagram|linkedin|twitter|tiktok|youtube|handle)/i;
 const NAME_FIELDS = new Set(["name", "fullname", "firstname", "lastname", "contactname", "personname", "ownername", "employeename", "staffname"]);
@@ -635,10 +688,21 @@ export function blindLeakTerms(
   opts: { codename?: string | null; extraPeople?: string[] } = {},
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
-  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean }> = [];
+  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean; regionWord?: boolean }> = [];
   const add = (text: string, kind: BlindTermKind, common?: boolean) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
+    // A person's one-word surname that is also a place word ("Washington",
+    // "York", "Wales") still identifies them: kept, but not matched where
+    // the text means the place (see `regionWord`). A given name that is a
+    // place ("Georgia") counts everywhere, as before.
+    if (kind === "person" && !t.includes(" ") && (isRegionWord(t) || isRegionLabel(t)) && !GIVEN_NAMES.has(foldForMatch(t))) {
+      terms.push({ text: t, kind, common, regionWord: true });
+      return;
+    }
+    // A province, state or country may stay in a Blind CIM (and the blind
+    // map shows exactly that) — it is never a person or a place term.
+    if ((kind === "person" || kind === "place") && isRegionLabel(t)) return;
     terms.push({ text: t, kind, common });
   };
 
@@ -655,7 +719,7 @@ export function blindLeakTerms(
     if (key.startsWith("_")) continue;
     const strings = factStrings(value);
     if (strings.length === 0) continue;
-    const peopleFact = PERSON_KEY.test(key) && !NOT_PEOPLE_KEY.test(key);
+    const peopleFact = (PERSON_KEY.test(key) || hasExecutiveAcronym(key)) && !NOT_PEOPLE_KEY.test(key);
     for (const s of strings) {
       if (peopleFact || s.nameField) {
         for (const p of s.nameField ? personField(s.text) : peopleInFact(s.text)) add(p, "person");
@@ -732,8 +796,18 @@ export function blindLeakTerms(
       if (!byFold.has(key) && !byFold.has(foldForMatch(titled[1]))) byFold.set(key, { text: t.text, kind: t.kind, common: false, titled: true });
       continue;
     }
-    if (byFold.has(folded)) continue;
-    byFold.set(folded, { text: t.text, kind: t.kind, common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)) });
+    const prev = byFold.get(folded);
+    if (prev) {
+      // The same word also as a plain term (a town, a business name) → matched everywhere.
+      if (prev.regionWord && !t.regionWord) delete prev.regionWord;
+      continue;
+    }
+    byFold.set(folded, {
+      text: t.text,
+      kind: t.kind,
+      common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)),
+      ...(t.regionWord ? { regionWord: true } : {}),
+    });
   }
   return Array.from(byFold.values());
 }
@@ -793,6 +867,15 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
     const needle = ` ${f} `;
     let at = lower.indexOf(needle);
     if (at < 0) continue;
+    if (t.regionWord) {
+      for (; at >= 0; at = lower.indexOf(needle, at + 1)) {
+        if (!usedAsPlace(lower, at, f)) {
+          hits.push(t.text);
+          break;
+        }
+      }
+      continue;
+    }
     if (!t.common) {
       hits.push(t.text);
       continue;
@@ -807,6 +890,49 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
   return hits;
 }
 
+/** Every multi-word province, state or country name, folded ("british columbia", "new york"). */
+const MULTI_WORD_REGIONS = REGION_NAMES.map((n) => foldForMatch(n)).filter((n) => n.includes(" "));
+/** A word right before a place that makes it the place: "in Montana", "across Washington". ("to" is not one: "reports to Washington".) */
+const PLACE_BEFORE = new Set(["in", "across", "throughout", "within", "into", "from", "outside", "northern", "southern", "eastern", "western", "central", "upstate", "downstate"]);
+/** What right after it names the place itself: "Washington State", "Washington DC", "Montana, USA". */
+const PLACE_AFTER = /^(?:state|province|dc|d c|usa|us|u s|u s a|canada|uk)(?: |$)/;
+
+/**
+ * Is the region-word surname `f`, found at `at` (the space before it in
+ * folded lowercase text), used as the place rather than the person? Yes
+ * inside a longer place name ("new york", "british columbia"), before
+ * "State"/"DC"/"USA", after "in"/"across"/"state of", or listed with
+ * another province or state ("Oregon and Washington"). Anything else —
+ * "Washington manages the service team", "York handles the books" — is
+ * the person. A city before it ("Seattle, Washington") proves nothing,
+ * so it still counts.
+ */
+function usedAsPlace(lower: string, at: number, f: string): boolean {
+  const start = at + 1;
+  const end = start + f.length;
+  for (const r of MULTI_WORD_REGIONS) {
+    if (!` ${r} `.includes(` ${f} `)) continue;
+    for (let i = lower.indexOf(` ${r} `, Math.max(0, start - r.length - 1)); i >= 0 && i < end; i = lower.indexOf(` ${r} `, i + 1)) {
+      if (i + 1 <= start && i + 1 + r.length >= end) return true;
+    }
+  }
+  const after = lower.slice(end + 1).split(" ");
+  if (PLACE_AFTER.test(after.slice(0, 3).join(" "))) return true;
+  const before = lower.slice(0, at).trim().split(" ");
+  const w1 = before[before.length - 1] ?? "";
+  const w2 = before[before.length - 2] ?? "";
+  if (PLACE_BEFORE.has(w1)) return true;
+  if (w1 === "of" && (w2 === "state" || w2 === "province" || w2 === "commonwealth")) return true;
+  const region = (...words: Array<string | undefined>) => {
+    const t = words.filter(Boolean).join(" ");
+    return !!t && isRegionLabel(t);
+  };
+  // Listed with another province or state: "Oregon and Washington", "Washington or Idaho".
+  if ((w1 === "and" || w1 === "or") && (region(w2) || region(before[before.length - 3], w2))) return true;
+  if ((after[0] === "and" || after[0] === "or") && (region(after[1]) || region(after[1], after[2]))) return true;
+  return false;
+}
+
 /** " dr winter ", " winter family ", " winter s family " in folded lowercase text. */
 function titledSurnameIn(lower: string, surname: string): boolean {
   if (!surname) return false;
@@ -817,6 +943,31 @@ function titledSurnameIn(lower: string, surname: string): boolean {
     if (TITLE_WORDS.has(before) || /^(?:s )?family\b/.test(after)) return true;
   }
   return false;
+}
+
+/** The only bracketed stand-ins a Blind CIM may carry. */
+const ALLOWED_PLACEHOLDERS = new Set(["address withheld", "contact info withheld"]);
+const PLACEHOLDER = /\[([A-Z][A-Za-z0-9 /&'’.,-]{0,58})\]/g;
+
+/**
+ * Unfilled template placeholders in a blind text — "[Province/State]",
+ * "[City]", "[Customer Name]" — that the redactor copied from its
+ * instructions instead of writing real words. Brackets already in the
+ * section's own text (`original`) and the two sanctioned stand-ins
+ * ([Address Withheld], [Contact Info Withheld]) don't count. A blind
+ * section with any of these is a failed redaction: retried, never served.
+ */
+export function blindPlaceholders(texts: unknown, original?: unknown): string[] {
+  const all = typeof texts === "string" ? texts : collectStrings(texts).join("\n");
+  if (!all.includes("[")) return [];
+  const before = original === undefined ? "" : typeof original === "string" ? original : collectStrings(original).join("\n");
+  const out = new Set<string>();
+  for (const m of Array.from(all.matchAll(PLACEHOLDER))) {
+    if (ALLOWED_PLACEHOLDERS.has(m[1].trim().toLowerCase())) continue;
+    if (before.includes(m[0])) continue;
+    out.add(m[0]);
+  }
+  return Array.from(out);
 }
 
 /** Convenience: is this text free of the deal's identifying terms? */

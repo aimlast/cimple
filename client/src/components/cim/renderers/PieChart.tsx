@@ -1,7 +1,10 @@
 /**
  * PieChart renderer
  * Recharts PieChart — also handles donut_chart layoutType.
- * Custom legend on the right. Professional color palette.
+ * Custom legend beside the chart, or under it when the space is narrow (a
+ * phone, a two-column half) so values are never clipped. Values are written
+ * with their unit the way a reader expects: "$3,520,000", "45%", "12 sites"
+ * — never "3,520,000 $".
  */
 import { useState, useCallback } from "react";
 import {
@@ -17,6 +20,10 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { formatFullValue, useElementWidth } from "./chartFormat";
+
+/** Below this width the legend goes under the chart (200px chart + a readable legend). */
+const SIDE_BY_SIDE_MIN = 480;
 
 interface PieDataPoint {
   name: string;
@@ -55,10 +62,7 @@ function CustomTooltip({ active, payload, unit }: CustomTooltipProps) {
         <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.payload.color }} />
         <span className="font-semibold text-foreground">{p.name}</span>
       </div>
-      <span className="font-medium tabular-nums">
-        {typeof p.value === "number" ? p.value.toLocaleString() : p.value}
-        {unit ? ` ${unit}` : ""}
-      </span>
+      <span className="font-medium tabular-nums">{formatFullValue(p.value, unit)}</span>
     </div>
   );
 }
@@ -90,6 +94,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
   const theme = useCimTheme();
   const onPieEnter = useCallback((_: any, index: number) => setActiveIndex(index), []);
   const onPieLeave = useCallback(() => setActiveIndex(undefined), []);
+  const { ref: boxRef, width: boxWidth } = useElementWidth<HTMLDivElement>();
   const data: PieChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const rawData = data.data || [];
 
@@ -119,7 +124,10 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
           {data.title}
         </h3>
       )}
-      <div className="flex items-center gap-6">
+      <div
+        ref={boxRef}
+        className={cn("flex gap-6", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "flex-col items-center" : "items-center")}
+      >
         {/* Chart */}
         <div className="relative flex-shrink-0" style={{ width: 200, height: 200 }}>
           <ResponsiveContainer width="100%" height="100%">
@@ -163,13 +171,11 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
         </div>
 
         {/* Legend */}
-        <div className="flex flex-col gap-2 min-w-0 flex-1">
+        <div className={cn("flex flex-col gap-2 min-w-0", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "w-full" : "flex-1")}>
           {data.totalLabel && total > 0 && (
             <div className="mb-2 pb-2 border-b border-border">
               <p className="text-xs text-muted-foreground">{data.totalLabel}</p>
-              <p className="text-sm font-semibold tabular-nums">
-                {total.toLocaleString()}{data.unit ? ` ${data.unit}` : ""}
-              </p>
+              <p className="text-sm font-semibold tabular-nums">{formatFullValue(total, data.unit)}</p>
             </div>
           )}
           {normalized.map((entry, i) => {
@@ -179,20 +185,19 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
               <div
                 key={i}
                 className={cn(
-                  "flex items-center gap-2.5 min-w-0 rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer",
+                  "flex items-start gap-2.5 min-w-0 rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer",
                   isHighlighted && "bg-muted/50",
                 )}
                 onMouseEnter={() => setActiveIndex(i)}
                 onMouseLeave={() => setActiveIndex(undefined)}
               >
-                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0" style={{ backgroundColor: entry.color }} />
-                <span className="text-xs text-foreground/80 truncate flex-1">{entry.name}</span>
-                <div className="flex items-center gap-1.5 flex-shrink-0">
-                  <span className="text-xs font-semibold tabular-nums text-foreground">
-                    {entry.value.toLocaleString()}
-                    {data.unit ? ` ${data.unit}` : ""}
+                <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0 mt-1" style={{ backgroundColor: entry.color }} />
+                <span className="text-xs text-foreground/80 flex-1 min-w-0 break-words">{entry.name}</span>
+                <div className="flex flex-wrap items-baseline justify-end gap-x-1.5 flex-shrink-0 max-w-[55%] text-right">
+                  <span className="text-xs font-semibold tabular-nums text-foreground whitespace-nowrap">
+                    {formatFullValue(entry.value, data.unit)}
                   </span>
-                  <span className="text-2xs text-muted-foreground">({pct}%)</span>
+                  <span className="text-2xs text-muted-foreground whitespace-nowrap">({pct}%)</span>
                 </div>
               </div>
             );
