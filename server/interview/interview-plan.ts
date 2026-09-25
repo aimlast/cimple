@@ -78,6 +78,12 @@ export const GENERIC_FIELD_LABELS: Record<string, string> = {
   trainingSupport: "Training offered to the buyer",
   transitionPlan: "Transition plan",
   reasonForSale: "Reason for sale",
+  revenueByYear: "Revenue by year",
+  ebitda: "EBITDA",
+  sde: "Seller's discretionary earnings (SDE)",
+  netIncome: "Net income",
+  grossProfit: "Gross profit",
+  addbacks: "Add-backs",
   workingCapital: "Working capital",
   debt: "Debt",
   askingPrice: "Asking price",
@@ -96,12 +102,36 @@ function industryKey(s: string | null | undefined): string {
   return (s || "").trim().toLowerCase();
 }
 
-/** The stored plan if it was built for the deal's current industry. */
-export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan">): InterviewPlan | null {
+/** The stored plan if it was built for the deal's current industry (and sub-industry, when recorded). */
+export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan"> & { subIndustry?: string | null }): InterviewPlan | null {
   const plan = deal.interviewPlan as InterviewPlan | null | undefined;
   if (!plan || plan.status !== "ready" || !Array.isArray(plan.items)) return null;
   if (industryKey(plan.industry) !== industryKey(deal.industry)) return null;
+  // A plan records the deal's sub-industry it was built for; a broker edit
+  // (Home Services → "Landscaping and snow") rebuilds it. Plans built before
+  // this was recorded, or callers that don't load the column, keep theirs.
+  if (plan.dealSubIndustry !== undefined && deal.subIndustry !== undefined
+    && industryKey(plan.dealSubIndustry) !== industryKey(deal.subIndustry)) return null;
   return plan;
+}
+
+/**
+ * The sub-industry to build the checklist for: the broker's own entry on the
+ * deal first (a generic industry like "Home Services" only finds the
+ * landscaping playbook through it), then the interview's identified one.
+ * Null when neither — nor the industry alone — matches a playbook.
+ */
+export function planSubIndustry(
+  deal: { industry?: string | null; subIndustry?: string | null },
+  contextSub?: string | null,
+): { matched: boolean; subIndustry: string | null } {
+  const industry = (deal.industry || "").trim();
+  if (!industry) return { matched: false, subIndustry: null };
+  for (const sub of [deal.subIndustry, contextSub]) {
+    if (sub && sub.trim() && matchIndustrySection(industry, sub) != null) return { matched: true, subIndustry: sub.trim() };
+  }
+  if (matchIndustrySection(industry, null) != null) return { matched: true, subIndustry: (deal.subIndustry || contextSub || "").trim() || null };
+  return { matched: false, subIndustry: null };
 }
 
 /**
@@ -109,7 +139,7 @@ export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan">)
  * items, minus broker-removed ones. Feeds buildSectionCoverage everywhere
  * coverage is computed, so the interview, readiness and outline agree.
  */
-export function coverageAdjustmentsForDeal(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline">): CoverageFieldAdjustments {
+export function coverageAdjustmentsForDeal(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline"> & { subIndustry?: string | null }): CoverageFieldAdjustments {
   const plan = getInterviewPlan(deal);
   const outline = getInterviewOutline(deal);
   const add: Record<string, { key: string; label: string; critical?: boolean; alias?: string | null }[]> = {};
@@ -204,18 +234,21 @@ const inflight = new Map<string, Promise<InterviewPlan | null>>();
  * interview carries on with the generic fields.
  */
 export async function computeInterviewPlan(
-  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "extractedInfo">,
+  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
 ): Promise<InterviewPlan | null> {
   const industry = (deal.industry || "").trim();
   if (!industry) return null;
-  if (matchIndustrySection(industry, context?.subIndustry) == null) return null;
+  const target = planSubIndustry(deal, context?.subIndustry);
+  if (!target.matched) return null;
+  const subIndustry = target.subIndustry;
+  const dealSubIndustry = deal.subIndustry === undefined ? undefined : (deal.subIndustry ?? null);
   const existing = inflight.get(deal.id);
   if (existing) return existing;
 
   const task = (async () => {
     try {
-      const playbook = buildIndustryKnowledge(industry, context?.subIndustry ?? null);
+      const playbook = buildIndustryKnowledge(industry, subIndustry);
       const sections = CIM_SECTIONS.map((s) => {
         const generic = (SECTION_FIELD_MAP[s.key] || []).map((f) => fieldLabel(f)).join("; ");
         return `- ${s.key}: ${s.title} (already covered generically: ${generic || "nothing"})`;
@@ -237,11 +270,12 @@ export async function computeInterviewPlan(
           "You turn an industry due-diligence playbook into a concrete data checklist for a CIM interview.",
           "For the business described, list the INDUSTRY-SPECIFIC data points the interview must capture, assigned to the CIM section they belong in.",
           `Rules: only data points specific to this industry/sub-industry — never repeat the generic items already listed per section; each is ONE concrete fact (a number, a yes/no, a term, a list), not a topic; at most ${MAX_ITEMS_PER_SECTION} per section; prefer the playbook's [CRITICAL] fields and MANDATORY PROBES and mark those critical; pick the sub-industry that matches this business and ignore the others; keys are camelCase and self-explanatory; labels and keys name the data point only — never a value, name or figure from the facts on file (the interviewer reads them to the seller).`,
+          `Conditional probes: many playbook items name the businesses they apply to ("movers and passenger operators", "any lane touching California", "for franchises", "consumer-facing"). Leave an item OUT when its condition doesn't hold for this business as described (a B2B freight carrier gets no consumer-complaint item; a carrier with no California lanes gets no CARB item). When unsure whether the condition holds, keep it but do not mark it critical.`,
         ].join(" "),
         messages: [{
           role: "user",
           content: [
-            `Business: ${deal.businessName} — ${industry}${context?.subIndustry ? ` (${context.subIndustry})` : ""}`,
+            `Business: ${deal.businessName} — ${industry}${subIndustry ? ` (${subIndustry})` : ""}`,
             deal.description ? `Description: ${String(deal.description).slice(0, 400)}` : "",
             `\nCIM sections:\n${sections}`,
             `\nFACTS ALREADY ON FILE (key: value):\n${onFile || "(none yet)"}`,
@@ -273,14 +307,14 @@ export async function computeInterviewPlan(
       const matched = items.filter((i) => i.answeredByKey);
       const verdicts = await verifyMatches(matched.map((i) => ({ label: i.label, value: String(info[i.answeredByKey!]) })));
       matched.forEach((item, idx) => { if (!verdicts[idx]) item.answeredByKey = null; });
-      const plan: InterviewPlan = { industry, subIndustry: context?.subIndustry ?? null, computedAt: new Date().toISOString(), status: "ready", items };
+      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "ready", items };
       await storage.updateDeal(deal.id, { interviewPlan: plan } as any);
       console.log(`[interview-plan] ${items.length} industry data points for deal ${deal.id} (${industry})`);
       return plan;
     } catch (err: any) {
       console.warn(`[interview-plan] build failed for deal ${deal.id}:`, err?.message || err);
       await storage.updateDeal(deal.id, {
-        interviewPlan: { industry, subIndustry: context?.subIndustry ?? null, computedAt: new Date().toISOString(), status: "failed", items: [] },
+        interviewPlan: { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "failed", items: [] },
       } as any).catch(() => {});
       return null;
     } finally {
@@ -298,13 +332,14 @@ export function isPlanBuilding(dealId: string): boolean {
 
 /** Start a build in the background when the deal has an industry but no current checklist. */
 export function ensureInterviewPlan(
-  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "interviewPlan" | "extractedInfo">,
+  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "interviewPlan" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
 ): void {
   if (!deal.industry || getInterviewPlan(deal) || inflight.has(deal.id)) return;
   // Don't hammer a failing build: retry at most once an hour.
   const stored = deal.interviewPlan as InterviewPlan | null | undefined;
   if (stored?.status === "failed" && industryKey(stored.industry) === industryKey(deal.industry)
+    && (stored.dealSubIndustry === undefined || deal.subIndustry === undefined || industryKey(stored.dealSubIndustry) === industryKey(deal.subIndustry))
     && Date.now() - new Date(stored.computedAt).getTime() < 60 * 60 * 1000) return;
   void computeInterviewPlan(deal, context);
 }

@@ -86,7 +86,11 @@ const GENERIC_TITLE_WORDS = new Set([
  *    source label ("… — Email"), never because the value mentions the word
  *    ("Revenue from email campaigns — 2024 P&L" is not private).
  */
-export function privateSourceMatcher(documents: Array<Pick<Document, "visibility"> & { name?: string | null }>) {
+export function privateSourceMatcher(
+  documents: Array<Pick<Document, "visibility"> & { name?: string | null }>,
+  /** Free text with no source label (an explanation): only a distinctive title counts. */
+  opts: { distinctiveOnly?: boolean } = {},
+) {
   const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
   const distinctive: string[] = [];
   const generic: string[] = [];
@@ -105,6 +109,7 @@ export function privateSourceMatcher(documents: Array<Pick<Document, "visibility
     if (!text) return false;
     const t = norm(text);
     if (distinctiveRes.some((re) => re.test(t))) return true;
+    if (opts.distinctiveOnly) return false;
     // A generic title ("Email", "CRM note") is judged on the side's SOURCE
     // label — the part after the last " — " ("$1.6M — Email (Mar 3)") — so
     // "email campaigns" in a value doesn't hide it. With no source label the

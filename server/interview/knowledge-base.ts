@@ -1,4 +1,4 @@
-import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy } from "@shared/schema";
+import type { Deal, Document, Task, InterviewSession, ExtractedInfo, Discrepancy, ConversationMessage } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 import type { SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 import { getSectionImportance, renderSectionImportanceForPrompt } from "./section-importance";
@@ -8,6 +8,20 @@ import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
+import { resolvedNotes, overlayResolvedFacts, type ResolvedDiscrepancyNote } from "../cim/resolved-block";
+import {
+  buildSourceDigests,
+  buildFlaggedRisks,
+  detectAlternateConflicts,
+  crossSourceFigureConflicts,
+  mergeDiscrepancyConflicts,
+  buildPriorExchanges,
+  type SourceDigest,
+  type FlaggedRisk,
+  type SourceConflict,
+  type PriorExchange,
+} from "./source-context";
+import { reviewConflictsForDeal } from "./source-review";
 
 // =====================
 // Types
@@ -77,6 +91,8 @@ export interface KnowledgeBase {
     createdAtTurn: number;
     /** Seller explicitly declined — hard-blocked from re-asking */
     declined?: boolean;
+    /** Carried over from an earlier session (its turn number is from that sitting). */
+    earlierSession?: boolean;
   }>;
 
   // Per-field confidence from the interview session (_confidenceLevels).
@@ -89,6 +105,33 @@ export interface KnowledgeBase {
   // ("from document: 2024 P&L.pdf", "from the broker's CRM notes — …").
   // Built from extractedInfo._fieldSources. Optional for old callers/fixtures.
   factSourceLabels?: Record<string, string>;
+
+  // What each seller-visible source says (summary + key facts), so the agent
+  // knows what a call or document covers beyond the extracted facts.
+  sourceDigests?: SourceDigest[];
+  // Risks the seller-visible sources flag — asked or deferred before ending.
+  flaggedRisks?: FlaggedRisk[];
+  // Values that disagree across seller-visible sources — reconciled neutrally.
+  sourceConflicts?: SourceConflict[];
+  // Earlier sessions' questions and answers (never asked again).
+  priorExchanges?: PriorExchange[];
+  // Discrepancies the broker settled — final values.
+  resolvedValues?: ResolvedDiscrepancyNote[];
+  // What still blocks a wrap-up (critical gaps, seller-only topics,
+  // unreconciled critical conflicts, open flagged risks). Set per turn.
+  wrapUpBlockers?: string[];
+  // Document requests the server dropped because the document is on file.
+  droppedDocRequests?: string[];
+}
+
+/** Optional context assembleKnowledgeBase can use (older callers pass none). */
+export interface KnowledgeBaseExtras {
+  /** Every interview session of the deal — earlier sessions become a digest. */
+  sessions?: InterviewSession[];
+  /** The session this knowledge base is for (excluded from the digest). */
+  currentSessionId?: string | null;
+  /** Open discrepancy rows (conflicts the fact merge raised). */
+  openDiscrepancies?: Discrepancy[];
 }
 
 export interface AskSellerDiscrepancy {
@@ -128,7 +171,21 @@ export interface SectionCoverage {
     critical?: boolean;
     value: string | null;
     confidence: "confirmed" | "inferred" | "approximate" | "unknown";
+    /** On file only from a lead (CRM note, website, social) the broker hasn't accepted. */
+    unverified?: boolean;
   }>;
+  /** Checklist/generic items the section asks for. */
+  totalItems?: number;
+  /** Of those, items with no verified value yet. */
+  openItems?: number;
+  /** Of those, items marked critical (industry checklist). */
+  openCriticalItems?: number;
+  /** Items on file only as unverified leads. */
+  unverifiedItems?: number;
+  /** Items the seller (interview, call, questionnaire) or the broker stated. */
+  sellerSourcedItems?: number;
+  /** Items backed by a written document (statements, reports) or set by the broker. */
+  documentedItems?: number;
 }
 
 /** Per-deal additions/removals to the generic section fields (industry checklist + broker edits). */
@@ -242,9 +299,13 @@ export const SECTION_FIELD_MAP: Record<string, string[]> = {
   reason_for_sale: [
     "reasonForSale",
   ],
+  // The keys the document pipeline actually writes (revenueByYear, ebitda,
+  // sde, …) belong here — without them a deal with three years of
+  // statements read "Financial Summary still needs work".
   financials: [
-    "annualRevenue", "revenueGrowth", "operatingMargins",
-    "workingCapital", "debt",
+    "annualRevenue", "revenueByYear", "revenueGrowth",
+    "ebitda", "sde", "netIncome", "grossProfit", "operatingMargins",
+    "addbacks", "workingCapital", "debt",
   ],
   asking_price: [
     "askingPrice", "saleType", "assetsIncluded", "inventory",
@@ -260,6 +321,69 @@ export const KNOWN_EXTRACTED_FIELDS: ReadonlySet<string> = new Set(
   Object.values(SECTION_FIELD_MAP).flat(),
 );
 
+/**
+ * The generic fields of a section are partly ALTERNATIVES, not a quota: one
+ * full seasonality answer covers "seasonality / peak / slow periods", and any
+ * one profitability measure answers "is it profitable?". Coverage counts
+ * these groups, not keys (a rich answer no longer counts double to make up
+ * for it). A group is answered by any of its keys, or by one of its extra
+ * alias keys the pipeline writes under another name (totalDebt for debt…).
+ * Sections not listed treat every field as its own group; industry
+ * checklist items are always their own group.
+ */
+const SECTION_FIELD_GROUPS: Record<string, { keys: string[]; aliases?: string[] }[]> = {
+  overview: [
+    { keys: ["businessName"] },
+    { keys: ["industry"] },
+    { keys: ["companyHistory", "yearsOperating", "ownershipHistory"], aliases: ["yearFounded", "foundedYear", "yearEstablished"] },
+    { keys: ["entityType"] },
+    { keys: ["brandIdentity", "missionStatement", "coreValues"] },
+    { keys: ["industryPerception", "customerPerception", "accolades"], aliases: ["reputation", "onlineReviews", "reviews"] },
+  ],
+  strengths: [{ keys: ["competitiveAdvantage", "uniqueSellingProposition", "strengths"] }],
+  growth_potential: [{ keys: ["growthOpportunities", "expansionPlans"] }],
+  target_market: [{ keys: ["targetMarket", "primaryMarket", "secondaryMarket", "b2bBreakdown", "customerDemographics", "customerBase"] }],
+  permits_licenses: [{ keys: ["permitsLicenses", "complianceRequirements"], aliases: ["licenses", "certifications"] }],
+  seasonality: [{ keys: ["seasonality", "peakPeriods", "slowPeriods"] }],
+  revenue_sources: [
+    { keys: ["revenueStreams", "keyProducts"], aliases: ["revenueMix", "serviceLines"] },
+    { keys: ["customerConcentration"], aliases: ["topCustomers", "largestCustomer"] },
+    { keys: ["annualRevenue", "revenueGrowth", "operatingMargins"], aliases: ["revenueByYear"] },
+  ],
+  real_estate: [{ keys: ["leaseDetails", "propertyInfo", "realEstateIncluded"], aliases: ["leaseExpiry", "monthlyRent", "annualRent"] }],
+  employees: [
+    { keys: ["employees"], aliases: ["employeeCount", "headcount"] },
+    { keys: ["employeeStructure", "keyEmployees", "managementTeam"] },
+    { keys: ["ownerInvolvement"], aliases: ["ownerRole", "ownerHours"] },
+  ],
+  operations: [
+    { keys: ["suppliers", "supplyChain"] },
+    { keys: ["technologySystems", "operationalSystems"] },
+  ],
+  buyer_profile: [{ keys: ["idealBuyer"] }],
+  training_support: [{ keys: ["trainingSupport", "transitionPlan"] }],
+  reason_for_sale: [{ keys: ["reasonForSale"] }],
+  financials: [
+    { keys: ["annualRevenue"] },
+    { keys: ["revenueByYear", "revenueGrowth"] },
+    { keys: ["ebitda", "sde", "netIncome", "grossProfit", "operatingMargins"], aliases: ["adjustedEbitda", "grossMargin", "netProfit", "ebitdaMargin"] },
+    { keys: ["addbacks"], aliases: ["normalizationAdjustments", "ownerCompensation"] },
+    { keys: ["workingCapital", "debt"], aliases: ["totalDebt", "longTermDebt", "totalAssets", "currentAssets", "currentLiabilities", "netWorkingCapital"] },
+  ],
+  asking_price: [
+    { keys: ["askingPrice"] },
+    { keys: ["saleType"], aliases: ["dealStructure"] },
+    { keys: ["assetsIncluded", "inventory"], aliases: ["equipmentList", "ffe"] },
+  ],
+};
+
+/** Source kinds that are leads, not facts, until the broker accepts them. */
+const LEAD_SOURCE_KINDS: ReadonlySet<string> = new Set(["crm", "website", "social"]);
+/** A lead answers a group only this much (it is a lead the CIM writers won't state as fact). */
+const LEAD_CREDIT = 0.25;
+/** Source kinds that are the seller (or the broker) speaking for the business. */
+const SELLER_SOURCE_KINDS: ReadonlySet<string> = new Set(["interview", "call", "video_call", "questionnaire", "broker"]);
+
 // =====================
 // Knowledge base assembly
 // =====================
@@ -270,6 +394,7 @@ export function assembleKnowledgeBase(
   tasks: Task[],
   latestSession: InterviewSession | null,
   resolvedDiscrepancies: Discrepancy[] = [],
+  extras: KnowledgeBaseExtras = {},
 ): KnowledgeBase {
   // The facts exactly as the interview may read them (see seller-view.ts):
   // nothing a broker-only source asserted (the broker's CRM notes, private
@@ -283,16 +408,17 @@ export function assembleKnowledgeBase(
   ) as Partial<ExtractedInfo>;
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
-  // Overlay resolved discrepancy values — corrected values win over raw extractedInfo
-  // so the interview agent never re-asks for or builds on stale numbers the broker
-  // already reconciled against uploaded documents. (ask_seller rows have no
-  // resolvedValue, so they never overlay — they become priority topics below.)
-  const extractedInfo: Partial<ExtractedInfo> = { ...baseExtractedInfo };
-  for (const d of resolvedDiscrepancies) {
-    if (d.resolvedValue && d.field) {
-      (extractedInfo as Record<string, unknown>)[d.field] = d.resolvedValue;
-    }
-  }
+  // Discrepancies the broker settled: a row naming a real fact key overlays
+  // that fact (per-year rows update that year); every settled row is also
+  // listed as a final value, so a narrative fact still repeating the losing
+  // value reads as outdated (server/cim/resolved-block.ts — the same rules
+  // the CIM writer uses). A label-named row no longer adds a pseudo-fact.
+  // (ask_seller rows have no resolvedValue — they become priority topics.)
+  const resolvedValues = resolvedNotes(resolvedDiscrepancies.filter((d) => d.status !== "ask_seller"));
+  const extractedInfo = overlayResolvedFacts(
+    baseExtractedInfo as Record<string, unknown>,
+    resolvedValues,
+  ) as Partial<ExtractedInfo>;
 
   // Discrepancies the broker explicitly routed to the interview
   // One side from a broker-only source (a CRM note, a private email): the
@@ -302,18 +428,43 @@ export function assembleKnowledgeBase(
   // broker-only source — financial-analysis values carry the source's name.)
   // (A generic title — "Email", "CRM note" — is judged on the side's source
   // label; a side with no label fails closed.)
+  // Fail closed: a side is private when the row's recorded side source says
+  // so (discrepancies.side_sources — brokerOnly, a CRM kind, or a broker-only
+  // row), when it names a broker-only source (legacy rows), or when its text
+  // cites the broker's own material ("per broker note", "CRM notes and site
+  // visit"). Any private side hides the explanation and suggested approach
+  // too — they are written from both sides.
   const namesPrivateSource = privateSourceMatcher(documents);
+  const mentionsPrivateTitle = privateSourceMatcher(documents, { distinctiveOnly: true });
+  const brokerOnlyDoc = (id: string | null | undefined) =>
+    !!id && documents.some((doc) => doc.id === id && doc.visibility === "broker_only");
+  const privateSide = (side: DiscrepancySide | undefined) =>
+    !!side && (side.brokerOnly === true || side.kind === "crm" || brokerOnlyDoc(side.documentId));
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")
     .map((d) => {
+      const sides = (d.sideSources as { interview?: DiscrepancySide; document?: DiscrepancySide } | null) || {};
       // documentId backs the second value (documentValue).
-      const privateA = namesPrivateSource(d.interviewValue);
+      const privateA =
+        privateSide(sides.interview) || namesPrivateSource(d.interviewValue) || PRIVATE_MATERIAL_RE.test(d.interviewValue ?? "");
       const privateB =
+        privateSide(sides.document) ||
         namesPrivateSource(d.documentValue) ||
-        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only"));
-      const privateSource = privateA || privateB;
+        brokerOnlyDoc(d.documentId) ||
+        PRIVATE_MATERIAL_RE.test(d.documentValue ?? "") ||
+        PRIVATE_MATERIAL_RE.test(d.documentName ?? "");
+      const explanationPrivate =
+        PRIVATE_MATERIAL_RE.test(d.aiExplanation ?? "") ||
+        PRIVATE_MATERIAL_RE.test(d.suggestedResolution ?? "") ||
+        mentionsPrivateTitle(d.aiExplanation) ||
+        mentionsPrivateTitle(d.suggestedResolution);
+      const privateSource = privateA || privateB || explanationPrivate;
+      // The field label itself can carry a source note ("Employees (CRM notes)").
+      const field = PRIVATE_MATERIAL_RE.test(d.field)
+        ? (d.factKey || d.field.replace(/\s*\([^)]*\)/g, "").replace(PRIVATE_MATERIAL_GLOBAL_RE, "").trim() || "a figure")
+        : d.field;
       return {
-        field: d.field,
+        field,
         valueA: privateA ? null : d.interviewValue,
         valueB: privateB ? null : d.documentValue,
         severity: d.severity,
@@ -332,9 +483,25 @@ export function assembleKnowledgeBase(
   // broker-only sources aren't in the view at all; a CRM note the broker
   // shared is labelled so the agent confirms it without citing the CRM.)
   const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
-  for (const d of resolvedDiscrepancies) {
-    if (d.resolvedValue && d.field) factSourceLabels[d.field] = "confirmed by the broker";
+  for (const n of resolvedValues) {
+    if (n.factKey && !n.year) factSourceLabels[n.factKey] = "confirmed by the broker";
   }
+
+  // Sources: digests, flagged risks, conflicts (seller-visible only — the
+  // view above already dropped broker-only alternates), earlier sessions.
+  const sourceConflicts = dedupeConflicts([
+    ...detectAlternateConflicts(baseExtractedInfo as Record<string, unknown>, documents),
+    ...crossSourceFigureConflicts(documents),
+    ...mergeDiscrepancyConflicts(extras.openDiscrepancies ?? [], documents),
+    ...reviewConflictsForDeal(deal, documents),
+  ]).filter((c) => !resolvedValues.some((n) => n.factKey === c.key));
+  const currentSessionId = extras.currentSessionId ?? null;
+  const priorSession =
+    (extras.sessions ?? [])
+      .filter((x) => x.id !== currentSessionId && ((x.messages as ConversationMessage[] | null) ?? []).some((m) => m.role === "user"))
+      .sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime())[0] ??
+    // Legacy callers: a latestSession that is not the current one is a prior session.
+    (latestSession && currentSessionId && latestSession.id !== currentSessionId ? latestSession : null);
   // Buyer importance per section — the industry-ranked map when one exists
   // for the deal's current industry, otherwise the base defaults.
   const sectionImportance = getSectionImportance(deal);
@@ -362,15 +529,54 @@ export function assembleKnowledgeBase(
     documents: documents.filter((d) => d.visibility !== "broker_only").map(summarizeDocument),
     outstandingTasks: tasks
       .filter((t) => t.status === "pending" || t.status === "in_progress")
+      // A follow-up whose field the seller has since answered is done —
+      // listing it made the agent raise it again.
+      .filter((t) => !t.relatedField || !sellerAnswered(extractedInfo as Record<string, unknown>, t.relatedField))
       .map(summarizeTask),
-    priorSessionSummary: latestSession ? summarizeSession(latestSession) : null,
+    priorSessionSummary: priorSession ? summarizeSession(priorSession) : null,
     extractedInfo,
     scrapedData: (deal.scrapedData as Record<string, string> | null) || null,
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
     askSellerDiscrepancies,
     fieldConfidence: confidenceLevels,
     factSourceLabels,
+    sourceDigests: buildSourceDigests(documents),
+    flaggedRisks: buildFlaggedRisks(documents),
+    sourceConflicts,
+    priorExchanges: extras.sessions ? buildPriorExchanges(extras.sessions, currentSessionId) : [],
+    resolvedValues,
   };
+}
+
+/** Recorded side of a discrepancy (discrepancies.side_sources). */
+interface DiscrepancySide { kind?: string; documentId?: string; brokerOnly?: boolean }
+
+/**
+ * Text that cites the broker's own material (CRM notes, the broker's recast,
+ * a site visit) — never shown to the seller, whatever the row's sources say.
+ */
+export const PRIVATE_MATERIAL_RE =
+  /\b(?:crm|broker(?:'s|s')? (?:note|notes|recast|estimate|estimates|valuation|meeting|call notes|analysis)|per (?:the )?broker|pipedrive|hubspot|salesforce|site visit(?: notes?)?)\b/i;
+const PRIVATE_MATERIAL_GLOBAL_RE = new RegExp(PRIVATE_MATERIAL_RE.source, "gi");
+
+/** A fact the seller (or the broker) has stated — not only a document or lead. */
+export function sellerAnswered(info: Record<string, unknown>, key: string): boolean {
+  if (!isSubstantiveValue(info[key])) return false;
+  const src = getFieldSources(info)[key];
+  return !!src && ["interview", "call", "video_call", "questionnaire", "broker"].includes(String(src.source));
+}
+
+/** One conflict per fact key (the first source wins: alternates, then merge, then review). */
+function dedupeConflicts(list: SourceConflict[]): SourceConflict[] {
+  const seen = new Set<string>();
+  const out: SourceConflict[] = [];
+  for (const c of list) {
+    const k = c.key.toLowerCase();
+    if (seen.has(k)) continue;
+    seen.add(k);
+    out.push(c);
+  }
+  return out.slice(0, 10);
 }
 
 function shortDate(value: string | Date | null | undefined): string | null {
@@ -471,6 +677,30 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     parts.push(``);
   }
 
+  // Conflicts between the deal's own sources — the agent must not repeat
+  // either value as settled (it used to tell a seller "you're at 3,100
+  // members" while the membership report on file showed 2,900 active).
+  const conflicts = kb.sourceConflicts ?? [];
+  if (conflicts.length > 0) {
+    parts.push(`## ⚖️ CONFLICTS TO RECONCILE WITH THE SELLER`);
+    parts.push(`The deal's sources disagree on these. Top priority after anything the broker routed above. For each: raise it neutrally at a natural moment ("I have two figures for X — A from <source> and B from <source>; which is right, and what explains the difference?"), never as a list and never accusingly. One per turn at most, and not back-to-back — a run of "I want to reconcile…" questions reads like an audit; weave them between other topics (critical ones first). Until the seller settles it, NEVER state either value as fact, and attribute each value only to the source shown — never say "your documents show" for a figure that came from a call. Capture the seller's answer under the fact key shown and list "reconcile <key>" in reasoning.resolvedDeferrals once it's settled.`);
+    for (const c of conflicts) {
+      parts.push(`- reconcile ${c.key}${c.critical ? " [CRITICAL — must be reconciled or deferred before the interview ends]" : ""}: ${c.values.map((v) => `"${v.value}" (${v.source})`).join(" vs ")}`);
+    }
+    parts.push(``);
+  }
+
+  // Risks the sources flag — what a buyer's diligence asks about first.
+  const risks = kb.flaggedRisks ?? [];
+  if (risks.length > 0) {
+    parts.push(`## 🚩 RISKS FLAGGED IN THE SOURCES`);
+    parts.push(`The deal's own documents, calls and emails flag these. Each must be asked about (what happened, where it stands now, what a buyer should know) or explicitly deferred before the interview ends — they come right after the conflicts, ahead of routine gap-filling. Ask about the substance in the seller's terms; don't read the flag back as an accusation. When one is covered, list "risk: <label>" in reasoning.resolvedDeferrals.`);
+    for (const r of risks) {
+      parts.push(`- risk: ${r.label} — "${r.text}" (flagged in: ${r.sources.slice(0, 2).join("; ")}${r.sources.length > 2 ? "…" : ""})`);
+    }
+    parts.push(``);
+  }
+
   // Scraped data — shown first so the agent is primed to verify it
   if (kb.scrapedData && Object.keys(kb.scrapedData).length > 0) {
     const sourceLabel = kb.scrapeSource === "website"
@@ -508,36 +738,81 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
       parts.push(`## ⛔ ALREADY ANSWERED — DO NOT RE-ASK. CONFIRM OR DEEPEN ONLY.`);
       parts.push(`Every fact below is already on file (from uploaded documents, emails, calls, the questionnaire, the broker, or earlier conversation) — each is labelled with where it came from. Before EVERY question you ask, scan this list:`);
       parts.push(`- If the fact you need is here, do NOT ask for it. Cite it and ask only for what is genuinely new (the delta): "Your P&L shows a 72/28 Shopify/Amazon split — has that shifted this year?"`);
-      parts.push(`- Values that did not come from the seller in this interview (documents, emails, call transcripts, the questionnaire, the broker, or anything marked "on file before this interview") came in separately: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Values the SELLER gave (in this interview or an earlier session, on a call, in an email, in the questionnaire) are settled: do not ask them again, and do not ask the seller to "confirm" them either — confirming what they already told you is a re-ask. Only a value that came from a document (and is not in a conflict below) may be confirmed, once, in passing. The broker's values are final.`);
       parts.push(`- Values marked "unverified" or "confirm with the seller" are leads, not facts: confirm them naturally in passing (still never as an open re-ask). When a label says never to mention or quote its source, don't — ask as if you simply want to confirm the detail.`);
       parts.push(`- Your suggestedAnswers must be consistent with these values — never offer a guess at a number already on file.`);
       parts.push(`- When capturing new fields, REUSE these exact key names when the concept matches; only mint a new key for a genuinely new concept.`);
       parts.push(``);
       const sourceLabels = kb.factSourceLabels ?? {};
+      const conflictByKey = new Map((kb.sourceConflicts ?? []).map((c) => [c.key, c]));
       for (const [key, rawValue] of known) {
         const value = repairCharIndexedValue(rawValue);
         const sessionConf = conf[key];
         const label = sourceLabels[key]
           ?? (sessionConf ? `seller ${sessionConf}` : "from documents/questionnaire");
-        parts.push(`- ${key}: ${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}  [${label}]`);
+        const conflict = conflictByKey.get(key);
+        const norm = (t: string) => t.replace(/\s+/g, " ").trim().toLowerCase();
+        const shown = norm(typeof value === "string" ? value : JSON.stringify(value));
+        const other = conflict
+          ? conflict.values.filter((v) => !shown.startsWith(norm(v.value).replace(/…$/, ""))).map((v) => `${v.source} says "${v.value}"`).join("; ")
+          : "";
+        parts.push(`- ${key}: ${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}  [${label}${other ? ` — BUT ${other}: in conflict, not settled` : ""}]`);
       }
       parts.push(``);
     }
   }
 
+  // Values the broker settled — final. Anything else on file that repeats
+  // a replaced value is outdated.
+  if ((kb.resolvedValues ?? []).length > 0) {
+    parts.push(`## SETTLED BY THE BROKER — final values (never re-ask, re-open or contradict)`);
+    for (const n of kb.resolvedValues!) {
+      const what = n.year ? `${n.factKey ?? n.field} (${n.year})` : (n.factKey ?? n.field);
+      const old = n.supersededValues.length ? ` — replaces ${n.supersededValues.map((v) => `"${v}"`).join(", ")} (outdated)` : "";
+      parts.push(`- ${what}: ${n.resolvedValue}${old}`);
+    }
+    parts.push(``);
+  }
+
+  // Earlier sessions — the seller was asked these already. Before this the
+  // next session saw only counts and re-asked answered questions.
+  if ((kb.priorExchanges ?? []).length > 0) {
+    parts.push(`## PREVIOUS SESSIONS — ALREADY DISCUSSED`);
+    parts.push(`The seller answered these in earlier sessions. Never ask any of them again (not reworded, not "just to confirm"); build on the answers. A topic the seller deferred ("I'll check", "ask my accountant") may be followed up once, framed as a follow-up to that earlier conversation.`);
+    for (const x of kb.priorExchanges!) {
+      parts.push(`- [session ${x.session}] Q: ${x.question} → A: ${x.answer}`);
+    }
+    parts.push(``);
+  }
+
   // Open deferral ledger — the agent's own outstanding items, durable across
   // turns. Without this the model forgot its deferrals and never circled back.
-  if ((kb.openDeferrals ?? []).length > 0) {
+  // (Conflicts and flagged risks shown in their own blocks above are left out.)
+  const shownAbove = [
+    ...(kb.sourceConflicts ?? []).map((c) => `reconcile ${c.key}`.toLowerCase()),
+    ...(kb.flaggedRisks ?? []).map((r) => `risk: ${r.label}`.toLowerCase()),
+  ];
+  const ledgerItems = (kb.openDeferrals ?? []).filter((d) => !shownAbove.includes(d.topic.toLowerCase()));
+  if (ledgerItems.length > 0) {
     parts.push(`## OPEN DEFERRALS (your outstanding items — durable ledger)`);
-    parts.push(`These topics were raised and set aside earlier in THIS interview (the turn number shows when — never describe one as coming from a prior session). They are NOT resolved. A deferral only resolves when the information itself is obtained — creating a broker task or document request keeps it OPEN. Circle back when a natural opening appears: if the seller likely knows the answer but was hesitant (rather than the data living purely in a document), make ONE later conversational re-attempt with a lower-stakes reframe — especially if the seller invites it ("anything else?"). When one is resolved, list its topic in reasoning.resolvedDeferrals.`);
-    for (const d of kb.openDeferrals!) {
+    parts.push(`These topics were raised and set aside earlier (the turn number shows when in THIS session; "earlier session" means a previous sitting). They are NOT resolved. A deferral only resolves when the information itself is obtained — creating a broker task or document request keeps it OPEN. Circle back when a natural opening appears: if the seller likely knows the answer but was hesitant (rather than the data living purely in a document), make ONE later conversational re-attempt with a lower-stakes reframe — especially if the seller invites it ("anything else?"). When one is resolved, list its topic in reasoning.resolvedDeferrals.`);
+    for (const d of ledgerItems) {
       const where = d.whereInfoLives ? ` (info lives: ${d.whereInfoLives})` : "";
       const why = d.reason ? ` — ${d.reason}` : "";
       const ban = d.declined
         ? ` ⛔ DECLINED by the seller — do NOT re-ask this session under any circumstances (not even as the closing question); the broker will handle it. Only if the seller re-opens it themselves may you follow up.`
         : "";
-      parts.push(`- [turn ${d.createdAtTurn}] ${d.topic}${why}${where}${ban}`);
+      parts.push(`- [${d.earlierSession ? "earlier session" : `turn ${d.createdAtTurn}`}] ${d.topic}${why}${where}${ban}`);
     }
+    parts.push(``);
+  }
+
+  // What still stands between this interview and a wrap-up (the server
+  // won't let it end on its own before these are covered or deferred).
+  if ((kb.wrapUpBlockers ?? []).length > 0) {
+    parts.push(`## STILL NEEDED BEFORE THE INTERVIEW CAN WRAP UP`);
+    parts.push(`Each must be discussed with the seller or explicitly deferred (with where the answer lives) before you set shouldEnd. Weave them in by priority — never as a list. The seller asking to stop still ends the interview.`);
+    for (const b of kb.wrapUpBlockers!) parts.push(`- ${b}`);
     parts.push(``);
   }
 
@@ -676,35 +951,40 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     for (const field of section.fields) {
       const name = field.label ? `${field.fieldName} (${field.label}${field.critical ? " — CRITICAL for this industry" : ""})` : field.fieldName;
       if (field.value) {
-        parts.push(`  - ${name}: ${field.value} (${field.confidence})`);
+        parts.push(`  - ${name}: ${field.value} (${field.unverified ? "unverified lead — confirm with the seller" : field.confidence})`);
       } else {
         parts.push(`  - ${name}: NOT YET CAPTURED`);
       }
     }
   }
 
-  // Documents
+  // Documents — and what each one says. The agent used to see only file
+  // names and asked for anything extraction missed ("Who is Megan?" with
+  // the org chart on file).
   if (kb.documents.length > 0) {
     parts.push("");
-    parts.push(`## Uploaded Documents`);
-    parts.push(`These documents have been uploaded for this deal. Do NOT ask the seller to upload documents they've already provided. Facts extracted from processed documents already appear in the ALREADY ANSWERED list above — asking the seller for them reads as "you didn't look at what I sent you" and destroys trust.`);
+    parts.push(`## Uploaded Documents & Sources — what each one says`);
+    parts.push(`These sources are on file for this deal. Do NOT ask the seller to upload or send anything listed here. Their facts appear in the ALREADY ANSWERED list above, and the digest under each says what else it covers — a question answered by a source here reads as "you didn't look at what I sent you". When you need more than a digest gives, cite the source and ask only for what's new ("The org chart has Megan as quality manager — does she run the IATF audits herself?"). Call and email digests say who said what; a statement by someone other than the seller is theirs, not the seller's.`);
+    const digests = new Map((kb.sourceDigests ?? []).map((d) => [d.id, d]));
     for (const doc of kb.documents) {
       const status = doc.isProcessed ? "processed" : doc.status;
-      const extracted = doc.hasExtractedData || doc.hasExtractedText ? " — contents extracted into the knowledge base" : "";
-      parts.push(`- ${doc.name} (${doc.category}${doc.subcategory ? `/${doc.subcategory}` : ""}) — ${status}${extracted}`);
+      const digest = digests.get(doc.id);
+      parts.push(`- ${doc.name} (${digest?.kind ?? doc.category}${digest?.date ? `, ${digest.date}` : ""}) — ${status}`);
+      if (digest?.summary) parts.push(`    Says: ${digest.summary}`);
+      if (digest?.keyFacts) parts.push(`    Key facts: ${digest.keyFacts}`);
     }
   }
 
-  // Outstanding tasks
-  if (kb.outstandingTasks.length > 0) {
+  // Outstanding tasks — already recorded; the agent must not re-create them.
+  if (kb.outstandingTasks.length > 0 || (kb.droppedDocRequests ?? []).length > 0) {
     parts.push("");
-    parts.push(`## Outstanding Tasks & Deferred Questions`);
-    parts.push(`These items were flagged in previous sessions. Consider addressing them when the moment is right.`);
+    parts.push(`## Open follow-ups already recorded`);
+    parts.push(`These follow-ups and document requests already exist for the broker — do NOT create them again (newTasks) and don't ask the seller for them again unless they bring it up. If the seller answers one, capture the answer as usual; if one turns out not to apply (e.g. "there is no such clause"), list its title in reasoning.resolvedDeferrals.`);
     for (const task of kb.outstandingTasks) {
       parts.push(`- [${task.type}] ${task.title}: ${task.description || "No details"}${task.relatedField ? ` (field: ${task.relatedField})` : ""}`);
-      if (task.aiExplanation) {
-        parts.push(`  Context: ${task.aiExplanation}`);
-      }
+    }
+    for (const d of kb.droppedDocRequests ?? []) {
+      parts.push(`- NOT requested — already on file: ${d}`);
     }
   }
 
@@ -735,11 +1015,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     const ps = kb.priorSessionSummary;
     parts.push("");
     parts.push(`## Prior Interview Session`);
-    parts.push(`A previous interview session exists (status: ${ps.status}).`);
-    parts.push(`- Questions asked: ${ps.questionsAsked ?? 0}`);
-    parts.push(`- Questions answered: ${ps.questionsAnswered ?? 0}`);
-    parts.push(`- Questions skipped: ${ps.questionsSkipped ?? 0}`);
-    parts.push(`You are resuming this interview. Review the conversation history and continue from where it left off. Do not repeat questions that were already answered.`);
+    parts.push(`The seller has done an earlier session (status: ${ps.status}; ${ps.questionsAsked ?? 0} questions asked, ${ps.questionsAnswered ?? 0} answered). This is a new sitting: that conversation is NOT in your message history — its questions and answers are listed under PREVIOUS SESSIONS above, and everything the seller said there is already in the ALREADY ANSWERED list. Continue from there; never repeat a question that was answered.`);
   }
 
   return parts.join("\n");
@@ -806,42 +1082,78 @@ export function buildSectionCoverage(
     const extras = (adjustments?.add?.[section.key] ?? [])
       .filter((x) => !seen.has(x.key) && !adjustments?.remove?.has(x.key) && (seen.add(x.key), true))
       .map((x) => ({ key: x.key, label: x.label as string | undefined, extra: true, critical: !!x.critical, alias: x.alias ?? null }));
+    const sources = getFieldSources(extractedInfo as Record<string, unknown>);
+    // A value is a lead (not a fact) when a CRM note, the website or social
+    // media is its only source and the broker hasn't accepted it — the CIM
+    // writers treat those as unconfirmed, so the score must too.
+    const isLead = (key: string): boolean => {
+      const src = sources[key];
+      return !!src && LEAD_SOURCE_KINDS.has(String(src.source)) && !src.acceptedByBroker;
+    };
     const fields = [...generic.map((g) => ({ ...g, alias: null as string | null })), ...extras].map(({ key: fieldName, label, extra, critical, alias }) => {
       // A checklist item may already be answered by a fact stored under a
       // general key (e.g. associate agreements inside keyEmployees).
       const own = extractedInfo[fieldName as keyof ExtractedInfo] ?? null;
-      const raw = isSubstantiveValue(own) ? own : alias ? (extractedInfo[alias as keyof ExtractedInfo] ?? null) : own;
+      const usesAlias = !isSubstantiveValue(own) && !!alias;
+      const raw = usesAlias ? (extractedInfo[alias as keyof ExtractedInfo] ?? null) : own;
       // Quality gate: junk placeholders don't count as answers
-      const value = isSubstantiveValue(raw) ? (raw as string) : null;
+      const value = isSubstantiveValue(raw) ? stringifyCoverageValue(raw) : null;
+      const valueKey = usesAlias ? alias! : fieldName;
+      const unverified = value !== null && isLead(valueKey);
       const sessionConf = confidenceLevels?.[fieldName];
       const confidence: "confirmed" | "inferred" | "approximate" | "unknown" =
         !value ? "unknown"
+        : unverified ? "inferred"
         : sessionConf === "confirmed" || sessionConf === "approximate" ? sessionConf
         : "inferred";
-      return { fieldName, value, confidence, ...(label ? { label } : {}), ...(extra ? { industrySpecific: true, critical } : {}) };
+      const sellerSourced = value !== null && !unverified &&
+        (SELLER_SOURCE_KINDS.has(String(sources[valueKey]?.source)) || sessionConf === "confirmed" || sessionConf === "approximate");
+      return {
+        fieldName, value, confidence,
+        ...(label ? { label } : {}),
+        ...(extra ? { industrySpecific: true, critical } : {}),
+        ...(unverified ? { unverified: true } : {}),
+        _seller: sellerSourced,
+        _documented: value !== null && !unverified && ["document", "broker"].includes(String(sources[valueKey]?.source ?? "")),
+      };
     });
 
-    const populatedCount = fields.filter((f) => f.value !== null).length;
-    const totalCount = fields.length;
-    // Richness weighting: the mapped fields are alternatives, not a quota —
-    // one substantial value (a full lease description with term, rate, and
-    // options) covers its section better than three stubs. A rich field
-    // counts double so exhaustively-answered sections stop reading "partial"
-    // (QA-observed: three fully-detailed leases stuck at partial all run).
-    const effectiveCount = fields.reduce(
-      (n, f) => n + (f.value === null ? 0 : f.value.length >= 120 ? 2 : 1),
-      0,
-    );
+    // Groups of alternatives (see SECTION_FIELD_GROUPS); anything not in a
+    // group — industry checklist and broker-added items included — is its
+    // own group. A group counts 1 when any member (or alias) holds a
+    // verified value, LEAD_CREDIT when only a lead does.
+    const fieldByKey = new Map(fields.map((f) => [f.fieldName, f]));
+    const grouped = new Set<string>();
+    const groups: { members: typeof fields; aliases: string[] }[] = [];
+    for (const g of SECTION_FIELD_GROUPS[section.key] ?? []) {
+      const members = g.keys.map((k) => fieldByKey.get(k)).filter((f): f is (typeof fields)[number] => !!f);
+      if (members.length === 0) continue;
+      members.forEach((m) => grouped.add(m.fieldName));
+      groups.push({ members, aliases: g.aliases ?? [] });
+    }
+    for (const f of fields) if (!grouped.has(f.fieldName)) groups.push({ members: [f], aliases: [] });
+    const groupScore = (g: (typeof groups)[number]): number => {
+      if (g.members.some((m) => m.value !== null && !m.unverified)) return 1;
+      const aliasValues = g.aliases.filter((a) => isSubstantiveValue(extractedInfo[a as keyof ExtractedInfo]));
+      if (aliasValues.some((a) => !isLead(a))) return 1;
+      if (g.members.some((m) => m.value !== null) || aliasValues.length > 0) return LEAD_CREDIT;
+      return 0;
+    };
+    const score = groups.reduce((n, g) => n + groupScore(g), 0);
+    const anyValue = groups.some((g) => groupScore(g) > 0);
 
     const coreFields = SECTION_CORE_FIELDS[section.key];
-    const coreMissing =
-      coreFields !== undefined &&
-      !fields.some((f) => coreFields.includes(f.fieldName) && f.value !== null);
+    const coreValue = coreFields ? fields.filter((f) => coreFields.includes(f.fieldName) && f.value !== null) : [];
+    const coreMissing = coreFields !== undefined && coreValue.length === 0;
+    const coreLeadOnly = coreFields !== undefined && coreValue.length > 0 && coreValue.every((f) => f.unverified);
+    // A buyer-critical checklist item with nothing verified keeps the
+    // section from reading "well covered", however much else is on file.
+    const openCritical = fields.filter((f) => f.critical && (f.value === null || f.unverified));
 
     let status: SectionCoverage["status"];
-    if (totalCount === 0 || populatedCount === 0 || coreMissing) {
+    if (groups.length === 0 || !anyValue || coreMissing) {
       status = "missing";
-    } else if (effectiveCount >= totalCount * 0.6) {
+    } else if (score >= groups.length * 0.6 && openCritical.length === 0 && !coreLeadOnly) {
       status = "well_covered";
     } else {
       status = "partial";
@@ -854,9 +1166,25 @@ export function buildSectionCoverage(
       importanceReason: importance?.reason ?? "",
       order: section.order,
       status,
-      fields,
+      fields: fields.map(({ _seller, _documented, ...f }) => f),
+      totalItems: fields.length,
+      openItems: fields.filter((f) => f.value === null || f.unverified).length,
+      openCriticalItems: openCritical.length,
+      unverifiedItems: fields.filter((f) => f.unverified).length,
+      sellerSourcedItems: fields.filter((f) => f._seller).length,
+      documentedItems: fields.filter((f) => f._documented).length,
     };
   });
+}
+
+/** Coverage values are shown as text; map facts (revenue by year) read as "2024: $1.2M; 2023: …". */
+function stringifyCoverageValue(v: unknown): string {
+  if (typeof v === "string") return v;
+  const repaired = repairCharIndexedValue(v);
+  if (repaired && typeof repaired === "object" && !Array.isArray(repaired)) {
+    return Object.entries(repaired as Record<string, unknown>).map(([k, x]) => `${k}: ${String(x)}`).join("; ");
+  }
+  return typeof repaired === "object" ? JSON.stringify(repaired) : String(repaired);
 }
 
 function parseLocation(

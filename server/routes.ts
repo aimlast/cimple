@@ -13,7 +13,8 @@ import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
-import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel } from "./interview/interview-plan.js";
+import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel, planSubIndustry } from "./interview/interview-plan.js";
+import { ensureSourceReview } from "./interview/source-review.js";
 import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } from "./interview/knowledge-base.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
@@ -1309,7 +1310,14 @@ Return JSON only.`,
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
       const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
-      const result = await startOrResumeSession(dealId, { conductedBy, conductedVia: parseConductedVia(req.body?.conductedVia) });
+      // A finished interview is continued only on an explicit request
+      // ("Continue interview" / "Add more detail") — loading the page alone
+      // returns its finished state and starts nothing.
+      const result = await startOrResumeSession(dealId, {
+        conductedBy,
+        conductedVia: parseConductedVia(req.body?.conductedVia),
+        resume: req.body?.resume === true,
+      });
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview start error:", error);
@@ -6299,8 +6307,13 @@ Return JSON only.`,
     const outline = getInterviewOutline(deal);
     const importance = getSectionImportance(deal);
     // Kick off the industry checklist if it's missing (background, ~20–40s).
+    // The deal's own sub-industry counts: "Home Services" alone matches no
+    // playbook, "Landscaping and snow & ice management" does.
     ensureInterviewPlan(deal);
     const plan = getInterviewPlan(deal);
+    // (A build that just failed waits an hour before retrying — don't spin meanwhile.)
+    const lastBuildFailed = (deal.interviewPlan as { status?: string } | null)?.status === "failed";
+    const playbookMatches = planSubIndustry(deal).matched && !lastBuildFailed;
     // Data points per section with on-file status — the same coverage the
     // interview and the quality score use (excluded sections kept here so a
     // removed section still shows what it would have covered).
@@ -6316,8 +6329,9 @@ Return JSON only.`,
     return {
       outline,
       plan: {
-        status: plan ? "ready" : isPlanBuilding(deal.id) ? "building" : deal.industry ? "unavailable" : "no_industry",
-        industry: plan?.industry ?? deal.industry ?? null,
+        status: plan ? "ready" : isPlanBuilding(deal.id) ? "building" : !deal.industry ? "no_industry" : playbookMatches ? "building" : "unavailable",
+        // The playbook it came from ("Landscaping and snow…" rather than "Home Services").
+        industry: plan ? (plan.subIndustry || plan.industry) : deal.industry ?? null,
         itemCount: plan?.items.length ?? 0,
       },
       sections: CIM_SECTIONS.map((s) => ({
@@ -6348,6 +6362,12 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // First look at the outline: review the sources for conflicts in the
+      // background, so the interview can open on them (never re-run here —
+      // the interview refreshes a stale review itself).
+      if (!(deal as { interviewSourceReview?: unknown }).interviewSourceReview) {
+        storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
+      }
       res.json(outlineView(deal));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load interview outline" });

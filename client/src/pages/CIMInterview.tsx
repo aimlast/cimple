@@ -30,6 +30,7 @@ export default function CIMInterview() {
       mode="broker"
       dealId={dealId}
       businessName={deal?.businessName}
+      transcriptHref={`/deal/${dealId}/interview-review`}
       onComplete={async () => {
         await queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
         await queryClient.invalidateQueries({

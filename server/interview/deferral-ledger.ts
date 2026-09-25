@@ -31,6 +31,15 @@ export interface DeferralEntry {
    * hard-blocked: never re-asked this session, never the closing question.
    */
   declined?: boolean;
+  /**
+   * "source": minted by the server from the deal's sources (a conflict to
+   * reconcile, a flagged risk) — on the agent's agenda, but not yet raised
+   * with the seller, so it is not a deferral and not shown as one. Cleared
+   * when the agent explicitly defers it.
+   */
+  origin?: "source";
+  /** Carried over from an earlier session (its turn number is from that sitting). */
+  earlierSession?: boolean;
 }
 
 /**
@@ -97,6 +106,8 @@ export function updateDeferralLedger(
       // Same topic again: refresh context; reopen if it had been resolved.
       if (d.reason) match.reason = d.reason;
       if (d.whereInfoLives) match.whereInfoLives = d.whereInfoLives;
+      // The agent deferring a source-minted item makes it a real deferral.
+      delete match.origin;
       if (declined) match.declined = true; // a decline is sticky
       if (match.status === "resolved") {
         match.status = "open";
@@ -132,7 +143,7 @@ export function declinedDeferrals(ledger: DeferralEntry[]): DeferralEntry[] {
  * Stable and append-only until resolved — no more per-turn flicker.
  */
 export function deferralTopicStrings(ledger: DeferralEntry[]): string[] {
-  return openDeferrals(ledger).map((e) =>
+  return openDeferrals(ledger).filter((e) => e.origin !== "source").map((e) =>
     e.reason ? `${e.topic} — ${e.reason}` : e.topic,
   );
 }

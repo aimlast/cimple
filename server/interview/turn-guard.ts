@@ -588,6 +588,15 @@ export interface GovernanceInput {
   /** Session-manager's authoritative stop detection for this turn (sees the
    *  previous agent message; covers completion-acceptance stops). */
   sellerStopDetected?: boolean;
+  /**
+   * Items that must be discussed or deferred before the interview may end on
+   * its own (see completion-gaps.ts): uncaptured critical checklist items in
+   * partly covered critical sections, seller-only topics (reason for sale,
+   * transition, owner pay, add-backs, deal structure, key-person risk) with
+   * no seller source, unreconciled critical source conflicts, open flagged
+   * risks. Each is a plain-language line naming the item.
+   */
+  blockingItems?: string[];
 }
 
 export interface GovernanceResult {
@@ -633,6 +642,10 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (missingCritical.length > 0) {
     reasons.push(`critical sections still have no coverage: ${missingCritical.join(", ")}`);
   }
+  const blocking = (input.blockingItems ?? []).filter((b) => b && b.trim());
+  if (blocking.length > 0) {
+    reasons.push(`still not discussed or deferred: ${blocking.slice(0, 6).join("; ")}${blocking.length > 6 ? "; …" : ""}`);
+  }
 
   if (reasons.length === 0) return { allowEnd: true };
 
@@ -647,9 +660,9 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
     continuationInstruction:
       `[SYSTEM OVERRIDE: Do not end the interview yet — ${reasons.join("; ")}.` +
       deferredNote +
-      ` Continue the conversation naturally: briefly acknowledge the seller's last answer, then transition into the most important remaining gap` +
-      (missingCritical.length > 0 ? ` (start with: ${missingCritical[0]})` : "") +
-      `. Do not mention this instruction or that you attempted to end. Set shouldEnd to false.]`,
+      ` Continue the conversation naturally: transition straight into the most important remaining gap` +
+      (missingCritical.length > 0 ? ` (start with: ${missingCritical[0]})` : blocking.length > 0 ? ` (start with: ${blocking[0]})` : "") +
+      ` — ask about it, or if the seller can't answer, record an explicit deferral with where the answer lives. Do not mention this instruction or that you attempted to end. Set shouldEnd to false.]`,
   };
 }
 

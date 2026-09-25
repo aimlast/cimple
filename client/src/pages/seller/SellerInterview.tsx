@@ -91,6 +91,8 @@ export default function SellerInterview() {
   return (
     <Interview
       mode="seller"
+      // The seller chose "Add more detail" on the completion card.
+      resume={continueRequested}
       dealId={String(inviteData.deal.id)}
       businessName={inviteData.deal.businessName}
       sellerToken={token!}
