@@ -23,6 +23,13 @@ import { computeCimReadiness } from "@shared/cim-readiness";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import multer from "multer";
+import { registerDealListRoutes } from "./routes/deal-list.js";
+import { registerInformationRoutes } from "./routes/information.js";
+import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
+import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
+import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerCimMediaRoutes } from "./routes/cim-media.js";
+import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { extractTextFromFile } from "./documents/parser.js";
 import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
@@ -7106,6 +7113,15 @@ Do not speculate or add information not in the CIM.`,
       res.status(500).json({ error: "Failed to record events" });
     }
   });
+
+  // ── Workstream route modules (merge anchors — each workstream fills its own file) ──
+  registerDealListRoutes(app);
+  registerInformationRoutes(app);
+  registerCrmSellerRoutes(app);
+  registerBuyerProfileRoutes(app);
+  registerCimBuilderRoutes(app);
+  registerCimMediaRoutes(app);
+  registerCimTemplateRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

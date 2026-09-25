@@ -220,6 +220,7 @@ export const deals = pgTable("deals", {
   phase: text("phase").notNull().default("phase1_info_collection"),
   // Phases: phase1_info_collection, phase2_platform_intake, phase3_content_creation, phase4_design_finalization
   status: text("status").notNull().default("draft"),
+  // @anchor:deals-cols:list
   // Status within phase: draft, in_progress, pending_review, approved, completed
   
   // Phase 1 data
@@ -250,6 +251,7 @@ export const deals = pgTable("deals", {
   
   // Public data scrape
   websiteUrl: text("website_url"),
+  // @anchor:deals-cols:crm
   scrapedAt: timestamp("scraped_at"),
   scrapedData: jsonb("scraped_data"),   // Unverified public data — confirmed during AI interview
   scrapeSource: text("scrape_source"),  // "website" | "internet_search" | "website_and_internet"
@@ -299,12 +301,14 @@ export const deals = pgTable("deals", {
   // Likely acquirers from outside the broker's buyer list, researched on the
   // web (server/matching/external-acquirers.ts). Broker-facing only.
   externalAcquirers: jsonb("external_acquirers").$type<ExternalAcquirerSearch>(),
+  // @anchor:deals-cols:info
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section
   // override — section titles and the view-room header — with the same name
   // the section content was redacted to.
   blindCodename: text("blind_codename"),
+  // @anchor:deals-cols:cim
 
   // Buyer access settings
   ndaRequired: boolean("nda_required").default(true),
@@ -316,6 +320,7 @@ export const deals = pgTable("deals", {
   isLive: boolean("is_live").default(false),
   
   // Metadata
+  // @anchor:deals-cols:seed
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -363,6 +368,7 @@ export const documents = pgTable("documents", {
   isRequired: boolean("is_required").default(false),
   promisedAt: timestamp("promised_at"), // when seller promised to provide
   
+  // @anchor:documents-cols:info
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -483,6 +489,7 @@ export const cimSections = pgTable("cim_sections", {
   charts: jsonb("charts"),
   images: jsonb("images"),
 
+  // @anchor:cim-sections-cols:cim
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -702,6 +709,7 @@ export const buyerAccess = pgTable("buyer_access", {
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
 
+  // @anchor:buyer-access-cols:buyers
   createdAt: timestamp("created_at").defaultNow().notNull(),
   lastAccessedAt: timestamp("last_accessed_at"),
 });
@@ -808,6 +816,7 @@ export const brandingSettings = pgTable("branding_settings", {
   footerTemplate: text("footer_template"),
   disclaimer: text("disclaimer"),
   
+  // @anchor:branding-cols:cim
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1657,6 +1666,7 @@ export const buyerUsers = pgTable("buyer_users", {
   resetTokenExpiresAt: timestamp("reset_token_expires_at"),
 
   lastLoginAt: timestamp("last_login_at"),
+  // @anchor:buyer-users-cols:buyers
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1729,6 +1739,7 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   crmSyncedAt: timestamp("crm_synced_at"),
 
   addedAt: timestamp("added_at").defaultNow().notNull(),
+  // @anchor:contacts-cols:buyers
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1892,3 +1903,26 @@ export const insertDealDocumentRequirementSchema = createInsertSchema(dealDocume
 });
 export type InsertDealDocumentRequirement = z.infer<typeof insertDealDocumentRequirementSchema>;
 export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSelect;
+
+// ════════════════════════════════════════════════════════════════════
+// Workstream merge anchors — each workstream adds its NEW tables, types
+// and helpers directly below its own anchor (keeps parallel merges clean).
+// ════════════════════════════════════════════════════════════════════
+
+// @anchor:schema-tail:list
+// (deal-list workstream)
+
+// @anchor:schema-tail:info
+// (information workstream)
+
+// @anchor:schema-tail:crm
+// (crm-seller workstream)
+
+// @anchor:schema-tail:buyers
+// (buyers workstream)
+
+// @anchor:schema-tail:cim
+// (cim workstreams)
+
+// @anchor:schema-tail:seed
+// (seed workstream)

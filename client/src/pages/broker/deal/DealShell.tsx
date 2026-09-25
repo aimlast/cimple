@@ -25,6 +25,8 @@ import { QATab } from "./QATab";
 import { TeamTab } from "./TeamTab";
 import { FinancialsTab } from "./FinancialsTab";
 import { InterviewReviewTab } from "./InterviewReviewTab";
+import { InformationTab } from "./InformationTab";
+import { CimTab } from "./CimTab";
 import type { Deal } from "@shared/schema";
 
 /* ═══════════════════════════════════════════
@@ -32,6 +34,8 @@ import type { Deal } from "@shared/schema";
 ═══════════════════════════════════════════ */
 const TABS = [
   { key: "overview", label: "Overview" },
+  { key: "information", label: "Information" },
+  { key: "cim", label: "CIM" },
   { key: "buyers", label: "Buyers" },
   { key: "qa", label: "Q&A" },
   { key: "team", label: "Team" },
@@ -167,6 +171,8 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
       {/* ── Tab content ── */}
       <div className="flex-1 overflow-y-auto scrollbar-thin">
         {activeTab === "overview" && <OverviewTab phaseFocus={phaseFocus} />}
+        {activeTab === "information" && <InformationTab />}
+        {activeTab === "cim" && <CimTab />}
         {activeTab === "buyers" && <BuyersTab />}
         {activeTab === "qa" && <QATab />}
         {activeTab === "team" && <TeamTab />}

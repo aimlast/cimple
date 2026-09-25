@@ -28,6 +28,7 @@ import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import SellerNdaPage from "@/pages/SellerNdaPage";
 import Integrations from "@/pages/Integrations";
 import Buyers from "@/pages/Buyers";
+import BuyerProfilePage from "@/pages/BuyerProfilePage";
 import SellerLayout from "@/layouts/SellerLayout";
 import SellerInterview from "@/pages/seller/SellerInterview";
 import BuyerLayout from "@/layouts/BuyerLayout";
@@ -51,6 +52,7 @@ function Routes() {
       <Route path="/broker" component={BrokerDashboard} />
       <Route path="/broker/deals" component={ActiveCIMs} />
       <Route path="/broker/analytics" component={Analytics} />
+      <Route path="/broker/buyers/:buyerId" component={BuyerProfilePage} />
       <Route path="/broker/buyers" component={Buyers} />
       <Route path="/broker/integrations" component={Integrations} />
       <Route path="/broker/settings" component={Settings} />
