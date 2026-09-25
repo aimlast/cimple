@@ -241,6 +241,8 @@ app.use((req, res, next) => {
     log(`serving on port ${port}`);
     // Start the buyer-decision reminder scheduler (runs every 6 hours)
     startReminderScheduler();
+    // Re-sync CRM buyer contacts for brokers who switched automatic sync on.
+    import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
   });
 
   // Graceful shutdown: Railway sends SIGTERM when replacing a deployment.

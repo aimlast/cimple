@@ -612,6 +612,9 @@ export const buyerAccess = pgTable("buyer_access", {
   prequalified: boolean("prequalified").default(false),
   proofOfFunds: boolean("proof_of_funds").default(false),
   buyerNotes: text("buyer_notes"), // broker's internal notes
+  // What the buyer answered on the NDA / buyer-profile step, exactly as submitted
+  // (kept per deal as the record of what they told us when they signed).
+  ndaProfile: jsonb("nda_profile"),
 
   // Deep buyer criteria (JSONB — see BUYER_CRITERIA_SECTIONS for structure)
   buyerCriteria: jsonb("buyer_criteria").default(sql`'{}'::jsonb`),
@@ -1659,9 +1662,21 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
   brokerId: varchar("broker_id").notNull(),
   buyerUserId: varchar("buyer_user_id").notNull(),
-  source: text("source").notNull().default("manual"),  // manual | csv | crm | deal | signup
+  source: text("source").notNull().default("manual"),  // manual | csv | crm | deal | signup | nda
   tags: jsonb("tags").default(sql`'[]'::jsonb`),       // string[]
   notes: text("notes"),
+
+  // CRM-derived buyer profile — PRIVATE to this broker. Built from the
+  // broker's own CRM record (notes, deals, custom fields), so it must never
+  // be written onto the global buyer_users row (the buyer can see that row,
+  // and so can other brokers' matching). Matching merges it under whatever
+  // the buyer entered themselves (see mergeBuyerProfile).
+  crmProvider: text("crm_provider"),                   // pipedrive | hubspot | salesforce
+  crmRecordId: text("crm_record_id"),
+  crmProfile: jsonb("crm_profile"),                    // CrmBuyerProfile
+  crmSyncKey: text("crm_sync_key"),                    // change detector — unchanged records skip re-extraction
+  crmSyncedAt: timestamp("crm_synced_at"),
+
   addedAt: timestamp("added_at").defaultNow().notNull(),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -1674,6 +1689,51 @@ export const insertBrokerBuyerContactSchema = createInsertSchema(brokerBuyerCont
 });
 export type InsertBrokerBuyerContact = z.infer<typeof insertBrokerBuyerContactSchema>;
 export type BrokerBuyerContact = typeof brokerBuyerContacts.$inferSelect;
+
+/** Buyer profile extracted from a broker's CRM record (broker-private). */
+export interface CrmBuyerProfile {
+  buyerType?: string | null;
+  /** Broker-facing one/two-sentence summary. Never shown to the buyer. */
+  background?: string | null;
+  liquidFunds?: string | null;
+  hasProofOfFunds?: boolean | null;
+  targetIndustries?: string[];
+  targetLocations?: string[];
+  /** Keys from BUYER_CRITERIA_SECTIONS only. */
+  buyerCriteria?: Record<string, any>;
+  /** Listings this buyer asked about in the CRM (deal titles + stage). */
+  inquiries?: Array<{ title: string; stage?: string | null; status?: string | null }>;
+  /** Fields the model inferred (e.g. industry from a listing they enquired on) rather than read. */
+  inferred?: string[];
+  extractedAt?: string;
+}
+
+type ProfileLike = Pick<BuyerUser,
+  "buyerType" | "background" | "liquidFunds" | "hasProofOfFunds" | "targetIndustries" | "targetLocations" | "buyerCriteria">;
+
+/**
+ * Effective matching profile for one broker: what the buyer entered
+ * themselves always wins; the broker's private CRM profile only fills gaps.
+ * Returns a BuyerUser-shaped object (profileCompletionPct recomputed) so it
+ * can be passed straight to the matching engine and the lead scorer.
+ */
+export function mergeBuyerProfile<T extends BuyerUser>(buyer: T, crm?: CrmBuyerProfile | null): T {
+  if (!crm) return buyer;
+  const own: ProfileLike = buyer;
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+  const merged: T = {
+    ...buyer,
+    buyerType: own.buyerType || crm.buyerType || null,
+    background: own.background || crm.background || null,
+    liquidFunds: own.liquidFunds || crm.liquidFunds || null,
+    hasProofOfFunds: !!own.hasProofOfFunds || !!crm.hasProofOfFunds,
+    targetIndustries: (arr(own.targetIndustries).length ? arr(own.targetIndustries) : arr(crm.targetIndustries)) as any,
+    targetLocations: (arr(own.targetLocations).length ? arr(own.targetLocations) : arr(crm.targetLocations)) as any,
+    buyerCriteria: { ...(crm.buyerCriteria || {}), ...((own.buyerCriteria as Record<string, any>) || {}) } as any,
+  };
+  merged.profileCompletionPct = Math.max(buyer.profileCompletionPct ?? 0, calculateBuyerProfileCompletion(merged));
+  return merged;
+}
 
 // ────────────────────────────────────────────────────────────────────
 // Deal Outreach

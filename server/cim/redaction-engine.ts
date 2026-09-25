@@ -9,6 +9,7 @@
  * Preserves: all financial figures, percentages, operational metrics, industry terms.
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { blindIdentifiers } from "@shared/blind-identifiers";
 import type { CimSection } from "@shared/schema";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
@@ -36,14 +37,13 @@ export async function generateBlindOverrides(
 ): Promise<{ codename: string; overrides: RedactionResult[] }> {
   // Build a mapping of known identifiers to help the AI
   const extractedInfo = deal.extractedInfo || {};
-  const knownIdentifiers: string[] = [
-    deal.businessName,
-    extractedInfo.locations,
-    extractedInfo.ownerName,
+  const knownIdentifiers: string[] = Array.from(new Set([
+    ...blindIdentifiers(deal),
     extractedInfo.contactEmail,
     extractedInfo.contactPhone,
     extractedInfo.address,
-  ].filter(Boolean);
+    extractedInfo.leaseAddress,
+  ].filter((v): v is string => typeof v === "string" && v.length > 0)));
 
   // Generate a project codename
   const codenames = [

@@ -11,6 +11,7 @@
  * inspector never writes redacted/enriched text back into the base section.
  */
 import { useState, useCallback, useEffect, useMemo, useRef } from "react";
+import { blindTitleRedactor } from "@shared/blind-identifiers";
 import { useParams } from "wouter";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -174,16 +175,7 @@ export default function CIMDesigner() {
   // the same codename the content was redacted to.
   const redactTitle = useMemo(() => {
     if (previewMode !== "blind" || !versionExists || !deal) return (t: string) => t;
-    const codename = deal.blindCodename || null;
-    const info = (deal.extractedInfo as Record<string, any> | null) ?? null;
-    const identifiers = [deal.businessName, info?.ownerName, info?.locations]
-      .filter((v): v is string => typeof v === "string" && v.length > 0);
-    if (!codename || identifiers.length === 0) return (t: string) => t;
-    const nameRegex = new RegExp(
-      identifiers.map(s => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|"),
-      "gi",
-    );
-    return (t: string) => t.replace(nameRegex, codename);
+    return blindTitleRedactor(deal as any, deal.blindCodename || null);
   }, [deal, previewMode, versionExists]);
 
   // Apply overrides for preview mode

@@ -191,6 +191,108 @@ function textMatchesAny(text: string, targets: string[]): boolean {
   });
 }
 
+// ── Industry / location matching ────────────────────────────────────────────
+// Buyer criteria come from people and CRM notes ("dental", "GTA", "southern
+// Ontario", "home services"), deals are filed under broad labels
+// ("Healthcare", "Unit 4, 210 Fairway Rd S, Kitchener, Ontario"). Plain
+// substring matching missed most real matches, so both sides are compared on
+// meaningful words, with a small taxonomy of parent industries and regions.
+
+const INDUSTRY_FILLER = new Set([
+  "business", "businesses", "company", "companies", "industry", "industries", "sector", "sectors", "service", "services",
+  "practice", "practices", "firm", "firms", "shop", "shops", "store", "stores", "and", "the", "of", "or", "related", "type",
+  "small", "medium", "large", "established", "profitable", "any", "other", "general", "local", "based", "provider", "providers",
+]);
+/** Parent industry → words that belong to it (both directions count as a match). */
+const INDUSTRY_FAMILIES: Record<string, string[]> = {
+  healthcare: ["health", "healthcare", "medical", "dental", "dentist", "orthodont", "clinic", "physio", "physiotherapy", "chiropract", "pharmacy", "optometr", "optical", "veterinar", "vet", "home care", "homecare", "senior care", "massage", "rehab"],
+  "home services": ["hvac", "heating", "cooling", "air conditioning", "plumbing", "plumber", "electrical", "electrician", "roofing", "landscap", "lawn", "cleaning", "janitorial", "pest", "restoration", "garage door", "pool", "handyman", "renovation"],
+  construction: ["construction", "contractor", "contracting", "general contractor", "renovation", "electrical", "plumbing", "roofing", "excavat", "paving", "concrete", "framing", "drywall"],
+  "food service": ["restaurant", "cafe", "café", "coffee", "bakery", "bar", "pub", "catering", "food service", "franchise restaurant", "pizza", "fast food", "tavern"],
+  "professional services": ["accounting", "bookkeeping", "payroll", "tax", "legal", "law", "consulting", "marketing agency", "agency", "insurance brokerage", "engineering", "architecture", "staffing"],
+  manufacturing: ["manufactur", "fabrication", "welding", "machining", "machine shop", "metal", "plastics", "printing", "packaging"],
+  retail: ["retail", "boutique", "florist", "convenience", "grocery", "butcher", "vape", "cannabis", "liquor", "pet store", "hardware", "e-commerce", "ecommerce"],
+  automotive: ["automotive", "auto repair", "mechanic", "car dealership", "dealership", "collision", "body shop", "car wash", "tire"],
+  "business services": ["b2b", "business services", "it services", "managed services", "msp", "logistics", "courier", "trucking", "transportation", "distribution", "wholesale"],
+};
+
+function words(t: string): string[] {
+  return t.toLowerCase().replace(/[^a-z0-9éè&\s-]/g, " ").split(/[\s/,&-]+/).filter(Boolean);
+}
+function stem(w: string): string {
+  return w.length > 4 ? w.replace(/(ies)$/, "y").replace(/(es|s)$/, "") : w;
+}
+function containsTerm(haystack: string, term: string): boolean {
+  const t = term.toLowerCase().trim();
+  if (!t) return false;
+  if (t.includes(" ")) return haystack.includes(t);
+  return new RegExp(`\\b${escapeRegex(stem(t))}`).test(haystack);
+}
+function familiesOf(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const [family, members] of Object.entries(INDUSTRY_FAMILIES)) {
+    if (containsTerm(text, family) || members.some((m) => containsTerm(text, m))) out.add(family);
+  }
+  return out;
+}
+
+/** Does any buyer target industry fit this deal? */
+export function industryMatches(dealText: string, targets: string[]): boolean {
+  const hay = dealText.toLowerCase();
+  if (!hay.trim()) return false;
+  if (textMatchesAny(hay, targets)) return true;
+  const dealFamilies = familiesOf(hay);
+  return targets.some((target) => {
+    const meaningful = words(target).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w));
+    // Specific term found in the deal ("dental" ⊂ "Harbourline Dental … dental practice").
+    if (meaningful.some((w) => containsTerm(hay, w))) return true;
+    // A broad target covers its family ("Healthcare" buyer ↔ dental practice;
+    // "home services" ↔ HVAC). Specific targets don't widen: an HVAC buyer is
+    // not automatically a plumbing buyer.
+    const tl = target.toLowerCase();
+    return Object.keys(INDUSTRY_FAMILIES).some((f) => dealFamilies.has(f) && (containsTerm(tl, f) || (f === "healthcare" && /\b(health|medical)\b/.test(tl))));
+  });
+}
+
+const LOCATION_FILLER = new Set(["north", "northern", "south", "southern", "east", "eastern", "west", "western", "central", "greater", "area", "region", "metro", "the", "and", "of", "near", "around", "within", "anywhere", "in", "province", "state"]);
+const CA_PROVINCES: Record<string, string> = {
+  on: "ontario", bc: "british columbia", ab: "alberta", qc: "quebec", mb: "manitoba", sk: "saskatchewan",
+  ns: "nova scotia", nb: "new brunswick", nl: "newfoundland", pe: "prince edward island", yt: "yukon", nt: "northwest territories", nu: "nunavut",
+};
+const REGION_ALIASES: Record<string, string[]> = {
+  gta: ["toronto", "mississauga", "brampton", "markham", "vaughan", "richmond hill", "oakville", "pickering", "ajax", "whitby", "oshawa", "burlington", "milton", "newmarket", "aurora", "scarborough", "etobicoke", "north york"],
+  "greater toronto": ["toronto", "mississauga", "brampton", "markham", "vaughan", "richmond hill", "oakville"],
+  "lower mainland": ["vancouver", "burnaby", "surrey", "richmond", "coquitlam", "langley", "abbotsford", "delta"],
+  "kitchener-waterloo": ["kitchener", "waterloo", "cambridge"],
+  "golden horseshoe": ["toronto", "hamilton", "burlington", "oakville", "mississauga", "st. catharines", "niagara", "oshawa"],
+};
+const US_STATES = ["alabama","alaska","arizona","arkansas","california","colorado","connecticut","delaware","florida","georgia","hawaii","idaho","illinois","indiana","iowa","kansas","kentucky","louisiana","maine","maryland","massachusetts","michigan","minnesota","mississippi","missouri","montana","nebraska","nevada","new hampshire","new jersey","new mexico","new york","north carolina","north dakota","ohio","oklahoma","oregon","pennsylvania","rhode island","south carolina","south dakota","tennessee","texas","utah","vermont","virginia","washington","west virginia","wisconsin","wyoming"];
+
+/** Does any buyer target location cover this deal's location? */
+export function locationMatches(dealLocation: string, targets: string[]): boolean {
+  let hay = ` ${dealLocation.toLowerCase().replace(/[.,]/g, " ")} `;
+  // Expand province abbreviations ("Kitchener, ON") so "Ontario" targets match.
+  for (const [abbr, name] of Object.entries(CA_PROVINCES)) {
+    if (new RegExp(`\\b${abbr}\\b`).test(hay)) hay += ` ${name} `;
+  }
+  if (textMatchesAny(hay, targets)) return true;
+  const isCanada = hay.includes("canada") || Object.values(CA_PROVINCES).some((p) => hay.includes(p));
+  const isUS = /\b(usa|united states)\b/.test(hay) || US_STATES.some((st) => hay.includes(` ${st} `) || hay.includes(` ${st}`));
+  return targets.some((raw) => {
+    const t = raw.toLowerCase().trim();
+    if (!t) return false;
+    if (/\bcanada\b/.test(t) && isCanada) return true;
+    if (/\b(us|usa|united states|america)\b/.test(t) && isUS) return true;
+    for (const [alias, cities] of Object.entries(REGION_ALIASES)) {
+      if (t.includes(alias) && cities.some((c) => hay.includes(c))) return true;
+    }
+    const abbr = CA_PROVINCES[t];
+    if (abbr && hay.includes(abbr)) return true;
+    const meaningful = words(t).filter((w) => w.length >= 3 && !LOCATION_FILLER.has(w));
+    return meaningful.length > 0 && meaningful.every((w) => hay.includes(w));
+  });
+}
+
 type CatScore = { score: number; max: number; details: Record<string, { score: number; max: number; note: string }> };
 
 function buildCatScore(details: Record<string, { score: number; max: number; note: string }>): CatScore {
@@ -307,17 +409,24 @@ export async function matchBuyerToDeal(
   // ── INDUSTRY FIT ───────────────────────────────────────────────────────────
   const industryDetails: Record<string, { score: number; max: number; note: string }> = {};
   const dealIndustry = deal.industry || "";
+  // Everything that says what the business does — the broad industry label
+  // alone ("Healthcare") can't tell a dental buyer this is a dental practice.
+  const asText = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" && "value" in (v as any) ? String((v as any).value ?? "") : "");
+  const dealIndustryText = [
+    dealIndustry, deal.subIndustry, asText(info.industry), asText(info.subIndustry), asText(info.businessType),
+    asText(info.companyName), asText(info.businessDescription).slice(0, 400), asText(info.summary).slice(0, 400),
+    asText(info.revenueStreams).slice(0, 200),
+  ].filter(Boolean).join(" · ");
 
   if (criteria.targetIndustries && criteria.targetIndustries.length > 0) {
-    const match = textMatchesAny(dealIndustry, criteria.targetIndustries) ||
-      (deal.subIndustry ? textMatchesAny(deal.subIndustry, criteria.targetIndustries) : false);
+    const match = industryMatches(dealIndustryText, criteria.targetIndustries);
     industryDetails.industry = match
       ? { score: 100, max: 100, note: `${dealIndustry} — matches target` }
       : { score: 0, max: 100, note: `${dealIndustry} — not in target list` };
   }
 
   if (criteria.excludedIndustries && criteria.excludedIndustries.length > 0) {
-    const excluded = textMatchesAny(dealIndustry, criteria.excludedIndustries);
+    const excluded = industryMatches([dealIndustry, deal.subIndustry].filter(Boolean).join(" · "), criteria.excludedIndustries);
     if (excluded) {
       industryDetails.excluded = { score: 0, max: 100, note: `${dealIndustry} — EXCLUDED industry` };
     }
@@ -340,7 +449,7 @@ export async function matchBuyerToDeal(
   const dealLocation = info.locationSite || info.location || info.leaseAddress || "";
 
   if (criteria.targetLocations && criteria.targetLocations.length > 0 && dealLocation) {
-    const match = textMatchesAny(dealLocation, criteria.targetLocations);
+    const match = locationMatches(String(dealLocation), criteria.targetLocations);
     locationDetails.location = match
       ? { score: 100, max: 100, note: `${dealLocation.slice(0, 50)} — matches target` }
       : { score: 0, max: 100, note: `${dealLocation.slice(0, 50)} — not in target locations` };

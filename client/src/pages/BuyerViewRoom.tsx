@@ -26,6 +26,7 @@ import { SectionBoundary } from "@/components/cim/SectionBoundary";
 import { ConnectedContent } from "@/components/cim/ConnectedContent";
 import { BuyerChatbot, type BuyerQuestionFeedItem } from "@/components/buyer/BuyerChatbot";
 import { BuyerDecisionPanel } from "@/components/buyer/BuyerDecisionPanel";
+import { NdaBuyerProfileGate } from "@/components/buyer/NdaBuyerProfileGate";
 
 type BuyerDecision = "under_review" | "interested" | "not_interested" | "lapsed";
 
@@ -84,76 +85,6 @@ function Watermark({ email }: { email: string }) {
             {email}
           </span>
         ))}
-      </div>
-    </div>
-  );
-}
-
-// ── NDA Gate ───────────────────────────────────────────────────────────────
-function NdaGate({ deal, token, onAccepted }: { deal: Deal; token: string; onAccepted: () => void }) {
-  const [signing, setSigning] = useState(false);
-  const [signError, setSignError] = useState<string | null>(null);
-
-  const sign = async () => {
-    setSigning(true);
-    setSignError(null);
-    try {
-      const res = await fetch(`/api/view/${token}/sign-nda`, { method: "POST" });
-      if (!res.ok) {
-        const body = await readErrorBody(res);
-        throw new Error(body.error || "Could not record your signature — please try again.");
-      }
-      // Only unlock the document once the server has actually recorded the
-      // signature; otherwise the refetch would just re-render this gate.
-      onAccepted();
-    } catch (err) {
-      setSignError(
-        err instanceof Error && err.message
-          ? err.message
-          : "Could not record your signature — please try again.",
-      );
-    } finally {
-      setSigning(false);
-    }
-  };
-
-  return (
-    <div className="fixed inset-0 z-50 bg-background flex items-center justify-center p-6">
-      <div className="max-w-lg w-full border border-border rounded-xl p-8 shadow-lg space-y-5 bg-card">
-        <div className="flex items-center gap-3">
-          <div className="h-10 w-10 rounded-lg bg-teal/10 flex items-center justify-center">
-            <Lock className="h-5 w-5 text-teal" />
-          </div>
-          <div>
-            <h2 className="font-semibold text-base">Non-Disclosure Agreement</h2>
-            <p className="text-xs text-muted-foreground">{deal.businessName} — Confidential Information Memorandum</p>
-          </div>
-        </div>
-        <Separator />
-        <p className="text-sm text-muted-foreground leading-relaxed">
-          By proceeding, you agree to keep all information contained in this Confidential
-          Information Memorandum strictly confidential. You agree not to disclose, reproduce, or
-          use this information except for the purpose of evaluating this business opportunity.
-          This agreement is legally binding.
-        </p>
-        <Button
-          className="w-full bg-teal text-teal-foreground hover:bg-teal/90"
-          onClick={sign}
-          disabled={signing}
-          data-testid="button-sign-nda"
-        >
-          {signing ? "Signing…" : "I agree — View the CIM"}
-        </Button>
-        {signError && (
-          <div
-            className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive"
-            role="alert"
-            data-testid="text-nda-error"
-          >
-            <AlertCircle className="h-3.5 w-3.5 mt-px shrink-0" />
-            <span>{signError}</span>
-          </div>
-        )}
       </div>
     </div>
   );
@@ -358,10 +289,10 @@ export default function BuyerViewRoom() {
   // after signing we refetch to receive the actual CIM content.
   if (data.ndaGate) {
     return (
-      <NdaGate
-        deal={deal}
+      <NdaBuyerProfileGate
+        dealName={deal.businessName}
         token={token!}
-        onAccepted={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token] })}
+        onAccepted={() => queryClient.invalidateQueries({ queryKey: ["/api/view", token], exact: true })}
       />
     );
   }
