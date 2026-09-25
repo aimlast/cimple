@@ -69,11 +69,13 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
     return <ProseFallback content={content} />;
   }
 
+  // One card per row on phones (a 7-digit value doesn't fit half a phone),
+  // two from 420px, the requested count from sm.
   const gridClass = {
-    2: "grid-cols-2",
-    3: "grid-cols-2 sm:grid-cols-3",
-    4: "grid-cols-2 sm:grid-cols-4",
-  }[cols] || "grid-cols-2 sm:grid-cols-3";
+    2: "grid-cols-1 min-[420px]:grid-cols-2",
+    3: "grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3",
+    4: "grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-4",
+  }[cols] || "grid-cols-1 min-[420px]:grid-cols-2 sm:grid-cols-3";
 
   return (
     <div>
@@ -87,7 +89,7 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
           <div
             key={i}
             className={cn(
-              "relative bg-card rounded-lg px-5 py-4 border",
+              "relative min-w-0 bg-card rounded-lg px-4 sm:px-5 py-4 border",
               metric.highlight
                 ? "border-teal/30 shadow-sm"
                 : "border-card-border"
@@ -99,8 +101,8 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
             )}
 
             {/* Value */}
-            <div className="flex items-baseline gap-1.5">
-              <span className="text-2xl font-semibold tracking-tight text-foreground">
+            <div className="flex flex-wrap items-baseline gap-x-1.5 min-w-0">
+              <span className="text-xl sm:text-2xl font-semibold tracking-tight text-foreground [overflow-wrap:anywhere]">
                 {currencyPrefix(metric) + String(metric.value)}
               </span>
               {metric.unit && !isCurrencyUnit(metric.unit) && (

@@ -304,7 +304,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "financial_table",
     planner: true,
-    aiSpec: "financial_table: { headers: string[], rows: [{label, values: string[], isTotal?, isSectionHeader?, indent?, bold?}], caption?, currency?, footnotes? }",
+    aiSpec: "financial_table: { headers: string[] — FIRST entry is the label-column header (\"\" or e.g. \"Line item\"), then one header per value column, oldest year first, rows: [{label, values: string[] — one per value column, same order as headers[1..]; \"\" when a year has no figure}, isTotal?, isSectionHeader?, indent?, bold?}], caption?, currency?, footnotes? }",
     aiUse: "— Use for: P&L summary, SDE normalization, balance sheet highlights, asking price build-up",
     defaultData: () => ({
       headers: ["", "2023", "2024", "2025"],
@@ -625,6 +625,22 @@ export type BuyerAccessLevel = (typeof BUYER_ACCESS_LEVELS)[number]["key"];
 
 export function isBuyerAccessLevel(v: unknown): v is BuyerAccessLevel {
   return typeof v === "string" && BUYER_ACCESS_LEVELS.some((l) => l.key === v);
+}
+
+/** Buyer-facing name of an access level ("Full CIM", "LOI", "Due diligence") — never the raw key. */
+export function buyerAccessLabel(level: string | null | undefined): string {
+  if (level === "full") return "Full CIM";
+  const known = BUYER_ACCESS_LEVELS.find((l) => l.key === level);
+  if (known) return known.label;
+  const s = String(level ?? "").replace(/_/g, " ").trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : "—";
+}
+
+/** The same name inside a sentence: "Given LOI access", "Given due diligence access", "Given full CIM access". */
+export function buyerAccessPhrase(level: string | null | undefined): string {
+  const label = buyerAccessLabel(level);
+  // Keep acronyms ("LOI"); lower-case the first letter of words.
+  return /^[A-Z]{2,}\b/.test(label) ? label : label.charAt(0).toLowerCase() + label.slice(1);
 }
 
 /** Which CIM version a buyer access level sees. */

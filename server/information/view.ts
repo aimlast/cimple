@@ -32,7 +32,6 @@ import {
   describeSource,
   isSourceKind,
   repairCharIndexedValue,
-  isUntrackedSource,
   serializeFactValue,
   getFieldCorroborations,
   SOURCE_META_KEYS,
@@ -40,6 +39,7 @@ import {
   type SourceKind,
 } from "../interview/info-merger";
 import { BROKER_DELETED_KEY, BROKER_SECTION_OF_KEY, BROKER_FACT_LABELS_KEY, websiteFactKey } from "./facts";
+import { inferFieldSources, isUntrackedSource, type InferredFieldSource } from "./infer-sources";
 
 /**
  * Per-source notes the extractor records (summaries, call logistics) — about
@@ -169,14 +169,16 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   const latest = [...sessions].sort((a, b) => +new Date(b.lastActivityAt) - +new Date(a.lastActivityAt))[0];
   const confidenceLevels = ((latest?.extractedInfo as Info | null)?._confidenceLevels as Record<string, string> | undefined) ?? {};
 
-  const sourceInfo = (src: FieldSource | undefined | null): FactSourceInfo => {
-    if (!src || !isSourceKind(src.source) || isUntrackedSource(src)) {
-      return { kind: "unknown", label: "Recorded before sources were tracked" };
+  const sourceInfo = (raw: InferredFieldSource | undefined | null): FactSourceInfo => {
+    if (!raw || !isSourceKind(raw.source) || isUntrackedSource(raw)) {
+      return { kind: "unknown", label: "Collected before Cimple recorded where each fact came from" };
     }
+    const src = raw;
     const documentName = src.documentId ? docName(src.documentId) : undefined;
     return {
       kind: src.source,
-      label: describeSource(src, docName),
+      label: describeSource(src, docName) + (src.inferred ? " (inferred)" : ""),
+      ...(src.inferred ? { inferred: true } : {}),
       ...(src.documentId ? { documentId: src.documentId } : {}),
       ...(documentName ? { documentName } : {}),
       ...(src.sessionId ? { sessionId: src.sessionId } : {}),
@@ -257,7 +259,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
 
   const makeFact = (key: string, extra: { industrySpecific?: boolean; critical?: boolean } = {}): InformationFact => {
     const value = repairCharIndexedValue(info[key]);
-    const src = sources[key];
+    const src = traced[key];
     const agree = corroboratedBy(key, value);
     return {
       key,
@@ -279,6 +281,20 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     (k) => !k.startsWith("_") && !SOURCE_META_KEYS.has(k) && hasValue(info[k]),
   );
   const assigned = new Set<string>();
+
+  // Recorded sources, completed (a session for pre-session interview facts)
+  // and, for facts collected before provenance existed, traced back to the
+  // interview / questionnaire / document / website they match (marked inferred).
+  const traced: Record<string, InferredFieldSource> = inferFieldSources({
+    info,
+    sources,
+    factKeys,
+    documents,
+    sessions,
+    sessionKind: (s) => sessionKinds.get(s.id) ?? "interview",
+    questionnaire: deal,
+    scraped: (deal.scrapedData as Info | null) || null,
+  });
 
   // Coverage — status per section (all sections, so excluded ones still
   // show their facts) and the readiness score (respecting exclusions).
@@ -343,14 +359,20 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
 
   // Counts per source kind (visible facts only)
   const counts: Partial<Record<FactSourceKind, number>> = {};
+  let inferredFacts = 0;
   for (const key of factKeys) {
-    const kind: FactSourceKind = isSourceKind(sources[key]?.source) ? sources[key].source : "unknown";
+    const t = traced[key];
+    const kind: FactSourceKind = t && !isUntrackedSource(t) ? t.source : "unknown";
     counts[kind] = (counts[kind] ?? 0) + 1;
+    if (t?.inferred) inferredFacts++;
   }
 
-  // Sources
-  const factCountWhere = (pred: (s: FieldSource) => boolean) =>
-    factKeys.filter((k) => sources[k] && pred(sources[k])).length;
+  // Sources. Counts include traced (inferred) facts; `inferredFactCount`
+  // says how many of them were matched rather than recorded.
+  const tracedWhere = (pred: (s: InferredFieldSource) => boolean) =>
+    factKeys.filter((k) => traced[k] && !isUntrackedSource(traced[k]) && pred(traced[k]));
+  const factCountWhere = (pred: (s: InferredFieldSource) => boolean) => tracedWhere(pred).length;
+  const inferredCountWhere = (pred: (s: InferredFieldSource) => boolean) => tracedWhere((s) => !!s.inferred && pred(s)).length;
   const sourcesOut: InformationSource[] = [];
   for (const d of documents) {
     const data = (d.extractedData as Record<string, unknown> | null) || {};
@@ -373,10 +395,8 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       date: meta?.date ?? new Date(d.createdAt).toISOString(),
       meta,
       visibility: d.visibility === "broker_only" ? "broker_only" : "shared",
-      factCount: factKeys.filter((k) => {
-        const s = sources[k];
-        return s && (s.documentId === d.id || Object.values(s.years ?? {}).includes(d.id));
-      }).length,
+      factCount: factCountWhere((s) => s.documentId === d.id || Object.values(s.years ?? {}).includes(d.id)),
+      inferredFactCount: inferredCountWhere((s) => s.documentId === d.id || Object.values(s.years ?? {}).includes(d.id)),
       status: d.status,
       uploadedBy: d.uploadedBy,
       fileUrl: d.fileUrl,
@@ -406,13 +426,15 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       meta: via ? { platform: via } : null,
       visibility: "shared",
       factCount: factCountWhere((src) => src.sessionId === s.id),
+      inferredFactCount: inferredCountWhere((src) => src.sessionId === s.id),
       status: s.status,
       turns,
     });
   });
   // Facts recorded by the interview before per-session provenance existed
-  const legacyInterview = factCountWhere((src) => LIVE_KINDS.has(src.source) && !src.sessionId);
-  if (legacyInterview > 0 && sessions.length === 0) {
+  // (Linked to a session by inferFieldSources whenever one exists.)
+  const legacyInterview = factCountWhere((src) => LIVE_KINDS.has(src.source) && !src.sessionId && !src.documentId);
+  if (legacyInterview > 0) {
     sourcesOut.push({ id: "interview", kind: "interview", title: "AI interview", date: null, meta: null, visibility: "shared", factCount: legacyInterview });
   }
   if (deal.questionnaireData || (counts.questionnaire ?? 0) > 0) {
@@ -424,6 +446,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       meta: null,
       visibility: "shared",
       factCount: factCountWhere((src) => src.source === "questionnaire"),
+      inferredFactCount: inferredCountWhere((src) => src.source === "questionnaire"),
     });
   }
   const scraped = (deal.scrapedData as Record<string, unknown> | null) || null;
@@ -436,6 +459,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       meta: deal.websiteUrl ? { url: deal.websiteUrl } : null,
       visibility: "shared",
       factCount: factCountWhere((src) => src.source === "website" && !src.documentId),
+      inferredFactCount: inferredCountWhere((src) => src.source === "website" && !src.documentId),
     });
   }
   if ((counts.broker ?? 0) > 0) {
@@ -488,6 +512,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     sources: sourcesOut,
     counts,
     totalFacts: factKeys.length,
+    inferredFacts,
     readiness,
     deleted,
     website,

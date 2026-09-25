@@ -1796,8 +1796,8 @@ function Phase3Center() {
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight">
             Your CIM
           </h2>
@@ -1818,7 +1818,7 @@ function Phase3Center() {
             </p>
           )}
         </div>
-        <div className="flex flex-wrap items-center gap-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
             deal.phase === "phase4_design_finalization" ? (
               <span className="text-xs font-medium text-success flex items-center gap-1">

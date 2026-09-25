@@ -20,6 +20,10 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { useElementWidth } from "./chartFormat";
+
+/** Below this container width the build-up is drawn as labelled horizontal rows. */
+const NARROW_WIDTH = 520;
 
 interface WaterfallItem {
   label: string;
@@ -180,6 +184,7 @@ function WaterfallTooltip({ active, payload, currency }: CustomTooltipProps) {
 
 export function WaterfallChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const { ref: widthRef, width } = useElementWidth<HTMLDivElement>();
   const data: WaterfallLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const items = data.items || [];
 
@@ -199,13 +204,21 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
     total: primaryColor,
   };
 
+  // Until measured, fall back to the viewport so a phone never flashes the
+  // wide chart with colliding labels.
+  const measured = width || (typeof window !== "undefined" ? window.innerWidth : 1024);
+  const narrow = measured < NARROW_WIDTH;
+
   return (
-    <div>
+    <div ref={widthRef}>
       {data.title && (
         <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
           {data.title}
         </h3>
       )}
+      {narrow ? (
+        <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} />
+      ) : (
       <ResponsiveContainer width="100%" height={Math.max(280, waterfallData.length * 40)}>
         <BarChart
           data={waterfallData}
@@ -248,9 +261,10 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      )}
 
       {/* Legend */}
-      <div className="flex items-center justify-center gap-6 mt-3">
+      <div className="flex flex-wrap items-center justify-center gap-x-6 gap-y-1 mt-3">
         <div className="flex items-center gap-1.5">
           <span className="w-2.5 h-2.5 rounded-sm" style={{ backgroundColor: theme.positive }} />
           <span className="text-[11px] text-muted-foreground">Addback</span>
@@ -264,6 +278,58 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
           <span className="text-[11px] text-muted-foreground">Total</span>
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Phone-width build-up: one labelled row per step with its amount and a bar
+ * segment on a shared scale, so long addback names wrap instead of colliding.
+ */
+function WaterfallRows({
+  data,
+  colorMap,
+  currency,
+}: {
+  data: WaterfallBarData[];
+  colorMap: Record<string, string>;
+  currency?: string;
+}) {
+  const lo = Math.min(0, ...data.map((d) => d.base), ...data.map((d) => d.total));
+  const hi = Math.max(1, ...data.map((d) => d.base + d.value), ...data.map((d) => d.total));
+  const span = hi - lo || 1;
+  return (
+    <div className="space-y-3">
+      {data.map((d, i) => {
+        const emphasis = d.type === "start" || d.type === "total";
+        const amount =
+          d.type === "add" ? `+${formatCurrency(d.rawValue, currency)}` : formatCurrency(d.rawValue, currency);
+        return (
+          <div key={i}>
+            <div className="flex items-baseline justify-between gap-3 text-xs">
+              <span className={emphasis ? "font-semibold text-foreground min-w-0" : "text-foreground/80 min-w-0"}>
+                {d.name}
+              </span>
+              <span
+                className={emphasis ? "font-semibold tabular-nums shrink-0 text-foreground" : "font-medium tabular-nums shrink-0"}
+                style={emphasis ? undefined : { color: colorMap[d.type] }}
+              >
+                {amount}
+              </span>
+            </div>
+            <div className="relative mt-1 h-2 rounded-sm bg-muted/40">
+              <div
+                className="absolute top-0 bottom-0 rounded-sm"
+                style={{
+                  left: `${((d.base - lo) / span) * 100}%`,
+                  width: `${Math.max(0.8, (d.value / span) * 100)}%`,
+                  backgroundColor: colorMap[d.type],
+                }}
+              />
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }

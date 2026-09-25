@@ -301,26 +301,28 @@ export default function Settings() {
       </div>
 
       <Tabs defaultValue={initialTab} className="w-full">
-        <TabsList className="flex w-full justify-start overflow-x-auto scrollbar-hide sm:grid sm:grid-cols-5">
-          <TabsTrigger value="account" className="flex shrink-0 items-center gap-2">
-            <User className="h-4 w-4" />
+        {/* Phones: all five tabs visible on two rows (a sideways-scrolling strip
+            hid Defaults and Integrations with no cue). */}
+        <TabsList className="grid w-full h-auto grid-cols-3 gap-1 sm:h-10 sm:grid-cols-5">
+          <TabsTrigger value="account" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <User className="hidden sm:block h-4 w-4 shrink-0" />
             Account
           </TabsTrigger>
-          <TabsTrigger value="notifications" className="flex shrink-0 items-center gap-2">
-            <Bell className="h-4 w-4" />
+          <TabsTrigger value="notifications" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Bell className="hidden sm:block h-4 w-4 shrink-0" />
             Notifications
           </TabsTrigger>
-          <TabsTrigger value="brand" className="flex shrink-0 items-center gap-2" data-testid="tab-brand">
-            <Palette className="h-4 w-4" />
+          <TabsTrigger value="brand" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm" data-testid="tab-brand">
+            <Palette className="hidden sm:block h-4 w-4 shrink-0" />
             <span className="hidden sm:inline">Brand &amp; templates</span>
             <span className="sm:hidden">Brand</span>
           </TabsTrigger>
-          <TabsTrigger value="defaults" className="flex shrink-0 items-center gap-2">
-            <Settings2 className="h-4 w-4" />
+          <TabsTrigger value="defaults" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Settings2 className="hidden sm:block h-4 w-4 shrink-0" />
             Defaults
           </TabsTrigger>
-          <TabsTrigger value="integrations" className="flex shrink-0 items-center gap-2">
-            <Link2 className="h-4 w-4" />
+          <TabsTrigger value="integrations" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Link2 className="hidden sm:block h-4 w-4 shrink-0" />
             Integrations
           </TabsTrigger>
         </TabsList>

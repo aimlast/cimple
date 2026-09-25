@@ -19,6 +19,7 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { Deal, CimSection } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
+import { buyerAccessLabel } from "@shared/cim-layouts";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
 import { CimDesignProvider, buildCimDesign, type CimDesignPayload } from "@/components/cim/CimDesignContext";
 import { CimSheet } from "@/components/cim/CimSheet";
@@ -436,7 +437,7 @@ export default function BuyerViewRoom() {
               <div className="px-1 space-y-1.5 text-xs">
                 <div className="flex justify-between text-muted-foreground">
                   <span>Access</span>
-                  <Badge variant="outline" className="text-[9px] h-4 capitalize">{access.accessLevel}</Badge>
+                  <Badge variant="outline" className="text-[9px] h-4">{buyerAccessLabel(access.accessLevel)}</Badge>
                 </div>
                 {access.canDownload === false && (
                   <div className="flex items-center gap-1 text-muted-foreground/60">

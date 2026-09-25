@@ -255,7 +255,7 @@ export function BuyersTab() {
             </p>
           </div>
         ) : (
-          <div className="rounded-lg border border-border overflow-x-auto">
+          <div className="relative rounded-lg border border-border overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="border-b border-border bg-muted/30">
@@ -385,7 +385,7 @@ export function BuyersTab() {
                           {/* Which CIM version this buyer sees (teaser → blind with locked
                               sections, full → blind, LOI → named, DD → named + DD detail). */}
                           <div className="mt-1.5 flex items-center gap-1.5">
-                            <span className="text-[11px] text-muted-foreground">CIM access</span>
+                            <span className="text-[11px] text-muted-foreground whitespace-nowrap">CIM access</span>
                             <AccessLevelSelect dealId={dealId} buyer={buyer} />
                           </div>
                         </div>

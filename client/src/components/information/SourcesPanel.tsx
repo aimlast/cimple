@@ -64,12 +64,15 @@ export function SourcesPanel({
   onFilterSource,
   onOpen,
   onAdd,
+  untrackedFacts = 0,
 }: {
   sources: InformationSource[];
   activeSourceId: string | null;
   onFilterSource: (id: string | null) => void;
   onOpen: (src: InformationSource) => void;
   onAdd: () => void;
+  /** Facts collected before source tracking that match no source. */
+  untrackedFacts?: number;
 }) {
   const sorted = [...sources].sort((a, b) => {
     const ad = a.date ? +new Date(a.date) : 0;
@@ -82,6 +85,11 @@ export function SourcesPanel({
         <div>
           <h3 className="text-sm font-semibold">Sources</h3>
           <p className="text-[11px] text-muted-foreground">{sources.length} source{sources.length === 1 ? "" : "s"}</p>
+          {untrackedFacts > 0 && (
+            <p className="text-[11px] text-muted-foreground/80 mt-0.5 max-w-[15rem] leading-snug" data-testid="sources-untracked-note">
+              {untrackedFacts} earlier fact{untrackedFacts === 1 ? "" : "s"} can't be traced to one of these.
+            </p>
+          )}
         </div>
         <Button size="sm" className="h-7 text-xs gap-1 bg-teal text-teal-foreground hover:bg-teal/90" onClick={onAdd} data-testid="button-open-add-source">
           <Plus className="h-3 w-3" /> Add source
@@ -125,6 +133,7 @@ export function SourcesPanel({
                     type="button"
                     onClick={() => onFilterSource(active ? null : s.id)}
                     disabled={s.factCount === 0}
+                    aria-label={s.factCount === 0 ? "No facts traced to this source" : `${s.factCount} facts: show only these`}
                     className={`shrink-0 text-[11px] tabular-nums rounded-full px-2 py-0.5 border transition-colors ${
                       active
                         ? "border-teal/50 bg-teal/10 text-teal"
@@ -132,10 +141,17 @@ export function SourcesPanel({
                           ? "border-transparent text-muted-foreground/50"
                           : "border-border text-muted-foreground hover:text-foreground hover:border-teal/40"
                     }`}
-                    title={s.factCount ? "Show only the facts from this source" : "No facts on file from this source"}
+                    title={
+                      s.factCount
+                        ? `Show only the facts from this source${s.inferredFactCount ? ` (${s.inferredFactCount === s.factCount ? "all" : s.inferredFactCount} traced by matching values, from before source tracking)` : ""}`
+                        : untrackedFacts > 0
+                          ? "No fact on file traces back to this source (some earlier facts can't be traced to any source)"
+                          : "No facts on file from this source"
+                    }
                     data-testid={`source-facts-${s.id}`}
                   >
-                    {s.factCount} fact{s.factCount === 1 ? "" : "s"}
+                    {/* A bare "0 facts" reads as broken when earlier facts can't be traced, so show a dash then. */}
+                    {s.factCount === 0 && untrackedFacts > 0 ? "—" : `${s.factCount} fact${s.factCount === 1 ? "" : "s"}`}
                   </button>
                 </div>
               </li>
@@ -181,12 +197,20 @@ export function SourceViewer({
     queryFn: () => requestJson<SourceText>("GET", `/api/deals/${dealId}/information/sources/${docId}/text`),
   });
   const del = useMutation({
-    mutationFn: () => requestJson("DELETE", `/api/documents/${docId}`),
-    onSuccess: () => {
+    mutationFn: () => requestJson<{ removedFields?: string[] }>("DELETE", `/api/documents/${docId}`),
+    onSuccess: (res) => {
       queryClient.invalidateQueries({ queryKey: informationKey(dealId) });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "documents"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId], exact: true });
-      toast({ title: "Source deleted", description: "The facts it contributed were removed too." });
+      // Say what the server actually did: a source whose facts were only matched
+      // by inference (or that gave none) removes nothing.
+      const removed = new Set((res?.removedFields ?? []).map((k) => k.split(":")[0])).size;
+      toast({
+        title: "Source deleted",
+        description: removed > 0
+          ? `What it contributed to ${removed} fact${removed === 1 ? "" : "s"} was removed too.`
+          : "No facts on file were removed.",
+      });
       setConfirmDelete(false);
       onClose();
     },
@@ -198,6 +222,10 @@ export function SourceViewer({
   const line = metaLine(source.kind, source.meta, source.date);
   const h = source.highlights;
   const isPdf = (data?.mimeType ?? "").includes("pdf") || /\.pdf$/i.test(source.fileUrl ?? "");
+  // Deleting a document removes the facts RECORDED from it; facts only traced
+  // to it (collected before source tracking) stay.
+  const inferredFacts = source.inferredFactCount ?? 0;
+  const recordedFacts = Math.max(0, source.factCount - inferredFacts);
 
   return (
     <>
@@ -283,8 +311,13 @@ export function SourceViewer({
           <AlertDialogHeader>
             <AlertDialogTitle>Delete this source?</AlertDialogTitle>
             <AlertDialogDescription>
-              "{source.title}" and the {source.factCount} fact{source.factCount === 1 ? "" : "s"} it contributed will be removed.
-              Where another source gave a value for the same fact, that value takes its place.
+              {recordedFacts > 0
+                ? <>"{source.title}" and the {recordedFacts} fact{recordedFacts === 1 ? "" : "s"} it contributed will be removed.
+                  Where another source gave a value for the same fact, that value takes its place.</>
+                : <>"{source.title}" will be removed. No fact on file was recorded from it, so none are removed.</>}
+              {inferredFacts > 0 && (
+                <> {inferredFacts} earlier fact{inferredFacts === 1 ? "" : "s"} that match{inferredFacts === 1 ? "es" : ""} it stay{inferredFacts === 1 ? "s" : ""} on file.</>
+              )}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

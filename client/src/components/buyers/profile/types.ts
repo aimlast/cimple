@@ -179,7 +179,8 @@ export function parseMoney(v: unknown): number | null {
 export function formatMoney(v: unknown): string {
   const n = parseMoney(v);
   if (n == null) return typeof v === "string" ? v : "—";
-  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(n % 1_000_000 === 0 ? 0 : 1)}M`;
+  // $1.25M stays $1.25M (a buyer's range must not read "$1.3M").
+  if (n >= 1_000_000) return `$${(n / 1_000_000).toFixed(2).replace(/\.?0+$/, "")}M`;
   if (n >= 1_000) return `$${Math.round(n / 1_000)}K`;
   return `$${Math.round(n)}`;
 }

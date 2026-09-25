@@ -176,7 +176,9 @@ export default function ActiveCIMs() {
         </div>
 
         {/* Pipeline strip — clicking a phase filters to it */}
-        <div className="flex items-end overflow-x-auto scrollbar-none -mx-1 px-1">
+        {/* Phones: a 3-column grid so every phase and Live stay visible;
+            from sm, one row. */}
+        <div className="grid grid-cols-3 gap-x-4 gap-y-4 sm:flex sm:items-end sm:gap-0 sm:overflow-x-auto scrollbar-hide sm:-mx-1 sm:px-1">
           {phaseCounts.map((p) => {
             const on = prefs.phases.length === 1 && prefs.phases[0] === p.key;
             return (
@@ -186,7 +188,7 @@ export default function ActiveCIMs() {
                 onClick={() => updatePrefs({ phases: on ? [] : [p.key] })}
                 aria-pressed={on}
                 title={on ? "Show all phases" : `Show only ${p.label}`}
-                className="flex flex-col items-start shrink-0 pr-5 mr-5 border-r border-border text-left transition-opacity hover:opacity-80"
+                className="flex min-w-0 flex-col items-start shrink-0 sm:pr-5 sm:mr-5 sm:border-r border-border text-left transition-opacity hover:opacity-80"
                 data-testid={`stat-phase-${p.key}`}
               >
                 <span className={`text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 ${on ? "text-teal" : "text-muted-foreground/60"}`}>
@@ -195,7 +197,7 @@ export default function ActiveCIMs() {
                 <span className={`text-2xl font-semibold tabular-nums leading-none ${on ? "text-teal" : "text-foreground"}`}>
                   {isLoading ? "–" : p.count}
                 </span>
-                <span className="text-[11px] text-muted-foreground/70 mt-1.5 whitespace-nowrap">{p.label}</span>
+                <span className="max-w-full truncate text-[11px] text-muted-foreground/70 mt-1.5 whitespace-nowrap">{p.label}</span>
               </button>
             );
           })}
@@ -204,7 +206,7 @@ export default function ActiveCIMs() {
             onClick={() => updatePrefs({ liveOnly: !prefs.liveOnly })}
             aria-pressed={prefs.liveOnly}
             title={prefs.liveOnly ? "Show all deals" : "Show only live deals"}
-            className="flex flex-col items-start shrink-0 text-left transition-opacity hover:opacity-80"
+            className="flex min-w-0 flex-col items-start shrink-0 text-left transition-opacity hover:opacity-80"
             data-testid="stat-live"
           >
             <span className="text-[10px] font-semibold uppercase tracking-[0.1em] mb-1 text-success/70">Live</span>

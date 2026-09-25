@@ -3,7 +3,7 @@
  * choose where it goes and whether the AI writes it from the deal's
  * information or it starts blank.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Loader2, Lock, PenLine, Sparkles, Users } from "lucide-react";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -39,6 +39,9 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
   const [mode, setMode] = useState<"ai" | "blank">("ai");
   const [brief, setBrief] = useState("");
   const [tier, setTier] = useState<"teaser" | "full">("teaser");
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const titleRef = useRef<HTMLInputElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // Fresh form each time it opens, positioned where the broker clicked.
   useEffect(() => {
@@ -75,13 +78,27 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-5xl w-[calc(100vw-2rem)] p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden">
+      <DialogContent
+        ref={contentRef}
+        className="max-w-5xl w-[calc(100vw-2rem)] p-0 gap-0 max-h-[92vh] flex flex-col overflow-hidden focus:outline-none"
+        // On phones the gallery and the form share one scroll area: focusing the
+        // title would scroll every layout choice out of view (and open the
+        // keyboard). There, open at the top of the gallery; on wider screens,
+        // focus the title without scrolling.
+        onOpenAutoFocus={(e) => {
+          e.preventDefault();
+          if (bodyRef.current) bodyRef.current.scrollTop = 0;
+          const wide = typeof window !== "undefined" && window.matchMedia("(min-width: 768px)").matches;
+          if (wide) titleRef.current?.focus({ preventScroll: true });
+          else contentRef.current?.focus({ preventScroll: true });
+        }}
+      >
         <DialogHeader className="px-5 pt-5 pb-3 border-b border-border shrink-0">
           <DialogTitle>Add a section</DialogTitle>
           <DialogDescription>Choose how it looks, name it, and decide whether the AI writes it for you.</DialogDescription>
         </DialogHeader>
 
-        <div className="flex-1 min-h-0 overflow-y-auto md:overflow-hidden md:grid md:grid-cols-[1fr_360px]">
+        <div ref={bodyRef} className="flex-1 min-h-0 overflow-y-auto md:overflow-hidden md:grid md:grid-cols-[1fr_360px]">
           {/* Layout gallery */}
           <div className="md:overflow-y-auto p-5 md:border-r border-border">
             <LayoutGallery value={layoutType} onSelect={(l) => setLayoutType(l.key)} />
@@ -105,7 +122,7 @@ export function AddSectionDialog({ open, onOpenChange, sections, afterSectionId,
               <Label htmlFor="add-section-title" className="text-xs">Section title</Label>
               <Input
                 id="add-section-title"
-                autoFocus
+                ref={titleRef}
                 value={title}
                 maxLength={200}
                 onChange={(e) => setTitle(e.target.value)}

@@ -310,9 +310,9 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
 
   return (
     <div className="space-y-4">
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      {/* Header — stacks on phones so the buttons never push the tab sideways */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Sparkles className="h-4 w-4 text-teal" />
             Suggested buyers
@@ -323,7 +323,7 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
               : "Ranked by qualified-lead score. Cimple drafts the email — you review, edit, and send."}
           </p>
         </div>
-        <div className="flex items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-1.5 sm:shrink-0 sm:justify-end">
           <Button
             size="sm"
             className="bg-teal text-teal-foreground hover:bg-teal/90"
@@ -337,7 +337,7 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
               ? `Checking ${data?.deepCheck?.done ?? 0} of ${data?.deepCheck?.total ?? 0}…`
               : data?.deepCheck
                 ? "Re-run AI deep check"
-                : `AI deep check${data?.firstPassCount ? ` (${data.firstPassCount} buyers)` : ""}`}
+                : `AI deep check${data?.firstPassCount ? ` (${data.firstPassCount} buyer${data.firstPassCount === 1 ? "" : "s"})` : ""}`}
           </Button>
           <Button
             variant="outline"
@@ -372,8 +372,8 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       {/* Selection controls — shown whenever there is anyone to contact or
           revisit, so the contacted toggle never disappears */}
       {candidates.length > 0 && (
-        <div className="flex items-center justify-between gap-2 px-1">
-          <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2 px-1">
+          <div className="flex flex-wrap items-center gap-2">
             <span className="text-xs text-muted-foreground">
               {selected.size > 0
                 ? `${selected.size} selected`
@@ -392,7 +392,7 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
               </>
             )}
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             <label className="flex items-center gap-1.5 text-xs text-muted-foreground cursor-pointer">
               <Checkbox
                 checked={showContacted}

@@ -95,6 +95,30 @@ function isEmptyProse(section: CimSection, layoutData: Record<string, any>, cont
   return false;
 }
 
+/** Case/punctuation/whitespace-insensitive form of a heading, for comparison. */
+function headingKey(v: unknown): string {
+  return typeof v === "string" ? v.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "") : "";
+}
+
+/**
+ * The section heading is always printed above the renderer, so a renderer
+ * caption (`title` / `caption`) that just repeats it is dropped — otherwise
+ * buyers read "Revenue Composition" then "REVENUE COMPOSITION". Render-only:
+ * the stored layoutData (and the data editor) keep the field.
+ */
+export function dropRepeatedCaption<T extends Record<string, any>>(layoutData: T, sectionTitle: string | null | undefined): T {
+  const key = headingKey(sectionTitle);
+  if (!key || !layoutData || typeof layoutData !== "object") return layoutData;
+  let out = layoutData;
+  for (const field of ["title", "caption"] as const) {
+    if (headingKey(out[field]) === key) {
+      if (out === layoutData) out = { ...layoutData };
+      delete (out as any)[field];
+    }
+  }
+  return out;
+}
+
 export function CimSectionRenderer({ section, branding, brokerMode = false, hideTitle = false }: CimSectionRendererProps) {
   // Hooks first (the early returns below must not change the hook order).
   const themeVars = useThemeStyle();
@@ -104,7 +128,10 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
   // Prose fields keep their markup (renderers run them through renderInline /
   // renderProse); every other string is flattened so a chart label or metric
   // value never shows a literal "**", "[[dd]]" or "[DD]".
-  const layoutData = sanitizeLayoutData((section.layoutData as any) || {});
+  const layoutData = dropRepeatedCaption(
+    sanitizeLayoutData((section.layoutData as any) || {}),
+    UNTITLED.has(section.layoutType) ? "" : section.sectionTitle,
+  );
   // Broker edits win over the AI draft. Prose renderers also prefer this over
   // layoutData.body — see editableText.ts for the rule.
   const content = section.brokerEditedContent || section.aiDraftContent || "";

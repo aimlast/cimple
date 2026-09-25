@@ -20,6 +20,7 @@ import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
 import { blindLeakTerms } from "@shared/blind-guard";
 import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
 import type { BuyerQuestion } from "@shared/schema";
+import { normalizeFinancialTable } from "@shared/financial-table";
 
 type AnyRecord = Record<string, any>;
 
@@ -172,21 +173,22 @@ export function serializeLayoutData(layoutType: string | null | undefined, layou
       case "financial_table": {
         push("Table", d.caption);
         push("Currency", d.currency);
-        const headers: string[] = Array.isArray(d.headers) ? d.headers.map(fmt) : [];
-        for (const r of Array.isArray(d.rows) ? d.rows : []) {
-          if (!r) continue;
-          const values: string[] = Array.isArray(r.values) ? r.values.map(fmt) : [];
-          if (r.isSectionHeader && values.every((v) => !v)) {
-            lines.push(`[${fmt(r.label)}]`);
+        // Same header/value pairing as the CIM renderer (shared/financial-table).
+        const table = normalizeFinancialTable(d);
+        for (const r of table.rows) {
+          const label = fmt(r.label);
+          if (r.isSectionHeader && r.cells.every((v) => !v)) {
+            lines.push(`[${label}]`);
             continue;
           }
-          const cells = values
+          const cells = r.cells
             .map((v, i) => {
-              const h = headers[i + 1];
-              return v ? (h ? `${h} ${v}` : v) : "";
+              if (!v) return "";
+              const h = table.columns[i];
+              return h ? `${h} ${fmt(v)}` : fmt(v);
             })
             .filter(Boolean);
-          if (cells.length) lines.push(`${fmt(r.label)}: ${cells.join(" | ")}`);
+          if (cells.length) lines.push(`${label}: ${cells.join(" | ")}`);
         }
         for (const f of Array.isArray(d.footnotes) ? d.footnotes : []) push("Note", f);
         break;

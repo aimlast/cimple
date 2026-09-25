@@ -71,7 +71,8 @@ function displayText(key: string, v: any, data: BuyerProfileResponse): string {
   if (!isSet(v) && v !== false) return "—";
   switch (key) {
     case "buyerType": return buyerTypeLabel(v) ?? "—";
-    case "hasProofOfFunds": return v === true ? "Yes — verified" : v === false ? "No" : "Unknown";
+    // A claim (buyer, NDA answer, CRM note or broker tick) — nobody has reviewed a document.
+    case "hasProofOfFunds": return v === true ? "Yes" : v === false ? "No" : "Unknown";
     case "liquidFunds": return data.profile.liquidFundsIsRange && v === data.profile.liquidFunds ? v : /^\$?\s*[\d,.]+\s*[kmb]?$/i.test(String(v).trim()) ? formatMoney(v) : String(v);
     default: return Array.isArray(v) ? v.join(", ") : String(v);
   }
@@ -228,7 +229,9 @@ export function CapacitySection({ ctx }: { ctx: Ctx }) {
           )} />
         <FieldCell ctx={ctx} fieldKey="hasProofOfFunds" label="Proof of funds"
           editor={(v, set) => <ProofOfFundsSelect value={v ?? null} onChange={set} />}
-          view={(v) => <span className={v === true ? "text-emerald-400" : v === false ? "" : "text-muted-foreground/60"}>{v === true ? "Yes — verified" : v === false ? "No" : "Unknown"}</span>} />
+          view={(v) => v === true
+            ? <span title="Stated by the source shown — no proof-of-funds document has been reviewed in Cimple">Yes <span className="text-xs text-muted-foreground">· not reviewed</span></span>
+            : <span className={v === false ? "" : "text-muted-foreground/60"}>{v === false ? "No" : "Unknown"}</span>} />
         {latestNda && (latestNda.funding || latestNda.timeline) && (
           <div className="bg-card p-3 sm:p-3.5 min-w-0 col-span-full">
             <div className="flex items-start justify-between gap-2 mb-1">

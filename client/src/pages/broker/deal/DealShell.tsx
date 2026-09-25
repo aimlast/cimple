@@ -124,7 +124,7 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
   return (
     <div className="flex flex-col h-full overflow-hidden">
       {/* ── Deal header ── */}
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-border shrink-0 bg-card">
+      <div className="flex items-center gap-2 sm:gap-3 px-4 sm:px-5 py-3 border-b border-border shrink-0 bg-card">
         <button
           onClick={() => setLocation("/broker/deals")}
           className="flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
@@ -133,19 +133,33 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
           <ArrowLeft className="h-3.5 w-3.5" /> Deals
         </button>
         <div className="h-4 w-px bg-border shrink-0" />
-        <span className="text-sm font-semibold truncate">
+        {/* The name gets the room on phones: the industry chip hides and the
+            stepper collapses to "Phase n/4". */}
+        <span className="min-w-0 flex-1 sm:flex-initial text-sm font-semibold truncate" title={deal.businessName} data-testid="text-deal-name">
           {deal.businessName}
         </span>
         {deal.industry && (
-          <span className="shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+          <span className="hidden sm:inline-flex shrink-0 text-2xs font-medium px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
             {deal.industry}
           </span>
         )}
-        <div className="ml-auto flex items-center gap-4 shrink-0">
-          <PhaseStepperHorizontal
-            deal={deal}
-            onPhaseClick={handlePhaseClick}
-          />
+        <div className="ml-auto flex items-center gap-2 sm:gap-4 shrink-0">
+          <div className="hidden sm:block">
+            <PhaseStepperHorizontal
+              deal={deal}
+              onPhaseClick={handlePhaseClick}
+            />
+          </div>
+          {getPhaseIndex(deal.phase) >= 0 && (
+            <button
+              onClick={() => handlePhaseClick(deal.phase)}
+              className="sm:hidden whitespace-nowrap text-2xs font-medium px-2 py-0.5 rounded-full border border-teal/40 text-teal"
+              title={PHASES[getPhaseIndex(deal.phase)]?.label}
+              data-testid="button-phase-compact"
+            >
+              Phase {getPhaseIndex(deal.phase) + 1}/{PHASES.length}
+            </button>
+          )}
           {deal.isLive && (
             <span className="inline-flex items-center gap-1 text-2xs font-medium px-2 py-0.5 rounded-full bg-success/10 text-success">
               <span className="h-1.5 w-1.5 rounded-full bg-success" /> Live

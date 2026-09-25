@@ -37,7 +37,7 @@ export function AccessLevelSelect({ dealId, buyer }: Props) {
   return (
     <Select value={current} onValueChange={(v) => v !== current && save.mutate(v)} disabled={save.isPending}>
       <SelectTrigger
-        className="h-7 w-[124px] text-xs"
+        className="h-7 w-[124px] shrink-0 text-xs"
         aria-label={`CIM access for ${buyer.buyerName || buyer.buyerEmail}`}
         data-testid={`select-access-level-${buyer.id}`}
       >

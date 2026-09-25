@@ -10,7 +10,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { Link, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, Mail, KeyRound, PencilLine, MoreHorizontal, Trash2, MapPin, AlertCircle, RefreshCw, Loader2, ShieldCheck, Check } from "lucide-react";
+import { ArrowLeft, Mail, KeyRound, PencilLine, MoreHorizontal, Trash2, MapPin, AlertCircle, RefreshCw, Loader2, Wallet, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
@@ -212,7 +212,16 @@ export default function BuyerProfilePage() {
             <div className="min-w-0">
               <div className="flex flex-wrap items-center gap-2">
                 <h1 className="text-xl sm:text-[1.6rem] font-semibold tracking-tight leading-tight text-foreground break-words" data-testid="text-buyer-name">{p.name}</h1>
-                {p.hasProofOfFunds === true && <span title="Proof of funds verified" className="text-emerald-400"><ShieldCheck className="h-4 w-4" /></span>}
+                {/* A claim, not a check: neutral chip, never a "verified" shield. */}
+                {p.hasProofOfFunds === true && (
+                  <span
+                    title="Proof of funds available, as stated by the buyer, their NDA answers, your CRM or you — no document has been reviewed in Cimple"
+                    className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] font-medium text-muted-foreground"
+                    data-testid="chip-proof-of-funds"
+                  >
+                    <Wallet className="h-3 w-3" /> Proof of funds
+                  </span>
+                )}
                 <InterestPicker buyerId={data.buyer.id} value={data.contact.interestStatus} />
               </div>
               {subline.length > 0 && <p className="mt-1 text-sm text-muted-foreground">{subline.join(" · ")}</p>}
