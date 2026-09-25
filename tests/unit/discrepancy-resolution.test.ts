@@ -166,6 +166,8 @@ const row = (o: Record<string, unknown>) =>
   s.getBrandingByBroker = async () => undefined;
   s.getEngagementInsightsByIndustry = async () => [];
   s.getCimTemplate = async () => undefined;
+  // facts1: buildLayoutParams stamps sources from the deal's documents rows.
+  s.getDocumentsByDeal = async () => [];
   const params = await buildLayoutParams({ id: "deal1", brokerId: "b", businessName: "X", industry: null, extractedInfo: { customerConcentration: "about 18%" } } as any, "content");
   assert.ok(!Object.keys(params.extractedInfo).some((key) => /\s/.test(key)), "no keys containing spaces");
   assert.equal((params.extractedInfo as any).customerConcentration, "22.0%");

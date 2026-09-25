@@ -162,6 +162,8 @@ export function discrepancySideHeading(d: SideRow, side: "interview" | "document
   const s = getSideSources(d)[side];
   if (s) {
     if (s.brokerOnly || s.kind === "crm") return "Your private notes";
+    // A merge row (facts1) can set the broker's own earlier value against a source.
+    if (s.kind === "broker") return "Your edit";
     const kind = KIND_LABELS[s.kind] ?? "Source";
     return side === "interview" ? `${kind} said` : `${kind} shows`;
   }

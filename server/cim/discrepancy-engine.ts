@@ -32,6 +32,8 @@ import {
   getFieldAlternates,
   isUntrackedSource,
   serializeFactValue,
+  yearSource,
+  sourceRowLookup,
   type FieldSource,
 } from "../interview/info-merger";
 import { agentConfig } from "../interview/config/load-config";
@@ -40,6 +42,7 @@ import { sliceRelevantText } from "../financial/analyzer";
 import { filterDiscrepancyItems, isMissingSide, sidesEquivalent, numberTokens, tokensMatch, type NumTok } from "./discrepancy-filter";
 import type { DiscrepancySideSources, DiscrepancySideSource } from "@shared/discrepancy-sides";
 import { scrubPrivateText } from "./discrepancy-privacy";
+import { HEADLINE_MAPS } from "../documents/merge-policy";
 import type { SourceKind } from "@shared/schema";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
@@ -127,13 +130,6 @@ export function isSameDiscrepancy(
   if (item.factKey && existing.factKey && item.factKey === existing.factKey && (item.factYear ?? null) === (existing.factYear ?? null)) return true;
   if (normalizeDiscrepancyFieldKey(item.field) === normalizeDiscrepancyFieldKey(existing.field)) return true;
   if (item.factKey && normalizeDiscrepancyFieldKey(item.factKey) === normalizeDiscrepancyFieldKey(existing.field)) return true;
-  const tokens = (s: string) =>
-    new Set(s.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").filter((t) => t.length >= 3));
-  const a = tokens(item.field);
-  const b = tokens(existing.field);
-  let shared = 0;
-  a.forEach((t) => { if (b.has(t)) shared++; });
-  if (shared === 0) return false;
   const norm = (v: string | null | undefined) => {
     if (!v) return "";
     const idx = v.indexOf(" — ");
@@ -141,6 +137,21 @@ export function isSameDiscrepancy(
   };
   const itemValues = new Set([norm(item.interviewValue), norm(item.documentValue)].filter(Boolean));
   const existingValues = [norm(existing.interviewValue), norm(existing.documentValue), norm(existing.resolvedValue)].filter(Boolean);
+  // A headline and its by-year map are one fact (the merge raises "ebitda",
+  // the check may say "ebitdaByYear" 2024): the same pair of values is the same conflict.
+  const family = (k: string) => HEADLINE_MAPS.find((p) => p.head === k)?.map ?? k;
+  if (
+    item.factKey && existing.factKey && family(item.factKey) === family(existing.factKey) &&
+    (!item.factYear || !existing.factYear || item.factYear === existing.factYear) &&
+    existingValues.some((v) => itemValues.has(v))
+  ) return true;
+  const tokens = (s: string) =>
+    new Set(s.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").filter((t) => t.length >= 3));
+  const a = tokens(item.field);
+  const b = tokens(existing.field);
+  let shared = 0;
+  a.forEach((t) => { if (b.has(t)) shared++; });
+  if (shared === 0) return false;
   const jaccard = shared / (a.size + b.size - shared);
   return existingValues.some((v) => itemValues.has(v)) || jaccard >= 0.5;
 }
@@ -277,6 +288,9 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
   const docs = new Map(documents.map((d) => [d.id, d]));
   const sources = getFieldSources(info);
   const alternates = getFieldAlternates(info);
+  // Per-year entries are full FieldSources (or bare ids on older rows) —
+  // always read them through yearSource, which resolves both.
+  const lookup = sourceRowLookup(documents);
   const refs: SourceRef[] = [];
   const refByOrigin = new Map<string, SourceRef>();
 
@@ -290,7 +304,7 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
       kind = "interview";
     } else {
       kind = src!.source as SourceKind;
-      if ((doc && doc.visibility === "broker_only") || kind === "crm") cls = "private";
+      if ((doc && doc.visibility === "broker_only") || src!.brokerOnly || kind === "crm") cls = "private";
       else if (kind === "broker") cls = "settled";
       else if (CLAIM_KINDS.has(kind)) cls = "claim";
       else if (kind === "document") cls = doc && !isEvidenceDocument(doc) ? (doc.visibility === "broker_only" ? "private" : "claim") : "evidence";
@@ -334,8 +348,7 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
       for (const [year, sub] of Object.entries(value as Record<string, unknown>)) {
         const text = valueText(sub);
         if (!text) continue;
-        const yearDoc = src?.years?.[year];
-        const ref = refFor(yearDoc ? { source: src?.source === "broker" ? "document" : src!.source, documentId: yearDoc } : src);
+        const ref = refFor(yearSource(src, year, lookup) ?? src);
         push({ key, year, value: text, ref: ref.ref }, ref.cls, true);
       }
       continue;

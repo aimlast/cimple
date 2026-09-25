@@ -541,7 +541,8 @@ export function targetRelatesToSides(
 function sideKind(d: Partial<Pick<Discrepancy, "sideSources" | "source">>, side: "interview" | "document", raw: string): FieldSource["source"] {
   const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { kind?: string } | undefined>;
   const kind = sides[side]?.kind;
-  if (kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social"].includes(kind)) {
+  // "broker": a merge row (facts1) can set the broker's own earlier value against a source.
+  if (kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social", "broker"].includes(kind)) {
     return kind as FieldSource["source"];
   }
   if (d.source === "financial_analysis") return kindFromValueLabel(raw);
@@ -578,13 +579,16 @@ export function applyResolutionToInfo(
   else setBrokerFact(info, target.key, coerceBrokerValue(info[target.key], resolved), { note });
   // The conflicting values the broker ruled on stay visible as alternates —
   // bare figures (the " — source" label stripped) under their real kind.
-  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { documentId?: string } | undefined>;
+  // A broker-only side stays broker-only as an alternate (FieldSource.brokerOnly
+  // is what the seller view and the CIM inputs filter on).
+  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { documentId?: string; brokerOnly?: boolean } | undefined>;
   const conflicting: Array<{ raw: string | null; src: FieldSource }> = [
     {
       raw: d.interviewValue,
       src: {
         source: sideKind(d, "interview", d.interviewValue || ""),
         ...(sides.interview?.documentId ? { documentId: sides.interview.documentId } : {}),
+        ...(sides.interview?.brokerOnly ? { brokerOnly: true } : {}),
         note: "Conflicting value (discrepancy)",
       },
     },
@@ -593,6 +597,7 @@ export function applyResolutionToInfo(
       src: {
         source: sideKind(d, "document", d.documentValue || ""),
         ...(d.documentId || sides.document?.documentId ? { documentId: d.documentId || sides.document!.documentId } : {}),
+        ...(sides.document?.brokerOnly ? { brokerOnly: true } : {}),
         note: "Conflicting value (discrepancy)",
       },
     },
