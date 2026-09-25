@@ -34,7 +34,7 @@ import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
-import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile } from "@shared/schema";
+import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -761,73 +761,23 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      const { matchBuyerToDeal } = await import("./matching/engine.js");
-      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
+      const { scoreBuyersForDeal, topDimensions, passesFirstPass } = await import("./matching/suggested.js");
+      const { isDeepCheckRunning } = await import("./matching/deep-check.js");
 
-      // Pull the broker's full buyer contact list (deal-access + manual + invited)
-      const list = await storage.getBrokerBuyerContactList(deal.brokerId);
-
-      // For "exclude already contacted" filter
-      const existingOutreach = await storage.getDealOutreachByDeal(dealId);
+      const [scoredRaw, existingOutreach, existingAccess] = await Promise.all([
+        scoreBuyersForDeal(deal),
+        storage.getDealOutreachByDeal(dealId),
+        storage.getBuyerAccessByDeal(dealId),
+      ]);
       const contactedBuyerIds = new Set(existingOutreach.map(o => o.buyerUserId));
+      const accessBuyerIds = new Set(existingAccess.filter(a => a.buyerUserId).map(a => a.buyerUserId as string));
+      const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
 
-      // Already-granted access (don't suggest re-contacting)
-      const existingAccess = await storage.getBuyerAccessByDeal(dealId);
-      const accessBuyerIds = new Set(
-        existingAccess.filter(a => a.buyerUserId).map(a => a.buyerUserId as string),
-      );
-
-      const ANALYTICS_DIMENSION_LABELS: Record<string, string> = {
-        financialFit: "Financials",
-        industryFit: "Industry",
-        locationFit: "Location",
-        operationalFit: "Operations",
-        dealStructureFit: "Deal structure",
-        qualificationFit: "Qualification",
-      };
-      const topDimsFromBreakdown = (bd: any): string[] => {
-        if (!bd) return [];
-        const entries: Array<[string, number]> = [];
-        for (const key of Object.keys(ANALYTICS_DIMENSION_LABELS)) {
-          const cat = bd[key];
-          if (cat && cat.max > 0) {
-            const pct = (cat.score / cat.max) * 100;
-            if (pct >= 60) entries.push([ANALYTICS_DIMENSION_LABELS[key], pct]);
-          }
-        }
-        entries.sort((a, b) => b[1] - a[1]);
-        return entries.slice(0, 3).map((e) => e[0]);
-      };
-
-      // Score every buyer in parallel (skipAI for speed; broker can request
-      // a deeper rescore for the top N later if desired)
-      const scored = await Promise.all(list.map(async ({ buyerUser: ownProfile, contact, lastActivityAt }) => {
-        const buyerUser = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
-        const criteria: any = {
-          ...(buyerUser.buyerCriteria as any || {}),
-          targetIndustries: buyerUser.targetIndustries || [],
-          targetLocations: buyerUser.targetLocations || [],
-        };
-
-        let breakdown: any = null;
-        try {
-          breakdown = await matchBuyerToDeal(
-            criteria,
-            {
-              industry: deal.industry || "",
-              subIndustry: (deal as any).subIndustry,
-              askingPrice: (deal as any).askingPrice,
-              extractedInfo: (deal as any).extractedInfo || {},
-            },
-            { skipAI: true },
-          );
-        } catch {}
-
-        const score = calculateQualifiedLeadScore({
-          buyer: buyerUser,
-          match: breakdown,
-        });
-
+      const scored = scoredRaw.map((s) => {
+        const { buyer: buyerUser, contact, breakdown, score, lastActivityAt } = s;
+        const aiCheck = deep?.results?.[buyerUser.id] ?? null;
+        // With an AI verdict, rank on it (60%) blended with the lead score.
+        const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
         return {
           buyerUserId: buyerUser.id,
           name: buyerUser.name,
@@ -842,11 +792,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tags: contact?.tags ?? [],
           alreadyHasAccess: accessBuyerIds.has(buyerUser.id),
           alreadyContacted: contactedBuyerIds.has(buyerUser.id),
+          passesFirstPass: passesFirstPass(s),
           match: breakdown ? {
             criteriaMatched: breakdown.criteriaMatched,
             criteriaTested: breakdown.criteriaTested,
             deterministicScore: breakdown.deterministicScore,
-            topDimensions: topDimsFromBreakdown(breakdown),
+            topDimensions: topDimensions(breakdown),
           } : null,
           qualifiedScore: {
             total: score.total,
@@ -854,15 +805,22 @@ export async function registerRoutes(app: Express): Promise<Server> {
             reasons: score.reasons,
             breakdown: score.breakdown,
           },
+          aiCheck: aiCheck ? {
+            verdict: aiCheck.verdict,
+            fitScore: aiCheck.fitScore,
+            whyFit: aiCheck.whyFit,
+            watchOuts: aiCheck.watchOuts,
+            checkedAt: aiCheck.checkedAt,
+          } : null,
+          rankScore,
           lastActivityAt,
         };
-      }));
+      });
 
-      // Sort: highest qualifiedScore first; ties broken by criteriaMatched
+      // AI-checked buyers first (by blended rank), then the rest by lead score.
       scored.sort((a, b) => {
-        if (b.qualifiedScore.total !== a.qualifiedScore.total) {
-          return b.qualifiedScore.total - a.qualifiedScore.total;
-        }
+        if (!!a.aiCheck !== !!b.aiCheck) return a.aiCheck ? -1 : 1;
+        if (b.rankScore !== a.rankScore) return b.rankScore - a.rankScore;
         return (b.match?.criteriaMatched ?? 0) - (a.match?.criteriaMatched ?? 0);
       });
 
@@ -872,10 +830,54 @@ export async function registerRoutes(app: Express): Promise<Server> {
         industry: deal.industry,
         suggested: scored,
         totalCandidates: scored.length,
+        deepCheck: deep ? {
+          status: isDeepCheckRunning(dealId) ? "running" : deep.status === "running" ? "failed" : deep.status,
+          total: deep.total, done: deep.done, skipped: deep.skipped ?? 0,
+          startedAt: deep.startedAt, finishedAt: deep.finishedAt ?? null, error: deep.error ?? null,
+        } : null,
+        firstPassCount: scored.filter((s) => s.passesFirstPass && !s.alreadyHasAccess).length,
       });
     } catch (err: any) {
       console.error("Error fetching suggested buyers:", err);
       res.status(500).json({ error: "Failed to fetch suggested buyers" });
+    }
+  });
+
+  // Likely acquirers from outside the broker's list (web research, cited).
+  app.get("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
+    const deal = await storage.getDeal(req.params.dealId);
+    if (!deal) return res.status(404).json({ error: "Deal not found" });
+    const { isExternalSearchRunning } = await import("./matching/external-acquirers.js");
+    const s = (deal.externalAcquirers as any) || null;
+    if (s && s.status === "running" && !isExternalSearchRunning(deal.id)) s.status = "failed";
+    res.json(s ?? { status: "none", results: [] });
+  });
+  app.post("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { startExternalAcquirerSearch } = await import("./matching/external-acquirers.js");
+      const r = await startExternalAcquirerSearch(req.params.dealId, { includeExcluded: req.body?.includeExcluded === true });
+      if (!r.started) return res.status(r.reason === "already_running" ? 409 : 400).json({ error: r.reason === "already_running" ? "Already researching" : "AI is unavailable right now" });
+      res.status(202).json({ started: true });
+    } catch (err) {
+      console.error("[external-acquirers] start failed:", err);
+      res.status(500).json({ error: "Couldn't start the research" });
+    }
+  });
+
+  // AI deep check of every buyer who passes the first-pass match (background).
+  app.post("/api/deals/:dealId/buyer-deep-check", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { startBuyerDeepCheck } = await import("./matching/deep-check.js");
+      const r = await startBuyerDeepCheck(req.params.dealId);
+      if (!r.started) {
+        return res.status(r.reason === "already_running" ? 409 : 400).json({
+          error: r.reason === "already_running" ? "A deep check is already running" : r.reason === "no_ai" ? "AI is unavailable right now" : "Deal not found",
+        });
+      }
+      res.status(202).json({ started: true });
+    } catch (err) {
+      console.error("[deep-check] start failed:", err);
+      res.status(500).json({ error: "Couldn't start the deep check" });
     }
   });
 
@@ -946,6 +948,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
           targetIndustries: buyer.targetIndustries,
           targetLocations: buyer.targetLocations,
         };
+        // The AI deep check's blind-safe hook for this buyer, when there is one.
+        const deepResult = ((deal as any).buyerDeepCheck as BuyerDeepCheck | null)?.results?.[buyerUserId];
+        const outreachAngle = deepResult?.outreachAngle || null;
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable.
@@ -970,6 +975,7 @@ ${JSON.stringify(buyerProfile, null, 2)}
 BROKER FIRM: ${brokerCompany || "(none — sign with the broker's name only)"}
 
 ${template ? `BROKER NOTES / TEMPLATE GUIDANCE:\n${template}` : ""}
+${outreachAngle ? `WHY THIS BUYER FITS (use as the opening angle, in your own words; still never name the business, city or exact figures):\n${outreachAngle}\n` : ""}
 
 Requirements:
 - Subject line: under 70 chars, mentions the industry and a key signal (size, location, or growth)

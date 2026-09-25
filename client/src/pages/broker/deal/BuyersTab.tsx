@@ -12,6 +12,7 @@ import { useDeal } from "@/contexts/DealContext";
 import { BuyerApprovalsPanel } from "@/components/deal/BuyerApprovalsPanel";
 import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
+import { ExternalAcquirersPanel } from "@/components/deal/ExternalAcquirersPanel";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -515,6 +516,7 @@ export function BuyersTab() {
         </div>
         <div className="space-y-6">
           <SuggestedBuyersPanel dealId={dealId} />
+          <ExternalAcquirersPanel dealId={dealId} />
           <BuyerMatchingPanel dealId={dealId} />
         </div>
       </section>
