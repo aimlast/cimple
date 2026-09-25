@@ -19,6 +19,7 @@ import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
+import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -63,18 +64,18 @@ async function persist(job: CimGenerationJob) {
 }
 
 /**
- * Build the layout-engine params from a deal. Content mode overlays resolved
- * discrepancies onto extractedInfo (the broker's accepted values win);
- * layout mode uses extractedInfo as stored, matching the old endpoints.
+ * Build the layout-engine params from a deal. Resolved discrepancies (both
+ * modes): a row naming a real fact key overlays that key (the broker's
+ * accepted value wins), and every resolved row reaches the writer in the
+ * "RESOLVED — FINAL VALUES" block with the values it superseded.
  */
 export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
-  const extractedInfo = { ...((deal.extractedInfo as Record<string, unknown>) || {}) };
-  if (mode === "content") {
-    const resolved = await storage.getResolvedDiscrepancies(deal.id);
-    for (const d of resolved) {
-      if (d.resolvedValue && d.field) extractedInfo[d.field] = d.resolvedValue;
-    }
-  }
+  void mode;
+  const resolvedDiscrepancies = resolvedNotes(await storage.getResolvedDiscrepancies(deal.id));
+  const extractedInfo = overlayResolvedFacts(
+    (deal.extractedInfo as Record<string, unknown>) || {},
+    resolvedDiscrepancies,
+  );
   const [branding, insights] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
@@ -90,6 +91,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // over the deal column; never a seller's or document's figure.
     askingPrice: listedAskingPrice(deal),
     extractedInfo,
+    resolvedDiscrepancies,
     scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
     questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
     operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,

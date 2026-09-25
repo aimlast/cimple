@@ -11,6 +11,7 @@ import { isFactKey } from "../interview/info-merger";
 import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "../information/cim-facts";
 import { normalizeLocationMap, normText } from "@shared/cim-media";
 import type { CimSectionOutline } from "@shared/cim-theme";
+import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-block";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -82,6 +83,8 @@ export interface CimLayoutParams {
   industry: string;
   askingPrice?: string | null;
   extractedInfo: Record<string, unknown>;
+  /** Broker-resolved discrepancies — rendered as the "RESOLVED — FINAL VALUES" block. */
+  resolvedDiscrepancies?: ResolvedDiscrepancyNote[] | null;
   scrapedData?: Record<string, unknown> | null;
   questionnaireData?: Record<string, unknown> | null;
   operationalSystems?: Record<string, unknown> | null;
@@ -820,6 +823,9 @@ export function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[
       for (const [key, value] of leads) parts.push(`${formatKey(key)}: ${factValueText(value)}`);
     }
   }
+
+  const resolvedBlock = renderResolvedBlock(params.resolvedDiscrepancies ?? []);
+  if (resolvedBlock) parts.push("\n" + resolvedBlock);
 
   if (params.cimContent && Object.keys(params.cimContent).length > 0) {
     parts.push("\n--- DRAFTED CONTENT (Phase 3) ---");

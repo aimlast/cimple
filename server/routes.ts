@@ -9,6 +9,7 @@ import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
+import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
@@ -5278,11 +5279,11 @@ Return JSON only.`,
           return res.status(404).json({ error: "Section not found" });
         }
         const existingSections = await storage.getCimSectionsByDeal(dealId);
-        const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
-        const extractedInfo = { ...(deal.extractedInfo as Record<string, unknown> || {}) };
-        for (const d of resolvedDiscrepancies) {
-          if (d.resolvedValue && d.field) extractedInfo[d.field] = d.resolvedValue;
-        }
+        const resolvedDiscrepancies = resolvedNotes(await storage.getResolvedDiscrepancies(dealId));
+        const extractedInfo = overlayResolvedFacts(
+          (deal.extractedInfo as Record<string, unknown>) || {},
+          resolvedDiscrepancies,
+        );
         const branding = await storage.getBrandingByBroker(deal.brokerId);
         const refs = existingSections.map(s => ({
           sectionKey: s.sectionKey,
@@ -5299,6 +5300,7 @@ Return JSON only.`,
             industry: deal.industry,
             askingPrice: listedAskingPrice(deal),
             extractedInfo,
+            resolvedDiscrepancies,
             scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
             questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
             operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,

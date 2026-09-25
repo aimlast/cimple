@@ -334,6 +334,16 @@ export const deals = pgTable("deals", {
   isLive: boolean("is_live").default(false),
   
   // Metadata
+  // When the discrepancy check last ran, and a fingerprint of the processed
+  // sources it ran against — CIM generation runs the check first when it is
+  // missing or stale (sources changed since).
+  discrepancyCheckedAt: timestamp("discrepancy_checked_at"),
+  discrepancyCheckSources: text("discrepancy_check_sources"),
+  // @anchor:deals-cols:h-facts
+  // @anchor:deals-cols:h-findisc
+  // @anchor:deals-cols:h-interview
+  // @anchor:deals-cols:h-cim
+  // @anchor:deals-cols:h-misc
   // @anchor:deals-cols:seed
   // Set on seeded demo / QA deals (a stable key the seeding code uses to find
   // and refresh its own deals). Such deals are kept out of the industry-wide
@@ -1080,6 +1090,16 @@ export const discrepancies = pgTable("discrepancies", {
   // Where this discrepancy was generated: "interview" (interview-vs-document check)
   // or "financial_analysis" (cross-source check during the financial analysis run).
   source: text("source").notNull().default("interview"),
+  // The extractedInfo key this discrepancy is about (chosen from the deal's
+  // real fact keys), plus the fiscal year for per-year maps (revenueByYear…).
+  // Resolution writes the chosen value to this key. Null on legacy rows.
+  // Rows raised by the fact merge itself use source = "merge".
+  factKey: text("fact_key"),
+  factYear: text("fact_year"),
+  // Where each side came from: { interview?: SideSource; document?: SideSource }
+  // with SideSource = { kind, documentId?, brokerOnly? } — a broker-only side
+  // is never shown to the seller or quoted by the interview.
+  sideSources: jsonb("side_sources"),
   aiExplanation: text("ai_explanation"),
   suggestedResolution: text("suggested_resolution"),
   // "open" | "seller_responded" | "resolved" | "accepted"
@@ -2500,3 +2520,9 @@ export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 
 // @anchor:schema-tail:seed
 // (seed workstream)
+
+// @anchor:schema-tail:h-facts
+// @anchor:schema-tail:h-findisc
+// @anchor:schema-tail:h-interview
+// @anchor:schema-tail:h-cim
+// @anchor:schema-tail:h-misc
