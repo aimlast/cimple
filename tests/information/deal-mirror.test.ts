@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import {
   reconcileMirroredFacts, columnPatchAfterChange, listedAskingPrice, effectiveAskingPrice, sameValue, MIRROR_NOTES,
+  interviewFactView, isDealRowFact,
 } from "../../server/information/deal-mirror";
 import { setBrokerFact, editFact, deleteFact, restoreFact, useAlternate, applyResolutionToInfo } from "../../server/information/facts";
 import { getFieldSources, getFieldAlternates } from "../../server/interview/info-merger";
@@ -105,6 +106,67 @@ assert.deepEqual(r6.columnPatch, {});
 const d7 = mutate({ askingPrice: "$1M", extractedInfo: { askingPrice: "$1M", _fieldSources: { askingPrice: { source: "broker" } } } }, (info) => editFact(info, "annualRevenue", "$4M"));
 assert.equal(d7.askingPrice, "$1M");
 ok("drifted copies reconcile by authority; formatting and unrelated edits cause no churn");
+
+// 6. Delete + restore of a seller's figure never makes it the listed price
+//    (round-2 review: the restored "$3,000,000" landed in deals.askingPrice)
+let d8 = { askingPrice: null as string | null, extractedInfo: {
+  askingPrice: "$3,000,000", _fieldSources: { askingPrice: { source: "interview", turn: 4 } },
+} as Info };
+d8 = mutate(d8, (info) => deleteFact(info, "askingPrice"));
+assert.equal(d8.askingPrice, null);
+d8 = mutate(d8, (info) => restoreFact(info, "askingPrice"));
+assert.equal((d8.extractedInfo as Info).askingPrice, "$3,000,000", "the fact is back");
+assert.equal(getFieldSources(d8.extractedInfo).askingPrice.source, "interview", "with its own source");
+assert.equal(d8.askingPrice, null, "…but never on the deal row");
+assert.equal(listedAskingPrice(d8), null);
+assert.equal(effectiveAskingPrice(d8), "$3,000,000");
+d8 = mutate(d8, () => undefined);
+assert.equal(d8.askingPrice, null, "and a later reconcile doesn't promote it either");
+assert.equal(getFieldSources(d8.extractedInfo).askingPrice.source, "interview");
+// A broker price replaced by a non-broker value (not a current flow, but the
+// rule holds): the column is cleared, not left pointing at the old price.
+const d9 = { askingPrice: "$2M", extractedInfo: { askingPrice: "$2M", _fieldSources: { askingPrice: { source: "broker" } } } as Info };
+const before9 = structuredClone(d9.extractedInfo);
+const after9 = { ...before9, askingPrice: "$2.5M", _fieldSources: { askingPrice: { source: "document" } } };
+assert.deepEqual(columnPatchAfterChange(d9, before9, after9), { askingPrice: null });
+// Same amount from another source keeps the column (legacy equal copies)
+assert.deepEqual(columnPatchAfterChange(d9, before9, { ...after9, askingPrice: "2000000" }), {});
+// Restoring a deleted BROKER price still brings the column back (group 2)
+ok("only a broker value reaches the column — a restored seller figure doesn't");
+
+// 7. The seller interview never sees the deal-row price
+const valuation = mutate(
+  { askingPrice: null, extractedInfo: { askingPrice: "$3M", _fieldSources: { askingPrice: { source: "interview", turn: 9, at: "2026-09-20T00:00:00Z" } } } as Info },
+  (info) => setBrokerFact(info, "askingPrice", "$2,750,000", { note: MIRROR_NOTES.valuation }),
+);
+assert.ok(isDealRowFact(valuation.extractedInfo, "askingPrice"));
+let seen = interviewFactView(valuation.extractedInfo);
+assert.equal(seen.askingPrice, "$3M", "the interview sees the seller's own expectation");
+assert.equal(getFieldSources(seen).askingPrice.source, "interview");
+assert.equal((valuation.extractedInfo as Info).askingPrice, "$2,750,000", "the stored fact is untouched");
+// Only the Valuation price on file → the interview still asks the seller
+const onlyValuation = mutate({ askingPrice: null, extractedInfo: {} }, (info) => setBrokerFact(info, "askingPrice", "$1.2M", { note: MIRROR_NOTES.valuation }));
+seen = interviewFactView(onlyValuation.extractedInfo);
+assert.equal(seen.askingPrice, undefined);
+assert.equal(getFieldSources(seen).askingPrice, undefined);
+// Created with a price, and a price lined up from the column: hidden too
+const created = mutate({ askingPrice: "$800,000", extractedInfo: {} }, () => undefined);
+assert.equal(getFieldSources(created.extractedInfo).askingPrice.note, MIRROR_NOTES.reconciled);
+assert.equal(interviewFactView(created.extractedInfo).askingPrice, undefined);
+// The newest seller figure wins over an older one; a document is below the seller
+const alts = { askingPrice: "$2M", _fieldSources: { askingPrice: { source: "broker", note: MIRROR_NOTES.valuation } },
+  _fieldAlternates: { askingPrice: [
+    { source: "document", value: "$1.9M", at: "2026-09-25T00:00:00Z" },
+    { source: "interview", value: "$2.6M", at: "2026-09-10T00:00:00Z" },
+    { source: "interview", value: "$2.4M", at: "2026-09-22T00:00:00Z" },
+    { source: "broker", value: "$2.1M", at: "2026-09-24T00:00:00Z" },
+  ] } } as Info;
+assert.equal(interviewFactView(alts).askingPrice, "$2.4M");
+// A broker edit on the Information tab reaches the interview as before
+const tabEdit = mutate(valuation, (info) => editFact(info, "askingPrice", "$2,900,000"));
+assert.equal(isDealRowFact(tabEdit.extractedInfo, "askingPrice"), false);
+assert.equal(interviewFactView(tabEdit.extractedInfo), tabEdit.extractedInfo, "nothing hidden → same object");
+ok("interview view hides the deal-row price and shows the seller-side value");
 
 // ── CIM generation gate ──────────────────────────────────────────────
 assert.deepEqual(cimGenerationGate({ interviewCompleted: true }, null), { allowed: true, pending: false, reason: null });

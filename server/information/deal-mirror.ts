@@ -25,9 +25,21 @@
  * in the interview stays a fact (the deal list and matching fall back to it
  * when no price is set), but it is never written onto the deal as the
  * broker's listed asking price.
+ *
+ * The seller interview never sees the price from the deal row (see
+ * interviewFactView): it keeps collecting the seller's own expectation,
+ * which is kept next to the broker's price as another value.
  */
 import type { Deal } from "@shared/schema";
-import { getFieldSources, getSuppressedKeys, typedNumericValues } from "../interview/info-merger";
+import {
+  getFieldSources,
+  getFieldAlternates,
+  getSuppressedKeys,
+  parseAlternateValue,
+  sourceRank,
+  typedNumericValues,
+  type FieldSource,
+} from "../interview/info-merger";
 
 type Info = Record<string, unknown>;
 
@@ -112,8 +124,12 @@ export function reconcileMirroredFacts(
 /**
  * After a broker change (every mutateDealInfo caller is one: edit, add,
  * delete, restore, chosen alternate, resolved discrepancy): when the change
- * touched a mirrored fact, the column takes the fact's value — null when the
- * broker deleted it. Returns only real differences.
+ * touched a mirrored fact, the column follows — but only a BROKER value ever
+ * reaches it. When the fact is now the seller's or a document's (e.g. the
+ * broker restored a deleted interview figure), that isn't the broker's
+ * listed price: the column is cleared rather than set to it (kept only when
+ * it already holds the same amount). Null when the broker deleted the fact.
+ * Returns only real differences.
  */
 export function columnPatchAfterChange(
   deal: Pick<Deal, MirroredFactColumn>,
@@ -127,9 +143,60 @@ export function columnPatchAfterChange(
       JSON.stringify(before[key] ?? null) !== JSON.stringify(after[key] ?? null) ||
       JSON.stringify(getFieldSources(before)[key] ?? null) !== JSON.stringify(getFieldSources(after)[key] ?? null);
     if (!touched) continue;
-    if (columnText(deal[key]) !== next) patch[key] = next;
+    const col = columnText(deal[key]);
+    const target = !next || isBrokerFact(after, key) ? next : sameValue(col, next) ? col : null;
+    if (col !== target) patch[key] = target;
   }
   return patch;
+}
+
+/* ─── What the seller interview sees ─────────────────────────────────── */
+
+const DEAL_ROW_NOTES: ReadonlySet<string> = new Set(Object.values(MIRROR_NOTES));
+
+/**
+ * True when the fact is the broker's price from the deal row (Valuation
+ * step, deal creation, or lined up from the column) — as opposed to a value
+ * the broker typed or chose on the Information tab.
+ */
+export function isDealRowFact(info: Info, key: string): boolean {
+  const src = getFieldSources(info)[key];
+  return src?.source === "broker" && typeof src.note === "string" && DEAL_ROW_NOTES.has(src.note);
+}
+
+/**
+ * The deal's facts as the seller interview reads them. The broker's listed
+ * asking price from the deal row is the broker's pricing decision, not
+ * something the seller has said: before the two copies were kept as one
+ * value it never reached the interview, and it still doesn't — the agent
+ * keeps asking for (and recording) the seller's OWN expectation and never
+ * quotes the broker's price to the seller. In its place the interview sees
+ * the best value from any other source (the seller's own answer, the intake
+ * form, a document), which the precedence rules kept as an alternate — so a
+ * seller who already answered is never asked again.
+ *
+ * Returns `info` itself when nothing is hidden. Read-only: never save it.
+ */
+export function interviewFactView<T extends Info>(info: T): T {
+  let out: Info = info;
+  for (const key of MIRRORED_FACT_COLUMNS) {
+    if (!isDealRowFact(info, key)) continue;
+    if (out === info) out = { ...info };
+    const best = (getFieldAlternates(info)[key] ?? [])
+      .filter((a) => a && typeof a.value === "string" && a.value.trim() !== "" && a.source !== "broker")
+      .sort((a, b) => sourceRank(b.source) - sourceRank(a.source) || String(b.at ?? "").localeCompare(String(a.at ?? "")))[0];
+    const sources: Record<string, FieldSource> = { ...getFieldSources(out) };
+    if (best) {
+      const { value, ...src } = best;
+      out[key] = parseAlternateValue(value);
+      sources[key] = src;
+    } else {
+      delete out[key];
+      delete sources[key];
+    }
+    out._fieldSources = sources;
+  }
+  return out as T;
 }
 
 /**

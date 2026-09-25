@@ -491,6 +491,15 @@ export default function CIMDesigner() {
           ))}
         </div>
         {generation.isRunning && <div className="md:hidden px-3 pb-2"><CimGenerationProgress view={generation} compact /></div>}
+        {/* Why "Regenerate all" is off — said out loud, not only in a tooltip
+            (the button lives on wide screens only, so does the note). */}
+        {sections.length > 0 && !generation.isRunning && !gate.blockedReason && !infoGate.allowed && infoGate.reason && (
+          <p className="hidden lg:block px-4 pb-2 text-[11px] text-amber-500" data-testid="text-builder-regenerate-needs-information">
+            {infoGate.readiness
+              ? `Regenerate all is off: not enough information yet (quality ${infoGate.readiness.score}/100) — finish the seller interview, or add documents, calls or facts on the Information tab. You can still edit and rewrite one section at a time.`
+              : infoGate.reason}
+          </p>
+        )}
       </div>
 
       {/* ── Body ── */}

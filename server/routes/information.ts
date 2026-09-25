@@ -69,8 +69,10 @@ export function registerInformationRoutes(app: Express): void {
     try {
       // A deal whose asking price on the deal row and on file disagree (from
       // before the two were kept as one value) is lined up first.
-      await syncMirroredFacts(req.params.dealId);
-      res.json(await loadView(req.params.dealId));
+      // The response says so, so the client refreshes the deal it has loaded.
+      const dealUpdated = await syncMirroredFacts(req.params.dealId);
+      const view = await loadView(req.params.dealId);
+      res.json(dealUpdated ? { ...view, dealUpdated: true } : view);
     } catch (err) {
       fail(res, err, "Couldn't load the collected information");
     }

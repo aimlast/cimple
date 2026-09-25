@@ -1812,6 +1812,11 @@ function Phase3Center() {
               {blockReason.replace(/before generating\.$/, "before regenerating.")}
             </p>
           )}
+          {!blockReason && infoBlockReason && (
+            <p className="text-xs text-amber-500 mt-1 max-w-xl" data-testid="text-regenerate-needs-information">
+              Regenerating is off for now. {infoBlockReason} You can still edit, approve and advance this CIM.
+            </p>
+          )}
         </div>
         <div className="flex flex-wrap items-center gap-2 shrink-0">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (

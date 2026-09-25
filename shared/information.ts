@@ -139,4 +139,10 @@ export interface InformationView {
     scrapeSource: string | null;
     items: WebsiteItem[];
   } | null;
+  /**
+   * True when loading the view lined up a deal whose asking price on the deal
+   * row and on file had drifted apart — the deal changed, so anything showing
+   * the deal (Overview, Valuation) should refetch it.
+   */
+  dealUpdated?: boolean;
 }
