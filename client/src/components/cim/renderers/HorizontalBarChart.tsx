@@ -17,6 +17,7 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { formatAxisTick, formatFullValue } from "./chartFormat";
 
 interface HBarDataPoint {
   name: string;
@@ -52,8 +53,7 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
     <div className="bg-card border border-card-border rounded-md shadow-md px-3 py-2 text-xs">
       <p className="font-semibold text-foreground mb-1">{label}</p>
       <span className="font-medium text-foreground tabular-nums">
-        {typeof payload[0].value === "number" ? payload[0].value.toLocaleString() : payload[0].value}
-        {unit ? ` ${unit}` : ""}
+        {formatFullValue(payload[0].value, unit)}
       </span>
     </div>
   );
@@ -117,7 +117,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
             tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(v) => v.toLocaleString()}
+            tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <YAxis
             type="category"

@@ -93,8 +93,9 @@ function DealEngagementRow({ d }: { d: DealRow }) {
   return (
     <div className="rounded-lg border border-border/60 p-3 hover:border-border transition-colors" data-testid={`deal-row-${d.dealId}`}>
       <div className="flex items-start justify-between gap-2">
-        <Link href={`/deal/${d.dealId}/buyers`} className="group min-w-0">
-          <span className="text-sm font-medium text-foreground group-hover:text-teal inline-flex items-center gap-1 min-w-0">
+        {/* Block-level flex all the way down so the name truncates before the pills. */}
+        <Link href={`/deal/${d.dealId}/buyers`} className="group flex min-w-0 flex-1" title={d.businessName}>
+          <span className="text-sm font-medium text-foreground group-hover:text-teal flex items-center gap-1 min-w-0">
             <span className="truncate">{d.businessName}</span>
             <ArrowUpRight className="h-3 w-3 shrink-0 opacity-50 group-hover:opacity-100" />
           </span>

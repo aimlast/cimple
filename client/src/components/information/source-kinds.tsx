@@ -13,7 +13,7 @@ import {
   AtSign,
   ClipboardList,
   PencilLine,
-  HelpCircle,
+  History,
   Cpu,
   type LucideIcon,
 } from "lucide-react";
@@ -31,8 +31,15 @@ export const KIND_META: Record<FactSourceKind, { label: string; plural: string; 
   questionnaire: { label: "Questionnaire", plural: "Questionnaire", icon: ClipboardList },
   broker: { label: "You", plural: "Your edits", icon: PencilLine },
   system: { label: "System", plural: "System", icon: Cpu },
-  unknown: { label: "Source not recorded", plural: "Source not recorded", icon: HelpCircle },
+  // Collected before Cimple recorded provenance and not traceable to a source.
+  unknown: { label: "Earlier record", plural: "Earlier records", icon: History },
 };
+
+/** Plain-words explanations for facts from before source tracking. */
+export const UNTRACKED_HINT =
+  "Collected before Cimple started recording where each fact came from, and it doesn't match any source on file. Check it against the sources, or edit it to confirm it yourself.";
+export const INFERRED_HINT =
+  "Collected before Cimple recorded sources. Traced to this source because the value matches what it says.";
 
 /** Filter-chip order (the founder's list). */
 export const FILTER_KINDS: FactSourceKind[] = [
@@ -104,6 +111,6 @@ export function sourceChipText(src: FactSourceInfo): string {
       return `You · edited ${when ?? ""}`.trim();
     }
     default:
-      return "Source not recorded";
+      return "Earlier record";
   }
 }

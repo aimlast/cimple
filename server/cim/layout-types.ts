@@ -107,7 +107,9 @@ export interface TimelineData {
 }
 
 export interface FinancialTableData {
-  headers: string[];                // e.g. ["", "2022", "2023", "2024"]
+  /** First entry = label-column header ("" or e.g. "Line item"), then one per value column —
+   *  e.g. ["", "2022", "2023", "2024"] over 3-value rows. Read via shared/financial-table. */
+  headers: string[];
   rows: Array<{
     label: string;
     values: string[];

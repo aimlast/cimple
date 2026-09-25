@@ -28,6 +28,7 @@ import {
   X,
   Check,
   Loader2,
+  History,
 } from "lucide-react";
 import type {
   FactSourceInfo,
@@ -69,7 +70,7 @@ function LoadingState() {
     <div className="max-w-6xl mx-auto px-4 sm:px-6 py-6 space-y-4">
       <Skeleton className="h-24 w-full" />
       <Skeleton className="h-9 w-full" />
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_20rem] gap-6">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-6">
         <div className="space-y-3">
           <Skeleton className="h-40 w-full" />
           <Skeleton className="h-40 w-full" />
@@ -135,7 +136,10 @@ export function InformationTab() {
   };
 
   const readiness = view.readiness;
-  const sourceCount = view.sources.length;
+  // Sources that actually account for facts (recorded or traced).
+  const sourceCount = view.sources.filter((s) => s.factCount > 0).length;
+  const untracked = view.counts.unknown ?? 0;
+  const inferredFacts = view.inferredFacts ?? 0;
   const activeSource = sourceFilter ? view.sources.find((s) => s.id === sourceFilter) : null;
 
   const sectionsShown = view.sections
@@ -171,7 +175,19 @@ export function InformationTab() {
             <h2 className="text-lg font-semibold tracking-tight">Collected information</h2>
             <p className="text-sm text-muted-foreground mt-1">{readiness.summary}</p>
             <p className="text-xs text-muted-foreground/80 mt-2 tabular-nums">
-              {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"} from {sourceCount} source{sourceCount === 1 ? "" : "s"}
+              {untracked > 0 ? (
+                // "64 facts · 29 from 6 sources · 35 earlier records"
+                <>
+                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
+                  {sourceCount > 0 && <>{" · "}{view.totalFacts - untracked} from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
+                  {" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}
+                </>
+              ) : (
+                <>
+                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
+                  {sourceCount > 0 && <> from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
+                </>
+              )}
               {missingCount > 0 && (
                 <>
                   {" · "}
@@ -219,8 +235,8 @@ export function InformationTab() {
                 onClick={() => setKindFilter(kindFilter === k ? "all" : k)}
               />
             ))}
-            {(view.counts.unknown ?? 0) > 0 && (
-              <FilterChip kind="unknown" label="Source not recorded" count={view.counts.unknown ?? 0} active={kindFilter === "unknown"} onClick={() => setKindFilter(kindFilter === "unknown" ? "all" : "unknown")} />
+            {untracked > 0 && (
+              <FilterChip kind="unknown" label={KIND_META.unknown.plural} count={untracked} active={kindFilter === "unknown"} onClick={() => setKindFilter(kindFilter === "unknown" ? "all" : "unknown")} />
             )}
           </div>
         </div>
@@ -245,6 +261,19 @@ export function InformationTab() {
             Show what's still missing
           </label>
         </div>
+        {(untracked > 0 || inferredFacts > 0) && !activeSource && (
+          // One calm explanation instead of a question mark on every row.
+          <p className="flex items-start gap-2 rounded-md border border-border/60 bg-muted/20 px-3 py-2 text-xs text-muted-foreground leading-relaxed" data-testid="note-earlier-records">
+            <History className="h-3.5 w-3.5 mt-0.5 shrink-0" />
+            <span>
+              {inferredFacts > 0 && untracked > 0
+                ? <>Some facts were collected before Cimple recorded where each one came from. {inferredFacts} of them {inferredFacts === 1 ? "matches" : "match"} a source on file and {inferredFacts === 1 ? "is" : "are"} marked <span className="italic">inferred</span>; the other {untracked} {untracked === 1 ? "is" : "are"} marked <span className="text-foreground/80">Earlier record</span>. Check those against your sources, or edit one to confirm it yourself.</>
+                : inferredFacts > 0
+                  ? <>{inferredFacts} fact{inferredFacts === 1 ? " was" : "s were"} collected before Cimple recorded where each one came from. {inferredFacts === 1 ? "It matches" : "Each matches"} a source on file, so {inferredFacts === 1 ? "it's" : "they're"} marked <span className="italic">inferred</span>.</>
+                  : <>{untracked} fact{untracked === 1 ? " was" : "s were"} collected before Cimple recorded where each one came from, and {untracked === 1 ? "doesn't" : "don't"} match any source on file. {untracked === 1 ? "It's" : "They're"} marked <span className="text-foreground/80">Earlier record</span>. Check {untracked === 1 ? "it" : "them"} against your sources, or edit one to confirm it yourself.</>}
+            </span>
+          </p>
+        )}
         {activeSource && (
           <div className="flex items-center gap-2 rounded-md border border-teal/30 bg-teal/5 px-3 py-2 text-xs">
             <span className="text-muted-foreground">Showing facts from</span>
@@ -257,7 +286,7 @@ export function InformationTab() {
       </div>
 
       {/* ── Body ── */}
-      <div className="grid lg:grid-cols-[minmax(0,1fr)_20rem] gap-6 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-[minmax(0,1fr)_20rem] gap-6 items-start">
         <div className="space-y-3 min-w-0">
           {view.totalFacts === 0 && !filtering ? (
             <div className="rounded-lg border border-dashed border-border bg-muted/10 px-6 py-10 text-center">
@@ -489,6 +518,7 @@ export function InformationTab() {
             onFilterSource={(id) => { setSourceFilter(id); if (id) setKindFilter("all"); }}
             onOpen={openListedSource}
             onAdd={() => setAddSourceOpen(true)}
+            untrackedFacts={untracked}
           />
           {deal.interviewCompleted && (
             <div className="rounded-lg border border-border/60 px-4 py-3 text-xs text-muted-foreground">

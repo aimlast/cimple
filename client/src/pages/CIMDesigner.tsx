@@ -376,13 +376,13 @@ export default function CIMDesigner() {
     <div className="h-screen flex flex-col bg-background overflow-hidden">
       {/* ── Top bar ── */}
       <div className="border-b border-border shrink-0">
-        <div className="flex items-center gap-2 px-3 h-12">
+        <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 h-12">
           <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate(`/deal/${dealId}/cim`)} aria-label="Back to the deal">
             <ArrowLeft className="h-4 w-4" />
           </Button>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold truncate">{deal.businessName}</p>
-            <p className="text-[10px] text-muted-foreground uppercase tracking-wider">CIM builder</p>
+            <p className="text-sm font-semibold truncate" title={deal.businessName}>{deal.businessName}</p>
+            <p className="hidden sm:block text-[10px] text-muted-foreground uppercase tracking-wider whitespace-nowrap">CIM builder</p>
           </div>
           {generation.isRunning && <CimGenerationProgress view={generation} compact className="hidden md:flex" />}
           {blind?.generated && (blind.running || blind.updating > 0) && (
@@ -391,11 +391,12 @@ export default function CIMDesigner() {
             </span>
           )}
           <Select value={previewAs} onValueChange={(v) => setPreviewAs(v as PreviewAs)}>
-            <SelectTrigger className="h-8 w-[150px] sm:w-[190px] text-xs" data-testid="select-preview-as" aria-label="Preview as">
+            <SelectTrigger className="h-8 w-[58px] sm:w-[190px] shrink-0 text-xs" data-testid="select-preview-as" aria-label="Preview as">
               {/* div, not span: the trigger line-clamps direct span children */}
               <div className="flex items-center gap-1.5 min-w-0">
                 {previewAs === "editor" ? <Pencil className="h-3 w-3 shrink-0" /> : <Eye className="h-3 w-3 shrink-0 text-amber-500" />}
-                <span className="truncate">{previewAs === "editor" ? "Editing" : `Preview: ${previewMeta.label}`}</span>
+                {/* Phones: icon only (pencil = editing, amber eye = previewing), so the deal name has room */}
+                <span className="hidden sm:inline truncate">{previewAs === "editor" ? "Editing" : `Preview: ${previewMeta.label}`}</span>
                 <span className="hidden"><SelectValue /></span>
               </div>
             </SelectTrigger>

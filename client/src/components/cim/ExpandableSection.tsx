@@ -230,18 +230,22 @@ function SummaryPreview({
         <CimSectionRenderer
           section={{
             ...section,
-            layoutData: { ...layoutData, rows: previewRows },
+            // Footnotes belong to the full table; under the fade they collided
+            // with the "+N more rows" label.
+            layoutData: { ...layoutData, rows: previewRows, footnotes: undefined },
           }}
           branding={branding}
           brokerMode={false}
           hideTitle
         />
         {remaining > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background to-transparent flex items-end justify-center pb-1">
-            <span className="text-[11px] text-muted-foreground/60">
-              +{remaining} more rows
-            </span>
-          </div>
+          <>
+            <div className="pointer-events-none absolute bottom-6 left-0 right-0 h-10 bg-gradient-to-t from-background to-transparent" />
+            {/* Below the table, not over its last row's figures */}
+            <p className="mt-1.5 text-center text-[11px] text-muted-foreground/70">
+              +{remaining} more row{remaining === 1 ? "" : "s"}
+            </p>
+          </>
         )}
       </div>
     );

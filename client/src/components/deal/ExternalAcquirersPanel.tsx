@@ -80,8 +80,8 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
   const results = data?.results ?? [];
   return (
     <div className="space-y-3" data-testid="external-acquirers">
-      <div className="flex items-start justify-between gap-3">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
             <Globe className="h-4 w-4 text-teal" />
             Buyers outside your list
@@ -90,7 +90,7 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
             Companies and investors actively buying in this space, found on the web with sources. The search only uses the industry, region and size — never the business's name.
           </p>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1">
+        <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
           <Button size="sm" variant="outline" disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="button-find-external">
             {running ? <Loader2 className="h-3 w-3 mr-1 animate-spin" /> : <Search className="h-3 w-3 mr-1" />}
             {running ? "Researching…" : data?.status === "done" ? "Search again" : "Find outside buyers"}

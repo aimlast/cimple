@@ -737,6 +737,9 @@ Any section's layoutData can include these optional interactive flags:
 
 Use expandable sparingly — only on sections where the full content is genuinely dense. A metric grid with 4 items does not need to be expandable. A financial table with 15 line items does.
 
+SECTION TITLES VS. CAPTIONS:
+The section title is always printed as the section's heading. A layoutData "title" (or a financial_table "caption") is an optional sub-caption inside the section: leave it out unless it adds something the heading doesn't (e.g. "FY2023–FY2025, CAD" or "Share of 2025 revenue"). Never repeat the section title in it.
+
 DOCUMENT STRUCTURE RULES:
 1. ALWAYS start with a cover_page section
 2. ALWAYS follow cover_page with a metric_grid showing the most important 4–6 KPIs

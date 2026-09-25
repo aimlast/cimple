@@ -17,6 +17,7 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
 
 interface SeriesConfig {
   key: string;
@@ -60,8 +61,7 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
             <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
             <span className="text-muted-foreground">{seriesLabel}:</span>
             <span className="font-medium tabular-nums">
-              {typeof p.value === "number" ? p.value.toLocaleString() : p.value}
-              {unit ? ` ${unit}` : ""}
+              {formatFullValue(p.value, unit)}
             </span>
           </div>
         );
@@ -86,6 +86,7 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
   const colorPalette = theme.chart;
 
   const showLegend = series.length > 1;
+  const yAxisWidth = axisWidthFor(chartData.flatMap((d) => series.map((s) => d[s.key])), data.unit);
 
   return (
     <div>
@@ -94,10 +95,15 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
           {data.title}
         </h3>
       )}
+      {data.yLabel && (
+        // Axis caption sits above the plot — a rotated label inside the axis
+        // column collides with the tick numbers (worst on phones).
+        <p className="text-2xs font-medium text-muted-foreground mb-1.5">{data.yLabel}</p>
+      )}
       <ResponsiveContainer width="100%" height={280}>
         <LineChart
           data={chartData}
-          margin={{ top: 4, right: 16, left: 0, bottom: data.xLabel ? 24 : 8 }}
+          margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -116,8 +122,8 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
             tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(v) => v.toLocaleString()}
-            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: theme.inkMuted } : undefined}
+            width={yAxisWidth}
+            tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} series={series} />}

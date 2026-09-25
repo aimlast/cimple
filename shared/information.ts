@@ -24,6 +24,12 @@ export interface FactSourceInfo {
   at?: string;
   note?: string;
   excerpt?: string;
+  /**
+   * The fact was collected before Cimple recorded sources; this source was
+   * traced by matching the value to the interview / questionnaire / a
+   * document / the website, not recorded at the time.
+   */
+  inferred?: boolean;
 }
 
 export interface FactAlternate {
@@ -83,7 +89,10 @@ export interface InformationSource {
   date: string | null;
   meta: DocumentSourceMeta | null;
   visibility: "shared" | "broker_only";
+  /** Facts on file from this source, including ones traced to it (see inferredFactCount). */
   factCount: number;
+  /** How many of factCount were traced by matching values, not recorded at the time. */
+  inferredFactCount?: number;
   /** documents rows only */
   documentId?: string;
   status?: string;
@@ -131,6 +140,8 @@ export interface InformationView {
   /** Visible facts per source kind. */
   counts: Partial<Record<FactSourceKind, number>>;
   totalFacts: number;
+  /** Facts whose source was traced (inferred), not recorded: collected before source tracking. */
+  inferredFacts?: number;
   readiness: CimReadiness;
   deleted: DeletedFact[];
   website: {

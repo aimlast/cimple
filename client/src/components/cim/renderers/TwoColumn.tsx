@@ -108,7 +108,10 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
   const textContent = typeof content === "string" ? content : (content != null ? JSON.stringify(content) : "");
 
   if (type === "list") {
-    const lines = textContent.split("\n").filter(Boolean);
+    // One item per line; a single line of "a|b|c" (a shape the AI sometimes
+    // writes) is split on the pipes so it never reads as run-on text.
+    let lines = textContent.split("\n").map((l) => l.trim()).filter(Boolean);
+    if (lines.length === 1 && lines[0].includes("|")) lines = lines[0].split("|").map((l) => l.trim()).filter(Boolean);
     return (
       <div>
         {col.title && (
@@ -196,11 +199,12 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
           {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
         </div>
       )}
-      <div className="grid grid-cols-2 gap-8">
-        <div>
+      {/* Stacks on phones (a rule between the two), side by side from md. */}
+      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
+        <div className="min-w-0">
           <SafeColumnBlock col={left} branding={branding} section={section} />
         </div>
-        <div className="border-l border-border pl-8">
+        <div className="min-w-0 border-t border-border pt-6 md:border-t-0 md:border-l md:pl-8 md:pt-0">
           <SafeColumnBlock col={right} branding={branding} section={section} />
         </div>
       </div>

@@ -68,7 +68,7 @@ export function ProofOfFundsSelect({ value, onChange }: { value: boolean | null;
     <Select value={value === true ? "yes" : value === false ? "no" : NONE} onValueChange={(v) => onChange(v === "yes" ? true : v === "no" ? false : null)}>
       <SelectTrigger className="h-9" data-testid="select-proof-of-funds"><SelectValue /></SelectTrigger>
       <SelectContent>
-        <SelectItem value="yes">Yes — verified</SelectItem>
+        <SelectItem value="yes">Yes</SelectItem>
         <SelectItem value="no">No</SelectItem>
         <SelectItem value={NONE}>Unknown</SelectItem>
       </SelectContent>

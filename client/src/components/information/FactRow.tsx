@@ -11,7 +11,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { Check, Loader2, Pencil, Trash2, Layers, X } from "lucide-react";
 import type { FactAlternate, FactSourceInfo, InformationFact } from "@shared/information";
-import { KIND_META, sourceChipText, formatShortDate } from "./source-kinds";
+import { KIND_META, sourceChipText, formatShortDate, UNTRACKED_HINT, INFERRED_HINT } from "./source-kinds";
 import { useInformationAction } from "./useInformation";
 
 const LONG_TEXT = 260;
@@ -32,15 +32,22 @@ export function SourceChip({
   const tone =
     source.kind === "broker"
       ? "border-teal/40 bg-teal/10 text-teal"
-      : source.kind === "crm" || source.kind === "website" || source.kind === "social" || source.kind === "unknown"
-        ? "border-dashed border-border text-muted-foreground"
-        : "border-border bg-muted/40 text-foreground/80";
+      : source.kind === "unknown"
+        // Quiet, not alarming: plain text with no border.
+        ? "border-transparent bg-muted/30 text-muted-foreground"
+        : source.kind === "crm" || source.kind === "website" || source.kind === "social" || source.inferred
+          ? "border-dashed border-border text-muted-foreground"
+          : "border-border bg-muted/40 text-foreground/80";
   const text = sourceChipText(source);
-  const detail = [
-    source.label,
-    source.note && !source.label.includes(source.note) ? source.note : null,
-    source.at ? `Recorded ${formatShortDate(source.at, true)}` : null,
-  ].filter(Boolean).join(" · ");
+  const detail =
+    source.kind === "unknown"
+      ? UNTRACKED_HINT
+      : [
+          source.label,
+          source.note && !source.label.includes(source.note) ? source.note : null,
+          source.at ? `Recorded ${formatShortDate(source.at, true)}` : null,
+          source.inferred ? INFERRED_HINT : null,
+        ].filter(Boolean).join(" · ");
   const chip = (
     <span
       className={`inline-flex max-w-full items-center gap-1 rounded-full border ${tone} ${
@@ -49,6 +56,7 @@ export function SourceChip({
     >
       <Icon className="h-3 w-3 shrink-0" />
       <span className="truncate">{text}</span>
+      {source.inferred && <span className="shrink-0 italic text-muted-foreground">(inferred)</span>}
     </span>
   );
   return (
