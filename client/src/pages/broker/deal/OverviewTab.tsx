@@ -82,6 +82,8 @@ import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
+import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
+import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
   Deal,
@@ -1126,6 +1128,10 @@ function Phase2Center() {
   const [togetherOpen, setTogetherOpen] = useState(false);
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
   const [showScraped, setShowScraped] = useState(false);
+  const [reviewingDiscrepancies, setReviewingDiscrepancies] = useState(false);
+  // The "next step" card must not say "Ready to build" while a critical
+  // discrepancy blocks generation (same rule as the server and Phase 3).
+  const { criticalUnresolved, discrepanciesError } = useDiscrepancyGate(dealId);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const activeInvite = pickPrimaryInvite(invites);
@@ -1480,29 +1486,18 @@ function Phase2Center() {
           is done. Previously there was no path from here to CIM generation.
           Hidden once the deal is past Seller Intake (it would move it back). */}
       {deal.interviewCompleted && deal.phase === "phase2_platform_intake" && (
-        <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div>
-            <p className="text-sm font-medium">Ready to build the CIM</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              The interview is complete. Move to Content Creation to generate
-              the CIM from everything you've collected.
-            </p>
-          </div>
-          <Button
-            className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shrink-0"
-            onClick={() => advanceToContent.mutate()}
-            disabled={advanceToContent.isPending}
-            data-testid="button-advance-phase-3"
-          >
-            {advanceToContent.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <>
-                Continue to Content Creation
-                <ChevronRight className="h-3.5 w-3.5" />
-              </>
-            )}
-          </Button>
+        <div className="space-y-3">
+          <ReadyToBuildCta
+            criticalCount={criticalUnresolved.length}
+            gateError={!!discrepanciesError}
+            pending={advanceToContent.isPending}
+            onContinue={() => advanceToContent.mutate()}
+            onReview={() => setReviewingDiscrepancies((v) => !v)}
+            reviewing={reviewingDiscrepancies}
+          />
+          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || !!discrepanciesError) && (
+            <DiscrepancyPanel dealId={dealId} />
+          )}
         </div>
       )}
     </div>
@@ -1787,6 +1782,7 @@ function Phase3Center() {
                   "Generate CIM"
                 )}
               </Button>
+              {!blockReason && <DiscrepancyCheckNotice dealId={dealId} className="mt-3" />}
             </>
           )}
         </div>
@@ -1888,6 +1884,7 @@ function Phase3Center() {
       {(generation.isRunning || generation.job?.status === "failed") && (
         <CimGenerationProgress view={generation} />
       )}
+      {!generation.isRunning && !blockReason && <DiscrepancyCheckNotice dealId={dealId} className="sm:justify-end" />}
 
       <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
         <AlertDialogContent>
@@ -1927,7 +1924,8 @@ function Phase3Center() {
       {/* The message above says "resolve N critical discrepancies" — give the
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
-      {generationBlocked && (
+      {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
+      {(generationBlocked || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
         discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (

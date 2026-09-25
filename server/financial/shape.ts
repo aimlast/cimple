@@ -57,6 +57,19 @@ export interface UiNormalization {
   notes?: string[];
   /** Broker chose the base metric (PATCH diff). Carried forward across re-runs. */
   metricOverride?: boolean;
+  /**
+   * EBITDA / SDE per year computed in code from net income + the approved
+   * add-backs (normalization-rules.ts) — the canonical figures; recomputed on
+   * every broker edit. adjustedEbitda / adjustedSde = the latest year's.
+   */
+  computed?: {
+    reportedEbitda: Record<string, number>;
+    adjustedEbitda: Record<string, number>;
+    sde: Record<string, number>;
+    latestYear: string | null;
+  };
+  adjustedEbitda?: number;
+  adjustedSde?: number;
 }
 
 export interface UiWorkingCapitalItem {
@@ -97,6 +110,8 @@ export interface UiInsight {
   title: string;
   detail: string;
   cimSection?: string;
+  /** Set when the insight states an EBITDA/SDE figure the normalization doesn't compute. */
+  flag?: string;
 }
 
 export interface UiInsights {

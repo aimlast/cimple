@@ -152,9 +152,27 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   await storage.updateDeal(deal.id, updates as any);
 }
 
-async function run(job: CimGenerationJob, deal: Deal) {
+/**
+ * Runs before any section is written — the discrepancy gate (see
+ * cim/discrepancy-check.ts ensureDiscrepancyGate): runs the check when it is
+ * missing or stale and throws when a critical conflict is open.
+ */
+export type BeforeWriting = (onChecking: () => void) => Promise<unknown>;
+
+async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWriting) {
   const touch = () => { job.updatedAt = new Date().toISOString(); };
   try {
+    if (beforeWriting) {
+      await beforeWriting(() => {
+        job.phase = "checking";
+        touch();
+        void persist(job);
+      });
+      job.phase = "planning";
+      touch();
+      // The check may have changed facts' discrepancies — build from the deal as it is now.
+      deal = (await storage.getDeal(deal.id)) ?? deal;
+    }
     const params = await buildLayoutParams(deal, job.mode);
     const document = await generator(params, (p) => {
       job.phase = p.phase;
@@ -175,10 +193,16 @@ async function run(job: CimGenerationJob, deal: Deal) {
     job.sectionCount = document.sections.length;
     job.warnings = document.warnings ?? [];
   } catch (err: any) {
-    console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
+    if (err?.name === "DiscrepancyGateError") console.log(`[cim-generation] deal ${job.dealId} stopped at the discrepancy gate: ${err.message}`);
+    else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
     job.status = "failed";
     job.phase = "finished";
     job.error = err?.message || "CIM generation failed";
+    if (err?.name === "DiscrepancyGateError") {
+      job.stoppedBy = "discrepancies";
+      job.stoppedReason = err.reason === "new" ? "new" : "critical";
+      job.blockingDiscrepancies = err.blocking;
+    }
   }
   job.finishedAt = new Date().toISOString();
   touch();
@@ -193,7 +217,11 @@ async function run(job: CimGenerationJob, deal: Deal) {
  * job is registered and its "running" status persisted. Throws
  * CimGenerationRunningError if a job is already running for the deal.
  */
-export async function startCimGeneration(deal: Deal, mode: CimGenerationMode): Promise<CimGenerationJob> {
+export async function startCimGeneration(
+  deal: Deal,
+  mode: CimGenerationMode,
+  opts: { beforeWriting?: BeforeWriting } = {},
+): Promise<CimGenerationJob> {
   const existing = jobs.get(deal.id);
   if (existing?.status === "running") throw new CimGenerationRunningError(existing);
   const now = new Date().toISOString();
@@ -213,7 +241,7 @@ export async function startCimGeneration(deal: Deal, mode: CimGenerationMode): P
   };
   jobs.set(deal.id, job);
   await persist(job);
-  void run(job, deal);
+  void run(job, deal, opts.beforeWriting);
   return job;
 }
 

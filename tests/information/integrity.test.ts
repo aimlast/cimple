@@ -204,10 +204,10 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     // deleting the P&L keeps the broker's 2024 decision
     const r = removeDocumentFields(info, "PL");
     assert.deepEqual(r.info.revenueByYear, { "2024": "$1,894,000" });
-    // no target → nothing written
+    // no target → nothing written; the broker is asked which fact it updates
     const before = JSON.stringify(info);
-    assert.equal(applyResolutionToInfo(info, { field: "What were the owner's wages in 2024 and were they paid as salary?", resolvedValue: "$90K salary", source: "financial_analysis" } as any), null);
-    assert.equal(applyResolutionToInfo(info, { field: "2023 SDE", resolvedValue: "$410K", source: "financial_analysis" } as any), null);
+    assert.equal(applyResolutionToInfo(info, { field: "What were the owner's wages in 2024 and were they paid as salary?", resolvedValue: "$90K salary", source: "financial_analysis" } as any), "needs_mapping");
+    assert.equal(applyResolutionToInfo(info, { field: "2023 SDE", resolvedValue: "$410K", source: "financial_analysis" } as any), "needs_mapping");
     assert.equal(JSON.stringify(info), before);
     // a known label still works
     const k2 = applyResolutionToInfo(info, { field: "Annual Revenue", resolvedValue: "$1.9M", interviewValue: "$2.3M", documentValue: null, source: "interview" } as any);

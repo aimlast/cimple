@@ -22,6 +22,18 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { IStorage } from "../storage";
 import type { Discrepancy, FinancialAnalysis } from "@shared/schema";
 import { extractFinancialData, type ExtractedStatement } from "./extractor";
+import { brokerPrivacy } from "../interview/seller-view";
+import { getFieldSources } from "../interview/info-merger";
+import { filterDiscrepancyItems, dropReason } from "../cim/discrepancy-filter";
+import { scrubPrivateText } from "../cim/discrepancy-privacy";
+import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
+import {
+  applyAddbackRules,
+  applyWorkingCapitalRules,
+  flagEarningsNotes,
+  flagEarningsStatements,
+  withCanonicalEarnings,
+} from "./normalization-rules";
 import { getComparables, type CompsResult } from "./comps";
 import {
   coerceReclassifiedTable,
@@ -64,6 +76,16 @@ interface SourceBundle {
   existingDiscrepanciesContext: string;
   /** Name lookup used when wiring discrepancies to documents */
   docNamesById: Record<string, string>;
+  /** Per-document kind + privacy, for each discrepancy side's sideSources */
+  docMetaById: Record<string, { kind: string; brokerOnly: boolean }>;
+  /**
+   * The broker's private material (broker-only files, CRM notes, facts only
+   * they assert) — context for the analysis, never cited in a discrepancy
+   * or question that could reach the seller.
+   */
+  privateContext: string;
+  /** The deal's real fact keys — each discrepancy names the one it is about. */
+  factKeys: string[];
 }
 
 /**
@@ -114,9 +136,11 @@ const FINANCIAL_KEYWORDS = [
 /**
  * Budget-aware text slicing: keep the head of the document, then windows
  * around financial keywords deeper in the text (tax returns bury the GIFI
- * statements hundreds of pages in).
+ * statements hundreds of pages in). `extraKeywords` (the discrepancy check
+ * passes the words of the facts it verifies — "lease", "expiry",
+ * "technicians") are searched first.
  */
-export function sliceRelevantText(text: string, budget: number): string {
+export function sliceRelevantText(text: string, budget: number, extraKeywords: string[] = []): string {
   if (text.length <= budget) return text;
 
   const headBudget = Math.floor(budget * 0.45);
@@ -126,7 +150,10 @@ export function sliceRelevantText(text: string, budget: number): string {
 
   const windows: Array<{ start: number; end: number }> = [];
   const windowSize = 1500;
-  for (const kw of FINANCIAL_KEYWORDS) {
+  const keywords = extraKeywords.length > 0
+    ? Array.from(new Set([...extraKeywords.map((k) => k.toLowerCase()).filter((k) => k.length >= 3), ...FINANCIAL_KEYWORDS]))
+    : FINANCIAL_KEYWORDS;
+  for (const kw of keywords) {
     let idx = restLower.indexOf(kw);
     let guard = 0;
     while (idx !== -1 && guard < 20) {
@@ -180,10 +207,19 @@ async function assembleSources(
   );
 
   const docNamesById: Record<string, string> = {};
-  for (const d of processedDocs) docNamesById[d.id] = d.name;
+  const docMetaById: Record<string, { kind: string; brokerOnly: boolean }> = {};
+  for (const d of processedDocs) {
+    docNamesById[d.id] = d.name;
+    docMetaById[d.id] = { kind: d.sourceKind || "document", brokerOnly: d.visibility === "broker_only" || d.sourceKind === "crm" };
+  }
+  // The broker's private files and CRM notes inform the analysis but are
+  // kept apart (see privateContext) — never a side of a discrepancy the
+  // broker could route to the seller.
+  const privateDocs = processedDocs.filter((d) => docMetaById[d.id].brokerOnly);
+  const sharedDocs = processedDocs.filter((d) => !docMetaById[d.id].brokerOnly);
 
   // 1. Financial-category docs -> full structured extraction
-  const financialDocs = processedDocs.filter(
+  const financialDocs = sharedDocs.filter(
     (d) => d.category === "financials" && d.extractedText && d.extractedText.trim().length >= 50,
   );
   // Per-doc failures (network blips, malformed output) must not kill the run —
@@ -207,7 +243,7 @@ async function assembleSources(
   );
 
   // 2. Tax + other docs -> key-value data + relevant text slices
-  const nonFinancialDocs = processedDocs.filter((d) => d.category !== "financials");
+  const nonFinancialDocs = sharedDocs.filter((d) => d.category !== "financials");
   const taxDocs = nonFinancialDocs.filter(isTaxDocument);
   const otherDocs = nonFinancialDocs.filter((d) => !isTaxDocument(d));
 
@@ -236,12 +272,23 @@ async function assembleSources(
 
   // 3. Knowledge base (extractedInfo) — the merged view of interview, docs,
   //    emails, and scrape. Numbers stated in emails/calls land here.
+  const rawInfo = (deal.extractedInfo as Record<string, unknown>) || {};
+  const { isPrivateSource } = brokerPrivacy(allDocs);
+  const fieldSources = getFieldSources(rawInfo);
+  const privateFacts: Record<string, unknown> = {};
   const extractedInfo = Object.fromEntries(
-    Object.entries((deal.extractedInfo as Record<string, unknown>) || {}).filter(
+    Object.entries(rawInfo).filter(([k, v]) => {
       // "_"-prefixed keys are broker-private / session-meta — not analysis input
-      ([k]) => !k.startsWith("_"),
-    ),
+      if (k.startsWith("_")) return false;
+      // A fact only the broker's private material asserts (a CRM note).
+      if (isPrivateSource(fieldSources[k])) {
+        privateFacts[k] = v;
+        return false;
+      }
+      return true;
+    }),
   );
+  const factKeys = Object.keys(rawInfo).filter((k) => !k.startsWith("_"));
 
   // 3b. Confirmed facts — the subset of the knowledge base the seller confirmed
   //     in the interview, plus values the broker settled by resolving a
@@ -257,9 +304,12 @@ async function assembleSources(
   }
   for (const d of existingDiscrepancies) {
     if ((d.status === "resolved" || d.status === "accepted") && d.resolvedValue && d.field) {
-      confirmedFacts[d.field] = d.resolvedValue;
+      // Keyed by the real fact when the row names one (never a label-named pseudo-fact).
+      const key = d.factKey && !d.factKey.startsWith("_") ? (d.factYear ? `${d.factKey} (${d.factYear})` : d.factKey) : d.field;
+      confirmedFacts[key] = d.resolvedValue;
       // The resolved value also replaces the stale figure in the knowledge-base view
-      if (hasOwn(extractedInfo, d.field)) extractedInfo[d.field] = d.resolvedValue;
+      const target = d.factKey && !d.factYear ? d.factKey : d.field;
+      if (hasOwn(extractedInfo, target)) extractedInfo[target] = d.resolvedValue;
     }
   }
   let confirmedFactsContext = "";
@@ -303,7 +353,16 @@ async function assembleSources(
     ...financialDocs.map((d) => d.id),
     ...taxDocs.map((d) => d.id),
     ...otherDocs.filter((d) => d.extractedData || d.extractedText).map((d) => d.id),
+    ...privateDocs.map((d) => d.id),
   ];
+
+  const privateParts: string[] = [];
+  if (Object.keys(privateFacts).length > 0) {
+    const json = JSON.stringify(privateFacts, null, 1);
+    privateParts.push(`Facts only the broker's notes state:\n${json.length > 6000 ? json.slice(0, 6000) + "\n... [truncated]" : json}`);
+  }
+  for (const d of privateDocs) privateParts.push(renderDoc(d, 4000));
+  const privateContext = privateParts.join("\n\n---\n\n");
 
   return {
     statements,
@@ -314,6 +373,9 @@ async function assembleSources(
     confirmedFactsContext,
     existingDiscrepanciesContext,
     docNamesById,
+    docMetaById,
+    privateContext,
+    factKeys,
   };
 }
 
@@ -373,7 +435,8 @@ export async function runFinancialAnalysis(
       sources.statements.length > 0 ||
       sources.otherDocsContext.length > 0 ||
       sources.knowledgeBaseContext.length > 0 ||
-      sources.questionnaireContext.length > 0;
+      sources.questionnaireContext.length > 0 ||
+      sources.privateContext.length > 0;
 
     if (!hasAnyData) {
       await storage.updateFinancialAnalysis(analysis.id, {
@@ -394,16 +457,22 @@ export async function runFinancialAnalysis(
     // 3. Comprehensive AI analysis across all sources
     const freshResult = await runComprehensiveAnalysis(deal, sources);
 
-    // 3b. Deterministic post-passes: tie the reclassified P&L to reported net
-    //     income, then re-apply the broker's decisions from the previous version.
-    const reconciled = reconcileNetIncome(freshResult.reclassifiedPnl, freshResult.normalization);
-    const analysisResult: AnalysisOutput = previous
+    // 3b. Deterministic post-passes (see normalization-rules.ts): distributions
+    //     are never add-backs, working capital is cash-free/debt-free with no
+    //     single-period peg; then tie the reclassified P&L to reported net
+    //     income and re-apply the broker's decisions from the previous version;
+    //     finally compute EBITDA/SDE in code and flag any text that states a
+    //     different figure.
+    const ruled = postProcessAnalysis(freshResult);
+    const reconciled = reconcileNetIncome(ruled.reclassifiedPnl, ruled.normalization);
+    const carried: AnalysisOutput = previous
       ? carryForwardBrokerEdits(normalizeFinancialAnalysisRow(previous), {
-          ...freshResult,
+          ...ruled,
           reclassifiedPnl: reconciled.pnl,
           normalization: reconciled.normalization,
         })
-      : { ...freshResult, reclassifiedPnl: reconciled.pnl, normalization: reconciled.normalization };
+      : { ...ruled, reclassifiedPnl: reconciled.pnl, normalization: reconciled.normalization };
+    const analysisResult = finalizeEarnings(carried);
 
     // 4. Pull comps (stub for now)
     const latestRevenue = deriveLatestRevenue(analysisResult.reclassifiedPnl);
@@ -434,6 +503,7 @@ export async function runFinancialAnalysis(
       analysisResult.clearedDiscrepancyIds,
       sources.docNamesById,
       existingDiscrepancies,
+      sources.docMetaById,
     );
 
     return analysis.id;
@@ -452,6 +522,27 @@ export async function runFinancialAnalysis(
       });
     return analysis.id;
   }
+}
+
+// ── Deterministic post-processing ──
+
+/** Rules applied to the model's fresh output, before the broker's edits are carried over. */
+export function postProcessAnalysis(result: AnalysisOutput): AnalysisOutput {
+  return {
+    ...result,
+    normalization: applyAddbackRules(result.normalization),
+    workingCapital: applyWorkingCapitalRules(result.workingCapital),
+  };
+}
+
+/** Canonical EBITDA/SDE from the final add-back list; text that disagrees is flagged. */
+export function finalizeEarnings(result: AnalysisOutput): AnalysisOutput {
+  const normalization = withCanonicalEarnings(flagEarningsNotes(result.normalization));
+  const { insights, mismatches } = flagEarningsStatements(result.insights, normalization);
+  const aiReasoning = mismatches.length > 0
+    ? `${result.aiReasoning}${result.aiReasoning ? "\n\n" : ""}Figures checked in code: ${mismatches.map((m) => `${m.where} states ${m.year} ${m.metric} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`).join("; ")}.`
+    : result.aiReasoning;
+  return { ...result, normalization, insights, aiReasoning };
 }
 
 // ── Derivations for comps ──
@@ -713,8 +804,12 @@ export function carryForwardBrokerEdits(
 
 export interface FinancialDiscrepancyItem {
   field: string; // short human-readable metric name, e.g. "2025 Revenue"
-  sourceA: { source: string; value: string };
-  sourceB: { source: string; value: string };
+  /** The real fact key this is about (from the deal's keys), when one fits. */
+  factKey?: string | null;
+  /** Fiscal year for a per-year fact. */
+  factYear?: string | null;
+  sourceA: { source: string; value: string; documentId?: string };
+  sourceB: { source: string; value: string; documentId?: string };
   documentId?: string; // the document backing sourceB, when applicable
   severity: "critical" | "significant" | "minor";
   category: "financial" | "operational" | "legal" | "factual";
@@ -764,19 +859,102 @@ function matchesExisting(item: FinancialDiscrepancyItem, existing: Discrepancy):
  *  - every other open row is left alone — a run that did not re-evaluate a
  *    conflict must never make it disappear.
  */
+/** Kind of source a free-text label names ("Seller interview", "2024 T2", "CRM note"). */
+function kindFromSourceLabel(label: string): string {
+  const l = label.toLowerCase();
+  if (/\bcrm\b|pipedrive|hubspot|broker(?:'s)? (?:note|recast|estimate)|per broker|site visit/.test(l)) return "crm";
+  if (/video|zoom|teams|google meet/.test(l)) return "video_call";
+  if (/\bcall\b|phone/.test(l)) return "call";
+  if (/interview|seller said|told us|knowledge base/.test(l)) return "interview";
+  if (/questionnaire|intake/.test(l)) return "questionnaire";
+  if (/e-?mail/.test(l)) return "email";
+  return "document";
+}
+
+const CLAIM_SIDE_KINDS = new Set(["interview", "call", "video_call", "questionnaire", "email", "crm"]);
+
+/**
+ * The stored values of one analysis finding: which side is the seller's
+ * (interviewValue) and which the document's (documentValue), where each came
+ * from (sideSources — a broker-only file or CRM note is flagged brokerOnly
+ * and its value is stored without the private source's name), the fact it
+ * is about, and explanation text that never quotes or names private
+ * material. Pure.
+ */
+export function financialDiscrepancyValues(
+  item: FinancialDiscrepancyItem,
+  docNamesById: Record<string, string>,
+  docMetaById: Record<string, { kind: string; brokerOnly: boolean }>,
+) {
+  const sideOf = (s: FinancialDiscrepancyItem["sourceA"], fallbackDocId?: string): DiscrepancySideSource => {
+    const docId = s.documentId && docMetaById[s.documentId] ? s.documentId : fallbackDocId && docMetaById[fallbackDocId] ? fallbackDocId : undefined;
+    const meta = docId ? docMetaById[docId] : undefined;
+    const kind = (meta?.kind ?? kindFromSourceLabel(s.source)) as DiscrepancySideSource["kind"];
+    // A known document decides; a free-text label is judged on its words (fail closed).
+    const brokerOnly = meta ? meta.brokerOnly : kind === "crm" || mentionsPrivateSource(s.source);
+    return {
+      kind,
+      ...(docId ? { documentId: docId } : {}),
+      ...(brokerOnly ? { brokerOnly: true } : {}),
+      ...(brokerOnly ? {} : { label: docId ? docNamesById[docId] ?? s.source : s.source }),
+    };
+  };
+  let a = item.sourceA;
+  let b = item.sourceB;
+  let sideA = sideOf(a);
+  let sideB = sideOf(b, item.documentId);
+  // The seller-side value goes first, the document second (the table's contract).
+  if (!CLAIM_SIDE_KINDS.has(sideA.kind) && CLAIM_SIDE_KINDS.has(sideB.kind)) {
+    [a, b] = [b, a];
+    [sideA, sideB] = [sideB, sideA];
+  }
+  const stored = (s: FinancialDiscrepancyItem["sourceA"], side: DiscrepancySideSource) =>
+    side.brokerOnly ? s.value : `${s.value} — ${s.source}`;
+  const sideSources: DiscrepancySideSources = { interview: sideA, document: sideB };
+  const scrubbed = scrubPrivateText({
+    field: item.field,
+    interviewValue: stored(a, sideA),
+    documentValue: stored(b, sideB),
+    aiExplanation: item.explanation,
+    suggestedResolution: item.suggestedResolution,
+    sideSources,
+  });
+  const documentId = sideB.documentId ?? item.documentId ?? null;
+  return {
+    interviewValue: scrubbed.interviewValue,
+    documentValue: scrubbed.documentValue,
+    documentId,
+    documentName: documentId ? docNamesById[documentId] ?? null : null,
+    severity: item.severity,
+    category: item.category,
+    aiExplanation: scrubbed.aiExplanation,
+    suggestedResolution: scrubbed.suggestedResolution,
+    factKey: item.factKey ?? null,
+    factYear: item.factYear ?? null,
+    sideSources: scrubbed.sideSources as any,
+  };
+}
+
 async function persistFinancialDiscrepancies(
   dealId: string,
   storage: IStorage,
-  items: FinancialDiscrepancyItem[],
+  rawItems: FinancialDiscrepancyItem[],
   clearedIds: string[],
   docNamesById: Record<string, string>,
   existing: Discrepancy[],
+  docMetaById: Record<string, { kind: string; brokerOnly: boolean }> = {},
 ): Promise<void> {
   const live = existing.filter((d) => d.status !== "superseded");
   const byId = new Map(live.map((d) => [d.id, d]));
   const settled = live.filter((d) => d.status === "resolved" || d.status === "accepted");
   const unsettled = live.filter((d) => d.status !== "resolved" && d.status !== "accepted");
   const refreshed = new Set<string>();
+
+  // Equal values, a missing document, adjusted vs reported: never a conflict.
+  const { kept: items, dropped } = filterDiscrepancyItems(
+    rawItems.map((item) => ({ ...item, interviewValue: item.sourceA.value, documentValue: item.sourceB.value })),
+  );
+  const droppedExisting = new Set(dropped.map((d) => d.item.existingId).filter((id): id is string => !!id));
 
   for (const item of items) {
     const referenced = item.existingId ? byId.get(item.existingId) : undefined;
@@ -789,23 +967,18 @@ async function persistFinancialDiscrepancies(
       ? referenced
       : unsettled.find((d) => d.source === "financial_analysis" && !refreshed.has(d.id) && matchesExisting(item, d));
 
-    const documentName = item.documentId ? docNamesById[item.documentId] ?? null : null;
-    const values = {
-      interviewValue: `${item.sourceA.value} — ${item.sourceA.source}`,
-      documentValue: `${item.sourceB.value} — ${item.sourceB.source}`,
-      documentId: item.documentId ?? null,
-      documentName,
-      severity: item.severity,
-      category: item.category,
-      aiExplanation: item.explanation,
-      suggestedResolution: item.suggestedResolution,
-    };
+    const values = financialDiscrepancyValues(item, docNamesById, docMetaById);
 
     if (openMatch) {
       refreshed.add(openMatch.id);
       if (openMatch.source !== "financial_analysis") continue; // interview-check rows are not ours to rewrite
-      // Refresh the finding; keep the broker's routing/status and the original field name.
-      await storage.updateDiscrepancy(openMatch.id, values);
+      // Refresh the finding; keep the broker's routing/status, the original
+      // field name and a fact key the broker already linked.
+      await storage.updateDiscrepancy(openMatch.id, {
+        ...values,
+        factKey: openMatch.factKey || values.factKey,
+        factYear: openMatch.factKey ? openMatch.factYear : values.factYear,
+      });
       continue;
     }
 
@@ -820,9 +993,16 @@ async function persistFinancialDiscrepancies(
     refreshed.add(created.id);
   }
 
-  // Explicitly cleared by this run: the sources now agree. Rows the broker
-  // routed to the seller stay with the seller — only untouched open rows close.
-  for (const id of clearedIds) {
+  // Explicitly cleared by this run (the sources now agree), re-raised but
+  // filtered out, or an older finding of ours that was never a conflict
+  // (equal values). Rows the broker routed to the seller stay with the
+  // seller — only untouched open rows close. A routed question (no second
+  // value) is never "equal".
+  const toClear = new Set([...clearedIds, ...Array.from(droppedExisting)]);
+  for (const row of unsettled) {
+    if (row.source === "financial_analysis" && row.status === "open" && row.interviewValue && row.documentValue && dropReason(row) !== null) toClear.add(row.id);
+  }
+  for (const id of Array.from(toClear)) {
     const row = byId.get(id);
     if (!row || row.source !== "financial_analysis" || refreshed.has(id)) continue;
     if (row.status !== "open" && row.status !== "seller_responded") continue;
@@ -885,6 +1065,12 @@ ${sources.knowledgeBaseContext || "(none)"}
 ═══ SOURCE 4: SELLER QUESTIONNAIRE ═══
 ${sources.questionnaireContext || "(none)"}
 
+═══ SOURCE 5: BROKER-PRIVATE CONTEXT (the broker's own CRM notes and private files — use it to inform your analysis, but NEVER as a side of a discrepancy, and never quote, name or allude to it in any discrepancy or clarifying question: those can be read to the seller) ═══
+${sources.privateContext || "(none)"}
+
+═══ FACT KEYS ON FILE (each discrepancy's "factKey" must be one of these, or "" if none fits) ═══
+${sources.factKeys.join(", ") || "(none)"}
+
 ═══ PREVIOUSLY RAISED DISCREPANCIES ═══
 ${sources.existingDiscrepanciesContext || "(none)"}
 
@@ -938,10 +1124,10 @@ Respond with valid JSON matching this EXACT structure (this is the shape the bro
 
   "workingCapital": {
     "asOfPeriod": "2024",
-    "currentAssets": [ { "name": "Cash", "amount": 91402 }, { "name": "Inventory", "amount": 71712 } ],
+    "currentAssets": [ { "name": "Accounts Receivable", "amount": 91402 }, { "name": "Inventory", "amount": 71712 } ],
     "currentLiabilities": [ { "name": "Accounts Payable", "amount": 20000 } ],
     "netWorkingCapital": 143114,
-    "targetNwc": 150000,
+    "targetNwc": null,
     "pegAmount": null,
     "notes": ["..."]
   },
@@ -963,9 +1149,10 @@ Respond with valid JSON matching this EXACT structure (this is the shape the bro
   "discrepancies": [
     {
       "field": "2024 Revenue",
-      "sourceA": { "source": "2024 T2 Tax Return", "value": "$809,147" },
-      "sourceB": { "source": "Seller interview (knowledge base annualRevenue)", "value": "$980,830" },
-      "documentId": "the sourceDocumentId or document ID backing one of the values, if applicable",
+      "factKey": "revenueByYear",
+      "factYear": "2024",
+      "sourceA": { "source": "Seller interview (knowledge base annualRevenue)", "value": "$980,830" },
+      "sourceB": { "source": "2024 T2 Tax Return", "value": "$809,147", "documentId": "the document ID backing this value" },
       "severity": "critical",
       "category": "financial",
       "explanation": "The seller quoted gross sales including discounts; the tax return reports net trade sales.",
@@ -987,11 +1174,19 @@ RULES:
 - CARVE-OUTS: when you separate a one-time or non-recurring amount out of a line (e.g. a $28,000 renovation buried in Rent), you MUST reduce the parent line by the same amount (Rent = source Rent − 28,000; "Renovation (one-time)" = 28,000 under "Non-Recurring"). Never add a carve-out row while leaving the parent at its full amount — that double-counts the expense and breaks the tie.
 - Liability and expense values should be POSITIVE numbers (the UI subtracts them by category).
 - normalization.netIncome must be the reported net income per year; addbacks type "sde" = owner-specific (only applies to SDE), type "ebitda" = applies to both (D&A, interest, taxes, true one-offs). Removal of non-recurring INCOME (e.g. government grants) belongs as a NEGATIVE addback amount.
+- DISTRIBUTIONS ARE NOT ADD-BACKS: dividends (any class), owner draws, and shareholder-loan repayments are paid out of after-tax profit on the balance sheet — nothing on the P&L to add back. Never include them in an add-back or in owner compensation; mention them in normalization.notes instead.
+- OWNER COMPENSATION add-back = the owner's actual salary/wages and benefits on the P&L minus a market replacement salary for the role they do (state both figures in the description). Never add a dividend to it.
+- A recovery, clawback or post-payment audit adjustment is a timing item, not income: never remove it as a negative add-back.
+- Every EBITDA or SDE figure you state (insights, notes, discrepancies) must equal net income + the add-backs you listed for that year — the code recomputes them and flags any figure that doesn't tie.
 - addback category MUST be from: "owner_comp", "discretionary", "non_recurring", "one_time", "other".
 - workingCapital: use the latest period with a full balance sheet; list real line items. If NO source contains a balance sheet, set "workingCapital" to null — never estimate current assets or liabilities from a P&L, and never invent a net working capital figure.
+- Working capital is CASH-FREE, DEBT-FREE: exclude cash and equivalents, bank debt / lines of credit, the current portion of long-term debt, shareholder loans (either direction) and income taxes payable/receivable. Set pegAmount and targetNwc only from a trailing average of several periods' NWC; never set a peg equal to one period's NWC (use null).
 - CONFIRMED FACTS are final. Insights, owner names, revenue splits, and normalization assumptions must use them. A document or scrape that contradicts a confirmed fact is a discrepancy to flag (unless it was already resolved), never a figure to quote.
 - clarifyingQuestions severity: "high" | "medium" | "low".
-- DISCREPANCIES: compare the SAME metric across sources (revenue, COGS, net income, owner comp, addbacks claimed vs supported, employee counts on payroll vs stated, rent, inventory, asking price). Flag when values differ by >5% (severity: significant 5-10%, critical >10% or core-claim conflicts, minor for rounding/timing). Only flag REAL conflicts with evidence from two identifiable sources — never flag missing data. Name each source specifically (document name, "knowledge base", "questionnaire"). If an addback is claimed in the interview/knowledge base but not visible in any statement, THAT is a discrepancy.
+- DISCREPANCIES: compare the SAME metric across sources (revenue, COGS, net income, owner comp, addbacks claimed vs supported, employee counts on payroll vs stated, rent, inventory, asking price). Flag when values differ by >5% (severity: significant 5-10%, critical >10% or core-claim conflicts, minor for rounding/timing). Only flag REAL conflicts with evidence from two identifiable sources — never flag missing data, never two ways of writing the same value (monthly vs annual, rounding), and never an adjusted/normalized figure against a reported one. Name each source specifically (document name, "knowledge base", "questionnaire") and give its document ID when a document backs it. If an addback is claimed in the interview/knowledge base but not visible in any statement, THAT is a discrepancy.
+- Each discrepancy's "factKey" is the fact key (from FACT KEYS ON FILE) whose value IS the conflicting figure — the broker's resolution replaces that value; "factYear" only for a per-year fact like revenueByYear. A part of a broader fact is not that fact (licensed technicians are not total employees; one owner-comp line is not the whole add-back list) — use "" then.
+- Headcounts: say exactly what each source counts (the roster, full-time vs part-time, whether the owner is included) — never assert the owner is included unless the source says so.
+- BROKER-PRIVATE CONTEXT (SOURCE 5) is never a side of a discrepancy and is never quoted or named ("CRM", "broker note", "broker recast", "site visit") in a discrepancy, explanation, suggested resolution or clarifying question. Notes and insights are read by the due-diligence writer too: never name the private source there either (say "an earlier estimate").
 - discrepancy category: "financial" for amounts, margins, and addbacks; "operational" for headcount, hours, locations, customers, vendors; "legal" for leases, licences, contracts, litigation; "factual" for names, ages, dates, ownership, and other non-financial facts.
 - PREVIOUSLY RAISED DISCREPANCIES: never re-raise a RESOLVED one under any wording. For each OPEN one, either return it with its "existingId" (still a conflict) or list its id in "clearedDiscrepancyIds" (sources now agree) — do not silently omit it.
 - If a statement type has no data, set its value to null.
@@ -1041,9 +1236,11 @@ RULES:
     .filter((d: any) => d && d.field && d.sourceA?.value && d.sourceB?.value)
     .map((d: any) => ({
       field: String(d.field),
-      sourceA: { source: String(d.sourceA.source ?? "Source A"), value: String(d.sourceA.value) },
-      sourceB: { source: String(d.sourceB.source ?? "Source B"), value: String(d.sourceB.value) },
-      documentId: isUuid(d.documentId) ? d.documentId : undefined,
+      factKey: typeof d.factKey === "string" && sources.factKeys.includes(d.factKey.trim()) ? d.factKey.trim() : null,
+      factYear: typeof d.factYear === "string" && /^(?:FY\s*)?\d{4}$/.test(d.factYear.trim()) ? d.factYear.trim().replace(/^FY\s*/i, "") : null,
+      sourceA: { source: String(d.sourceA.source ?? "Source A"), value: String(d.sourceA.value), ...(isUuid(d.sourceA.documentId) ? { documentId: d.sourceA.documentId } : {}) },
+      sourceB: { source: String(d.sourceB.source ?? "Source B"), value: String(d.sourceB.value), ...(isUuid(d.sourceB.documentId) ? { documentId: d.sourceB.documentId } : {}) },
+      documentId: isUuid(d.documentId) ? d.documentId : isUuid(d.sourceB?.documentId) ? d.sourceB.documentId : undefined,
       severity: ["critical", "significant", "minor"].includes(d.severity) ? d.severity : "significant",
       category: (DISCREPANCY_CATEGORIES as readonly string[]).includes(d.category) ? d.category : "financial",
       explanation: String(d.explanation ?? ""),

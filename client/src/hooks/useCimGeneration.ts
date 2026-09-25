@@ -20,6 +20,9 @@ export function invalidateCimCaches(dealId: string) {
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides"] });
   queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "layout"] });
+  // The run may have started with the discrepancy check (and stopped at it).
+  queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancies"] });
+  queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "discrepancy-check-status"] });
 }
 
 /** Seconds-per-section prior used before the first section has finished. */
@@ -44,6 +47,9 @@ export function describeJob(job: CimGenerationStatus | null): Omit<CimGeneration
   }
   if (job.status === "failed") {
     return { isRunning: false, percent: 0, etaSeconds: null, label: job.error || "Generation failed" };
+  }
+  if (job.phase === "checking") {
+    return { isRunning, percent: 2, etaSeconds: null, label: "Checking the documents against what the seller said…" };
   }
   if (job.phase === "planning" || job.total === 0) {
     return { isRunning, percent: 4, etaSeconds: null, label: "Planning the document…" };
