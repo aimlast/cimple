@@ -33,6 +33,7 @@ import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
 import { listedAskingPrice } from "./information/deal-mirror";
+import { brokerFactsView } from "./information/facts";
 import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
@@ -1834,7 +1835,9 @@ Return JSON only.`,
       // Scope is ALWAYS the session broker — never a client-supplied param.
       // Archived deals are left out (the deal list's /api/deals/list can show them).
       const deals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
-      res.json(deals);
+      // Drifted asking-price copies lined up in memory (one value everywhere;
+      // reading never writes — see information/deal-mirror.ts).
+      res.json(deals.map((d) => brokerFactsView(d)));
     } catch (error: any) {
       console.error("Error fetching deals:", error);
       res.status(500).json({ error: "Failed to fetch deals" });
@@ -1849,7 +1852,11 @@ Return JSON only.`,
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
       }
-      res.json(deal);
+      // The Overview (Valuation input included) shows the same asking price
+      // as the Information tab, deal list, readiness and CIM: drifted copies
+      // from before the one-value rule are lined up in memory, never saved
+      // on read (the broker's next change saves them — deal-mirror.ts).
+      res.json(brokerFactsView(deal));
     } catch (error: any) {
       console.error("Error fetching deal:", error);
       res.status(500).json({ error: "Failed to fetch deal" });
@@ -1909,7 +1916,7 @@ Return JSON only.`,
       // attention list and activity) — the broker put them away.
       const allDeals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
       // "$2.5M" must count as 2,500,000 (the old digit-strip read it as 2.5).
-      const askingValue = (d: { askingPrice: string | null }) => moneyValue(d.askingPrice) ?? 0;
+      const askingValue = (d: { askingPrice: string | null; extractedInfo: unknown }) => moneyValue(listedAskingPrice(d as never)) ?? 0;
 
       // ─ Pipeline snapshot: group deals by phase (labels: shared/deal-progress) ─
       const pipeline = DEAL_PHASES.map(({ key: phase, label }) => {
@@ -2550,7 +2557,7 @@ Return JSON only.`,
         const { sellerSafeDeal } = await import("./seller-safe-deal");
         return res.json(sellerSafeDeal(deal));
       }
-      res.json(deal);
+      res.json(brokerFactsView(deal));
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid deal data", details: error.errors });
@@ -3633,7 +3640,7 @@ Return JSON only.`,
               deal.industry,
               {
                 businessName: deal.businessName,
-                askingPrice: deal.askingPrice || undefined,
+                askingPrice: listedAskingPrice(deal) || undefined,
               },
             );
 
@@ -4074,17 +4081,6 @@ Return JSON only.`,
       const deal = await storage.getDeal(invite.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      // Interview coverage
-      const { buildSectionCoverage } = await import("./interview/knowledge-base");
-      const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
-      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
-      const readiness = computeCimReadiness(sectionCoverage);
-      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
-      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
-      const interviewPct = sectionCoverage.length > 0
-        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
-        : 0;
-
       // Interview sessions
       const { db } = await import("./db");
       const { interviewSessions, buyerQuestions } = await import("@shared/schema");
@@ -4092,6 +4088,27 @@ Return JSON only.`,
       const sessions = await db.select().from(interviewSessions)
         .where(eqOp(interviewSessions.dealId, deal.id))
         .orderBy(descOp(interviewSessions.lastActivityAt));
+
+      // Interview coverage — built exactly as the interview header builds it
+      // (the seller-safe knowledge base: nothing a broker-only source
+      // asserted, not the broker's listed price, the session's confidence
+      // labels, resolved discrepancies), so the seller never sees two
+      // different quality labels.
+      const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
+      const kbDocuments = await storage.getDocumentsByDeal(deal.id);
+      const sectionCoverage = assembleKnowledgeBase(
+        deal,
+        kbDocuments,
+        await storage.getTasksByDeal(deal.id),
+        sessions[0] ?? null,
+        await storage.getResolvedDiscrepancies(deal.id),
+      ).sectionCoverage;
+      const readiness = computeCimReadiness(sectionCoverage);
+      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
+      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
+      const interviewPct = sectionCoverage.length > 0
+        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
+        : 0;
       const hasActiveSession = sessions.some((s) => s.status === "active");
       const hasCompletedSession = sessions.some((s) => s.status === "completed");
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
@@ -4105,7 +4122,7 @@ Return JSON only.`,
 
       // Uploaded documents — broker-only sources (CRM notes, private emails)
       // never reach the seller.
-      const allDocs = (await storage.getDocumentsByDeal(deal.id)).filter((d) => (d as any).visibility !== "broker_only");
+      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
 
       // Pending seller approvals
       const pendingQuestions = await db.select().from(buyerQuestions)
@@ -5480,7 +5497,7 @@ Return JSON only.`,
           extractedInfo.targetMarket ? `Target market: ${extractedInfo.targetMarket}` : "Established customer base",
           extractedInfo.growthOpportunities ? `Growth opportunity: ${extractedInfo.growthOpportunities.substring(0, 80)}` : "Significant growth potential",
         ],
-        askingPrice: deal.askingPrice || "Contact for details",
+        askingPrice: listedAskingPrice(deal) || "Contact for details",
         industry: industry,
         location: extractedInfo.locations || "Contact for details",
       };

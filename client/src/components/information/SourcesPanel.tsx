@@ -277,7 +277,7 @@ export function SourceViewer({
                   action.mutate(
                     { method: "PATCH", path: `/sources/${source.documentId}`, body: { visibility: v ? "broker_only" : "shared" } },
                     {
-                      onSuccess: () => toast({ title: v ? "Now broker only" : "Now shared", description: v ? "The seller can't see or open it." : "The seller can see it in their documents." }),
+                      onSuccess: () => toast({ title: v ? "Now broker only" : "Now shared", description: v ? "The seller can't see or open it, and the interview won't use its facts." : "The seller can see it in their documents, and the interview can confirm its facts with them." }),
                       onError: (e) => toast({ title: "Couldn't change it", description: (e as Error).message, variant: "destructive" }),
                     },
                   )

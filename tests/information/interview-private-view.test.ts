@@ -104,7 +104,7 @@ const baseDeal: any = {
     assert.equal(safe.sellerStory + safe.industryContext + safe.sensitiveTopics.join() + safe.personalInsights.join(), "");
     const prompt = renderKnowledgeBaseForPrompt(assembleKnowledgeBase({ ...baseDeal, extractedInfo: {}, sellerProfile: legacy }, [], [], null, []));
     assert.doesNotMatch(prompt, /Karen|1\.6M|fold/);
-    assert.match(prompt, /Communication style: direct/);
+    assert.doesNotMatch(prompt, /Communication style:|Family involvement:/, "(round 4) no AI-derived category of a stale profile");
 
     const current: any = {
       ...legacy, privacyVersion: PROFILE_PRIVACY_VERSION, sourceDocumentIds: ["pl"],

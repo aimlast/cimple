@@ -5,9 +5,9 @@ import { getSectionImportance, renderSectionImportanceForPrompt } from "./sectio
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
-import { profileSafeForInterview, type SellerCommunicationProfile } from "./eq-profiler";
+import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
-import { sellerInterviewView } from "./seller-view";
+import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
 
 // =====================
 // Types
@@ -35,8 +35,9 @@ export interface KnowledgeBase {
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
 
-  // Seller Communication Profile — EQ profiler output (generated pre-interview)
-  sellerProfile: SellerCommunicationProfile | null;
+  // Seller Communication Profile — EQ profiler output (generated pre-interview),
+  // as the interview may read it (see profileSafeForInterview).
+  sellerProfile: InterviewSellerProfile | null;
 
   // What the seller told us in the questionnaire before the interview
   questionnaireData: Record<string, unknown> | null;
@@ -299,11 +300,9 @@ export function assembleKnowledgeBase(
   // it asks the seller for the figure without hinting at it.
   // (A side is private when its row is broker-only, or when it names a
   // broker-only source — financial-analysis values carry the source's name.)
-  const privateDocNames = documents
-    .filter((doc) => doc.visibility === "broker_only" && (doc.name || "").trim().length >= 4)
-    .map((doc) => doc.name.trim().toLowerCase());
-  const namesPrivateSource = (text: string | null) =>
-    !!text && privateDocNames.some((name) => text.toLowerCase().includes(name));
+  // (A generic title — "Email", "CRM note" — only counts when it IS the
+  // side's source label, never because the value mentions the word.)
+  const namesPrivateSource = privateSourceMatcher(documents);
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")
     .map((d) => {
@@ -581,13 +580,21 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     parts.push(`This profile was generated from broker notes, prior communications, and available data about the seller.`);
     parts.push(`Use it to adapt your tone, pacing, and approach. Do NOT reference this profile directly to the seller.`);
     parts.push(``);
-    parts.push(`- Communication style: ${kb.sellerProfile.communicationStyle}`);
-    parts.push(`- Emotional state: ${kb.sellerProfile.emotionalState}`);
-    parts.push(`- Selling reason: ${kb.sellerProfile.sellingReason}`);
-    parts.push(`- Seller sophistication: ${kb.sellerProfile.sophistication}`);
-    parts.push(`- Business attachment: ${kb.sellerProfile.businessAttachment}`);
-    parts.push(`- Time orientation: ${kb.sellerProfile.timeOrientation}`);
-    parts.push(`- Family involvement: ${kb.sellerProfile.familyInvolvement}`);
+    // A profile awaiting its rebuild carries only what the broker set by
+    // hand — no AI-derived category (it may have come from private notes).
+    if (kb.sellerProfile.pendingRebuild) {
+      parts.push(`(Profile being refreshed: only the broker's own settings are shown. Read the seller from the conversation itself.)`);
+    }
+    const category: Array<[string, string | undefined]> = [
+      ["Communication style", kb.sellerProfile.communicationStyle],
+      ["Emotional state", kb.sellerProfile.emotionalState],
+      ["Selling reason", kb.sellerProfile.sellingReason],
+      ["Seller sophistication", kb.sellerProfile.sophistication],
+      ["Business attachment", kb.sellerProfile.businessAttachment],
+      ["Time orientation", kb.sellerProfile.timeOrientation],
+      ["Family involvement", kb.sellerProfile.familyInvolvement],
+    ];
+    for (const [label, value] of category) if (value) parts.push(`- ${label}: ${value}`);
 
     if (kb.sellerProfile.sensitiveTopics.length > 0) {
       parts.push(`\nSensitive topics — handle with extreme care, never bring up directly:`);

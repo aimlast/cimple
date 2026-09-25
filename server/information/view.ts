@@ -26,6 +26,7 @@ import { buildSectionCoverage, SECTION_FIELD_MAP, isSubstantiveValue } from "../
 import { coverageAdjustmentsForDeal, getInterviewPlan, fieldLabel } from "../interview/interview-plan";
 import { getSectionImportance } from "../interview/section-importance";
 import { getInterviewOutline } from "../interview/outline";
+import { brokerPrivacy } from "../interview/seller-view";
 import {
   getFieldSources,
   getFieldAlternates,
@@ -157,6 +158,10 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   const alternates = getFieldAlternates(info);
   const docById = new Map(documents.map((d) => [d.id, d]));
   const docName = (id: string) => docById.get(id)?.name;
+  // A value a broker-only source asserted never reaches the interview (see
+  // interview/seller-view.ts) — the chip says so instead of "the interview
+  // confirms it".
+  const { isPrivateSource } = brokerPrivacy(documents);
   const sessionKinds = new Map<string, SourceKind>();
   for (const s of sessions) {
     const meta = (s.extractedInfo as Info | null) || {};
@@ -181,6 +186,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       label: describeSource(src, docName) + (src.inferred ? " (inferred)" : ""),
       ...(src.inferred ? { inferred: true } : {}),
       ...(brokerAcceptedSource(src) ? { acceptedByBroker: true } : {}),
+      ...(isPrivateSource(src) ? { brokerOnly: true } : {}),
       ...(src.documentId ? { documentId: src.documentId } : {}),
       ...(documentName ? { documentName } : {}),
       ...(src.sessionId ? { sessionId: src.sessionId } : {}),

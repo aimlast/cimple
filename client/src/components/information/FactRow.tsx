@@ -47,6 +47,7 @@ export function SourceChip({
           source.note && !source.label.includes(source.note) ? source.note : null,
           source.at ? `Recorded ${formatShortDate(source.at, true)}` : null,
           source.inferred ? INFERRED_HINT : null,
+          source.brokerOnly ? "Private to you: the seller never sees it and the interview doesn't use it" : null,
         ].filter(Boolean).join(" · ");
   const chip = (
     <span
@@ -82,6 +83,11 @@ const CONFIDENCE_TEXT: Record<string, { text: string; cls: string; hint: string 
   approximate: { text: "Approximate", cls: "text-amber-500", hint: "The seller gave a rough figure, or it couldn't be matched to their exact words — confirm it." },
   unverified: { text: "Unverified", cls: "text-muted-foreground italic", hint: "Second-hand or public information — the interview confirms it with the seller." },
 };
+
+// Broker-only sources (CRM notes, private emails) never reach the interview,
+// so it can't confirm what they say — it asks the seller openly.
+const BROKER_ONLY_UNVERIFIED_HINT =
+  "From your private notes. The seller never sees this source and the interview doesn't use it: it asks the seller directly. If you edit the value, it becomes your own fact, which the interview does use.";
 
 function AlternatesPopover({
   alternates,
@@ -221,7 +227,9 @@ export function FactRow({
     );
 
   const long = fact.displayValue.length > LONG_TEXT || fact.displayValue.split("\n").length > 4;
-  const conf = CONFIDENCE_TEXT[fact.confidence];
+  const conf = CONFIDENCE_TEXT[fact.confidence] && fact.source.brokerOnly && fact.confidence === "unverified"
+    ? { ...CONFIDENCE_TEXT[fact.confidence]!, hint: BROKER_ONLY_UNVERIFIED_HINT }
+    : CONFIDENCE_TEXT[fact.confidence];
   const multiline = fact.isMap || draft.length > 60 || draft.includes("\n");
 
   return (

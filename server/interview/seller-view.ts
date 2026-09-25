@@ -66,6 +66,48 @@ export function brokerPrivacy(documents: DocLike[]) {
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
+// Words that make up fallback source titles ("Email", "CRM note", "Pipedrive
+// activity", "Call notes") — a title made only of these names no particular
+// source, so finding the word in a value proves nothing.
+const GENERIC_TITLE_WORDS = new Set([
+  "email", "emails", "e", "mail", "crm", "note", "notes", "call", "calls", "activity", "activities", "record", "records",
+  "pipedrive", "hubspot", "salesforce", "deal", "person", "organization", "organisation", "org", "document", "documents",
+  "doc", "file", "files", "untitled", "memo", "transcript", "message", "messages", "thread", "private", "broker", "meeting",
+  "source", "text", "pasted", "upload", "uploaded", "re", "fwd", "fw", "from", "the", "a", "an", "and", "with", "of", "to", "on",
+]);
+
+/**
+ * Does a discrepancy side's text name a broker-only source? Financial-analysis
+ * values carry their source's name as a label ("$1.6M — CRM note — call
+ * with owner"), so a side is private when it names a broker-only row.
+ *  - A distinctive title (any word beyond the generic ones, 4+ characters)
+ *    counts wherever it appears as whole words.
+ *  - A generic title ("Email", "CRM note") counts only when it IS the side's
+ *    source label ("… — Email"), never because the value mentions the word
+ *    ("Revenue from email campaigns — 2024 P&L" is not private).
+ */
+export function privateSourceMatcher(documents: Array<Pick<Document, "visibility"> & { name?: string | null }>) {
+  const norm = (t: string) => t.toLowerCase().replace(/\s+/g, " ").trim();
+  const distinctive: string[] = [];
+  const generic: string[] = [];
+  for (const doc of documents) {
+    if (doc.visibility !== "broker_only") continue;
+    const name = norm(doc.name || "");
+    if (!name) continue;
+    const words = name.split(/[^a-z0-9à-ÿ]+/).filter(Boolean);
+    if (name.length >= 4 && words.some((w) => !GENERIC_TITLE_WORDS.has(w))) distinctive.push(name);
+    else generic.push(name);
+  }
+  const escape = (t: string) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const distinctiveRes = distinctive.map((n) => new RegExp(`(^|[^a-z0-9à-ÿ])${escape(n)}($|[^a-z0-9à-ÿ])`, "i"));
+  return (text: string | null | undefined): boolean => {
+    if (!text) return false;
+    const t = norm(text);
+    if (distinctiveRes.some((re) => re.test(t))) return true;
+    return generic.some((n) => t === n || t.endsWith(` — ${n}`) || t.endsWith(` - ${n}`) || t.endsWith(` – ${n}`) || t.endsWith(`(${n})`));
+  };
+}
+
 /** Best alternate for `altKey`: highest-ranked source, then newest. */
 function bestAlternate(list: FieldAlternate[] | undefined): FieldAlternate | undefined {
   return (list ?? [])

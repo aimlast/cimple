@@ -879,14 +879,17 @@ export async function processTurn(
   // prompt forbids it; this strips it mechanically when the model slips,
   // leaving the question. Clarifications, reconciliations, and empathy
   // openers are preserved (see stripFillerPreamble). When the seller asked
-  // something, the opener is the answer ("Yes — I have $2.3M down as your
-  // asking price.") and is never stripped: an unanswered question reads as
-  // being ignored, which is worse than a recap.
-  if (!degraded && !sellerMessage.includes("?")) {
-    const stripped = stripFillerPreamble(aiResponse.message);
+  // something, the opening may be the answer ("Yes — I have $2.3M down as
+  // your asking price.") and is never stripped — an unanswered question
+  // reads as being ignored — but praise of the question and a recap/grade
+  // that answers nothing still go (question mode, keyed on the seller's
+  // message).
+  if (!degraded) {
+    const stripped = stripFillerPreamble(aiResponse.message, { sellerMessage });
     if (stripped !== aiResponse.message) {
-      const removed = aiResponse.message.trim().slice(0, Math.max(0, aiResponse.message.trim().length - stripped.length)).trim();
-      console.log(`[session-manager] Filler guard trimmed a recap opener on session ${sessionId}: "${removed.slice(0, 140)}"`);
+      console.log(
+        `[session-manager] Filler guard trimmed a recap/praise sentence on session ${sessionId}: "${aiResponse.message.trim().slice(0, 160)}" → "${stripped.slice(0, 80)}…"`,
+      );
       aiResponse.message = stripped;
     }
   }

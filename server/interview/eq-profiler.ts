@@ -133,19 +133,67 @@ export function carryBrokerProfileEdits(
   return out;
 }
 
+/** The profile's category fields (the ones a prompt renders as labels). */
+export const PROFILE_CATEGORY_FIELDS = BROKER_EDITABLE_PROFILE_FIELDS;
+export type ProfileCategoryField = (typeof PROFILE_CATEGORY_FIELDS)[number];
+
 /**
- * The profile as the interview agent may see it: a profile that needs a
- * rebuild keeps only its style/category fields (no free text that could
- * carry the broker's private notes); any other profile loses pricing and
- * negotiation text (including anything the broker typed into it).
+ * A profile as the interview may read it. `pendingRebuild` marks a stale
+ * profile reduced to what the broker set by hand: its category fields are
+ * optional because a stale profile's own values may have been inferred from
+ * the broker's private notes.
+ */
+export type InterviewSellerProfile = Omit<SellerCommunicationProfile, ProfileCategoryField> &
+  Partial<Pick<SellerCommunicationProfile, ProfileCategoryField>> & { pendingRebuild?: boolean };
+
+/** The category values the broker set by hand on this profile (brokerOverrides). */
+function brokerSetCategories(profile: SellerCommunicationProfile): Partial<Pick<SellerCommunicationProfile, ProfileCategoryField>> {
+  const overrides = profile.brokerOverrides;
+  const out: Record<string, string> = {};
+  if (!overrides || typeof overrides !== "object") return out;
+  for (const field of PROFILE_CATEGORY_FIELDS) {
+    const o = (overrides as Record<string, any>)[field];
+    const value = o && typeof o === "object" && "brokerValue" in o ? o.brokerValue : o;
+    if (typeof value === "string" && value) out[field] = value;
+  }
+  return out;
+}
+
+/**
+ * The profile as the interview agent may see it.
+ *
+ * A profile that needs a rebuild (built under older privacy rules, or from a
+ * row the broker has since made private) may have taken ANY of its content
+ * from the broker's private notes — not only the free text (a seller story
+ * quoting a CRM note) but the categories too: "Selling reason: health" from
+ * a note about a heart episode, "Family involvement: spouse involved" from a
+ * note about the wife doing the books. Until the background rebuild lands,
+ * such a profile keeps only what the broker set by hand on it (their style
+ * corrections are their own instructions for the interview) — every
+ * AI-derived category, the free text and the list of sources it read are
+ * dropped, deterministically, whatever the deal holds today.
+ *
+ * Any other profile loses pricing and negotiation text (including anything
+ * the broker typed into it).
  */
 export function profileSafeForInterview(
   profile: SellerCommunicationProfile | null,
   documents: Array<{ id?: string; visibility?: string | null }>,
-): SellerCommunicationProfile | null {
+): InterviewSellerProfile | null {
   if (!profile) return null;
   if (!sellerProfileNeedsRebuild(profile, documents)) return stripNegotiationText(profile);
-  return { ...profile, sensitiveTopics: [], personalInsights: [], sellerStory: "", industryContext: "" };
+  const base: Record<string, unknown> = { ...profile };
+  for (const field of PROFILE_CATEGORY_FIELDS) delete base[field];
+  return {
+    ...(base as Omit<SellerCommunicationProfile, ProfileCategoryField>),
+    ...brokerSetCategories(profile),
+    sensitiveTopics: [],
+    personalInsights: [],
+    sellerStory: "",
+    industryContext: "",
+    dataSources: [],
+    pendingRebuild: true,
+  };
 }
 
 // A profile is about HOW to talk with the seller. Pricing and negotiation

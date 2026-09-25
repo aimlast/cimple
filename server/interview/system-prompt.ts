@@ -110,8 +110,12 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
   // interviews, so kept out of the cached prefix).
   try {
     const insights = await getInterviewInsightsForIndustry(kb.business.industry);
-    if (insights && insights.sampleCount > 0) {
-      dynamicParts.push(renderInsightsForPrompt(insights));
+    // Only generic, de-identified patterns reach the prompt (see
+    // insight-sanitizer.ts) — the row is shared by every broker's
+    // interviews in the industry. Nothing left → no block at all.
+    const rendered = insights && insights.sampleCount > 0 ? renderInsightsForPrompt(insights) : "";
+    if (rendered) {
+      dynamicParts.push(rendered);
       dynamicParts.push("\n---\n");
     }
   } catch {
