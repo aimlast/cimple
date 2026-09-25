@@ -9,6 +9,8 @@
  *           buyer's view, computed with the server's own rules.
  *   Right:  the inspector — title, layout, content, AI writer, who can see
  *           it, approve / regenerate / undo / delete.
+ *   Design: a drawer for the deal's template and the business's branding
+ *           (cim-design/DesignPanel), plus the print preview.
  *
  * Below 1024px the three panes become tabs (Sections · Page · Edit).
  * Pieces live in client/src/components/cim-builder/.
@@ -17,7 +19,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useLocation, useParams } from "wouter";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
-  AlertTriangle, ArrowLeft, Eye, Images, Loader2, Lock, Pencil, Plus, RefreshCw, Sparkles, Unlock, Wand2,
+  AlertTriangle, ArrowLeft, Eye, Images, Loader2, Lock, Palette, Pencil, Plus, Printer, RefreshCw, Sparkles, Unlock, Wand2,
 } from "lucide-react";
 import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
 import { CimMediaProvider } from "@/components/cim/CimMediaContext";
@@ -45,6 +47,9 @@ import { CimCanvas, type PreviewAs } from "@/components/cim-builder/CimCanvas";
 import { AddSectionDialog } from "@/components/cim-builder/AddSectionDialog";
 import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog";
 import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
+import { useDealDesign } from "@/components/cim-design/api";
+import { DesignPanel } from "@/components/cim-design/DesignPanel";
+import { cimModeForAccessLevel } from "@shared/cim-layouts";
 
 const PREVIEWS: Array<{ key: PreviewAs; label: string; hint: string }> = [
   { key: "editor", label: "Editing", hint: "Everything, with your edit controls" },
@@ -74,7 +79,7 @@ export default function CIMDesigner() {
     const p = new URLSearchParams(window.location.search).get("preview");
     return PREVIEWS.some((x) => x.key === p) ? (p as PreviewAs) : "editor";
   });
-  const [pane, setPane] = useState<Pane>("page");
+  const [pane, setPane] = useState<Pane>(() => (new URLSearchParams(window.location.search).get("design") === "1" ? "edit" : "page"));
   const [addAt, setAddAt] = useState<{ open: boolean; afterId?: string | null }>({ open: false });
   const [layoutOpen, setLayoutOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<BuilderSection | null>(null);
@@ -82,6 +87,7 @@ export default function CIMDesigner() {
   const [regenBrief, setRegenBrief] = useState("");
   const [regenAllOpen, setRegenAllOpen] = useState(false);
   const [mediaOpen, setMediaOpen] = useState(false);
+  const [designOpen, setDesignOpen] = useState(() => new URLSearchParams(window.location.search).get("design") === "1");
   // Unsaved photo/video/map edits, previewed live on the page.
   const [draft, setDraft] = useState<{ id: string; layoutData: Record<string, any> } | null>(null);
   const onDraftChange = useCallback((id: string, layoutData: Record<string, any> | null) => {
@@ -109,6 +115,10 @@ export default function CIMDesigner() {
   const sections = state?.sections ?? [];
   const gate = useAiGate(dealId);
   const media = useMediaLibrary(dealId);
+  const dealDesign = useDealDesign(dealId);
+  const designPayload = dealDesign.data
+    ? { template: dealDesign.data.template, brokerage: dealDesign.data.brokerage, business: dealDesign.data.business }
+    : null;
   const generation = useCimGeneration(dealId);
 
   const overrideMode = previewAs === "teaser" || previewAs === "full" ? "blind" : previewAs === "due_diligence" ? "dd" : null;
@@ -135,6 +145,7 @@ export default function CIMDesigner() {
 
   const select = (id: string, from: "list" | "page") => {
     setSelectedId(id);
+    setDesignOpen(false);
     if (from === "list") {
       // Bring the section into view on the page.
       requestAnimationFrame(() => document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
@@ -198,6 +209,11 @@ export default function CIMDesigner() {
   }
 
   const openAdd = (afterId?: string | null) => setAddAt({ open: true, afterId });
+  // Print preview of the version on screen (editing = the named CIM).
+  const openPrintPreview = () => {
+    const version = previewAs === "editor" ? "normal" : cimModeForAccessLevel(previewAs);
+    window.open(`/deal/${dealId}/print?version=${version}`, "_blank", "noopener");
+  };
   const blind = state?.blind;
   const previewMeta = PREVIEWS.find((p) => p.key === previewAs)!;
 
@@ -296,6 +312,7 @@ export default function CIMDesigner() {
             overrides={overrides}
             deal={deal}
             branding={branding}
+            design={designPayload}
             selectedId={selectedId}
             onSelect={(id) => select(id, "page")}
             onAddAfter={(id) => openAdd(id)}
@@ -311,7 +328,26 @@ export default function CIMDesigner() {
 
   const editPane = (
     <div className="h-full min-h-0 overflow-y-auto scrollbar-thin bg-card">
-      {selected && !readOnly ? (
+      {designOpen ? (
+        // The design panel sits where the inspector is, so the page stays
+        // fully visible and re-themes as the broker clicks.
+        <div className="p-4 space-y-4" data-testid="design-pane">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold flex items-center gap-1.5"><Palette className="h-4 w-4 text-teal" /> Design</p>
+              <p className="text-[11px] text-muted-foreground">How this CIM looks. Changes save and show on the page straight away.</p>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={() => setDesignOpen(false)} data-testid="button-close-design">Done</Button>
+          </div>
+          <DesignPanel
+            dealId={dealId}
+            design={dealDesign.data}
+            loading={dealDesign.isLoading}
+            library={media}
+            onPrintPreview={openPrintPreview}
+          />
+        </div>
+      ) : selected && !readOnly ? (
         <SectionInspector
           key={selected.id}
           section={selected}
@@ -375,6 +411,29 @@ export default function CIMDesigner() {
           <Button
             variant="ghost"
             size="sm"
+            className={cn("h-8 text-xs gap-1.5 px-2 sm:px-3", designOpen ? "text-teal bg-teal/10" : "text-muted-foreground")}
+            onClick={() => { setDesignOpen((o) => !o); setPane("edit"); }}
+            title="Template, colours, logos and print preview"
+            data-testid="button-cim-design"
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Design</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden md:inline-flex h-8 text-xs gap-1.5 text-muted-foreground px-2 sm:px-3"
+            onClick={openPrintPreview}
+            disabled={sections.length === 0}
+            title="A print-friendly version of this CIM (broker only)"
+            data-testid="button-print-preview"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">Print</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
             className="h-8 text-xs gap-1.5 text-muted-foreground px-2 sm:px-3"
             onClick={() => setMediaOpen(true)}
             title="Photos and videos uploaded for this deal"
@@ -418,7 +477,7 @@ export default function CIMDesigner() {
                 pane === p ? "bg-teal/15 text-foreground" : "text-muted-foreground hover:bg-muted/60",
               )}
             >
-              {p === "sections" ? `Sections (${sections.length})` : p === "page" ? "Page" : "Edit"}
+              {p === "sections" ? `Sections (${sections.length})` : p === "page" ? "Page" : designOpen ? "Design" : "Edit"}
             </button>
           ))}
         </div>

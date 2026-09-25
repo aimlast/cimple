@@ -1168,9 +1168,11 @@ Return JSON only.`,
         return res.status(400).json({ error: "Missing data or filename" });
       }
       const ext = path.extname(filename).toLowerCase() || ".png";
-      const allowed = [".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif"];
+      // No SVG: /uploads is served from the app origin with CSP off, so an
+      // SVG logo could run script. New uploads use POST /api/cim-templates/brand-logo.
+      const allowed = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
       if (!allowed.includes(ext)) {
-        return res.status(400).json({ error: "Invalid file type. Allowed: PNG, JPG, SVG, WebP, GIF" });
+        return res.status(400).json({ error: "Invalid file type. Allowed: PNG, JPG, WebP, GIF" });
       }
       const base64Data = data.replace(/^data:image\/[^;]+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
@@ -1785,11 +1787,21 @@ Return JSON only.`,
     }
   });
 
+  // One row per broker: POST creates it the first time and updates it after.
   app.post("/api/branding", requireBroker, async (req, res) => {
     try {
       const { insertBrandingSettingsSchema } = await import("@shared/schema");
+      const { cleanBrandingWrite } = await import("./cim/templates");
+      const cleaned = await cleanBrandingWrite(req.session.brokerId!, req.body || {});
+      if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
+      const existing = await storage.getBrandingByBroker(req.session.brokerId!);
+      if (existing) {
+        const updates = insertBrandingSettingsSchema.partial().parse(cleaned.data);
+        const settings = await storage.updateBrandingSettings(existing.id, updates);
+        return res.json(settings);
+      }
       const validatedData = insertBrandingSettingsSchema.parse({
-        ...req.body,
+        ...cleaned.data,
         brokerId: req.session.brokerId,
       });
       const settings = await storage.createBrandingSettings(validatedData);
@@ -1810,8 +1822,10 @@ Return JSON only.`,
         return res.status(404).json({ error: "Branding settings not found" });
       }
       const { insertBrandingSettingsSchema } = await import("@shared/schema");
-      const { brokerId: _b, id: _i, ...brandingBody } = req.body || {};
-      const validatedData = insertBrandingSettingsSchema.partial().parse(brandingBody);
+      const { cleanBrandingWrite } = await import("./cim/templates");
+      const cleaned = await cleanBrandingWrite(req.session.brokerId!, req.body || {});
+      if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
+      const validatedData = insertBrandingSettingsSchema.partial().parse(cleaned.data);
       const settings = await storage.updateBrandingSettings(req.params.id, validatedData);
       if (!settings) {
         return res.status(404).json({ error: "Branding settings not found" });
@@ -4272,9 +4286,17 @@ Return JSON only.`,
         cimContent: cimMode === "normal" ? deal.cimContent : null,
       };
 
-      const branding = deal.brokerId
-        ? await storage.getBrandingByBroker(deal.brokerId)
-        : undefined;
+      // Branding is whitelisted (never the settings row). The design payload
+      // carries the template, the brokerage brand (fine in Blind) and the
+      // business's own branding — only in Normal/DD, and only past the NDA.
+      const { designPayload } = await import("./cim/templates");
+      const design = await designPayload(deal, cimMode);
+      const gatedDesign = { ...design, template: { ...design.template, name: "" }, business: null };
+      const branding = {
+        companyName: design.brokerage.firmName,
+        logoUrl: design.brokerage.logoUrl,
+        disclaimer: design.brokerage.disclaimer,
+      };
 
       // NDA gate — enforced server-side. Until the NDA is signed, no CIM
       // sections or Q&A leave the server (previously the full payload
@@ -4285,7 +4307,8 @@ Return JSON only.`,
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
-          branding: branding ?? null,
+          branding,
+          design: gatedDesign,
           cimMode,
           ndaGate: true,
         });
@@ -4319,7 +4342,8 @@ Return JSON only.`,
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
-          branding: branding ?? null,
+          branding,
+          design: gatedDesign,
           cimMode,
           preparing: true,
         });
@@ -4333,7 +4357,8 @@ Return JSON only.`,
         sections: buyerCim.sections,
         pendingSections: buyerCim.heldBack,
         publishedQuestions,
-        branding: branding ?? null,
+        branding,
+        design,
         cimMode,
       });
     } catch (error: any) {
@@ -4830,7 +4855,8 @@ Return JSON only.`,
       res.json({
         request,
         deal: deal ? { id: deal.id, businessName: deal.businessName } : null,
-        branding: branding ?? null,
+        // Whitelisted — never the settings row (ids, broker id, templates).
+        branding: branding ? { companyName: branding.companyName ?? null, logoUrl: branding.logoUrl ?? null } : null,
       });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load review" });

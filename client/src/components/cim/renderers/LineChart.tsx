@@ -13,7 +13,7 @@ import {
   ResponsiveContainer,
   Dot,
 } from "recharts";
-import { CIM_DOC } from "../CimBrandingContext";
+import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
@@ -38,11 +38,6 @@ interface RendererProps {
   content: string;
   branding: CimBranding;
   section: CimSection;
-}
-
-function buildLineColors(primary: string, accent: string): string[] {
-  // Warm-neutral tail colors chosen to read on the paper document surface
-  return [primary, accent, "#64b8a0", "#94c9b8", CIM_DOC.neutral, "#ABA697"];
 }
 
 interface CustomTooltipProps {
@@ -76,6 +71,7 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
 }
 
 export function LineChartRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const theme = useCimTheme();
   const data: LineChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
   const series = data.series || [];
@@ -85,9 +81,9 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
     return <ProseFallback content={content} />;
   }
 
-  const primaryColor = branding.primaryHex || "#2dc88e";
-  const accentColor = branding.accentHex || "#1a9e72";
-  const colorPalette = buildLineColors(primaryColor, accentColor);
+  // Series colours always come from the template, so every chart in the
+  // CIM shares one palette (per-series colours in the data are ignored).
+  const colorPalette = theme.chart;
 
   const showLegend = series.length > 1;
 
@@ -106,30 +102,30 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke={CIM_DOC.line}
+            stroke={theme.line}
             vertical={false}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
+            tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
+            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
+            tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
             tickFormatter={(v) => v.toLocaleString()}
-            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
+            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} series={series} />}
-            cursor={{ stroke: CIM_DOC.line, strokeWidth: 1 }}
+            cursor={{ stroke: theme.line, strokeWidth: 1 }}
           />
           {showLegend && (
             <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: CIM_DOC.inkSoft }}
+              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: theme.inkSoft }}
               iconType="circle"
               iconSize={8}
               formatter={(value) => series.find((s) => s.key === value)?.label || value}
@@ -141,9 +137,9 @@ export function LineChartRenderer({ layoutData, content, branding, section }: Re
               type="monotone"
               dataKey={s.key}
               name={s.key}
-              stroke={s.color || colorPalette[i % colorPalette.length]}
+              stroke={colorPalette[i % colorPalette.length]}
               strokeWidth={2}
-              dot={{ r: 3, fill: s.color || colorPalette[i % colorPalette.length], strokeWidth: 0 }}
+              dot={{ r: 3, fill: colorPalette[i % colorPalette.length], strokeWidth: 0 }}
               activeDot={{ r: 5, strokeWidth: 0 }}
             />
           ))}

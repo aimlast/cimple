@@ -1,7 +1,8 @@
 /**
  * CimTab — the deal's CIM at a glance: status and generation progress, the
- * three versions (Normal / Blind / Due diligence) with previews, what each
- * kind of buyer sees, and the way into the CIM builder. Generate / regenerate
+ * three versions (Normal / Blind / Due diligence) with previews, the design
+ * (template, branding, cover and brokerage pages), what each kind of buyer
+ * sees, and the way into the CIM builder. Generate / regenerate
  * follow the same discrepancy gate as everywhere else.
  */
 import { useState } from "react";
@@ -27,6 +28,8 @@ import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
 import { cn } from "@/lib/utils";
+import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
+import type { CimSection } from "@shared/schema";
 
 function when(v: string | Date | null | undefined): string {
   if (!v) return "—";
@@ -170,6 +173,14 @@ export function CimTab() {
               />
             </div>
           </section>
+
+          {/* Design: template, branding, cover + brokerage pages */}
+          <CimDesignCard
+            dealId={dealId}
+            deal={deal}
+            cover={(sections.find((s) => s.layoutType === "cover_page" && s.isVisible !== false) as unknown as CimSection) ?? null}
+            onOpenDesign={() => navigate(`/deal/${dealId}/design?design=1`)}
+          />
 
           {/* Access */}
           <section className="space-y-3">

@@ -142,7 +142,7 @@ function Figure({
         type="button"
         onClick={onOpen}
         className={cn(
-          "relative block w-full overflow-hidden rounded-lg border border-card-border bg-[#F2EEE3] focus:outline-none focus-visible:ring-2 focus-visible:ring-teal",
+          "relative block w-full overflow-hidden rounded-lg border border-card-border bg-muted focus:outline-none focus-visible:ring-2 focus-visible:ring-teal",
           frame,
           fill && "flex-1 min-h-0",
         )}
@@ -180,7 +180,7 @@ function Carousel({ images, onOpen, badge }: { images: Shown[]; onOpen: (i: numb
   return (
     <div className="print:hidden">
       <div
-        className="group relative overflow-hidden rounded-lg border border-card-border bg-[#F2EEE3] aspect-[16/9]"
+        className="group relative overflow-hidden rounded-lg border border-card-border bg-muted aspect-[16/9]"
         onTouchStart={(e) => setTouchX(e.touches[0]?.clientX ?? null)}
         onTouchEnd={(e) => {
           const end = e.changedTouches[0]?.clientX;

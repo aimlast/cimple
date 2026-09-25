@@ -18,6 +18,7 @@ import { dealMedia, type BuyerAccess, type DealMedia } from "@shared/schema";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { mediaIdsIn, normalizeMediaLayoutData, type MediaAssetRef, type MediaLayoutKey } from "@shared/cim-media";
+import { businessBrandingMediaIds } from "./templates";
 
 export const PRIVATE_MEDIA_DIR = "private-media";
 
@@ -105,6 +106,10 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
     for (const s of cim.sections) {
       if (s.locked) continue;
       for (const id of mediaIdsIn(s.layoutType, s.layoutData)) ids.add(id);
+    }
+    // The business's logo and cover photo (cim-templates): named CIMs only.
+    if (mode !== "blind" && !cim.preparing) {
+      for (const id of businessBrandingMediaIds(deal)) ids.add(id);
     }
   }
   const v = { at: Date.now(), dealId: access.dealId, ids };

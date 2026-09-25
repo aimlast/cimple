@@ -309,6 +309,10 @@ export const deals = pgTable("deals", {
   // the section content was redacted to.
   blindCodename: text("blind_codename"),
   // @anchor:deals-cols:cim
+  // The business-for-sale's own branding on its CIM (cim-templates workstream):
+  // logo / cover photo (ids in deal_media) and colours. Normal & DD CIMs only —
+  // never sent to, or rendered for, a Blind buyer.
+  businessBranding: jsonb("business_branding").$type<import("./cim-theme").CimBusinessBranding>(),
 
   // Buyer access settings
   ndaRequired: boolean("nda_required").default(true),
@@ -832,6 +836,21 @@ export const brandingSettings = pgTable("branding_settings", {
   disclaimer: text("disclaimer"),
   
   // @anchor:branding-cols:cim
+  // CIM templates + brokerage branding (cim-templates workstream).
+  // Built-in template id (shared/cim-theme.ts) or a cim_templates.id.
+  defaultTemplateId: varchar("default_template_id"),
+  firmAddress: text("firm_address"),
+  firmPhone: text("firm_phone"),
+  firmEmail: text("firm_email"),
+  firmWebsite: text("firm_website"),
+  showDisclaimerPage: boolean("show_disclaimer_page").notNull().default(true),
+  showContactPage: boolean("show_contact_page").notNull().default(true),
+  // Forces one cover style across templates (null = each template's own).
+  coverStyle: text("cover_style"),
+  // primaryColor/accentColor/headingFont/bodyFont only reach the CIM when the
+  // broker switches them on (legacy rows hold untouched schema defaults).
+  useBrandColors: boolean("use_brand_colors").notNull().default(false),
+  useBrandFonts: boolean("use_brand_fonts").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1997,6 +2016,26 @@ export const dealMedia = pgTable("deal_media", {
 });
 export type DealMedia = typeof dealMedia.$inferSelect;
 export type InsertDealMedia = typeof dealMedia.$inferInsert;
+
+// ── CIM design templates (cim-templates workstream) ───────────────────────
+// A brokerage's custom templates. Built-in templates live in code
+// (shared/cim-theme.ts BUILTIN_TEMPLATES) and are never stored here.
+export const cimTemplates = pgTable("cim_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Full, validated CimThemeTokens (sanitizeTokens).
+  tokens: jsonb("tokens").notNull().$type<import("./cim-theme").CimThemeTokens>(),
+  // "Match my existing CIM": the ordered sections of the broker's past CIM,
+  // followed by the layout engine when planning a CIM with this template.
+  sectionOutline: jsonb("section_outline").$type<import("./cim-theme").CimSectionOutline>(),
+  // The template this one was cloned from (built-in id or cim_templates.id).
+  basedOn: varchar("based_on"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 // (cim workstreams)
 
 // @anchor:schema-tail:seed

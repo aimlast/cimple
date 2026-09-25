@@ -13,6 +13,8 @@ import type { ComponentType } from "react";
 import type { CimSection } from "@shared/schema";
 import { LOCKED_LAYOUT_TYPE, type CimLayoutKey } from "@shared/cim-layouts";
 import type { CimBranding } from "./CimBrandingContext";
+import { useSectionNumber, useThemeStyle } from "./CimDesignContext";
+import { CimSectionHeading } from "./CimSectionHeading";
 
 import { MetricGridRenderer }         from "./renderers/MetricGrid";
 import { BarChartRenderer }           from "./renderers/BarChart";
@@ -94,6 +96,9 @@ function isEmptyProse(section: CimSection, layoutData: Record<string, any>, cont
 }
 
 export function CimSectionRenderer({ section, branding, brokerMode = false, hideTitle = false }: CimSectionRendererProps) {
+  // Hooks first (the early returns below must not change the hook order).
+  const themeVars = useThemeStyle();
+  const number = useSectionNumber(section.id);
   if (!section.isVisible && !brokerMode) return null;
 
   // Prose fields keep their markup (renderers run them through renderInline /
@@ -132,28 +137,27 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
       // `cim-doc` locks the document to the paper palette regardless of
       // the app theme (see index.css) — the CIM must render identically
       // in dark mode, light mode, and print.
+      // The template's variables are set here too, so a section rendered on
+      // its own (outside a sheet) still wears the deal's template.
       className={`cim-doc cim-section relative ${!section.isVisible ? "opacity-40" : ""}`}
+      style={themeVars}
       data-section-key={section.sectionKey}
       data-layout-type={section.layoutType}
       data-track-section={section.sectionKey}
     >
       {/* Section title — not shown for cover_page or divider */}
       {!hideTitle && !UNTITLED.has(section.layoutType) && (
-        <div className="mb-4 flex items-start justify-between gap-4">
-          <h2
-            className="text-xl font-bold tracking-tight"
-            style={{ color: branding.headingColor }}
-          >
-            {section.sectionTitle}
-          </h2>
-          {brokerMode && !section.isVisible && (
+        <CimSectionHeading
+          title={section.sectionTitle}
+          number={number}
+          aside={brokerMode && !section.isVisible ? (
             <div className="flex items-center gap-2 shrink-0 mt-0.5">
               <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
                 hidden
               </span>
             </div>
-          )}
-        </div>
+          ) : undefined}
+        />
       )}
       {inner}
     </div>

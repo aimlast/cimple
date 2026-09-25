@@ -8,6 +8,7 @@ import {
 } from "@shared/cim-layouts";
 import { agentConfig } from "../interview/config/load-config";
 import { normalizeLocationMap, normText } from "@shared/cim-media";
+import type { CimSectionOutline } from "@shared/cim-theme";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -89,6 +90,11 @@ export interface CimLayoutParams {
     primaryColor?: string;
   } | null;
   engagementInsights?: EngagementInsightInput[] | null;
+  /**
+   * The design template's section outline ("Match my existing CIM"): the
+   * planner follows this order and these titles; toneNotes guide the writer.
+   */
+  sectionOutline?: CimSectionOutline | null;
 }
 
 /**
@@ -125,7 +131,7 @@ export async function generateCimLayout(
 
   // ── Phase 1: plan the document ─────────────────────────────────────────
   onProgress?.({ phase: "planning", total: 0, done: 0 });
-  const manifest = await generateManifest(sharedSystem);
+  const manifest = await generateManifest(sharedSystem, params.sectionOutline ?? null);
   onProgress?.({ phase: "writing", total: manifest.length, done: 0 });
 
   // ── Phase 2: generate each section's content in parallel batches ──────
@@ -528,7 +534,36 @@ const MANIFEST_TOOL = {
   },
 } as const;
 
-async function generateManifest(sharedSystem: SystemBlock): Promise<ManifestEntry[]> {
+const BROKERAGE_PAGE_TITLE = /confidential|disclaimer|^contact( us| information| details)?$/i;
+
+/** Phase 1 on its own: the section plan a full generation would start from. */
+export async function planCimManifest(params: CimLayoutParams): Promise<Array<Pick<ManifestEntry, "sectionTitle" | "layoutType" | "order">>> {
+  const manifest = await generateManifest(buildSharedSystem(params), params.sectionOutline ?? null);
+  return manifest.map((m) => ({ order: m.order, sectionTitle: m.sectionTitle, layoutType: m.layoutType }));
+}
+
+/** The broker's house structure, as planner instructions (empty when none). */
+export function outlineInstructions(outline: CimSectionOutline | null): string {
+  // The disclaimer and contact pages come from the brokerage's settings
+  // (they're added around every CIM), so they are never planned as sections.
+  const sections = (outline?.sections ?? []).filter((s) => !BROKERAGE_PAGE_TITLE.test(s.title.trim()));
+  if (sections.length === 0) return "";
+  const list = sections
+    .map((s, i) => `${i + 1}. ${s.title}${s.notes ? ` — ${s.notes}` : ""}${s.layoutHint ? ` [their layout: ${s.layoutHint}]` : ""}`)
+    .join("\n");
+  return [
+    "\n\n# THE BROKERAGE'S HOUSE STRUCTURE",
+    "This brokerage's CIMs follow the section order below (taken from one of their own past CIMs). Follow it:",
+    "- Keep this order and these section titles. Adapt a title only where it plainly doesn't fit this business.",
+    "- Fill each section from THIS deal's knowledge base and pick the best layout for its content.",
+    "- Add a section only when this business genuinely needs one the outline lacks (e.g. an industry-specific section the rules require), placed where it fits. Drop an outline section only when the knowledge base has nothing for it.",
+    "- The document still opens with the cover page. Do not plan a confidentiality/disclaimer or contact section — those pages are added from the brokerage's settings.",
+    list,
+  ].join("\n");
+}
+
+async function generateManifest(sharedSystem: SystemBlock, outline: CimSectionOutline | null = null): Promise<ManifestEntry[]> {
+  const houseStructure = outlineInstructions(outline);
   const attempt = async (): Promise<ManifestEntry[] | null> => {
     const response = await anthropic.messages.create({
       model: MODEL,
@@ -537,7 +572,7 @@ async function generateManifest(sharedSystem: SystemBlock): Promise<ManifestEntr
         sharedSystem,
         {
           type: "text",
-          text: "# TASK\nPlan this CIM document. Output ONLY the section manifest via the cim_manifest tool — no layoutData yet. Be bespoke to this business: the section list should tell this business's story to a sophisticated buyer, including the industry-specific sections the rules require.",
+          text: "# TASK\nPlan this CIM document. Output ONLY the section manifest via the cim_manifest tool — no layoutData yet. Be bespoke to this business: the section list should tell this business's story to a sophisticated buyer, including the industry-specific sections the rules require." + houseStructure,
         },
       ] as never,
       tools: [MANIFEST_TOOL] as never,
@@ -814,6 +849,10 @@ function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): st
 
   if (params.brokerBranding?.companyName) {
     parts.push(`\n--- PREPARED BY ---\n${params.brokerBranding.companyName}`);
+  }
+
+  if (params.sectionOutline?.toneNotes) {
+    parts.push(`\n--- HOUSE STYLE (how this brokerage's CIMs read — match it) ---\n${params.sectionOutline.toneNotes}`);
   }
 
   if (params.engagementInsights && params.engagementInsights.length > 0) {

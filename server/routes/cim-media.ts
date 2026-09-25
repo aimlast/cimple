@@ -132,6 +132,16 @@ async function removeQuietly(p: string | null | undefined) {
   }
 }
 
+/** A deleted upload can't stay the business's logo or cover photo (cim-templates). */
+async function detachFromBusinessBranding(deal: Deal, mediaId: string) {
+  const b = (deal.businessBranding ?? null) as Record<string, unknown> | null;
+  if (!b || (b.logoMediaId !== mediaId && b.coverPhotoMediaId !== mediaId)) return;
+  const next = { ...b };
+  if (next.logoMediaId === mediaId) next.logoMediaId = null;
+  if (next.coverPhotoMediaId === mediaId) next.coverPhotoMediaId = null;
+  await storage.updateDeal(deal.id, { businessBranding: next } as any);
+}
+
 function cleanCaption(v: unknown): string | null {
   if (typeof v !== "string") return null;
   const t = v.replace(/\s+/g, " ").trim();
@@ -283,6 +293,7 @@ export function registerCimMediaRoutes(app: Express): void {
       if (using.length > 0) await invalidateBlind(deal.id, using.map((s) => s.id));
       await db.delete(dealMedia).where(eq(dealMedia.id, row.id));
       await removeQuietly(mediaFilePath(row));
+      await detachFromBusinessBranding(deal, row.id);
       invalidateBuyerMedia(deal.id);
       res.json({ success: true, deletedId: row.id, detachedFrom: using.length });
     } catch (err) {

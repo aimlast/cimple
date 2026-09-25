@@ -15,6 +15,7 @@
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
+import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
@@ -76,6 +77,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
   ]);
+  // The deal's design template may carry the brokerage's house structure
+  // ("Match my existing CIM") — the planner follows it.
+  const template = await templateForDeal(deal, branding ?? null).catch(() => null);
   return {
     dealId: deal.id,
     businessName: deal.businessName,
@@ -90,6 +94,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     brokerBranding: branding
       ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor }
       : null,
+    sectionOutline: template?.sectionOutline ?? null,
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({

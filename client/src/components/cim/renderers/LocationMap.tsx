@@ -53,7 +53,7 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
         <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">{data.title}</h3>
       )}
       <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
-        <div className="relative overflow-hidden rounded-lg border border-card-border bg-[#F2EEE3] aspect-[4/3] md:aspect-auto md:min-h-[320px]">
+        <div className="relative overflow-hidden rounded-lg border border-card-border bg-muted aspect-[4/3] md:aspect-auto md:min-h-[320px]">
           <iframe
             key={`${query}-${zoom}`}
             src={mapEmbedUrl(query, zoom)}
@@ -85,7 +85,7 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
                 <div className="flex items-start gap-3">
                   <span className={cn(
                     "mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full",
-                    selected ? "bg-teal text-white" : "bg-[#F2EEE3] text-teal",
+                    selected ? "bg-teal text-teal-foreground" : "bg-muted text-teal",
                   )}>
                     <MapPin className="h-3.5 w-3.5" />
                   </span>

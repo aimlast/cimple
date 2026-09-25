@@ -350,6 +350,16 @@ export class MemStorage implements IStorage {
       headerTemplate: insertSettings.headerTemplate ?? null,
       footerTemplate: insertSettings.footerTemplate ?? null,
       disclaimer: insertSettings.disclaimer ?? null,
+      defaultTemplateId: insertSettings.defaultTemplateId ?? null,
+      firmAddress: insertSettings.firmAddress ?? null,
+      firmPhone: insertSettings.firmPhone ?? null,
+      firmEmail: insertSettings.firmEmail ?? null,
+      firmWebsite: insertSettings.firmWebsite ?? null,
+      showDisclaimerPage: insertSettings.showDisclaimerPage ?? true,
+      showContactPage: insertSettings.showContactPage ?? true,
+      coverStyle: insertSettings.coverStyle ?? null,
+      useBrandColors: insertSettings.useBrandColors ?? false,
+      useBrandFonts: insertSettings.useBrandFonts ?? false,
       createdAt: now,
       updatedAt: now,
     };
@@ -904,8 +914,11 @@ export class DbStorage implements IStorage {
   }
 
   async getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined> {
+    // One row per broker (POST /api/branding upserts). Should a legacy
+    // duplicate exist, always the same (oldest) row answers.
     const result = await db.select().from(brandingSettings)
       .where(eq(brandingSettings.brokerId, brokerId))
+      .orderBy(brandingSettings.createdAt, brandingSettings.id)
       .limit(1);
     return result[0] ?? undefined;
   }
