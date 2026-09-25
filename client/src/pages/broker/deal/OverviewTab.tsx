@@ -13,11 +13,14 @@ import { useDeal } from "@/contexts/DealContext";
 import { queryClient } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
-import type { CimReadiness } from "@shared/cim-readiness";
+import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
+import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
+import type { DealSellerContact } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -58,10 +61,8 @@ import {
   AlertCircle,
   Loader2,
   Globe,
-  Pencil,
   RefreshCw,
   X,
-  Check,
   Wand2,
   Mail,
   Phone,
@@ -73,13 +74,13 @@ import {
   Eye,
   Undo2,
   Users,
+  Library,
+  ArrowRight,
+  Pencil,
 } from "lucide-react";
-import { PHASES, getPhaseIndex, DOC_CATEGORIES } from "./phases";
+import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
-import { buildBranding } from "@/components/cim/CimBrandingContext";
-import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
-import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
+import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
@@ -87,7 +88,6 @@ import type {
   SellerInvite,
   Document as DocType,
   CimSection,
-  BrandingSettings,
   Discrepancy,
 } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
@@ -226,22 +226,17 @@ function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
 function DocumentUploadCard({
   openSignal,
 }: {
-  openSignal?: { category: string; tab: "file" | "paste"; nonce: number } | null;
+  openSignal?: AddSourcePreset | null;
 }) {
   const { dealId } = useDeal();
-  const { toast } = useToast();
+  const [, setLocation] = useLocation();
   const [uploadOpen, setUploadOpen] = useState(false);
-  const [docFile, setDocFile] = useState<File | null>(null);
-  const [docCategory, setDocCategory] = useState("financials");
-  const [uploadTab, setUploadTab] = useState<"file" | "paste">("file");
-  const [pasteText, setPasteText] = useState("");
-  const [pasteTitle, setPasteTitle] = useState("");
+  const [preset, setPreset] = useState<AddSourcePreset | null>(null);
 
-  // Other cards (e.g. the Calls tile) can pop this dialog open pre-configured.
+  // Other cards (e.g. the Calls tile) can pop the dialog open pre-configured.
   useEffect(() => {
     if (!openSignal) return;
-    setDocCategory(openSignal.category);
-    setUploadTab(openSignal.tab);
+    setPreset(openSignal);
     setUploadOpen(true);
   }, [openSignal]);
 
@@ -265,75 +260,10 @@ function DocumentUploadCard({
     const stillProcessing = new Set(docs.filter(isDocProcessing).map((d) => d.id));
     const finished = Array.from(processingIdsRef.current).some((id) => !stillProcessing.has(id));
     processingIdsRef.current = stillProcessing;
-    if (finished) queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+    if (finished) {
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
+    }
   }, [docs, dealId]);
-
-  const uploadDoc = useMutation({
-    mutationFn: async () => {
-      // Pasted text becomes a plain .txt upload — same pipeline. The title
-      // travels separately so the document keeps it verbatim ("—", commas
-      // and all); only the File name is sanitised for the wire.
-      const title = pasteTitle.trim();
-      const safeFileName =
-        title.replace(/[^a-zA-Z0-9-_ ]/g, " ").replace(/\s+/g, " ").trim() || "call-transcript";
-      const file =
-        uploadTab === "paste"
-          ? new File([pasteText], `${safeFileName}.txt`, { type: "text/plain" })
-          : docFile;
-      if (!file || (uploadTab === "paste" && !pasteText.trim()))
-        throw new Error(uploadTab === "paste" ? "Nothing pasted" : "No file selected");
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("category", docCategory);
-      if (uploadTab === "paste" && title) formData.append("title", title);
-      const r = await fetch(`/api/deals/${dealId}/documents/upload`, {
-        method: "POST",
-        body: formData,
-        credentials: "include",
-      });
-      // Multipart request, so apiJson doesn't apply — but the toast must
-      // still say why the server rejected it (type, size, session...).
-      const text = await r.text();
-      let body: Record<string, any> | null = null;
-      try {
-        body = text ? JSON.parse(text) : null;
-      } catch {
-        body = null;
-      }
-      if (!r.ok) {
-        throw new ApiError(
-          body && typeof body.error === "string"
-            ? body.error
-            : r.status === 401
-              ? "Your session has expired — please sign in again."
-              : `Upload failed (${r.status})`,
-          r.status,
-          body,
-        );
-      }
-      return body ?? {};
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "documents"],
-      });
-      toast({
-        title: "Document uploaded",
-        description: "Parsing will begin automatically.",
-      });
-      setDocFile(null);
-      setPasteText("");
-      setPasteTitle("");
-      setUploadOpen(false);
-    },
-    onError: (err: Error) => {
-      toast({
-        title: "Upload failed",
-        description: err.message,
-        variant: "destructive",
-      });
-    },
-  });
 
   const parsedCount = docs.filter(
     (d: any) => (d.status as string) === "extracted",
@@ -345,10 +275,10 @@ function DocumentUploadCard({
         <div className="flex items-start gap-3">
           <Upload className="h-[1.125rem] w-[1.125rem] text-teal mt-0.5 shrink-0" />
           <div className="flex-1 min-w-0">
-            <p className="text-sm font-medium">Upload Documents</p>
+            <p className="text-sm font-medium">Add information</p>
             <p className="text-xs text-muted-foreground mt-0.5">
-              Upload financials, P&L, tax returns, leases, and other key
-              documents. The AI will extract structured data automatically.
+              Documents, emails, call or video-call transcripts, CRM notes, web
+              pages — the AI reads each one and records where every fact came from.
             </p>
             {/* A failed list fetch must not read as "nothing uploaded yet". */}
             {docsError && (
@@ -392,18 +322,30 @@ function DocumentUploadCard({
                 )}
               </div>
             )}
-            <div className="mt-3 flex items-center gap-2">
+            <div className="mt-3 flex flex-wrap items-center gap-2">
               <Button
                 size="sm"
                 className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5"
-                onClick={() => setUploadOpen(true)}
+                onClick={() => {
+                  setPreset({ kind: "document", tab: "file", nonce: Date.now() });
+                  setUploadOpen(true);
+                }}
+                data-testid="button-open-upload"
               >
-                <Upload className="h-3 w-3" /> Upload File
+                <Upload className="h-3 w-3" /> Add a source
+              </Button>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="h-7 text-xs gap-1 text-muted-foreground hover:text-foreground"
+                onClick={() => setLocation(`/deal/${dealId}/information`)}
+              >
+                <Library className="h-3 w-3" /> Collected information
               </Button>
               {docs.length > 0 && (
                 <span className="text-2xs text-muted-foreground">
-                  {docs.length} uploaded
-                  {parsedCount > 0 && ` · ${parsedCount} parsed`}
+                  {docs.length} source{docs.length === 1 ? "" : "s"}
+                  {parsedCount > 0 && ` · ${parsedCount} read`}
                 </span>
               )}
             </div>
@@ -411,101 +353,7 @@ function DocumentUploadCard({
         </div>
       </div>
 
-      <Dialog open={uploadOpen} onOpenChange={setUploadOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Upload Document</DialogTitle>
-            <DialogDescription>
-              Supported: PDF, Excel (.xlsx/.xls), Word (.docx), PowerPoint
-              (.pptx), text files
-            </DialogDescription>
-          </DialogHeader>
-          <div className="py-3 space-y-3">
-            <div className="flex gap-1 rounded-md bg-muted p-0.5 w-fit">
-              {(["file", "paste"] as const).map((t) => (
-                <button
-                  key={t}
-                  onClick={() => setUploadTab(t)}
-                  className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
-                    uploadTab === t
-                      ? "bg-card shadow-sm"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  {t === "file" ? "Upload file" : "Paste text"}
-                </button>
-              ))}
-            </div>
-            {uploadTab === "file" ? (
-              <div className="space-y-1.5">
-                <Label className="text-xs">File</Label>
-                <Input
-                  type="file"
-                  accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
-                  onChange={(e) => setDocFile(e.target.files?.[0] || null)}
-                  className="h-9"
-                />
-              </div>
-            ) : (
-              <>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Title (optional)</Label>
-                  <Input
-                    placeholder="e.g. Seller call — July 15"
-                    value={pasteTitle}
-                    onChange={(e) => setPasteTitle(e.target.value)}
-                    className="h-9"
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label className="text-xs">Text</Label>
-                  <Textarea
-                    placeholder="Paste a call transcript, meeting notes, or any text — the AI extracts the key facts into the deal profile."
-                    value={pasteText}
-                    onChange={(e) => setPasteText(e.target.value)}
-                    className="min-h-[10rem] text-sm"
-                  />
-                </div>
-              </>
-            )}
-            <div className="space-y-1.5">
-              <Label className="text-xs">Category</Label>
-              <Select value={docCategory} onValueChange={setDocCategory}>
-                <SelectTrigger className="h-9">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {DOC_CATEGORIES.map((c) => (
-                    <SelectItem key={c.value} value={c.value}>
-                      {c.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-          </div>
-          <div className="flex justify-end gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={() => setUploadOpen(false)}
-            >
-              Cancel
-            </Button>
-            <Button
-              size="sm"
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
-              onClick={() => uploadDoc.mutate()}
-              disabled={
-                (uploadTab === "file" ? !docFile : !pasteText.trim()) ||
-                uploadDoc.isPending
-              }
-            >
-              {uploadDoc.isPending ? "Uploading..." : "Upload & Parse"}
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
+      <AddSourceDialog dealId={dealId} open={uploadOpen} onOpenChange={setUploadOpen} preset={preset} />
     </>
   );
 }
@@ -562,7 +410,7 @@ function IntegrationPromptCard({
     {
       icon: Database,
       label: "CRM",
-      desc: "Connect Pipedrive for buyer prefill",
+      desc: "Import the seller's Pipedrive record",
       badge: "Available",
       badgeCls: "bg-teal/10 text-teal",
       onClick: () => setLocation("/broker/integrations"),
@@ -864,6 +712,12 @@ Signed electronically via the Cimple platform.`;
       testId: "button-invite-seller",
       action: () => {
         setInviteResult(null);
+        // Start from the seller's details on file (CRM / Information tab).
+        const contact = deal.sellerContact as DealSellerContact | null;
+        if (contact) {
+          setSellerName((v) => v || contact.name || "");
+          setSellerEmail((v) => v || contact.email || "");
+        }
         setInviteOpen(true);
       },
       actionLabel: "Invite Seller",
@@ -1054,7 +908,9 @@ Signed electronically via the Cimple platform.`;
         </div>
       ))}
 
-      {requiredDone && (
+      {/* Only on a Phase 1 deal — on a later deal this expanded accordion
+          would move it backwards (the server refuses that anyway). */}
+      {requiredDone && deal.phase === "phase1_info_collection" && (
         <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between gap-4">
           <div>
             <p className="text-sm font-medium text-teal">
@@ -1549,15 +1405,46 @@ function Phase2Center() {
           )}
           <div className="flex-1">
             <p
-              className={`text-sm font-medium ${deal.interviewCompleted ? "line-through text-muted-foreground" : "text-teal"}`}
+              className={`text-sm font-medium ${deal.interviewCompleted ? "text-foreground" : "text-teal"}`}
             >
-              AI interview
+              {deal.interviewCompleted ? "Interview complete" : "AI interview"}
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {deal.interviewCompleted
-                ? "Completed — business profile built"
+                ? "The business profile is built — you can keep adding to it."
                 : "The AI conducts an adaptive interview to build the full business profile."}
             </p>
+            {deal.interviewCompleted && (
+              <div className="mt-3 flex flex-wrap items-center gap-2" data-testid="interview-complete-links">
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setLocation(`/deal/${dealId}/information`)}
+                  data-testid="button-view-collected-information"
+                >
+                  <Library className="h-3 w-3" /> View collected information
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs gap-1.5"
+                  onClick={() => setLocation(`/deal/${dealId}/interview-review`)}
+                  data-testid="button-view-transcript"
+                >
+                  <MessageSquare className="h-3 w-3" /> View transcript
+                </Button>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="h-7 text-xs gap-1.5 text-muted-foreground hover:text-foreground"
+                  onClick={() => setLocation(`/deal/${dealId}/interview`)}
+                  data-testid="button-add-more-detail"
+                >
+                  <Pencil className="h-3 w-3" /> Add more detail
+                </Button>
+              </div>
+            )}
             {!deal.interviewCompleted && (
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Button
@@ -1590,8 +1477,9 @@ function Phase2Center() {
       </div>
 
       {/* Advance to Content Creation — the clear next step once the interview
-          is done. Previously there was no path from here to CIM generation. */}
-      {deal.interviewCompleted && (
+          is done. Previously there was no path from here to CIM generation.
+          Hidden once the deal is past Seller Intake (it would move it back). */}
+      {deal.interviewCompleted && deal.phase === "phase2_platform_intake" && (
         <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
           <div>
             <p className="text-sm font-medium">Ready to build the CIM</p>
@@ -1669,12 +1557,6 @@ function Phase3Center() {
   const { deal, dealId } = useDeal();
   const { toast } = useToast();
   const cimContent = deal.cimContent as Record<string, string> | null;
-  const [editingSection, setEditingSection] = useState<string | null>(null);
-  // Prose layouts edit a text draft (→ brokerEditedContent); structured
-  // layouts edit their layoutData (→ layoutData). See editableText.ts.
-  const [editMode, setEditMode] = useState<"text" | "data">("text");
-  const [editDraft, setEditDraft] = useState("");
-  const [dataDraft, setDataDraft] = useState<Record<string, any>>({});
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
 
   // Throws on failure: returning [] here would drop the broker into the
@@ -1693,17 +1575,6 @@ function Phase3Center() {
     },
   });
 
-  const { data: brandingSettings } = useQuery<BrandingSettings | null>({
-    queryKey: ["/api/branding"],
-    queryFn: async () => {
-      const r = await fetch("/api/branding");
-      if (!r.ok) return null;
-      const arr = await r.json();
-      return Array.isArray(arr) ? arr[0] || null : arr;
-    },
-  });
-
-  const branding = buildBranding(brandingSettings, deal);
   const hasVisualSections = cimSections.length > 0;
 
   const {
@@ -1726,16 +1597,14 @@ function Phase3Center() {
   // page). This tab follows it via useCimGeneration for the progress bar;
   // the "CIM ready" toast comes from the app-wide CimGenerationWatcher.
   const generation = useCimGeneration(dealId);
-  // Importance-weighted information quality — replaces the raw field count.
-  const { data: readinessData } = useQuery<{ readiness: CimReadiness }>({
-    queryKey: ["/api/deals", dealId, "cim-readiness"],
-    queryFn: async () => {
-      const r = await fetch(`/api/deals/${dealId}/cim-readiness`, { credentials: "include" });
-      if (!r.ok) throw new Error("Failed to load CIM readiness");
-      return r.json();
-    },
-  });
-  const readiness = readinessData?.readiness;
+  // Importance-weighted information quality — replaces the raw field count —
+  // and the shared "enough information to write the CIM?" rule: a finished
+  // interview, or enough collected from any source (calls, CRM, documents,
+  // the Information tab). Same rule as the CIM tab, the builder, the deal
+  // list and the server.
+  const infoGate = useCimGenerationGate(dealId, deal.interviewCompleted);
+  const readiness = infoGate.readiness;
+  const infoBlockReason = infoGate.allowed ? null : infoGate.reason;
   const generate = useMutation({
     mutationFn: () =>
       apiJson<{ started: boolean }>(
@@ -1770,63 +1639,6 @@ function Phase3Center() {
       });
     },
   });
-
-  const saveEdit = useMutation({
-    mutationFn: ({ sectionId, patch }: { sectionId: string; patch: { brokerEditedContent?: string; layoutData?: Record<string, any> } }) =>
-      apiJson(
-        "PATCH",
-        `/api/cim-sections/${sectionId}`,
-        patch,
-        "Couldn't save the section",
-      ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({
-        queryKey: ["/api/deals", dealId, "cim-sections"],
-      });
-      setEditingSection(null);
-      toast({ title: "Section saved" });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Save failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  // Per-section regenerate: rebuilds ONE section through the layout engine
-  // (POST generate-content { sectionId }); everything else is untouched.
-  const regenerateSection = useMutation({
-    mutationFn: (sectionId: string) =>
-      apiJson(
-        "POST",
-        `/api/deals/${dealId}/generate-content`,
-        { sectionId },
-        "Couldn't regenerate the section",
-      ),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
-      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "Section regenerated" });
-    },
-    onError: (e: Error) =>
-      toast({
-        title: "Regenerate failed",
-        description: e.message,
-        variant: "destructive",
-      }),
-  });
-
-  const startEdit = (section: CimSection) => {
-    setEditingSection(String(section.id));
-    if (isTextEditableLayout(section.layoutType)) {
-      setEditMode("text");
-      setEditDraft(getEditableText(section));
-    } else {
-      setEditMode("data");
-      setDataDraft(((section.layoutData as Record<string, any> | null) ?? {}));
-    }
-  };
 
   const approve = useMutation({
     mutationFn: (role: "broker" | "seller") =>
@@ -1863,20 +1675,6 @@ function Phase3Center() {
       toast({ title: "Couldn't advance", description: e.message, variant: "destructive" }),
   });
 
-  if (!deal.interviewCompleted) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <AlertCircle className="h-8 w-8 text-muted-foreground/30 mb-3" />
-        <p className="text-sm font-medium text-muted-foreground">
-          Interview required first
-        </p>
-        <p className="text-xs text-muted-foreground/60 mt-1">
-          Complete the AI interview in Phase 2 before generating content.
-        </p>
-      </div>
-    );
-  }
-
   // Without the sections list we can't tell "not generated yet" from "failed
   // to load" — and the former branch offers a Generate button that would
   // wipe and rebuild an existing CIM. Show the error instead.
@@ -1908,7 +1706,7 @@ function Phase3Center() {
         {readiness ? (
           <CimReadinessCard
             readiness={readiness}
-            hint={`${totalDataFields} data fields on file (${extractedCount} from the interview and documents, ${scrapedCount} from the public scrape). ${readiness.criticalGap ? "Closing the critical gaps before generating will produce a stronger CIM; you can still generate now and edit." : "Ready to generate."}`}
+            hint={`${totalDataFields} data fields on file (${extractedCount} from the interview and documents, ${scrapedCount} from the public scrape). ${!infoGate.allowed ? "Add more before generating — see below." : readiness.criticalGap ? "Closing the critical gaps before generating will produce a stronger CIM; you can still generate now and edit." : "Ready to generate."}`}
           />
         ) : (
           <div
@@ -1954,6 +1752,16 @@ function Phase3Center() {
               {blockReason}
             </p>
           )}
+          {!blockReason && infoBlockReason && (
+            <p className="text-xs text-amber-500 mb-3 max-w-md mx-auto" data-testid="text-generate-needs-information">
+              {infoBlockReason}
+            </p>
+          )}
+          {!blockReason && !infoBlockReason && infoGate.allowed && !deal.interviewCompleted && (
+            <p className="text-xs text-muted-foreground mb-3 max-w-md mx-auto" data-testid="text-generate-without-interview">
+              The seller interview isn't finished — the CIM will be written from what you've collected so far. You can regenerate after the interview.
+            </p>
+          )}
           {generation.isRunning ? (
             <CimGenerationProgress view={generation} className="max-w-md mx-auto" />
           ) : (
@@ -1964,8 +1772,8 @@ function Phase3Center() {
               <Button
                 className="bg-teal text-teal-foreground hover:bg-teal/90"
                 onClick={() => generate.mutate()}
-                disabled={generate.isPending || generationBlocked}
-                title={blockReason ?? undefined}
+                disabled={generate.isPending || generationBlocked || !infoGate.allowed}
+                title={blockReason ?? infoBlockReason ?? undefined}
                 data-testid="button-generate-content"
               >
                 {generate.isPending ? (
@@ -1988,14 +1796,14 @@ function Phase3Center() {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
           <h2 className="text-lg font-semibold tracking-tight">
-            CIM Preview
+            Your CIM
           </h2>
           <p className="text-sm text-muted-foreground mt-0.5">
             {hasVisualSections
-              ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Click any section to edit`
+              ? `${cimSections.length} section${cimSections.length === 1 ? "" : "s"} · Edit, add and rearrange them in the CIM builder`
               : "Legacy text CIM — regenerate to enable visual editing"}
           </p>
           {readiness && <CimReadinessBadge readiness={readiness} className="mt-1" />}
@@ -2004,8 +1812,13 @@ function Phase3Center() {
               {blockReason.replace(/before generating\.$/, "before regenerating.")}
             </p>
           )}
+          {!blockReason && infoBlockReason && (
+            <p className="text-xs text-amber-500 mt-1 max-w-xl" data-testid="text-regenerate-needs-information">
+              Regenerating is off for now. {infoBlockReason} You can still edit, approve and advance this CIM.
+            </p>
+          )}
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 sm:shrink-0 sm:justify-end">
           {deal.contentApprovedByBroker && deal.contentApprovedBySeller ? (
             deal.phase === "phase4_design_finalization" ? (
               <span className="text-xs font-medium text-success flex items-center gap-1">
@@ -2060,8 +1873,8 @@ function Phase3Center() {
             onClick={() => setRegenConfirmOpen(true)}
             // Same gate as the first Generate button — critical discrepancies
             // block every generation, not just the first.
-            disabled={generate.isPending || generation.isRunning || generationBlocked}
-            title={blockReason ?? undefined}
+            disabled={generate.isPending || generation.isRunning || generationBlocked || !infoGate.allowed}
+            title={blockReason ?? infoBlockReason ?? undefined}
             data-testid="button-regenerate-content"
           >
             <RefreshCw
@@ -2123,105 +1936,9 @@ function Phase3Center() {
       )}
 
       {hasVisualSections ? (
-        <div className="space-y-6 rounded-lg border border-border bg-card/50 p-6">
-          {cimSections.map((section) => {
-            const isEditing = editingSection === String(section.id);
-            const textEditable = isTextEditableLayout(section.layoutType);
-            const dataEditable = isStructuredLayout(section.layoutType);
-            const isRegenerating =
-              regenerateSection.isPending && regenerateSection.variables === String(section.id);
-            return (
-              <div key={section.id} className="group relative">
-                {!isEditing && (
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 flex gap-1">
-                    {(textEditable || dataEditable) && (
-                      <button
-                        onClick={() => startEdit(section)}
-                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm"
-                        data-testid={`button-edit-section-${section.sectionKey}`}
-                      >
-                        <Pencil className="h-3 w-3" /> {textEditable ? "Edit text" : "Edit data"}
-                      </button>
-                    )}
-                    {section.layoutType !== "cover_page" && section.layoutType !== "divider" && (
-                      <button
-                        onClick={() => regenerateSection.mutate(String(section.id))}
-                        disabled={regenerateSection.isPending || generationBlocked}
-                        title={blockReason ?? "Rebuild only this section from the knowledge base"}
-                        className="h-7 px-2 rounded bg-background/90 border border-border text-xs text-muted-foreground hover:text-foreground flex items-center gap-1 backdrop-blur-sm disabled:opacity-50"
-                        data-testid={`button-regenerate-section-${section.sectionKey}`}
-                      >
-                        <RefreshCw className={`h-3 w-3 ${isRegenerating ? "animate-spin" : ""}`} />
-                        {isRegenerating ? "Regenerating…" : "Regenerate"}
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {isEditing ? (
-                  <div className="rounded-lg border-2 border-teal/40 bg-card p-4 space-y-3">
-                    <div className="flex items-center justify-between">
-                      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-widest">
-                        {section.sectionTitle}
-                      </p>
-                      <span className="text-2xs text-muted-foreground bg-muted px-2 py-0.5 rounded">
-                        {section.layoutType}
-                      </span>
-                    </div>
-                    {editMode === "text" ? (
-                      <Textarea
-                        value={editDraft}
-                        onChange={(e) => setEditDraft(e.target.value)}
-                        className="resize-none text-sm min-h-[140px] font-normal"
-                        autoFocus
-                      />
-                    ) : (
-                      <div className="max-h-[480px] overflow-y-auto pr-1 scrollbar-thin">
-                        <StructuredDataEditor value={dataDraft} onChange={setDataDraft} />
-                      </div>
-                    )}
-                    <div className="flex items-center gap-2">
-                      <Button
-                        size="sm"
-                        className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1"
-                        onClick={() =>
-                          saveEdit.mutate({
-                            sectionId: String(section.id),
-                            patch: editMode === "text"
-                              ? { brokerEditedContent: editDraft }
-                              : { layoutData: dataDraft },
-                          })
-                        }
-                        disabled={saveEdit.isPending}
-                      >
-                        {saveEdit.isPending ? (
-                          <Loader2 className="h-3 w-3 animate-spin" />
-                        ) : (
-                          <Check className="h-3 w-3" />
-                        )}
-                        Save
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="h-7 text-xs gap-1"
-                        onClick={() => setEditingSection(null)}
-                      >
-                        <X className="h-3 w-3" /> Cancel
-                      </Button>
-                    </div>
-                  </div>
-                ) : (
-                  <CimSectionRenderer
-                    section={section}
-                    branding={branding}
-                    brokerMode
-                  />
-                )}
-              </div>
-            );
-          })}
-        </div>
+        // The CIM builder is the one editor for sections (add, delete,
+        // reorder, rewrite with AI, access tiers) — Overview shows a summary.
+        <CimSummaryCard dealId={dealId} />
       ) : (
         <div className="space-y-3">
           {CIM_SECTIONS.map((section) => {
@@ -2325,7 +2042,7 @@ function Phase4Center() {
           onClick={() => navigate(`/deal/${dealId}/design`)}
         >
           <Wand2 className="h-3.5 w-3.5" />
-          Open CIM Designer
+          Open CIM builder
         </Button>
       </div>
       {publishBlocked && (
@@ -2593,9 +2310,11 @@ export interface PhaseFocus {
 
 export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } = {}) {
   const { deal, dealId } = useDeal();
-  const [expandedPhases, setExpandedPhases] = useState<Set<string>>(
-    new Set(),
-  );
+  const [, setLocation] = useLocation();
+  // Open/closed per phase. The current phase starts open and every other one
+  // closed, but all of them can be toggled — including the current one.
+  const [phaseOpen, setPhaseOpen] = useState<Record<string, boolean>>({});
+  const isPhaseOpen = (key: string) => phaseOpen[key] ?? deal.phase === key;
   // Header stepper → expand the target phase, then scroll once it has
   // rendered. Runs here (not on a timer in DealShell) so it also works when
   // the click navigated from another tab and this component mounted later.
@@ -2603,33 +2322,40 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   useEffect(() => {
     if (!phaseFocus) return;
     pendingScrollRef.current = phaseFocus.key;
-    setExpandedPhases((prev) => {
-      if (prev.has(phaseFocus.key)) return prev;
-      const next = new Set(prev);
-      next.add(phaseFocus.key);
-      return next;
-    });
+    setPhaseOpen((prev) => (prev[phaseFocus.key] ? prev : { ...prev, [phaseFocus.key]: true }));
   }, [phaseFocus]);
   useEffect(() => {
     const key = pendingScrollRef.current;
     if (!key) return;
-    // Wait for the card to actually be open (current phase is always open)
-    // so we scroll to the expanded content, not a collapsed header.
-    if (deal.phase !== key && !expandedPhases.has(key)) return;
+    // Wait for the card to actually be open so we scroll to the expanded
+    // content, not a collapsed header.
+    if (!isPhaseOpen(key)) return;
     const el = document.getElementById(`phase-section-${key}`);
     if (!el) return;
     pendingScrollRef.current = null;
     el.scrollIntoView({ behavior: "smooth", block: "start" });
   });
-  // Set by the Calls tile to pop the shared upload dialog pre-configured.
-  const [uploadSignal, setUploadSignal] = useState<{
-    category: string;
-    tab: "file" | "paste";
-    nonce: number;
-  } | null>(null);
+  // Set by the Calls tile to pop the shared Add source dialog pre-configured.
+  const [uploadSignal, setUploadSignal] = useState<AddSourcePreset | null>(null);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
+  // A CIM made only in the builder (sections, no generation stamp) is still
+  // a draft — the checklist counts it like the deal list does. Only fetched
+  // when the deal row alone can't tell.
+  const needsSectionCount =
+    (deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
+    !deal.cimContent && !deal.cimLayoutGeneratedAt;
+  const { data: checklistSections } = useQuery<CimSection[]>({
+    queryKey: ["/api/deals", dealId, "cim-sections"],
+    enabled: needsSectionCount,
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/cim-sections`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load CIM sections");
+      return r.json();
+    },
+  });
+  const checklistGeneration = useCimGeneration(dealId);
 
   const phaseComponents: Record<string, React.ReactNode> = {
     phase1_info_collection: <Phase1Center />,
@@ -2639,12 +2365,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   };
 
   const togglePhase = (key: string) => {
-    setExpandedPhases((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
+    setPhaseOpen((prev) => ({ ...prev, [key]: !(prev[key] ?? deal.phase === key) }));
   };
 
   return (
@@ -2652,11 +2373,13 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
       {PHASES.map((phase, idx) => {
         const isCurrentPhase = deal.phase === phase.key;
         const isComplete = currentPhaseIdx > idx;
-        const isExpanded = isCurrentPhase || expandedPhases.has(phase.key);
+        const isExpanded = isPhaseOpen(phase.key);
         // On a failed invites fetch, fall back to questionnaire evidence
         // (phases.ts) rather than asserting "not invited".
         const items = phase.items(deal, {
           invited: invitesError ? undefined : invites.length > 0,
+          hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
+          cimGenerating: checklistGeneration.isRunning,
         });
         const required = items.filter((i) => !i.optional);
         const doneCount = required.filter((i) => i.done).length;
@@ -2673,13 +2396,12 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
                   : "border-border/60 bg-muted/20"
             }`}
           >
+            <div className="flex items-center rounded-lg hover:bg-muted/30 transition-colors">
             <button
-              onClick={() => !isCurrentPhase && togglePhase(phase.key)}
-              className={`w-full flex items-center gap-3 px-4 py-3 text-left ${
-                !isCurrentPhase
-                  ? "cursor-pointer hover:bg-muted/30 transition-colors"
-                  : ""
-              } rounded-lg`}
+              onClick={() => togglePhase(phase.key)}
+              aria-expanded={isExpanded}
+              className="flex-1 min-w-0 flex items-center gap-3 px-4 py-3 text-left cursor-pointer rounded-lg"
+              data-testid={`phase-toggle-${phase.key}`}
             >
               {isComplete ? (
                 <CheckCircle2 className="h-4.5 w-4.5 text-success shrink-0" />
@@ -2722,13 +2444,29 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
                 </span>
               </div>
 
-              {!isCurrentPhase &&
-                (isExpanded ? (
-                  <ChevronDown className="h-4 w-4 text-muted-foreground shrink-0" />
-                ) : (
-                  <ChevronRight className="h-4 w-4 text-muted-foreground shrink-0" />
-                ))}
             </button>
+            {phase.key === "phase3_content_creation" && (
+              <button
+                type="button"
+                onClick={() => setLocation(`/deal/${dealId}/information`)}
+                className="shrink-0 inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs text-teal hover:bg-teal/10 transition-colors"
+                data-testid="link-phase3-collected-information"
+              >
+                <Library className="h-3 w-3" />
+                <span className="hidden sm:inline">Collected information</span>
+                <span className="sm:hidden">Information</span>
+                <ArrowRight className="h-3 w-3" />
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => togglePhase(phase.key)}
+              aria-label={isExpanded ? `Collapse ${phase.label}` : `Expand ${phase.label}`}
+              className="shrink-0 p-2 mr-2 rounded-md text-muted-foreground hover:text-foreground"
+            >
+              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+            </button>
+            </div>
 
             {isExpanded && (
               <div className="px-4 pb-4 pt-1 border-t border-border/50">
@@ -2751,11 +2489,12 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
               the seller can add them at any time.
             </p>
           </div>
+          <CrmLinkCard dealId={dealId} variant="compact" />
           <DocumentUploadCard openSignal={uploadSignal} />
           <IntegrationPromptCard
             onOpenTranscripts={() =>
               setUploadSignal({
-                category: "transcripts",
+                kind: "call",
                 tab: "paste",
                 nonce: Date.now(),
               })

@@ -15,6 +15,8 @@ import type { CimBranding } from "./CimBrandingContext";
 import { CimSectionRenderer } from "./CimSectionRenderer";
 import { FinancialToggle } from "./FinancialToggle";
 import { renderInline, stripMarkup } from "./richText";
+import { useCimTheme, useSectionNumber, useThemeStyle } from "./CimDesignContext";
+import { CimSectionHeading } from "./CimSectionHeading";
 
 interface ExpandableSectionProps {
   section: CimSection;
@@ -97,6 +99,8 @@ export function ExpandableSection({
 }: ExpandableSectionProps) {
   const config = getExpandableConfig(section);
   const [expanded, setExpanded] = useState(!config.isExpandable);
+  const themeVars = useThemeStyle();
+  const number = useSectionNumber(section.id);
 
   // Auto-expand in print mode
   useEffect(() => {
@@ -155,6 +159,7 @@ export function ExpandableSection({
       {!expanded && (
         <div
           className="cim-doc cim-section relative"
+          style={themeVars}
           data-section-key={section.sectionKey}
           data-layout-type={section.layoutType}
           data-track-section={section.sectionKey}
@@ -162,14 +167,7 @@ export function ExpandableSection({
           {/* Section title */}
           {section.layoutType !== "cover_page" &&
             section.layoutType !== "divider" && (
-              <div className="mb-4 flex items-start justify-between gap-4">
-                <h2
-                  className="text-xl font-bold tracking-tight"
-                  style={{ color: branding.headingColor }}
-                >
-                  {section.sectionTitle}
-                </h2>
-              </div>
+              <CimSectionHeading title={section.sectionTitle} number={number} />
             )}
 
           {/* Summary content — intelligent preview */}
@@ -219,6 +217,7 @@ function SummaryPreview({
   summaryText: string | null;
 }) {
   const layoutData = (section.layoutData as any) || {};
+  const theme = useCimTheme();
 
   // Financial table: show headers + first 3 rows with fade
   if (section.layoutType === "financial_table" && layoutData.rows) {
@@ -231,17 +230,22 @@ function SummaryPreview({
         <CimSectionRenderer
           section={{
             ...section,
-            layoutData: { ...layoutData, rows: previewRows },
+            // Footnotes belong to the full table; under the fade they collided
+            // with the "+N more rows" label.
+            layoutData: { ...layoutData, rows: previewRows, footnotes: undefined },
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
-          <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-background to-transparent flex items-end justify-center pb-1">
-            <span className="text-[11px] text-muted-foreground/60">
-              +{remaining} more rows
-            </span>
-          </div>
+          <>
+            <div className="pointer-events-none absolute bottom-6 left-0 right-0 h-10 bg-gradient-to-t from-background to-transparent" />
+            {/* Below the table, not over its last row's figures */}
+            <p className="mt-1.5 text-center text-[11px] text-muted-foreground/70">
+              +{remaining} more row{remaining === 1 ? "" : "s"}
+            </p>
+          </>
         )}
       </div>
     );
@@ -266,6 +270,7 @@ function SummaryPreview({
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
           <div className="text-center mt-2">
@@ -293,6 +298,7 @@ function SummaryPreview({
           }}
           branding={branding}
           brokerMode={false}
+          hideTitle
         />
         {remaining > 0 && (
           <div className="text-center mt-2">
@@ -317,7 +323,7 @@ function SummaryPreview({
         {pullQuote && (
           <blockquote
             className="border-l-3 pl-4 py-1 mb-4 text-sm italic text-foreground/80"
-            style={{ borderColor: branding.primaryHex }}
+            style={{ borderColor: theme.accent }}
           >
             {renderInline(pullQuote, "pq")}
           </blockquote>
@@ -345,6 +351,7 @@ function SummaryPreview({
       section={section}
       branding={branding}
       brokerMode={false}
+      hideTitle
     />
   );
 }

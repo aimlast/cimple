@@ -1,16 +1,35 @@
 /**
  * InterviewReviewTab — Interview transcripts, coverage, and broker-private notes.
  */
+import { useSearch } from "wouter";
 import { useDeal } from "@/contexts/DealContext";
 import { InterviewTranscriptPanel } from "@/components/deal/InterviewTranscriptPanel";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ShieldAlert } from "lucide-react";
 
-interface BrokerPrivateNote {
-  note: string;
+interface PrivateNoteSource {
   reason?: string;
   turn?: number;
+  documentId?: string;
+  brokerOnly?: boolean;
+}
+
+interface BrokerPrivateNote extends PrivateNoteSource {
+  note: string;
+  /** Other sources that state the same note. */
+  alsoFrom?: PrivateNoteSource[];
+}
+
+function sourceLabel(s: PrivateNoteSource): string {
+  const base = s.reason ? s.reason : "Recorded during the interview";
+  return typeof s.turn === "number" && !s.documentId ? `${base} · turn ${s.turn}` : base;
+}
+
+/** "in Pipedrive note — …" / "said in the interview (turn 4)". */
+function alsoLabel(s: PrivateNoteSource): string {
+  if (!s.documentId) return typeof s.turn === "number" ? `said in the interview (turn ${s.turn})` : "said in the interview";
+  return s.reason ? s.reason.replace(/^From /, "in ") : "in another source";
 }
 
 /**
@@ -32,9 +51,10 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
           </Badge>
         </CardTitle>
         <p className="text-xs text-muted-foreground">
-          Sensitive context the seller shared during the interview and asked to
-          keep out of documents. Visible only to you — excluded from CIM
-          generation, financial analysis, and buyer-facing content.
+          Sensitive context from the interview and your sources (CRM notes,
+          emails, transcripts), kept out of documents. Visible only to you —
+          excluded from CIM generation, financial analysis, and buyer-facing
+          content.
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -46,8 +66,9 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
           >
             <p className="text-sm">{n.note}</p>
             <p className="text-[11px] text-muted-foreground mt-1">
-              {n.reason ? n.reason : "Recorded during the interview"}
-              {typeof n.turn === "number" ? ` · turn ${n.turn}` : ""}
+              {sourceLabel(n)}
+              {(n.alsoFrom ?? []).length > 0 &&
+                ` · also ${(n.alsoFrom ?? []).map(alsoLabel).join(", ")}`}
             </p>
           </div>
         ))}
@@ -58,6 +79,11 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
 
 export function InterviewReviewTab() {
   const { dealId, deal } = useDeal();
+  // ?session=<id>&turn=<n> — a fact's source link from the Information tab.
+  const params = new URLSearchParams(useSearch());
+  const focusSessionId = params.get("session");
+  const turnParam = Number(params.get("turn"));
+  const focusTurn = Number.isInteger(turnParam) && turnParam > 0 ? turnParam : null;
   const privateNotes: BrokerPrivateNote[] = Array.isArray(
     (deal.extractedInfo as Record<string, unknown> | null)?._brokerPrivateNotes,
   )
@@ -68,7 +94,7 @@ export function InterviewReviewTab() {
   return (
     <div className="max-w-4xl mx-auto px-6 py-6 space-y-6">
       <BrokerPrivateNotesPanel notes={privateNotes} />
-      <InterviewTranscriptPanel dealId={dealId} />
+      <InterviewTranscriptPanel dealId={dealId} focusSessionId={focusSessionId} focusTurn={focusTurn} />
     </div>
   );
 }

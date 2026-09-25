@@ -40,9 +40,16 @@ const ICON_MAP: Record<string, React.ElementType> = {
   Layers, Clock, Key, Lock, Map, Phone, Mail,
 };
 
+/** "users" / "trending-up" / "TrendingUp" → the lucide component, if we have it. */
+function lookupIcon(name: string): React.ElementType | undefined {
+  if (ICON_MAP[name]) return ICON_MAP[name];
+  const pascal = name.replace(/(^|[-_\s]+)([a-z0-9])/gi, (_, __, c: string) => c.toUpperCase());
+  return ICON_MAP[pascal];
+}
+
 function IconBox({ name, className }: { name?: string; className?: string }) {
   if (!name) return null;
-  const Icon = ICON_MAP[name];
+  const Icon = lookupIcon(name);
   if (!Icon) return null;
   return <Icon className={cn("w-4 h-4", className)} />;
 }
@@ -115,7 +122,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
         <div className={cn("grid gap-4", gridClass)}>
           {items.map((item, i) => (
             <div key={i} className="flex flex-col items-center text-center gap-2 p-4 bg-card rounded-lg border border-card-border">
-              {item.icon && ICON_MAP[item.icon] ? (
+              {item.icon && lookupIcon(item.icon) ? (
                 <div className="w-10 h-10 rounded-lg bg-teal-muted flex items-center justify-center">
                   <IconBox name={item.icon} className="text-teal" />
                 </div>
@@ -159,7 +166,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
               )}
             >
               <div className="flex items-start gap-3">
-                {item.icon && ICON_MAP[item.icon] ? (
+                {item.icon && lookupIcon(item.icon) ? (
                   <div className={cn(
                     "w-8 h-8 rounded-md flex items-center justify-center flex-shrink-0",
                     item.highlight ? "bg-teal-muted" : "bg-muted"
@@ -212,7 +219,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
               item.highlight ? "border-teal" : "border-border"
             )}
           >
-            {item.icon && ICON_MAP[item.icon] ? (
+            {item.icon && lookupIcon(item.icon) ? (
               <IconBox name={item.icon} className="text-muted-foreground mt-0.5 flex-shrink-0" />
             ) : (
               <TealDot />

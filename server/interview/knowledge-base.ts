@@ -5,7 +5,9 @@ import { getSectionImportance, renderSectionImportanceForPrompt } from "./sectio
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
-import type { SellerCommunicationProfile } from "./eq-profiler";
+import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
+import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
 
 // =====================
 // Types
@@ -33,8 +35,9 @@ export interface KnowledgeBase {
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
 
-  // Seller Communication Profile — EQ profiler output (generated pre-interview)
-  sellerProfile: SellerCommunicationProfile | null;
+  // Seller Communication Profile — EQ profiler output (generated pre-interview),
+  // as the interview may read it (see profileSafeForInterview).
+  sellerProfile: InterviewSellerProfile | null;
 
   // What the seller told us in the questionnaire before the interview
   questionnaireData: Record<string, unknown> | null;
@@ -81,6 +84,11 @@ export interface KnowledgeBase {
   // must be presented as already-known (verify, never re-ask). Optional for
   // old callers/fixtures.
   fieldConfidence?: Record<string, string>;
+
+  // Where each known fact came from, as the bracketed label the agent sees
+  // ("from document: 2024 P&L.pdf", "from the broker's CRM notes — …").
+  // Built from extractedInfo._fieldSources. Optional for old callers/fixtures.
+  factSourceLabels?: Record<string, string>;
 }
 
 export interface AskSellerDiscrepancy {
@@ -90,6 +98,9 @@ export interface AskSellerDiscrepancy {
   severity: string;
   explanation: string | null;
   suggestedResolution: string | null;
+  /** One side came from a broker-only source (CRM note, private email/file):
+   *  confirm the figure with the seller, never mention or quote that source. */
+  privateSource?: boolean;
 }
 
 export interface LocationContext {
@@ -260,7 +271,16 @@ export function assembleKnowledgeBase(
   latestSession: InterviewSession | null,
   resolvedDiscrepancies: Discrepancy[] = [],
 ): KnowledgeBase {
-  const baseExtractedInfo = (deal.extractedInfo as Partial<ExtractedInfo>) || {};
+  // The facts exactly as the interview may read them (see seller-view.ts):
+  // nothing a broker-only source asserted (the broker's CRM notes, private
+  // emails and files — facts, other values, private notes), and not the
+  // broker's listed asking price from the deal row (the agent keeps asking
+  // for the seller's own expectation when there is none). processTurn
+  // merges each turn against this same view.
+  const baseExtractedInfo = sellerInterviewView(
+    ((deal.extractedInfo as Partial<ExtractedInfo>) || {}) as Record<string, unknown>,
+    documents,
+  ) as Partial<ExtractedInfo>;
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
   // Overlay resolved discrepancy values — corrected values win over raw extractedInfo
@@ -275,21 +295,46 @@ export function assembleKnowledgeBase(
   }
 
   // Discrepancies the broker explicitly routed to the interview
+  // One side from a broker-only source (a CRM note, a private email): the
+  // agent never sees that side's value, or the explanation built from it —
+  // it asks the seller for the figure without hinting at it.
+  // (A side is private when its row is broker-only, or when it names a
+  // broker-only source — financial-analysis values carry the source's name.)
+  // (A generic title — "Email", "CRM note" — is judged on the side's source
+  // label; a side with no label fails closed.)
+  const namesPrivateSource = privateSourceMatcher(documents);
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")
-    .map((d) => ({
-      field: d.field,
-      valueA: d.interviewValue,
-      valueB: d.documentValue,
-      severity: d.severity,
-      explanation: d.aiExplanation,
-      suggestedResolution: d.suggestedResolution,
-    }));
+    .map((d) => {
+      // documentId backs the second value (documentValue).
+      const privateA = namesPrivateSource(d.interviewValue);
+      const privateB =
+        namesPrivateSource(d.documentValue) ||
+        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only"));
+      const privateSource = privateA || privateB;
+      return {
+        field: d.field,
+        valueA: privateA ? null : d.interviewValue,
+        valueB: privateB ? null : d.documentValue,
+        severity: d.severity,
+        explanation: privateSource ? null : d.aiExplanation,
+        suggestedResolution: privateSource ? null : d.suggestedResolution,
+        ...(privateSource ? { privateSource: true } : {}),
+      };
+    });
 
   // Per-field confidence lives on the session (interview turns write it) —
   // used to label coverage fields honestly instead of hardcoding "confirmed".
   const sessionMeta = (latestSession?.extractedInfo as Record<string, unknown> | null) || {};
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string> | undefined) ?? undefined;
+
+  // The real source of every known fact, labelled for the agent. (Facts from
+  // broker-only sources aren't in the view at all; a CRM note the broker
+  // shared is labelled so the agent confirms it without citing the CRM.)
+  const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
+  for (const d of resolvedDiscrepancies) {
+    if (d.resolvedValue && d.field) factSourceLabels[d.field] = "confirmed by the broker";
+  }
   // Buyer importance per section — the industry-ranked map when one exists
   // for the deal's current industry, otherwise the base defaults.
   const sectionImportance = getSectionImportance(deal);
@@ -301,17 +346,20 @@ export function assembleKnowledgeBase(
       industry: deal.industry,
       subIndustry: deal.subIndustry,
       description: deal.description,
-      location: parseLocation(deal, questionnaireData),
+      location: parseLocation(deal, questionnaireData, baseExtractedInfo),
     },
     sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
     sectionImportance,
     outline,
     conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
     industryContext: null, // Set by the AI on first turn, stored on session
-    sellerProfile: (deal.sellerProfile as SellerCommunicationProfile | null) || null,
+    // A profile built before broker-only sources were excluded keeps only
+    // its style fields until it is rebuilt (its free text could quote them).
+    sellerProfile: profileSafeForInterview((deal.sellerProfile as SellerCommunicationProfile | null) || null, documents),
     questionnaireData,
     operationalSystems: parseOperationalSystems(deal),
-    documents: documents.map(summarizeDocument),
+    // Broker-only sources are never named to the seller.
+    documents: documents.filter((d) => d.visibility !== "broker_only").map(summarizeDocument),
     outstandingTasks: tasks
       .filter((t) => t.status === "pending" || t.status === "in_progress")
       .map(summarizeTask),
@@ -321,7 +369,77 @@ export function assembleKnowledgeBase(
     scrapeSource: (deal.scrapeSource as "website" | "internet_search" | "website_and_internet" | null) || null,
     askSellerDiscrepancies,
     fieldConfidence: confidenceLevels,
+    factSourceLabels,
   };
+}
+
+function shortDate(value: string | Date | null | undefined): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return typeof value === "string" ? value : null;
+  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * The bracketed source label for each known fact, e.g. "from the seller in
+ * the interview — confirmed", "from document: 2024 Compilation.pdf",
+ * "from an email, Mar 3, 2026", "from the website — unverified".
+ */
+export function buildFactSourceLabels(
+  info: Record<string, unknown>,
+  documents: Pick<Document, "id" | "name" | "createdAt" | "sourceKind" | "sourceMeta" | "visibility">[],
+  confidenceLevels?: Record<string, string>,
+): Record<string, string> {
+  const sources = getFieldSources(info);
+  const docs = new Map(documents.map((d) => [d.id, d]));
+  const out: Record<string, string> = {};
+  for (const key of Object.keys(info)) {
+    if (key.startsWith("_")) continue;
+    const conf = confidenceLevels?.[key];
+    out[key] = describeFactSource(sources[key], docs, conf);
+  }
+  return out;
+}
+
+function describeFactSource(
+  src: FieldSource | undefined,
+  docs: Map<string, Pick<Document, "id" | "name" | "createdAt" | "sourceKind" | "sourceMeta" | "visibility">>,
+  conf: string | undefined,
+): string {
+  const withConf = (base: string) => (conf ? `${base} — ${conf}` : base);
+  if (!src || !isSourceKind(src.source)) {
+    // Untracked legacy value: the seller's interview answer when the session
+    // has a confidence for it, otherwise something on file before this interview.
+    return conf ? `seller ${conf}` : "on file before this interview";
+  }
+  const doc = src.documentId ? docs.get(src.documentId) : undefined;
+  const brokerOnly = doc?.visibility === "broker_only";
+  const docDate = shortDate((doc?.sourceMeta as { date?: string } | null)?.date ?? doc?.createdAt ?? src.at ?? null);
+  switch (src.source) {
+    case "interview":
+      return withConf("from the seller in the interview");
+    case "call":
+      return doc ? `from a call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a call with the broker");
+    case "video_call":
+      return doc ? `from a video-call transcript with the seller${docDate ? `, ${docDate}` : ""}` : withConf("from a video call with the broker");
+    case "questionnaire":
+      return "from the seller's intake questionnaire";
+    case "broker":
+      return "confirmed by the broker";
+    case "crm":
+      return "from the broker's CRM notes — confirm with the seller; never mention the CRM or quote it";
+    case "website":
+      return "from the website — unverified";
+    case "social":
+      return "from social media — unverified";
+    case "email":
+      if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
+      return `from an email${docDate ? `, ${docDate}` : ""}`;
+    case "document":
+    default:
+      if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
+      return doc ? `from document: ${doc.name}` : "from an uploaded document";
+  }
 }
 
 // =====================
@@ -348,6 +466,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
       if (d.valueB) parts.push(`    Value 2: ${d.valueB}`);
       if (d.explanation) parts.push(`    Why it matters: ${d.explanation}`);
       if (d.suggestedResolution) parts.push(`    Suggested approach: ${d.suggestedResolution}`);
+      if (d.privateSource) parts.push(`    ⚠ The other value is held privately by the broker and is not shown to you. Ask the seller for the right figure in your own words — never suggest a figure, and never mention the broker's notes, a CRM or any document.`);
     }
     parts.push(``);
   }
@@ -379,24 +498,28 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // and re-asked them — sellers noticed every time. This block makes every
   // known fact first-class with a hard do-not-re-ask imperative.
   {
+    // Per-source notes (a source's summary, red flags, the broker's action
+    // items…) are not business facts and never listed as "known".
     const known = Object.entries(kb.extractedInfo).filter(
-      ([k, v]) => !k.startsWith("_") && isSubstantiveValue(v),
+      ([k, v]) => isFactKey(k) && isSubstantiveValue(v),
     );
     if (known.length > 0) {
       const conf = kb.fieldConfidence ?? {};
       parts.push(`## ⛔ ALREADY ANSWERED — DO NOT RE-ASK. CONFIRM OR DEEPEN ONLY.`);
-      parts.push(`Every fact below is already on file (from uploaded documents, the questionnaire, or earlier conversation). Before EVERY question you ask, scan this list:`);
+      parts.push(`Every fact below is already on file (from uploaded documents, emails, calls, the questionnaire, the broker, or earlier conversation) — each is labelled with where it came from. Before EVERY question you ask, scan this list:`);
       parts.push(`- If the fact you need is here, do NOT ask for it. Cite it and ask only for what is genuinely new (the delta): "Your P&L shows a 72/28 Shopify/Amazon split — has that shifted this year?"`);
-      parts.push(`- Values marked [from documents/questionnaire] came in before the interview: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Values that did not come from the seller in this interview (documents, emails, call transcripts, the questionnaire, the broker, or anything marked "on file before this interview") came in separately: treat them as ALREADY PROVIDED. You may verify one naturally in passing, never re-ask it as an open question.`);
+      parts.push(`- Values marked "unverified" or "confirm with the seller" are leads, not facts: confirm them naturally in passing (still never as an open re-ask). When a label says never to mention or quote its source, don't — ask as if you simply want to confirm the detail.`);
       parts.push(`- Your suggestedAnswers must be consistent with these values — never offer a guess at a number already on file.`);
       parts.push(`- When capturing new fields, REUSE these exact key names when the concept matches; only mint a new key for a genuinely new concept.`);
       parts.push(``);
-      for (const [key, value] of known) {
+      const sourceLabels = kb.factSourceLabels ?? {};
+      for (const [key, rawValue] of known) {
+        const value = repairCharIndexedValue(rawValue);
         const sessionConf = conf[key];
-        const label = sessionConf
-          ? `seller ${sessionConf}`
-          : "from documents/questionnaire";
-        parts.push(`- ${key}: ${String(value)}  [${label}]`);
+        const label = sourceLabels[key]
+          ?? (sessionConf ? `seller ${sessionConf}` : "from documents/questionnaire");
+        parts.push(`- ${key}: ${typeof value === "object" && value !== null ? JSON.stringify(value) : String(value)}  [${label}]`);
       }
       parts.push(``);
     }
@@ -457,13 +580,21 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     parts.push(`This profile was generated from broker notes, prior communications, and available data about the seller.`);
     parts.push(`Use it to adapt your tone, pacing, and approach. Do NOT reference this profile directly to the seller.`);
     parts.push(``);
-    parts.push(`- Communication style: ${kb.sellerProfile.communicationStyle}`);
-    parts.push(`- Emotional state: ${kb.sellerProfile.emotionalState}`);
-    parts.push(`- Selling reason: ${kb.sellerProfile.sellingReason}`);
-    parts.push(`- Seller sophistication: ${kb.sellerProfile.sophistication}`);
-    parts.push(`- Business attachment: ${kb.sellerProfile.businessAttachment}`);
-    parts.push(`- Time orientation: ${kb.sellerProfile.timeOrientation}`);
-    parts.push(`- Family involvement: ${kb.sellerProfile.familyInvolvement}`);
+    // A profile awaiting its rebuild carries only what the broker set by
+    // hand — no AI-derived category (it may have come from private notes).
+    if (kb.sellerProfile.pendingRebuild) {
+      parts.push(`(Profile being refreshed: only the broker's own settings are shown. Read the seller from the conversation itself.)`);
+    }
+    const category: Array<[string, string | undefined]> = [
+      ["Communication style", kb.sellerProfile.communicationStyle],
+      ["Emotional state", kb.sellerProfile.emotionalState],
+      ["Selling reason", kb.sellerProfile.sellingReason],
+      ["Seller sophistication", kb.sellerProfile.sophistication],
+      ["Business attachment", kb.sellerProfile.businessAttachment],
+      ["Time orientation", kb.sellerProfile.timeOrientation],
+      ["Family involvement", kb.sellerProfile.familyInvolvement],
+    ];
+    for (const [label, value] of category) if (value) parts.push(`- ${label}: ${value}`);
 
     if (kb.sellerProfile.sensitiveTopics.length > 0) {
       parts.push(`\nSensitive topics — handle with extreme care, never bring up directly:`);
@@ -728,7 +859,12 @@ export function buildSectionCoverage(
   });
 }
 
-function parseLocation(deal: Deal, questionnaireData: Record<string, unknown> | null): LocationContext | null {
+function parseLocation(
+  deal: Deal,
+  questionnaireData: Record<string, unknown> | null,
+  /** The interview's view of the facts (never a broker-only source's). */
+  facts: Partial<ExtractedInfo>,
+): LocationContext | null {
   // Try to extract location from questionnaire data first
   if (questionnaireData) {
     const country = questionnaireData["Country"] || questionnaireData["country"];
@@ -761,9 +897,8 @@ function parseLocation(deal: Deal, questionnaireData: Record<string, unknown> | 
   }
 
   // Try extractedInfo
-  const extractedInfo = deal.extractedInfo as Partial<ExtractedInfo> | null;
-  if (extractedInfo?.locations) {
-    return { country: null, stateProvince: null, municipality: null, raw: extractedInfo.locations };
+  if (facts?.locations) {
+    return { country: null, stateProvince: null, municipality: null, raw: facts.locations };
   }
 
   return null;

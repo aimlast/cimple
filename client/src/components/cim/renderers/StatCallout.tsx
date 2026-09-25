@@ -4,6 +4,7 @@
  */
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
+import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 
@@ -28,11 +29,13 @@ interface RendererProps {
 }
 
 export function StatCalloutRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const theme = useCimTheme();
   const data: StatCalloutLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   if (!data.primaryValue && !content) return null;
 
-  const accentHex = data.accentColor || branding.accentHex || branding.primaryHex || "#2dc88e";
+  // The template's accent (an AI-chosen colour in the data would break the theme).
+  const accentHex = theme.accentText;
 
   if (!data.primaryValue) {
     return <ProseFallback content={content} />;

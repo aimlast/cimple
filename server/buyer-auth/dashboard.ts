@@ -11,10 +11,12 @@
  *   - Top 3 matching dimensions as chips ("Industry · Size · Geography")
  *   - Never percentages or ranks that could discourage buyers
  */
+import { listedAskingPrice } from "../information/deal-mirror";
 import type { Express } from "express";
 import { storage } from "../storage";
 import { requireBuyer } from "./routes.js";
 import { matchBuyerToDeal } from "../matching/engine.js";
+import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 
 interface DashboardDeal {
   dealId: string;
@@ -112,6 +114,7 @@ export function registerBuyerDashboardRoutes(app: Express) {
               industry: deal.industry || "",
               subIndustry: (deal as any).subIndustry,
               askingPrice: (deal as any).askingPrice,
+              description: (deal as any).description ?? null,
               extractedInfo: (deal as any).extractedInfo || {},
             },
             { skipAI: true },
@@ -141,9 +144,11 @@ export function registerBuyerDashboardRoutes(app: Express) {
           businessName: blind ? ((deal as any).blindCodename || "Confidential Opportunity") : deal.businessName,
           industry: deal.industry || null,
           subIndustry: (deal as any).subIndustry || null,
-          askingPrice: (deal as any).askingPrice || null,
+          // The broker's listed price only (never a seller's expectation).
+          askingPrice: listedAskingPrice(deal),
           location: blind ? null : location,
-          description: blind ? null : ((deal as any).description || extracted?.executiveSummary || null),
+          // CIM-derived text waits for a required NDA, as in the view room.
+          description: blind || ndaBlocksBuyer(deal, access) ? null : ((deal as any).description || extracted?.executiveSummary || null),
           brokerFirm,
           accessToken: access.accessToken,
           accessLevel: access.accessLevel,

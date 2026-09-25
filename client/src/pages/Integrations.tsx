@@ -310,7 +310,7 @@ export default function Integrations() {
       setPipedriveError(null);
       toast({
         title: "Pipedrive connected",
-        description: "Deal stages will sync and buyer submissions can now prefill from your Pipedrive contacts.",
+        description: "Link a deal to the seller's Pipedrive record from its Information tab (or start a new deal from Pipedrive) to import notes, emails and files. Buyer submissions can now prefill from your Pipedrive contacts.",
       });
     },
     onError: (err) => {

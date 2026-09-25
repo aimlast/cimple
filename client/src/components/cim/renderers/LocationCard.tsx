@@ -43,7 +43,7 @@ function LeaseTypePill({ type }: { type: string }) {
       isOwned
         ? "bg-teal-muted text-teal-muted-foreground"
         : isMtm
-        ? "bg-amber-500/10 text-amber-700 border border-amber-200"
+        ? "bg-[hsl(var(--cim-caution)/0.1)] text-[hsl(var(--cim-caution))] border border-[hsl(var(--cim-caution)/0.3)]"
         : "bg-muted text-muted-foreground"
     )}>
       {type}
@@ -58,6 +58,13 @@ function KVRow({ label, value }: { label: string; value: string }) {
       <span className="text-xs font-medium text-foreground text-right">{value}</span>
     </div>
   );
+}
+
+/** "2,650 sq ft" — the unit added only when the value doesn't already carry one. */
+function formatSqft(v: unknown): string {
+  if (typeof v === "number") return `${v.toLocaleString()} sq ft`;
+  const t = String(v ?? "").trim();
+  return /sq\.?\s*f(ee)?t|square\s*f(ee|oo)t|ft²|sf\b|m²|sq\.?\s*m/i.test(t) ? t : `${t} sq ft`;
 }
 
 export function LocationCardRenderer({ layoutData, content, branding, section }: RendererProps) {
@@ -103,7 +110,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
               {loc.sqft && (
                 <KVRow
                   label="Size"
-                  value={`${typeof loc.sqft === "number" ? loc.sqft.toLocaleString() : loc.sqft} sq ft`}
+                  value={formatSqft(loc.sqft)}
                 />
               )}
               {loc.leaseExpiry && <KVRow label="Lease Expiry" value={loc.leaseExpiry} />}
@@ -127,7 +134,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
         <div className="mt-4 pt-3 border-t border-border flex items-center gap-2">
           <span className="text-xs text-muted-foreground">Total Space:</span>
           <span className="text-sm font-semibold tabular-nums">
-            {typeof data.totalSqft === "number" ? data.totalSqft.toLocaleString() : data.totalSqft} sq ft
+            {formatSqft(data.totalSqft)}
           </span>
         </div>
       )}

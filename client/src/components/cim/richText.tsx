@@ -214,9 +214,13 @@ export function ProseFallback({ content }: { content: string }) {
  * plain text so chart labels, metric values and table cells never show a
  * literal "**", "[[dd]]" or "[DD]".
  */
+/** Links and upload ids are data, not text — never rewritten (a "__" in a video id is not bold). */
+const RAW_KEYS = new Set(["url", "mediaId"]);
+
 export function sanitizeLayoutData<T>(value: T, parentKey = "", depth = 0): T {
   if (depth > 8 || value == null) return value;
   if (typeof value === "string") {
+    if (RAW_KEYS.has(parentKey)) return value;
     return (PROSE_KEYS.has(parentKey) ? value.replace(LEGACY_DD_TAG, "") : stripMarkup(value)) as T;
   }
   if (Array.isArray(value)) {

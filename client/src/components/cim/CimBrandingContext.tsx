@@ -1,18 +1,17 @@
 /**
  * CimBrandingContext
  *
- * Provides branding values (broker + business) to all CIM renderer components.
- * Renderers consume this via the `branding` prop rather than calling hooks directly.
+ * The `branding` prop passed to CIM renderers (names; legacy colour fields).
+ * The visual system — template, colours, fonts — lives in CimDesignContext.
  */
 import { createContext, useContext } from "react";
 import type { BrandingSettings } from "@shared/schema";
+import { brandColorToHex } from "@shared/cim-theme";
 
 /**
- * CIM document palette — literal hex values for the theme-locked "paper"
- * document surface (see `.cim-doc` in index.css). Recharts requires explicit
- * colors for SVG internals (axes, grid, labels, cursors), so chart renderers
- * import these instead of app theme tokens. These values NEVER change with
- * the app theme — the document looks identical in dark and light mode.
+ * Classic Paper's palette as literal hex (see `.cim-doc` in index.css). The
+ * renderers read the active template through useCimTheme() instead; these
+ * remain the Classic Paper reference values and a fallback for old callers.
  */
 export const CIM_DOC = {
   paper: "#FBF8F2",        // warm paper background
@@ -55,55 +54,37 @@ export interface CimBranding {
   headingColor: string;       // CSS color string for headings
 }
 
+/**
+ * The legacy `branding` prop every renderer still receives. Colours and
+ * fonts now come from the design template (CimDesignContext / useCimTheme);
+ * this carries the names. primaryHex/accentHex are kept for old callers and
+ * follow the brokerage colours only when the broker switched them on.
+ */
 export function buildBranding(
-  settings: BrandingSettings | null | undefined,
+  settings: Partial<BrandingSettings> | null | undefined,
   deal: { businessName: string; industry?: string | null } | null | undefined
 ): CimBranding {
-  const primary = settings?.primaryColor || "218 70% 47%";
-  const accent  = settings?.accentColor  || "162 65% 38%";
+  const useColors = !!settings?.useBrandColors;
+  const primaryHex = (useColors && brandColorToHex(settings?.primaryColor)) || CIM_DOC.brass;
+  const accentHex = (useColors && brandColorToHex(settings?.accentColor)) || CIM_DOC.brass;
 
   return {
-    firmName:     settings?.companyName  || "Your Brokerage",
+    firmName:     settings?.companyName  || "",
     firmLogo:     settings?.logoUrl      || undefined,
-    primaryColor: primary,
-    accentColor:  accent,
-    headingFont:  settings?.headingFont  || "Inter",
-    bodyFont:     settings?.bodyFont     || "Inter",
+    primaryColor: settings?.primaryColor || "",
+    accentColor:  settings?.accentColor  || "",
+    headingFont:  settings?.headingFont  || "",
+    bodyFont:     settings?.bodyFont     || "",
     disclaimer:   settings?.disclaimer   || undefined,
 
     businessName: deal?.businessName || "",
     businessLogo: undefined,
     industry:     deal?.industry     || undefined,
 
-    primaryHex:   hslToHex(primary),
-    accentHex:    hslToHex(accent),
-    headingColor: `hsl(${primary})`,
+    primaryHex,
+    accentHex,
+    headingColor: CIM_DOC.ink,
   };
-}
-
-/** Minimal HSL → hex for inline style usage in renderers */
-function hslToHex(hsl: string): string {
-  try {
-    const parts = hsl.trim().split(/\s+/);
-    if (parts.length < 3) return "#000000";
-    const h = parseFloat(parts[0]);
-    const s = parseFloat(parts[1]) / 100;
-    const l = parseFloat(parts[2]) / 100;
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-    const m = l - c / 2;
-    let r = 0, g = 0, b = 0;
-    if (h < 60)       { r = c; g = x; }
-    else if (h < 120) { r = x; g = c; }
-    else if (h < 180) { g = c; b = x; }
-    else if (h < 240) { g = x; b = c; }
-    else if (h < 300) { r = x; b = c; }
-    else              { r = c; b = x; }
-    const toHex = (v: number) => Math.round((v + m) * 255).toString(16).padStart(2, "0");
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  } catch {
-    return "#000000";
-  }
 }
 
 const CimBrandingContext = createContext<CimBranding | null>(null);

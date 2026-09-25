@@ -6,7 +6,8 @@ import fs from "fs";
 import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf } from "./interview";
+import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
+import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
@@ -17,24 +18,42 @@ import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
 import type { InterviewCall, InterviewBot } from "@shared/schema";
 import { ndaBuyerProfileSchema, hasMatchableProfile } from "@shared/nda-buyer-profile";
-import { blindTitleRedactor } from "@shared/blind-identifiers";
 import { isRecallConfigured, isSupportedMeetingUrl, newWebhookToken, createBot, getBot, leaveCall, latestStatus, pushBotLine, setBotStatus, readBotLines, clearBotBuffer, lineFromWebhook } from "./calls/recall.js";
 import { computeCimReadiness } from "@shared/cim-readiness";
+import { DEAL_PHASES, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
+import { buildBuyerCim, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
+import { askerScope } from "@shared/buyer-qa-scope";
+import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
+import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
+import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
+import { cimModeForAccessLevel, isBuyerAccessLevel } from "@shared/cim-layouts";
 import multer from "multer";
-import { extractTextFromFile } from "./documents/parser.js";
-import { extractDocumentData, mergeExtractedData } from "./documents/extractor.js";
+import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
+import { registerInformationRoutes } from "./routes/information.js";
+import { listedAskingPrice } from "./information/deal-mirror";
+import { brokerFactsView } from "./information/facts";
+import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
+import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
+import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
+import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerCimMediaRoutes } from "./routes/cim-media.js";
+import { loadMediaAssets } from "./cim/media-store.js";
+import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
-import { removeDocumentFields, typedNumericValues } from "./interview/info-merger";
+import { typedNumericValues } from "./interview/info-merger";
+import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
-import { buildAnswerContext, buildBuyerQuestionFeed, type AnswerSection } from "./qa/cim-context.js";
+import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
+import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
+import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -121,14 +140,18 @@ async function generateSectionWithClaude(
     contextParts.push(`=== BROKER NOTES ===\n${data.description}`);
   }
 
-  const confirmed = Object.entries(data.extractedInfo).filter(
-    ([k, v]) => v && !k.startsWith("_"),
-  );
+  // Facts split by provenance: CRM notes / website / social claims are
+  // leads, never presented as confirmed; per-source notes and "_" keys are
+  // never CIM input.
+  const { confirmed, leads } = splitFactsForCim(data.extractedInfo);
   if (confirmed.length > 0) {
     contextParts.push(
-      `=== CONFIRMED (from seller interview) ===\n` +
-      confirmed.map(([k, v]) => `${k}: ${v}`).join("\n")
+      `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
+      confirmed.map(([k, v]) => `${k}: ${factValueText(v)}`).join("\n")
     );
+  }
+  if (leads.length > 0) {
+    contextParts.push(`=== ${CIM_LEADS_HEADING} ===\n` + leads.map(([k, v]) => `${k}: ${factValueText(v)}`).join("\n"));
   }
 
   if (data.questionnaireData && Object.keys(data.questionnaireData).length > 0) {
@@ -170,7 +193,7 @@ Style guidelines:
 - Use **bold** for key metrics, standout facts, or deal highlights
 - Never open with clichés like "proven track record", "well-established", "thriving", or "exciting opportunity"
 - If a section has very little data, write what you can and note clearly what information is pending — do not fabricate
-- Prioritize "CONFIRMED (from seller interview)" data above all other sources`,
+- Prioritize "CONFIRMED" data above all other sources; never state an "UNCONFIRMED LEADS" item as fact`,
     messages: [
       {
         role: "user",
@@ -250,6 +273,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         const deal = await storage.getDeal(doc.dealId);
         if (deal && deal.brokerId === req.session.brokerId) return next();
       }
+      // Broker-only sources (CRM notes, private emails) are never served to
+      // the seller, whatever token they hold.
+      if ((doc as any).visibility === "broker_only") return res.status(401).json({ error: "Not authorized" });
       const token = (req.query.token as string) || (req.headers["x-seller-token"] as string);
       if (token) {
         const invite = await storage.getSellerInviteByToken(token);
@@ -260,6 +286,24 @@ export async function registerRoutes(app: Express): Promise<Server> {
       console.error("Document access check failed:", err);
       return res.status(500).json({ error: "Access check failed" });
     }
+  });
+
+  // CIM photos/videos (private-media/) are NEVER served statically — only
+  // through GET /api/media/:id (server/routes/cim-media.ts), which checks the
+  // broker session, seller token or buyer view token. The path is decoded
+  // and normalised first so "%2D", "./" or case tricks can't slip past.
+  app.use("/uploads", (req, res, next) => {
+    let p: string;
+    try {
+      p = decodeURIComponent(req.path);
+    } catch {
+      return res.status(404).json({ error: "Not found" });
+    }
+    const norm = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase();
+    if (norm === "/private-media" || norm.startsWith("/private-media/")) {
+      return res.status(404).json({ error: "Not found" });
+    }
+    next();
   });
 
   app.use("/uploads", (await import("express")).default.static(uploadsDir));
@@ -301,49 +345,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // List all buyer contacts for a broker
   app.get("/api/broker/buyers", requireBroker, async (req, res) => {
     try {
-      const brokerId = req.session.brokerId!;
-      const list = await storage.getBrokerBuyerContactList(brokerId);
-      const { calculateQualifiedLeadScore } = await import("./scoring/buyer-score.js");
-
-      res.json({
-        buyers: list.map(({ buyerUser: ownProfile, contact, dealCount, lastActivityAt }) => {
-          // Broker's private CRM profile fills gaps under what the buyer entered.
-          const buyerUser = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
-          // Profile-only composite score (no deal context — match-fit weight
-          // is redistributed across profile/engagement/proofOfFunds).
-          const score = calculateQualifiedLeadScore({ buyer: buyerUser });
-          return {
-            id: buyerUser.id,
-            email: buyerUser.email,
-            name: buyerUser.name,
-            phone: buyerUser.phone,
-            company: buyerUser.company,
-            title: buyerUser.title,
-            linkedinUrl: buyerUser.linkedinUrl,
-            buyerType: buyerUser.buyerType,
-            background: buyerUser.background,
-            liquidFunds: buyerUser.liquidFunds,
-            hasProofOfFunds: buyerUser.hasProofOfFunds,
-            targetIndustries: buyerUser.targetIndustries,
-            targetLocations: buyerUser.targetLocations,
-            profileCompletionPct: buyerUser.profileCompletionPct,
-            source: contact?.source ?? buyerUser.source ?? "deal",
-            tags: contact?.tags ?? [],
-            notes: contact?.notes ?? null,
-            contactId: contact?.id ?? null,
-            crmSynced: !!contact?.crmProfile,
-            crmProvider: contact?.crmProvider ?? null,
-            addedAt: contact?.addedAt ?? buyerUser.createdAt,
-            dealCount,
-            lastActivityAt,
-            qualifiedScore: {
-              total: score.total,
-              tier: score.tier,
-              reasons: score.reasons,
-            },
-          };
-        }),
-      });
+      // Merged profile (broker overlay > buyer's own > CRM) with engagement on
+      // the broker's deals feeding the score — see server/buyers/profile-view.ts.
+      const { buildBrokerBuyerList } = await import("./buyers/profile-view.js");
+      res.json({ buyers: await buildBrokerBuyerList(req.session.brokerId!) });
     } catch (err: any) {
       console.error("Error fetching broker buyer list:", err);
       res.status(500).json({ error: "Failed to fetch buyer list" });
@@ -354,11 +359,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/broker/buyers/:buyerId", requireBroker, async (req, res) => {
     try {
       const brokerId = req.session.brokerId!;
+      // Only buyers already on this broker's list — never any buyer by id.
+      if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
       const ownProfile = await storage.getBuyerUser(req.params.buyerId);
       if (!ownProfile) return res.status(404).json({ error: "Buyer not found" });
 
       const contact = await storage.getBrokerBuyerContact(brokerId, ownProfile.id);
-      const buyer = mergeBuyerProfile(ownProfile, contact?.crmProfile as CrmBuyerProfile | null);
+      // Same broker view as the profile page: 3-layer merge, self-entered
+      // funds as a range, never the raw buyer_users row.
+      const { brokerBuyerCard } = await import("./buyers/profile-view.js");
+      const { loadBrokerScope } = await import("./buyers/provenance-scope.js");
+      const buyer = brokerBuyerCard(ownProfile, contact, await loadBrokerScope(brokerId));
 
       // List all buyerAccess rows for this buyer, then filter to those
       // on the broker's deals.
@@ -377,26 +388,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       }
 
       res.json({
-        buyer: {
-          id: buyer.id,
-          email: buyer.email,
-          name: buyer.name,
-          phone: buyer.phone,
-          company: buyer.company,
-          title: buyer.title,
-          linkedinUrl: buyer.linkedinUrl,
-          buyerType: buyer.buyerType,
-          background: buyer.background,
-          liquidFunds: buyer.liquidFunds,
-          hasProofOfFunds: buyer.hasProofOfFunds,
-          targetIndustries: buyer.targetIndustries,
-          targetLocations: buyer.targetLocations,
-          buyerCriteria: buyer.buyerCriteria,
-          profileCompletionPct: buyer.profileCompletionPct,
-          source: contact?.source ?? buyer.source,
-          createdAt: buyer.createdAt,
-          lastLoginAt: buyer.lastLoginAt,
-        },
+        buyer,
         contact: contact ? {
           id: contact.id,
           tags: contact.tags,
@@ -457,7 +449,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           updates.targetLocations = body.targetLocations as any;
         }
         if (Object.keys(updates).length > 0) {
-          buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+          buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "broker_import", null, body.brokerId));
         }
       } else if (body.sendInvite) {
         // Create via invite flow (sends set-password email)
@@ -485,6 +477,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
         if (Object.keys(extraUpdates).length > 0) {
           buyerUser = await storage.updateBuyerUser(buyerUser.id, extraUpdates);
         }
+        if (buyerUser && invited.isNew) {
+          buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import", null, body.brokerId) } as any)) || buyerUser;
+        }
       } else {
         // Create a buyer row without sending an invite email
         buyerUser = await storage.createBuyerUser({
@@ -510,6 +505,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           resetToken: null,
           resetTokenExpiresAt: null,
         } as any);
+        buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "broker_import", null, body.brokerId) } as any)) || buyerUser;
       }
 
       if (!buyerUser) {
@@ -524,7 +520,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notes: body.notes ?? null,
       });
 
-      res.json({ buyerUser, contact });
+      // Never the raw row: buyer_users carries the password hash, any pending
+      // set-password/reset token and the buyer's exact self-entered funds.
+      const { brokerBuyerCard } = await import("./buyers/profile-view.js");
+      const { loadBrokerScope } = await import("./buyers/provenance-scope.js");
+      res.json({ buyerUser: brokerBuyerCard(buyerUser, contact, await loadBrokerScope(body.brokerId)), contact });
     } catch (err: any) {
       if (err.name === "ZodError") {
         return res.status(400).json({ error: "Invalid buyer data", details: err.errors });
@@ -626,7 +626,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (!buyerUser.buyerType && buyerType) updates.buyerType = buyerType;
             if (!buyerUser.liquidFunds && liquidFunds) updates.liquidFunds = liquidFunds;
             if (Object.keys(updates).length > 0) {
-              buyerUser = await storage.updateBuyerUser(buyerUser.id, updates);
+              buyerUser = await storage.updateBuyerUser(buyerUser.id, withFieldSources(buyerUser, updates, "csv", null, body.brokerId));
             }
           } else if (body.sendInvites) {
             const invited = await inviteBuyerUser({
@@ -648,6 +648,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
             if (targetLocations.length > 0) extra.targetLocations = targetLocations as any;
             if (Object.keys(extra).length > 0) {
               buyerUser = await storage.updateBuyerUser(buyerUser.id, extra);
+            }
+            if (buyerUser && invited.isNew) {
+              buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv", null, body.brokerId) } as any)) || buyerUser;
             }
             status = "created";
           } else {
@@ -674,6 +677,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
               resetToken: null,
               resetTokenExpiresAt: null,
             } as any);
+            buyerUser = (await storage.updateBuyerUser(buyerUser.id, { fieldSources: initialFieldSources(buyerUser, "csv", null, body.brokerId) } as any)) || buyerUser;
             status = "created";
           }
 
@@ -719,6 +723,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         notes: z.string().nullable().optional(),
       });
       const updates = schema.parse(req.body);
+      if (!(await isBuyerInBrokerList(brokerId, req.params.buyerId))) return res.status(404).json({ error: "Buyer not found" });
 
       let contact = await storage.getBrokerBuyerContact(brokerId, req.params.buyerId);
       if (!contact) {
@@ -898,48 +903,28 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const branding = await storage.getBrandingByBroker(deal.brokerId);
       const brokerCompany = (branding as any)?.companyName || "";
 
-      const extracted: any = (deal as any).extractedInfo || {};
       // PRE-NDA outreach must be blind-safe: no business name, no city, no
       // exact figures (observed leak: "Harbourline Dental Group… Kitchener…
       // $2M revenue, $628K SDE" in a cold email). Bands + region only.
-      const band = (raw: unknown): string | null => {
-        const n = typeof raw === "string" ? typedNumericValues(raw).find((t) => t.kind === "currency")?.value : null;
-        if (!n) return null;
-        if (n < 500_000) return "under $500K";
-        if (n < 1_000_000) return "$500K–$1M";
-        if (n < 2_000_000) return "$1M–$2M";
-        if (n < 5_000_000) return "$2M–$5M";
-        if (n < 10_000_000) return "$5M–$10M";
-        return "$10M+";
-      };
-      const regionOf = (loc: unknown): string | null => {
-        const text = typeof loc === "string" ? loc : loc && typeof loc === "object" ? Object.values(loc as Record<string, unknown>).filter((v) => typeof v === "string").join(" ") : "";
-        const US_STATES = "Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming";
-        const m = new RegExp("\\b(Ontario|Quebec|British Columbia|Alberta|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Newfoundland|Prince Edward Island|" + US_STATES + "|\\bON\\b|\\bQC\\b|\\bBC\\b|\\bAB\\b|\\bMB\\b|\\bSK\\b|\\bNS\\b|\\bNB\\b|\\bNL\\b|\\bPE\\b)").exec(text);
-        const map: Record<string, string> = { ON: "Ontario", QC: "Quebec", BC: "British Columbia", AB: "Alberta", MB: "Manitoba", SK: "Saskatchewan", NS: "Nova Scotia", NB: "New Brunswick", NL: "Newfoundland", PE: "Prince Edward Island" };
-        return m ? (map[m[1]] ?? m[1]) : null;
-      };
-      const yearsBand = (raw: unknown): string | null => {
-        const n = typeof raw === "string" ? parseInt((raw.match(/\d+/) || [""])[0], 10) : NaN;
-        if (!Number.isFinite(n)) return null;
-        return n >= 20 ? "20+ years established" : n >= 10 ? "10+ years established" : n >= 5 ? "5+ years established" : null;
-      };
+      const { blindDealSummary } = await import("./buyers/blind-deal-summary.js");
       const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
       const brokerName = brokerUser?.name || "Your broker";
-      const dealSummary = {
-        codename: (deal as any).blindCodename || "a confidential opportunity",
-        industry: deal.industry,
-        subIndustry: (deal as any).subIndustry,
-        region: regionOf(extracted.locationSite || extracted.location || (deal as any).location),
-        revenueBand: band(extracted.annualRevenue),
-        sdeBand: band(extracted.sde),
-        tenure: yearsBand(extracted.yearsOperating),
-      };
+      const dealSummary = blindDealSummary(deal);
+      // Deterministic identity check on every draft (and on the deep-check
+      // hook fed into it): a draft naming the business, owner, staff, city,
+      // street or contacts is discarded for the blind-safe template.
+      const outreachTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
+      // Only buyers on this broker's own list can be drafted to.
+      const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
       // Draft each email in parallel
       const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
-        const buyer = await storage.getBuyerUser(buyerUserId);
-        if (!buyer) return null;
+        if (!listed.has(buyerUserId)) return null;
+        const ownBuyer = await storage.getBuyerUser(buyerUserId);
+        if (!ownBuyer) return null;
+        // The broker's effective view of the buyer (their edits > buyer's own > CRM).
+        const contactRow = await storage.getBrokerBuyerContact(req.session.brokerId!, buyerUserId);
+        const buyer = mergeBuyerProfile(ownBuyer, contactRow?.crmProfile as CrmBuyerProfile | null, contactRow?.brokerProfile as BrokerBuyerOverlay | null);
 
         const buyerProfile = {
           name: buyer.name,
@@ -950,11 +935,14 @@ export async function registerRoutes(app: Express): Promise<Server> {
         };
         // The AI deep check's blind-safe hook for this buyer, when there is one.
         const deepResult = ((deal as any).buyerDeepCheck as BuyerDeepCheck | null)?.results?.[buyerUserId];
-        const outreachAngle = deepResult?.outreachAngle || null;
+        const rawAngle = deepResult?.outreachAngle || null;
+        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 ? rawAngle : null;
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
-        // template if the API is unavailable.
-        let subject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
+        // template if the API is unavailable or the draft isn't blind-safe.
+        const defaultSubject = `Confidential opportunity: ${deal.industry}${dealSummary.region ? ` — ${dealSummary.region}` : ""}`;
+        const templateBody = () => `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        let subject = defaultSubject;
         let body = "";
 
         try {
@@ -995,12 +983,21 @@ Return JSON only.`,
 
           const raw = aiResp.content[0].type === "text" ? aiResp.content[0].text : "";
           const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
-          if (parsed.subject) subject = parsed.subject;
-          if (parsed.body) body = parsed.body;
+          const aiSubject = typeof parsed.subject === "string" ? parsed.subject.trim() : "";
+          const aiBody = typeof parsed.body === "string" ? parsed.body.trim() : "";
+          const leaks = findBlindLeaks(`${aiSubject}\n${aiBody}`, outreachTerms);
+          if (aiBody && leaks.length === 0) {
+            if (aiSubject) subject = aiSubject;
+            body = aiBody;
+          } else if (leaks.length > 0) {
+            console.warn("[outreach] AI draft named identifying details — discarded for the blind-safe template");
+          }
         } catch (aiErr) {
           console.warn("[outreach] AI draft failed for", buyer.email, "— falling back to template");
-          // Deterministic fallback
-          body = `Hi ${buyer.name.split(" ")[0]},\n\nI'm reaching out because a ${deal.industry} business${dealSummary.region ? ` in ${dealSummary.region}` : ""} just came to market and it looks like a strong fit for your acquisition criteria${buyer.targetIndustries && (buyer.targetIndustries as string[]).length > 0 ? ` in ${(buyer.targetIndustries as string[]).slice(0, 2).join(" / ")}` : ""}.\n\nQuick highlights:\n• Industry: ${deal.industry}${dealSummary.subIndustry ? ` (${dealSummary.subIndustry})` : ""}\n${dealSummary.revenueBand ? `• Revenue: ${dealSummary.revenueBand}\n` : ""}${dealSummary.tenure ? `• ${dealSummary.tenure}\n` : ""}\nIf you'd like a closer look, just reply and I'll set up secure access to the full confidential overview.\n\nNo pressure either way — happy to answer questions if it's a fit.\n\nBest,\n${brokerName}${brokerCompany ? `\n${brokerCompany}` : ""}`;
+        }
+        if (!body) {
+          subject = defaultSubject;
+          body = templateBody();
         }
 
         return {
@@ -1046,17 +1043,21 @@ Return JSON only.`,
 
       const branding = await storage.getBrandingByBroker(deal.brokerId);
       const brokerCompany = (branding as any)?.companyName || "Cimple";
+      // Only buyers on this broker's own list can be emailed from here.
+      const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
+      const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
       const results = await Promise.all(outreach.map(async (item) => {
-        const buyer = await storage.getBuyerUser(item.buyerUserId);
+        const buyer = listed.has(item.buyerUserId) ? await storage.getBuyerUser(item.buyerUserId) : undefined;
         if (!buyer) {
           return { buyerUserId: item.buyerUserId, status: "failed", error: "Buyer not found" };
         }
 
-        // Render plain-text body into a simple HTML wrapper
+        // Render plain-text body into a simple HTML wrapper (escaped — the
+        // broker's text is never interpreted as HTML).
         const htmlBody = item.body
           .split("\n\n")
-          .map(p => `<p style="margin:0 0 16px 0;color:#333;font-size:14px;line-height:1.6;">${p.replace(/\n/g, "<br/>")}</p>`)
+          .map(p => `<p style="margin:0 0 16px 0;color:#333;font-size:14px;line-height:1.6;">${esc(p).replace(/\n/g, "<br/>")}</p>`)
           .join("");
         const html = `
 <!DOCTYPE html>
@@ -1067,7 +1068,7 @@ Return JSON only.`,
     ${htmlBody}
   </div>
   <p style="text-align:center;color:#999;font-size:11px;margin-top:16px;">
-    Sent via Cimple on behalf of ${brokerCompany}
+    Sent via Cimple on behalf of ${esc(brokerCompany)}
   </p>
 </body>
 </html>`;
@@ -1139,9 +1140,11 @@ Return JSON only.`,
         return res.status(400).json({ error: "Missing data or filename" });
       }
       const ext = path.extname(filename).toLowerCase() || ".png";
-      const allowed = [".png", ".jpg", ".jpeg", ".svg", ".webp", ".gif"];
+      // No SVG: /uploads is served from the app origin with CSP off, so an
+      // SVG logo could run script. New uploads use POST /api/cim-templates/brand-logo.
+      const allowed = [".png", ".jpg", ".jpeg", ".webp", ".gif"];
       if (!allowed.includes(ext)) {
-        return res.status(400).json({ error: "Invalid file type. Allowed: PNG, JPG, SVG, WebP, GIF" });
+        return res.status(400).json({ error: "Invalid file type. Allowed: PNG, JPG, WebP, GIF" });
       }
       const base64Data = data.replace(/^data:image\/[^;]+;base64,/, "");
       const buffer = Buffer.from(base64Data, "base64");
@@ -1167,8 +1170,10 @@ Return JSON only.`,
   app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { generateSellerProfile } = await import("./interview/eq-profiler");
-      const profile = await generateSellerProfile(dealId);
+      const { generateSellerProfile, carryBrokerProfileEdits } = await import("./interview/eq-profiler");
+      const prior = ((await storage.getDeal(dealId))?.sellerProfile as Record<string, unknown> | null) || null;
+      // The broker's own notes and corrections survive a regenerate.
+      const profile = carryBrokerProfileEdits(await generateSellerProfile(dealId), prior);
       // Store on deal record
       await storage.updateDeal(dealId, { sellerProfile: profile } as any);
       res.json(profile);
@@ -1287,6 +1292,15 @@ Return JSON only.`,
   });
 
   // Start or resume an interview session for a deal
+  // Interview responses: the owning broker gets the full turn result; a
+  // seller (admitted by their token) gets field names without values or
+  // guard reasons — those can quote broker-only sources (CRM notes, private
+  // emails). See server/interview/seller-safe-turn.ts.
+  const brokerOwnsInterview = async (req: Request, dealId: string) =>
+    !!req.session.brokerId && !!(await getOwnedDeal(dealId, req.session.brokerId));
+  const interviewResultFor = async <T extends object>(req: Request, dealId: string, result: T): Promise<T> =>
+    (await brokerOwnsInterview(req, dealId)) ? result : sellerSafeTurnResult(result as any);
+
   app.post("/api/interview/:dealId/start", async (req, res) => {
     try {
       const { dealId } = req.params;
@@ -1294,8 +1308,8 @@ Return JSON only.`,
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
       const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
-      const result = await startOrResumeSession(dealId, { conductedBy });
-      res.json(result);
+      const result = await startOrResumeSession(dealId, { conductedBy, conductedVia: parseConductedVia(req.body?.conductedVia) });
+      res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview start error:", error);
       res.status(500).json({ error: error.message || "Failed to start interview" });
@@ -1567,8 +1581,10 @@ Return JSON only.`,
 
       const result = await processTurn(dealId, sessionId, message, undefined, {
         correctionOf: parseCorrectionOf(req.body.correctionOf),
+        conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+        conductedVia: parseConductedVia(req.body?.conductedVia),
       });
-      res.json(result);
+      res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview message error:", error);
       res.status(500).json({ error: error.message || "Failed to process message" });
@@ -1609,9 +1625,10 @@ Return JSON only.`,
           {
             correctionOf: parseCorrectionOf(req.body.correctionOf),
             conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+            conductedVia: parseConductedVia(req.body?.conductedVia),
           },
         );
-        send({ type: "done", result });
+        send({ type: "done", result: await interviewResultFor(req, dealId, result) });
       } catch (err: any) {
         console.error("Interview stream error:", err);
         send({ type: "error", error: err.message || "Failed to process message" });
@@ -1756,11 +1773,21 @@ Return JSON only.`,
     }
   });
 
+  // One row per broker: POST creates it the first time and updates it after.
   app.post("/api/branding", requireBroker, async (req, res) => {
     try {
       const { insertBrandingSettingsSchema } = await import("@shared/schema");
+      const { cleanBrandingWrite } = await import("./cim/templates");
+      const cleaned = await cleanBrandingWrite(req.session.brokerId!, req.body || {});
+      if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
+      const existing = await storage.getBrandingByBroker(req.session.brokerId!);
+      if (existing) {
+        const updates = insertBrandingSettingsSchema.partial().parse(cleaned.data);
+        const settings = await storage.updateBrandingSettings(existing.id, updates);
+        return res.json(settings);
+      }
       const validatedData = insertBrandingSettingsSchema.parse({
-        ...req.body,
+        ...cleaned.data,
         brokerId: req.session.brokerId,
       });
       const settings = await storage.createBrandingSettings(validatedData);
@@ -1781,8 +1808,10 @@ Return JSON only.`,
         return res.status(404).json({ error: "Branding settings not found" });
       }
       const { insertBrandingSettingsSchema } = await import("@shared/schema");
-      const { brokerId: _b, id: _i, ...brandingBody } = req.body || {};
-      const validatedData = insertBrandingSettingsSchema.partial().parse(brandingBody);
+      const { cleanBrandingWrite } = await import("./cim/templates");
+      const cleaned = await cleanBrandingWrite(req.session.brokerId!, req.body || {});
+      if (!cleaned.ok) return res.status(400).json({ error: cleaned.error });
+      const validatedData = insertBrandingSettingsSchema.partial().parse(cleaned.data);
       const settings = await storage.updateBrandingSettings(req.params.id, validatedData);
       if (!settings) {
         return res.status(404).json({ error: "Branding settings not found" });
@@ -1804,21 +1833,30 @@ Return JSON only.`,
   app.get("/api/deals", requireBroker, async (req, res) => {
     try {
       // Scope is ALWAYS the session broker — never a client-supplied param.
-      const deals = await storage.getAllDeals(req.session.brokerId);
-      res.json(deals);
+      // Archived deals are left out (the deal list's /api/deals/list can show them).
+      const deals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
+      // Drifted asking-price copies lined up in memory (one value everywhere;
+      // reading never writes — see information/deal-mirror.ts).
+      res.json(deals.map((d) => brokerFactsView(d)));
     } catch (error: any) {
       console.error("Error fetching deals:", error);
       res.status(500).json({ error: "Failed to fetch deals" });
     }
   });
 
-  app.get("/api/deals/:id", requireBroker, async (req, res) => {
+  app.get("/api/deals/:id", requireBroker, async (req, res, next) => {
+    // GET /api/deals/list lives in routes/deal-list.ts, registered after this.
+    if (req.params.id === "list") return next();
     try {
       const deal = await getOwnedDeal(req.params.id, req.session.brokerId);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
       }
-      res.json(deal);
+      // The Overview (Valuation input included) shows the same asking price
+      // as the Information tab, deal list, readiness and CIM: drifted copies
+      // from before the one-value rule are lined up in memory, never saved
+      // on read (the broker's next change saves them — deal-mirror.ts).
+      res.json(brokerFactsView(deal));
     } catch (error: any) {
       console.error("Error fetching deal:", error);
       res.status(500).json({ error: "Failed to fetch deal" });
@@ -1829,11 +1867,26 @@ Return JSON only.`,
     try {
       const { insertDealSchema } = await import("@shared/schema");
       // Owner is always the logged-in broker — a client-supplied brokerId is ignored.
+      // demoKey marks seeded demo/QA deals (kept out of the industry-wide
+      // learning loops) — set only by the seeding code, never by a client.
+      const { demoKey: _demoKey, ...body } = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
       const validatedData = insertDealSchema.parse({
-        ...req.body,
+        ...body,
         brokerId: req.session.brokerId,
       });
-      const deal = await storage.createDeal(validatedData);
+      let deal = await storage.createDeal(validatedData);
+      // An asking price entered at creation becomes the broker's fact too
+      // (one value with the Information tab — see information/deal-mirror.ts).
+      if (deal.askingPrice) {
+        try {
+          const { setMirroredDealFact } = await import("./information/facts");
+          const { MIRROR_NOTES } = await import("./information/deal-mirror");
+          await setMirroredDealFact(deal.id, "askingPrice", deal.askingPrice, MIRROR_NOTES.created);
+          deal = (await storage.getDeal(deal.id)) ?? deal;
+        } catch (e) {
+          console.warn("[deals] asking-price fact not recorded:", e);
+        }
+      }
 
       // Auto-populate document requirements from industry intelligence
       if (deal.industry) {
@@ -1859,25 +1912,19 @@ Return JSON only.`,
   // ── Broker dashboard ──────────────────────────────────────────────────
   app.get("/api/broker/dashboard", requireBroker, async (req, res) => {
     try {
-      const allDeals = await storage.getAllDeals(req.session.brokerId);
+      // Archived deals are out of the dashboard entirely (pipeline, stats,
+      // attention list and activity) — the broker put them away.
+      const allDeals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
+      // "$2.5M" must count as 2,500,000 (the old digit-strip read it as 2.5).
+      const askingValue = (d: { askingPrice: string | null; extractedInfo: unknown }) => moneyValue(listedAskingPrice(d as never)) ?? 0;
 
-      // ─ Pipeline snapshot: group deals by phase ─
-      const phaseLabels: Record<string, string> = {
-        phase1_info_collection: "Info Collection",
-        phase2_platform_intake: "Platform Intake",
-        phase3_content_creation: "Content Creation",
-        phase4_design_finalization: "Design Finalization",
-      };
-      const phaseKeys = Object.keys(phaseLabels);
-      const pipeline = phaseKeys.map((phase) => {
+      // ─ Pipeline snapshot: group deals by phase (labels: shared/deal-progress) ─
+      const pipeline = DEAL_PHASES.map(({ key: phase, label }) => {
         const phaseDeals = allDeals.filter((d) => d.phase === phase);
-        const totalAskingPrice = phaseDeals.reduce((sum, d) => {
-          const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
-          return sum + (isNaN(price) ? 0 : price);
-        }, 0);
+        const totalAskingPrice = phaseDeals.reduce((sum, d) => sum + askingValue(d), 0);
         return {
           phase,
-          label: phaseLabels[phase],
+          label,
           dealCount: phaseDeals.length,
           totalAskingPrice,
           deals: phaseDeals.map((d) => ({
@@ -1891,10 +1938,7 @@ Return JSON only.`,
 
       // ─ Quick stats ─
       const activeDeals = allDeals.filter((d) => d.status !== "completed");
-      const totalPipelineValue = activeDeals.reduce((sum, d) => {
-        const price = parseFloat((d.askingPrice || "0").replace(/[^0-9.]/g, ""));
-        return sum + (isNaN(price) ? 0 : price);
-      }, 0);
+      const totalPipelineValue = activeDeals.reduce((sum, d) => sum + askingValue(d), 0);
       const avgDaysInPhase = activeDeals.length > 0
         ? Math.round(
             activeDeals.reduce((sum, d) => {
@@ -1921,7 +1965,6 @@ Return JSON only.`,
       let newBuyersThisWeek = 0;
       const pendingApprovals: Array<{ dealId: string; dealName: string; buyerName: string; buyerCompany: string | null; submittedAt: string }> = [];
       const unansweredQuestions: Array<{ dealId: string; dealName: string; questionPreview: string; askedAt: string }> = [];
-      const pendingReviewCIMs: Array<{ dealId: string; dealName: string }> = [];
 
       for (const { deal, access, approvals, questions } of perDealData) {
         // New buyers this week
@@ -1951,12 +1994,28 @@ Return JSON only.`,
             });
           }
         }
-
-        // CIMs ready for broker review
-        if (deal.status === "pending_review") {
-          pendingReviewCIMs.push({ dealId: deal.id, dealName: deal.businessName });
-        }
       }
+
+      // Deals whose next step is the broker's — the same definition the deal
+      // list uses (shared/deal-progress computeNextStep), so the dashboard and
+      // the list never disagree about whose move it is. (Replaces the old
+      // pendingReviewCIMs, keyed off deals.status, which nothing ever set.)
+      const sideFacts = await loadDealSideFacts(allDeals, { confidence: true });
+      const yourMove = allDeals
+        .map((deal) => {
+          const facts = sideFacts.get(deal.id);
+          const step = dealNextStep(deal, facts);
+          return { deal, step, lastActivityMs: facts?.lastActivityMs ?? new Date(deal.createdAt).getTime() };
+        })
+        .filter(({ step }) => step.owner === "you")
+        .sort((a, b) => b.lastActivityMs - a.lastActivityMs)
+        .map(({ deal, step, lastActivityMs }) => ({
+          dealId: deal.id,
+          dealName: deal.businessName,
+          label: step.label,
+          href: step.href ?? `/deal/${deal.id}/overview`,
+          lastActivity: new Date(lastActivityMs).toISOString(),
+        }));
 
       // Stalled interviews (active sessions with no activity in 3+ days)
       const { db } = await import("./db");
@@ -2001,7 +2060,10 @@ Return JSON only.`,
           dealName: dealMap.get(dealId) || "Unknown",
           count,
         }))
-        .filter((d) => d.count > 0);
+        // Shown as "Waiting on the seller", so only where a seller has been
+        // invited and the deal isn't live yet (an uninvited deal already
+        // reads "Your move: invite the seller").
+        .filter((d) => d.count > 0 && sideFacts.get(d.dealId)?.extras.invited && !allDeals.find((x) => x.id === d.dealId)?.isLive);
 
       // ─ Recent activity feed (last 48 hours, cap at 20) ─
       const twoDaysAgo = new Date(Date.now() - 48 * 60 * 60 * 1000);
@@ -2100,7 +2162,7 @@ Return JSON only.`,
           pendingApprovals,
           unansweredQuestions,
           stalledInterviews,
-          pendingReviewCIMs,
+          yourMove,
           pendingDocuments,
         },
         activity,
@@ -2348,14 +2410,28 @@ Return JSON only.`,
     }
   });
 
-  // Dual-auth PATCH: a broker session can update any field of a deal they
-  // own; a seller (identified by their invite token in the X-Seller-Token
-  // header) can update only the intake fields on the deal their token maps
-  // to. Everyone else gets 401/404.
+  // Dual-auth PATCH: a broker session can update the broker-editable fields
+  // below on a deal they own; a seller (identified by their invite token in
+  // the X-Seller-Token header) can update only the intake fields on the deal
+  // their token maps to. Everyone else gets 401/404.
   const SELLER_PATCHABLE_FIELDS = new Set([
     "questionnaireData",
     "operationalSystems",
     "employeeChart",
+  ]);
+  // What the broker UI actually sends (Overview checklist, approvals, publish,
+  // phase advance; the intake wizard when a broker previews the seller view),
+  // plus the plain deal-detail fields. Everything else has its own endpoint:
+  // ownership (brokerId) never moves, extractedInfo is written only through
+  // provenance-aware paths, archive via /archive, generation state by jobs.
+  const BROKER_PATCHABLE_FIELDS = new Set([
+    ...Array.from(SELLER_PATCHABLE_FIELDS),
+    "businessName", "industry", "subIndustry", "location", "description", "websiteUrl",
+    "askingPrice", "ndaSigned", "sqCompleted", "valuationCompleted", "engagementSent",
+    "phase", "isLive",
+    "contentApprovedByBroker", "contentApprovedBySeller",
+    "designApprovedByBroker", "designApprovedBySeller",
+    "designTemplateId", "ndaRequired", "watermarkText",
   ]);
   app.patch("/api/deals/:id", async (req, res) => {
     try {
@@ -2366,7 +2442,30 @@ Return JSON only.`,
       if (req.session.brokerId) {
         const owned = await getOwnedDeal(req.params.id, req.session.brokerId);
         if (!owned) return res.status(404).json({ error: "Deal not found" });
-        allowedBody = req.body;
+        const body = (req.body && typeof req.body === "object" ? req.body : {}) as Record<string, unknown>;
+        const { allowBackward, ...fields } = body;
+        if ("brokerId" in fields || "id" in fields) {
+          return res.status(400).json({ error: "A deal's id and owner can't be changed" });
+        }
+        const rejected = Object.keys(fields).filter((k) => !BROKER_PATCHABLE_FIELDS.has(k));
+        if (rejected.length > 0) {
+          return res.status(400).json({ error: `These fields can't be changed here: ${rejected.join(", ")}` });
+        }
+        // Phases only move forward unless the caller deliberately asks to
+        // move back. An earlier phase's "Advance" button on an expanded
+        // accordion used to silently drag a phase-4 deal back to phase 2.
+        if (fields.phase !== undefined) {
+          if (!isDealPhase(fields.phase)) {
+            return res.status(400).json({ error: "Unknown phase" });
+          }
+          if (phaseIndex(fields.phase) < phaseIndex(owned.phase) && allowBackward !== true) {
+            return res.status(409).json({
+              error: `This deal is already past that step — it's in ${DEAL_PHASES[phaseIndex(owned.phase)]?.label ?? "a later phase"}.`,
+              code: "phase_backward",
+            });
+          }
+        }
+        allowedBody = fields;
       } else {
         const sellerToken = req.headers["x-seller-token"];
         if (typeof sellerToken === "string" && sellerToken.length > 0) {
@@ -2426,11 +2525,39 @@ Return JSON only.`,
         validatedData.ndaSignedIp = null;
         (validatedData as any).ndaSignedBy = null;
       }
-      const deal = await storage.updateDeal(req.params.id, validatedData);
+      // The asking price is one value with the fact on the Information tab:
+      // it's written as the broker's fact and the column follows (see
+      // server/information/deal-mirror.ts) — never the column alone.
+      const askingPriceSet = req.session.brokerId && "askingPrice" in (validatedData as Record<string, unknown>);
+      const askingPrice = (validatedData as Record<string, unknown>).askingPrice;
+      if (askingPriceSet) delete (validatedData as Record<string, unknown>).askingPrice;
+      let deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
       }
-      res.json(deal);
+      if (askingPriceSet) {
+        const { setMirroredDealFact } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFact(req.params.id, "askingPrice", askingPrice, MIRROR_NOTES.valuation);
+        deal = (await storage.getDeal(req.params.id)) ?? deal;
+      }
+      // Intake answers become facts (source "questionnaire") as soon as the
+      // seller saves them — the broker's Information tab and the readiness
+      // score shouldn't wait for the interview to start.
+      if (["questionnaireData", "operationalSystems", "employeeChart"].some((k) => (validatedData as Record<string, unknown>)[k] !== undefined)) {
+        try {
+          const { seedQuestionnaireFacts } = await import("./interview/session-manager");
+          if ((await seedQuestionnaireFacts(req.params.id)).length > 0) deal = (await storage.getDeal(req.params.id)) ?? deal;
+        } catch (e) {
+          console.warn("[intake] questionnaire seeding failed:", e);
+        }
+      }
+      if (!req.session.brokerId) {
+        // A seller-token save gets the seller-visible fields only.
+        const { sellerSafeDeal } = await import("./seller-safe-deal");
+        return res.json(sellerSafeDeal(deal));
+      }
+      res.json(brokerFactsView(deal));
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid deal data", details: error.errors });
@@ -2509,12 +2636,9 @@ Return JSON only.`,
       // The dialog promises "any data extracted from it will be removed" —
       // honour it via field provenance.
       try {
-        const dealRow = await storage.getDeal(existingDoc.dealId);
-        if (dealRow) {
-          const { info, removed } = removeDocumentFields((dealRow.extractedInfo as Record<string, unknown>) || {}, existingDoc.id);
-          if (removed.length > 0) await storage.updateDeal(existingDoc.dealId, { extractedInfo: info } as any);
-          return res.json({ success: true, removedFields: removed });
-        }
+        const { removeSourceFacts } = await import("./documents/cleanup");
+        const removed = await removeSourceFacts(existingDoc.dealId, existingDoc.id);
+        return res.json({ success: true, removedFields: removed });
       } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
       res.json({ success: true });
     } catch (error: any) {
@@ -2563,33 +2687,12 @@ Return JSON only.`,
     },
   });
 
-  async function parseDocumentAsync(
-    docId: string,
-    filePath: string,
-    mimeType: string | null,
-    category: string,
-    subcategory: string | null,
-    dealId: string
-  ) {
-    try {
-      await storage.updateDocument(docId, { status: "parsing" } as any);
-      const text = await extractTextFromFile(filePath, mimeType);
-      const extracted = await extractDocumentData(text, category, subcategory);
-      await storage.updateDocument(docId, {
-        status: "extracted",
-        extractedText: text,
-        extractedData: extracted,
-        isProcessed: true,
-      } as any);
-      const deal = await storage.getDeal(dealId);
-      if (deal) {
-        const merged = mergeExtractedData((deal.extractedInfo as Record<string, unknown>) || {}, extracted, docId);
-        await storage.updateDeal(dealId, { extractedInfo: merged } as any);
-      }
-    } catch (err) {
-      console.error(`[parser] failed for doc ${docId}:`, err);
-      await storage.updateDocument(docId, { status: "failed" } as any).catch(() => {});
-    }
+  // Parse + extract + merge with provenance — see server/documents/ingest.ts.
+  // Fire-and-forget: the row's status flips pending → parsing → extracted/failed.
+  function parseDocumentAsync(docId: string) {
+    import("./documents/ingest")
+      .then(({ ingestDocument }) => ingestDocument(docId))
+      .catch((err) => console.error(`[parser] failed for doc ${docId}:`, err));
   }
 
   app.post("/api/deals/:dealId/documents/upload", docUpload.single("file"), async (req, res) => {
@@ -2644,6 +2747,20 @@ Return JSON only.`,
       // Pasted text carries its own title; keep it verbatim as the display
       // name. Only the on-disk filename (doc_<ts>.ext) needs sanitising.
       const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
+      // Provenance v2: the broker says what kind of source this is (email,
+      // call transcript, CRM note…) and who may see it. A seller's upload is
+      // always a shared document.
+      const { isSourceKind } = await import("./interview/info-merger");
+      const { cleanSourceMeta, defaultVisibilityForKind } = await import("./documents/ingest");
+      const requestedKind = uploadedBy === "broker" && isSourceKind(req.body.sourceKind) ? req.body.sourceKind : "document";
+      let sourceMeta: ReturnType<typeof cleanSourceMeta> = null;
+      if (uploadedBy === "broker" && typeof req.body.sourceMeta === "string" && req.body.sourceMeta.trim()) {
+        try { sourceMeta = cleanSourceMeta(JSON.parse(req.body.sourceMeta)); } catch { sourceMeta = null; }
+      }
+      const visibility =
+        uploadedBy === "broker" && (req.body.visibility === "broker_only" || req.body.visibility === "shared")
+          ? req.body.visibility
+          : uploadedBy === "broker" ? defaultVisibilityForKind(requestedKind) : "shared";
       const doc = await storage.createDocument({
         dealId: req.params.dealId,
         uploadedBy,
@@ -2652,7 +2769,12 @@ Return JSON only.`,
         category,
         subcategory: subcategory || null,
         fileUrl: `/uploads/docs/${req.file.filename}`,
+        fileSize: req.file.size ?? null,
+        mimeType: req.file.mimetype || null,
         status: "pending",
+        sourceKind: requestedKind,
+        sourceMeta,
+        visibility,
       } as any);
 
       // Credit the upload against the checklist: the explicit row when one
@@ -2660,7 +2782,9 @@ Return JSON only.`,
       // broker dropping "2023 P&L.pdf" counts toward the financials row).
       // When the seller replaces their own earlier upload, that file goes.
       const previousFileId = targetRequirement?.uploadedFileId ?? null;
-      const linkedRequirement = await linkUploadToRequirement({
+      // A broker-only source is never credited on the seller's checklist
+      // (the seller would see its name there).
+      const linkedRequirement = visibility === "broker_only" ? null : await linkUploadToRequirement({
         dealId: req.params.dealId,
         docId: doc.id,
         fileName: displayName,
@@ -2676,7 +2800,7 @@ Return JSON only.`,
         }
       }
 
-      parseDocumentAsync(doc.id, req.file.path, req.file.mimetype, category, subcategory || null, req.params.dealId);
+      parseDocumentAsync(doc.id);
       res.json({ ...doc, linkedRequirement });
     } catch (error: any) {
       console.error("Upload error:", error);
@@ -2688,8 +2812,7 @@ Return JSON only.`,
     try {
       const doc = await storage.getDocument(req.params.id);
       if (!doc || !(await ownsDeal(req, doc.dealId))) return res.status(404).json({ error: "Document not found" });
-      const filePath = path.join(uploadsDir, (doc.fileUrl || "").replace(/^\/uploads\//, ""));
-      parseDocumentAsync(doc.id, filePath, null, doc.category || "other", doc.subcategory || null, doc.dealId);
+      parseDocumentAsync(doc.id);
       res.json({ status: "parsing" });
     } catch (error: any) {
       res.status(500).json({ error: "Parse failed" });
@@ -2749,12 +2872,9 @@ Return JSON only.`,
         typeof req.body.apiToken === "string" ? req.body.apiToken.trim() : "";
       if (!apiToken) return res.status(400).json({ error: "API token is required" });
 
+      const { validatePipedriveToken } = await import("./crm/pipedrive.js");
       try {
-        const check = await fetch(
-          `https://api.pipedrive.com/v1/users/me?api_token=${encodeURIComponent(apiToken)}`,
-        );
-        const body: any = await check.json().catch(() => null);
-        if (!check.ok || !body?.success) {
+        if (!(await validatePipedriveToken(apiToken))) {
           return res
             .status(400)
             .json({ error: "Pipedrive rejected that token — double-check it and try again." });
@@ -2782,7 +2902,9 @@ Return JSON only.`,
             brokerId: req.session.brokerId,
           } as any);
 
-      res.json({ ok: true, integration });
+      // Never echo the token (or any credential) back to the browser.
+      const { accessToken: _token, refreshToken: _refresh, ...safeIntegration } = (integration ?? {}) as Record<string, unknown>;
+      res.json({ ok: true, integration: safeIntegration });
     } catch (error: any) {
       console.error("Pipedrive connect error:", error);
       res.status(500).json({ error: "Failed to connect Pipedrive" });
@@ -2793,7 +2915,7 @@ Return JSON only.`,
   // profiles (private to the broker; nobody is emailed). See server/crm/buyer-sync.ts.
   app.get("/api/integrations/pipedrive/buyer-sync", requireBroker, async (req, res) => {
     try {
-      const { getPipedriveIntegration, getLiveBuyerSyncStatus, getPipedriveBuyerSyncOptions } = await import("./crm/buyer-sync.js");
+      const { getPipedriveIntegration, effectiveBuyerSyncStatus, getPipedriveBuyerSyncOptions } = await import("./crm/buyer-sync.js");
       const brokerId = req.session.brokerId!;
       const integration = await getPipedriveIntegration(brokerId);
       if (!integration) return res.json({ connected: false });
@@ -2809,7 +2931,7 @@ Return JSON only.`,
       res.json({
         connected: true,
         settings: saved.settings ?? null,
-        status: getLiveBuyerSyncStatus(brokerId) ?? saved.status ?? null,
+        status: effectiveBuyerSyncStatus(brokerId, saved.status),
         lastSuccessAt: saved.lastSuccessAt ?? null,
         syncedCount: contacts.length,
         options,
@@ -3518,7 +3640,7 @@ Return JSON only.`,
               deal.industry,
               {
                 businessName: deal.businessName,
-                askingPrice: deal.askingPrice || undefined,
+                askingPrice: listedAskingPrice(deal) || undefined,
               },
             );
 
@@ -3939,8 +4061,11 @@ Return JSON only.`,
       if (!deal) {
         return res.status(404).json({ error: "Associated deal not found" });
       }
-      
-      res.json({ invite, deal });
+
+      // Seller-visible fields only — never the broker's facts, CRM link,
+      // notes, seller profile or call/bot secrets.
+      const { sellerSafeDeal } = await import("./seller-safe-deal");
+      res.json({ invite, deal: sellerSafeDeal(deal) });
     } catch (error: any) {
       console.error("Error fetching invite:", error);
       res.status(500).json({ error: "Failed to fetch invite" });
@@ -3956,17 +4081,6 @@ Return JSON only.`,
       const deal = await storage.getDeal(invite.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      // Interview coverage
-      const { buildSectionCoverage } = await import("./interview/knowledge-base");
-      const extractedInfo = (deal.extractedInfo || {}) as Record<string, unknown>;
-      const sectionCoverage = buildSectionCoverage(extractedInfo as any, undefined, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
-      const readiness = computeCimReadiness(sectionCoverage);
-      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
-      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
-      const interviewPct = sectionCoverage.length > 0
-        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
-        : 0;
-
       // Interview sessions
       const { db } = await import("./db");
       const { interviewSessions, buyerQuestions } = await import("@shared/schema");
@@ -3974,6 +4088,27 @@ Return JSON only.`,
       const sessions = await db.select().from(interviewSessions)
         .where(eqOp(interviewSessions.dealId, deal.id))
         .orderBy(descOp(interviewSessions.lastActivityAt));
+
+      // Interview coverage — built exactly as the interview header builds it
+      // (the seller-safe knowledge base: nothing a broker-only source
+      // asserted, not the broker's listed price, the session's confidence
+      // labels, resolved discrepancies), so the seller never sees two
+      // different quality labels.
+      const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
+      const kbDocuments = await storage.getDocumentsByDeal(deal.id);
+      const sectionCoverage = assembleKnowledgeBase(
+        deal,
+        kbDocuments,
+        await storage.getTasksByDeal(deal.id),
+        sessions[0] ?? null,
+        await storage.getResolvedDiscrepancies(deal.id),
+      ).sectionCoverage;
+      const readiness = computeCimReadiness(sectionCoverage);
+      const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
+      const partial = sectionCoverage.filter((s) => s.status === "partial").length;
+      const interviewPct = sectionCoverage.length > 0
+        ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
+        : 0;
       const hasActiveSession = sessions.some((s) => s.status === "active");
       const hasCompletedSession = sessions.some((s) => s.status === "completed");
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
@@ -3985,8 +4120,9 @@ Return JSON only.`,
       const totalRequired = requiredDocs.length;
       const docPct = totalRequired > 0 ? Math.round((uploadedRequired / totalRequired) * 100) : 0;
 
-      // Uploaded documents
-      const allDocs = await storage.getDocumentsByDeal(deal.id);
+      // Uploaded documents — broker-only sources (CRM notes, private emails)
+      // never reach the seller.
+      const allDocs = kbDocuments.filter((d) => (d as any).visibility !== "broker_only");
 
       // Pending seller approvals
       const pendingQuestions = await db.select().from(buyerQuestions)
@@ -4154,34 +4290,18 @@ Return JSON only.`,
   // Auto-generate blind overrides in the background the first time a
   // blind-mode link is opened before the broker ran "Generate blind CIM".
   // In-flight guard prevents a stampede of redaction runs per deal.
-  const blindGenInFlight = new Set<string>();
-  function ensureBlindOverridesInBackground(deal: { id: string; businessName: string; industry: string; extractedInfo: unknown }) {
-    if (blindGenInFlight.has(deal.id)) return;
-    blindGenInFlight.add(deal.id);
-    (async () => {
-      const sections = await storage.getCimSectionsByDeal(deal.id);
-      if (sections.length === 0) return;
-      const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const { codename, overrides } = await generateBlindOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      });
-      await storage.deleteCimSectionOverrides(deal.id, "blind");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId: deal.id,
-          cimSectionId: override.cimSectionId,
-          mode: "blind",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
-      }
-      await storage.updateDeal(deal.id, { blindCodename: codename } as any);
-      console.log(`[view] Auto-generated ${overrides.length} blind overrides for deal ${deal.id}`);
-    })()
-      .catch((err) => console.error(`[view] Blind auto-generation failed for deal ${deal.id}:`, err))
-      .finally(() => blindGenInFlight.delete(deal.id));
+  // In-flight guard + codename reuse live in server/cim/blind-sync.ts.
+  function ensureBlindOverridesInBackground(deal: { id: string }) {
+    regenerateAllBlindInBackground(deal.id);
+  }
+
+  /** Blind view rooms use neutral section keys — map them back to the real ones. */
+  async function translateBlindSectionKeys(dealId: string, events: Array<{ sectionKey?: string | null }>): Promise<void> {
+    if (!events.some((e) => typeof e?.sectionKey === "string" && /^s_[0-9a-z]{12}$/.test(e.sectionKey))) return;
+    const map = realSectionKeyMap(await storage.getCimSectionsByDeal(dealId));
+    for (const e of events) {
+      if (typeof e?.sectionKey === "string" && map.has(e.sectionKey)) e.sectionKey = map.get(e.sectionKey)!;
+    }
   }
 
   app.get("/api/view/:token", async (req, res) => {
@@ -4260,28 +4380,41 @@ Return JSON only.`,
 
       // Buyers get a minimal whitelisted deal payload — never the raw deal
       // record (extractedInfo, broker notes, valuation data). Legacy
-      // cimContent only ships in normal mode: it has no redacted variant.
-      const publicDeal = {
+      // cimContent (the pre-builder prose map) is added below only where the
+      // page renders it: named CIM, NDA passed, and no CIM sections at all.
+      // It holds every section's text — hidden ones included — so it never
+      // ships alongside sections, and never before the NDA.
+      const publicDeal: { id: string; businessName: string; industry: string; cimContent: unknown } = {
         id: deal.id,
         businessName: displayName,
         industry: deal.industry,
-        cimContent: cimMode === "normal" ? deal.cimContent : null,
+        cimContent: null,
       };
 
-      const branding = deal.brokerId
-        ? await storage.getBrandingByBroker(deal.brokerId)
-        : undefined;
+      // Branding is whitelisted (never the settings row). The design payload
+      // carries the template, the brokerage brand (fine in Blind) and the
+      // business's own branding — only in Normal/DD, and only past the NDA.
+      const { designPayload } = await import("./cim/templates");
+      const design = await designPayload(deal, cimMode);
+      const gatedDesign = { ...design, template: { ...design.template, name: "" }, business: null };
+      const branding = {
+        companyName: design.brokerage.firmName,
+        logoUrl: design.brokerage.logoUrl,
+        disclaimer: design.brokerage.disclaimer,
+      };
 
       // NDA gate — enforced server-side. Until the NDA is signed, no CIM
       // sections or Q&A leave the server (previously the full payload
-      // shipped and the gate was a client-side render decision).
-      if (deal.ndaRequired && !access.ndaSigned) {
+      // shipped and the gate was a client-side render decision). The same
+      // rule guards the chatbot, the Q&A feed and media (ndaBlocksBuyer).
+      if (ndaBlocksBuyer(deal, access)) {
         return res.json({
           access: freshAccess,
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
-          branding: branding ?? null,
+          branding,
+          design: gatedDesign,
           cimMode,
           ndaGate: true,
         });
@@ -4291,73 +4424,55 @@ Return JSON only.`,
       // (whitelisted fields — never the seller-approval token or broker draft).
       const [baseSections, publishedQuestions] = await Promise.all([
         storage.getCimSectionsByDeal(deal.id),
-        buildBuyerQuestionFeed(deal.id, access.id),
+        buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }),
       ]);
+      if (cimMode === "normal" && baseSections.length === 0) publicDeal.cimContent = deal.cimContent ?? null;
 
-      // Apply redaction/enrichment overrides for non-normal modes
-      let sections = baseSections;
-      if (cimMode !== "normal" && baseSections.length > 0) {
-        const overrides = await storage.getCimSectionOverrides(deal.id, cimMode);
-        if (overrides.length > 0) {
-          // Section titles are NOT stored in the override (which only holds
-          // layoutData + content), so redact them here with the same codename.
-          // Every known name variant (company/legal/trade/brand names, owner,
-          // website) — see shared/blind-identifiers.ts.
-          const redactTitle = blindMode
-            ? blindTitleRedactor(deal as any, codename)
-            : (t: string) => t;
-
-          const overrideMap = new Map(overrides.map(o => [o.cimSectionId, o]));
-          sections = baseSections.map(s => {
-            const sectionTitle = redactTitle(s.sectionTitle || "");
-            const override = overrideMap.get(String(s.id));
-            if (!override) return { ...s, sectionTitle };
-            return {
-              ...s,
-              sectionTitle,
-              layoutData: override.layoutData || s.layoutData,
-              // Blind: the override IS the content. Falling back to the base
-              // draft/broker edit would serve un-redacted prose to a pre-NDA buyer.
-              aiDraftContent: override.contentOverride || (blindMode ? null : s.aiDraftContent),
-              brokerEditedContent: override.contentOverride || (blindMode ? null : s.brokerEditedContent),
-            };
-          });
-        } else if (blindMode) {
-          // No redacted version exists yet. Do NOT serve the real, un-redacted
-          // sections — that would leak identity to the first viewer. Serve a
-          // "preparing" holding state and generate; the client polls back.
-          ensureBlindOverridesInBackground(deal);
-          return res.json({
-            access: freshAccess,
-            deal: publicDeal,
-            sections: [],
-            publishedQuestions: [],
-            branding: branding ?? null,
-            cimMode,
-            preparing: true,
-          });
-        }
-        // dd mode with no overrides yet: serving base sections is acceptable —
-        // a due-diligence buyer has already earned full-identity access.
+      // Which sections this buyer may receive, in which form — hidden
+      // sections, per-section access tiers and blind freshness are all
+      // enforced here (shared/cim-buyer-view.ts). Buyers get only what
+      // the renderer needs: never aiLayoutReasoning (internal AI notes that
+      // name the owners), seller edits, approval flags or AI task state.
+      const [overrides, media] = await Promise.all([
+        cimMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, cimMode),
+        // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
+        loadMediaAssets(deal.id),
+      ]);
+      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media });
+      if (buyerCim.preparing) {
+        // No redacted version exists yet. Do NOT serve the real, un-redacted
+        // sections — that would leak identity to the first viewer. Serve a
+        // "preparing" holding state and generate; the client polls back.
+        ensureBlindOverridesInBackground(deal);
+        return res.json({
+          access: freshAccess,
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding,
+          design: gatedDesign,
+          cimMode,
+          preparing: true,
+        });
       }
-
-      // Buyers get only what the renderer needs. The raw cimSections row
-      // carries aiLayoutReasoning (internal AI notes that name the owners),
-      // seller edits, finalContent, approval flags — none of which may reach
-      // a blind-mode buyer, and none of which the view room renders.
-      const toBuyerSection = (sec: any) => ({
-        id: sec.id,
-        dealId: sec.dealId,
-        sectionKey: sec.sectionKey,
-        sectionTitle: sec.sectionTitle,
-        order: sec.order,
-        layoutType: sec.layoutType,
-        layoutData: sec.layoutData,
-        aiDraftContent: sec.aiDraftContent,
-        brokerEditedContent: sec.brokerEditedContent,
-        isVisible: sec.isVisible,
+      // Sections whose blind version is behind their content (just added or
+      // edited) are held back until re-redacted — make sure that is running.
+      // A blind section that still names something identifying is withheld
+      // too, and its redaction is redone.
+      if (buyerCim.leaked.length > 0) {
+        console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
+        redoLeakedBlind(deal.id, buyerCim.leaked).catch((err) => console.error("[view] blind redo failed:", err));
+      } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
+      res.json({
+        access: freshAccess,
+        deal: publicDeal,
+        sections: buyerCim.sections,
+        pendingSections: buyerCim.heldBack,
+        publishedQuestions,
+        branding,
+        design,
+        cimMode,
       });
-      res.json({ access: freshAccess, deal: publicDeal, sections: sections.map(toBuyerSection), publishedQuestions, branding: branding ?? null, cimMode });
     } catch (error: any) {
       console.error("Error fetching buyer access:", error);
       res.status(500).json({ error: "Failed to verify access" });
@@ -4445,8 +4560,49 @@ Return JSON only.`,
     try {
       const existingAccess = await storage.getBuyerAccess(req.params.id);
       if (!existingAccess || !(await ownsDeal(req, existingAccess.dealId))) return res.status(404).json({ error: "Buyer access not found" });
-      const { dealId: _d, accessToken: _t, id: _i, ...accessUpdates } = req.body || {};
-      if (typeof accessUpdates.expiresAt === "string") accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+      // Only what a broker may change on a link. Everything else on the row —
+      // buyerUserId (the account link, which also decides "on your buyer
+      // list"), NDA, decision, reminder and view state — is written only by
+      // the server flows that earn it (grant, approval, NDA signing, view room).
+      const parsed = z.object({
+        accessLevel: z.string().optional(),
+        expiresAt: z.union([z.string(), z.null()]).optional(),
+        buyerName: z.string().trim().max(200).nullable().optional(),
+        buyerCompany: z.string().trim().max(200).nullable().optional(),
+      }).strip().safeParse(req.body ?? {});
+      if (!parsed.success) return res.status(400).json({ error: "Invalid update" });
+      const accessUpdates: Record<string, any> = {};
+      for (const [k, v] of Object.entries(parsed.data)) if (v !== undefined) accessUpdates[k] = v;
+      if (Object.keys(accessUpdates).length === 0) {
+        // Nothing a broker may change was sent. An empty body is a no-op;
+        // a body carrying only server-owned fields (buyerUserId, NDA, decision…)
+        // is refused so the caller knows it was not applied.
+        const sent = Object.keys(req.body && typeof req.body === "object" ? req.body : {});
+        if (sent.length > 0) {
+          return res.status(400).json({ error: "Only the access level, expiry date, buyer name and company can be changed here" });
+        }
+        return res.json(existingAccess);
+      }
+      if (typeof accessUpdates.expiresAt === "string") {
+        accessUpdates.expiresAt = new Date(accessUpdates.expiresAt);
+        if (isNaN(accessUpdates.expiresAt.getTime())) return res.status(400).json({ error: "Invalid expiry date" });
+      }
+      // Access level decides which CIM version (and which sections) the buyer
+      // sees — only the four known levels are accepted.
+      if (accessUpdates.accessLevel !== undefined && !isBuyerAccessLevel(accessUpdates.accessLevel)) {
+        return res.status(400).json({ error: "Access level must be teaser, full, loi or due_diligence" });
+      }
+      // Keep a short history of broker actions on the link (buyer profile timeline).
+      const history = [...(((existingAccess as any).accessEvents as BuyerAccessEvent[] | null) ?? [])];
+      const nowIso = new Date().toISOString();
+      if (accessUpdates.expiresAt instanceof Date && !isNaN(accessUpdates.expiresAt.getTime())
+        && (!existingAccess.expiresAt || accessUpdates.expiresAt.getTime() > new Date(existingAccess.expiresAt).getTime())) {
+        history.push({ type: "extended", at: nowIso, expiresAt: accessUpdates.expiresAt.toISOString() });
+      }
+      if (typeof accessUpdates.accessLevel === "string" && accessUpdates.accessLevel !== existingAccess.accessLevel) {
+        history.push({ type: "level_changed", at: nowIso, accessLevel: accessUpdates.accessLevel });
+      }
+      if (history.length !== (((existingAccess as any).accessEvents as unknown[] | null) ?? []).length) accessUpdates.accessEvents = history.slice(-50);
       const access = await storage.updateBuyerAccess(req.params.id, accessUpdates);
       if (!access) {
         return res.status(404).json({ error: "Buyer access not found" });
@@ -4541,8 +4697,10 @@ Return JSON only.`,
         ? describeCrmAction(syncResult.provider, decision)
         : syncResult.status === "failed"
         ? `CRM auto-update failed (${crmProviderLabel(syncResult.provider)}): ${syncResult.error}. Please update your pipeline manually.`
+        : syncResult.reason
+        ? syncResult.reason
         : crmProvider
-        ? describeCrmAction(crmProvider, decision)
+        ? `${crmProviderLabel(crmProvider)} is connected, but nothing was changed in it for this decision.`
         : "No CRM is connected — connect Pipedrive, HubSpot or Salesforce in Settings to enable automatic pipeline updates.";
 
       // Compose email body
@@ -4654,7 +4812,8 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const query = String(req.body?.query || req.body?.recordId || "");
       if (!query) return res.status(400).json({ error: "query or recordId required" });
-      const result = await prefillBuyerFromCrm(deal.brokerId, query);
+      const recordId = req.body?.recordId != null ? String(req.body.recordId) : null;
+      const result = await prefillBuyerFromCrm(deal.brokerId, query, recordId);
       res.json(result);
     } catch (error: any) {
       console.error("Error prefilling buyer:", error);
@@ -4847,7 +5006,8 @@ Return JSON only.`,
       res.json({
         request,
         deal: deal ? { id: deal.id, businessName: deal.businessName } : null,
-        branding: branding ?? null,
+        // Whitelisted — never the settings row (ids, broker id, templates).
+        branding: branding ? { companyName: branding.companyName ?? null, logoUrl: branding.logoUrl ?? null } : null,
       });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load review" });
@@ -4919,6 +5079,9 @@ Return JSON only.`,
         });
         buyerUserId = invited.user.id;
         isNewAccount = invited.isNew;
+        if (invited.isNew) {
+          await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id, deal.brokerId) } as any).catch(() => {});
+        }
       }
 
       const accessToken = crypto.randomUUID();
@@ -5055,21 +5218,9 @@ Return JSON only.`,
     }
   });
 
-  app.patch("/api/sections/:id", requireBroker, async (req, res) => {
-    try {
-      const existingSection = await storage.getCimSection(req.params.id);
-      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
-      const { dealId: _d, id: _i, ...sectionUpdates } = req.body || {};
-      const section = await storage.updateCimSection(req.params.id, sectionUpdates);
-      if (!section) {
-        return res.status(404).json({ error: "Section not found" });
-      }
-      res.json(section);
-    } catch (error: any) {
-      console.error("Error updating section:", error);
-      res.status(500).json({ error: "Failed to update section" });
-    }
-  });
+  // Legacy alias — same whitelisted, blind-safe update as /api/cim-sections/:id
+  // (it used to accept ANY column, including blind-freshness state).
+  app.patch("/api/sections/:id", requireBroker, patchCimSection);
 
   // ── CIM-SECTIONS ALIASES (used by CIMDesigner) ──
 
@@ -5084,12 +5235,10 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/cim-sections/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { orderedIds } = req.body;
-      if (Array.isArray(orderedIds)) {
-        for (let i = 0; i < orderedIds.length; i++) {
-          await storage.updateCimSection(String(orderedIds[i]), { order: i } as any);
-        }
-      }
+      // Every id must belong to this deal (the old loop wrote any id it was
+      // given — a cross-tenant write); one transaction, 0-based.
+      const result = await reorderDealSections(req.params.dealId, req.body?.orderedIds);
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to reorder sections" });
@@ -5148,7 +5297,7 @@ Return JSON only.`,
             dealId,
             businessName: deal.businessName,
             industry: deal.industry,
-            askingPrice: deal.askingPrice,
+            askingPrice: listedAskingPrice(deal),
             extractedInfo,
             scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
             questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
@@ -5167,38 +5316,11 @@ Return JSON only.`,
           brokerEditedContent: null,
           brokerApproved: false,
         });
-        // The section's overrides now describe content that no longer exists.
-        // DD: drop it (a DD buyer is allowed to see the base section). Blind:
-        // NEVER leave a gap — the view room serves the base section when an
-        // override is missing, which would show a blind buyer the real name.
-        // Re-redact the new section under the existing codename; if that
-        // fails, keep the stale (still redacted) overrides in place.
-        const blindOverrides = await storage.getCimSectionOverrides(dealId, "blind");
-        const hadBlind = blindOverrides.some(o => o.cimSectionId === String(target.id));
-        if (hadBlind && updatedSection) {
-          try {
-            const { generateBlindOverrides } = await import("./cim/redaction-engine");
-            const { overrides: reblinded } = await generateBlindOverrides([updatedSection], {
-              businessName: deal.businessName,
-              industry: deal.industry,
-              extractedInfo: deal.extractedInfo as Record<string, any> | null,
-            }, { codename: (deal as any).blindCodename });
-            await storage.deleteCimSectionOverridesForSection(String(target.id));
-            for (const o of reblinded) {
-              await storage.createCimSectionOverride({
-                dealId,
-                cimSectionId: o.cimSectionId,
-                mode: "blind",
-                layoutData: o.layoutData,
-                contentOverride: o.contentOverride,
-              });
-            }
-          } catch (err) {
-            console.error(`[generate-content] Re-redaction failed for section ${target.id}; keeping stale overrides:`, err);
-          }
-        } else {
-          await storage.deleteCimSectionOverridesForSection(String(target.id));
-        }
+        // The section's overrides now describe content that no longer exists:
+        // drop them, mark the section stale and re-redact in the background
+        // under the existing codename. The view room holds a stale section
+        // back from blind buyers until then (it is never served un-redacted).
+        await invalidateBlind(dealId, [String(target.id)]);
         if (regenerated.aiDraftContent) {
           const existingContent = (deal.cimContent as Record<string, string>) || {};
           await storage.updateDeal(deal.id, { cimContent: { ...existingContent, [target.sectionKey]: regenerated.aiDraftContent } });
@@ -5215,7 +5337,7 @@ Return JSON only.`,
           questionnaireData: deal.questionnaireData as Record<string, any> | null,
           scrapedData: (deal as any).scrapedData as Record<string, any> | null,
           description: deal.description,
-          askingPrice: deal.askingPrice,
+          askingPrice: listedAskingPrice(deal),
         };
         if (!CIM_SECTION_PROMPTS[sectionKey]) {
           return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
@@ -5242,6 +5364,14 @@ Return JSON only.`,
       // Returns 202 immediately; the client follows progress via
       // GET /api/deals/:dealId/cim-generation. The job keeps running if the
       // broker leaves the page (the old single request was dropped with it).
+      // Enough information to write from? A completed interview, or a
+      // readiness score of "Developing" or better from any mix of sources
+      // (calls, CRM, documents, the Information tab) — the same rule the
+      // Overview, CIM tab and builder show (shared/deal-progress).
+      const infoGate = await checkCimGenerationGate(deal);
+      if (!infoGate.allowed) {
+        return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
+      }
       try {
         const job = await startCimGeneration(deal, "content");
         return res.status(202).json({ started: true, job });
@@ -5269,27 +5399,13 @@ Return JSON only.`,
         return res.status(400).json({ error: "Generate CIM content first" });
       }
 
-      const { generateBlindOverrides } = await import("./cim/redaction-engine");
-      const { codename, overrides } = await generateBlindOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      });
-
-      // Delete old blind overrides and insert new ones
-      await storage.deleteCimSectionOverrides(dealId, "blind");
-      for (const override of overrides) {
-        await storage.createCimSectionOverride({
-          dealId,
-          cimSectionId: override.cimSectionId,
-          mode: "blind",
-          layoutData: override.layoutData,
-          contentOverride: override.contentOverride,
-        });
-      }
-      await storage.updateDeal(dealId, { blindCodename: codename } as any);
-
-      res.json({ success: true, overrideCount: overrides.length });
+      // Rebuilds every section's blind version under the deal's EXISTING
+      // codename (a new, brokerage-unique one only if it never had one) —
+      // outreach already sent under the codename keeps matching the CIM.
+      // Sections whose redaction fails are held back from blind buyers
+      // (never served un-redacted) and reported here.
+      const { codename, count, failed } = await regenerateAllBlind(dealId);
+      res.json({ success: true, overrideCount: count, failedCount: failed, codename });
     } catch (error: any) {
       console.error("Error generating blind CIM:", error);
       res.status(500).json({ error: error.message || "Failed to generate blind CIM" });
@@ -5381,7 +5497,7 @@ Return JSON only.`,
           extractedInfo.targetMarket ? `Target market: ${extractedInfo.targetMarket}` : "Established customer base",
           extractedInfo.growthOpportunities ? `Growth opportunity: ${extractedInfo.growthOpportunities.substring(0, 80)}` : "Significant growth potential",
         ],
-        askingPrice: deal.askingPrice || "Contact for details",
+        askingPrice: listedAskingPrice(deal) || "Contact for details",
         industry: industry,
         location: extractedInfo.locations || "Contact for details",
       };
@@ -5542,6 +5658,7 @@ Return JSON only.`,
       });
       
       const eventData = eventSchema.parse(req.body);
+      await translateBlindSectionKeys(buyerAccess.dealId, [eventData]);
       
       const event = await storage.createAnalyticsEvent({
         dealId: buyerAccess.dealId,
@@ -5693,6 +5810,9 @@ Return JSON only.`,
           try {
             buyerUser = await storage.getBuyerUser(b.buyerUserId);
             if (buyerUser) {
+              // Same effective profile as Suggested buyers (broker edits > own > CRM).
+              const contactRow = await storage.getBrokerBuyerContact(req.session.brokerId!, buyerUser.id);
+              buyerUser = mergeBuyerProfile(buyerUser, contactRow?.crmProfile as CrmBuyerProfile | null, contactRow?.brokerProfile as BrokerBuyerOverlay | null);
               profile = {
                 buyerType: buyerUser.buyerType,
                 profileCompletionPct: buyerUser.profileCompletionPct,
@@ -5719,6 +5839,7 @@ Return JSON only.`,
                 industry: deal.industry || "",
                 subIndustry: (deal as any).subIndustry,
                 askingPrice: (deal as any).askingPrice,
+                description: (deal as any).description ?? null,
                 extractedInfo: (deal as any).extractedInfo || {},
               },
               { skipAI: true },
@@ -6061,6 +6182,7 @@ Return JSON only.`,
             industry: deal.industry,
             subIndustry: deal.subIndustry,
             askingPrice: deal.askingPrice,
+            description: deal.description ?? null,
             extractedInfo: (deal.extractedInfo || {}) as Record<string, any>,
             financialAnalysis: latestFA ? {
               reclassifiedPnl: latestFA.reclassifiedPnl,
@@ -6144,6 +6266,14 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const openCritical = await blockingCriticalDiscrepancies(dealId);
       if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the layout");
+      // Enough information to write from? A completed interview, or a
+      // readiness score of "Developing" or better from any mix of sources
+      // (calls, CRM, documents, the Information tab) — the same rule the
+      // Overview, CIM tab and builder show (shared/deal-progress).
+      const infoGate = await checkCimGenerationGate(deal);
+      if (!infoGate.allowed) {
+        return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
+      }
 
       // Background job — see generation-jobs.ts. 202 now, progress via GET
       // /api/deals/:dealId/cim-generation.
@@ -6268,18 +6398,10 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      const { buildSectionCoverage } = await import("./interview/knowledge-base");
-      const { db } = await import("./db");
-      const { interviewSessions } = await import("@shared/schema");
-      const { eq: eqOp, desc: descOp } = await import("drizzle-orm");
-      const [latest] = await db.select().from(interviewSessions)
-        .where(eqOp(interviewSessions.dealId, deal.id))
-        .orderBy(descOp(interviewSessions.lastActivityAt)).limit(1);
-      const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
-      const confidence = meta._confidenceLevels as Record<string, string> | undefined;
-      const sections = buildSectionCoverage((deal.extractedInfo || {}) as any, confidence, getSectionImportance(deal), getInterviewOutline(deal).excludedSections, coverageAdjustmentsForDeal(deal));
+      // Same computation the CIM generation gate checks (cim/generation-gate).
+      const { readiness, sections } = await computeDealReadiness(deal);
       res.json({
-        readiness: computeCimReadiness(sections),
+        readiness,
         sections: sections.map((s) => ({ key: s.key, title: s.title, status: s.status, importance: s.importance, importanceReason: s.importanceReason })),
       });
     } catch (error: any) {
@@ -6337,38 +6459,22 @@ Return JSON only.`,
   });
 
   // Update a single CIM section (broker edit, format override, approve)
-  app.patch("/api/cim-sections/:sectionId", requireBroker, async (req, res) => {
-    try {
-      const { sectionId } = req.params;
-      const existingSection = await storage.getCimSection(sectionId);
-      if (!existingSection || !(await ownsDeal(req, existingSection.dealId))) return res.status(404).json({ error: "Section not found" });
-      const { brokerEditedContent, layoutOverride, layoutData, layoutType, isVisible, sectionTitle } = req.body;
-      // The designer historically sent `isApproved`; the column is brokerApproved.
-      const brokerApproved = req.body.brokerApproved !== undefined ? req.body.brokerApproved : req.body.isApproved;
+  // Whitelisted + validated (title, content, data, layout, visibility,
+  // approval, access tier); content edits push an undo snapshot and refresh
+  // the section's blind version — see server/cim/section-ops.ts.
+  app.patch("/api/cim-sections/:sectionId", requireBroker, patchCimSection);
 
-      const updated = await storage.updateCimSection(sectionId, {
-        ...(brokerEditedContent !== undefined && { brokerEditedContent }),
-        ...(layoutType !== undefined && { layoutType }),
-        ...(layoutOverride !== undefined && { layoutOverride }),
-        ...(layoutData !== undefined && { layoutData }),
-        ...(isVisible !== undefined && { isVisible }),
-        ...(brokerApproved !== undefined && { brokerApproved }),
-        ...(sectionTitle !== undefined && { sectionTitle }),
-      });
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to update section" });
-    }
-  });
-
-  // Reorder sections
+  // Reorder sections ({ order: [{ id, order }] }) — same rules as
+  // /cim-sections/reorder: ids must belong to the deal, one transaction.
   app.post("/api/deals/:dealId/layout/reorder", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { dealId } = req.params;
-      const { order }: { order: Array<{ id: string; order: number }> } = req.body;
-      for (const item of order) {
-        await storage.updateCimSection(item.id, { order: item.order } as any);
+      const order = Array.isArray(req.body?.order) ? req.body.order : null;
+      if (!order || order.some((o: any) => !o || typeof o.id !== "string" || typeof o.order !== "number")) {
+        return res.status(400).json({ error: "order must be a list of { id, order }" });
       }
+      const orderedIds = [...order].sort((a: any, b: any) => a.order - b.order).map((o: any) => o.id);
+      const result = await reorderDealSections(req.params.dealId, orderedIds);
+      if (!result.ok) return res.status(result.status).json({ error: result.error });
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to reorder sections" });
@@ -6504,6 +6610,17 @@ Return JSON only.`,
       }
       const updated = await storage.updateDiscrepancy(req.params.id, updates);
       if (!updated) return res.status(404).json({ error: "Discrepancy not found" });
+      // The broker's resolution becomes the fact on file (source "broker"),
+      // with the conflicting values kept as alternates — not just a read-time
+      // overlay. (The overlays in the KB/generation paths keep working.)
+      if (updated.status === "resolved" && typeof updated.resolvedValue === "string" && updated.resolvedValue.trim()) {
+        try {
+          const { applyDiscrepancyResolution } = await import("./information/facts");
+          await applyDiscrepancyResolution(updated);
+        } catch (e) {
+          console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
+        }
+      }
       res.json(updated);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to update discrepancy" });
@@ -6676,7 +6793,7 @@ Return JSON only.`,
     try {
       const { dealId } = req.params;
       const { question, accessToken } = req.body;
-      if (!question?.trim()) return res.status(400).json({ error: "Question required" });
+      if (typeof question !== "string" || !question.trim()) return res.status(400).json({ error: "Question required" });
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -6685,18 +6802,36 @@ Return JSON only.`,
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) {
         return res.status(401).json({ error: "A valid view-room link is required to ask questions" });
       }
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Same NDA rule as the view room: nothing CIM-derived (answers or the
+      // shared Q&A) before a required NDA is signed.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Sign the NDA to ask questions about this business", code: "nda_required" });
+      }
       const buyerAccessId = access.id;
-      const chatMode = access.accessLevel === "due_diligence" ? "dd" : access.accessLevel === "loi" ? "normal" : "blind";
+      const chatMode = cimModeForAccessLevel(access.accessLevel);
+      // Who may later read this answer: a teaser's blind answer → everyone;
+      // a full-access buyer's → full-access buyers and up (it may quote
+      // sections locked for teasers); a named-CIM answer → the asker only.
+      const scope = askerScope(access.accessLevel);
+      const blindTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
+      /** Shared (published to other buyers) only within scope and only if it names nothing identifying. */
+      const shareableText = (answer: string) =>
+        scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
+      const reader = { id: access.id, accessLevel: access.accessLevel };
       storage.createAnalyticsEvent({
         dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
         eventData: { question: String(question).slice(0, 200) },
       } as any).catch(() => {});
 
-      // ── Step 1: Check knowledge base — has a similar question been answered before? ──
-      const publishedQs = await storage.getPublishedQuestions(dealId);
+      // ── Step 1: Check knowledge base — has a similar question been answered
+      // before? Only answers THIS buyer may read (scope + identity check):
+      // a teaser is never answered from a full-access buyer's answer.
+      const publishedQs = await publishedQuestionsFor(deal, reader);
       if (publishedQs.length > 0) {
         const kbContext = publishedQs
-          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer}`)
+          .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer || q.aiAnswer}`)
           .join("\n\n");
 
         const similarityCheck = await anthropic.messages.create({
@@ -6719,8 +6854,9 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
           const matchedAnswer = matchText.slice(6).trim();
           // Find the matched Q ID for linking
           const matchedQ = publishedQs.find(q =>
-            matchedAnswer.includes(q.publishedAnswer?.slice(0, 50) || "___none___")
+            matchedAnswer.includes((q.publishedAnswer || q.aiAnswer)?.slice(0, 50) || "___none___")
           );
+          const share = shareableText(matchedAnswer);
 
           const saved = await storage.createBuyerQuestion({
             dealId,
@@ -6728,9 +6864,10 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
             question,
             aiAnswer: matchedAnswer,
             status: "published",
-            isPublished: true,
+            isPublished: share,
             publishedAnswer: matchedAnswer,
-            addedToKnowledgeBase: true,
+            addedToKnowledgeBase: share,
+            answerScope: scope,
             similarQuestionIds: matchedQ ? [matchedQ.id] : [],
           } as any);
 
@@ -6752,32 +6889,23 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // carries most of the facts in a bespoke CIM, so it is flattened into
       // the context alongside the prose — otherwise "what is the monthly
       // rent?" escalated even though the Facility section shows it.
-      const baseSections = (await storage.getCimSectionsByDeal(dealId)).filter(s => s.isVisible !== false);
-      let answerSections: AnswerSection[] = baseSections.map(s => ({
-        title: s.sectionTitle,
-        body: s.brokerEditedContent || s.aiDraftContent || "",
-        layoutType: s.layoutType,
-        layoutData: s.layoutData,
-      }));
-      if (chatMode !== "normal") {
-        const overrides = await storage.getCimSectionOverrides(dealId, chatMode);
-        if (overrides.length === 0 && chatMode === "blind") {
-          answerSections = [];
-        } else if (overrides.length > 0) {
-          const blind = chatMode === "blind";
-          answerSections = baseSections.map(s => {
-            const o = overrides.find(ov => ov.cimSectionId === String(s.id));
-            return {
-              title: o ? "Section" : s.sectionTitle,
-              body: o?.contentOverride || (blind ? "" : (s.brokerEditedContent || s.aiDraftContent || "")),
-              layoutType: s.layoutType,
-              // Same rule as the prose: a blind buyer only ever gets the
-              // redacted override's data, never the un-redacted base.
-              layoutData: o?.layoutData || (blind ? null : s.layoutData),
-            };
-          });
-        }
-      }
+      // Same authority as the view room (shared/cim-buyer-view.ts):
+      // hidden, locked (above the buyer's tier) and not-yet-redacted
+      // sections never feed the answer.
+      const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
+        storage.getCimSectionsByDeal(dealId),
+        chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+        loadMediaAssets(dealId),
+      ]);
+      const chatCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia });
+      const answerSections: AnswerSection[] = chatCim.sections
+        .filter(s => !s.locked)
+        .map(s => ({
+          title: s.sectionTitle,
+          body: s.brokerEditedContent || s.aiDraftContent || "",
+          layoutType: s.layoutType,
+          layoutData: s.layoutData,
+        }));
       // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
       const cimText = stripDdMarkers(buildAnswerContext(answerSections));
 
@@ -6792,27 +6920,33 @@ Do not speculate or add information not in the CIM.`,
       });
 
       const aiAnswer = cimText.trim().length === 0 ? null : (aiResponse.content[0].type === "text" ? aiResponse.content[0].text : null);
-      const needsEscalation = !aiAnswer || aiAnswer.trim() === "ESCALATE";
+      // The model sometimes writes "ESCALATE" and then explains — still an escalation.
+      const needsEscalation = !aiAnswer || /^\s*ESCALATE\b/.test(aiAnswer);
 
+      // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
+      // business name, address or people — it goes to the asker only, never
+      // into the shared feed / knowledge base that blind buyers read. A full-
+      // access buyer's answer is shared with full-access buyers only.
+      const shareable = !needsEscalation && shareableText(aiAnswer!);
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
         question,
         aiAnswer: needsEscalation ? null : aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        isPublished: !needsEscalation,
+        isPublished: shareable,
         publishedAnswer: needsEscalation ? null : aiAnswer,
-        addedToKnowledgeBase: !needsEscalation,
+        addedToKnowledgeBase: shareable,
+        answerScope: scope,
       } as any);
 
       // Notify broker when question needs manual response
       if (needsEscalation) {
-        const deal = await storage.getDeal(dealId);
         notify(dealId, "buyer_question", {
           title: "New buyer question needs your response",
           body: `A buyer asked: "${question.slice(0, 100)}${question.length > 100 ? "..." : ""}"`,
           actionUrl: `/deal/${dealId}`,
-          businessName: deal?.businessName,
+          businessName: deal.businessName,
         }).catch(() => {});
       }
 
@@ -6836,9 +6970,15 @@ Do not speculate or add information not in the CIM.`,
       const tok = (req.headers["x-buyer-token"] as string | undefined) || (typeof req.query.token === "string" ? req.query.token : undefined);
       const access = tok ? await storage.getBuyerAccessByToken(tok) : undefined;
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) return res.status(401).json({ error: "A valid view-room link is required" });
-      // Published answers plus this buyer's own pending questions, so the
-      // chat survives a reload and the poll can pick up the broker's answer.
-      res.json(await buildBuyerQuestionFeed(dealId, access.id));
+      const deal = await storage.getDeal(dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // Same NDA rule as the view room, which withholds this feed too.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Sign the NDA to see questions and answers", code: "nda_required" });
+      }
+      // Published answers this buyer may read plus their own questions, so
+      // the chat survives a reload and the poll can pick up the broker's answer.
+      res.json(await buildBuyerQuestionFeed(deal, { id: access.id, accessLevel: access.accessLevel }));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to get questions" });
     }
@@ -6880,6 +7020,9 @@ Do not speculate or add information not in the CIM.`,
       if (status !== undefined) updates.status = status;
       if (publishedAnswer !== undefined) updates.publishedAnswer = publishedAnswer;
       if (isPublished !== undefined) updates.isPublished = isPublished;
+      // Published by the broker on purpose → for every buyer (a Blind buyer
+      // still never sees it if it names the business — buyer-qa-scope.ts).
+      if (isPublished === true) updates.answerScope = "all";
 
       // Generate approval token when sending to seller
       if (status === "pending_seller") {
@@ -6962,6 +7105,7 @@ Do not speculate or add information not in the CIM.`,
           isPublished: true,
           publishedAnswer,
           addedToKnowledgeBase: true,
+          answerScope: "all",
         } as any);
         res.json({ success: true, status: "published" });
       } else {
@@ -7008,6 +7152,7 @@ Do not speculate or add information not in the CIM.`,
           isPublished: true,
           publishedAnswer: revision || undefined,
           addedToKnowledgeBase: true,
+          answerScope: "all",
         } as any);
 
         if (!question) return res.status(404).json({ error: "Question not found" });
@@ -7076,6 +7221,9 @@ Do not speculate or add information not in the CIM.`,
       const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
+      // Blind views send neutral section keys (s_<id>); record the real key
+      // so section analytics and the learning loop line up across versions.
+      await translateBlindSectionKeys(dealId, accepted);
 
       for (const event of accepted) {
         await storage.createAnalyticsEvent({
@@ -7099,13 +7247,22 @@ Do not speculate or add information not in the CIM.`,
       res.json({ received: events.length });
 
       // Fire-and-forget: aggregate section_exit events into engagementInsights
-      aggregateEngagementInsights(dealId, events, storage).catch(err =>
+      aggregateEngagementInsights(dealId, accepted, storage).catch(err =>
         console.warn("[learning-loop] aggregation error:", err)
       );
     } catch (error: any) {
       res.status(500).json({ error: "Failed to record events" });
     }
   });
+
+  // ── Workstream route modules (merge anchors — each workstream fills its own file) ──
+  registerDealListRoutes(app);
+  registerInformationRoutes(app);
+  registerCrmSellerRoutes(app);
+  registerBuyerProfileRoutes(app);
+  registerCimBuilderRoutes(app);
+  registerCimMediaRoutes(app);
+  registerCimTemplateRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

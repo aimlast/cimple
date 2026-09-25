@@ -6,7 +6,9 @@
 import { storage } from "../storage";
 import { matchBuyerToDeal, type MatchBreakdown } from "./engine";
 import { calculateQualifiedLeadScore } from "../scoring/buyer-score";
-import { mergeBuyerProfile, type BrokerBuyerContact, type BuyerUser, type CrmBuyerProfile, type Deal } from "@shared/schema";
+import { type BrokerBuyerContact, type BuyerUser, type Deal } from "@shared/schema";
+import { mergedForBroker } from "../buyers/profile-view";
+import { loadBrokerScope } from "../buyers/provenance-scope";
 
 const DIMENSION_LABELS: Record<string, string> = {
   financialFit: "Financials",
@@ -32,7 +34,9 @@ export function topDimensions(bd: any): string[] {
 }
 
 export interface ScoredBuyer {
-  buyer: BuyerUser;                    // merged (own profile + broker's private CRM profile)
+  buyer: BuyerUser;                    // merged: broker's edits > buyer's own > broker's private CRM profile
+  /** The liquid-funds figure is the buyer's own (promised to show as a range only) — AI prompts get the range. */
+  fundsRange: string | null;
   contact: BrokerBuyerContact | null;
   lastActivityAt: Date | null;
   breakdown: MatchBreakdown | null;
@@ -40,9 +44,13 @@ export interface ScoredBuyer {
 }
 
 export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
-  const list = await storage.getBrokerBuyerContactList(deal.brokerId!);
+  const [list, scope] = await Promise.all([
+    storage.getBrokerBuyerContactList(deal.brokerId!),
+    loadBrokerScope(deal.brokerId!),
+  ]);
   return Promise.all(list.map(async ({ buyerUser, contact, lastActivityAt }) => {
-    const buyer = mergeBuyerProfile(buyerUser, contact?.crmProfile as CrmBuyerProfile | null);
+    const merged = mergedForBroker(buyerUser, contact, scope);
+    const buyer = { ...merged.profile, hasProofOfFunds: !!merged.profile.hasProofOfFunds };
     const criteria: any = {
       ...((buyer.buyerCriteria as any) || {}),
       targetIndustries: buyer.targetIndustries || [],
@@ -56,13 +64,14 @@ export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
           industry: deal.industry || "",
           subIndustry: (deal as any).subIndustry,
           askingPrice: (deal as any).askingPrice,
+          description: (deal as any).description ?? null,
           extractedInfo: (deal as any).extractedInfo || {},
         },
         { skipAI: true },
       );
     } catch { /* unscorable profile */ }
     const score = calculateQualifiedLeadScore({ buyer, match: breakdown });
-    return { buyer, contact: contact ?? null, lastActivityAt, breakdown, score };
+    return { buyer, fundsRange: merged.fundsMasked ? merged.display.liquidFunds : null, contact: contact ?? null, lastActivityAt, breakdown, score };
   }));
 }
 

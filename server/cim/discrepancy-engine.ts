@@ -7,6 +7,7 @@
  * Example: "You mentioned revenue of $2M but your P&L shows $1.7M"
  */
 import Anthropic from "@anthropic-ai/sdk";
+import { isFactKey } from "../interview/info-merger";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -109,9 +110,10 @@ export async function runDiscrepancyCheck(
     return { items: [], clearedIds: [] }; // Nothing to cross-reference
   }
 
-  // "_"-prefixed keys are broker-private / session-meta — never cross-referenced
+  // "_"-prefixed keys (broker-private / session-meta) and per-source notes
+  // (summaries, red flags) are never cross-referenced
   const interviewData = Object.fromEntries(
-    Object.entries(deal.extractedInfo || {}).filter(([k]) => !k.startsWith("_")),
+    Object.entries(deal.extractedInfo || {}).filter(([k]) => isFactKey(k)),
   );
   const questionnaireData = deal.questionnaireData || {};
 

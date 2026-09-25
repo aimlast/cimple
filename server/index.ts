@@ -239,10 +239,17 @@ app.use((req, res, next) => {
   const host = process.env.HOST || "0.0.0.0";
   server.listen(port, host, () => {
     log(`serving on port ${port}`);
-    // Start the buyer-decision reminder scheduler (runs every 6 hours)
-    startReminderScheduler();
-    // Re-sync CRM buyer contacts for brokers who switched automatic sync on.
-    import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
+    // Local instances run against the production database for testing; they
+    // must not run schedulers (reminders would be stamped "sent" without an
+    // email going out, CRM syncs would double up). DISABLE_SCHEDULERS=1 there.
+    if (process.env.DISABLE_SCHEDULERS === "1") {
+      log("schedulers disabled (DISABLE_SCHEDULERS=1)");
+    } else {
+      // Start the buyer-decision reminder scheduler (runs every 6 hours)
+      startReminderScheduler();
+      // Re-sync CRM buyer contacts for brokers who switched automatic sync on.
+      import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
+    }
   });
 
   // Graceful shutdown: Railway sends SIGTERM when replacing a deployment.

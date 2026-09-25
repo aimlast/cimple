@@ -23,27 +23,34 @@
  * renderer shows, and saving it changes what the renderer shows.
  */
 import type { CimSection } from "@shared/schema";
+import { CIM_LAYOUTS } from "@shared/cim-layouts";
 
-export const TEXT_EDITABLE_LAYOUTS = new Set(["prose_highlight", "two_column"]);
+// Both lists come from the layout registry (shared/cim-layouts.ts `editor`).
+export const TEXT_EDITABLE_LAYOUTS: ReadonlySet<string> = new Set(
+  CIM_LAYOUTS.filter((l) => l.editor === "text").map((l) => l.key),
+);
 
-export const STRUCTURED_LAYOUTS = new Set([
-  "cover_page", "metric_grid", "bar_chart", "horizontal_bar_chart", "pie_chart",
-  "donut_chart", "line_chart", "timeline", "financial_table", "comparison_table",
-  "callout_list", "icon_stat_row", "org_chart", "location_card", "stat_callout",
-  "numbered_list", "scorecard", "waterfall_chart", "divider",
-]);
+export const STRUCTURED_LAYOUTS: ReadonlySet<string> = new Set(
+  CIM_LAYOUTS.filter((l) => l.editor === "data").map((l) => l.key),
+);
+
+/** Photo gallery, video and map — edited with the media editors. */
+export const MEDIA_EDITOR_LAYOUTS: ReadonlySet<string> = new Set(
+  CIM_LAYOUTS.filter((l) => l.editor === "media").map((l) => l.key),
+);
 
 /** True when a free-text editor is the right tool for this section. */
 export function isTextEditableLayout(layoutType: string | null | undefined): boolean {
   if (!layoutType) return true;
   if (TEXT_EDITABLE_LAYOUTS.has(layoutType)) return true;
+  if (MEDIA_EDITOR_LAYOUTS.has(layoutType)) return false;
   // Unregistered layouts fall back to a prose renderer — text is all there is.
   return !STRUCTURED_LAYOUTS.has(layoutType);
 }
 
 /** True when the structured (layoutData) editor should be offered. */
 export function isStructuredLayout(layoutType: string | null | undefined): boolean {
-  return !!layoutType && STRUCTURED_LAYOUTS.has(layoutType) && layoutType !== "divider";
+  return !!layoutType && STRUCTURED_LAYOUTS.has(layoutType);
 }
 
 interface ColumnLike { content?: unknown; layoutType?: string }

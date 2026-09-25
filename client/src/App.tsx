@@ -24,10 +24,12 @@ import SellerCall from "@/pages/seller/SellerCall";
 import { CimGenerationWatcher } from "@/components/broker/CimGenerationWatcher";
 import CIMInterview from "@/pages/CIMInterview";
 import CIMDesigner from "@/pages/CIMDesigner";
+import CimPrintPreview from "@/pages/CimPrintPreview";
 import SellerApprovalPage from "@/pages/SellerApprovalPage";
 import SellerNdaPage from "@/pages/SellerNdaPage";
 import Integrations from "@/pages/Integrations";
 import Buyers from "@/pages/Buyers";
+import BuyerProfilePage from "@/pages/BuyerProfilePage";
 import SellerLayout from "@/layouts/SellerLayout";
 import SellerInterview from "@/pages/seller/SellerInterview";
 import BuyerLayout from "@/layouts/BuyerLayout";
@@ -51,6 +53,7 @@ function Routes() {
       <Route path="/broker" component={BrokerDashboard} />
       <Route path="/broker/deals" component={ActiveCIMs} />
       <Route path="/broker/analytics" component={Analytics} />
+      <Route path="/broker/buyers/:buyerId" component={BuyerProfilePage} />
       <Route path="/broker/buyers" component={Buyers} />
       <Route path="/broker/integrations" component={Integrations} />
       <Route path="/broker/settings" component={Settings} />
@@ -108,6 +111,8 @@ function isFullscreen(path: string) {
   if (path.endsWith("/interview")) return true;
   // Broker-led "Interview together"
   if (path.endsWith("/interview/together")) return true;
+  // CIM print preview (broker only, no app chrome so it prints clean)
+  if (/^\/deal\/[^/]+\/print$/.test(path)) return true;
   // Seller's side of the in-Cimple video call
   if (/^\/seller\/[^/]+\/call$/.test(path)) return true;
   // Legacy seller invite redirect
@@ -281,6 +286,14 @@ function FullscreenLayout() {
           {() => (
             <BrokerAuthGate>
               <TogetherInterview />
+            </BrokerAuthGate>
+          )}
+        </Route>
+        {/* CIM print preview — broker-only */}
+        <Route path="/deal/:dealId/print">
+          {() => (
+            <BrokerAuthGate>
+              <CimPrintPreview />
             </BrokerAuthGate>
           )}
         </Route>

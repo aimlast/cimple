@@ -13,7 +13,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
-import type { BuyerAccess, BuyerUser } from "@shared/schema";
+import { initialFieldSources, withFieldSources, type BuyerAccess, type BuyerUser } from "@shared/schema";
 import { storedBuyerType, type NdaBuyerProfile } from "@shared/nda-buyer-profile";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -32,6 +32,7 @@ async function resolveBuyerUser(access: BuyerAccess, profile: NdaBuyerProfile | 
     targetLocations: [] as any, buyerType: null, background: null, liquidFunds: null, hasProofOfFunds: false,
     profileCompletionPct: 0, emailVerified: false, source: "nda_signed", invitedByBroker: brokerId,
     invitedByDeal: access.dealId, resetToken: null, resetTokenExpiresAt: null,
+    fieldSources: initialFieldSources({ name: profile.name, phone: profile.phone, company: profile.company ?? null, title: profile.title ?? null }, "nda", access.dealId, brokerId),
   } as any);
 }
 
@@ -55,16 +56,20 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     if (profile.dealRole === "add_on") { criteria.addOnAcquisition = true; criteria.platformAcquisition = false; }
     if (profile.dealRole === "either") { criteria.addOnAcquisition = true; criteria.platformAcquisition = true; }
     if (profile.operateSelf === "no" || profile.operateSelf === "hire_manager") criteria.managementTeamRequired = true;
-    buyer = (await storage.updateBuyerUser(buyer.id, {
+    const updates: Partial<BuyerUser> = {
       name: profile.name,
       phone: profile.phone,
       company: profile.company || buyer.company,
       title: profile.title || buyer.title,
       buyerType: storedBuyerType(profile),
       background: profile.background,
-      hasProofOfFunds: profile.proofOfFunds === "yes",
       buyerCriteria: criteria as any,
-    })) || buyer;
+    };
+    // Proof of funds is tri-state: "can provide on request" says nothing yet.
+    if (profile.proofOfFunds === "yes") updates.hasProofOfFunds = true;
+    if (profile.proofOfFunds === "no") updates.hasProofOfFunds = false;
+    // Every field this changes is stamped as coming from this deal's NDA.
+    buyer = (await storage.updateBuyerUser(buyer.id, withFieldSources(buyer, updates, "nda", access.dealId, brokerId))) || buyer;
   }
 
   await storage.updateBuyerAccess(access.id, {
@@ -92,12 +97,12 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
         if (!current) return;
         // Their newest words win for anything they mentioned.
         const criteria = { ...((current.buyerCriteria as Record<string, any>) || {}), ...x.criteria };
-        await storage.updateBuyerUser(buyerId, {
+        await storage.updateBuyerUser(buyerId, withFieldSources(current, {
           targetIndustries: (x.targetIndustries.length ? x.targetIndustries : current.targetIndustries) as any,
           targetLocations: (x.targetLocations.length ? x.targetLocations : current.targetLocations) as any,
           liquidFunds: current.liquidFunds || x.liquidFunds || null,
           buyerCriteria: criteria as any,
-        });
+        }, "nda", access.dealId, brokerId));
       })
       .catch((err) => console.error("[nda-profile] criteria extraction failed:", err));
   }

@@ -220,6 +220,11 @@ export const deals = pgTable("deals", {
   phase: text("phase").notNull().default("phase1_info_collection"),
   // Phases: phase1_info_collection, phase2_platform_intake, phase3_content_creation, phase4_design_finalization
   status: text("status").notNull().default("draft"),
+  // @anchor:deals-cols:list
+  // Set = the broker archived the deal: hidden from the deal list (unless
+  // "Show archived"), the dashboard and GET /api/deals. Restorable; buyer
+  // links and the CIM keep working. See server/routes/deal-list.ts.
+  archivedAt: timestamp("archived_at"),
   // Status within phase: draft, in_progress, pending_review, approved, completed
   
   // Phase 1 data
@@ -250,6 +255,13 @@ export const deals = pgTable("deals", {
   
   // Public data scrape
   websiteUrl: text("website_url"),
+  // @anchor:deals-cols:crm
+  // The seller's record in the broker's CRM (Pipedrive deal / organisation /
+  // person) and the state of the last import from it. See server/crm/seller-import.ts.
+  crmLink: jsonb("crm_link").$type<DealCrmLink>(),
+  // Who the seller is (name / email / phone / title) and where that came
+  // from — the CRM, the broker, or the seller invite.
+  sellerContact: jsonb("seller_contact").$type<DealSellerContact>(),
   scrapedAt: timestamp("scraped_at"),
   scrapedData: jsonb("scraped_data"),   // Unverified public data — confirmed during AI interview
   scrapeSource: text("scrape_source"),  // "website" | "internet_search" | "website_and_internet"
@@ -299,12 +311,18 @@ export const deals = pgTable("deals", {
   // Likely acquirers from outside the broker's buyer list, researched on the
   // web (server/matching/external-acquirers.ts). Broker-facing only.
   externalAcquirers: jsonb("external_acquirers").$type<ExternalAcquirerSearch>(),
+  // @anchor:deals-cols:info
 
   // Project codename used by the Blind CIM (e.g. "Project Atlas"). Persisted
   // so the view layer can redact identifying info that isn't inside a section
   // override — section titles and the view-room header — with the same name
   // the section content was redacted to.
   blindCodename: text("blind_codename"),
+  // @anchor:deals-cols:cim
+  // The business-for-sale's own branding on its CIM (cim-templates workstream):
+  // logo / cover photo (ids in deal_media) and colours. Normal & DD CIMs only —
+  // never sent to, or rendered for, a Blind buyer.
+  businessBranding: jsonb("business_branding").$type<import("./cim-theme").CimBusinessBranding>(),
 
   // Buyer access settings
   ndaRequired: boolean("nda_required").default(true),
@@ -316,6 +334,12 @@ export const deals = pgTable("deals", {
   isLive: boolean("is_live").default(false),
   
   // Metadata
+  // @anchor:deals-cols:seed
+  // Set on seeded demo / QA deals (a stable key the seeding code uses to find
+  // and refresh its own deals). Such deals are kept out of the industry-wide
+  // learning loops (interview_insights, engagement_insights) shared by every
+  // broker. Broker-internal: never sent to a seller or a buyer.
+  demoKey: text("demo_key"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -363,6 +387,15 @@ export const documents = pgTable("documents", {
   isRequired: boolean("is_required").default(false),
   promisedAt: timestamp("promised_at"), // when seller promised to provide
   
+  // @anchor:documents-cols:info
+  // Provenance v2 — what kind of source this row is (document, email, call,
+  // video_call, crm, website, social…; see SourceKind below), its metadata
+  // (from/to/date/participants/url…), and who may see it. 'broker_only' rows
+  // are never listed or served to the seller and never quoted to the seller
+  // by the interview agent (e.g. CRM notes).
+  sourceKind: text("source_kind").default("document"),
+  sourceMeta: jsonb("source_meta").$type<DocumentSourceMeta>(),
+  visibility: text("visibility").default("shared"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -483,6 +516,22 @@ export const cimSections = pgTable("cim_sections", {
   charts: jsonb("charts"),
   images: jsonb("images"),
 
+  // @anchor:cim-sections-cols:cim
+  // CIM builder (see shared/cim-layouts.ts, server/cim/section-ops.ts).
+  // "teaser" | "full" — full sections show as locked stubs to teaser buyers.
+  // Nullable with a default so existing rows read as teaser (unchanged CIMs).
+  accessTier: text("access_tier").default("teaser"),
+  // Set whenever the section's content changes; cleared when its blind
+  // override has been regenerated for that exact revision. While set, the
+  // blind view room holds the section back (never serves stale/unredacted).
+  blindStaleAt: timestamp("blind_stale_at"),
+  // AI-redacted title written together with the blind override.
+  blindTitle: text("blind_title"),
+  // Background AI task on this section (write / regenerate / rewrite /
+  // convert) — CimSectionAiTask. Null when idle.
+  aiTask: jsonb("ai_task"),
+  // Undo stack of earlier versions (CimSectionSnapshot[], newest last, capped).
+  contentHistory: jsonb("content_history"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -567,6 +616,9 @@ export const buyerQuestions = pgTable("buyer_questions", {
   similarQuestionIds: jsonb("similar_question_ids").default(sql`'[]'::jsonb`),
 
   isPublished: boolean("is_published").default(false),
+  // Who may read the answer (shared/buyer-qa-scope.ts): "all" | "full" |
+  // "private". Null on rows answered before scopes were recorded.
+  answerScope: text("answer_scope"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -702,6 +754,10 @@ export const buyerAccess = pgTable("buyer_access", {
   expiresAt: timestamp("expires_at"),
   revokedAt: timestamp("revoked_at"),
 
+  // @anchor:buyer-access-cols:buyers
+  // Broker actions on this link over time (extended / level changed / revoked)
+  // — drives the buyer profile timeline. BuyerAccessEvent[]
+  accessEvents: jsonb("access_events"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   lastAccessedAt: timestamp("last_accessed_at"),
 });
@@ -808,6 +864,22 @@ export const brandingSettings = pgTable("branding_settings", {
   footerTemplate: text("footer_template"),
   disclaimer: text("disclaimer"),
   
+  // @anchor:branding-cols:cim
+  // CIM templates + brokerage branding (cim-templates workstream).
+  // Built-in template id (shared/cim-theme.ts) or a cim_templates.id.
+  defaultTemplateId: varchar("default_template_id"),
+  firmAddress: text("firm_address"),
+  firmPhone: text("firm_phone"),
+  firmEmail: text("firm_email"),
+  firmWebsite: text("firm_website"),
+  showDisclaimerPage: boolean("show_disclaimer_page").notNull().default(true),
+  showContactPage: boolean("show_contact_page").notNull().default(true),
+  // Forces one cover style across templates (null = each template's own).
+  coverStyle: text("cover_style"),
+  // primaryColor/accentColor/headingFont/bodyFont only reach the CIM when the
+  // broker switches them on (legacy rows hold untouched schema defaults).
+  useBrandColors: boolean("use_brand_colors").notNull().default(false),
+  useBrandFonts: boolean("use_brand_fonts").notNull().default(false),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1657,6 +1729,10 @@ export const buyerUsers = pgTable("buyer_users", {
   resetTokenExpiresAt: timestamp("reset_token_expires_at"),
 
   lastLoginAt: timestamp("last_login_at"),
+  // @anchor:buyer-users-cols:buyers
+  // Who wrote each profile field: { field | "criteria.<key>": BuyerFieldSource }.
+  // Never returned to the buyer (see toPublicBuyerUser).
+  fieldSources: jsonb("field_sources"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1671,10 +1747,11 @@ export type InsertBuyerUser = z.infer<typeof insertBuyerUserSchema>;
 export type BuyerUser = typeof buyerUsers.$inferSelect;
 
 // Public view of a buyer user (never expose passwordHash or resetToken)
-export type PublicBuyerUser = Omit<BuyerUser, "passwordHash" | "resetToken" | "resetTokenExpiresAt">;
+// (fieldSources is internal provenance — it names brokers' imports and CRM.)
+export type PublicBuyerUser = Omit<BuyerUser, "passwordHash" | "resetToken" | "resetTokenExpiresAt" | "fieldSources">;
 
 export function toPublicBuyerUser(user: BuyerUser): PublicBuyerUser {
-  const { passwordHash, resetToken, resetTokenExpiresAt, ...rest } = user;
+  const { passwordHash, resetToken, resetTokenExpiresAt, fieldSources, ...rest } = user;
   return rest;
 }
 
@@ -1729,6 +1806,14 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
   crmSyncedAt: timestamp("crm_synced_at"),
 
   addedAt: timestamp("added_at").defaultNow().notNull(),
+  // @anchor:contacts-cols:buyers
+  // The broker's own edits to this buyer's profile — private to this broker,
+  // never written onto buyer_users. Wins over the buyer's own answers and the
+  // CRM profile in this broker's view and matching (mergeBuyerProfileWithSources).
+  brokerProfile: jsonb("broker_profile"),              // BrokerBuyerOverlay
+  brokerProfileMeta: jsonb("broker_profile_meta"),     // { field: { at } }
+  interestStatus: text("interest_status"),             // hot | warm | cold | not_interested | null
+  aiSummary: jsonb("ai_summary"),                      // { text, at, key }
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1756,33 +1841,28 @@ export interface CrmBuyerProfile {
   inquiries?: Array<{ title: string; stage?: string | null; status?: string | null }>;
   /** Fields the model inferred (e.g. industry from a listing they enquired on) rather than read. */
   inferred?: string[];
+  /** Per field (top-level name or "criteria.<key>"): a short quote from the note / field it came from. */
+  evidence?: Record<string, string>;
   extractedAt?: string;
 }
 
-type ProfileLike = Pick<BuyerUser,
-  "buyerType" | "background" | "liquidFunds" | "hasProofOfFunds" | "targetIndustries" | "targetLocations" | "buyerCriteria">;
-
 /**
- * Effective matching profile for one broker: what the buyer entered
- * themselves always wins; the broker's private CRM profile only fills gaps.
- * Returns a BuyerUser-shaped object (profileCompletionPct recomputed) so it
- * can be passed straight to the matching engine and the lead scorer.
+ * Effective matching profile for one broker. Precedence: the broker's own
+ * edits (overlay, broker-private) > what the buyer entered themselves (and the
+ * other writers of the global row, e.g. the NDA) > the broker's private CRM
+ * profile. Returns a BuyerUser-shaped object (profileCompletionPct recomputed)
+ * so it can be passed straight to the matching engine and the lead scorer.
+ * Per-field sources: mergeBuyerProfileWithSources (schema tail, buyers).
  */
-export function mergeBuyerProfile<T extends BuyerUser>(buyer: T, crm?: CrmBuyerProfile | null): T {
-  if (!crm) return buyer;
-  const own: ProfileLike = buyer;
-  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
-  const merged: T = {
-    ...buyer,
-    buyerType: own.buyerType || crm.buyerType || null,
-    background: own.background || crm.background || null,
-    liquidFunds: own.liquidFunds || crm.liquidFunds || null,
-    hasProofOfFunds: !!own.hasProofOfFunds || !!crm.hasProofOfFunds,
-    targetIndustries: (arr(own.targetIndustries).length ? arr(own.targetIndustries) : arr(crm.targetIndustries)) as any,
-    targetLocations: (arr(own.targetLocations).length ? arr(own.targetLocations) : arr(crm.targetLocations)) as any,
-    buyerCriteria: { ...(crm.buyerCriteria || {}), ...((own.buyerCriteria as Record<string, any>) || {}) } as any,
-  };
-  merged.profileCompletionPct = Math.max(buyer.profileCompletionPct ?? 0, calculateBuyerProfileCompletion(merged));
+export function mergeBuyerProfile<T extends BuyerUser>(
+  buyer: T,
+  crm?: CrmBuyerProfile | null,
+  overlay?: BrokerBuyerOverlay | null,
+): T {
+  if (!crm && !overlay) return buyer;
+  const merged = mergeBuyerProfileWithSources(buyer, crm, overlay).profile;
+  // Existing callers expect a boolean here.
+  merged.hasProofOfFunds = !!merged.hasProofOfFunds;
   return merged;
 }
 
@@ -1892,3 +1972,531 @@ export const insertDealDocumentRequirementSchema = createInsertSchema(dealDocume
 });
 export type InsertDealDocumentRequirement = z.infer<typeof insertDealDocumentRequirementSchema>;
 export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSelect;
+
+// ════════════════════════════════════════════════════════════════════
+// Workstream merge anchors — each workstream adds its NEW tables, types
+// and helpers directly below its own anchor (keeps parallel merges clean).
+// ════════════════════════════════════════════════════════════════════
+
+// @anchor:schema-tail:list
+// (deal-list workstream)
+
+// @anchor:schema-tail:info
+// (information workstream)
+
+/**
+ * Provenance v2 — every extractedInfo fact records the kind of source that
+ * asserted it (extractedInfo._fieldSources[key].source). Authority order
+ * lives in server/interview/info-merger.ts (SOURCE_RANK).
+ */
+export const SOURCE_KINDS = [
+  "interview", "call", "video_call", "questionnaire", "email", "document",
+  "crm", "website", "social", "broker", "system",
+] as const;
+export type SourceKind = (typeof SOURCE_KINDS)[number];
+
+/** documents.sourceMeta — optional details about where a source came from. */
+export interface DocumentSourceMeta {
+  from?: string;
+  to?: string;
+  subject?: string;
+  /** ISO date (or yyyy-mm-dd) the email was sent / call happened / note was written. */
+  date?: string;
+  participants?: string;
+  durationMin?: number;
+  url?: string;
+  /** zoom | meet | teams | cimple | phone | in_person … */
+  platform?: string;
+  /** CRM or mail provider (pipedrive, hubspot, gmail…). */
+  provider?: string;
+  recordType?: string;
+  recordId?: string;
+}
+
+// @anchor:schema-tail:crm
+// (crm-seller workstream)
+
+export type CrmRecordType = "deal" | "organization" | "person";
+
+/** Progress / outcome of an import from the CRM (deals.crmLink.lastImportStatus). */
+export interface CrmImportStatus {
+  state: "running" | "done" | "failed";
+  startedAt: string;
+  finishedAt?: string;
+  /** Plain-English line for the broker ("Imported 9 new items"). */
+  message?: string;
+  /** Items found in the CRM this run (record, notes, activities, emails, files). */
+  total?: number;
+  processed?: number;
+  /** New or changed items turned into sources this run. */
+  imported?: number;
+  /** Items already imported and unchanged (or deleted by the broker). */
+  unchanged?: number;
+  /** Items skipped (empty notes, unsupported files, too large). */
+  skipped?: number;
+  failed?: number;
+  byKind?: { record?: number; notes?: number; activities?: number; emails?: number; files?: number };
+  /** Parts of the CRM that couldn't be read (e.g. mail not synced) — shown as a hint. */
+  warnings?: string[];
+}
+
+/** One CRM item already imported as a source — makes re-import idempotent. */
+export interface CrmImportedItem {
+  /** documents.id of the source it became (may since have been deleted by the broker). */
+  documentId: string;
+  /** The item's version when imported: the CRM's update time, or a hash of its content. */
+  version: string;
+}
+
+/** deals.crmLink — the seller's record in the broker's CRM. */
+export interface DealCrmLink {
+  provider: "pipedrive";
+  /** What the broker picked (deal / organisation / person). */
+  linkedType?: CrmRecordType;
+  dealId?: string;
+  orgId?: string;
+  personId?: string;
+  title: string;
+  /** Opens the record in the CRM. */
+  url?: string;
+  linkedAt: string;
+  lastImportAt?: string;
+  lastImportStatus?: CrmImportStatus;
+  /** "note:123", "file:9", "record:deal:4" … → the source it became. */
+  imported?: Record<string, CrmImportedItem>;
+}
+
+/** deals.sellerContact — the seller's contact details and where they came from. */
+export interface DealSellerContact {
+  name?: string;
+  email?: string;
+  phone?: string;
+  title?: string;
+  source: "crm" | "broker" | "invite";
+  updatedAt: string;
+}
+
+// @anchor:schema-tail:buyers
+// (buyers workstream)
+
+// ────────────────────────────────────────────────────────────────────
+// Buyer profile provenance, broker overlay and per-buyer email
+// ────────────────────────────────────────────────────────────────────
+
+/** Who wrote a field on the global buyer_users row. */
+export type BuyerFieldSourceKind = "buyer" | "nda" | "broker_import" | "csv" | "crm" | "approval";
+/**
+ * `brokerId` is the brokerage whose action wrote the value (broker_import /
+ * csv / crm / approval / nda). buyer_users is one global row shared by every
+ * brokerage, so a broker is only ever shown stamps that are theirs — see
+ * server/buyers/provenance-scope.ts.
+ */
+export interface BuyerFieldSource { source: BuyerFieldSourceKind; at: string; dealId?: string | null; brokerId?: string | null }
+/** Keyed by top-level field name or "criteria.<key>". */
+export type BuyerFieldSources = Record<string, BuyerFieldSource>;
+
+/** Top-level profile fields that carry provenance and can be overlaid by a broker. */
+export const BUYER_PROFILE_FIELDS = [
+  "name", "phone", "company", "title", "linkedinUrl", "buyerType", "background",
+  "liquidFunds", "hasProofOfFunds", "targetIndustries", "targetLocations",
+] as const;
+export type BuyerProfileField = (typeof BUYER_PROFILE_FIELDS)[number];
+const TEXT_PROFILE_FIELDS = ["name", "phone", "company", "title", "linkedinUrl", "buyerType", "background", "liquidFunds"] as const;
+const LIST_PROFILE_FIELDS = ["targetIndustries", "targetLocations"] as const;
+
+export type BuyerCriterionType = "currency" | "percent" | "number" | "select" | "multiselect" | "tags" | "boolean";
+export interface BuyerCriterionDef { label: string; type: BuyerCriterionType; options?: readonly string[]; section: string; sectionLabel: string }
+
+/**
+ * Every acquisition criterion, flat (key → definition + section). The two
+ * "tags" entries targetIndustries/targetLocations are left out — they live at
+ * the top level of the profile, not inside buyerCriteria.
+ */
+export const BUYER_CRITERIA_FIELDS: Record<string, BuyerCriterionDef> = (() => {
+  const out: Record<string, BuyerCriterionDef> = {};
+  for (const [section, def] of Object.entries(BUYER_CRITERIA_SECTIONS)) {
+    for (const [key, f] of Object.entries(def.fields)) {
+      if (key === "targetIndustries" || key === "targetLocations") continue;
+      out[key] = { ...(f as any), section, sectionLabel: def.label };
+    }
+  }
+  return out;
+})();
+
+/** Broker-private overlay (broker_buyer_contacts.broker_profile). Absent key = no override. */
+export interface BrokerBuyerOverlay {
+  name?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  title?: string | null;
+  linkedinUrl?: string | null;
+  buyerType?: string | null;
+  background?: string | null;
+  liquidFunds?: string | null;
+  hasProofOfFunds?: boolean | null;
+  targetIndustries?: string[];
+  targetLocations?: string[];
+  buyerCriteria?: Record<string, any>;
+}
+/** When the broker last edited each overlay field (same keys as sources). */
+export type BrokerOverlayMeta = Record<string, { at: string }>;
+
+export const BUYER_INTEREST_STATUSES = ["hot", "warm", "cold", "not_interested"] as const;
+export type BuyerInterestStatus = (typeof BUYER_INTEREST_STATUSES)[number];
+
+export interface BuyerAiSummary { text: string; at: string; key: string }
+
+/** One broker action on a buyer_access row (buyer_access.access_events). */
+export interface BuyerAccessEvent {
+  type: "extended" | "level_changed" | "revoked";
+  at: string;
+  expiresAt?: string | null;
+  accessLevel?: string | null;
+}
+
+/** "other" = on the buyer's global profile, written by someone other than this broker or the buyer (never named). */
+export type MergedFieldSourceKind = BuyerFieldSourceKind | "broker" | "other";
+export interface MergedFieldSource {
+  source: MergedFieldSourceKind;
+  layer: "overlay" | "own" | "crm";
+  at?: string | null;
+  dealId?: string | null;
+  /** Own-layer value written before per-field sources were recorded; `source` is a best guess from how the account started. */
+  legacy?: boolean;
+  /** CRM layer only: short quote from the record, and whether the model inferred rather than read it. */
+  evidence?: string | null;
+  inferred?: boolean;
+}
+
+/** A value counts as "set" when it says something (not null, "", or an empty list). */
+export function buyerValueIsSet(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+/** Best guess at who wrote an untracked value on the global row, from how the account started. */
+export function legacyOwnSource(buyer: Pick<BuyerUser, "source">): BuyerFieldSourceKind {
+  switch (buyer.source) {
+    case "crm_imported": return "crm";
+    case "nda_signed": return "nda";
+    case "broker_invited": return "broker_import";
+    default: return "buyer";
+  }
+}
+
+/**
+ * The three-layer merge with a source per field. Precedence: broker overlay
+ * (broker-private) > the buyer's own global row (written by the buyer, the
+ * NDA, a broker import/CSV, CRM contact basics or an approval — each stamped
+ * in buyer_users.field_sources) > the broker's private CRM profile.
+ *
+ * hasProofOfFunds is tri-state: an own `false` only counts when a writer
+ * recorded it (the column defaults to false), so an untouched default never
+ * hides a CRM "yes", but a buyer's explicit "no" does.
+ */
+export function mergeBuyerProfileWithSources<T extends BuyerUser>(
+  buyer: T,
+  crm?: CrmBuyerProfile | null,
+  overlay?: BrokerBuyerOverlay | null,
+  overlayMeta?: BrokerOverlayMeta | null,
+): { profile: T; sources: Record<string, MergedFieldSource> } {
+  const fs = ((buyer as any).fieldSources as BuyerFieldSources | null) || {};
+  const ov: BrokerBuyerOverlay = overlay || {};
+  const c: CrmBuyerProfile = crm || {};
+  const sources: Record<string, MergedFieldSource> = {};
+  const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k) && (o as any)[k] !== undefined;
+
+  const ownSrc = (key: string): MergedFieldSource => {
+    const s = fs[key];
+    return s
+      ? { source: s.source, layer: "own", at: s.at ?? null, dealId: s.dealId ?? null }
+      : { source: legacyOwnSource(buyer), layer: "own", at: null, legacy: true };
+  };
+  const crmSrc = (key: string): MergedFieldSource => {
+    const bare = key.replace(/^criteria\./, "");
+    return {
+      source: "crm", layer: "crm", at: c.extractedAt ?? null,
+      evidence: c.evidence?.[key] ?? c.evidence?.[bare] ?? null,
+      inferred: (c.inferred || []).some((f) => f === key || f === bare),
+    };
+  };
+  const ovSrc = (key: string): MergedFieldSource => ({ source: "broker", layer: "overlay", at: overlayMeta?.[key]?.at ?? null });
+
+  const profile: any = { ...buyer };
+
+  for (const f of TEXT_PROFILE_FIELDS) {
+    const ownV = (buyer as any)[f];
+    const crmV = (c as any)[f];
+    if (has(ov, f) && !(f === "name" && !buyerValueIsSet((ov as any)[f]))) {
+      const v = (ov as any)[f];
+      profile[f] = buyerValueIsSet(v) ? v : null;
+      sources[f] = ovSrc(f);
+    } else if (buyerValueIsSet(ownV)) {
+      profile[f] = ownV;
+      sources[f] = ownSrc(f);
+    } else if (buyerValueIsSet(crmV)) {
+      profile[f] = crmV;
+      sources[f] = crmSrc(f);
+    } else {
+      profile[f] = f === "name" ? buyer.name : null;
+    }
+  }
+
+  if (typeof ov.hasProofOfFunds === "boolean") {
+    profile.hasProofOfFunds = ov.hasProofOfFunds;
+    sources.hasProofOfFunds = ovSrc("hasProofOfFunds");
+  } else if (buyer.hasProofOfFunds === true || (buyer.hasProofOfFunds === false && fs.hasProofOfFunds)) {
+    profile.hasProofOfFunds = buyer.hasProofOfFunds;
+    sources.hasProofOfFunds = ownSrc("hasProofOfFunds");
+  } else if (typeof c.hasProofOfFunds === "boolean") {
+    profile.hasProofOfFunds = c.hasProofOfFunds;
+    sources.hasProofOfFunds = crmSrc("hasProofOfFunds");
+  } else {
+    profile.hasProofOfFunds = null;
+  }
+
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+  for (const f of LIST_PROFILE_FIELDS) {
+    if (Array.isArray((ov as any)[f])) {
+      profile[f] = (ov as any)[f];
+      sources[f] = ovSrc(f);
+    } else if (arr((buyer as any)[f]).length) {
+      profile[f] = arr((buyer as any)[f]);
+      sources[f] = ownSrc(f);
+    } else if (arr((c as any)[f]).length) {
+      profile[f] = arr((c as any)[f]);
+      sources[f] = crmSrc(f);
+    } else {
+      profile[f] = [];
+    }
+  }
+
+  const ownCrit = ((buyer.buyerCriteria as Record<string, any>) || {});
+  const crmCrit = c.buyerCriteria || {};
+  const ovCrit = ov.buyerCriteria || {};
+  const criteria: Record<string, any> = {};
+  for (const k of Array.from(new Set([...Object.keys(crmCrit), ...Object.keys(ownCrit), ...Object.keys(ovCrit)]))) {
+    const key = `criteria.${k}`;
+    if (buyerValueIsSet(ovCrit[k])) { criteria[k] = ovCrit[k]; sources[key] = ovSrc(key); }
+    else if (buyerValueIsSet(ownCrit[k])) { criteria[k] = ownCrit[k]; sources[key] = ownSrc(key); }
+    else if (buyerValueIsSet(crmCrit[k])) { criteria[k] = crmCrit[k]; sources[key] = crmSrc(key); }
+  }
+  profile.buyerCriteria = criteria;
+  profile.profileCompletionPct = Math.max(buyer.profileCompletionPct ?? 0, calculateBuyerProfileCompletion(profile));
+  return { profile: profile as T, sources };
+}
+
+/** Profile keys (top-level + "criteria.<key>") whose value differs between two versions of a profile. */
+export function changedBuyerProfileKeys(before: Partial<BuyerUser>, after: Partial<BuyerUser>): string[] {
+  const out: string[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const f of BUYER_PROFILE_FIELDS) {
+    if (!(f in after)) continue;
+    if (!same((before as any)[f], (after as any)[f])) out.push(f);
+  }
+  if ("buyerCriteria" in after) {
+    const b = (before.buyerCriteria as Record<string, any>) || {};
+    const a = (after.buyerCriteria as Record<string, any>) || {};
+    for (const k of Array.from(new Set([...Object.keys(b), ...Object.keys(a)]))) {
+      if (!same(b[k], a[k])) out.push(`criteria.${k}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Stamp `keys` as written by `source` now. Criteria keys whose new value is
+ * empty lose their stamp (nothing left to attribute); top-level keys keep it
+ * (an explicit "no" — e.g. proof of funds — is still an answer).
+ */
+export function stampBuyerFieldSources(
+  existing: unknown,
+  keys: string[],
+  source: BuyerFieldSourceKind,
+  opts: { dealId?: string | null; brokerId?: string | null; after?: Partial<BuyerUser> } = {},
+): BuyerFieldSources {
+  const next: BuyerFieldSources = { ...((existing as BuyerFieldSources | null) || {}) };
+  const at = new Date().toISOString();
+  const crit = (opts.after?.buyerCriteria as Record<string, any> | undefined) || undefined;
+  for (const k of keys) {
+    if (k.startsWith("criteria.") && crit && !buyerValueIsSet(crit[k.slice(9)])) { delete next[k]; continue; }
+    next[k] = { source, at, ...(opts.dealId ? { dealId: opts.dealId } : {}), ...(opts.brokerId ? { brokerId: opts.brokerId } : {}) };
+  }
+  return next;
+}
+
+/**
+ * `updates` for a buyer_users row plus the field_sources stamps for whatever
+ * they actually change (every writer of the global row goes through this).
+ */
+export function withFieldSources(
+  current: Partial<BuyerUser>,
+  updates: Partial<BuyerUser>,
+  source: BuyerFieldSourceKind,
+  dealId?: string | null,
+  brokerId?: string | null,
+): Partial<BuyerUser> {
+  const keys = changedBuyerProfileKeys(current, updates);
+  if (!keys.length) return updates;
+  const after = { ...current, ...updates };
+  return { ...updates, fieldSources: stampBuyerFieldSources(current.fieldSources, keys, source, { dealId, brokerId, after }) as any };
+}
+
+/** Field sources for a brand-new buyer_users row created by `source`. */
+export function initialFieldSources(row: Partial<BuyerUser>, source: BuyerFieldSourceKind, dealId?: string | null, brokerId?: string | null): BuyerFieldSources {
+  const keys: string[] = BUYER_PROFILE_FIELDS.filter((f) => (f === "hasProofOfFunds" ? row.hasProofOfFunds === true : buyerValueIsSet((row as any)[f])));
+  for (const [k, v] of Object.entries((row.buyerCriteria as Record<string, any>) || {})) if (buyerValueIsSet(v)) keys.push(`criteria.${k}`);
+  return stampBuyerFieldSources({}, keys, source, { dealId, brokerId });
+}
+
+// Criteria validation (the buyer's own PATCH and the broker overlay). Numeric
+// criteria stay loose (number or short text) because the buyer editor has
+// always stored free text; everything else must match its definition.
+const numericCriterion = z.union([z.number().finite(), z.string().trim().max(40)]);
+const tagList = z.array(z.string().trim().min(1).max(120)).max(40);
+export const buyerCriteriaSchema = z.object({
+  ...Object.fromEntries(Object.entries(BUYER_CRITERIA_FIELDS).map(([k, d]) => {
+    let t: z.ZodTypeAny;
+    if (d.type === "boolean") t = z.boolean();
+    else if (d.type === "select") t = z.enum(d.options as unknown as [string, ...string[]]);
+    else if (d.type === "multiselect") t = z.array(z.enum(d.options as unknown as [string, ...string[]])).max(20);
+    else if (d.type === "tags") t = tagList;
+    else t = numericCriterion;
+    return [k, t.nullable().optional()];
+  })),
+  targetIndustries: tagList.nullable().optional(),
+  targetLocations: tagList.nullable().optional(),
+  lookingFor: z.string().max(2000).nullable().optional(),
+}).strip();
+
+/** Drop empty criteria (null, "", []) after validation. */
+export function cleanBuyerCriteria(c: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(c).filter(([, v]) => buyerValueIsSet(v)));
+}
+
+/** Liquid funds as a coarse range — a buyer's self-entered figure is promised to show only as a range. */
+export function buyerFundsRange(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null;
+  const lower = raw.toLowerCase();
+  const m = lower.match(/(\d[\d,]*\.?\d*)\s*([kmb])?/);
+  if (!m) return "Amount on file";
+  let v = parseFloat(m[1].replace(/,/g, ""));
+  if (isNaN(v)) return "Amount on file";
+  if (m[2] === "k") v *= 1e3; else if (m[2] === "m") v *= 1e6; else if (m[2] === "b") v *= 1e9;
+  else if (/\bthousand\b/.test(lower)) v *= 1e3; else if (/\b(million|mil|mm)\b/.test(lower)) v *= 1e6; else if (/\b(billion|bn)\b/.test(lower)) v *= 1e9;
+  if (v < 250_000) return "Under $250K";
+  if (v < 1_000_000) return "$250K–$1M";
+  if (v < 5_000_000) return "$1M–$5M";
+  if (v < 25_000_000) return "$5M–$25M";
+  return "$25M+";
+}
+
+/**
+ * Emails a broker sent one buyer from the buyer's profile page (the broker
+ * clicks send — never automatic). deal_id is optional: a note about the
+ * relationship doesn't have to be about a listing.
+ */
+export const buyerEmails = pgTable("buyer_emails", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  buyerUserId: varchar("buyer_user_id").notNull(),
+  dealId: varchar("deal_id"),
+  toEmail: text("to_email").notNull(),
+  replyTo: text("reply_to"),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: text("status").notNull().default("sent"),   // sent | failed
+  errorMessage: text("error_message"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type BuyerEmail = typeof buyerEmails.$inferSelect;
+export type InsertBuyerEmail = typeof buyerEmails.$inferInsert;
+
+// @anchor:schema-tail:cim
+/** A background AI task on one CIM section (cim_sections.ai_task). */
+export interface CimSectionAiTask {
+  id: string;
+  kind: "write" | "regenerate" | "rewrite" | "convert";
+  /** "ready" = a rewrite proposal waiting for the broker to apply or discard. */
+  status: "running" | "failed" | "ready";
+  startedAt: string;
+  finishedAt?: string;
+  error?: string;
+  request?: {
+    instructions?: string;
+    tones?: string[];
+    length?: "shorter" | "same" | "longer";
+    brief?: string;
+    layoutType?: string;
+  };
+  /** Rewrite result, same layout type as the section. */
+  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null };
+}
+
+/** One entry of a section's undo stack (cim_sections.content_history). */
+export interface CimSectionSnapshot {
+  at: string;
+  /** What replaced this version, in plain words ("AI rewrite", "Edited text"). */
+  reason: string;
+  sectionTitle: string;
+  layoutType: string;
+  layoutData: unknown;
+  aiDraftContent: string | null;
+  brokerEditedContent: string | null;
+}
+
+// ── CIM media library (cim-media workstream) ──────────────────────────────
+// Photos and videos a broker uploads for a deal's CIM (gallery / video
+// blocks). Files live under <UPLOADS_DIR>/private-media/<dealId>/ with
+// random names and are NEVER served statically — only through
+// GET /api/media/:id (owning broker, the deal's seller token, or a buyer
+// view token whose CIM shows the file). Blind-CIM buyers only ever get
+// files marked blind_safe (see shared/cim-media.ts).
+export const dealMedia = pgTable("deal_media", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  brokerId: varchar("broker_id").notNull(),
+  kind: text("kind").notNull(), // "image" | "video"
+  // Private path relative to UPLOADS_DIR ("private-media/<dealId>/<random>.jpg").
+  // Never sent to a browser.
+  fileUrl: text("file_url").notNull(),
+  mimeType: text("mime_type").notNull(),
+  size: integer("size").notNull(),
+  width: integer("width"),
+  height: integer("height"),
+  caption: text("caption"),
+  // The broker's statement that nothing in the file identifies the business.
+  blindSafe: boolean("blind_safe").notNull().default(false),
+  // Broker-only: the name the file had on the broker's computer.
+  originalName: text("original_name"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type DealMedia = typeof dealMedia.$inferSelect;
+export type InsertDealMedia = typeof dealMedia.$inferInsert;
+
+// ── CIM design templates (cim-templates workstream) ───────────────────────
+// A brokerage's custom templates. Built-in templates live in code
+// (shared/cim-theme.ts BUILTIN_TEMPLATES) and are never stored here.
+export const cimTemplates = pgTable("cim_templates", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  name: text("name").notNull(),
+  description: text("description"),
+  // Full, validated CimThemeTokens (sanitizeTokens).
+  tokens: jsonb("tokens").notNull().$type<import("./cim-theme").CimThemeTokens>(),
+  // "Match my existing CIM": the ordered sections of the broker's past CIM,
+  // followed by the layout engine when planning a CIM with this template.
+  sectionOutline: jsonb("section_outline").$type<import("./cim-theme").CimSectionOutline>(),
+  // The template this one was cloned from (built-in id or cim_templates.id).
+  basedOn: varchar("based_on"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
+export type CimTemplateRow = typeof cimTemplates.$inferSelect;
+// (cim workstreams)
+
+// @anchor:schema-tail:seed
+// (seed workstream)

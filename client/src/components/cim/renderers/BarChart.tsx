@@ -13,10 +13,11 @@ import {
   Legend,
 } from "recharts";
 import { cn } from "@/lib/utils";
-import { CIM_DOC } from "../CimBrandingContext";
 import type { CimBranding } from "../CimBrandingContext";
+import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
 
 interface BarDataPoint {
   name: string;
@@ -42,21 +43,6 @@ interface RendererProps {
   section: CimSection;
 }
 
-function lighten(hex: string, amount = 0.5): string {
-  try {
-    const h = hex.replace("#", "");
-    const r = parseInt(h.substring(0, 2), 16);
-    const g = parseInt(h.substring(2, 4), 16);
-    const b = parseInt(h.substring(4, 6), 16);
-    const lr = Math.round(r + (255 - r) * amount);
-    const lg = Math.round(g + (255 - g) * amount);
-    const lb = Math.round(b + (255 - b) * amount);
-    return `rgb(${lr},${lg},${lb})`;
-  } catch {
-    return "#a0c4b8";
-  }
-}
-
 interface CustomTooltipProps {
   active?: boolean;
   payload?: Array<{ value: number; name: string; color: string }>;
@@ -74,8 +60,7 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
           <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ backgroundColor: p.color }} />
           <span className="text-muted-foreground">{p.name}:</span>
           <span className="font-medium text-foreground tabular-nums">
-            {typeof p.value === "number" ? p.value.toLocaleString() : p.value}
-            {unit ? ` ${unit}` : ""}
+            {formatFullValue(p.value, unit)}
           </span>
         </div>
       ))}
@@ -84,6 +69,7 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 }
 
 export function BarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const theme = useCimTheme();
   const data: BarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -92,8 +78,9 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
     return <ProseFallback content={content} />;
   }
 
-  const primaryColor = branding.primaryHex || "#2dc88e";
-  const secondaryColor = branding.accentHex ? lighten(branding.accentHex, 0.4) : lighten(primaryColor, 0.5);
+  // The template's series colours (brand colours lead when the broker uses them).
+  const primaryColor = theme.chart[0];
+  const secondaryColor = theme.chart[1];
   const hasSecondary = chartData.some((d) => d.secondaryValue != null);
 
   const normalized = chartData.map((d) => ({
@@ -104,6 +91,13 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
       : undefined,
   }));
 
+  const yAxisWidth = axisWidthFor(
+    normalized.flatMap((d) =>
+      data.stacked ? [(d.value || 0) + (d.secondaryValue || 0)] : [d.value, d.secondaryValue],
+    ),
+    data.unit,
+  );
+
   return (
     <div>
       {data.title && (
@@ -111,36 +105,41 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
           {data.title}
         </h3>
       )}
+      {data.yLabel && (
+        // Axis caption sits above the plot — a rotated label inside the axis
+        // column collides with the tick numbers (worst on phones).
+        <p className="text-2xs font-medium text-muted-foreground mb-1.5">{data.yLabel}</p>
+      )}
       <ResponsiveContainer width="100%" height={280}>
-        <BarChart data={normalized} margin={{ top: 4, right: 16, left: 0, bottom: data.xLabel ? 24 : 8 }}
+        <BarChart data={normalized} margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
           barCategoryGap="30%">
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke={CIM_DOC.line}
+            stroke={theme.line}
             vertical={false}
           />
           <XAxis
             dataKey="name"
-            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
+            tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
+            label={data.xLabel ? { value: data.xLabel, position: "insideBottom", offset: -12, fontSize: 11, fill: theme.inkMuted } : undefined}
           />
           <YAxis
-            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
+            tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(v) => v.toLocaleString()}
-            label={data.yLabel ? { value: data.yLabel, angle: -90, position: "insideLeft", fontSize: 11, fill: CIM_DOC.inkMuted } : undefined}
+            width={yAxisWidth}
+            tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} />}
-            cursor={{ fill: CIM_DOC.stripe, fillOpacity: 0.6 }}
+            cursor={{ fill: theme.stripe, fillOpacity: 0.6 }}
           />
           {hasSecondary && (
             <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: CIM_DOC.inkSoft }}
+              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: theme.inkSoft }}
               iconType="circle"
               iconSize={8}
             />

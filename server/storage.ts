@@ -35,6 +35,7 @@ import {
 import { randomUUID } from "crypto";
 import { db } from "./db";
 import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
 // touching any of these recomputes profileCompletionPct (see updateBuyerUser).
@@ -350,6 +351,16 @@ export class MemStorage implements IStorage {
       headerTemplate: insertSettings.headerTemplate ?? null,
       footerTemplate: insertSettings.footerTemplate ?? null,
       disclaimer: insertSettings.disclaimer ?? null,
+      defaultTemplateId: insertSettings.defaultTemplateId ?? null,
+      firmAddress: insertSettings.firmAddress ?? null,
+      firmPhone: insertSettings.firmPhone ?? null,
+      firmEmail: insertSettings.firmEmail ?? null,
+      firmWebsite: insertSettings.firmWebsite ?? null,
+      showDisclaimerPage: insertSettings.showDisclaimerPage ?? true,
+      showContactPage: insertSettings.showContactPage ?? true,
+      coverStyle: insertSettings.coverStyle ?? null,
+      useBrandColors: insertSettings.useBrandColors ?? false,
+      useBrandFonts: insertSettings.useBrandFonts ?? false,
       createdAt: now,
       updatedAt: now,
     };
@@ -693,6 +704,9 @@ export class DbStorage implements IStorage {
   }
 
   async updateBuyerAccess(id: string, updates: Partial<InsertBuyerAccess>): Promise<BuyerAccess | undefined> {
+    // Drizzle throws "No values to set" on an empty update — nothing to change
+    // means the row as it stands.
+    if (!Object.values(updates).some((v) => v !== undefined)) return this.getBuyerAccess(id);
     const result = await db.update(buyerAccess)
       .set(updates)
       .where(eq(buyerAccess.id, id))
@@ -904,8 +918,11 @@ export class DbStorage implements IStorage {
   }
 
   async getBrandingByBroker(brokerId: string): Promise<BrandingSettings | undefined> {
+    // One row per broker (POST /api/branding upserts). Should a legacy
+    // duplicate exist, always the same (oldest) row answers.
     const result = await db.select().from(brandingSettings)
       .where(eq(brandingSettings.brokerId, brokerId))
+      .orderBy(brandingSettings.createdAt, brandingSettings.id)
       .limit(1);
     return result[0] ?? undefined;
   }
@@ -1331,7 +1348,10 @@ export class DbStorage implements IStorage {
   }
 
   async getBuyerUserByResetToken(token: string): Promise<BuyerUser | undefined> {
-    const result = await db.select().from(buyerUsers).where(eq(buyerUsers.resetToken, token));
+    // Stored hashed (legacy rows: plaintext) — see buyer-auth/reset-token.ts.
+    const candidates = resetTokenLookupValues(token);
+    if (candidates.length === 0) return undefined;
+    const result = await db.select().from(buyerUsers).where(inArray(buyerUsers.resetToken, candidates));
     return result[0];
   }
 

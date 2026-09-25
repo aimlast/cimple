@@ -15,7 +15,10 @@
 import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
+import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal } from "@shared/schema";
+import { phaseIndex } from "@shared/deal-progress";
+import { listedAskingPrice } from "../information/deal-mirror";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -64,7 +67,7 @@ async function persist(job: CimGenerationJob) {
  * discrepancies onto extractedInfo (the broker's accepted values win);
  * layout mode uses extractedInfo as stored, matching the old endpoints.
  */
-async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
+export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
   const extractedInfo = { ...((deal.extractedInfo as Record<string, unknown>) || {}) };
   if (mode === "content") {
     const resolved = await storage.getResolvedDiscrepancies(deal.id);
@@ -76,11 +79,16 @@ async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<C
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
   ]);
+  // The deal's design template may carry the brokerage's house structure
+  // ("Match my existing CIM") — the planner follows it.
+  const template = await templateForDeal(deal, branding ?? null).catch(() => null);
   return {
     dealId: deal.id,
     businessName: deal.businessName,
     industry: deal.industry,
-    askingPrice: deal.askingPrice,
+    // The broker's listed price — a correction on the Information tab wins
+    // over the deal column; never a seller's or document's figure.
+    askingPrice: listedAskingPrice(deal),
     extractedInfo,
     scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
     questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
@@ -90,6 +98,7 @@ async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<C
     brokerBranding: branding
       ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor }
       : null,
+    sectionOutline: template?.sectionOutline ?? null,
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({
@@ -134,7 +143,9 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   };
   if (mode === "content") {
     updates.cimContent = cimContent;
-    updates.phase = "phase3_content_creation";
+    // Moves an earlier deal into Content Creation; a full regenerate on a
+    // Design-phase deal must not drag it back to phase 3.
+    if (phaseIndex(deal.phase) < phaseIndex("phase3_content_creation")) updates.phase = "phase3_content_creation";
   }
   await storage.updateDeal(deal.id, updates as any);
 }

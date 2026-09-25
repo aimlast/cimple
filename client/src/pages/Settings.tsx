@@ -8,7 +8,6 @@ import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { 
   Save, 
@@ -21,8 +20,6 @@ import {
   Mail,
   Building,
   AlertCircle,
-  X,
-  Image,
   RefreshCw,
   MessageSquare,
   Gavel,
@@ -31,6 +28,8 @@ import {
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { useToast } from "@/hooks/use-toast";
 import type { BrandingSettings } from "@shared/schema";
+import { BrandSettingsCard } from "@/components/cim-design/BrandSettingsCard";
+import { TemplateGallery } from "@/components/cim-design/TemplateGallery";
 
 /**
  * Broker email preferences. Every switch here controls real events — the
@@ -86,83 +85,16 @@ async function readErrorMessage(res: Response, fallback: string): Promise<string
   return `${fallback} (${res.status})`;
 }
 
-function ColorInput({ label, value, onChange, testId }: { label: string; value: string; onChange: (v: string) => void; testId: string }) {
-  const isValidHsl = (hsl: string) => {
-    if (!hsl || typeof hsl !== 'string') return false;
-    const parts = hsl.trim().split(/\s+/);
-    if (parts.length !== 3) return false;
-    const [h, s, l] = parts.map(v => parseFloat(v.replace('%', '')));
-    return !isNaN(h) && !isNaN(s) && !isNaN(l) && 
-           h >= 0 && h <= 360 && s >= 0 && s <= 100 && l >= 0 && l <= 100;
-  };
-
-  const hslToHex = (hsl: string) => {
-    if (!isValidHsl(hsl)) return '#000000';
-    const [h, s, l] = hsl.split(/\s+/).map(v => parseFloat(v.replace('%', '')));
-    const c = (1 - Math.abs(2 * l / 100 - 1)) * s / 100;
-    const x = c * (1 - Math.abs((h / 60) % 2 - 1));
-    const m = l / 100 - c / 2;
-    let r = 0, g = 0, b = 0;
-    if (h < 60) { r = c; g = x; b = 0; }
-    else if (h < 120) { r = x; g = c; b = 0; }
-    else if (h < 180) { r = 0; g = c; b = x; }
-    else if (h < 240) { r = 0; g = x; b = c; }
-    else if (h < 300) { r = x; g = 0; b = c; }
-    else { r = c; g = 0; b = x; }
-    const toHex = (v: number) => {
-      const hex = Math.round((v + m) * 255).toString(16);
-      return hex.length === 1 ? '0' + hex : hex;
-    };
-    return `#${toHex(r)}${toHex(g)}${toHex(b)}`;
-  };
-
-  const hexToHsl = (hex: string) => {
-    const r = parseInt(hex.slice(1, 3), 16) / 255;
-    const g = parseInt(hex.slice(3, 5), 16) / 255;
-    const b = parseInt(hex.slice(5, 7), 16) / 255;
-    const max = Math.max(r, g, b), min = Math.min(r, g, b);
-    let h = 0, s = 0, l = (max + min) / 2;
-    if (max !== min) {
-      const d = max - min;
-      s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-      switch (max) {
-        case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-        case g: h = ((b - r) / d + 2) / 6; break;
-        case b: h = ((r - g) / d + 4) / 6; break;
-      }
-    }
-    return `${Math.round(h * 360)} ${Math.round(s * 100)}% ${Math.round(l * 100)}%`;
-  };
-
-  const hexValue = hslToHex(value || "0 0% 0%");
-  
-  return (
-    <div className="space-y-2">
-      <Label htmlFor={testId}>{label}</Label>
-      <div className="flex gap-2">
-        <Input
-          id={testId}
-          type="color"
-          value={hexValue}
-          onChange={(e) => onChange(hexToHsl(e.target.value))}
-          className="w-20 h-10"
-          data-testid={`${testId}-picker`}
-        />
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value)}
-          placeholder="H S% L%"
-          className="flex-1 font-mono text-sm"
-          data-testid={testId}
-        />
-      </div>
-    </div>
-  );
-}
+const SETTINGS_TABS = ["account", "notifications", "brand", "defaults", "integrations"];
 
 export default function Settings() {
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  // ?tab=brand opens straight on a tab (the CIM builder links there).
+  const [initialTab] = useState(() => {
+    const t = new URLSearchParams(window.location.search).get("tab");
+    return t && SETTINGS_TABS.includes(t) ? t : "account";
+  });
 
   const {
     data: brandingSettings,
@@ -173,23 +105,6 @@ export default function Settings() {
   } = useQuery<BrandingSettings | null>({
     queryKey: ["/api/branding"],
   });
-
-  const [primaryColor, setPrimaryColor] = useState("218 70% 47%");
-  const [accentColor, setAccentColor] = useState("25 95% 53%");
-  const [backgroundColor, setBackgroundColor] = useState("0 0% 100%");
-  const [cardColor, setCardColor] = useState("0 0% 100%");
-  const [textColor, setTextColor] = useState("224 71% 4%");
-  const [headingFont, setHeadingFont] = useState("Inter");
-  const [bodyFont, setBodyFont] = useState("Inter");
-  const [logoUrl, setLogoUrl] = useState("");
-  const [spacing, setSpacing] = useState<string>("medium");
-  const [borderRadius, setBorderRadius] = useState<string>("medium");
-
-  const [companyName, setCompanyName] = useState("");
-  const [disclaimer, setDisclaimer] = useState("");
-  const [headerTemplate, setHeaderTemplate] = useState("");
-  const [footerTemplate, setFooterTemplate] = useState("");
-  const [uploadingLogo, setUploadingLogo] = useState(false);
 
   const [firmName, setFirmName] = useState("");
   const [firmEmail, setFirmEmail] = useState("");
@@ -294,122 +209,6 @@ export default function Settings() {
       }),
   });
 
-  useEffect(() => {
-    if (brandingSettings) {
-      setPrimaryColor(brandingSettings.primaryColor);
-      setAccentColor(brandingSettings.accentColor);
-      setBackgroundColor(brandingSettings.backgroundColor);
-      setCardColor(brandingSettings.cardColor);
-      setTextColor(brandingSettings.textColor);
-      setHeadingFont(brandingSettings.headingFont);
-      setBodyFont(brandingSettings.bodyFont);
-      setLogoUrl(brandingSettings.logoUrl || "");
-      setSpacing(brandingSettings.spacing);
-      setBorderRadius(brandingSettings.borderRadius);
-      setCompanyName(brandingSettings.companyName || "");
-      setDisclaimer(brandingSettings.disclaimer || "");
-      setHeaderTemplate(brandingSettings.headerTemplate || "");
-      setFooterTemplate(brandingSettings.footerTemplate || "");
-    }
-  }, [brandingSettings]);
-
-  const saveBrandingMutation = useMutation({
-    mutationFn: async (data: any) => {
-      const [method, url] = brandingSettings?.id
-        ? ["PATCH", `/api/branding/${brandingSettings.id}`]
-        : ["POST", "/api/branding"];
-      const r = await fetch(url, {
-        method,
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify(data),
-      });
-      if (!r.ok) throw new Error(await readErrorMessage(r, "Failed to save branding"));
-      return r.json();
-    },
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["/api/branding"] });
-      toast({
-        title: "Settings Saved",
-        description: "Your branding settings have been updated successfully.",
-      });
-    },
-    onError: (error: Error) => {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to save settings. Please try again.",
-        variant: "destructive",
-      });
-    },
-  });
-
-  const normalizeHslColor = (color: string): string => {
-    const trimmed = color.trim();
-    if (/^\d+\s+\d+%\s+\d+%$/.test(trimmed)) {
-      return trimmed;
-    }
-    const parts = trimmed.split(/\s+/);
-    if (parts.length === 3) {
-      const h = parseInt(parts[0]);
-      const s = parseInt(parts[1].replace('%', ''));
-      const l = parseInt(parts[2].replace('%', ''));
-      if (!isNaN(h) && !isNaN(s) && !isNaN(l)) {
-        return `${h} ${s}% ${l}%`;
-      }
-    }
-    return trimmed;
-  };
-
-  const handleLogoUpload = async (file: File) => {
-    setUploadingLogo(true);
-    try {
-      const reader = new FileReader();
-      reader.onload = async (e) => {
-        try {
-          const base64 = e.target?.result as string;
-          const res = await fetch("/api/upload-logo", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            credentials: "include",
-            body: JSON.stringify({ data: base64, filename: file.name }),
-          });
-          if (!res.ok) throw new Error(await readErrorMessage(res, "Upload failed"));
-          const { url } = await res.json();
-          setLogoUrl(url);
-          toast({ title: "Logo Uploaded", description: "Your logo has been uploaded successfully." });
-        } catch (err: any) {
-          toast({ title: "Upload Failed", description: err.message, variant: "destructive" });
-        } finally {
-          setUploadingLogo(false);
-        }
-      };
-      reader.readAsDataURL(file);
-    } catch {
-      setUploadingLogo(false);
-    }
-  };
-
-  // Cleared fields are sent as explicit nulls: the PATCH is a partial update,
-  // so an omitted (undefined) key would silently keep the old value.
-  const handleSaveBranding = () => {
-    saveBrandingMutation.mutate({
-      companyName: companyName.trim() || null,
-      primaryColor: normalizeHslColor(primaryColor),
-      accentColor: normalizeHslColor(accentColor),
-      backgroundColor: normalizeHslColor(backgroundColor),
-      cardColor: normalizeHslColor(cardColor),
-      textColor: normalizeHslColor(textColor),
-      headingFont,
-      bodyFont,
-      logoUrl: logoUrl.trim() || null,
-      spacing,
-      borderRadius,
-      disclaimer: disclaimer.trim() || null,
-      headerTemplate: headerTemplate.trim() || null,
-      footerTemplate: footerTemplate.trim() || null,
-    });
-  };
-
   const handleSaveAccount = () => {
     saveSettings.mutate(
       { firmName, firmEmail, firmPhone },
@@ -501,26 +300,29 @@ export default function Settings() {
         </p>
       </div>
 
-      <Tabs defaultValue="account" className="w-full">
-        <TabsList className="grid w-full grid-cols-5">
-          <TabsTrigger value="account" className="flex items-center gap-2">
-            <User className="h-4 w-4" />
+      <Tabs defaultValue={initialTab} className="w-full">
+        {/* Phones: all five tabs visible on two rows (a sideways-scrolling strip
+            hid Defaults and Integrations with no cue). */}
+        <TabsList className="grid w-full h-auto grid-cols-3 gap-1 sm:h-10 sm:grid-cols-5">
+          <TabsTrigger value="account" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <User className="hidden sm:block h-4 w-4 shrink-0" />
             Account
           </TabsTrigger>
-          <TabsTrigger value="notifications" className="flex items-center gap-2">
-            <Bell className="h-4 w-4" />
+          <TabsTrigger value="notifications" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Bell className="hidden sm:block h-4 w-4 shrink-0" />
             Notifications
           </TabsTrigger>
-          <TabsTrigger value="branding" className="flex items-center gap-2">
-            <Palette className="h-4 w-4" />
-            Branding
+          <TabsTrigger value="brand" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm" data-testid="tab-brand">
+            <Palette className="hidden sm:block h-4 w-4 shrink-0" />
+            <span className="hidden sm:inline">Brand &amp; templates</span>
+            <span className="sm:hidden">Brand</span>
           </TabsTrigger>
-          <TabsTrigger value="defaults" className="flex items-center gap-2">
-            <Settings2 className="h-4 w-4" />
+          <TabsTrigger value="defaults" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Settings2 className="hidden sm:block h-4 w-4 shrink-0" />
             Defaults
           </TabsTrigger>
-          <TabsTrigger value="integrations" className="flex items-center gap-2">
-            <Link2 className="h-4 w-4" />
+          <TabsTrigger value="integrations" className="flex min-w-0 items-center gap-2 px-2 text-xs sm:px-3 sm:text-sm">
+            <Link2 className="hidden sm:block h-4 w-4 shrink-0" />
             Integrations
           </TabsTrigger>
         </TabsList>
@@ -709,289 +511,16 @@ export default function Settings() {
           </div>
         </TabsContent>
 
-        <TabsContent value="branding" className="mt-6 space-y-6">
-          <Card>
-            <CardHeader>
-              <CardTitle>Brand Colors</CardTitle>
-              <CardDescription>
-                These colors will be applied to your exported CIM documents
-              </CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-6 sm:grid-cols-2">
-                <ColorInput
-                  label="Primary Color"
-                  value={primaryColor}
-                  onChange={setPrimaryColor}
-                  testId="input-primary-color"
-                />
-                <ColorInput
-                  label="Accent Color"
-                  value={accentColor}
-                  onChange={setAccentColor}
-                  testId="input-accent-color"
-                />
-              </div>
-              <Separator />
-              <div className="grid gap-6 sm:grid-cols-3">
-                <ColorInput
-                  label="Background"
-                  value={backgroundColor}
-                  onChange={setBackgroundColor}
-                  testId="input-background-color"
-                />
-                <ColorInput
-                  label="Card Color"
-                  value={cardColor}
-                  onChange={setCardColor}
-                  testId="input-card-color"
-                />
-                <ColorInput
-                  label="Text Color"
-                  value={textColor}
-                  onChange={setTextColor}
-                  testId="input-text-color"
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Typography & Design</CardTitle>
-              <CardDescription>Configure fonts and spacing for CIM documents</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-6">
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Heading Font</Label>
-                  <Select value={headingFont} onValueChange={setHeadingFont}>
-                    <SelectTrigger data-testid="select-heading-font">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Inter">Inter</SelectItem>
-                      <SelectItem value="Roboto">Roboto</SelectItem>
-                      <SelectItem value="Open Sans">Open Sans</SelectItem>
-                      <SelectItem value="Lato">Lato</SelectItem>
-                      <SelectItem value="Montserrat">Montserrat</SelectItem>
-                      <SelectItem value="Poppins">Poppins</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Body Font</Label>
-                  <Select value={bodyFont} onValueChange={setBodyFont}>
-                    <SelectTrigger data-testid="select-body-font">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="Inter">Inter</SelectItem>
-                      <SelectItem value="Roboto">Roboto</SelectItem>
-                      <SelectItem value="Open Sans">Open Sans</SelectItem>
-                      <SelectItem value="Lato">Lato</SelectItem>
-                      <SelectItem value="Montserrat">Montserrat</SelectItem>
-                      <SelectItem value="Poppins">Poppins</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-              <div className="grid gap-4 sm:grid-cols-2">
-                <div className="space-y-2">
-                  <Label>Spacing</Label>
-                  <Select value={spacing} onValueChange={setSpacing}>
-                    <SelectTrigger data-testid="select-spacing">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="small">Compact</SelectItem>
-                      <SelectItem value="medium">Medium</SelectItem>
-                      <SelectItem value="large">Spacious</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="space-y-2">
-                  <Label>Border Radius</Label>
-                  <Select value={borderRadius} onValueChange={setBorderRadius}>
-                    <SelectTrigger data-testid="select-border-radius">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="small">Sharp</SelectItem>
-                      <SelectItem value="medium">Rounded</SelectItem>
-                      <SelectItem value="large">Very Rounded</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Brokerage Name</CardTitle>
-              <CardDescription>Your firm name as it appears on CIM documents</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Input
-                value={companyName}
-                onChange={(e) => setCompanyName(e.target.value)}
-                placeholder="e.g. A R Business Brokers Inc."
-                data-testid="input-company-name"
-              />
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Logo</CardTitle>
-              <CardDescription>Upload your firm logo for CIM cover pages and headers</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {logoUrl ? (
-                <div className="border rounded-lg p-4 bg-muted/50">
-                  <div className="flex items-start justify-between gap-4">
-                    <img 
-                      src={logoUrl} 
-                      alt="Logo preview" 
-                      className="max-h-24 object-contain"
-                      onError={(e) => {
-                        (e.target as HTMLImageElement).style.display = 'none';
-                      }}
-                    />
-                    <Button
-                      variant="outline"
-                      size="icon"
-                      onClick={() => setLogoUrl("")}
-                      data-testid="button-remove-logo"
-                    >
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              ) : (
-                <label
-                  htmlFor="logo-file-input"
-                  className="flex flex-col items-center justify-center border-2 border-dashed rounded-lg p-8 cursor-pointer hover-elevate transition-colors"
-                  onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); }}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    const file = e.dataTransfer.files?.[0];
-                    if (file && file.type.startsWith("image/")) handleLogoUpload(file);
-                  }}
-                >
-                  {uploadingLogo ? (
-                    <div className="text-center">
-                      <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-teal mx-auto mb-2" />
-                      <p className="text-sm text-muted-foreground">Uploading...</p>
-                    </div>
-                  ) : (
-                    <>
-                      <Image className="h-10 w-10 text-muted-foreground mb-3" />
-                      <p className="text-sm font-medium">Drop your logo here or click to browse</p>
-                      <p className="text-xs text-muted-foreground mt-1">PNG, JPG, SVG, or WebP (max 5MB)</p>
-                    </>
-                  )}
-                  <input
-                    id="logo-file-input"
-                    type="file"
-                    accept="image/png,image/jpeg,image/svg+xml,image/webp,image/gif"
-                    className="hidden"
-                    onChange={(e) => {
-                      const file = e.target.files?.[0];
-                      if (file) handleLogoUpload(file);
-                    }}
-                    data-testid="input-logo-file"
-                  />
-                </label>
-              )}
-              <Separator />
-              <div className="space-y-2">
-                <Label htmlFor="logo-url-fallback" className="text-xs text-muted-foreground">Or enter a URL</Label>
-                <Input
-                  id="logo-url-fallback"
-                  value={logoUrl}
-                  onChange={(e) => setLogoUrl(e.target.value)}
-                  placeholder="https://example.com/logo.png"
-                  className="text-sm"
-                  data-testid="input-logo-url"
-                />
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Confidentiality & Disclaimer</CardTitle>
-              <CardDescription>Legal text that appears at the start of every CIM/CBO document</CardDescription>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <Textarea
-                value={disclaimer}
-                onChange={(e) => setDisclaimer(e.target.value)}
-                placeholder="Enter your Notice of Confidentiality & Disclaimer text..."
-                rows={10}
-                className="text-sm"
-                data-testid="input-disclaimer"
-              />
-              <Button
-                variant="outline"
-                onClick={() => setDisclaimer(`Notice of Confidentiality\n${companyName || '[Your Brokerage Name]'} represents the client on an exclusive basis. The information presented in this document is highly sensitive and confidential and is for the use only by those who signed the NDA as deemed necessary by the Broker's sole judgement for the purpose of considering the Business or the vendor's or company's business described herein for acquisition. The Confidential Business Overview ("CBO") and the information presented shall be treated as Secret and Confidential and no part of it shall be disclosed to others, except as provided in the NDA or NINDA. It is highly important to the Business and its current owner(s) that all Confidential Information be held in the strictest of confidence. The Business could be seriously damaged should word that "the Business is for sale" reach its employees, customers, competitors and/or others, or should information contained herein fall into other wrong hands. This CBO cannot be reproduced, duplicated, shared, or revealed, in whole or in part, or used in any other manner without the prior written permission of ${companyName || '[Your Brokerage Name]'}.\n\nDisclaimer\nThe Vendor has supplied the information contained in this Document. ${companyName || '[Your Brokerage Name]'} has not audited or otherwise confirmed this information and makes no representations, expressed or implied, as to its accuracy or completeness or the conclusion to be drawn, and shall in no way be responsible for the content, accuracy, and truthfulness of such information. Any and all representations shall be made solely by the Vendor as set forth in a signed agreement, or purchase contract, which agreement or contract shall control the representations and warranties, if any. By requesting this information package or CBO, the recipient, user or reader acknowledges the responsibility of non-disclosure and to perform a due diligence review prior to the acquisition of the Business, or Company, or assets thereof.`)}
-                data-testid="button-prefill-disclaimer"
-              >
-                Pre-fill with Standard Template
-              </Button>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Page Header</CardTitle>
-              <CardDescription>Text that appears at the top of every page in the CIM/CBO</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Input
-                value={headerTemplate}
-                onChange={(e) => setHeaderTemplate(e.target.value)}
-                placeholder="e.g. Confidential Business Overview | {businessName}"
-                data-testid="input-header-template"
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                Use {"{businessName}"} to insert the business name dynamically
-              </p>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Page Footer</CardTitle>
-              <CardDescription>Text that appears at the bottom of every page in the CIM/CBO</CardDescription>
-            </CardHeader>
-            <CardContent>
-              <Input
-                value={footerTemplate}
-                onChange={(e) => setFooterTemplate(e.target.value)}
-                placeholder="e.g. PRIVATE & CONFIDENTIAL | {businessName} | A R Business Brokers Inc."
-                data-testid="input-footer-template"
-              />
-              <p className="text-xs text-muted-foreground mt-2">
-                Use {"{businessName}"} to insert the business name dynamically
-              </p>
-            </CardContent>
-          </Card>
-
-          <div className="flex justify-end">
-            <Button
-              onClick={handleSaveBranding}
-              disabled={saveBrandingMutation.isPending}
-              className="bg-teal text-teal-foreground hover:bg-teal/90"
-              data-testid="button-save-branding"
-            >
-              <Save className="h-4 w-4 mr-2" />
-              {saveBrandingMutation.isPending ? "Saving..." : "Save Branding Settings"}
-            </Button>
-          </div>
+        {/* CIM look: the brokerage brand (every CIM, every template) and
+            the templates themselves. The business-for-sale's branding is
+            per deal (CIM builder → Design). */}
+        <TabsContent value="brand" className="mt-6 space-y-6">
+          <BrandSettingsCard
+            branding={brandingSettings}
+            account={{ firmName, firmEmail, firmPhone }}
+            contactName={(me?.user as { name?: string | null } | undefined)?.name ?? null}
+          />
+          <TemplateGallery />
         </TabsContent>
 
         <TabsContent value="defaults" className="mt-6 space-y-6">

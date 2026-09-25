@@ -9,6 +9,8 @@ import { Textarea } from "@/components/ui/textarea";
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { ArrowLeft, Globe } from "lucide-react";
+import { NewDealFromCrm, industryFromCrm, type PickedCrmRecord } from "@/components/crm/NewDealFromCrm";
+import { requestJson } from "@/components/information/useInformation";
 
 const INDUSTRY_OPTIONS = [
   "Restaurant / Food Service",
@@ -63,6 +65,19 @@ export default function NewDeal() {
   const [location, setLocationField] = useState("");
   const [websiteUrl, setWebsiteUrl] = useState("");
   const [description, setDescription] = useState("");
+  // "Start from my CRM": the picked Pipedrive record — linked + imported once the deal exists.
+  const [crmPick, setCrmPick] = useState<PickedCrmRecord | null>(null);
+
+  const applyCrmPick = (p: PickedCrmRecord) => {
+    setCrmPick(p);
+    const f = p.prefill;
+    if (f.businessName) setBusinessName(f.businessName);
+    const mapped = industryFromCrm(f.industryText, INDUSTRY_OPTIONS);
+    if (mapped) setIndustry(mapped);
+    if (f.industryText) setSubIndustry(f.industryText);
+    if (f.location) setLocationField(f.location);
+    if (f.websiteUrl) setWebsiteUrl(f.websiteUrl.replace(/^https?:\/\//i, ""));
+  };
 
   const createDealMutation = useMutation({
     mutationFn: async (data: {
@@ -73,6 +88,7 @@ export default function NewDeal() {
       websiteUrl?: string;
       description?: string;
     }) => {
+      const contact = crmPick?.prefill.contact;
       const response = await fetch("/api/deals", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -81,20 +97,46 @@ export default function NewDeal() {
           ...data,
           phase: "phase1_info_collection",
           status: "draft",
+          ...(contact ? { sellerContact: { ...contact, source: "crm", updatedAt: new Date().toISOString() } } : {}),
         }),
       });
       if (!response.ok) {
         throw new Error(await readErrorMessage(response, "Couldn't create the deal. Please try again."));
       }
-      return response.json();
+      const deal = await response.json();
+      // Link the CRM record and start importing it. The deal exists either
+      // way — a link failure is reported, not fatal.
+      let crmError: string | null = null;
+      if (crmPick) {
+        try {
+          await requestJson("POST", `/api/deals/${deal.id}/crm/link`, {
+            type: crmPick.result.type,
+            id: crmPick.result.id,
+            startImport: true,
+          });
+        } catch (e) {
+          crmError = (e as Error).message;
+        }
+      }
+      return { deal, crmError };
     },
-    onSuccess: (deal) => {
+    onSuccess: ({ deal, crmError }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals"] });
-      toast({
-        title: "Deal created",
-        description: `${deal.businessName} has been added to your pipeline.`,
-      });
-      setLocation(`/deal/${deal.id}`);
+      if (crmError) {
+        toast({
+          title: "Deal created — Pipedrive wasn't linked",
+          description: `${crmError} You can link it from the deal's Information tab.`,
+          variant: "destructive",
+        });
+      } else {
+        toast({
+          title: "Deal created",
+          description: crmPick
+            ? `${deal.businessName} is importing from Pipedrive — facts appear as each item is read.`
+            : `${deal.businessName} has been added to your pipeline.`,
+        });
+      }
+      setLocation(crmPick && !crmError ? `/deal/${deal.id}/information` : `/deal/${deal.id}`);
     },
     onError: (err: Error) => {
       toast({
@@ -147,6 +189,8 @@ export default function NewDeal() {
             Enter the basics to open the deal. Everything else is collected during the AI interview.
           </p>
         </div>
+
+        <NewDealFromCrm picked={crmPick} onPick={applyCrmPick} onClear={() => setCrmPick(null)} />
 
         <form onSubmit={handleSubmit} noValidate>
 

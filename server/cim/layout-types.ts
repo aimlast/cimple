@@ -11,33 +11,15 @@
 
 // ─────────────────────────────────────────────
 // Layout type registry
-// Add new types here as the renderer library grows
+// The list of layout types lives in shared/cim-layouts.ts (one registry for
+// the AI prompt, the renderers, the builder and the chatbot). Add new types
+// there. "image_gallery" keeps its data shape below for the media workstream;
+// "unknown" is the legacy fallback for rows written before the registry.
 // ─────────────────────────────────────────────
-export type LayoutType =
-  | "cover_page"
-  | "metric_grid"
-  | "bar_chart"
-  | "horizontal_bar_chart"
-  | "pie_chart"
-  | "donut_chart"
-  | "line_chart"
-  | "timeline"
-  | "financial_table"
-  | "comparison_table"
-  | "callout_list"
-  | "icon_stat_row"
-  | "prose_highlight"
-  | "two_column"
-  | "org_chart"
-  | "location_card"
-  | "stat_callout"
-  | "image_gallery"
-  | "numbered_list"
-  | "tag_cloud"
-  | "scorecard"
-  | "waterfall_chart"
-  | "divider"
-  | "unknown"; // fallback — renders raw JSON gracefully
+import type { CimLayoutKey } from "@shared/cim-layouts";
+export { CIM_LAYOUTS, getCimLayout, normalizeLayoutType } from "@shared/cim-layouts";
+
+export type LayoutType = CimLayoutKey | "image_gallery" | "unknown";
 
 // ─────────────────────────────────────────────
 // Per-layout data shapes
@@ -125,7 +107,9 @@ export interface TimelineData {
 }
 
 export interface FinancialTableData {
-  headers: string[];                // e.g. ["", "2022", "2023", "2024"]
+  /** First entry = label-column header ("" or e.g. "Line item"), then one per value column —
+   *  e.g. ["", "2022", "2023", "2024"] over 3-value rows. Read via shared/financial-table. */
+  headers: string[];
   rows: Array<{
     label: string;
     values: string[];

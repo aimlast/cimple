@@ -13,10 +13,11 @@ import {
   ResponsiveContainer,
   LabelList,
 } from "recharts";
-import { CIM_DOC } from "../CimBrandingContext";
+import { useCimTheme } from "../CimDesignContext";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
+import { formatAxisTick, formatFullValue } from "./chartFormat";
 
 interface HBarDataPoint {
   name: string;
@@ -52,14 +53,14 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
     <div className="bg-card border border-card-border rounded-md shadow-md px-3 py-2 text-xs">
       <p className="font-semibold text-foreground mb-1">{label}</p>
       <span className="font-medium text-foreground tabular-nums">
-        {typeof payload[0].value === "number" ? payload[0].value.toLocaleString() : payload[0].value}
-        {unit ? ` ${unit}` : ""}
+        {formatFullValue(payload[0].value, unit)}
       </span>
     </div>
   );
 }
 
 export function HorizontalBarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const theme = useCimTheme();
   const data: HorizontalBarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -68,7 +69,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
     return <ProseFallback content={content} />;
   }
 
-  const primaryColor = branding.primaryHex || "#2dc88e";
+  const primaryColor = theme.chart[0];
 
   const normalized = chartData.map((d) => ({
     ...d,
@@ -108,27 +109,27 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
-            stroke={CIM_DOC.line}
+            stroke={theme.line}
             horizontal={false}
           />
           <XAxis
             type="number"
-            tick={{ fontSize: 11, fill: CIM_DOC.inkMuted }}
+            tick={{ fontSize: 11, fill: theme.inkMuted }}
             axisLine={false}
             tickLine={false}
-            tickFormatter={(v) => v.toLocaleString()}
+            tickFormatter={(v) => formatAxisTick(v, data.unit)}
           />
           <YAxis
             type="category"
             dataKey="name"
             width={leftMargin}
-            tick={{ fontSize: 11, fill: CIM_DOC.inkSoft }}
+            tick={{ fontSize: 11, fill: theme.inkSoft }}
             axisLine={false}
             tickLine={false}
           />
           <Tooltip
             content={<CustomTooltip unit={data.unit} />}
-            cursor={{ fill: CIM_DOC.stripe, fillOpacity: 0.6 }}
+            cursor={{ fill: theme.stripe, fillOpacity: 0.6 }}
           />
           <Bar dataKey="value" radius={[0, 3, 3, 0]}>
             {withPercent.map((_, index) => (
@@ -138,7 +139,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
               <LabelList
                 dataKey="percent"
                 position="right"
-                style={{ fontSize: 11, fill: CIM_DOC.inkMuted, fontWeight: 500 }}
+                style={{ fontSize: 11, fill: theme.inkMuted, fontWeight: 500 }}
               />
             )}
           </Bar>

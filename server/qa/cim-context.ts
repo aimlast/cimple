@@ -9,22 +9,27 @@
  *    already answered ("What is the monthly rent?").
  *
  * 2. `buildBuyerQuestionFeed` — the Q&A feed a buyer is allowed to see:
- *    every published answer on the deal plus the requesting buyer's own
- *    still-pending questions (so they survive a reload), each flagged with
- *    ownership. Fields are whitelisted — the seller-approval token and the
- *    broker's unapproved draft never leave the server.
+ *    the published answers they're entitled to (answer scope + identity
+ *    check, shared/buyer-qa-scope.ts) plus the requesting buyer's own
+ *    questions (so they survive a reload), each flagged with ownership.
+ *    Fields are whitelisted — the seller-approval token and the broker's
+ *    unapproved draft never leave the server.
  */
 import { storage } from "../storage";
+import { CIM_PRESENTATION_KEYS } from "@shared/cim-layouts";
+import { blindLeakTerms } from "@shared/blind-guard";
+import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
+import type { BuyerQuestion } from "@shared/schema";
+import { normalizeFinancialTable } from "@shared/financial-table";
 
 type AnyRecord = Record<string, any>;
 
-/** Presentation-only keys that carry no facts — skipped by the generic walker. */
-const SKIP_KEYS = new Set([
-  "color", "icon", "highlight", "columns", "style", "accentColor", "relatedSections",
-  "url", "alt", "isTotal", "isSectionHeader", "indent", "bold", "trend", "weight",
-  "category", "layoutType", "id", "reportsTo", "isKeyPerson", "ordered", "stacked",
-  "showPercentages", "preparedByLogo", "businessLogo", "xLabel", "yLabel",
-]);
+/**
+ * Presentation-only keys that carry no facts — skipped by the generic walker.
+ * Owned by the layout registry (shared/cim-layouts.ts): each layout declares
+ * its own presentation keys (logos, media URLs, colours).
+ */
+const SKIP_KEYS: ReadonlySet<string> = CIM_PRESENTATION_KEYS;
 
 /** Keep a single section's structured text bounded so the prompt stays small. */
 const MAX_SECTION_CHARS = 4000;
@@ -168,21 +173,22 @@ export function serializeLayoutData(layoutType: string | null | undefined, layou
       case "financial_table": {
         push("Table", d.caption);
         push("Currency", d.currency);
-        const headers: string[] = Array.isArray(d.headers) ? d.headers.map(fmt) : [];
-        for (const r of Array.isArray(d.rows) ? d.rows : []) {
-          if (!r) continue;
-          const values: string[] = Array.isArray(r.values) ? r.values.map(fmt) : [];
-          if (r.isSectionHeader && values.every((v) => !v)) {
-            lines.push(`[${fmt(r.label)}]`);
+        // Same header/value pairing as the CIM renderer (shared/financial-table).
+        const table = normalizeFinancialTable(d);
+        for (const r of table.rows) {
+          const label = fmt(r.label);
+          if (r.isSectionHeader && r.cells.every((v) => !v)) {
+            lines.push(`[${label}]`);
             continue;
           }
-          const cells = values
+          const cells = r.cells
             .map((v, i) => {
-              const h = headers[i + 1];
-              return v ? (h ? `${h} ${v}` : v) : "";
+              if (!v) return "";
+              const h = table.columns[i];
+              return h ? `${h} ${fmt(v)}` : fmt(v);
             })
             .filter(Boolean);
-          if (cells.length) lines.push(`${fmt(r.label)}: ${cells.join(" | ")}`);
+          if (cells.length) lines.push(`${label}: ${cells.join(" | ")}`);
         }
         for (const f of Array.isArray(d.footnotes) ? d.footnotes : []) push("Note", f);
         break;
@@ -296,9 +302,30 @@ export function serializeLayoutData(layoutType: string | null | undefined, layou
         }
         break;
       }
+      // Media blocks: only their words (the buyer view has already reduced
+      // them to what this buyer may see — region-only maps when blind).
       case "image_gallery": {
         push("Title", d.title);
-        for (const img of Array.isArray(d.images) ? d.images : []) push("Image", img?.caption);
+        for (const img of Array.isArray(d.images) ? d.images : []) push("Photo", img?.caption || img?.alt);
+        break;
+      }
+      case "video": {
+        push("Title", d.title);
+        for (const v of Array.isArray(d.items) ? d.items : []) {
+          const t = [fmt(v?.title), fmt(v?.caption)].filter(Boolean).join(" — ");
+          if (t) lines.push(`Video: ${t}`);
+        }
+        break;
+      }
+      case "location_map": {
+        push("Title", d.title);
+        for (const l of Array.isArray(d.locations) ? d.locations : []) {
+          if (!l) continue;
+          const where = fmt(l.address) || (fmt(l.region) ? `${fmt(l.region)} (general area only)` : "");
+          const t = [fmt(l.label), where, fmt(l.note)].filter(Boolean).join(" — ");
+          if (t) lines.push(`Location: ${t}`);
+        }
+        push("Note", d.caption);
         break;
       }
       case "divider": {
@@ -356,25 +383,56 @@ export interface BuyerQuestionFeedItem {
   isMine: boolean;
 }
 
+/** The buyer reading the feed. */
+export interface QaReader {
+  id: string;
+  accessLevel: string | null | undefined;
+}
+
+type QaDeal = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null };
+
 /**
- * Everything the requesting buyer may see: published Q&A from any buyer on
- * the deal, plus their own unanswered questions (answers withheld until
- * published). Ordered oldest → newest so the chat reads chronologically.
+ * Published rows another buyer's question may be answered from, or shown
+ * to `reader` in the feed: within the answer's scope (a teaser never gets
+ * an answer drawn from full-access sections; nobody gets another buyer's
+ * named-CIM answer), and — for a Blind reader — free of anything that
+ * identifies the business (shared/buyer-qa-scope.ts).
  */
-export async function buildBuyerQuestionFeed(dealId: string, buyerAccessId: string): Promise<BuyerQuestionFeedItem[]> {
-  const all = await storage.getQuestionsByDeal(dealId);
+export async function publishedQuestionsFor(deal: QaDeal, reader: QaReader): Promise<BuyerQuestion[]> {
+  const [all, accesses] = await Promise.all([storage.getQuestionsByDeal(deal.id), storage.getBuyerAccessByDeal(deal.id)]);
+  const levelOf = new Map(accesses.map((a) => [a.id, a.accessLevel]));
+  const terms = blindLeakTerms(deal, { codename: deal.blindCodename });
+  return all.filter((q) => {
+    if (!q.isPublished || !(q.publishedAnswer || q.aiAnswer)) return false;
+    const scope = rowScope(q, q.buyerAccessId && levelOf.has(q.buyerAccessId) ? levelOf.get(q.buyerAccessId) : false);
+    return readerMaySeeRow(q, scope, reader, terms);
+  });
+}
+
+/**
+ * Everything the requesting buyer may see: published Q&A they're entitled
+ * to (see publishedQuestionsFor), plus their own questions (answers shown
+ * once answered, including ones kept private to them). Ordered oldest →
+ * newest so the chat reads chronologically.
+ */
+export async function buildBuyerQuestionFeed(deal: QaDeal, reader: QaReader): Promise<BuyerQuestionFeedItem[]> {
+  const [all, visible] = await Promise.all([storage.getQuestionsByDeal(deal.id), publishedQuestionsFor(deal, reader)]);
+  const visibleIds = new Set(visible.map((q) => q.id));
   const feed: BuyerQuestionFeedItem[] = [];
   for (const q of all) {
-    const isMine = !!q.buyerAccessId && q.buyerAccessId === buyerAccessId;
-    const published = !!q.isPublished && !!(q.publishedAnswer || q.aiAnswer);
+    const isMine = !!q.buyerAccessId && q.buyerAccessId === reader.id;
+    const published = visibleIds.has(q.id);
     if (!published && !isMine) continue;
+    // The asker also sees an AI answer kept private to them (answered from
+    // the named CIM — see the chatbot route).
+    const answerVisible = published || (isMine && q.status === "published");
     feed.push({
       id: q.id,
       question: q.question,
       status: published ? "published" : q.status,
       isPublished: published,
-      aiAnswer: published ? q.aiAnswer ?? null : null,
-      publishedAnswer: published ? q.publishedAnswer ?? null : null,
+      aiAnswer: answerVisible ? q.aiAnswer ?? null : null,
+      publishedAnswer: answerVisible ? q.publishedAnswer ?? null : null,
       createdAt: q.createdAt,
       updatedAt: q.updatedAt,
       isMine,

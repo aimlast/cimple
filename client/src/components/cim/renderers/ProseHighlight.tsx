@@ -34,9 +34,10 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
   if (!body && !hasRight) return null;
 
   return (
-    <div className={cn("flex gap-8", hasRight ? "items-start" : "")}>
+    // Stacks on phones (prose, then the quote/highlights); side by side from md.
+    <div className={cn("flex flex-col gap-6 md:flex-row md:gap-8", hasRight ? "md:items-start" : "")}>
       {/* Left: prose — capped measure so full-width text never becomes a wall */}
-      <div className={cn("flex-1 min-w-0", hasRight ? "max-w-[60%]" : "max-w-prose")}>
+      <div className={cn("flex-1 min-w-0", hasRight ? "md:max-w-[60%]" : "max-w-prose")}>
         {data.subheading && (
           <p className="text-xs font-semibold text-teal uppercase tracking-widest mb-3">
             {stripMarkup(data.subheading)}
@@ -51,7 +52,7 @@ export function ProseHighlightRenderer({ layoutData, content, branding, section 
 
       {/* Right: pull quote + highlights */}
       {hasRight && (
-        <div className="w-[36%] flex-shrink-0 flex flex-col gap-4">
+        <div className="w-full md:w-[36%] md:flex-shrink-0 flex flex-col gap-4">
           {data.pullQuote && (
             <div className="relative pl-4 border-l-2 border-teal">
               <p className="text-base font-medium text-foreground/90 leading-snug italic">

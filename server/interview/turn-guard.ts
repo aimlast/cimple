@@ -660,9 +660,9 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
 // question follows it. Openers that do real work — clarifying, reconciling
 // a conflict, or meeting something hard with a human beat — are kept.
 const FILLER_OPENER_RE =
-  /\b(got it|noted|understood|makes sense|perfect|great|excellent|wonderful|fantastic|awesome|good to (know|hear)|glad to hear|thanks? (for|so much)|appreciate (you|that|the|it)|helpful (context|detail|to know)|that'?s (helpful|useful|clear|good|great|solid|strong|healthy|impressive|a (solid|strong|healthy|good|nice|great)|exactly|really)|that (is|sounds|seems) (like )?(a )?(solid|strong|healthy|good|great|nice|impressive|meaningful)|sounds (good|great|like a)|solid (foundation|number|position|base)|strong (position|foundation|number|signal)|healthy (margin|number|spread|sign)|impressive|buyers? (love|like|want|appreciate|will (love|appreciate|like|value))|from a buyer'?s (perspective|standpoint|point of view)|the kind of (thing|stuff|detail|number|signal|answer)|exactly the kind|what buyers|a good sign|good sign|nice (to see|spread|mix)|love to see|congrat)/i;
+  /\b(got it|noted|understood|makes sense|perfect|great|excellent|wonderful|fantastic|awesome|good to (know|hear)|glad to hear|thanks? (for|so much)|appreciate (you|that|the|it)|helpful (context|detail|to know)|that'?s (helpful|useful|clear|good|great|solid|strong|healthy|impressive|a (solid|strong|healthy|good|nice|great)|exactly|really)|that (is|sounds|seems) (like )?(a )?(solid|strong|healthy|good|great|nice|impressive|meaningful)|sounds (good|great|like a)|solid (foundation|number|position|base)|strong (position|foundation|number|signal)|healthy (margin|number|spread|sign)|impressive|buyers? (love|like|want|appreciate|will (love|appreciate|like|value))|from a buyer'?s (perspective|standpoint|point of view)|the kind of (thing|stuff|detail|number|signal|answer)|exactly the kind|what buyers|a good sign|good sign|nice (to see|spread|mix)|love to see|congrat|(is|are|looks|sounds) (a |an )?(very |really |quite |pretty )?(strong|solid|healthy|impressive|excellent|great)\b|that'?s the kind of|buyers? (look|are looking|will look|tend to look) for|buyers? (notice|value|reward|pay (more|a premium)))/i;
 const KEEP_OPENER_RE =
-  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|i had|down as|your broker|the broker|privately|private|off the record|between (you|us)|won'?t (go|be|appear) in|stays? (with|between)|flag that|keep that|not (in|for) the (document|cim|memorandum)|your call|whenever you'?re ready|we can (skip|leave|come back)|correct(ed|ion)|updat(ed|ing) (that|it)|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(hard|difficult|tough|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
+  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|i had|down as|your broker|the broker|privately|private|off the record|between (you|us)|won'?t (go|be|appear) in|stays? (with|between)|flag that|keep that|not (in|for) the (document|cim|memorandum)|your call|whenever you'?re ready|we can (skip|leave|come back)|correct(ed|ion)|updat(ed|ing) (that|it)|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(a |an )?(really |very )?(hard|difficult|tough|rough|painful|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
 
 /**
  * Splits off leading sentences. A "sentence" ends at . ! ? or an em-dash
@@ -684,12 +684,75 @@ function leadingSentence(text: string): { head: string; rest: string } | null {
   return null;
 }
 
+// Praise of the seller's question itself ("Great question.", "Good
+// questions — …") — never an answer to anything.
+const QUESTION_PRAISE_SENTENCE_RE =
+  /^(?:(?:that'?s|those are|these are|what)\s+(?:a\s+)?)?(?:really\s+|very\s+)?(?:great|good|fair|excellent|smart|important|reasonable|valid|thoughtful|interesting)\s+(?:question|questions|point|points|ask)s?\s*[.!]$/i;
+const QUESTION_PRAISE_PREFIX_RE =
+  /^(?:(?:that'?s|those are|these are)\s+(?:a\s+)?)?(?:really\s+|very\s+)?(?:great|good|fair|excellent|smart|important|reasonable|valid|thoughtful|interesting)\s+(?:question|questions|point|points|ask)s?\s*(?:[—–,:]|-\s)\s*/i;
+
+// "Got it — $8,417 is confirmed." — an acknowledgement that only reports the
+// seller's last answer was recorded. The "confirm" in it isn't a
+// clarification (KEEP_OPENER_RE), it's the recap the tone rules forbid.
+const RECAP_RECORDED_RE =
+  /^(?:got it|noted|understood|perfect|great|thanks|thank you|okay|ok|all right|alright|good)\b[^.?!]*\b(?:is|are|'s|has been|have been)\s+(?:now\s+)?(?:confirmed|noted|recorded|captured|locked in|on file|updated)\s*[.!]$/i;
+const keepsOpener = (head: string) => KEEP_OPENER_RE.test(head) && !RECAP_RECORDED_RE.test(head.trim());
+
+// Words that open a direct answer ("Yes — …", "No, …", "It depends …").
+const ANSWER_START_RE =
+  /^(?:yes|yeah|yep|no|nope|not\b|sure|of course|absolutely|correct|right|exactly|definitely|probably|usually|typically|generally|it depends|depends|i (?:do|don'?t|can|can'?t|have|haven'?t|will|won'?t|would|wouldn'?t|see|'?ll|'?m)|we (?:do|don'?t|can|can'?t|have|will|'?ll)|you (?:can|do|don'?t|will|won'?t|'?ll|should|shouldn'?t|may|might|need|needn'?t)|it(?:'?s| is| isn'?t| was| will| won'?t| goes| stays)|they(?:'?re| are| will| won'?t| do| don'?t)|nothing|nobody|only|none|either|both|because|that(?:'?s| is) (?:up to|for|because|why|how|what|your|a question for))\b/i;
+
+const STOPWORDS = new Set(
+  "about above after again also and any are aren't because been before being below between both but can can't cannot could couldn't did didn't does doesn't doing don't down during each few for from further had hadn't has hasn't have haven't having here how i'm into its it's just like more most much must need needs other our ours out over own really same should shouldn't some such than that that's the their theirs them then there these they this those through too under until very was wasn't were weren't what what's when where which while who why will with won't would wouldn't you your yours yourself business thing things something anything question questions know think".split(" "),
+);
+const contentStems = (text: string): Set<string> =>
+  new Set(
+    (text.toLowerCase().match(/[a-z][a-z'’-]{3,}/g) ?? [])
+      .map((w) => w.replace(/['’]s$/, ""))
+      .filter((w) => !STOPWORDS.has(w))
+      .map((w) => w.slice(0, 5)),
+  );
+
 /**
- * Removes up to two leading filler sentences when a question remains after
- * them. Returns the message unchanged when no question follows (wrap-ups,
- * goodbyes), when the opener does real work, or when nothing matches.
+ * Did the seller ask the agent something? A "?" alone isn't enough — a
+ * seller hedging a figure ("maybe $1.3M? I'd have to check") hasn't asked
+ * anything. A question sentence opens with a question word / auxiliary, or
+ * ends with a tag ("…, right?", "…, correct?").
  */
-export function stripFillerPreamble(message: string): string {
+export function sellerAskedQuestion(sellerMessage: string | null | undefined): boolean {
+  if (!sellerMessage || !sellerMessage.includes("?")) return false;
+  const questions = sellerMessage.match(/[^.!?\n]*\?/g) ?? [];
+  return questions.some((q) => {
+    const s = q.trim().replace(/^["'(\s]+/, "").replace(/^(?:and|but|so|also|ok(?:ay)?|oh|well|hey|hmm|um|sorry|then)[,\s]+/i, "");
+    if (/^(?:what|why|how|when|where|which|who|whom|whose|is|are|was|were|am|do|does|did|can|could|should|would|will|shall|may|might|must|have|has|had|isn'?t|aren'?t|wasn'?t|don'?t|doesn'?t|didn'?t|can'?t|couldn'?t|shouldn'?t|wouldn'?t|won'?t|haven'?t|hasn'?t|any|anything|you|your|so what|what's|how's|who's|where's)\b/i.test(s)) return true;
+    return /(?:,|\bor)\s*(?:right|correct|yes|no|ok(?:ay)?|true|isn'?t (?:it|that)|don'?t (?:you|they|we)|aren'?t (?:they|we|you)|won'?t (?:it|they)|you think|you know|agreed)\s*\?$/i.test(s) || /\b(?:right|correct)\?$/i.test(s);
+  });
+}
+
+/**
+ * Removes filler sentences at the top of a reply when a question remains
+ * after them. Returns the message unchanged when no question follows
+ * (wrap-ups, goodbyes), when the opener does real work, or when nothing
+ * matches.
+ *
+ * `sellerMessage` (the seller's last message) switches on question mode when
+ * the seller asked something: the reply's opening may then BE the answer
+ * ("Yes — I have $2.3M down as your asking price."), and an unanswered
+ * question reads as being ignored. In that mode only these go:
+ *   - praise of the question ("Great question." / a "Good question — "
+ *     prefix), never an answer;
+ *   - a recap/praise sentence that neither starts like an answer nor shares
+ *     a content word with what the seller asked — including one that
+ *     follows the answer ("Yes — $2.3M, noted. That's a strong number.
+ *     What …?" keeps the answer and drops the grade).
+ * Anything that looks like an answer, clarifies or empathises is kept.
+ */
+export function stripFillerPreamble(message: string, opts: { sellerMessage?: string | null } = {}): string {
+  const questionMode = sellerAskedQuestion(opts.sellerMessage);
+  return questionMode ? stripInQuestionMode(message, opts.sellerMessage!) : stripOpeners(message);
+}
+
+function stripOpeners(message: string): string {
   let current = message.trim();
   for (let i = 0; i < 2; i++) {
     const parts = leadingSentence(current);
@@ -697,11 +760,75 @@ export function stripFillerPreamble(message: string): string {
     const { head, rest } = parts;
     if (!rest.includes("?")) break;               // nothing to ask after it
     if (head.includes("?")) break;                // the opener IS a question
-    if (KEEP_OPENER_RE.test(head)) break;         // clarifying / reconciling / empathy
-    if (!FILLER_OPENER_RE.test(head)) break;      // not recognisably filler
+    if (keepsOpener(head)) break;                 // clarifying / reconciling / empathy
+    if (!FILLER_OPENER_RE.test(head) && !QUESTION_PRAISE_SENTENCE_RE.test(head.trim())) break; // not recognisably filler
     if (!/^[A-Z"'(]/.test(rest.trim())) break;    // would leave a mid-sentence fragment
     current = rest.trim();
   }
   if (current === message.trim()) return message;
   return current.charAt(0).toUpperCase() + current.slice(1);
+}
+
+function stripInQuestionMode(message: string, sellerMessage: string): string {
+  const original = message.trim();
+  let text = original;
+  // "Good question — yes, I have it." → "Yes, I have it." (only when a real
+  // sentence follows the praise).
+  const prefix = text.match(QUESTION_PRAISE_PREFIX_RE);
+  if (prefix && /[A-Za-z]/.test(text.slice(prefix[0].length))) {
+    const after = text.slice(prefix[0].length).trim();
+    text = after.charAt(0).toUpperCase() + after.slice(1);
+  }
+  const questionText = (sellerMessage.match(/[^.!?\n]*\?/g) ?? []).join(" ");
+  const asked = contentStems(questionText);
+  // "Why do you need that?" names nothing to match against, and its answer
+  // is an explanation that often sounds like filler ("Buyers want to see
+  // who runs the day-to-day.") — the first real sentence is the answer.
+  let answerExpected =
+    asked.size === 0 || /\b(why|how come|what for|what does (?:that|it|this) matter|does (?:that|it|this) matter|what'?s the point)\b/i.test(questionText);
+  // Walk the leading sentences by position and cut only the filler ones out
+  // of the text, so everything kept — paragraph breaks included — is exactly
+  // as the agent wrote it.
+  // "Do you have my price down?" — then "Noted — $2.3M is on file." IS the
+  // answer, so the first sentence keeps the plain clarification rule.
+  const askedAboutRecord = /\b(have|got|get|on file|down|recorded?|noted?|correct(?:ly)?|right|confirm\w*|captur\w*)\b/i.test(questionText);
+  const cuts: Array<[number, number]> = [];
+  let pos = 0;
+  let first = true;
+  let keptCount = 0;
+  for (let i = 0; i < 3 && keptCount < 2; i++) {
+    const current = text.slice(pos);
+    const parts = leadingSentence(current);
+    if (!parts) break;
+    const { head, rest } = parts;
+    if (!rest.includes("?")) break;               // nothing to ask after it
+    if (head.includes("?")) break;                // a question — the reply's own
+    if (!/^[A-Z"'(]/.test(rest.trim())) break;    // would leave a mid-sentence fragment
+    const h = head.trim();
+    const praiseOfQuestion = QUESTION_PRAISE_SENTENCE_RE.test(h);
+    const filler =
+      praiseOfQuestion ||
+      (!answerExpected &&
+        FILLER_OPENER_RE.test(h) &&
+        !(first && askedAboutRecord ? KEEP_OPENER_RE.test(h) : keepsOpener(h)) &&
+        !ANSWER_START_RE.test(h.replace(/^["'(]+/, "")) &&
+        !Array.from(contentStems(h)).some((w) => asked.has(w)));
+    if (!praiseOfQuestion) {
+      answerExpected = false;                      // only the first real sentence is the presumed answer
+      first = false;
+    }
+    const next = pos + (current.length - rest.length);
+    if (filler) cuts.push([pos, next]);
+    else keptCount++;                              // the answer (or a clarification) stays
+    pos = next;
+  }
+  if (cuts.length === 0 && text === original) return message;
+  let out = "";
+  let from = 0;
+  for (const [a, b] of cuts) {
+    out += text.slice(from, a);
+    from = b;
+  }
+  out = (out + text.slice(from)).trim();
+  return out.charAt(0).toUpperCase() + out.slice(1);
 }

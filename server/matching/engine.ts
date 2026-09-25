@@ -14,6 +14,7 @@
  *
  * The final score is a weighted blend: 60% deterministic + 40% AI qualitative.
  */
+import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -304,6 +305,30 @@ function buildCatScore(details: Record<string, { score: number; max: number; not
   return { score: total, max, details };
 }
 
+/**
+ * Everything that says what the business does, for industry matching — the
+ * broad industry label alone ("Healthcare") can't tell a dental buyer this is
+ * a dental practice. Stable sources only: the deal's labels and the broker's
+ * description, then the business facts that describe it (overview, history,
+ * products and services, revenue streams). Per-source summaries are no longer
+ * deal facts (they stay on each source), so a legacy deal-level `summary` is
+ * only a last resort.
+ */
+export function dealBusinessText(
+  deal: { industry?: string | null; subIndustry?: string | null; description?: string | null },
+  info: Record<string, any>,
+): string {
+  const asText = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" && "value" in (v as any) ? String((v as any).value ?? "") : "");
+  return [
+    deal.industry || "", deal.subIndustry, asText(info.industry), asText(info.subIndustry), asText(info.businessType),
+    asText(info.companyName), asText(deal.description).slice(0, 400),
+    asText(info.businessDescription).slice(0, 400), asText(info.companyOverview).slice(0, 300),
+    asText(info.companyHistory).slice(0, 300), asText(info.keyProducts).slice(0, 200),
+    asText(info.servicesOffered ?? info.services).slice(0, 200), asText(info.revenueStreams).slice(0, 200),
+    asText(info.summary).slice(0, 400),
+  ].filter(Boolean).join(" · ");
+}
+
 // ── Main matching function ──────────────────────────────────────────────────
 export async function matchBuyerToDeal(
   criteria: BuyerCriteria,
@@ -311,6 +336,8 @@ export async function matchBuyerToDeal(
     industry: string;
     subIndustry?: string | null;
     askingPrice?: string | null;
+    /** The broker's description of the business (deal creation). */
+    description?: string | null;
     extractedInfo: Record<string, any>;
     financialAnalysis?: any;
   },
@@ -343,8 +370,9 @@ export async function matchBuyerToDeal(
     financialDetails.sde = { score: r.score, max: 100, note: `$${(dealSde / 1e3).toFixed(0)}K — ${r.note}` };
   }
 
-  // Asking price
-  const dealPrice = parseCurrency(deal.askingPrice) || parseCurrency(info.askingPrice);
+  // Asking price — the broker's listed price (a broker correction on the
+  // Information tab wins over a stale deal column), else the price on file.
+  const dealPrice = parseCurrency(effectiveAskingPrice({ askingPrice: deal.askingPrice ?? null, extractedInfo: info }));
   if (dealPrice && (criteria.askingPriceMin || criteria.askingPriceMax)) {
     const r = rangeScore(dealPrice, parseCurrency(criteria.askingPriceMin), parseCurrency(criteria.askingPriceMax));
     financialDetails.askingPrice = { score: r.score, max: 100, note: `$${(dealPrice / 1e6).toFixed(2)}M — ${r.note}` };
@@ -409,14 +437,7 @@ export async function matchBuyerToDeal(
   // ── INDUSTRY FIT ───────────────────────────────────────────────────────────
   const industryDetails: Record<string, { score: number; max: number; note: string }> = {};
   const dealIndustry = deal.industry || "";
-  // Everything that says what the business does — the broad industry label
-  // alone ("Healthcare") can't tell a dental buyer this is a dental practice.
-  const asText = (v: unknown) => (typeof v === "string" ? v : v && typeof v === "object" && "value" in (v as any) ? String((v as any).value ?? "") : "");
-  const dealIndustryText = [
-    dealIndustry, deal.subIndustry, asText(info.industry), asText(info.subIndustry), asText(info.businessType),
-    asText(info.companyName), asText(info.businessDescription).slice(0, 400), asText(info.summary).slice(0, 400),
-    asText(info.revenueStreams).slice(0, 200),
-  ].filter(Boolean).join(" · ");
+  const dealIndustryText = dealBusinessText(deal, info);
 
   if (criteria.targetIndustries && criteria.targetIndustries.length > 0) {
     const match = industryMatches(dealIndustryText, criteria.targetIndustries);

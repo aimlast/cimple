@@ -70,6 +70,153 @@ export interface SellerCommunicationProfile {
 
   /** Broker corrections applied on top of the AI-generated profile */
   brokerOverrides?: Record<string, any>;
+
+  /**
+   * PROFILE_PRIVACY_VERSION of the rules the profile was built under — see
+   * sellerProfileNeedsRebuild. Older profiles may carry the broker's private
+   * material (a negotiation floor, family names from a CRM note, the
+   * broker's listed price).
+   */
+  privacyVersion?: number;
+
+  /** The documents rows whose text (or name) the profile was built from. */
+  sourceDocumentIds?: string[];
+}
+
+/**
+ * Profiles built under the current privacy rules carry this version:
+ * v2 — no broker-only source text; v3 — also no broker's listed price, and
+ * the rows read are recorded (sourceDocumentIds) so a row the broker later
+ * makes private invalidates the profile.
+ */
+export const PROFILE_PRIVACY_VERSION = 3;
+
+/**
+ * True when a stored profile's free text (seller story, sensitive topics,
+ * personal insights, industry context) may carry material the seller must
+ * never hear, so it must stay out of the interview prompt until rebuilt:
+ * - it was built under older rules — whatever the deal holds TODAY (the
+ *   broker-only source it quoted may since have been deleted), or
+ * - a row it was built from has since been made broker-only.
+ */
+export function sellerProfileNeedsRebuild(
+  profile: Partial<SellerCommunicationProfile> | null | undefined,
+  documents: Array<{ id?: string; visibility?: string | null }>,
+): boolean {
+  if (!profile) return false;
+  if ((profile.privacyVersion ?? 0) < PROFILE_PRIVACY_VERSION) return true;
+  const read = new Set(Array.isArray(profile.sourceDocumentIds) ? profile.sourceDocumentIds : []);
+  return documents.some((d) => !!d.id && read.has(d.id) && d.visibility === "broker_only");
+}
+
+const BROKER_EDITABLE_PROFILE_FIELDS = [
+  "communicationStyle", "emotionalState", "sellingReason", "sophistication",
+  "businessAttachment", "timeOrientation", "familyInvolvement",
+] as const;
+
+/**
+ * A rebuilt profile keeps what the broker set by hand on the old one: their
+ * notes (brokerOverrides) and the style fields they corrected.
+ */
+export function carryBrokerProfileEdits(
+  profile: SellerCommunicationProfile,
+  prior: Record<string, unknown> | null,
+): SellerCommunicationProfile {
+  const overrides = prior?.brokerOverrides;
+  if (!overrides || typeof overrides !== "object") return profile;
+  const out: SellerCommunicationProfile = { ...profile, brokerOverrides: overrides as Record<string, any> };
+  for (const field of BROKER_EDITABLE_PROFILE_FIELDS) {
+    const o = (overrides as Record<string, any>)[field];
+    const value = o && typeof o === "object" && "brokerValue" in o ? o.brokerValue : o;
+    if (typeof value === "string" && value) (out as any)[field] = value;
+  }
+  return out;
+}
+
+/** The profile's category fields (the ones a prompt renders as labels). */
+export const PROFILE_CATEGORY_FIELDS = BROKER_EDITABLE_PROFILE_FIELDS;
+export type ProfileCategoryField = (typeof PROFILE_CATEGORY_FIELDS)[number];
+
+/**
+ * A profile as the interview may read it. `pendingRebuild` marks a stale
+ * profile reduced to what the broker set by hand: its category fields are
+ * optional because a stale profile's own values may have been inferred from
+ * the broker's private notes.
+ */
+export type InterviewSellerProfile = Omit<SellerCommunicationProfile, ProfileCategoryField> &
+  Partial<Pick<SellerCommunicationProfile, ProfileCategoryField>> & { pendingRebuild?: boolean };
+
+/** The category values the broker set by hand on this profile (brokerOverrides). */
+function brokerSetCategories(profile: SellerCommunicationProfile): Partial<Pick<SellerCommunicationProfile, ProfileCategoryField>> {
+  const overrides = profile.brokerOverrides;
+  const out: Record<string, string> = {};
+  if (!overrides || typeof overrides !== "object") return out;
+  for (const field of PROFILE_CATEGORY_FIELDS) {
+    const o = (overrides as Record<string, any>)[field];
+    const value = o && typeof o === "object" && "brokerValue" in o ? o.brokerValue : o;
+    if (typeof value === "string" && value) out[field] = value;
+  }
+  return out;
+}
+
+/**
+ * The profile as the interview agent may see it.
+ *
+ * A profile that needs a rebuild (built under older privacy rules, or from a
+ * row the broker has since made private) may have taken ANY of its content
+ * from the broker's private notes — not only the free text (a seller story
+ * quoting a CRM note) but the categories too: "Selling reason: health" from
+ * a note about a heart episode, "Family involvement: spouse involved" from a
+ * note about the wife doing the books. Until the background rebuild lands,
+ * such a profile keeps only what the broker set by hand on it (their style
+ * corrections are their own instructions for the interview) — every
+ * AI-derived category, the free text and the list of sources it read are
+ * dropped, deterministically, whatever the deal holds today.
+ *
+ * Any other profile loses pricing and negotiation text (including anything
+ * the broker typed into it).
+ */
+export function profileSafeForInterview(
+  profile: SellerCommunicationProfile | null,
+  documents: Array<{ id?: string; visibility?: string | null }>,
+): InterviewSellerProfile | null {
+  if (!profile) return null;
+  if (!sellerProfileNeedsRebuild(profile, documents)) return stripNegotiationText(profile);
+  const base: Record<string, unknown> = { ...profile };
+  for (const field of PROFILE_CATEGORY_FIELDS) delete base[field];
+  return {
+    ...(base as Omit<SellerCommunicationProfile, ProfileCategoryField>),
+    ...brokerSetCategories(profile),
+    sensitiveTopics: [],
+    personalInsights: [],
+    sellerStory: "",
+    industryContext: "",
+    dataSources: [],
+    pendingRebuild: true,
+  };
+}
+
+// A profile is about HOW to talk with the seller. Pricing and negotiation
+// never belong in it: a sentence or item that talks about a price, an offer
+// or a bottom line next to a dollar figure is dropped, whatever the model
+// wrote (the inputs no longer carry the broker's price or private notes —
+// this is the backstop).
+const NEGOTIATION_RE = /\b(price|pricing|floor|offer|offers|negotiat\w*|walk[- ]away|bottom[- ]line|lowest|minimum|accept|take less|settle|valuation|worth)\b/i;
+const MONEY_RE = /\$\s?\d|\b\d[\d,.]*\s?(k|m|mm|million|thousand)\b/i;
+const isNegotiationText = (t: string) => NEGOTIATION_RE.test(t) && MONEY_RE.test(t);
+
+/** Drops pricing/negotiation sentences and items from a profile's free text. */
+export function stripNegotiationText(profile: SellerCommunicationProfile): SellerCommunicationProfile {
+  // Sentences end at . ! ? followed by a space ("$1.8M" is one token).
+  const sentences = (text: string) =>
+    text.split(/(?<=[.!?])\s+/).filter((s) => s.trim() && !isNegotiationText(s)).join(" ").trim();
+  return {
+    ...profile,
+    sellerStory: sentences(profile.sellerStory || ""),
+    industryContext: sentences(profile.industryContext || ""),
+    sensitiveTopics: (profile.sensitiveTopics || []).filter((t) => !isNegotiationText(String(t))),
+    personalInsights: (profile.personalInsights || []).filter((t) => !isNegotiationText(String(t))),
+  };
 }
 
 // =====================
@@ -210,6 +357,8 @@ async function gatherDataSources(dealId: string): Promise<{
   data: GatheredData;
   sources: string[];
   confidenceScore: number;
+  /** Rows whose text or name went into the analysis prompt. */
+  documentIds: string[];
 }> {
   const deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
@@ -225,8 +374,33 @@ async function gatherDataSources(dealId: string): Promise<{
   if (deal.description && deal.description.trim().length > 0) {
     notesParts.push(`Deal Description:\n${deal.description}`);
   }
-  if (deal.askingPrice) {
-    notesParts.push(`Asking Price: ${deal.askingPrice}`);
+  // Not the broker's listed asking price: it is the broker's pricing
+  // decision, which the interview never shows the seller (see
+  // interviewFactView) — and the profile goes into the interview's prompt.
+  const documentIds = new Set<string>();
+
+  // Broker-only sources (CRM notes and activities, private emails) are the
+  // broker's own notes — negotiation positions, private judgements, family
+  // details the seller never shared with us. The profile goes into the
+  // interview agent's prompt, and broker-only content must never reach the
+  // seller through it, so NONE of it is read here. A CRM note the broker
+  // explicitly shared is fine.
+  let dealDocs: Awaited<ReturnType<typeof storage.getDocumentsByDeal>> = [];
+  try {
+    dealDocs = (await storage.getDocumentsByDeal(dealId)).filter((d) => d.visibility !== "broker_only");
+  } catch {
+    dealDocs = [];
+  }
+  const crmText = dealDocs
+    .filter((d) => d.sourceKind === "crm" && d.extractedText && d.extractedText.trim())
+    .map((d) => (documentIds.add(d.id), `--- ${d.name} ---\n${d.extractedText!.trim()}`))
+    .join("\n\n")
+    .slice(0, 12_000);
+  if (crmText) {
+    notesParts.push(
+      `CRM notes the broker shared about the seller and the business (personal matters here — health, family, money — ` +
+        `belong under sensitive topics: never something the interviewer raises):\n${crmText}`,
+    );
   }
 
   if (notesParts.length > 0) {
@@ -235,11 +409,22 @@ async function gatherDataSources(dealId: string): Promise<{
     availableSourceCount++;
   }
 
-  // 2. Email communications from integrationEmails
+  // 2. Email communications — the text of email sources on the deal (pasted,
+  // uploaded or imported from the CRM), else the addresses from integrationEmails
   let emailContent: string | null = null;
+  const emailText = dealDocs
+    .filter((d) => d.sourceKind === "email" && d.extractedText && d.extractedText.trim())
+    .map((d) => (documentIds.add(d.id), `--- ${d.name} ---\n${d.extractedText!.trim()}`))
+    .join("\n\n")
+    .slice(0, 12_000);
+  if (emailText) {
+    emailContent = `Emails on file:\n${emailText}`;
+    sources.push("emails");
+    availableSourceCount++;
+  }
   try {
     const emails = await storage.getIntegrationEmailsByDeal(dealId);
-    if (emails.length > 0) {
+    if (emails.length > 0 && !emailContent) {
       const emailSummary = emails
         .map((e) => `[${e.label || "Unknown"}] ${e.emailAddress}`)
         .join("\n");
@@ -254,13 +439,13 @@ async function gatherDataSources(dealId: string): Promise<{
   // 3. Documents — look for transcripts specifically
   let transcriptContent: string | null = null;
   try {
-    const docs = await storage.getDocumentsByDeal(dealId);
+    const docs = dealDocs; // shared sources only (see above)
     const transcripts = docs.filter((d) => d.category === "transcripts");
 
     if (transcripts.length > 0) {
       const transcriptTexts = transcripts
         .filter((t) => t.extractedText && t.extractedText.trim().length > 0)
-        .map((t) => `--- Transcript: ${t.name} ---\n${t.extractedText}`)
+        .map((t) => (documentIds.add(t.id), `--- Transcript: ${t.name} ---\n${t.extractedText}`))
         .join("\n\n");
 
       if (transcriptTexts.length > 0) {
@@ -277,7 +462,7 @@ async function gatherDataSources(dealId: string): Promise<{
     if (docsWithData.length > 0 && !emailContent) {
       // Supplement email content with document-extracted data if no direct emails
       const docSummary = docsWithData
-        .map((d) => `[${d.category}] ${d.name}: processed`)
+        .map((d) => (documentIds.add(d.id), `[${d.category}] ${d.name}: processed`))
         .join("\n");
       if (!emailContent) {
         emailContent = `Processed documents on file:\n${docSummary}`;
@@ -340,6 +525,7 @@ async function gatherDataSources(dealId: string): Promise<{
     },
     sources,
     confidenceScore,
+    documentIds: Array.from(documentIds),
   };
 }
 
@@ -363,6 +549,7 @@ IMPORTANT GUIDELINES:
 - For personalInsights, only include insights grounded in the data.
 - The sellerStory should be a coherent narrative that synthesizes what you know — it is okay for it to be brief if data is limited.
 - If you cannot determine a field with any confidence, choose the most neutral/common option.
+- This profile tells the interviewer HOW to talk with the seller. Never put prices, offers, valuations or negotiation positions in it, and nothing the seller would be surprised to hear the interviewer knows.
 
 Here is all available data about this seller:`);
 
@@ -450,6 +637,8 @@ function buildDefaultProfile(
     confidenceScore: 0.1,
     dataSources: [],
     generatedAt: new Date().toISOString(),
+    privacyVersion: PROFILE_PRIVACY_VERSION,
+    sourceDocumentIds: [],
   };
 }
 
@@ -469,7 +658,7 @@ export async function generateSellerProfile(
   dealId: string,
 ): Promise<SellerCommunicationProfile> {
   // Gather all available data
-  const { data, sources, confidenceScore } = await gatherDataSources(dealId);
+  const { data, sources, confidenceScore, documentIds } = await gatherDataSources(dealId);
 
   // If we have absolutely no data beyond business name/industry, return defaults
   if (sources.length === 0) {
@@ -566,14 +755,17 @@ export async function generateSellerProfile(
       confidenceScore,
       dataSources: sources,
       generatedAt: new Date().toISOString(),
+      privacyVersion: PROFILE_PRIVACY_VERSION,
+      sourceDocumentIds: documentIds,
     };
 
-    return profile;
+    return stripNegotiationText(profile);
   } catch (err) {
     console.error(`[eq-profiler] Failed to generate profile for deal ${dealId}:`, err);
     // Return a default profile rather than crashing the interview startup
     const fallback = buildDefaultProfile(data.businessName, data.industry, data.subIndustry);
     fallback.dataSources = sources;
+    fallback.sourceDocumentIds = documentIds;
     fallback.confidenceScore = Math.max(confidenceScore * 0.5, 0.1);
     return fallback;
   }

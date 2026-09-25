@@ -1,97 +1,70 @@
 /**
- * CIMDesigner — Broker-facing CIM editor
+ * CIMDesigner — the CIM builder (routes /deal/:dealId/design and
+ * /broker/cim/:dealId/design).
  *
- * Three-panel layout:
- *   Left: section list with visibility toggles + move up/down reordering
- *   Center: live CIM preview rendered via CimSectionRenderer
- *   Right: per-section inspector (AI reasoning, layout override, content edit, approve/hide)
+ *   Left:   the outline — drag to reorder, "+" between sections, a menu per
+ *           section (rename, duplicate, move, hide, access tier, delete).
+ *   Centre: the paper CIM exactly as buyers see it (same wrappers as the
+ *           view room); "Preview as" switches to a teaser / full / LOI / DD
+ *           buyer's view, computed with the server's own rules.
+ *   Right:  the inspector — title, layout, content, AI writer, who can see
+ *           it, approve / regenerate / undo / delete.
+ *   Design: a drawer for the deal's template and the business's branding
+ *           (cim-design/DesignPanel), plus the print preview.
  *
- * Blind / DD preview modes are read-only: overrides are generated from the
- * Normal version, and there is no endpoint to edit an override directly. The
- * inspector never writes redacted/enriched text back into the base section.
+ * Below 1024px the three panes become tabs (Sections · Page · Edit).
+ * Pieces live in client/src/components/cim-builder/.
  */
-import { useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { blindTitleRedactor } from "@shared/blind-identifiers";
-import { useParams } from "wouter";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { useLocation, useParams } from "wouter";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  AlertTriangle, ArrowLeft, Eye, Images, Loader2, Lock, Palette, Pencil, Plus, Printer, RefreshCw, Sparkles, Unlock, Wand2,
+} from "lucide-react";
+import { Sheet, SheetContent, SheetDescription, SheetHeader, SheetTitle } from "@/components/ui/sheet";
+import { CimMediaProvider } from "@/components/cim/CimMediaContext";
+import { useMediaLibrary } from "@/components/cim-builder/media/api";
+import { MediaLibrary } from "@/components/cim-builder/media/MediaLibrary";
 import { Button } from "@/components/ui/button";
-import { Textarea } from "@/components/ui/textarea";
-import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { Textarea } from "@/components/ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Separator } from "@/components/ui/separator";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent,
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
-import {
-  ArrowLeft, Wand2, Eye, EyeOff, CheckCircle2,
-  Loader2, RefreshCw, ChevronUp, ChevronDown, LayoutTemplate,
-  Lightbulb, Pencil, Lock, Unlock, AlertTriangle, Info,
-} from "lucide-react";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { apiRequest } from "@/lib/queryClient";
 import { useToast } from "@/hooks/use-toast";
 import { useCimGeneration, cimGenerationKey } from "@/hooks/useCimGeneration";
+import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
+import type { CimGenerationGate } from "@shared/deal-progress";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
-import type { Deal, CimSection, CimSectionOverride, BrandingSettings } from "@shared/schema";
-import { CimSectionRenderer } from "@/components/cim/CimSectionRenderer";
-import { SectionBoundary } from "@/components/cim/SectionBoundary";
-import { StructuredDataEditor } from "@/components/cim/StructuredDataEditor";
-import { getEditableText, isStructuredLayout, isTextEditableLayout } from "@/components/cim/editableText";
-import { stripMarkup } from "@/components/cim/richText";
 import { buildBranding } from "@/components/cim/CimBrandingContext";
-import { useLocation } from "wouter";
+import type { BrandingSettings, CimSectionOverride, Deal } from "@shared/schema";
+import { cn } from "@/lib/utils";
+import { useCimBuilder } from "@/components/cim-builder/useCimBuilder";
+import { useAiGate } from "@/components/cim-builder/useAiGate";
+import { SectionList } from "@/components/cim-builder/SectionList";
+import { SectionInspector } from "@/components/cim-builder/SectionInspector";
+import { CimCanvas, type PreviewAs } from "@/components/cim-builder/CimCanvas";
+import { AddSectionDialog } from "@/components/cim-builder/AddSectionDialog";
+import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog";
+import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
+import { useDealDesign } from "@/components/cim-design/api";
+import { DesignPanel } from "@/components/cim-design/DesignPanel";
+import { cimModeForAccessLevel } from "@shared/cim-layouts";
 
-// All layout types the AI can produce
-const LAYOUT_TYPES = [
-  "cover_page", "metric_grid", "bar_chart", "horizontal_bar_chart",
-  "pie_chart", "donut_chart", "line_chart", "timeline",
-  "financial_table", "comparison_table", "callout_list", "icon_stat_row",
-  "prose_highlight", "two_column", "org_chart", "location_card",
-  "stat_callout", "numbered_list", "scorecard", "waterfall_chart", "divider",
-] as const;
+const PREVIEWS: Array<{ key: PreviewAs; label: string; hint: string }> = [
+  { key: "editor", label: "Editing", hint: "Everything, with your edit controls" },
+  { key: "teaser", label: "Teaser buyer", hint: "Blind CIM; “Full access” sections locked" },
+  { key: "full", label: "Full-access buyer", hint: "Blind CIM, every section" },
+  { key: "loi", label: "LOI buyer", hint: "The named CIM" },
+  { key: "due_diligence", label: "Due-diligence buyer", hint: "Named CIM + DD details" },
+];
 
-type PreviewMode = "normal" | "blind" | "dd";
+type Pane = "sections" | "page" | "edit";
 
-/**
- * apiRequest throws `Error("<status>: <body>")` where body is usually the
- * server's JSON `{ error }`. Pull the human message out so toasts show what
- * the server actually said instead of a raw status line.
- */
-function apiErrorMessage(err: unknown, fallback: string): string {
-  if (!(err instanceof Error) || !err.message) return fallback;
-  const raw = err.message.replace(/^\d{3}:\s*/, "").trim();
-  if (!raw || raw.startsWith("<")) return fallback;
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object") {
-      const msg = parsed.error || parsed.message;
-      if (typeof msg === "string" && msg) return msg;
-    }
-  } catch {
-    // not JSON — fall through and show the raw text
-  }
-  return raw;
-}
-
-function isNotFound(err: unknown): boolean {
-  return err instanceof Error && /^404:/.test(err.message);
-}
-
-/** Session gone (logged out elsewhere, expired). Retrying can never fix this. */
-function isUnauthorized(err: unknown): boolean {
-  return err instanceof Error && /^401:/.test(err.message);
-}
-
-/**
- * Hand control back to BrokerAuthGate: invalidating the cached /me probe
- * makes the gate re-check the session and render the sign-in form in place,
- * so the broker lands straight back on this deal after signing in.
- */
-function requestSignIn(qc: ReturnType<typeof useQueryClient>) {
-  qc.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
+function isUnauthorized(err: unknown) {
+  return err instanceof Error && /^401:|session has ended/i.test(err.message);
 }
 
 export default function CIMDesigner() {
@@ -101,1049 +74,691 @@ export default function CIMDesigner() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [selectedSectionId, setSelectedSectionId] = useState<string | null>(null);
-  const [editedContent, setEditedContent] = useState<string>("");
-  const [contentDirty, setContentDirty] = useState(false);
-  // Structured layouts are edited through their layoutData (see editableText.ts).
-  const [dataDraft, setDataDraft] = useState<Record<string, any>>({});
-  const [dataDirty, setDataDirty] = useState(false);
-  const [previewMode, setPreviewMode] = useState<PreviewMode>("normal");
-  const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?preview=teaser|full|loi|due_diligence opens straight into a buyer preview
+  // (the CIM tab's version cards link here).
+  const [previewAs, setPreviewAs] = useState<PreviewAs>(() => {
+    const p = new URLSearchParams(window.location.search).get("preview");
+    return PREVIEWS.some((x) => x.key === p) ? (p as PreviewAs) : "editor";
+  });
+  const [pane, setPane] = useState<Pane>(() => (new URLSearchParams(window.location.search).get("design") === "1" ? "edit" : "page"));
+  const [addAt, setAddAt] = useState<{ open: boolean; afterId?: string | null }>({ open: false });
+  const [layoutOpen, setLayoutOpen] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<BuilderSection | null>(null);
+  const [regenTarget, setRegenTarget] = useState<BuilderSection | null>(null);
+  const [regenBrief, setRegenBrief] = useState("");
+  const [regenAllOpen, setRegenAllOpen] = useState(false);
+  const [mediaOpen, setMediaOpen] = useState(false);
+  const [designOpen, setDesignOpen] = useState(() => new URLSearchParams(window.location.search).get("design") === "1");
+  // Unsaved photo/video/map edits, previewed live on the page.
+  const [draft, setDraft] = useState<{ id: string; layoutData: Record<string, any> } | null>(null);
+  const onDraftChange = useCallback((id: string, layoutData: Record<string, any> | null) => {
+    setDraft((cur) => (layoutData ? { id, layoutData } : cur?.id === id ? null : cur));
+  }, []);
 
-  // ── Data queries ──────────────────────────────────────────────────────────
-  const {
-    data: deal, isLoading: dealLoading, isError: dealIsError, error: dealError, refetch: refetchDeal,
-  } = useQuery<Deal>({
+  // ── Data ──────────────────────────────────────────────────────────────
+  const dealQuery = useQuery<Deal>({
     queryKey: ["/api/deals", dealId],
-    queryFn: () => apiRequest("GET", `/api/deals/${dealId}`).then(r => r.json()),
+    queryFn: () => builderRequest<Deal>("GET", `/api/deals/${dealId}`),
     enabled: !!dealId,
   });
-
-  const {
-    data: sections = [], isLoading: sectionsLoading, isError: sectionsIsError, error: sectionsError, refetch: refetchSections,
-  } = useQuery<CimSection[]>({
-    queryKey: ["/api/deals", dealId, "cim-sections"],
-    queryFn: () => apiRequest("GET", `/api/deals/${dealId}/cim-sections`).then(r => r.json()),
-    enabled: !!dealId,
-  });
-
-  const { data: branding } = useQuery<BrandingSettings>({
+  const deal = dealQuery.data;
+  const { data: brandingSettings } = useQuery<BrandingSettings | null>({
     queryKey: ["/api/branding"],
-    queryFn: () => apiRequest("GET", "/api/branding").then(r => r.json()),
+    queryFn: async () => {
+      const r = await fetch("/api/branding", { credentials: "include" });
+      if (!r.ok) return null;
+      const body = await r.json();
+      return Array.isArray(body) ? body[0] || null : body;
+    },
   });
-
-  // ── CIM version overrides ──────────────────────────────────────────────────
-  const {
-    data: overrides = [], isLoading: overridesLoading, isError: overridesIsError, error: overridesError, refetch: refetchOverrides,
-  } = useQuery<CimSectionOverride[]>({
-    queryKey: ["/api/deals", dealId, "cim-overrides", previewMode],
-    queryFn: () => apiRequest("GET", `/api/deals/${dealId}/cim-overrides/${previewMode}`).then(r => r.json()),
-    enabled: !!dealId && previewMode !== "normal",
-  });
-
-  // A 401 on any designer query means the session is gone. Don't offer a
-  // Retry that loops — hand off to the auth gate, which shows sign-in here.
-  const sessionLost = isUnauthorized(dealError) || isUnauthorized(sectionsError) || isUnauthorized(overridesError);
-  useEffect(() => {
-    if (sessionLost) requestSignIn(qc);
-  }, [sessionLost, qc]);
-
-  // ── Derived ───────────────────────────────────────────────────────────────
-  const selectedSection = sections.find(s => s.id === selectedSectionId) ?? null;
-  const brandingCtx = buildBranding(branding, deal ?? null);
-  const approvedCount = sections.filter(s => s.brokerApproved).length;
-  const visibleCount = sections.filter(s => s.isVisible).length;
-
-  // Overrides that actually point at a current section. Stale overrides (left
-  // behind by an older layout) must not count as "this version exists".
-  const matchedOverrides = useMemo(() => {
-    if (previewMode === "normal") return new Map<string, CimSectionOverride>();
-    const ids = new Set(sections.map(s => String(s.id)));
-    const map = new Map<string, CimSectionOverride>();
-    for (const o of overrides) {
-      if (ids.has(String(o.cimSectionId))) map.set(String(o.cimSectionId), o);
-    }
-    return map;
-  }, [overrides, sections, previewMode]);
-
-  // A blind/dd version "exists" only when at least one override matches a
-  // current section. Otherwise the preview is showing unredacted base content.
-  const versionExists = previewMode === "normal" || matchedOverrides.size > 0;
-
-  // Title redaction mirrors the server's view-room logic (routes: /api/view/:token).
-  // Overrides only hold layoutData + content, so titles are redacted here with
-  // the same codename the content was redacted to.
-  const redactTitle = useMemo(() => {
-    if (previewMode !== "blind" || !versionExists || !deal) return (t: string) => t;
-    return blindTitleRedactor(deal as any, deal.blindCodename || null);
-  }, [deal, previewMode, versionExists]);
-
-  // Apply overrides for preview mode
-  const previewSections: CimSection[] = previewMode === "normal" || !versionExists
-    ? sections
-    : sections.map(s => {
-        const sectionTitle = redactTitle(s.sectionTitle || "");
-        const override = matchedOverrides.get(String(s.id));
-        if (!override) return { ...s, sectionTitle };
-        return {
-          ...s,
-          sectionTitle,
-          layoutData: override.layoutData || s.layoutData,
-          // Blind preview must mirror the view route: never fall back to un-redacted base text
-          aiDraftContent: override.contentOverride || (previewMode === "blind" ? null : s.aiDraftContent),
-          brokerEditedContent: override.contentOverride || (previewMode === "blind" ? null : s.brokerEditedContent),
-        };
-      });
-
-  const selectedPreviewSection = previewSections.find(s => s.id === selectedSectionId) ?? null;
-  const isReadOnlyMode = previewMode !== "normal";
-
-  // ── Mutations ─────────────────────────────────────────────────────────────
-  // Generation runs as a background job on the server; this page follows
-  // it via useCimGeneration and resets its editor state when it finishes.
-  // The completion toast comes from the app-wide CimGenerationWatcher.
+  const builder = useCimBuilder(dealId);
+  const state = builder.query.data;
+  const sections = state?.sections ?? [];
+  const gate = useAiGate(dealId);
+  // Writing the WHOLE CIM also needs enough information — the same rule as
+  // the Overview, the CIM tab, the deal list and the server
+  // (shared/deal-progress cimGenerationGate). Per-section AI isn't gated by it.
+  const infoGate = useCimGenerationGate(dealId, deal?.interviewCompleted);
+  const wholeCimReason = gate.blockedReason ?? (infoGate.allowed ? null : infoGate.reason);
+  const media = useMediaLibrary(dealId);
+  const dealDesign = useDealDesign(dealId);
+  const designPayload = dealDesign.data
+    ? { template: dealDesign.data.template, brokerage: dealDesign.data.brokerage, business: dealDesign.data.business }
+    : null;
   const generation = useCimGeneration(dealId);
-  const generateLayout = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-layout`).then(r => r.json()),
+
+  const overrideMode = previewAs === "teaser" || previewAs === "full" ? "blind" : previewAs === "due_diligence" ? "dd" : null;
+  const { data: overrides = [], isLoading: overridesLoading } = useQuery<CimSectionOverride[]>({
+    queryKey: ["/api/deals", dealId, "cim-overrides", overrideMode ?? "none", state?.blind.updating ?? 0, state?.blind.held ?? 0, sections.length],
+    queryFn: () => builderRequest<CimSectionOverride[]>("GET", `/api/deals/${dealId}/cim-overrides/${overrideMode}`),
+    enabled: !!dealId && !!overrideMode,
+  });
+
+  const branding = buildBranding(brandingSettings as any, deal ?? null);
+  const selected = sections.find((s) => s.id === selectedId) ?? null;
+  const approvedCount = sections.filter((s) => s.brokerApproved).length;
+  const hiddenCount = sections.filter((s) => s.isVisible === false).length;
+  const lockedCount = sections.filter((s) => s.accessTier === "full").length;
+  const readOnly = previewAs !== "editor";
+
+  // Keep the selection valid (deleted section, fresh CIM) — but not while a
+  // refetch is in flight: a just-added section isn't in the old list yet.
+  const fetching = builder.query.isFetching;
+  useEffect(() => {
+    if (fetching) return;
+    if (selectedId && state && !sections.some((s) => s.id === selectedId)) setSelectedId(null);
+  }, [sections, selectedId, state, fetching]);
+
+  const select = (id: string, from: "list" | "page") => {
+    setSelectedId(id);
+    setDesignOpen(false);
+    if (from === "list") {
+      // Bring the section into view on the page.
+      requestAnimationFrame(() => document.getElementById(`section-${id}`)?.scrollIntoView({ behavior: "smooth", block: "start" }));
+    }
+    if (!readOnly) setPane("edit");
+  };
+
+  // ── Whole-CIM actions ────────────────────────────────────────────────
+  const generateAll = useMutation({
+    mutationFn: () =>
+      builderRequest("POST", `/api/deals/${dealId}/${sections.length > 0 ? "generate-layout" : "generate-content"}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: cimGenerationKey(dealId) });
-      toast({
-        title: "Generating layout",
-        description: "This runs in the background — you can keep working or leave this page.",
-      });
+      toast({ title: "Generating the CIM", description: "This runs in the background — you can keep working or leave this page." });
     },
-    onError: (e: unknown) => toast({
-      title: "Layout generation failed",
-      description: apiErrorMessage(e, "The layout engine returned an error. Please try again."),
-      variant: "destructive",
-    }),
+    onError: (e) => toast({ title: "Couldn't start generating", description: errorText(e), variant: "destructive" }),
   });
-
-  const generateBlind = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-blind`).then(r => r.json()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides", "blind"] });
-      // blindCodename lives on the deal — refetch so title redaction picks it up
+  const generateVersion = useMutation({
+    mutationFn: (mode: "blind" | "dd") => builderRequest("POST", `/api/deals/${dealId}/generate-${mode}`),
+    onSuccess: (_r, mode) => {
+      builder.refresh();
       qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      toast({ title: "Blind CIM generated", description: "Identifying information has been redacted." });
-      setPreviewMode("blind");
+      toast({ title: mode === "blind" ? "Blind version ready" : "Due-diligence version ready" });
     },
-    onError: (e: unknown) => toast({
-      title: "Failed to generate blind CIM",
-      description: apiErrorMessage(e, "Redaction failed. Please try again."),
-      variant: "destructive",
-    }),
+    onError: (e) => toast({ title: "Couldn't generate that version", description: errorText(e), variant: "destructive" }),
   });
 
-  const generateDd = useMutation({
-    mutationFn: () => apiRequest("POST", `/api/deals/${dealId}/generate-dd`).then(r => r.json()),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides", "dd"] });
-      toast({ title: "DD CIM generated", description: "Due diligence details added." });
-      setPreviewMode("dd");
-    },
-    onError: (e: unknown) => toast({
-      title: "Failed to generate DD CIM",
-      description: apiErrorMessage(e, "Enrichment failed. Please try again."),
-      variant: "destructive",
-    }),
-  });
+  const generating = generation.isRunning || generateAll.isPending;
 
-  const updateSection = useMutation({
-    mutationFn: (patch: { id: string | number; [k: string]: unknown }) => {
-      const { id: sectionId, ...body } = patch;
-      return apiRequest("PATCH", `/api/cim-sections/${sectionId}`, body).then(r => r.json());
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] }),
-    onError: (e: unknown) => toast({
-      title: "Save failed",
-      description: apiErrorMessage(e, "The section could not be updated."),
-      variant: "destructive",
-    }),
-  });
-
-  const reorderSections = useMutation({
-    mutationFn: (orderedIds: (string | number)[]) =>
-      apiRequest("POST", `/api/deals/${dealId}/cim-sections/reorder`, { orderedIds }).then(r => r.json()),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] }),
-    onError: (e: unknown) => toast({
-      title: "Reorder failed",
-      description: apiErrorMessage(e, "The new section order could not be saved."),
-      variant: "destructive",
-    }),
-  });
-
-  // Per-section regenerate: rebuilds ONE section through the layout engine;
-  // the rest of the document (and its approvals) is untouched.
-  const regenerateSection = useMutation({
-    mutationFn: (sectionId: string) =>
-      apiRequest("POST", `/api/deals/${dealId}/generate-content`, { sectionId }).then(r => r.json()),
-    onSuccess: (_result, sectionId) => {
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides"] });
-      qc.invalidateQueries({ queryKey: ["/api/deals", dealId] });
-      if (selectedSectionId === sectionId) {
-        setEditedContent("");
-        setContentDirty(false);
-        setDataDirty(false);
-      }
-      toast({ title: "Section regenerated", description: "Blind version re-redacted automatically. Regenerate DD if you use it." });
-    },
-    onError: (e: unknown) => toast({
-      title: "Regenerate failed",
-      description: apiErrorMessage(e, "The section could not be regenerated. The existing version was kept."),
-      variant: "destructive",
-    }),
-  });
-
-  // ── Section selection ─────────────────────────────────────────────────────
-  // Always seed the editor from the BASE section, never the override-merged
-  // preview copy — otherwise a save in blind/dd mode would write redacted text
-  // into the Normal CIM. The text seed is what the renderer shows (broker
-  // edit → layoutData.body → AI draft), so editing starts from the live text.
-  const selectSection = useCallback((sectionId: string) => {
-    const base = sections.find(s => s.id === sectionId);
-    if (!base) return;
-    setSelectedSectionId(base.id);
-    setEditedContent(getEditableText(base));
-    setContentDirty(false);
-    setDataDraft(((base.layoutData as Record<string, any> | null) ?? {}));
-    setDataDirty(false);
-  }, [sections]);
-
-  // After a regenerate (or any refetch) the selected section's stored data
-  // changes underneath a clean editor — re-seed so the inspector matches.
+  // ── Auth / loading / errors ──────────────────────────────────────────
+  const loadError = dealQuery.error || builder.query.error;
   useEffect(() => {
-    if (!selectedSection) return;
-    if (!contentDirty) setEditedContent(getEditableText(selectedSection));
-    if (!dataDirty) setDataDraft(((selectedSection.layoutData as Record<string, any> | null) ?? {}));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [selectedSection?.updatedAt, selectedSection?.id]);
+    if (isUnauthorized(loadError)) qc.invalidateQueries({ queryKey: ["/api/broker-auth/me"] });
+  }, [loadError, qc]);
 
-  // ── Content save ──────────────────────────────────────────────────────────
-  const saveContent = () => {
-    if (!selectedSection || isReadOnlyMode) return;
-    updateSection.mutate(
-      { id: selectedSection.id, brokerEditedContent: editedContent },
-      {
-        onSuccess: () => {
-          setContentDirty(false);
-          toast({ title: "Content saved" });
-        },
-      },
-    );
-  };
-
-  const saveData = () => {
-    if (!selectedSection || isReadOnlyMode) return;
-    updateSection.mutate(
-      { id: selectedSection.id, layoutData: dataDraft },
-      {
-        onSuccess: () => {
-          setDataDirty(false);
-          toast({ title: "Section data saved" });
-        },
-      },
-    );
-  };
-
-  // ── Reorder helpers ───────────────────────────────────────────────────────
-  const moveSection = (idx: number, dir: -1 | 1) => {
-    const newOrder = [...sections];
-    const target = idx + dir;
-    if (target < 0 || target >= newOrder.length) return;
-    [newOrder[idx], newOrder[target]] = [newOrder[target], newOrder[idx]];
-    reorderSections.mutate(newOrder.map(s => s.id));
-  };
-
-  // When a run we were following finishes, the server has rebuilt every
-  // section and cleared overrides — drop editor state that pointed at them.
-  const prevGenStatus = useRef<string | undefined>(undefined);
-  useEffect(() => {
-    const status = generation.job?.status;
-    if (prevGenStatus.current === "running" && status === "done") {
-      setSelectedSectionId(null);
-      setEditedContent("");
-      setContentDirty(false);
-      setPreviewMode("normal");
-    }
-    prevGenStatus.current = status;
-  }, [generation.job?.status]);
-
-  // ── Regenerate guard ──────────────────────────────────────────────────────
-  const generating = generateLayout.isPending || generation.isRunning;
-  const requestGenerateLayout = () => {
-    if (generating) return;
-    if (sections.length > 0) {
-      setRegenConfirmOpen(true);
-      return;
-    }
-    generateLayout.mutate();
-  };
-
-  // ── Loading / error states ────────────────────────────────────────────────
-  if (dealLoading) {
+  if (dealQuery.isLoading || (builder.query.isLoading && !state)) {
     return (
-      <div className="h-screen flex items-center justify-center">
-        <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+      <div className="h-screen flex flex-col">
+        <div className="h-12 border-b border-border" />
+        <div className="flex-1 grid lg:grid-cols-[280px_1fr_360px]">
+          <div className="hidden lg:block border-r border-border p-3 space-y-2">{[...Array(9)].map((_, i) => <Skeleton key={i} className="h-9" />)}</div>
+          <div className="p-8"><Skeleton className="h-[70vh] max-w-[860px] mx-auto rounded-xl" /></div>
+          <div className="hidden lg:block border-l border-border" />
+        </div>
       </div>
     );
   }
-
-  if (dealIsError && isUnauthorized(dealError)) {
-    // The auth gate is already re-checking the session (effect above) and
-    // will swap in the sign-in form. Until it does, say what happened and
-    // offer the one action that helps — never a Retry that loops.
-    return (
-      <div className="h-screen flex flex-col items-center justify-center text-center p-8 gap-3">
-        <Lock className="h-8 w-8 text-muted-foreground" />
-        <p className="text-sm font-medium">Your session has ended</p>
-        <p className="text-xs text-muted-foreground max-w-sm">
-          Sign in again to keep working on this CIM — you'll come straight back here.
-        </p>
-        <Button size="sm" className="mt-2 bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => requestSignIn(qc)}>
-          Sign in
-        </Button>
-      </div>
-    );
-  }
-
-  if (dealIsError) {
-    const notFound = isNotFound(dealError);
+  if (loadError || !deal) {
+    const notFound = loadError instanceof Error && /not found/i.test(loadError.message);
     return (
       <div className="h-screen flex flex-col items-center justify-center text-center p-8 gap-3">
         <AlertTriangle className="h-8 w-8 text-destructive" />
-        <p className="text-sm font-medium">
-          {notFound ? "Deal not found" : "Couldn't load this deal"}
-        </p>
-        <p className="text-xs text-muted-foreground max-w-sm">
-          {notFound
-            ? "This deal doesn't exist or isn't in your account."
-            : apiErrorMessage(dealError, "The server returned an error.")}
-        </p>
+        <p className="text-sm font-medium">{isUnauthorized(loadError) ? "Your session has ended" : notFound ? "Deal not found" : "Couldn't load the CIM builder"}</p>
+        <p className="text-xs text-muted-foreground max-w-sm">{errorText(loadError, "The server returned an error.")}</p>
         <div className="flex gap-2 mt-2">
-          <Button variant="outline" size="sm" onClick={() => navigate("/broker/deals")}>
-            <ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back to deals
-          </Button>
-          {!notFound && (
-            <Button size="sm" onClick={() => refetchDeal()}>
-              <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
-            </Button>
-          )}
+          <Button variant="outline" size="sm" onClick={() => navigate("/broker/deals")}><ArrowLeft className="h-3.5 w-3.5 mr-1.5" /> Back to deals</Button>
+          {!notFound && <Button size="sm" onClick={() => { dealQuery.refetch(); builder.query.refetch(); }}><RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry</Button>}
         </div>
       </div>
     );
   }
 
-  if (!deal) return <div className="p-8 text-muted-foreground">Deal not found.</div>;
+  const openAdd = (afterId?: string | null) => setAddAt({ open: true, afterId });
+  // Print preview of the version on screen (editing = the named CIM).
+  const openPrintPreview = () => {
+    const version = previewAs === "editor" ? "normal" : cimModeForAccessLevel(previewAs);
+    window.open(`/deal/${dealId}/print?version=${version}`, "_blank", "noopener");
+  };
+  const blind = state?.blind;
+  const previewMeta = PREVIEWS.find((p) => p.key === previewAs)!;
 
-  const generateVersionButton = previewMode === "blind" ? (
-    <Button
-      size="sm"
-      variant={versionExists ? "outline" : "default"}
-      className={`h-7 text-xs gap-1 ${!versionExists ? "bg-amber-500 text-black hover:bg-amber-400" : ""}`}
-      onClick={() => generateBlind.mutate()}
-      disabled={generateBlind.isPending}
-    >
-      {generateBlind.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
-      {versionExists ? "Regenerate Blind" : "Generate Blind"}
-    </Button>
-  ) : previewMode === "dd" ? (
-    <Button
-      size="sm"
-      variant={versionExists ? "outline" : "default"}
-      className={`h-7 text-xs gap-1 ${!versionExists ? "bg-blue-500 text-white hover:bg-blue-400" : ""}`}
-      onClick={() => generateDd.mutate()}
-      disabled={generateDd.isPending}
-    >
-      {generateDd.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Unlock className="h-3 w-3" />}
-      {versionExists ? "Regenerate DD" : "Generate DD"}
-    </Button>
-  ) : null;
+  // ── Panes ────────────────────────────────────────────────────────────
+  const listPane = (
+    <div className="flex flex-col h-full min-h-0 bg-card">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border shrink-0">
+        <div>
+          <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sections</p>
+          <p className="text-[10px] text-muted-foreground/70">
+            {sections.length} · {approvedCount} approved{hiddenCount ? ` · ${hiddenCount} hidden` : ""}{lockedCount ? ` · ${lockedCount} full-access` : ""}
+          </p>
+        </div>
+        {!readOnly && (
+          <Button size="sm" variant="outline" className="h-7 text-xs gap-1 border-teal/40 text-teal hover:bg-teal/10" onClick={() => openAdd(undefined)} data-testid="button-add-section">
+            <Plus className="h-3.5 w-3.5" /> Add
+          </Button>
+        )}
+      </div>
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin">
+        <SectionList
+          sections={sections}
+          selectedId={selectedId}
+          showBlindStatus={!!blind?.generated}
+          readOnly={readOnly}
+          onSelect={(id) => select(id, "list")}
+          onReorder={(ids) => builder.reorder.mutate(ids)}
+          onAddAfter={(afterId) => openAdd(afterId)}
+          onRename={(id, t) => builder.patch.mutate({ id, sectionTitle: t })}
+          onDuplicate={(id) => builder.duplicate.mutate(id)}
+          onToggleVisible={(s) => builder.patch.mutate({ id: s.id, isVisible: s.isVisible === false })}
+          onSetTier={(id, tier) => builder.patch.mutate({ id, accessTier: tier })}
+          onDelete={(s) => setDeleteTarget(s)}
+        />
+        {!readOnly && sections.length > 0 && (
+          <div className="px-3 pb-4">
+            <button
+              type="button"
+              onClick={() => openAdd(undefined)}
+              className="w-full flex items-center justify-center gap-1.5 rounded-md border border-dashed border-border py-2 text-xs text-muted-foreground hover:text-foreground hover:border-teal/50"
+            >
+              <Plus className="h-3.5 w-3.5" /> Add a section at the end
+            </button>
+          </div>
+        )}
+      </div>
+      {!readOnly && sections.length > 0 && approvedCount < sections.length && (
+        <div className="p-2 border-t border-border shrink-0">
+          <Button
+            variant="ghost"
+            size="sm"
+            className="w-full h-7 text-xs text-teal hover:text-teal"
+            onClick={() => sections.filter((s) => !s.brokerApproved).forEach((s) => builder.patch.mutate({ id: s.id, brokerApproved: true }))}
+          >
+            Approve all sections
+          </Button>
+        </div>
+      )}
+    </div>
+  );
+
+  const pagePane = (
+    <div className="h-full min-h-0 overflow-y-auto scrollbar-thin bg-muted/20" id="cim-builder-page">
+      <div className="max-w-[900px] mx-auto px-3 py-5 sm:px-6 sm:py-8 space-y-4">
+        {/* App chrome above the paper: what this preview is */}
+        {readOnly && (
+          <PreviewBanner
+            previewAs={previewAs}
+            hint={previewMeta.hint}
+            blindGenerated={!!blind?.generated}
+            blindUpdating={blind?.updating ?? 0}
+            blindHeld={blind?.held ?? 0}
+            blindError={blind?.error ?? null}
+            ddGenerated={!!state?.dd.generated}
+            loading={overridesLoading}
+            busy={generateVersion.isPending}
+            onGenerate={(m) => generateVersion.mutate(m)}
+            onRetryBlind={() => builder.refreshBlind.mutate(undefined as never)}
+            onBackToEditing={() => setPreviewAs("editor")}
+          />
+        )}
+        <CimMediaProvider value={{ assets: media.assets }}>
+        {sections.length === 0 ? (
+          <EmptyCim
+            generating={generating}
+            blockedReason={gate.blockedReason}
+            infoGate={infoGate}
+            interviewCompleted={!!deal.interviewCompleted}
+            onGenerate={() => generateAll.mutate()}
+            onAddBlank={() => openAdd(undefined)}
+            generationView={generation}
+          />
+        ) : (
+          <CimCanvas
+            sections={sections}
+            media={media.refs}
+            draft={readOnly ? null : draft}
+            previewAs={previewAs}
+            overrides={overrides}
+            deal={deal}
+            branding={branding}
+            design={designPayload}
+            selectedId={selectedId}
+            onSelect={(id) => select(id, "page")}
+            onAddAfter={(id) => openAdd(id)}
+            onApplyRewrite={(id) => builder.applyRewrite.mutate(id)}
+            onDiscardRewrite={(id) => builder.discardTask.mutate(id)}
+            applying={builder.applyRewrite.isPending}
+          />
+        )}
+        </CimMediaProvider>
+      </div>
+    </div>
+  );
+
+  const editPane = (
+    <div className="h-full min-h-0 overflow-y-auto scrollbar-thin bg-card">
+      {designOpen ? (
+        // The design panel sits where the inspector is, so the page stays
+        // fully visible and re-themes as the broker clicks.
+        <div className="p-4 space-y-4" data-testid="design-pane">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-sm font-semibold flex items-center gap-1.5"><Palette className="h-4 w-4 text-teal" /> Design</p>
+              <p className="text-[11px] text-muted-foreground">How this CIM looks. Changes save and show on the page straight away.</p>
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs shrink-0" onClick={() => setDesignOpen(false)} data-testid="button-close-design">Done</Button>
+          </div>
+          <DesignPanel
+            dealId={dealId}
+            design={dealDesign.data}
+            loading={dealDesign.isLoading}
+            library={media}
+            onPrintPreview={openPrintPreview}
+          />
+        </div>
+      ) : selected && !readOnly ? (
+        <SectionInspector
+          key={selected.id}
+          section={selected}
+          api={builder}
+          aiBlockedReason={gate.blockedReason}
+          onChangeLayout={() => setLayoutOpen(true)}
+          onRegenerate={() => { setRegenBrief(""); setRegenTarget(selected); }}
+          onDelete={() => setDeleteTarget(selected)}
+          onDraftChange={onDraftChange}
+        />
+      ) : (
+        <div className="flex flex-col items-center justify-center h-full min-h-[240px] text-center p-6 gap-2">
+          {readOnly ? <Eye className="h-7 w-7 opacity-25" /> : <Pencil className="h-7 w-7 opacity-25" />}
+          <p className="text-xs text-muted-foreground max-w-[240px]">
+            {readOnly
+              ? "You're previewing what a buyer sees. Switch back to Editing to change sections."
+              : "Select a section — on the page or in the list — to edit its title, layout and content, or to rewrite it with AI."}
+          </p>
+          {readOnly && <Button size="sm" variant="outline" className="h-7 text-xs mt-1" onClick={() => setPreviewAs("editor")}>Back to editing</Button>}
+        </div>
+      )}
+    </div>
+  );
 
   return (
-    <TooltipProvider>
-      <div className="h-screen flex flex-col bg-background overflow-hidden">
-
-        {/* ── Top bar ─────────────────────────────────────────────────────── */}
-        <div className="flex items-center justify-between px-4 h-12 border-b border-border shrink-0">
-          <div className="flex items-center gap-3">
-            <Button variant="ghost" size="icon" className="h-7 w-7" onClick={() => navigate(`/deal/${dealId}`)}>
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-            <span className="text-sm font-semibold">{deal.businessName}</span>
-            <Badge variant="outline" className="text-[10px] font-mono">CIM Designer</Badge>
+    <div className="h-screen flex flex-col bg-background overflow-hidden">
+      {/* ── Top bar ── */}
+      <div className="border-b border-border shrink-0">
+        <div className="flex items-center gap-1 sm:gap-2 px-2 sm:px-3 h-12">
+          <Button variant="ghost" size="icon" className="h-8 w-8 shrink-0" onClick={() => navigate(`/deal/${dealId}/cim`)} aria-label="Back to the deal">
+            <ArrowLeft className="h-4 w-4" />
+          </Button>
+          <div className="min-w-0 flex-1">
+            <p className="text-sm font-semibold truncate" title={deal.businessName}>{deal.businessName}</p>
+            <p className="hidden sm:block text-[10px] text-muted-foreground uppercase tracking-wider whitespace-nowrap">CIM builder</p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span>{visibleCount} sections</span>
-            <span className="text-border">·</span>
-            <span>{approvedCount}/{sections.length} approved</span>
-
-            {/* CIM version toggle */}
-            {sections.length > 0 && (
-              <div className="flex items-center gap-0.5 ml-2 rounded-md border border-border bg-muted/30 p-0.5">
-                {(["normal", "blind", "dd"] as const).map((mode) => (
-                  <button
-                    key={mode}
-                    className={`px-2 py-0.5 rounded text-[10px] font-medium transition-colors ${
-                      previewMode === mode
-                        ? "bg-background text-foreground shadow-sm"
-                        : "text-muted-foreground hover:text-foreground"
-                    }`}
-                    onClick={() => setPreviewMode(mode)}
-                  >
-                    {mode === "normal" ? "Normal" : mode === "blind" ? "Blind" : "DD"}
-                  </button>
-                ))}
-              </div>
-            )}
-
-            {/* Generate version buttons */}
-            {generateVersionButton}
-
-            {generation.isRunning && <CimGenerationProgress view={generation} compact className="ml-1" />}
-            <Button
-              size="sm"
-              className="ml-1 h-7 bg-teal text-teal-foreground hover:bg-teal/90 text-xs gap-1.5"
-              onClick={requestGenerateLayout}
-              disabled={generating}
+          {generation.isRunning && <CimGenerationProgress view={generation} compact className="hidden md:flex" />}
+          {/* Held back = a redaction failed: red until that section is actually redacted, whatever else runs. */}
+          {blind?.generated && (blind.held > 0 || (!blind.running && !!blind.error && blind.updating > 0)) ? (
+            <button
+              type="button"
+              onClick={() => builder.refreshBlind.mutate(undefined as never)}
+              className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-red-400 hover:underline"
+              title={`${blind.error}. Blind buyers don't see ${(blind.held || blind.updating) === 1 ? "this section" : "these sections"} until the blind version is made. Click to retry.`}
             >
-              {generating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Wand2 className="h-3 w-3" />}
-              {sections.length > 0 ? "Regenerate Layout" : "Generate Layout"}
+              <AlertTriangle className="h-3 w-3" /> Blind held back ({blind.held || blind.updating}) · Retry
+            </button>
+          ) : blind?.generated && (blind.running || blind.updating > 0) && (
+            <span className="hidden md:inline-flex items-center gap-1.5 text-[11px] text-amber-500" title="Blind buyers see these sections once they're redacted">
+              <Loader2 className="h-3 w-3 animate-spin" /> Blind version updating ({blind.updating})
+            </span>
+          )}
+          <Select value={previewAs} onValueChange={(v) => setPreviewAs(v as PreviewAs)}>
+            <SelectTrigger className="h-8 w-[58px] sm:w-[190px] shrink-0 text-xs" data-testid="select-preview-as" aria-label="Preview as">
+              {/* div, not span: the trigger line-clamps direct span children */}
+              <div className="flex items-center gap-1.5 min-w-0">
+                {previewAs === "editor" ? <Pencil className="h-3 w-3 shrink-0" /> : <Eye className="h-3 w-3 shrink-0 text-amber-500" />}
+                {/* Phones: icon only (pencil = editing, amber eye = previewing), so the deal name has room */}
+                <span className="hidden sm:inline truncate">{previewAs === "editor" ? "Editing" : `Preview: ${previewMeta.label}`}</span>
+                <span className="hidden"><SelectValue /></span>
+              </div>
+            </SelectTrigger>
+            <SelectContent align="end">
+              {PREVIEWS.map((p) => (
+                <SelectItem key={p.key} value={p.key} className="text-xs">
+                  <span className="block">{p.key === "editor" ? p.label : `Preview: ${p.label}`}</span>
+                  <span className="block text-[10px] text-muted-foreground">{p.hint}</span>
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Button
+            variant="ghost"
+            size="sm"
+            className={cn("h-8 text-xs gap-1.5 px-2 sm:px-3", designOpen ? "text-teal bg-teal/10" : "text-muted-foreground")}
+            onClick={() => { setDesignOpen((o) => !o); setPane("edit"); }}
+            title="Template, colours, logos and print preview"
+            data-testid="button-cim-design"
+          >
+            <Palette className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Design</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="hidden md:inline-flex h-8 text-xs gap-1.5 text-muted-foreground px-2 sm:px-3"
+            onClick={openPrintPreview}
+            disabled={sections.length === 0}
+            title="A print-friendly version of this CIM (broker only)"
+            data-testid="button-print-preview"
+          >
+            <Printer className="h-3.5 w-3.5" />
+            <span className="hidden xl:inline">Print</span>
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-8 text-xs gap-1.5 text-muted-foreground px-2 sm:px-3"
+            onClick={() => setMediaOpen(true)}
+            title="Photos and videos uploaded for this deal"
+            data-testid="button-media-library"
+          >
+            <Images className="h-3.5 w-3.5" />
+            <span className="hidden sm:inline">Media{media.items.length ? ` (${media.items.length})` : ""}</span>
+          </Button>
+          {sections.length > 0 && (
+            <Button
+              variant="ghost"
+              size="sm"
+              className="hidden lg:inline-flex h-8 text-xs gap-1.5 text-muted-foreground"
+              onClick={() => setRegenAllOpen(true)}
+              disabled={generating || !!gate.blockedReason || !infoGate.allowed}
+              title={wholeCimReason ?? "Rebuild every section from scratch"}
+            >
+              {generating ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Wand2 className="h-3.5 w-3.5" />}
+              Regenerate all
             </Button>
-          </div>
+          )}
+          <Button
+            size="sm"
+            className="h-8 text-xs gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90 shrink-0"
+            onClick={() => { setPreviewAs("editor"); openAdd(selectedId ?? undefined); }}
+            data-testid="button-add-section-top"
+          >
+            <Plus className="h-3.5 w-3.5" /> <span className="hidden sm:inline">Add section</span>
+          </Button>
         </div>
-
-        {/* ── Three-panel body ─────────────────────────────────────────────── */}
-        <div className="flex flex-1 overflow-hidden">
-
-          {/* LEFT: section list ────────────────────────────────────────────── */}
-          <div className="w-[250px] shrink-0 border-r border-border flex flex-col bg-card">
-            <div className="px-3 py-2 border-b border-border">
-              <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">Sections</p>
-            </div>
-            {/* Radix wraps content in a display:table div that grows to the
-                widest row, which clipped long titles — force it to the panel width. */}
-            <ScrollArea className="flex-1 [&_[data-radix-scroll-area-viewport]>div]:!block">
-              {sectionsLoading ? (
-                <div className="p-3 space-y-2">
-                  {[...Array(8)].map((_, i) => <Skeleton key={i} className="h-8 rounded" />)}
-                </div>
-              ) : sectionsIsError ? (
-                <div className="p-4 text-center">
-                  <AlertTriangle className="h-6 w-6 mx-auto mb-2 text-destructive" />
-                  <p className="text-xs font-medium mb-1">Couldn't load sections</p>
-                  <p className="text-[11px] text-muted-foreground mb-2">
-                    {apiErrorMessage(sectionsError, "The server returned an error.")}
-                  </p>
-                  <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => refetchSections()}>
-                    <RefreshCw className="h-3 w-3 mr-1.5" /> Retry
-                  </Button>
-                </div>
-              ) : sections.length === 0 ? (
-                <div className="p-4 text-center">
-                  <LayoutTemplate className="h-8 w-8 mx-auto mb-2 opacity-20" />
-                  <p className="text-xs text-muted-foreground">No layout yet. Click Generate Layout to begin.</p>
-                </div>
-              ) : (
-                <div className="py-1">
-                  {sections.map((section, idx) => (
-                    <SectionListItem
-                      key={section.id}
-                      section={section}
-                      displayTitle={redactTitle(section.sectionTitle || "")}
-                      idx={idx}
-                      total={sections.length}
-                      isSelected={selectedSectionId === section.id}
-                      readOnly={isReadOnlyMode}
-                      onSelect={() => selectSection(section.id)}
-                      onToggleVisible={() => updateSection.mutate({ id: section.id, isVisible: !section.isVisible })}
-                      onMoveUp={() => moveSection(idx, -1)}
-                      onMoveDown={() => moveSection(idx, 1)}
-                    />
-                  ))}
-                </div>
+        {/* Narrow screens: one pane at a time */}
+        <div className="lg:hidden grid grid-cols-3 gap-1 px-3 pb-2" role="tablist">
+          {(["sections", "page", "edit"] as const).map((p) => (
+            <button
+              key={p}
+              role="tab"
+              aria-selected={pane === p}
+              onClick={() => setPane(p)}
+              className={cn(
+                "rounded-md py-1.5 text-xs font-medium transition-colors",
+                pane === p ? "bg-teal/15 text-foreground" : "text-muted-foreground hover:bg-muted/60",
               )}
-            </ScrollArea>
-            {sections.length > 0 && !isReadOnlyMode && (
-              <div className="p-2 border-t border-border">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full h-7 text-xs text-teal hover:text-teal"
-                  disabled={updateSection.isPending || approvedCount === sections.length}
-                  onClick={() => {
-                    const unApproved = sections.filter(s => !s.brokerApproved);
-                    unApproved.forEach(s => updateSection.mutate({ id: s.id, brokerApproved: true }));
-                  }}
-                >
-                  <CheckCircle2 className="h-3 w-3 mr-1.5" />
-                  {approvedCount === sections.length ? "All approved" : "Approve All"}
-                </Button>
-              </div>
-            )}
-          </div>
-
-          {/* CENTER: CIM preview ───────────────────────────────────────────── */}
-          <div className="flex-1 overflow-hidden bg-muted/20">
-            {/* Radix wraps ScrollArea content in a `display: table` div, which
-                sizes to max-content and lets the document sheet overflow
-                horizontally in narrow panes — force it back to block so the
-                sheet shrinks to the available width. */}
-            <ScrollArea className="h-full [&>[data-radix-scroll-area-viewport]>div]:!block">
-              {sectionsIsError ? (
-                <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
-                  <AlertTriangle className="h-10 w-10 mb-4 text-destructive" />
-                  <p className="text-sm font-medium mb-1">Couldn't load the CIM</p>
-                  <p className="text-xs text-muted-foreground max-w-xs mb-3">
-                    {apiErrorMessage(sectionsError, "The server returned an error.")}
-                  </p>
-                  <Button variant="outline" size="sm" onClick={() => refetchSections()}>
-                    <RefreshCw className="h-3.5 w-3.5 mr-1.5" /> Retry
-                  </Button>
-                </div>
-              ) : previewSections.length === 0 ? (
-                <div className="flex flex-col items-center justify-center h-full min-h-[400px] text-center p-8">
-                  <Wand2 className="h-10 w-10 mb-4 opacity-20" />
-                  <p className="text-sm font-medium mb-1">No CIM layout yet</p>
-                  <p className="text-xs text-muted-foreground max-w-xs">
-                    Click "Generate Layout" to have the AI create a bespoke presentation for this deal.
-                  </p>
-                </div>
-              ) : (
-                <div className="max-w-[880px] mx-auto py-8 px-6 space-y-4">
-                  {/* Mode indicator banner — app chrome, stays outside the document */}
-                  {previewMode !== "normal" && (
-                    <PreviewModeBanner
-                      mode={previewMode}
-                      loading={overridesLoading}
-                      isError={overridesIsError}
-                      errorMessage={apiErrorMessage(overridesError, "The server returned an error.")}
-                      versionExists={versionExists}
-                      isGenerating={previewMode === "blind" ? generateBlind.isPending : generateDd.isPending}
-                      onGenerate={() => (previewMode === "blind" ? generateBlind.mutate() : generateDd.mutate())}
-                      onRetry={() => refetchOverrides()}
-                    />
-                  )}
-                  {/* The document itself: theme-locked paper sheet, WYSIWYG with
-                      what buyers see in the view room regardless of app theme. */}
-                  <div className="cim-doc cim-sheet px-5 py-6 sm:px-10 sm:py-12 space-y-10">
-                    {previewSections.map(section => {
-                      const hidden = section.isVisible === false;
-                      return (
-                        <div
-                          key={section.id}
-                          className={`relative rounded-xl transition-all cursor-pointer ${
-                            selectedSectionId === section.id
-                              ? "ring-2 ring-teal ring-offset-2 ring-offset-background"
-                              : "hover:ring-1 hover:ring-border"
-                          } ${hidden ? "opacity-40 grayscale" : ""}`}
-                          onClick={() => selectSection(section.id)}
-                        >
-                          {hidden && (
-                            <div className="absolute top-2 right-2 z-10">
-                              <Badge variant="outline" className="text-[10px] gap-1 bg-background/90">
-                                <EyeOff className="h-3 w-3" /> Hidden — not shown to buyers
-                              </Badge>
-                            </div>
-                          )}
-                          <SectionBoundary sectionTitle={section.sectionTitle}>
-                            <CimSectionRenderer
-                              section={section}
-                              branding={brandingCtx}
-                              brokerMode
-                            />
-                          </SectionBoundary>
-                        </div>
-                      );
-                    })}
-                  </div>
-                </div>
-              )}
-            </ScrollArea>
-          </div>
-
-          {/* RIGHT: inspector ─────────────────────────────────────────────── */}
-          <div className="w-[300px] shrink-0 border-l border-border flex flex-col bg-card">
-            {selectedSection ? (
-              <SectionInspector
-                section={selectedSection}
-                previewMode={previewMode}
-                // In blind/dd the editor shows what the buyer sees, read-only.
-                displayContent={
-                  isReadOnlyMode && selectedPreviewSection
-                    // DD text carries [[dd]] highlight sentinels for the renderer — plain here.
-                    ? stripMarkup(selectedPreviewSection.brokerEditedContent || selectedPreviewSection.aiDraftContent || "")
-                    : editedContent
-                }
-                displayTitle={
-                  isReadOnlyMode && selectedPreviewSection
-                    ? selectedPreviewSection.sectionTitle
-                    : selectedSection.sectionTitle
-                }
-                contentDirty={contentDirty}
-                onContentChange={(v) => { setEditedContent(v); setContentDirty(true); }}
-                onSaveContent={saveContent}
-                dataDraft={dataDraft}
-                dataDirty={dataDirty}
-                onDataChange={(v) => { setDataDraft(v); setDataDirty(true); }}
-                onSaveData={saveData}
-                onUpdate={(patch) => updateSection.mutate({ id: selectedSection.id, ...patch })}
-                onRegenerate={() => regenerateSection.mutate(selectedSection.id)}
-                isRegenerating={regenerateSection.isPending && regenerateSection.variables === selectedSection.id}
-                onSwitchToNormal={() => setPreviewMode("normal")}
-                isSaving={updateSection.isPending}
-                // Reasoning is written against the real business; in Blind
-                // preview run it through the same codename substitution.
-                redactText={redactTitle}
-              />
-            ) : (
-              <div className="flex flex-col items-center justify-center h-full text-center p-6">
-                <Pencil className="h-8 w-8 mb-3 opacity-20" />
-                <p className="text-xs text-muted-foreground">Select a section to edit content, change layout, or review AI reasoning.</p>
-              </div>
-            )}
-          </div>
-
+            >
+              {p === "sections" ? `Sections (${sections.length})` : p === "page" ? "Page" : designOpen ? "Design" : "Edit"}
+            </button>
+          ))}
         </div>
+        {generation.isRunning && <div className="md:hidden px-3 pb-2"><CimGenerationProgress view={generation} compact /></div>}
+        {/* Why "Regenerate all" is off — said out loud, not only in a tooltip
+            (the button lives on wide screens only, so does the note). */}
+        {sections.length > 0 && !generation.isRunning && !gate.blockedReason && !infoGate.allowed && infoGate.reason && (
+          <p className="hidden lg:block px-4 pb-2 text-[11px] text-amber-500" data-testid="text-builder-regenerate-needs-information">
+            {infoGate.readiness
+              ? `Regenerate all is off: not enough information yet (quality ${infoGate.readiness.score}/100) — finish the seller interview, or add documents, calls or facts on the Information tab. You can still edit and rewrite one section at a time.`
+              : infoGate.reason}
+          </p>
+        )}
       </div>
 
-      {/* ── Regenerate confirmation ─────────────────────────────────────── */}
-      <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
+      {/* ── Body ── */}
+      <div className="flex-1 min-h-0 lg:grid lg:grid-cols-[280px_minmax(0,1fr)_360px]">
+        <div className={cn("h-full min-h-0 lg:border-r border-border", pane === "sections" ? "block" : "hidden lg:block")}>{listPane}</div>
+        <div className={cn("h-full min-h-0", pane === "page" ? "block" : "hidden lg:block")}>{pagePane}</div>
+        <div className={cn("h-full min-h-0 lg:border-l border-border", pane === "edit" ? "block" : "hidden lg:block")}>{editPane}</div>
+      </div>
+
+      {/* ── Media library ── */}
+      <Sheet open={mediaOpen} onOpenChange={setMediaOpen}>
+        <SheetContent side="right" className="w-full sm:max-w-xl overflow-y-auto">
+          <SheetHeader className="mb-4">
+            <SheetTitle>Media library</SheetTitle>
+            <SheetDescription>
+              Photos and videos for this deal. Use them in any photo gallery or video section — add one from the “Media” group of Add section.
+            </SheetDescription>
+          </SheetHeader>
+          <MediaLibrary dealId={dealId} library={media} mode="manage" />
+        </SheetContent>
+      </Sheet>
+
+      {/* ── Dialogs ── */}
+      <AddSectionDialog
+        open={addAt.open}
+        onOpenChange={(open) => setAddAt((a) => ({ ...a, open }))}
+        sections={sections}
+        afterSectionId={addAt.afterId}
+        aiBlockedReason={gate.blockedReason}
+        busy={builder.add.isPending}
+        onSubmit={(input) =>
+          builder.add.mutate(input, {
+            onSuccess: (r: any) => {
+              setAddAt({ open: false });
+              if (r?.section?.id) {
+                setSelectedId(r.section.id);
+                setPane("edit");
+                setTimeout(() => document.getElementById(`section-${r.section.id}`)?.scrollIntoView({ behavior: "smooth", block: "center" }), 400);
+              }
+            },
+          })
+        }
+      />
+      {selected && (
+        <ChangeLayoutDialog
+          open={layoutOpen}
+          onOpenChange={setLayoutOpen}
+          currentLayout={selected.layoutType}
+          sectionTitle={selected.sectionTitle}
+          aiBlockedReason={gate.blockedReason}
+          busy={builder.setLayout.isPending}
+          onChoose={(layoutType, convert) =>
+            builder.setLayout.mutate({ id: selected.id, layoutType, convert }, { onSuccess: () => setLayoutOpen(false) })
+          }
+        />
+      )}
+
+      <AlertDialog open={!!deleteTarget} onOpenChange={(o) => !o && setDeleteTarget(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Regenerate the entire layout?</AlertDialogTitle>
+            <AlertDialogTitle>Delete “{deleteTarget?.sectionTitle}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The section is removed from the CIM, along with its blind and due-diligence versions. This can't be undone —
+              if you only want buyers not to see it, hide it instead.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Keep it</AlertDialogCancel>
+            {deleteTarget?.isVisible !== false && (
+              <Button variant="outline" onClick={() => { if (deleteTarget) builder.patch.mutate({ id: deleteTarget.id, isVisible: false }); setDeleteTarget(null); }}>
+                Hide instead
+              </Button>
+            )}
+            <AlertDialogAction
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={() => { if (deleteTarget) builder.remove.mutate(deleteTarget.id); setDeleteTarget(null); }}
+              data-testid="button-confirm-delete-section"
+            >
+              Delete section
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={!!regenTarget} onOpenChange={(o) => !o && setRegenTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate “{regenTarget?.sectionTitle}”?</AlertDialogTitle>
+            <AlertDialogDescription>
+              The AI rebuilds this section from the deal's information. Your current version is kept — Undo brings it back.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <Textarea
+            value={regenBrief}
+            onChange={(e) => setRegenBrief(e.target.value)}
+            maxLength={1500}
+            rows={3}
+            className="text-sm resize-none"
+            placeholder="Optional: anything it should focus on?"
+          />
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              className="bg-teal text-teal-foreground hover:bg-teal/90"
+              onClick={() => { if (regenTarget) builder.regenerate.mutate({ id: regenTarget.id, brief: regenBrief.trim() || undefined }); setRegenTarget(null); }}
+            >
+              <Sparkles className="h-3.5 w-3.5 mr-1.5" /> Regenerate
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={regenAllOpen} onOpenChange={setRegenAllOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Regenerate the whole CIM?</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-sm text-muted-foreground">
-                <p>
-                  This rebuilds every section from scratch. The following will be
-                  permanently discarded and cannot be undone:
-                </p>
+                <p>This rebuilds every section from scratch. These are discarded and can't be undone:</p>
                 <ul className="list-disc pl-5 space-y-1">
-                  <li>All edited section content</li>
-                  <li>Section approvals ({approvedCount} of {sections.length} currently approved)</li>
-                  <li>Hidden/visible choices and custom section order</li>
-                  <li>Any generated Blind and DD versions</li>
+                  <li>Sections you added, edited, rewrote or reordered</li>
+                  <li>Approvals ({approvedCount} of {sections.length}), hidden sections and access settings</li>
+                  <li>The blind and due-diligence versions</li>
                 </ul>
+                <p>To redo one section, select it and choose “Regenerate from the deal's information”.</p>
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>Keep current layout</AlertDialogCancel>
+            <AlertDialogCancel>Keep my CIM</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={() => {
-                setRegenConfirmOpen(false);
-                generateLayout.mutate();
-              }}
+              onClick={() => { setRegenAllOpen(false); generateAll.mutate(); }}
             >
               Discard and regenerate
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
-    </TooltipProvider>
+    </div>
   );
 }
 
-// ── Preview mode banner ────────────────────────────────────────────────────
-interface PreviewModeBannerProps {
-  mode: Exclude<PreviewMode, "normal">;
+// ── Preview banner (app chrome above the paper) ─────────────────────────
+function PreviewBanner({
+  previewAs, hint, blindGenerated, blindUpdating, blindHeld, blindError, ddGenerated, loading, busy, onGenerate, onRetryBlind, onBackToEditing,
+}: {
+  previewAs: PreviewAs;
+  hint: string;
+  blindGenerated: boolean;
+  blindUpdating: number;
+  blindHeld: number;
+  blindError: string | null;
+  ddGenerated: boolean;
   loading: boolean;
-  isError: boolean;
-  errorMessage: string;
-  versionExists: boolean;
-  isGenerating: boolean;
-  onGenerate: () => void;
-  onRetry: () => void;
-}
-
-function PreviewModeBanner({
-  mode, loading, isError, errorMessage, versionExists, isGenerating, onGenerate, onRetry,
-}: PreviewModeBannerProps) {
-  const isBlind = mode === "blind";
-  const label = isBlind ? "Blind CIM Preview" : "Due Diligence CIM Preview";
-  const Icon = isBlind ? Lock : Unlock;
-
-  if (loading) {
-    return (
-      <div className="rounded-lg border border-border bg-muted/30 px-4 py-2 text-xs flex items-center gap-2 text-muted-foreground">
-        <Loader2 className="h-3.5 w-3.5 animate-spin" />
-        <span className="font-medium">{label}</span>
-        <span>— checking for a generated version…</span>
-      </div>
-    );
-  }
-
-  if (isError) {
-    return (
-      <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-4 py-2.5 text-xs flex items-start gap-2 text-destructive">
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="font-medium">Couldn't load the {isBlind ? "Blind" : "DD"} version</p>
-          <p className="text-muted-foreground mt-0.5">
-            {errorMessage} The content below is the unmodified Normal CIM.
-          </p>
-        </div>
-        <Button variant="outline" size="sm" className="h-7 text-xs shrink-0" onClick={onRetry}>
-          <RefreshCw className="h-3 w-3 mr-1.5" /> Retry
-        </Button>
-      </div>
-    );
-  }
-
-  if (!versionExists) {
-    return (
-      <div className={`rounded-lg border px-4 py-2.5 text-xs flex items-start gap-2 ${
-        isBlind
-          ? "bg-amber-500/10 border-amber-500/40 text-amber-400"
-          : "bg-blue-500/10 border-blue-500/40 text-blue-400"
-      }`}>
-        <AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" />
-        <div className="flex-1 min-w-0">
-          <p className="font-medium">
-            {isBlind ? "No Blind version generated yet" : "No DD version generated yet"}
-          </p>
-          <p className="text-muted-foreground mt-0.5">
-            {isBlind
-              ? "The content below is NOT redacted — business name, owner, and locations are all visible. Generate the Blind version before sharing teaser or blind links."
-              : "The content below is the standard CIM with no due diligence enrichment. Generate the DD version to reveal customer names and verification details."}
-          </p>
-        </div>
-        <Button
-          size="sm"
-          className={`h-7 text-xs shrink-0 gap-1 ${isBlind ? "bg-amber-500 text-black hover:bg-amber-400" : "bg-blue-500 text-white hover:bg-blue-400"}`}
-          onClick={onGenerate}
-          disabled={isGenerating}
-        >
-          {isGenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : <Icon className="h-3 w-3" />}
-          {isBlind ? "Generate Blind" : "Generate DD"}
-        </Button>
-      </div>
-    );
-  }
-
+  busy: boolean;
+  onGenerate: (m: "blind" | "dd") => void;
+  onRetryBlind: () => void;
+  onBackToEditing: () => void;
+}) {
+  const blindView = previewAs === "teaser" || previewAs === "full";
+  const label = PREVIEWS.find((p) => p.key === previewAs)?.label ?? "";
   return (
-    <div className={`rounded-lg border px-4 py-2 text-xs flex items-center gap-2 ${
-      isBlind
-        ? "bg-amber-500/5 border-amber-500/20 text-amber-400"
-        : "bg-blue-500/5 border-blue-500/20 text-blue-400"
-    }`}>
-      <Icon className="h-3.5 w-3.5" />
-      <span className="font-medium">{label}</span>
-      <span className="text-muted-foreground">
-        {isBlind
-          ? "— Identifying information redacted. Read-only: switch to Normal to edit."
-          : "— Sensitive data revealed and highlighted. Read-only: switch to Normal to edit."}
-      </span>
-    </div>
-  );
-}
-
-// ── Section list item ──────────────────────────────────────────────────────
-interface SectionListItemProps {
-  section: CimSection;
-  displayTitle: string;
-  idx: number;
-  total: number;
-  isSelected: boolean;
-  readOnly: boolean;
-  onSelect: () => void;
-  onToggleVisible: () => void;
-  onMoveUp: () => void;
-  onMoveDown: () => void;
-}
-
-function SectionListItem({
-  section, displayTitle, idx, total, isSelected, readOnly, onSelect, onToggleVisible, onMoveUp, onMoveDown,
-}: SectionListItemProps) {
-  const approved = !!section.brokerApproved;
-  const hidden = section.isVisible === false;
-
-  return (
-    <div
-      className={`group flex items-center gap-1.5 px-2 py-1.5 cursor-pointer transition-colors ${
-        isSelected ? "bg-teal/10 text-foreground" : "hover:bg-muted/60 text-muted-foreground"
-      } ${hidden ? "opacity-60" : ""}`}
-      onClick={onSelect}
-    >
-      <div className="flex-1 min-w-0" title={displayTitle}>
-        <p className={`text-xs leading-snug break-words line-clamp-2 ${isSelected ? "font-medium text-foreground" : ""} ${hidden ? "line-through" : ""}`}>
-          {displayTitle}
-        </p>
-        <p className="text-[10px] text-muted-foreground/60 truncate font-mono">{section.layoutType}</p>
+    <div className="space-y-2">
+      <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        {blindView ? <Lock className="h-3.5 w-3.5 text-amber-500" /> : <Unlock className="h-3.5 w-3.5 text-teal" />}
+        <span><span className="font-medium">Previewing as a {label.toLowerCase()}</span> <span className="text-muted-foreground">— {hint}. Read-only.</span></span>
+        {loading && <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />}
+        <button type="button" onClick={onBackToEditing} className="ml-auto text-teal hover:underline">Back to editing</button>
       </div>
-      {!readOnly && (
-        <div className="flex shrink-0 items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent"
-                onClick={(e) => { e.stopPropagation(); onMoveUp(); }}
-                disabled={idx === 0}
-                aria-label="Move section up"
-              >
-                <ChevronUp className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">Move up</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="p-0.5 rounded hover:bg-muted disabled:opacity-30 disabled:hover:bg-transparent"
-                onClick={(e) => { e.stopPropagation(); onMoveDown(); }}
-                disabled={idx === total - 1}
-                aria-label="Move section down"
-              >
-                <ChevronDown className="h-3 w-3" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">Move down</TooltipContent>
-          </Tooltip>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button
-                type="button"
-                className="p-0.5 rounded hover:bg-muted"
-                onClick={(e) => { e.stopPropagation(); onToggleVisible(); }}
-                aria-label={hidden ? "Show in CIM" : "Hide from CIM"}
-              >
-                {hidden ? <EyeOff className="h-3 w-3 opacity-40" /> : <Eye className="h-3 w-3" />}
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="text-xs">{hidden ? "Show in CIM" : "Hide from CIM"}</TooltipContent>
-          </Tooltip>
-        </div>
+      {blindView && !blindGenerated && (
+        <Notice tone="amber" action={<Button size="sm" className="h-7 text-xs bg-amber-500 text-black hover:bg-amber-400" disabled={busy} onClick={() => onGenerate("blind")}>{busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}Generate blind version</Button>}>
+          No blind version yet. Buyers on teaser or full links see “Preparing your confidential view” until it exists (it's also created automatically on the first visit).
+        </Notice>
       )}
-      {approved && <CheckCircle2 className="h-3 w-3 text-teal shrink-0" />}
+      {blindView && blindGenerated && (blindHeld > 0 || (blindUpdating > 0 && !!blindError)) && (
+        <Notice tone="amber" action={<Button size="sm" variant="outline" className="h-7 text-xs" onClick={onRetryBlind}>Retry</Button>}>
+          {blindError}. Blind buyers don't see {(blindHeld || blindUpdating) === 1 ? "that section" : "those sections"} until {(blindHeld || blindUpdating) === 1 ? "it's" : "they're"} redacted — never the un-redacted text.
+        </Notice>
+      )}
+      {blindView && blindGenerated && blindUpdating > 0 && !blindError && (
+        <Notice tone="amber">
+          {`${blindUpdating} section${blindUpdating === 1 ? " is" : "s are"} being redacted. Blind buyers see ${blindUpdating === 1 ? "it" : "them"} as soon as ${blindUpdating === 1 ? "it's" : "they're"} ready — never the un-redacted text.`}
+        </Notice>
+      )}
+      {previewAs === "due_diligence" && !ddGenerated && (
+        <Notice tone="blue" action={<Button size="sm" className="h-7 text-xs bg-blue-500 text-white hover:bg-blue-400" disabled={busy} onClick={() => onGenerate("dd")}>{busy ? <Loader2 className="h-3 w-3 animate-spin mr-1" /> : null}Generate DD version</Button>}>
+          No due-diligence version yet — DD buyers currently see the named CIM without the extra detail.
+        </Notice>
+      )}
     </div>
   );
 }
 
-// ── Section inspector ──────────────────────────────────────────────────────
-interface SectionInspectorProps {
-  section: CimSection;
-  previewMode: PreviewMode;
-  displayContent: string;
-  displayTitle: string;
-  contentDirty: boolean;
-  onContentChange: (v: string) => void;
-  onSaveContent: () => void;
-  dataDraft: Record<string, any>;
-  dataDirty: boolean;
-  onDataChange: (v: Record<string, any>) => void;
-  onSaveData: () => void;
-  onUpdate: (patch: Record<string, unknown>) => void;
-  onRegenerate: () => void;
-  isRegenerating: boolean;
-  onSwitchToNormal: () => void;
-  isSaving: boolean;
-  redactText: (t: string) => string;
+function Notice({ tone, children, action }: { tone: "amber" | "blue"; children: React.ReactNode; action?: React.ReactNode }) {
+  return (
+    <div className={cn(
+      "rounded-lg border px-3 py-2.5 text-xs flex flex-col sm:flex-row sm:items-center gap-2",
+      tone === "amber" ? "border-amber-500/40 bg-amber-500/10" : "border-blue-500/40 bg-blue-500/10",
+    )}>
+      <p className="flex-1 text-foreground/85 leading-relaxed">{children}</p>
+      {action}
+    </div>
+  );
 }
 
-function SectionInspector({
-  section, previewMode, displayContent, displayTitle, contentDirty,
-  onContentChange, onSaveContent, dataDraft, dataDirty, onDataChange, onSaveData,
-  onUpdate, onRegenerate, isRegenerating, onSwitchToNormal, isSaving, redactText,
-}: SectionInspectorProps) {
-  const approved = !!section.brokerApproved;
-  const rawReasoning = section.aiLayoutReasoning ?? undefined;
-  const reasoning = rawReasoning && previewMode === "blind" ? redactText(rawReasoning) : rawReasoning;
-  const readOnly = previewMode !== "normal";
-  const modeLabel = previewMode === "blind" ? "Blind" : "DD";
-  const textEditable = isTextEditableLayout(section.layoutType);
-  const dataEditable = isStructuredLayout(section.layoutType);
-  const canRegenerate = section.layoutType !== "cover_page" && section.layoutType !== "divider";
-
+function EmptyCim({
+  generating, blockedReason, infoGate, interviewCompleted, onGenerate, onAddBlank, generationView,
+}: {
+  generating: boolean;
+  blockedReason: string | null;
+  infoGate: CimGenerationGate;
+  interviewCompleted: boolean;
+  onGenerate: () => void;
+  onAddBlank: () => void;
+  generationView: ReturnType<typeof useCimGeneration>;
+}) {
   return (
-    <div className="flex flex-col h-full overflow-hidden">
-      {/* Inspector header */}
-      <div className="px-3 py-2 border-b border-border shrink-0">
-        <p className="text-xs font-semibold truncate">{displayTitle}</p>
-        <p className="text-[10px] font-mono text-muted-foreground">{section.layoutType}</p>
-      </div>
-
-      <ScrollArea className="flex-1">
-        <div className="p-3 space-y-4">
-
-          {/* Read-only notice for generated versions */}
-          {readOnly && (
-            <div className="rounded-md border border-border bg-muted/40 p-2.5 text-[11px] text-muted-foreground leading-relaxed flex gap-2">
-              <Info className="h-3.5 w-3.5 mt-0.5 shrink-0 text-teal" />
-              <div className="space-y-1.5">
-                <p>
-                  You're viewing the <span className="font-medium text-foreground">{modeLabel}</span> version.
-                  It's generated from the Normal CIM and can't be edited directly — saving here
-                  would overwrite your real content with {previewMode === "blind" ? "redacted" : "enriched"} text.
-                </p>
-                <p>Edit the Normal version, then regenerate {modeLabel}.</p>
-                <Button variant="outline" size="sm" className="h-6 text-[11px] mt-1" onClick={onSwitchToNormal}>
-                  Switch to Normal to edit
-                </Button>
-              </div>
-            </div>
+    <div className="rounded-xl border border-dashed border-border bg-card p-8 text-center max-w-lg mx-auto mt-10 space-y-3">
+      <Wand2 className="h-8 w-8 mx-auto text-teal/60" />
+      <p className="text-sm font-medium">No CIM yet</p>
+      <p className="text-xs text-muted-foreground">
+        Let the AI design a complete CIM from the deal's information — charts, tables and narrative — then shape it here.
+        Or start with a blank section.
+      </p>
+      {generationView.isRunning ? (
+        <CimGenerationProgress view={generationView} className="text-left" />
+      ) : (
+        <>
+          {generationView.job?.status === "failed" && <CimGenerationProgress view={generationView} className="text-left" />}
+          {blockedReason && <p className="text-xs text-red-400">{blockedReason}</p>}
+          {!blockedReason && !infoGate.allowed && infoGate.reason && (
+            <p className="text-xs text-amber-500" data-testid="text-builder-needs-information">{infoGate.reason}</p>
           )}
-
-          {/* AI reasoning */}
-          {reasoning && (
-            <div>
-              <div className="flex items-center gap-1.5 mb-1.5">
-                <Lightbulb className="h-3 w-3 text-amber-400" />
-                <span className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">AI Reasoning</span>
-                <Badge variant="outline" className="text-[9px] h-4 ml-auto">internal</Badge>
-              </div>
-              <p className="text-[11px] text-muted-foreground leading-relaxed bg-muted/40 rounded p-2">
-                {reasoning}
-              </p>
-              {previewMode === "blind" && (
-                <p className="text-[10px] text-muted-foreground/70 mt-1 leading-snug">
-                  Broker-only note — never shown to buyers and not part of the redacted version.
-                </p>
-              )}
-            </div>
+          {!blockedReason && infoGate.allowed && !interviewCompleted && (
+            <p className="text-xs text-muted-foreground">
+              The seller interview isn't finished — the CIM will be written from what you've collected so far.
+            </p>
           )}
-
-          <Separator />
-
-          {/* Layout override */}
-          <div>
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">Layout Type</p>
-            <Select
-              value={section.layoutType || ""}
-              disabled={readOnly || isSaving}
-              onValueChange={(v) => {
-                if (v === section.layoutType) return;
-                // layoutOverride is a text column recording the AI's original
-                // choice; keep the first AI value across repeated changes.
-                onUpdate({ layoutType: v, layoutOverride: section.layoutOverride || section.layoutType });
-              }}
-            >
-              <SelectTrigger className="h-7 text-xs">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {LAYOUT_TYPES.map(lt => (
-                  <SelectItem key={lt} value={lt} className="text-xs font-mono">{lt}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            {section.layoutOverride && section.layoutOverride !== section.layoutType && (
-              <p className="text-[10px] text-amber-400 mt-1">
-                Layout manually overridden (AI chose <span className="font-mono">{section.layoutOverride}</span>)
-              </p>
-            )}
-          </div>
-
-          <Separator />
-
-          {/* Content editor — free text for prose layouts, a data form for
-              structured ones. A textarea on a metric grid would save text no
-              renderer shows (see editableText.ts). */}
-          {(textEditable || readOnly) && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">
-                  {readOnly ? `${modeLabel} Content (read-only)` : "Content"}
-                </p>
-                {!readOnly && section.brokerEditedContent && (
-                  <Badge variant="outline" className="text-[9px] h-4">edited</Badge>
-                )}
-              </div>
-              <Textarea
-                value={displayContent}
-                readOnly={readOnly}
-                onChange={e => { if (!readOnly) onContentChange(e.target.value); }}
-                className={`text-xs min-h-[140px] resize-none leading-relaxed ${readOnly ? "opacity-70 cursor-default" : ""}`}
-                placeholder={readOnly ? `No ${modeLabel} content for this section.` : "Section content..."}
-              />
-              {!readOnly && contentDirty && (
-                <Button
-                  size="sm"
-                  className="w-full mt-2 h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
-                  onClick={onSaveContent}
-                  disabled={isSaving}
-                >
-                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
-                  Save Content
-                </Button>
-              )}
-            </div>
-          )}
-
-          {!readOnly && dataEditable && (
-            <div>
-              <div className="flex items-center justify-between mb-1.5">
-                <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Section data</p>
-                {dataDirty && <Badge variant="outline" className="text-[9px] h-4">unsaved</Badge>}
-              </div>
-              <StructuredDataEditor value={dataDraft} onChange={onDataChange} compact />
-              {dataDirty && (
-                <Button
-                  size="sm"
-                  className="w-full mt-2 h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90"
-                  onClick={onSaveData}
-                  disabled={isSaving}
-                >
-                  {isSaving ? <Loader2 className="h-3 w-3 animate-spin mr-1.5" /> : null}
-                  Save Data
-                </Button>
-              )}
-            </div>
-          )}
-
-          <Separator />
-
-          {/* Actions */}
-          <div className="space-y-2">
-            <p className="text-[11px] font-semibold text-muted-foreground uppercase tracking-wide">Actions</p>
-            {readOnly && (
-              <p className="text-[10px] text-muted-foreground">
-                Approval and visibility apply to the base section. Switch to Normal to change them.
-              </p>
-            )}
-
-            <Button
-              variant={approved ? "outline" : "default"}
-              size="sm"
-              className={`w-full h-7 text-xs gap-1.5 ${!approved ? "bg-teal text-teal-foreground hover:bg-teal/90" : ""}`}
-              onClick={() => onUpdate({ brokerApproved: !approved })}
-              disabled={readOnly || isSaving}
-            >
-              {approved ? <Unlock className="h-3 w-3" /> : <Lock className="h-3 w-3" />}
-              {approved ? "Unapprove" : "Approve Section"}
+          <div className="flex flex-col sm:flex-row gap-2 justify-center pt-1">
+            <Button className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5" onClick={onGenerate} disabled={generating || !!blockedReason || !infoGate.allowed} title={blockedReason ?? infoGate.reason ?? undefined}>
+              {generating ? <Loader2 className="h-4 w-4 animate-spin" /> : <Wand2 className="h-4 w-4" />} Generate the CIM
             </Button>
-
-            <Button
-              variant="outline"
-              size="sm"
-              className="w-full h-7 text-xs gap-1.5"
-              onClick={() => onUpdate({ isVisible: !section.isVisible })}
-              disabled={readOnly || isSaving}
-            >
-              {section.isVisible ? <EyeOff className="h-3 w-3" /> : <Eye className="h-3 w-3" />}
-              {section.isVisible ? "Hide from CIM" : "Show in CIM"}
-            </Button>
-
-            {canRegenerate && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full h-7 text-xs gap-1.5"
-                onClick={onRegenerate}
-                disabled={readOnly || isSaving || isRegenerating}
-                title="Rebuild only this section from the knowledge base. Other sections are untouched."
-              >
-                {isRegenerating ? <Loader2 className="h-3 w-3 animate-spin" /> : <RefreshCw className="h-3 w-3" />}
-                {isRegenerating ? "Regenerating…" : "Regenerate This Section"}
-              </Button>
-            )}
+            <Button variant="outline" onClick={onAddBlank}><Plus className="h-4 w-4 mr-1.5" /> Add a section</Button>
           </div>
-
-        </div>
-      </ScrollArea>
+        </>
+      )}
     </div>
   );
 }

@@ -142,7 +142,7 @@ export function calculateQualifiedLeadScore(input: QualifiedLeadInput): Qualifie
   // ── Reasons (broker-facing chips, in priority order) ──────────────────────
   const reasons: string[] = [];
   if (matchFit.reason) reasons.push(matchFit.reason);
-  if (input.buyer.hasProofOfFunds) reasons.push("Proof of funds verified");
+  if (input.buyer.hasProofOfFunds) reasons.push("Proof of funds available");
   if (engagement.reason) reasons.push(engagement.reason);
   if (profile >= 80) reasons.push("Complete profile");
   else if (profile >= 50) reasons.push("Profile filled in");
