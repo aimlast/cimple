@@ -714,6 +714,9 @@ export const buyerAccess = pgTable("buyer_access", {
   revokedAt: timestamp("revoked_at"),
 
   // @anchor:buyer-access-cols:buyers
+  // Broker actions on this link over time (extended / level changed / revoked)
+  // — drives the buyer profile timeline. BuyerAccessEvent[]
+  accessEvents: jsonb("access_events"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   lastAccessedAt: timestamp("last_accessed_at"),
 });
@@ -1671,6 +1674,9 @@ export const buyerUsers = pgTable("buyer_users", {
 
   lastLoginAt: timestamp("last_login_at"),
   // @anchor:buyer-users-cols:buyers
+  // Who wrote each profile field: { field | "criteria.<key>": BuyerFieldSource }.
+  // Never returned to the buyer (see toPublicBuyerUser).
+  fieldSources: jsonb("field_sources"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1685,10 +1691,11 @@ export type InsertBuyerUser = z.infer<typeof insertBuyerUserSchema>;
 export type BuyerUser = typeof buyerUsers.$inferSelect;
 
 // Public view of a buyer user (never expose passwordHash or resetToken)
-export type PublicBuyerUser = Omit<BuyerUser, "passwordHash" | "resetToken" | "resetTokenExpiresAt">;
+// (fieldSources is internal provenance — it names brokers' imports and CRM.)
+export type PublicBuyerUser = Omit<BuyerUser, "passwordHash" | "resetToken" | "resetTokenExpiresAt" | "fieldSources">;
 
 export function toPublicBuyerUser(user: BuyerUser): PublicBuyerUser {
-  const { passwordHash, resetToken, resetTokenExpiresAt, ...rest } = user;
+  const { passwordHash, resetToken, resetTokenExpiresAt, fieldSources, ...rest } = user;
   return rest;
 }
 
@@ -1744,6 +1751,13 @@ export const brokerBuyerContacts = pgTable("broker_buyer_contacts", {
 
   addedAt: timestamp("added_at").defaultNow().notNull(),
   // @anchor:contacts-cols:buyers
+  // The broker's own edits to this buyer's profile — private to this broker,
+  // never written onto buyer_users. Wins over the buyer's own answers and the
+  // CRM profile in this broker's view and matching (mergeBuyerProfileWithSources).
+  brokerProfile: jsonb("broker_profile"),              // BrokerBuyerOverlay
+  brokerProfileMeta: jsonb("broker_profile_meta"),     // { field: { at } }
+  interestStatus: text("interest_status"),             // hot | warm | cold | not_interested | null
+  aiSummary: jsonb("ai_summary"),                      // { text, at, key }
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1771,33 +1785,28 @@ export interface CrmBuyerProfile {
   inquiries?: Array<{ title: string; stage?: string | null; status?: string | null }>;
   /** Fields the model inferred (e.g. industry from a listing they enquired on) rather than read. */
   inferred?: string[];
+  /** Per field (top-level name or "criteria.<key>"): a short quote from the note / field it came from. */
+  evidence?: Record<string, string>;
   extractedAt?: string;
 }
 
-type ProfileLike = Pick<BuyerUser,
-  "buyerType" | "background" | "liquidFunds" | "hasProofOfFunds" | "targetIndustries" | "targetLocations" | "buyerCriteria">;
-
 /**
- * Effective matching profile for one broker: what the buyer entered
- * themselves always wins; the broker's private CRM profile only fills gaps.
- * Returns a BuyerUser-shaped object (profileCompletionPct recomputed) so it
- * can be passed straight to the matching engine and the lead scorer.
+ * Effective matching profile for one broker. Precedence: the broker's own
+ * edits (overlay, broker-private) > what the buyer entered themselves (and the
+ * other writers of the global row, e.g. the NDA) > the broker's private CRM
+ * profile. Returns a BuyerUser-shaped object (profileCompletionPct recomputed)
+ * so it can be passed straight to the matching engine and the lead scorer.
+ * Per-field sources: mergeBuyerProfileWithSources (schema tail, buyers).
  */
-export function mergeBuyerProfile<T extends BuyerUser>(buyer: T, crm?: CrmBuyerProfile | null): T {
-  if (!crm) return buyer;
-  const own: ProfileLike = buyer;
-  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
-  const merged: T = {
-    ...buyer,
-    buyerType: own.buyerType || crm.buyerType || null,
-    background: own.background || crm.background || null,
-    liquidFunds: own.liquidFunds || crm.liquidFunds || null,
-    hasProofOfFunds: !!own.hasProofOfFunds || !!crm.hasProofOfFunds,
-    targetIndustries: (arr(own.targetIndustries).length ? arr(own.targetIndustries) : arr(crm.targetIndustries)) as any,
-    targetLocations: (arr(own.targetLocations).length ? arr(own.targetLocations) : arr(crm.targetLocations)) as any,
-    buyerCriteria: { ...(crm.buyerCriteria || {}), ...((own.buyerCriteria as Record<string, any>) || {}) } as any,
-  };
-  merged.profileCompletionPct = Math.max(buyer.profileCompletionPct ?? 0, calculateBuyerProfileCompletion(merged));
+export function mergeBuyerProfile<T extends BuyerUser>(
+  buyer: T,
+  crm?: CrmBuyerProfile | null,
+  overlay?: BrokerBuyerOverlay | null,
+): T {
+  if (!crm && !overlay) return buyer;
+  const merged = mergeBuyerProfileWithSources(buyer, crm, overlay).profile;
+  // Existing callers expect a boolean here.
+  merged.hasProofOfFunds = !!merged.hasProofOfFunds;
   return merged;
 }
 
@@ -1924,6 +1933,334 @@ export type DealDocumentRequirement = typeof dealDocumentRequirements.$inferSele
 
 // @anchor:schema-tail:buyers
 // (buyers workstream)
+
+// ────────────────────────────────────────────────────────────────────
+// Buyer profile provenance, broker overlay and per-buyer email
+// ────────────────────────────────────────────────────────────────────
+
+/** Who wrote a field on the global buyer_users row. */
+export type BuyerFieldSourceKind = "buyer" | "nda" | "broker_import" | "csv" | "crm" | "approval";
+export interface BuyerFieldSource { source: BuyerFieldSourceKind; at: string; dealId?: string | null }
+/** Keyed by top-level field name or "criteria.<key>". */
+export type BuyerFieldSources = Record<string, BuyerFieldSource>;
+
+/** Top-level profile fields that carry provenance and can be overlaid by a broker. */
+export const BUYER_PROFILE_FIELDS = [
+  "name", "phone", "company", "title", "linkedinUrl", "buyerType", "background",
+  "liquidFunds", "hasProofOfFunds", "targetIndustries", "targetLocations",
+] as const;
+export type BuyerProfileField = (typeof BUYER_PROFILE_FIELDS)[number];
+const TEXT_PROFILE_FIELDS = ["name", "phone", "company", "title", "linkedinUrl", "buyerType", "background", "liquidFunds"] as const;
+const LIST_PROFILE_FIELDS = ["targetIndustries", "targetLocations"] as const;
+
+export type BuyerCriterionType = "currency" | "percent" | "number" | "select" | "multiselect" | "tags" | "boolean";
+export interface BuyerCriterionDef { label: string; type: BuyerCriterionType; options?: readonly string[]; section: string; sectionLabel: string }
+
+/**
+ * Every acquisition criterion, flat (key → definition + section). The two
+ * "tags" entries targetIndustries/targetLocations are left out — they live at
+ * the top level of the profile, not inside buyerCriteria.
+ */
+export const BUYER_CRITERIA_FIELDS: Record<string, BuyerCriterionDef> = (() => {
+  const out: Record<string, BuyerCriterionDef> = {};
+  for (const [section, def] of Object.entries(BUYER_CRITERIA_SECTIONS)) {
+    for (const [key, f] of Object.entries(def.fields)) {
+      if (key === "targetIndustries" || key === "targetLocations") continue;
+      out[key] = { ...(f as any), section, sectionLabel: def.label };
+    }
+  }
+  return out;
+})();
+
+/** Broker-private overlay (broker_buyer_contacts.broker_profile). Absent key = no override. */
+export interface BrokerBuyerOverlay {
+  name?: string | null;
+  phone?: string | null;
+  company?: string | null;
+  title?: string | null;
+  linkedinUrl?: string | null;
+  buyerType?: string | null;
+  background?: string | null;
+  liquidFunds?: string | null;
+  hasProofOfFunds?: boolean | null;
+  targetIndustries?: string[];
+  targetLocations?: string[];
+  buyerCriteria?: Record<string, any>;
+}
+/** When the broker last edited each overlay field (same keys as sources). */
+export type BrokerOverlayMeta = Record<string, { at: string }>;
+
+export const BUYER_INTEREST_STATUSES = ["hot", "warm", "cold", "not_interested"] as const;
+export type BuyerInterestStatus = (typeof BUYER_INTEREST_STATUSES)[number];
+
+export interface BuyerAiSummary { text: string; at: string; key: string }
+
+/** One broker action on a buyer_access row (buyer_access.access_events). */
+export interface BuyerAccessEvent {
+  type: "extended" | "level_changed" | "revoked";
+  at: string;
+  expiresAt?: string | null;
+  accessLevel?: string | null;
+}
+
+export type MergedFieldSourceKind = BuyerFieldSourceKind | "broker";
+export interface MergedFieldSource {
+  source: MergedFieldSourceKind;
+  layer: "overlay" | "own" | "crm";
+  at?: string | null;
+  dealId?: string | null;
+  /** Own-layer value written before per-field sources were recorded; `source` is a best guess from how the account started. */
+  legacy?: boolean;
+  /** CRM layer only: short quote from the record, and whether the model inferred rather than read it. */
+  evidence?: string | null;
+  inferred?: boolean;
+}
+
+/** A value counts as "set" when it says something (not null, "", or an empty list). */
+export function buyerValueIsSet(v: unknown): boolean {
+  if (v === null || v === undefined) return false;
+  if (typeof v === "string") return v.trim() !== "";
+  if (Array.isArray(v)) return v.length > 0;
+  return true;
+}
+
+/** Best guess at who wrote an untracked value on the global row, from how the account started. */
+function legacyOwnSource(buyer: Pick<BuyerUser, "source">): BuyerFieldSourceKind {
+  switch (buyer.source) {
+    case "crm_imported": return "crm";
+    case "nda_signed": return "nda";
+    case "broker_invited": return "broker_import";
+    default: return "buyer";
+  }
+}
+
+/**
+ * The three-layer merge with a source per field. Precedence: broker overlay
+ * (broker-private) > the buyer's own global row (written by the buyer, the
+ * NDA, a broker import/CSV, CRM contact basics or an approval — each stamped
+ * in buyer_users.field_sources) > the broker's private CRM profile.
+ *
+ * hasProofOfFunds is tri-state: an own `false` only counts when a writer
+ * recorded it (the column defaults to false), so an untouched default never
+ * hides a CRM "yes", but a buyer's explicit "no" does.
+ */
+export function mergeBuyerProfileWithSources<T extends BuyerUser>(
+  buyer: T,
+  crm?: CrmBuyerProfile | null,
+  overlay?: BrokerBuyerOverlay | null,
+  overlayMeta?: BrokerOverlayMeta | null,
+): { profile: T; sources: Record<string, MergedFieldSource> } {
+  const fs = ((buyer as any).fieldSources as BuyerFieldSources | null) || {};
+  const ov: BrokerBuyerOverlay = overlay || {};
+  const c: CrmBuyerProfile = crm || {};
+  const sources: Record<string, MergedFieldSource> = {};
+  const has = (o: object, k: string) => Object.prototype.hasOwnProperty.call(o, k) && (o as any)[k] !== undefined;
+
+  const ownSrc = (key: string): MergedFieldSource => {
+    const s = fs[key];
+    return s
+      ? { source: s.source, layer: "own", at: s.at ?? null, dealId: s.dealId ?? null }
+      : { source: legacyOwnSource(buyer), layer: "own", at: null, legacy: true };
+  };
+  const crmSrc = (key: string): MergedFieldSource => {
+    const bare = key.replace(/^criteria\./, "");
+    return {
+      source: "crm", layer: "crm", at: c.extractedAt ?? null,
+      evidence: c.evidence?.[key] ?? c.evidence?.[bare] ?? null,
+      inferred: (c.inferred || []).some((f) => f === key || f === bare),
+    };
+  };
+  const ovSrc = (key: string): MergedFieldSource => ({ source: "broker", layer: "overlay", at: overlayMeta?.[key]?.at ?? null });
+
+  const profile: any = { ...buyer };
+
+  for (const f of TEXT_PROFILE_FIELDS) {
+    const ownV = (buyer as any)[f];
+    const crmV = (c as any)[f];
+    if (has(ov, f) && !(f === "name" && !buyerValueIsSet((ov as any)[f]))) {
+      const v = (ov as any)[f];
+      profile[f] = buyerValueIsSet(v) ? v : null;
+      sources[f] = ovSrc(f);
+    } else if (buyerValueIsSet(ownV)) {
+      profile[f] = ownV;
+      sources[f] = ownSrc(f);
+    } else if (buyerValueIsSet(crmV)) {
+      profile[f] = crmV;
+      sources[f] = crmSrc(f);
+    } else {
+      profile[f] = f === "name" ? buyer.name : null;
+    }
+  }
+
+  if (typeof ov.hasProofOfFunds === "boolean") {
+    profile.hasProofOfFunds = ov.hasProofOfFunds;
+    sources.hasProofOfFunds = ovSrc("hasProofOfFunds");
+  } else if (buyer.hasProofOfFunds === true || (buyer.hasProofOfFunds === false && fs.hasProofOfFunds)) {
+    profile.hasProofOfFunds = buyer.hasProofOfFunds;
+    sources.hasProofOfFunds = ownSrc("hasProofOfFunds");
+  } else if (typeof c.hasProofOfFunds === "boolean") {
+    profile.hasProofOfFunds = c.hasProofOfFunds;
+    sources.hasProofOfFunds = crmSrc("hasProofOfFunds");
+  } else {
+    profile.hasProofOfFunds = null;
+  }
+
+  const arr = (v: unknown) => (Array.isArray(v) ? (v as string[]) : []);
+  for (const f of LIST_PROFILE_FIELDS) {
+    if (Array.isArray((ov as any)[f])) {
+      profile[f] = (ov as any)[f];
+      sources[f] = ovSrc(f);
+    } else if (arr((buyer as any)[f]).length) {
+      profile[f] = arr((buyer as any)[f]);
+      sources[f] = ownSrc(f);
+    } else if (arr((c as any)[f]).length) {
+      profile[f] = arr((c as any)[f]);
+      sources[f] = crmSrc(f);
+    } else {
+      profile[f] = [];
+    }
+  }
+
+  const ownCrit = ((buyer.buyerCriteria as Record<string, any>) || {});
+  const crmCrit = c.buyerCriteria || {};
+  const ovCrit = ov.buyerCriteria || {};
+  const criteria: Record<string, any> = {};
+  for (const k of Array.from(new Set([...Object.keys(crmCrit), ...Object.keys(ownCrit), ...Object.keys(ovCrit)]))) {
+    const key = `criteria.${k}`;
+    if (buyerValueIsSet(ovCrit[k])) { criteria[k] = ovCrit[k]; sources[key] = ovSrc(key); }
+    else if (buyerValueIsSet(ownCrit[k])) { criteria[k] = ownCrit[k]; sources[key] = ownSrc(key); }
+    else if (buyerValueIsSet(crmCrit[k])) { criteria[k] = crmCrit[k]; sources[key] = crmSrc(key); }
+  }
+  profile.buyerCriteria = criteria;
+  profile.profileCompletionPct = Math.max(buyer.profileCompletionPct ?? 0, calculateBuyerProfileCompletion(profile));
+  return { profile: profile as T, sources };
+}
+
+/** Profile keys (top-level + "criteria.<key>") whose value differs between two versions of a profile. */
+export function changedBuyerProfileKeys(before: Partial<BuyerUser>, after: Partial<BuyerUser>): string[] {
+  const out: string[] = [];
+  const same = (a: unknown, b: unknown) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  for (const f of BUYER_PROFILE_FIELDS) {
+    if (!(f in after)) continue;
+    if (!same((before as any)[f], (after as any)[f])) out.push(f);
+  }
+  if ("buyerCriteria" in after) {
+    const b = (before.buyerCriteria as Record<string, any>) || {};
+    const a = (after.buyerCriteria as Record<string, any>) || {};
+    for (const k of Array.from(new Set([...Object.keys(b), ...Object.keys(a)]))) {
+      if (!same(b[k], a[k])) out.push(`criteria.${k}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Stamp `keys` as written by `source` now. Criteria keys whose new value is
+ * empty lose their stamp (nothing left to attribute); top-level keys keep it
+ * (an explicit "no" — e.g. proof of funds — is still an answer).
+ */
+export function stampBuyerFieldSources(
+  existing: unknown,
+  keys: string[],
+  source: BuyerFieldSourceKind,
+  opts: { dealId?: string | null; after?: Partial<BuyerUser> } = {},
+): BuyerFieldSources {
+  const next: BuyerFieldSources = { ...((existing as BuyerFieldSources | null) || {}) };
+  const at = new Date().toISOString();
+  const crit = (opts.after?.buyerCriteria as Record<string, any> | undefined) || undefined;
+  for (const k of keys) {
+    if (k.startsWith("criteria.") && crit && !buyerValueIsSet(crit[k.slice(9)])) { delete next[k]; continue; }
+    next[k] = { source, at, ...(opts.dealId ? { dealId: opts.dealId } : {}) };
+  }
+  return next;
+}
+
+/**
+ * `updates` for a buyer_users row plus the field_sources stamps for whatever
+ * they actually change (every writer of the global row goes through this).
+ */
+export function withFieldSources(
+  current: Partial<BuyerUser>,
+  updates: Partial<BuyerUser>,
+  source: BuyerFieldSourceKind,
+  dealId?: string | null,
+): Partial<BuyerUser> {
+  const keys = changedBuyerProfileKeys(current, updates);
+  if (!keys.length) return updates;
+  const after = { ...current, ...updates };
+  return { ...updates, fieldSources: stampBuyerFieldSources(current.fieldSources, keys, source, { dealId, after }) as any };
+}
+
+/** Field sources for a brand-new buyer_users row created by `source`. */
+export function initialFieldSources(row: Partial<BuyerUser>, source: BuyerFieldSourceKind, dealId?: string | null): BuyerFieldSources {
+  const keys: string[] = BUYER_PROFILE_FIELDS.filter((f) => (f === "hasProofOfFunds" ? row.hasProofOfFunds === true : buyerValueIsSet((row as any)[f])));
+  for (const [k, v] of Object.entries((row.buyerCriteria as Record<string, any>) || {})) if (buyerValueIsSet(v)) keys.push(`criteria.${k}`);
+  return stampBuyerFieldSources({}, keys, source, { dealId });
+}
+
+// Criteria validation (the buyer's own PATCH and the broker overlay). Numeric
+// criteria stay loose (number or short text) because the buyer editor has
+// always stored free text; everything else must match its definition.
+const numericCriterion = z.union([z.number().finite(), z.string().trim().max(40)]);
+const tagList = z.array(z.string().trim().min(1).max(120)).max(40);
+export const buyerCriteriaSchema = z.object({
+  ...Object.fromEntries(Object.entries(BUYER_CRITERIA_FIELDS).map(([k, d]) => {
+    let t: z.ZodTypeAny;
+    if (d.type === "boolean") t = z.boolean();
+    else if (d.type === "select") t = z.enum(d.options as unknown as [string, ...string[]]);
+    else if (d.type === "multiselect") t = z.array(z.enum(d.options as unknown as [string, ...string[]])).max(20);
+    else if (d.type === "tags") t = tagList;
+    else t = numericCriterion;
+    return [k, t.nullable().optional()];
+  })),
+  targetIndustries: tagList.nullable().optional(),
+  targetLocations: tagList.nullable().optional(),
+  lookingFor: z.string().max(2000).nullable().optional(),
+}).strip();
+
+/** Drop empty criteria (null, "", []) after validation. */
+export function cleanBuyerCriteria(c: Record<string, any>): Record<string, any> {
+  return Object.fromEntries(Object.entries(c).filter(([, v]) => buyerValueIsSet(v)));
+}
+
+/** Liquid funds as a coarse range — a buyer's self-entered figure is promised to show only as a range. */
+export function buyerFundsRange(raw: string | null | undefined): string | null {
+  if (!raw || !raw.trim()) return null;
+  const lower = raw.toLowerCase();
+  const m = lower.match(/(\d[\d,]*\.?\d*)\s*([kmb])?/);
+  if (!m) return "Amount on file";
+  let v = parseFloat(m[1].replace(/,/g, ""));
+  if (isNaN(v)) return "Amount on file";
+  if (m[2] === "k") v *= 1e3; else if (m[2] === "m") v *= 1e6; else if (m[2] === "b") v *= 1e9;
+  else if (/\bthousand\b/.test(lower)) v *= 1e3; else if (/\b(million|mil|mm)\b/.test(lower)) v *= 1e6; else if (/\b(billion|bn)\b/.test(lower)) v *= 1e9;
+  if (v < 250_000) return "Under $250K";
+  if (v < 1_000_000) return "$250K–$1M";
+  if (v < 5_000_000) return "$1M–$5M";
+  if (v < 25_000_000) return "$5M–$25M";
+  return "$25M+";
+}
+
+/**
+ * Emails a broker sent one buyer from the buyer's profile page (the broker
+ * clicks send — never automatic). deal_id is optional: a note about the
+ * relationship doesn't have to be about a listing.
+ */
+export const buyerEmails = pgTable("buyer_emails", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  brokerId: varchar("broker_id").notNull(),
+  buyerUserId: varchar("buyer_user_id").notNull(),
+  dealId: varchar("deal_id"),
+  toEmail: text("to_email").notNull(),
+  replyTo: text("reply_to"),
+  subject: text("subject").notNull(),
+  body: text("body").notNull(),
+  status: text("status").notNull().default("sent"),   // sent | failed
+  errorMessage: text("error_message"),
+  sentAt: timestamp("sent_at"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+export type BuyerEmail = typeof buyerEmails.$inferSelect;
+export type InsertBuyerEmail = typeof buyerEmails.$inferInsert;
 
 // @anchor:schema-tail:cim
 // (cim workstreams)

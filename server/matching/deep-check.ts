@@ -65,7 +65,7 @@ function buyerCard(s: ScoredBuyer): Record<string, unknown> {
     targetIndustries: b.targetIndustries || [],
     targetLocations: b.targetLocations || [],
     criteria,
-    liquidFunds: b.liquidFunds || null,
+    liquidFunds: s.fundsRange ?? b.liquidFunds ?? null,
     proofOfFunds: !!b.hasProofOfFunds,
     brokerCrmSummary: crm?.background || null,
     listingsTheyAskedAbout: (crm?.inquiries || []).slice(0, 8).map((q) => q.title),
