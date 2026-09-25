@@ -273,7 +273,7 @@ Goal throughout: get a few real brokerages into beta. Everything below is merged
 - [ ] Call recording and transcription (mobile app or third-party integration)
 - [ ] Email sync (OAuth infrastructure exists but no provider secrets configured)
 - [ ] CRM integration (Salesforce, HubSpot — schema ready, implementation pending)
-- [ ] Proactive buyer-to-deal matching + new-deal notifications (matching engine + buyer dashboard live; auto-notify on new deal pending)
+- [x] Proactive buyer-to-deal matching — **built** (`SuggestedBuyersPanel` on the deal's Buyers tab, `GET /api/deals/:dealId/suggested-buyers`): every buyer in the broker's contact list scored with the matching engine (`skipAI: true`, deterministic only) + composite qualified-lead score (tier, criteria matched, top dimensions, reasons); broker multi-selects → Sonnet drafts personalised outreach → broker edits and sends; already-contacted / already-has-access excluded. Buyer decisions (Interested / Not interested / Need more time) are captured in the view room and sync to the CRM, so no broker follow-up automation is needed. Remaining ideas (from the 2026-09-24 CIM-PRO competitor review): NDA form doubles as the buyer questionnaire (per buyer type: individual / strategic / financial) so every signed NDA builds a matchable buyer profile; optional AI "deeper check" on the top suggestions; external acquirer discovery.
 - [ ] Comps API integration (stub exists, needs BizBuySell/DealStats API keys)
 - [ ] UX iteration pass across all flows
 
@@ -416,7 +416,7 @@ Mobile app or third-party integration. Transcripts feed directly into the knowle
 **2 — Email sync** (infrastructure ready, needs OAuth secrets)
 Gmail and Outlook OAuth infrastructure exists. Needs provider credentials to activate. Parsed emails feed knowledge base.
 
-**3 — Proactive buyer matching + broker-approved new-deal notifications** (engine + dashboards live)
+**3 — Proactive buyer matching + broker-approved new-deal notifications** (built: Suggested buyers panel with drafted, broker-sent outreach — see known gaps for what's left)
 Matching engine and buyer-side dashboard exist. Brokers see profile-aware analytics with `match-fit × engagement` ranking. Remaining: when a broker publishes a new deal, auto-match against all buyer profiles and **suggest** an email batch to qualifying buyers — broker reviews the suggested list, picks who to contact, edits the message if needed, and clicks send. **Never auto-send.** Positive framing ("X criteria matched"). Broker stays in control.
 
 **4 — Buyer scoring composites** (foundation in place)
