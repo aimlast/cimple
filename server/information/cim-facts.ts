@@ -12,10 +12,10 @@
  *   replaces them automatically; a broker edit makes them "broker"; a
  *   website claim the broker accepted into the facts is a fact).
  */
-import { getFieldSources, isFactKey, repairCharIndexedValue, type FieldSource, type SourceKind } from "../interview/info-merger";
+import { getFieldSources, isFactKey, repairCharIndexedValue, WEBSITE_ACCEPTED_SOURCE_NOTE, type FieldSource, type SourceKind } from "../interview/info-merger";
 
 /** Note the website "Accept into facts" action writes on the source. */
-export const WEBSITE_ACCEPTED_NOTE = "Accepted by you from the website";
+export const WEBSITE_ACCEPTED_NOTE = WEBSITE_ACCEPTED_SOURCE_NOTE;
 
 /** Source kinds whose facts are leads, not verified facts. */
 export const LEAD_SOURCE_KINDS: ReadonlySet<SourceKind> = new Set<SourceKind>(["crm", "website", "social"]);

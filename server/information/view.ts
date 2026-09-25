@@ -40,6 +40,7 @@ import {
 } from "../interview/info-merger";
 import { BROKER_DELETED_KEY, BROKER_SECTION_OF_KEY, BROKER_FACT_LABELS_KEY, websiteFactKey } from "./facts";
 import { inferFieldSources, isUntrackedSource, type InferredFieldSource } from "./infer-sources";
+import { brokerAcceptedSource } from "./cim-facts";
 
 /**
  * Per-source notes the extractor records (summaries, call logistics) — about
@@ -179,6 +180,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       kind: src.source,
       label: describeSource(src, docName) + (src.inferred ? " (inferred)" : ""),
       ...(src.inferred ? { inferred: true } : {}),
+      ...(brokerAcceptedSource(src) ? { acceptedByBroker: true } : {}),
       ...(src.documentId ? { documentId: src.documentId } : {}),
       ...(documentName ? { documentName } : {}),
       ...(src.sessionId ? { sessionId: src.sessionId } : {}),
@@ -192,6 +194,9 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   const confidenceOf = (key: string, src: InferredFieldSource | undefined): FactConfidence => {
     const kind = src?.source;
     if (kind === "broker") return "confirmed";
+    // A website / CRM / social value the broker accepted into the facts is
+    // treated as a fact everywhere (CIM writers included) — shown as such.
+    if (brokerAcceptedSource(src)) return "confirmed";
     // A fact collected before sources were tracked, now traced to the
     // questionnaire / a document / the website: the interview's own label for
     // it ("Approximate"…) still applies — the tracing only guesses the source.

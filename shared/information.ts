@@ -30,6 +30,8 @@ export interface FactSourceInfo {
    * document / the website, not recorded at the time.
    */
   inferred?: boolean;
+  /** A website / CRM / social value the broker accepted into the facts — shown as a fact, not a lead. */
+  acceptedByBroker?: boolean;
 }
 
 export interface FactAlternate {
@@ -152,10 +154,4 @@ export interface InformationView {
     scrapeSource: string | null;
     items: WebsiteItem[];
   } | null;
-  /**
-   * True when loading the view lined up a deal whose asking price on the deal
-   * row and on file had drifted apart — the deal changed, so anything showing
-   * the deal (Overview, Valuation) should refetch it.
-   */
-  dealUpdated?: boolean;
 }

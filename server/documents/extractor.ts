@@ -170,7 +170,8 @@ const SOURCE_GUIDANCE: Partial<Record<SourceKind, string>> = {
   crm: `THIS SOURCE IS THE BROKER'S OWN CRM NOTE (Pipedrive / HubSpot / Salesforce record, activity or note).
 - These are the broker's second-hand notes about the seller and the business — useful leads, not verified facts. Extract them faithfully as written; they will be confirmed with the seller later.
 - Do not upgrade hedged wording ("approx.", "thinks", "~") into firm figures — keep the hedge in the value.
-- Ignore CRM housekeeping (pipeline stage, owner, follow-up reminders) unless it states a fact about the business; put next steps in actionItems.`,
+- Ignore CRM housekeeping (pipeline stage, owner, follow-up reminders) unless it states a fact about the business; put next steps in actionItems.
+- The broker's negotiation notes — the seller's floor / lowest acceptable price, walk-away point, what they would give in on, how motivated or desperate they are, the broker's pricing strategy — are NEVER business facts: put them ONLY in _privateNotes. askingPrice is only a price the seller or broker states as the asking/listing price.`,
   website: `THIS SOURCE IS PUBLIC WEB CONTENT (the business's website or a directory/review page).
 - Everything here is a public marketing claim, unverified. Extract concrete claims only (years in business, services, locations, awards, team names, customer types) and keep the claim's own wording.
 - Do not extract financial figures unless the page states them explicitly; never infer size from marketing language.`,
@@ -217,7 +218,7 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
-PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble, legal trouble not about the business, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.`;
+PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.`;
 }
 
 /** Long sources (full-year email threads, hour-long calls) are read in full up to this size. */

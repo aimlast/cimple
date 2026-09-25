@@ -23,7 +23,7 @@ import { requireBroker, requireOwnedDeal } from "../broker-auth/routes.js";
 import { buildInformationView } from "../information/view";
 import {
   mutateDealInfo,
-  syncMirroredFacts,
+  brokerFactsView,
   editFact,
   addFact,
   deleteFact,
@@ -49,7 +49,9 @@ async function loadView(dealId: string) {
     storage.getDocumentsByDeal(dealId),
     db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId)),
   ]);
-  return buildInformationView({ deal, documents, sessions });
+  // Read-only: a deal whose asking-price copies drifted apart is shown lined
+  // up (in memory); the broker's next change saves that.
+  return buildInformationView({ deal: brokerFactsView(deal), documents, sessions });
 }
 
 function fail(res: Response, err: unknown, fallback: string) {
@@ -67,12 +69,8 @@ function factKeyParam(req: Request): string {
 export function registerInformationRoutes(app: Express): void {
   app.get("/api/deals/:dealId/information", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      // A deal whose asking price on the deal row and on file disagree (from
-      // before the two were kept as one value) is lined up first.
-      // The response says so, so the client refreshes the deal it has loaded.
-      const dealUpdated = await syncMirroredFacts(req.params.dealId);
-      const view = await loadView(req.params.dealId);
-      res.json(dealUpdated ? { ...view, dealUpdated: true } : view);
+      // Read-only — opening the tab never writes to the deal.
+      res.json(await loadView(req.params.dealId));
     } catch (err) {
       fail(res, err, "Couldn't load the collected information");
     }

@@ -6,8 +6,8 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, getPrivateNotes, privateNoteSources, type FieldSource, type PrivateNoteSource } from "./info-merger";
-import { interviewFactView } from "../information/deal-mirror";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
+import { sellerInterviewView } from "./seller-view";
 
 // =====================
 // Types
@@ -270,11 +270,15 @@ export function assembleKnowledgeBase(
   latestSession: InterviewSession | null,
   resolvedDiscrepancies: Discrepancy[] = [],
 ): KnowledgeBase {
-  // The broker's listed asking price from the deal row is not something the
-  // seller said — the interview sees the seller-side value instead (and keeps
-  // asking for the seller's own expectation when there is none).
-  const baseExtractedInfo = interviewFactView(
+  // The facts exactly as the interview may read them (see seller-view.ts):
+  // nothing a broker-only source asserted (the broker's CRM notes, private
+  // emails and files — facts, other values, private notes), and not the
+  // broker's listed asking price from the deal row (the agent keeps asking
+  // for the seller's own expectation when there is none). processTurn
+  // merges each turn against this same view.
+  const baseExtractedInfo = sellerInterviewView(
     ((deal.extractedInfo as Partial<ExtractedInfo>) || {}) as Record<string, unknown>,
+    documents,
   ) as Partial<ExtractedInfo>;
   const questionnaireData = deal.questionnaireData as Record<string, unknown> | null;
 
@@ -283,32 +287,6 @@ export function assembleKnowledgeBase(
   // already reconciled against uploaded documents. (ask_seller rows have no
   // resolvedValue, so they never overlay — they become priority topics below.)
   const extractedInfo: Partial<ExtractedInfo> = { ...baseExtractedInfo };
-  // Broker-private notes the agent may hold: ones the seller disclosed (in
-  // the interview, or in a source the seller shared). Notes taken from a
-  // broker-only source (the broker's CRM notes, private emails) are the
-  // broker's own — never in the agent's prompt, so they can never be quoted
-  // or alluded to — and notes whose source was deleted are gone.
-  {
-    const raw = (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
-    if (Array.isArray(raw)) {
-      const docVisibility = new Map(documents.map((d) => [d.id, d.visibility]));
-      // A note may come from several sources; the agent holds it when at
-      // least one of them is the seller's own (a session, a shared source),
-      // credited to that source — never to the broker's private one.
-      const sellerSide = (s: PrivateNoteSource) => {
-        if (s.brokerOnly) return false;
-        if (!s.documentId) return true;
-        const vis = docVisibility.get(s.documentId);
-        return vis !== undefined && vis !== "broker_only";
-      };
-      const safe = getPrivateNotes(extractedInfo as Record<string, unknown>).flatMap((n) => {
-        const src = privateNoteSources(n).find(sellerSide);
-        return src ? [{ note: n.note, ...src }] : [];
-      });
-      if (safe.length > 0) (extractedInfo as Record<string, unknown>)._brokerPrivateNotes = safe;
-      else delete (extractedInfo as Record<string, unknown>)._brokerPrivateNotes;
-    }
-  }
   for (const d of resolvedDiscrepancies) {
     if (d.resolvedValue && d.field) {
       (extractedInfo as Record<string, unknown>)[d.field] = d.resolvedValue;
@@ -316,27 +294,44 @@ export function assembleKnowledgeBase(
   }
 
   // Discrepancies the broker explicitly routed to the interview
+  // One side from a broker-only source (a CRM note, a private email): the
+  // agent never sees that side's value, or the explanation built from it —
+  // it asks the seller for the figure without hinting at it.
+  // (A side is private when its row is broker-only, or when it names a
+  // broker-only source — financial-analysis values carry the source's name.)
+  const privateDocNames = documents
+    .filter((doc) => doc.visibility === "broker_only" && (doc.name || "").trim().length >= 4)
+    .map((doc) => doc.name.trim().toLowerCase());
+  const namesPrivateSource = (text: string | null) =>
+    !!text && privateDocNames.some((name) => text.toLowerCase().includes(name));
   const askSellerDiscrepancies: AskSellerDiscrepancy[] = resolvedDiscrepancies
     .filter((d) => d.status === "ask_seller")
-    .map((d) => ({
-      field: d.field,
-      valueA: d.interviewValue,
-      valueB: d.documentValue,
-      severity: d.severity,
-      explanation: d.aiExplanation,
-      suggestedResolution: d.suggestedResolution,
-      privateSource:
-        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only")) || undefined,
-    }));
+    .map((d) => {
+      // documentId backs the second value (documentValue).
+      const privateA = namesPrivateSource(d.interviewValue);
+      const privateB =
+        namesPrivateSource(d.documentValue) ||
+        (!!d.documentId && documents.some((doc) => doc.id === d.documentId && doc.visibility === "broker_only"));
+      const privateSource = privateA || privateB;
+      return {
+        field: d.field,
+        valueA: privateA ? null : d.interviewValue,
+        valueB: privateB ? null : d.documentValue,
+        severity: d.severity,
+        explanation: privateSource ? null : d.aiExplanation,
+        suggestedResolution: privateSource ? null : d.suggestedResolution,
+        ...(privateSource ? { privateSource: true } : {}),
+      };
+    });
 
   // Per-field confidence lives on the session (interview turns write it) —
   // used to label coverage fields honestly instead of hardcoding "confirmed".
   const sessionMeta = (latestSession?.extractedInfo as Record<string, unknown> | null) || {};
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string> | undefined) ?? undefined;
 
-  // The real source of every known fact, labelled for the agent. Broker-only
-  // sources (CRM notes, private emails) are labelled so the agent confirms
-  // the fact with the seller without ever citing or quoting the source.
+  // The real source of every known fact, labelled for the agent. (Facts from
+  // broker-only sources aren't in the view at all; a CRM note the broker
+  // shared is labelled so the agent confirms it without citing the CRM.)
   const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
   for (const d of resolvedDiscrepancies) {
     if (d.resolvedValue && d.field) factSourceLabels[d.field] = "confirmed by the broker";
@@ -352,7 +347,7 @@ export function assembleKnowledgeBase(
       industry: deal.industry,
       subIndustry: deal.subIndustry,
       description: deal.description,
-      location: parseLocation(deal, questionnaireData),
+      location: parseLocation(deal, questionnaireData, baseExtractedInfo),
     },
     sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
     sectionImportance,
@@ -472,7 +467,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
       if (d.valueB) parts.push(`    Value 2: ${d.valueB}`);
       if (d.explanation) parts.push(`    Why it matters: ${d.explanation}`);
       if (d.suggestedResolution) parts.push(`    Suggested approach: ${d.suggestedResolution}`);
-      if (d.privateSource) parts.push(`    ⚠ One value comes from the broker's private notes (CRM). Ask the seller to confirm the figure in your own words — never mention the CRM, the broker's notes or any document, and never quote the explanation above.`);
+      if (d.privateSource) parts.push(`    ⚠ The other value is held privately by the broker and is not shown to you. Ask the seller for the right figure in your own words — never suggest a figure, and never mention the broker's notes, a CRM or any document.`);
     }
     parts.push(``);
   }
@@ -857,7 +852,12 @@ export function buildSectionCoverage(
   });
 }
 
-function parseLocation(deal: Deal, questionnaireData: Record<string, unknown> | null): LocationContext | null {
+function parseLocation(
+  deal: Deal,
+  questionnaireData: Record<string, unknown> | null,
+  /** The interview's view of the facts (never a broker-only source's). */
+  facts: Partial<ExtractedInfo>,
+): LocationContext | null {
   // Try to extract location from questionnaire data first
   if (questionnaireData) {
     const country = questionnaireData["Country"] || questionnaireData["country"];
@@ -890,9 +890,8 @@ function parseLocation(deal: Deal, questionnaireData: Record<string, unknown> | 
   }
 
   // Try extractedInfo
-  const extractedInfo = deal.extractedInfo as Partial<ExtractedInfo> | null;
-  if (extractedInfo?.locations) {
-    return { country: null, stateProvince: null, municipality: null, raw: extractedInfo.locations };
+  if (facts?.locations) {
+    return { country: null, stateProvince: null, municipality: null, raw: facts.locations };
   }
 
   return null;

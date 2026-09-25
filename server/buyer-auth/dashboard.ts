@@ -114,6 +114,7 @@ export function registerBuyerDashboardRoutes(app: Express) {
               industry: deal.industry || "",
               subIndustry: (deal as any).subIndustry,
               askingPrice: (deal as any).askingPrice,
+              description: (deal as any).description ?? null,
               extractedInfo: (deal as any).extractedInfo || {},
             },
             { skipAI: true },

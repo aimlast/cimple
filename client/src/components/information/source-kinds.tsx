@@ -79,6 +79,12 @@ function stripExt(name: string): string {
 
 /** The short text on a fact's source chip. */
 export function sourceChipText(src: FactSourceInfo): string {
+  const text = baseChipText(src);
+  // The broker vouched for a website / CRM / social value ("Accept into facts").
+  return src.acceptedByBroker && (src.kind === "website" || src.kind === "crm" || src.kind === "social") ? `${text} · accepted` : text;
+}
+
+function baseChipText(src: FactSourceInfo): string {
   const kind = src.kind;
   switch (kind) {
     case "interview":
