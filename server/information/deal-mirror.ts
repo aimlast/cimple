@@ -15,9 +15,10 @@
  *     mutateDealInfo) writes the column in the same update;
  *   - every write of the column (Valuation step, deal creation) goes through
  *     the fact as a broker value (see setMirroredDealFact in facts.ts);
- *   - two copies that disagree from before this rule are reconciled the next
- *     time the deal's information is read on the Information tab or changed:
- *     a broker-sourced fact wins (the column follows); otherwise the column —
+ *   - two copies that disagree from before this rule are shown lined up on
+ *     every broker surface (brokerFactsView, in memory — reading a deal never
+ *     writes to it) and saved that way on the broker's next change: a
+ *     broker-sourced fact wins (the column follows); otherwise the column —
  *     the broker's own entry — becomes the broker fact, and the other value
  *     stays visible as an alternate (never lost).
  *

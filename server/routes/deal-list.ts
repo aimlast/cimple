@@ -36,6 +36,7 @@ import { buildSectionCoverage } from "../interview/knowledge-base";
 import { getSectionImportance } from "../interview/section-importance.js";
 import { getInterviewOutline } from "../interview/outline.js";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan.js";
+import { brokerFactsView } from "../information/facts";
 import { typedNumericValues } from "../interview/info-merger";
 import { getLiveCimGenerationStatus } from "../cim/generation-jobs";
 import { effectiveAskingPrice } from "../information/deal-mirror";
@@ -345,8 +346,10 @@ function selectSlimDeals(brokerId: string, includeArchived: boolean) {
 
 function readinessFor(d: SlimDeal, confidence?: Record<string, string>): DealListRow["readiness"] {
   try {
+    // Same facts as the Information tab and /cim-readiness (asking-price
+    // copies lined up in memory) — one readiness number everywhere.
     const sections = buildSectionCoverage(
-      (d.extractedInfo || {}) as any,
+      (brokerFactsView(d as any).extractedInfo || {}) as any,
       confidence,
       getSectionImportance(d as any),
       getInterviewOutline(d as any).excludedSections,

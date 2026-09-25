@@ -19,11 +19,7 @@ export function useInformation(dealId: string) {
         const body = await r.json().catch(() => null);
         throw new Error((body && body.error) || "Couldn't load the collected information");
       }
-      const view = (await r.json()) as InformationView;
-      // Loading lined up a deal whose asking price had drifted between the
-      // deal row and the facts — the deal the Overview holds is now stale.
-      if (view.dealUpdated) invalidateDealFacts(dealId);
-      return view;
+      return (await r.json()) as InformationView;
     },
     // A source still being read will add facts in a moment — keep watching.
     refetchInterval: (query) => (query.state.data?.sources.some((s) => isProcessing(s.status)) ? 2500 : false),

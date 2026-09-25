@@ -35,7 +35,7 @@ export function SourceChip({
       : source.kind === "unknown"
         // Quiet, not alarming: plain text with no border.
         ? "border-transparent bg-muted/30 text-muted-foreground"
-        : source.kind === "crm" || source.kind === "website" || source.kind === "social" || source.inferred
+        : ((source.kind === "crm" || source.kind === "website" || source.kind === "social") && !source.acceptedByBroker) || source.inferred
           ? "border-dashed border-border text-muted-foreground"
           : "border-border bg-muted/40 text-foreground/80";
   const text = sourceChipText(source);

@@ -64,6 +64,7 @@ export async function scoreBuyersForDeal(deal: Deal): Promise<ScoredBuyer[]> {
           industry: deal.industry || "",
           subIndustry: (deal as any).subIndustry,
           askingPrice: (deal as any).askingPrice,
+          description: (deal as any).description ?? null,
           extractedInfo: (deal as any).extractedInfo || {},
         },
         { skipAI: true },

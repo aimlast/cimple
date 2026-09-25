@@ -48,7 +48,7 @@ import {
   MIRROR_NOTES,
   type MirroredFactColumn,
 } from "./deal-mirror";
-import type { Discrepancy } from "@shared/schema";
+import type { Deal, Discrepancy } from "@shared/schema";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
 export const BROKER_SECTION_OF_KEY = "_brokerSectionOf";
@@ -516,18 +516,18 @@ export async function setMirroredDealFact(dealId: string, key: MirroredFactColum
 }
 
 /**
- * Reconcile a deal's mirrored columns and facts if (and only if) they
- * disagree — called when the Information tab loads, so a deal whose copies
- * drifted before the mirror rule shows one value everywhere.
+ * The deal as broker surfaces read it (the Information tab, the readiness
+ * score): a deal whose asking-price copies drifted apart before the mirror
+ * rule gets them lined up IN MEMORY — the same result mutateDealInfo saves
+ * on the broker's next change — so every broker screen shows one value while
+ * reading the deal never writes to it (no save, no "last activity" bump).
+ * Returns the deal itself when nothing needs lining up. Never save it.
  */
-export async function syncMirroredFacts(dealId: string): Promise<boolean> {
-  const deal = await storage.getDeal(dealId);
-  if (!deal) return false;
-  const probe = structuredClone((deal.extractedInfo as Info | null) || {});
-  const { columnPatch, infoChanged } = reconcileMirroredFacts(deal, probe, setBrokerFact);
-  if (!infoChanged && Object.keys(columnPatch).length === 0) return false;
-  await mutateDealInfo(dealId, () => undefined);
-  return true;
+export function brokerFactsView<D extends Pick<Deal, MirroredFactColumn | "extractedInfo">>(deal: D): D {
+  const info = structuredClone((deal.extractedInfo as Info | null) || {});
+  const { columnPatch, infoChanged } = reconcileMirroredFacts(deal, info, setBrokerFact);
+  if (!infoChanged && Object.keys(columnPatch).length === 0) return deal;
+  return { ...deal, ...columnPatch, extractedInfo: info };
 }
 
 /** PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the fact on file. */

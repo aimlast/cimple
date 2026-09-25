@@ -14,6 +14,7 @@ import { buildSectionCoverage } from "../interview/knowledge-base";
 import { getSectionImportance } from "../interview/section-importance";
 import { getInterviewOutline } from "../interview/outline";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
+import { brokerFactsView } from "../information/facts";
 
 /** Section coverage + readiness for a deal (confidence from its latest interview session). */
 export async function computeDealReadiness(deal: Deal) {
@@ -25,8 +26,10 @@ export async function computeDealReadiness(deal: Deal) {
     .limit(1);
   const meta = (latest?.extractedInfo as Record<string, unknown> | null) || {};
   const confidence = meta._confidenceLevels as Record<string, string> | undefined;
+  // The facts as every broker surface reads them (asking-price copies lined
+  // up in memory), so this number matches the Information tab's.
   const sections = buildSectionCoverage(
-    (deal.extractedInfo || {}) as any,
+    (brokerFactsView(deal).extractedInfo || {}) as any,
     confidence,
     getSectionImportance(deal),
     getInterviewOutline(deal).excludedSections,

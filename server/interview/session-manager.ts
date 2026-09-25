@@ -67,7 +67,8 @@ import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
-import { interviewFactView, isDealRowFact } from "../information/deal-mirror";
+import { isDealRowFact } from "../information/deal-mirror";
+import { sellerInterviewView } from "./seller-view";
 
 // =====================
 // Types
@@ -325,11 +326,11 @@ export async function startOrResumeSession(
   const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
 
   // Seller Communication Profile: generated when missing, and rebuilt when
-  // it predates the exclusion of broker-only sources on a deal that has
-  // them (its free text could quote the broker's private CRM notes; until
-  // the rebuild lands the interview only sees its style fields). Runs in
-  // the background — we don't block the opening message on it; the profile
-  // is available from the second turn onward.
+  // it was built under older privacy rules or from a row the broker has
+  // since made private (its free text could quote the broker's CRM notes or
+  // listed price; until the rebuild lands the interview only sees its style
+  // fields). Runs in the background — we don't block the opening message on
+  // it; the profile is available from the second turn onward.
   if (!deal.sellerProfile || sellerProfileNeedsRebuild(deal.sellerProfile as never, documents)) {
     const prior = (deal.sellerProfile as Record<string, unknown> | null) || null;
     generateSellerProfile(dealId)
@@ -806,13 +807,16 @@ export async function processTurn(
   const valuationFishing = VALUATION_FISHING_RE.test(sellerMessage);
   // Belt-and-suspenders on fishing turns: ANY currency figure ≥ $10K in the
   // reply that neither the seller just said nor the file already holds is a
-  // leak — this catches figures the pattern list can't anticipate. (The
-  // broker's listed price from the deal row is not on the seller's file, so
-  // quoting it to the seller counts as a leak too.)
+  // leak — this catches figures the pattern list can't anticipate. (Only
+  // the file as the interview sees it: the broker's listed price from the
+  // deal row and figures from broker-only sources are not on the seller's
+  // file, so quoting one to the seller counts as a leak too.)
+  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
+  const sellerView = sellerInterviewView(existingExtracted, documents);
   const sanctionedText =
     sellerMessage +
     " " +
-    Object.entries(interviewFactView((deal.extractedInfo || {}) as Record<string, unknown>))
+    Object.entries(sellerView)
       .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
       .map(([, v]) => v)
       .join(" ");
@@ -874,11 +878,15 @@ export async function processTurn(
   // in front of every question is exhausting and nobody talks that way. The
   // prompt forbids it; this strips it mechanically when the model slips,
   // leaving the question. Clarifications, reconciliations, and empathy
-  // openers are preserved (see stripFillerPreamble).
-  if (!degraded) {
+  // openers are preserved (see stripFillerPreamble). When the seller asked
+  // something, the opener is the answer ("Yes — I have $2.3M down as your
+  // asking price.") and is never stripped: an unanswered question reads as
+  // being ignored, which is worse than a recap.
+  if (!degraded && !sellerMessage.includes("?")) {
     const stripped = stripFillerPreamble(aiResponse.message);
     if (stripped !== aiResponse.message) {
-      console.log(`[session-manager] Filler guard trimmed a recap opener on session ${sessionId}`);
+      const removed = aiResponse.message.trim().slice(0, Math.max(0, aiResponse.message.trim().length - stripped.length)).trim();
+      console.log(`[session-manager] Filler guard trimmed a recap opener on session ${sessionId}: "${removed.slice(0, 140)}"`);
       aiResponse.message = stripped;
     }
   }
@@ -897,13 +905,25 @@ export async function processTurn(
     aiResponse.endReason = aiResponse.endReason || "Seller asked to stop (repeated stop signals)";
   }
 
-  // Merge extracted fields
-  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
-  let { merged, updatedConfidence, changes } = mergeExtractedFields(
-    existingExtracted as Record<string, string>,
+  // Merge extracted fields — against the facts exactly as the agent was
+  // shown them (sellerInterviewView), so "already on file" and "a change"
+  // mean the same thing to the model and to the guards below. Merging
+  // against the raw facts made the model's repeat of the seller's own price
+  // (shown in place of the broker's hidden deal-row price) count as a
+  // change, which the grounding guard then turned into a "verify" re-ask.
+  // The turn's changes are applied to the deal's REAL facts afterwards
+  // (applyTurn), where the provenance rules below decide what is kept.
+  let { merged: viewMerged, updatedConfidence, changes } = mergeExtractedFields(
+    sellerView as Record<string, string>,
     aiResponse.extractedFields,
     confidenceLevels,
   );
+  /** The deal's real facts with this turn's changes applied (last write wins). */
+  const applyTurn = (): Record<string, unknown> => {
+    const out: Record<string, unknown> = { ...existingExtracted };
+    for (const c of changes) out[c.fieldName] = c.newValue;
+    return out;
+  };
 
   // Apply this turn's deferral deltas to the durable ledger (append-only
   // until resolved — see deferral-ledger.ts).
@@ -924,10 +944,16 @@ export async function processTurn(
   if (aiResponse.shouldEnd && !forcedEnd) {
     // A seller answer to a field that holds the broker's deal-row price is
     // kept beside it (see the provenance block below) — count it here too.
-    const prospectiveInfo: Record<string, unknown> = { ...(merged as Record<string, unknown>) };
+    // A seller answer replacing a broker-only source's value becomes the
+    // seller's own (as the provenance block below records it), so the
+    // interview's view counts it.
+    const prospectiveInfo: Record<string, unknown> = applyTurn();
+    const priorSourcesNow = getFieldSources(existingExtracted);
     for (const c of changes) {
       if (isDealRowFact(existingExtracted, c.fieldName)) {
         recordAlternate(prospectiveInfo, c.fieldName, c.newValue, { source: "interview", at: new Date().toISOString() });
+      } else if (priorSourcesNow[c.fieldName]?.source !== "broker") {
+        setFieldSource(prospectiveInfo, c.fieldName, { source: "interview", at: new Date().toISOString() });
       }
     }
     const prospectiveKb = assembleKnowledgeBase(
@@ -969,8 +995,8 @@ export async function processTurn(
       aiResponse = continued;
 
       // Fold in anything the continuation turn extracted
-      const remerge = mergeExtractedFields(merged, aiResponse.extractedFields, updatedConfidence);
-      merged = remerge.merged;
+      const remerge = mergeExtractedFields(viewMerged, aiResponse.extractedFields, updatedConfidence);
+      viewMerged = remerge.merged;
       updatedConfidence = remerge.updatedConfidence;
       changes = [...changes, ...remerge.changes];
 
@@ -989,7 +1015,25 @@ export async function processTurn(
   // not appear in the seller's actual message is downgraded to approximate
   // and queued on the deferral ledger for a proper circle-back. A fabricated
   // fact can never masquerade as seller-confirmed in the CIM pipeline.
-  const groundingFlags = applyGroundingGuard(changes, updatedConfidence, sellerMessage);
+  const groundingResult = applyGroundingGuard(changes, updatedConfidence, sellerMessage);
+  // The model restating a figure that is already on file (the seller said no
+  // number this turn) is not new information and not a fabrication: nothing
+  // is recorded, the file keeps its value and confidence, and no "verify"
+  // circle-back is opened — that would re-ask something already answered.
+  const restated = new Set(groundingResult.filter((f) => f.restatement).map((f) => f.change));
+  if (restated.size > 0) {
+    console.log(
+      `[session-manager] Grounding guard: ${restated.size} restated figure(s) already on file left unchanged: ` +
+        Array.from(restated).map((c) => c?.fieldName).join(", "),
+    );
+    changes = changes.filter((c) => !restated.has(c));
+    for (const c of Array.from(restated)) {
+      if (!c || changes.some((k) => k.fieldName === c.fieldName)) continue;
+      if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+      else delete updatedConfidence[c.fieldName];
+    }
+  }
+  const groundingFlags = groundingResult.filter((f) => !f.restatement);
   if (groundingFlags.length > 0) {
     console.warn(
       `[session-manager] Grounding guard downgraded ${groundingFlags.length} field(s): ` +
@@ -1023,11 +1067,10 @@ export async function processTurn(
     ...openDeferrals(priorLedger).map((d) => d.topic),
     ...aiResponse.reasoning.resolvedDeferrals,
   ];
-  // The broker's listed price from the deal row is never "the value on
-  // record" to the seller — reconcile against what the seller's file holds.
-  const sellerSideInfo = interviewFactView(existingExtracted);
-  const onRecord = (c: FieldChange): unknown =>
-    isDealRowFact(existingExtracted, c.fieldName) ? sellerSideInfo[c.fieldName] : c.previousValue;
+  // "The value on record" is the one the agent was shown (the turn merged
+  // against sellerInterviewView): never the broker's deal-row price or a
+  // broker-only source's figure, which the seller must not hear about.
+  const onRecord = (c: FieldChange): unknown => c.previousValue;
   const conflictDeferrals = changes
     .filter(
       (c) =>
@@ -1119,6 +1162,9 @@ export async function processTurn(
     }
   }
 
+  // From here on: the deal's real facts with this turn's changes applied.
+  const merged = applyTurn();
+
   // Update industry context
   const updatedIndustryContext = updateIndustryContext(
     kb.industryContext,
@@ -1162,9 +1208,14 @@ export async function processTurn(
     const priorSources = getFieldSources(existingExtracted);
     const kept: FieldChange[] = [];
     for (const c of changes) {
+      // The value really on file before the turn — not the interview's view
+      // of it (the broker's deal-row price and broker-only facts are hidden
+      // there, so the change's previousValue may be another value or none).
       const prev = priorSources[c.fieldName];
-      if (prev?.source === "broker" && c.previousValue !== null && c.previousValue !== undefined) {
-        mergedInfo[c.fieldName] = existingExtracted[c.fieldName];
+      const priorValue = existingExtracted[c.fieldName];
+      const hadValue = priorValue !== null && priorValue !== undefined && priorValue !== "";
+      if (prev?.source === "broker" && hadValue) {
+        mergedInfo[c.fieldName] = priorValue;
         // The broker's deal-row price is hidden from the interview, which
         // sees this seller answer in its place (interviewFactView) — so the
         // interview keeps the seller's confidence in it, as before.
@@ -1175,8 +1226,10 @@ export async function processTurn(
         recordAlternate(mergedInfo, c.fieldName, c.newValue, turnSrc);
         continue;
       }
-      if (prev && c.previousValue !== null && c.previousValue !== undefined && (prev.source !== kind || prev.documentId)) {
-        recordAlternate(mergedInfo, c.fieldName, c.previousValue, prev);
+      // The value this turn replaced (a document's, a CRM note's…) stays as
+      // another value — unless the seller said the very same thing.
+      if (prev && hadValue && (prev.source !== kind || prev.documentId) && String(priorValue) !== String(c.newValue)) {
+        recordAlternate(mergedInfo, c.fieldName, priorValue, prev);
       }
       setFieldSource(mergedInfo, c.fieldName, turnSrc);
       kept.push(c);

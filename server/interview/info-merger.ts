@@ -417,6 +417,13 @@ const NEGATION_RE = /\b(no|not|none|nothing|never|nobody|isn't|doesn't|don't|are
 export interface GroundingFlag {
   fieldName: string;
   reason: string;
+  /**
+   * The value only restates the figure already on file (the change's
+   * previous value) — nothing new, nothing fabricated. The caller drops the
+   * change instead of downgrading it; confidence is left untouched.
+   */
+  restatement?: boolean;
+  change?: FieldChange;
 }
 
 /**
@@ -448,6 +455,10 @@ export function applyGroundingGuard(
 
     let reason: string | null = null;
     if (valueAssertsQuantity && !sellerHasQuantity) {
+      if (restatesPreviousFigure(change)) {
+        flags.push({ fieldName: change.fieldName, reason: "restates the figure already on file", restatement: true, change });
+        continue;
+      }
       reason = `value asserts a number but the seller's message contains none`;
     } else if (valueAssertsNegative && !sellerNegated) {
       reason = `value asserts a negative claim the seller never made`;
@@ -461,6 +472,23 @@ export function applyGroundingGuard(
   }
 
   return flags;
+}
+
+/**
+ * True when every typed figure in the change's new value is a figure its
+ * previous value already states (same amount within 1%) — the model
+ * repeating what is on file, e.g. "$1.2M" for "$1,200,000".
+ */
+function restatesPreviousFigure(change: FieldChange): boolean {
+  if (change.previousValue === null || change.previousValue === undefined) return false;
+  const claimed = typedNumericValues(change.newValue).map((t) => t.value);
+  const onFile = typedNumericValues(String(change.previousValue)).map((t) => t.value);
+  if (claimed.length === 0 || onFile.length === 0) return false;
+  const close = (a: number, b: number) => {
+    const base = Math.max(Math.abs(a), Math.abs(b));
+    return base === 0 || Math.abs(a - b) / base <= 0.01;
+  };
+  return claimed.every((n) => onFile.some((f) => close(n, f)));
 }
 
 /**
@@ -634,6 +662,8 @@ export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
 export const FIELD_CORROBORATIONS_KEY = "_fieldCorroborations";
 /** Note on a source entry that stands for a value recorded before sources were tracked. */
 export const LEGACY_SOURCE_NOTE = "Recorded before sources were tracked";
+/** Note the website "Accept into facts" action writes (re-exported as WEBSITE_ACCEPTED_NOTE by information/cim-facts). */
+export const WEBSITE_ACCEPTED_SOURCE_NOTE = "Accepted by you from the website";
 
 /**
  * Per-source notes the extractor records (summaries, call logistics, red
@@ -744,6 +774,12 @@ export function describeSource(
       const when = shortDate(src.at);
       return name ? `${base} · ${name}` : when ? `${base} · ${when}` : base;
     }
+    case "website":
+    case "social":
+    case "crm":
+      // The broker vouched for it ("Accept into facts") — say so, not just "Website".
+      if (src.acceptedByBroker || src.note === WEBSITE_ACCEPTED_SOURCE_NOTE) return `${name ? `${base} · ${name}` : base} · accepted by you`;
+      return name ? `${base} · ${name}` : base;
     case "broker": {
       const when = shortDate(src.at);
       return src.note ? `${base} · ${src.note}` : when ? `${base} · ${when}` : base;
@@ -990,6 +1026,9 @@ export function removeDocumentFields(
       const map = { ...(repairCharIndexedValue(out[key]) as Record<string, unknown>) };
       const years = { ...src.years };
       let touched = false;
+      // Only years whose figure actually went count as removed — a year
+      // another source also stated stays on file under that source.
+      let yearRemoved = false;
       for (const y of Object.keys(map)) {
         const contributor = years[y] ?? (ownsWhole ? documentId : undefined);
         if (contributor !== documentId) continue;
@@ -1003,6 +1042,7 @@ export function removeDocumentFields(
         }
         delete map[y];
         delete years[y];
+        yearRemoved = true;
       }
       for (const [y, docId] of Object.entries(years)) if (docId === documentId && !(y in map)) delete years[y];
       if (!touched) {
@@ -1020,7 +1060,7 @@ export function removeDocumentFields(
         else delete next.documentId;
       }
       sources[key] = next;
-      removed.push(`${key}:${documentId}`);
+      if (yearRemoved) removed.push(`${key}:${documentId}`);
       continue;
     }
     if (src.documentId !== documentId) continue;

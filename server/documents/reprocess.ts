@@ -152,14 +152,24 @@ export async function reprocessDealDocuments(
     const latest = ((await storage.getDeal(dealId))?.extractedInfo as Record<string, unknown> | null) || {};
     const latestSources = getFieldSources(latest);
     const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
+    const carried: string[] = [];
     for (const key of Array.from(new Set([...Object.keys(latest), ...Object.keys(existing)]))) {
-      if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY) continue;
+      if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY || key === FIELD_CORROBORATIONS_KEY) continue;
       if (JSON.stringify(latest[key]) === JSON.stringify(existing[key])) continue;
+      carried.push(key);
       if (latest[key] === undefined) { delete rebuilt[key]; delete finalSources[key]; continue; }
       rebuilt[key] = latest[key];
       if (latestSources[key]) finalSources[key] = latestSources[key];
     }
     rebuilt[FIELD_SOURCES_KEY] = finalSources;
+    const finalCorr = carryCorroborations(
+      rebuilt[FIELD_CORROBORATIONS_KEY] as Record<string, unknown> | undefined,
+      existing[FIELD_CORROBORATIONS_KEY] as Record<string, unknown> | undefined,
+      latest[FIELD_CORROBORATIONS_KEY] as Record<string, unknown> | undefined,
+      carried,
+    );
+    if (Object.keys(finalCorr).length > 0) rebuilt[FIELD_CORROBORATIONS_KEY] = finalCorr;
+    else delete rebuilt[FIELD_CORROBORATIONS_KEY];
     // Alternates recorded since the rebuild started (not the stale ones it re-derived).
     const latestAlts = (latest[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
     const addedSince: Record<string, unknown[]> = {};
@@ -183,6 +193,44 @@ export async function reprocessDealDocuments(
 }
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Pure: the corroborations map after a rebuild, carrying over what changed on
+ * the deal while it ran (like the facts and alternates next to it):
+ * - a fact that changed meanwhile (carried over from `latest`) takes its
+ *   corroborations — whole-fact and per-year ("revenueByYear.2024") — from
+ *   `latest` too: the re-derived ones described the value it replaced;
+ * - for every other fact, the re-derived list plus any corroboration
+ *   recorded since the rebuild started.
+ */
+export function carryCorroborations(
+  rebuiltCorr: Record<string, unknown> | undefined,
+  existingCorr: Record<string, unknown> | undefined,
+  latestCorr: Record<string, unknown> | undefined,
+  carriedKeys: string[],
+): Record<string, unknown[]> {
+  const listAt = (m: Record<string, unknown> | undefined, k: string): unknown[] =>
+    m && Array.isArray(m[k]) ? (m[k] as unknown[]) : [];
+  const belongsToCarried = (k: string) => carriedKeys.some((c) => k === c || k.startsWith(`${c}.`));
+  const out: Record<string, unknown[]> = {};
+  for (const [k, list] of Object.entries(rebuiltCorr || {})) {
+    if (!belongsToCarried(k) && Array.isArray(list) && list.length > 0) out[k] = list;
+  }
+  const addedSince: Record<string, unknown[]> = {};
+  for (const k of Object.keys(latestCorr || {})) {
+    const latestList = listAt(latestCorr, k);
+    if (belongsToCarried(k)) {
+      if (latestList.length > 0) out[k] = latestList;
+      continue;
+    }
+    const before = new Set(listAt(existingCorr, k).map((c) => JSON.stringify(c)));
+    const fresh = latestList.filter((c) => !before.has(JSON.stringify(c)));
+    if (fresh.length > 0) addedSince[k] = fresh;
+  }
+  const merged = mergeAlternateMaps(out, addedSince);
+  for (const k of Object.keys(merged)) if (merged[k].length === 0) delete merged[k];
+  return merged;
+}
 
 /**
  * Pure: lays the deal's existing facts over a fresh re-extraction of its

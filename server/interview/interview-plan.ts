@@ -236,7 +236,7 @@ export async function computeInterviewPlan(
         system: [
           "You turn an industry due-diligence playbook into a concrete data checklist for a CIM interview.",
           "For the business described, list the INDUSTRY-SPECIFIC data points the interview must capture, assigned to the CIM section they belong in.",
-          `Rules: only data points specific to this industry/sub-industry — never repeat the generic items already listed per section; each is ONE concrete fact (a number, a yes/no, a term, a list), not a topic; at most ${MAX_ITEMS_PER_SECTION} per section; prefer the playbook's [CRITICAL] fields and MANDATORY PROBES and mark those critical; pick the sub-industry that matches this business and ignore the others; keys are camelCase and self-explanatory.`,
+          `Rules: only data points specific to this industry/sub-industry — never repeat the generic items already listed per section; each is ONE concrete fact (a number, a yes/no, a term, a list), not a topic; at most ${MAX_ITEMS_PER_SECTION} per section; prefer the playbook's [CRITICAL] fields and MANDATORY PROBES and mark those critical; pick the sub-industry that matches this business and ignore the others; keys are camelCase and self-explanatory; labels and keys name the data point only — never a value, name or figure from the facts on file (the interviewer reads them to the seller).`,
         ].join(" "),
         messages: [{
           role: "user",

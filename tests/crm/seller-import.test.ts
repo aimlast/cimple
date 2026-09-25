@@ -114,8 +114,10 @@ const kb = assembleKnowledgeBase(kbDeal, docs as any, [], null, [discrepancy]);
 assert.equal(kb.askSellerDiscrepancies?.[0]?.privateSource, true);
 assert.equal(kb.documents.length, 0, "broker-only sources are not listed to the agent");
 const rendered = renderKnowledgeBaseForPrompt(kb);
-assert.match(rendered, /broker's private notes \(CRM\)[^\n]*never mention the CRM/);
-ok("a discrepancy from a broker-only source carries the never-mention instruction; broker-only sources aren't listed");
+assert.match(rendered, /held privately by the broker[^\n]*never suggest a figure[^\n]*never mention the broker's notes, a CRM/);
+assert.doesNotMatch(rendered, /\$1\.2M|The CRM note says/, "the private side's value and explanation never reach the agent");
+assert.match(rendered, /Value 1: \$1\.4M/, "the seller's side is still there");
+ok("a discrepancy from a broker-only source: private value withheld, never-mention instruction; broker-only sources aren't listed");
 
 // ── Live: the local fake Pipedrive ──
 (async () => {
