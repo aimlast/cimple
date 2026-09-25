@@ -139,6 +139,16 @@ function buildDdContext(
   if (data.financialAnalysis) {
     const fa = data.financialAnalysis;
     if (fa.normalization) {
+      // EBITDA / SDE computed in code from the approved add-backs — the only
+      // figures to quote (never a number from an insight or note that differs).
+      const computed = (fa.normalization as any).computed as
+        | { reportedEbitda: Record<string, number>; adjustedEbitda: Record<string, number>; sde: Record<string, number> }
+        | undefined;
+      if (computed) {
+        const years = Object.keys(computed.adjustedEbitda);
+        const fmt = (n: number | undefined) => (typeof n === "number" ? `$${Math.round(n).toLocaleString("en-US")}` : "—");
+        parts.push(`## Canonical earnings (computed from the approved add-backs — use exactly these figures)\n${years.map((y) => `- ${y}: EBITDA ${fmt(computed.reportedEbitda[y])} · adjusted EBITDA ${fmt(computed.adjustedEbitda[y])} · SDE ${fmt(computed.sde[y])}`).join("\n")}`);
+      }
       parts.push(`## Financial Normalization\n${JSON.stringify(fa.normalization, null, 2)}`);
     }
     if (fa.clarifyingQuestions) {

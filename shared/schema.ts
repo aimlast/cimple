@@ -142,7 +142,8 @@ export interface CimGenerationStatus {
   status: "running" | "done" | "failed";
   /** "content" = Generate CIM from the Overview tab; "layout" = Designer regenerate-all. */
   mode: "content" | "layout";
-  phase: "planning" | "writing" | "saving" | "finished";
+  /** "checking" = the discrepancy check runs first (missing or stale). */
+  phase: "checking" | "planning" | "writing" | "saving" | "finished";
   /** Sections planned (0 until the manifest is ready). */
   total: number;
   /** Sections finished writing. */
@@ -155,6 +156,11 @@ export interface CimGenerationStatus {
   sectionCount?: number;
   /** Titles of sections finished so far, in completion order. */
   completedTitles: string[];
+  /** Set when the run stopped at the discrepancy gate before writing anything. */
+  stoppedBy?: "discrepancies";
+  /** "critical" = must be resolved first; "new" = the pre-run check just found conflicts to review. */
+  stoppedReason?: "critical" | "new";
+  blockingDiscrepancies?: Array<{ id: string; field: string }>;
 }
 
 /** One buyer's AI deep-check verdict for a deal. */

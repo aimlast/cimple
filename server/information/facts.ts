@@ -51,6 +51,8 @@ import {
   type MirroredFactColumn,
 } from "./deal-mirror";
 import type { Deal, Discrepancy } from "@shared/schema";
+import { humanizeFieldKey } from "@shared/discrepancy-sides";
+import { numberTokens, tokensMatch } from "../cim/discrepancy-filter";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
 export const BROKER_SECTION_OF_KEY = "_brokerSectionOf";
@@ -465,41 +467,211 @@ function kindFromValueLabel(v: string): FieldSource["source"] {
 }
 
 /**
- * Pure part of writing a discrepancy resolution into the deal's facts.
- * Returns the fact key written ("revenueByYear.2024" for one year of a map),
- * or null when the discrepancy names no fact (nothing is written then).
+ * The broker chose to keep a resolution as a note, not linked to any fact
+ * (stored as the discrepancy's factKey). Nothing is written for it, and it
+ * no longer asks "Which fact should this update?".
  */
-export function applyResolutionToInfo(info: Info, d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source">): string | null {
-  const target = discrepancyFactTarget(d.field, info);
+export const NO_FACT_KEY = "_none";
+
+/** Returned when a resolution names no fact — the broker is asked which fact it updates. */
+export const NEEDS_MAPPING = "needs_mapping" as const;
+
+/**
+ * Returned when the fact is a description the resolved figure is only part
+ * of ("Staff structure: 24 licensed technicians, 5 plumbers, …" resolved as
+ * "22 licensed technicians"): overwriting would throw the rest away, so
+ * nothing is written — the broker updates it through "facts that still say
+ * the old value" (a minimal rewrite, reviewed before it's saved).
+ */
+export const NARRATIVE_FACT = "narrative" as const;
+
+export function isNarrativeTarget(info: Info, target: DiscrepancyTarget, resolved: string): boolean {
+  if (target.sub) return false;
+  const cur = repairCharIndexedValue(info[target.key]);
+  return typeof cur === "string" && cur.length > 160 && resolved.length < cur.length * 0.4;
+}
+
+const FACT_KEY_SHAPE = /^[a-z][A-Za-z0-9]*$/;
+
+/**
+ * Where a resolution lands: the row's own factKey (chosen from the deal's
+ * real keys by the engine, the analysis, the merge — or by the broker in
+ * the picker) wins; legacy rows fall back to reading the field label.
+ */
+export function resolutionTarget(
+  info: Info,
+  d: Pick<Discrepancy, "field"> & Partial<Pick<Discrepancy, "factKey" | "factYear">>,
+): DiscrepancyTarget | typeof NO_FACT_KEY | null {
+  const factKey = (d.factKey || "").trim();
+  if (factKey === NO_FACT_KEY) return NO_FACT_KEY;
+  if (factKey && FACT_KEY_SHAPE.test(factKey) && isFactKey(factKey)) {
+    const year = (d.factYear || "").trim().replace(/^FY\s*/i, "");
+    const cur = repairCharIndexedValue(info[factKey]);
+    const mapLike = cur === undefined || cur === null || cur === "" ? factKey === "revenueByYear" || /ByYear$/.test(factKey) : isPlainMap(cur);
+    if (year && mapLike) return { key: factKey, sub: year };
+    return { key: factKey };
+  }
+  return discrepancyFactTarget(d.field, info);
+}
+
+/**
+ * A model-chosen fact key must hold the figure in question: the fact is
+ * empty, or states one side's value (or a figure from it). "22 licensed
+ * technicians" resolved into employees = "36 employees plus owner" is the
+ * wrong fact — the broker is asked instead of the headcount being lost.
+ */
+export function targetRelatesToSides(
+  info: Info,
+  target: DiscrepancyTarget,
+  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "source">,
+): boolean {
+  const raw = repairCharIndexedValue(info[target.key]);
+  const cur = target.sub && isPlainMap(raw) ? raw[target.sub] : raw;
+  if (cur === undefined || cur === null || cur === "") return true;
+  const text = typeof cur === "string" ? cur : JSON.stringify(cur);
+  const sides = [d.interviewValue, d.documentValue].map((v) => bareDiscrepancyValue(v || "")).filter(Boolean);
+  if (sides.length === 0) return true; // nothing to compare against (an answered question)
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9%.]+/g, " ").trim();
+  if (sides.some((v) => norm(text).includes(norm(v)) || norm(v).includes(norm(text)))) return true;
+  const curNums = numberTokens(text, { keepSourceLabel: true }).filter((t) => !t.year);
+  return sides.some((v) => numberTokens(v).filter((t) => !t.year).some((s) => curNums.some((c) => tokensMatch(c, s))));
+}
+
+/** The side a discrepancy value came from, as a fact source kind. */
+function sideKind(d: Partial<Pick<Discrepancy, "sideSources" | "source">>, side: "interview" | "document", raw: string): FieldSource["source"] {
+  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { kind?: string } | undefined>;
+  const kind = sides[side]?.kind;
+  if (kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social"].includes(kind)) {
+    return kind as FieldSource["source"];
+  }
+  if (d.source === "financial_analysis") return kindFromValueLabel(raw);
+  return side === "interview" ? "interview" : "document";
+}
+
+/**
+ * Pure part of writing a discrepancy resolution into the deal's facts.
+ * Returns the fact key written ("revenueByYear.2024" for one year of a map);
+ * NEEDS_MAPPING when the discrepancy names no fact (nothing is written — the
+ * broker is asked which fact it updates, never left with a silent no-op);
+ * NARRATIVE_FACT when the fact is a description the figure is only part of
+ * (nothing is overwritten — the broker reviews a minimal rewrite instead);
+ * null when there is nothing to write (no resolved value, or the broker
+ * chose to keep it as a note only).
+ */
+export function applyResolutionToInfo(
+  info: Info,
+  d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source"> &
+    Partial<Pick<Discrepancy, "factKey" | "factYear" | "sideSources">>,
+  opts: { brokerChoseFact?: boolean } = {},
+): string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null {
   const resolved = (d.resolvedValue || "").trim();
-  if (!target || !resolved) return null;
-  const financial = d.source === "financial_analysis";
+  if (!resolved) return null;
+  const target = resolutionTarget(info, d);
+  if (target === NO_FACT_KEY) return null;
+  if (!target) return NEEDS_MAPPING;
+  if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, target, d)) return NEEDS_MAPPING;
+  if (isNarrativeTarget(info, target, resolved)) return NARRATIVE_FACT;
+  const labelled = d.source === "financial_analysis";
   const note = "Resolved discrepancy";
   const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
   if (target.sub) setBrokerMapEntry(info, target.key, target.sub, resolved, note);
   else setBrokerFact(info, target.key, coerceBrokerValue(info[target.key], resolved), { note });
   // The conflicting values the broker ruled on stay visible as alternates —
   // bare figures (the " — source" label stripped) under their real kind.
+  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { documentId?: string } | undefined>;
   const conflicting: Array<{ raw: string | null; src: FieldSource }> = [
     {
       raw: d.interviewValue,
-      src: { source: financial ? kindFromValueLabel(d.interviewValue || "") : "interview", note: "Conflicting value (discrepancy)" },
+      src: {
+        source: sideKind(d, "interview", d.interviewValue || ""),
+        ...(sides.interview?.documentId ? { documentId: sides.interview.documentId } : {}),
+        note: "Conflicting value (discrepancy)",
+      },
     },
     {
       raw: d.documentValue,
       src: {
-        source: financial ? kindFromValueLabel(d.documentValue || "") : "document",
-        ...(d.documentId ? { documentId: d.documentId } : {}),
+        source: sideKind(d, "document", d.documentValue || ""),
+        ...(d.documentId || sides.document?.documentId ? { documentId: d.documentId || sides.document!.documentId } : {}),
         note: "Conflicting value (discrepancy)",
       },
     },
   ];
   for (const { raw, src } of conflicting) {
     if (!raw || !raw.trim()) continue;
-    const value = financial ? bareDiscrepancyValue(raw) : raw.trim();
+    const value = labelled ? bareDiscrepancyValue(raw) : raw.trim();
     if (value && value !== resolved) recordAlternate(info, altKey, value, src);
   }
   return altKey;
+}
+
+export interface FactTargetOption {
+  key: string;
+  label: string;
+  /** Short preview of the value on file. */
+  value: string;
+}
+
+/**
+ * Facts a resolution could update, best matches first — for the "Which fact
+ * should this update?" picker. Scored on shared words between the
+ * discrepancy's label and the fact's key/label, plus a figure from either
+ * side appearing in the fact's current value.
+ */
+export function suggestFactTargets(
+  info: Info,
+  d: Pick<Discrepancy, "field"> & Partial<Pick<Discrepancy, "interviewValue" | "documentValue" | "resolvedValue">>,
+  limit = 6,
+): { suggestions: FactTargetOption[]; all: FactTargetOption[] } {
+  const stem = (w: string) => w.replace(/(?:ies|es|s)$/, "");
+  const words = (s: string) =>
+    new Set(s.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
+  // Measure words say how, not what ("revenue percentage" of WHICH customer?).
+  const GENERIC = new Set(["revenue", "percentage", "percent", "total", "value", "number", "count", "amount", "annual", "year", "claimed", "calculated", "actual", "stated", "vs", "and", "the", "for"].map(stem));
+  // A subject word that names a fact under another word.
+  const SYNONYMS: Record<string, string[]> = {
+    percentage: ["concentration"], share: ["concentration"], percent: ["concentration"],
+    headcount: ["employee", "staff"], staff: ["employee"], employee: ["staff", "headcount"],
+    van: ["fleet", "vehicle"], truck: ["fleet", "vehicle"], vehicle: ["fleet"],
+    member: ["membership", "subscriber"], expiry: ["lease"], renewal: ["lease"],
+  };
+  const subject = words(d.field || "");
+  const distinctive = new Set(Array.from(subject).filter((w) => !GENERIC.has(w)));
+  const synonyms = new Set(Array.from(subject).flatMap((w) => (SYNONYMS[w] ?? []).map(stem)));
+  // Figures as written ("18%", "$1,312,000", "2,900") — a fact that states one is likely the target.
+  const figures = [d.interviewValue, d.documentValue, d.resolvedValue]
+    .flatMap((v) => (v ? bareDiscrepancyValue(v).match(/\$?\d[\d,.]*\d%?|\$?\d%?/g) ?? [] : []))
+    .filter((n) => n.replace(/\D/g, "").length >= 2 && !/^(?:19|20)\d\d$/.test(n));
+  const labels = objectAt(info, BROKER_FACT_LABELS_KEY) as Record<string, string>;
+  const all: Array<FactTargetOption & { score: number }> = [];
+  for (const [key, raw] of Object.entries(info)) {
+    if (!isFactKey(key) || raw === null || raw === undefined || raw === "") continue;
+    const label = labels[key] || factDisplayLabel(info, key);
+    const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const kw = words(`${key} ${label}`);
+    const valueWords = words(text);
+    let score = 0;
+    kw.forEach((w) => {
+      if (distinctive.has(w)) score += 3;
+      else if (subject.has(w)) score += 1;
+      if (synonyms.has(w)) score += 2;
+    });
+    score += Math.min(2, Array.from(distinctive).filter((w) => valueWords.has(w)).length);
+    if (figures.some((f) => text.includes(f))) score += 2;
+    all.push({ key, label, value: text.replace(/\s+/g, " ").slice(0, 120), score });
+  }
+  all.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+  const strip = ({ score: _s, ...o }: FactTargetOption & { score: number }) => o;
+  return {
+    suggestions: all.filter((o) => o.score >= 2).slice(0, limit).map(strip),
+    all: [...all].sort((a, b) => a.label.localeCompare(b.label)).map(strip),
+  };
+}
+
+/** A fact's broker-facing name: the broker's own label, the known label, or its key in words ("sde" → "SDE"). */
+export function factDisplayLabel(info: Info, key: string): string {
+  const labels = objectAt(info, BROKER_FACT_LABELS_KEY) as Record<string, string>;
+  return labels[key] || GENERIC_FIELD_LABELS[key] || humanizeFieldKey(key);
 }
 
 /**
@@ -580,7 +752,26 @@ export function brokerFactsView<D extends Pick<Deal, MirroredFactColumn | "extra
   return { ...deal, ...columnPatch, extractedInfo: info };
 }
 
-/** PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the fact on file. */
-export async function applyDiscrepancyResolution(d: Discrepancy): Promise<string | null> {
-  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d));
+/**
+ * PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the
+ * fact on file. Returns the key written, NEEDS_MAPPING (ask the broker which
+ * fact), or null (nothing to write). A NEEDS_MAPPING result saves nothing.
+ */
+export async function applyDiscrepancyResolution(
+  d: Discrepancy,
+  opts: { brokerChoseFact?: boolean } = {},
+): Promise<string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null> {
+  const deal = await storage.getDeal(d.dealId);
+  if (!deal) throw new FactError("Deal not found", 404);
+  // Decide first without writing: a label that maps to nothing (or a
+  // description the figure is only part of) must not bump the deal (or take
+  // the facts lock) for a no-op.
+  const info = (deal.extractedInfo as Info | null) || {};
+  const probe = resolutionTarget(info, d);
+  const resolved = (d.resolvedValue || "").trim();
+  if (probe === NO_FACT_KEY || !resolved) return null;
+  if (!probe) return NEEDS_MAPPING;
+  if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, probe, d)) return NEEDS_MAPPING;
+  if (isNarrativeTarget(info, probe, resolved)) return NARRATIVE_FACT;
+  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d, opts));
 }

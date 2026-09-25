@@ -47,6 +47,15 @@ export interface UiAddback {
   custom?: boolean;
   /** Broker toggled approval (PATCH diff). Carried forward by label across re-runs. */
   approvedOverride?: boolean;
+  /** Owner-comp lines: the owner's actual salary + benefits on the P&L per year. */
+  ownerActualComp?: Record<string, number>;
+  /** Owner-comp lines: the market replacement salary for the role (annual, or per year). */
+  marketSalary?: number | Record<string, number>;
+  /**
+   * Set by the owner-compensation split (normalization-rules.ts): "excess" =
+   * pay above market (EBITDA and SDE), "market" = the market salary (SDE only).
+   */
+  ownerCompPart?: "excess" | "market";
 }
 
 export interface UiNormalization {
@@ -57,6 +66,19 @@ export interface UiNormalization {
   notes?: string[];
   /** Broker chose the base metric (PATCH diff). Carried forward across re-runs. */
   metricOverride?: boolean;
+  /**
+   * EBITDA / SDE per year computed in code from net income + the approved
+   * add-backs (normalization-rules.ts) — the canonical figures; recomputed on
+   * every broker edit. adjustedEbitda / adjustedSde = the latest year's.
+   */
+  computed?: {
+    reportedEbitda: Record<string, number>;
+    adjustedEbitda: Record<string, number>;
+    sde: Record<string, number>;
+    latestYear: string | null;
+  };
+  adjustedEbitda?: number;
+  adjustedSde?: number;
 }
 
 export interface UiWorkingCapitalItem {
@@ -97,6 +119,8 @@ export interface UiInsight {
   title: string;
   detail: string;
   cimSection?: string;
+  /** Set when the insight states an EBITDA/SDE figure the normalization doesn't compute. */
+  flag?: string;
 }
 
 export interface UiInsights {
@@ -262,6 +286,15 @@ export function coerceNormalization(raw: any): UiNormalization | null {
         confidence,
         ...(a.custom === true || (typeof a.id === "string" && a.id.startsWith("custom_")) ? { custom: true } : {}),
         ...(a.approvedOverride === true ? { approvedOverride: true } : {}),
+        ...(a.ownerActualComp && typeof a.ownerActualComp === "object" && Object.keys(numberMap(a.ownerActualComp)).length > 0
+          ? { ownerActualComp: numberMap(a.ownerActualComp) }
+          : {}),
+        ...(typeof a.marketSalary === "number" && Number.isFinite(a.marketSalary) && a.marketSalary > 0
+          ? { marketSalary: a.marketSalary }
+          : a.marketSalary && typeof a.marketSalary === "object" && Object.keys(numberMap(a.marketSalary)).length > 0
+            ? { marketSalary: numberMap(a.marketSalary) }
+            : {}),
+        ...(a.ownerCompPart === "excess" || a.ownerCompPart === "market" ? { ownerCompPart: a.ownerCompPart } : {}),
       };
     });
 

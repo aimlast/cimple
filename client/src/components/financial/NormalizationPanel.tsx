@@ -277,7 +277,7 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                               {ab.label}
                             </p>
                             {ab.description && (
-                              <p className="text-2xs text-muted-foreground mt-0.5 truncate">{ab.description}</p>
+                              <p className="text-2xs text-muted-foreground mt-0.5 line-clamp-2" title={ab.description}>{ab.description}</p>
                             )}
                           </div>
                           {ab.type === "sde" && (

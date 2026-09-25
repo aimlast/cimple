@@ -12,6 +12,8 @@
  *    losing value are recognisably outdated.
  */
 import type { Discrepancy } from "@shared/schema";
+import { discrepancySideValue } from "@shared/discrepancy-sides";
+import { numberTokens, tokensMatch } from "./discrepancy-filter";
 
 export interface ResolvedDiscrepancyNote {
   /** Human label of what was reconciled (the discrepancy's field). */
@@ -36,11 +38,18 @@ export function resolvedNotes(rows: Discrepancy[]): ResolvedDiscrepancyNote[] {
   for (const d of rows) {
     const resolvedValue = clean(d.resolvedValue);
     if (!resolvedValue) continue;
-    const factKey = clean(d.factKey) || (FACT_KEY_RE.test(clean(d.field)) ? clean(d.field) : "");
+    // "_none" = the broker kept it as a note only — no fact to overlay.
+    const ownKey = FACT_KEY_RE.test(clean(d.factKey)) ? clean(d.factKey) : "";
+    const factKey = ownKey || (!clean(d.factKey) && FACT_KEY_RE.test(clean(d.field)) ? clean(d.field) : "");
     const norm = (s: string) => s.toLowerCase().replace(/\s+/g, " ");
-    const superseded = [clean(d.interviewValue), clean(d.documentValue)].filter(
-      (v) => v && norm(v) !== norm(resolvedValue),
-    );
+    // The side the broker accepted isn't superseded (its headline figure is
+    // the resolved one), and the analysis's " — source" labels are dropped.
+    const lead = numberTokens(resolvedValue)[0];
+    const superseded = [discrepancySideValue(d, "interview"), discrepancySideValue(d, "document")].filter((v) => {
+      if (!v || norm(v) === norm(resolvedValue)) return false;
+      const first = numberTokens(v)[0];
+      return !(lead && first && tokensMatch({ ...lead, approx: false }, { ...first, approx: false }));
+    });
     out.push({
       field: clean(d.field) || factKey,
       factKey: factKey || null,
@@ -76,13 +85,16 @@ export function overlayResolvedFacts(
 }
 
 export const RESOLVED_BLOCK_HEADING =
-  "--- RESOLVED DISCREPANCIES — FINAL VALUES (the broker reconciled these; any other figure or wording for the same thing is outdated and must not be used) ---";
+  "--- RESOLVED DISCREPANCIES — FINAL VALUES (the broker reconciled these; any other figure or wording for the same thing — anywhere above — is outdated and must not be used, nor any claim built on it) ---";
 
 export function renderResolvedBlock(notes: ResolvedDiscrepancyNote[]): string {
   if (notes.length === 0) return "";
+  // The ruled-out values are NOT quoted: a writer shown "replaces: ~18%
+  // (under 20%)" wrote "Largest customer <20%" into Investment Highlights.
+  // Stating that other figures exist is enough to mark them outdated.
   const lines = notes.map((n) => {
     const what = n.year ? `${n.field} (${n.year})` : n.field;
-    const old = n.supersededValues.length ? ` — replaces: ${n.supersededValues.map((v) => `"${v}"`).join(", ")}` : "";
+    const old = n.supersededValues.length ? " (final — earlier, different figures for this are wrong)" : "";
     return `${what}: ${n.resolvedValue}${old}`;
   });
   return [RESOLVED_BLOCK_HEADING, ...lines].join("\n");

@@ -39,6 +39,8 @@ import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-g
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerDiscrepancyRoutes } from "./routes/discrepancies.js";
+import { ensureDiscrepancyGate } from "./cim/discrepancy-check.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
@@ -2518,6 +2520,25 @@ Return JSON only.`,
         const openCritical = await blockingCriticalDiscrepancies(req.params.id);
         if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, gatedVerb);
       }
+      // Going live needs both design approvals — the UI hides Publish until
+      // then, and the server now holds the same line. The broker can still
+      // record the seller's approval on their behalf (same request or before).
+      if (dealPatch.isLive === true) {
+        const current = await storage.getDeal(req.params.id);
+        const approved = (k: "designApprovedByBroker" | "designApprovedBySeller") =>
+          dealPatch[k] === true || (dealPatch[k] === undefined && current?.[k] === true);
+        const missing = [
+          !approved("designApprovedByBroker") ? "broker" : null,
+          !approved("designApprovedBySeller") ? "seller" : null,
+        ].filter((m): m is string => !!m);
+        if (missing.length > 0) {
+          return res.status(409).json({
+            error: "Both design approvals are needed before publishing",
+            code: "needs_design_approvals",
+            missing,
+          });
+        }
+      }
       // A seller finishing the intake wizard completes the questionnaire
       // step — this flag drove broker checklists but was never set. The
       // wizard autosaves each step; only the final save carries
@@ -3244,6 +3265,10 @@ Return JSON only.`,
             });
           }
         }
+        // EBITDA / SDE are recomputed in code from the edited add-backs —
+        // the stored canonical figures always match what the panel shows.
+        const { withCanonicalEarnings } = await import("./financial/normalization-rules");
+        updates.normalization = withCanonicalEarnings(updates.normalization);
       }
 
       if (req.body.brokerReviewed) {
@@ -3326,7 +3351,16 @@ Return JSON only.`,
       // would then raise twice. Compare the same sliced text the create path
       // stores, normalized for whitespace and case.
       const normalizeField = (s: unknown) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-      const routedField = normalizeField(String(question.question).slice(0, 200));
+      // The interview reads this row: a sentence that quotes the broker's
+      // private material (a CRM note, "per broker recast") is dropped, and
+      // the row is flagged so the interview asks neutrally.
+      const { mentionsPrivateSource } = await import("@shared/discrepancy-sides");
+      const publicQuestion = String(question.question)
+        .split(/(?<=[.?!])\s+/)
+        .filter((sentence) => !mentionsPrivateSource(sentence))
+        .join(" ")
+        .trim();
+      const routedField = normalizeField(publicQuestion.slice(0, 200));
       if (!discrepancy) {
         const existingRouted = (await storage.getDiscrepanciesByDeal(req.params.dealId)).find(
           (d) =>
@@ -3341,10 +3375,20 @@ Return JSON only.`,
         // "high" maps to "significant" (not "critical") on purpose: an unanswered
         // question should not block CIM generation the way a critical value conflict does.
         const severity = question.severity === "low" ? "minor" : "significant";
-        const context = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
+        if (!publicQuestion) {
+          return res.status(409).json({
+            error: "This question quotes your private notes, so it can't be sent to the seller as written. Resolve it here instead.",
+            code: "private_question",
+          });
+        }
+        const rawContext = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
+        const privateContext = !!rawContext && mentionsPrivateSource(rawContext);
+        const context = privateContext ? null : rawContext;
+        const hadPrivate = privateContext || publicQuestion !== String(question.question).trim();
         discrepancy = await storage.createDiscrepancy({
           dealId: req.params.dealId,
-          field: String(question.question).slice(0, 200),
+          ...(hadPrivate ? { sideSources: { interview: { kind: "crm", brokerOnly: true } } as any } : {}),
+          field: publicQuestion.slice(0, 200),
           interviewValue: context,
           documentValue: null,
           documentId: null,
@@ -5406,7 +5450,7 @@ Return JSON only.`,
         return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
       }
       try {
-        const job = await startCimGeneration(deal, "content");
+        const job = await startCimGeneration(deal, "content", { beforeWriting: (onChecking) => ensureDiscrepancyGate(dealId, onChecking) });
         return res.status(202).json({ started: true, job });
       } catch (err) {
         if (err instanceof CimGenerationRunningError) {
@@ -6311,7 +6355,7 @@ Return JSON only.`,
       // Background job — see generation-jobs.ts. 202 now, progress via GET
       // /api/deals/:dealId/cim-generation.
       try {
-        const job = await startCimGeneration(deal, "layout");
+        const job = await startCimGeneration(deal, "layout", { beforeWriting: (onChecking) => ensureDiscrepancyGate(dealId, onChecking) });
         return res.status(202).json({ started: true, job });
       } catch (err) {
         if (err instanceof CimGenerationRunningError) {
@@ -6518,147 +6562,9 @@ Return JSON only.`,
   // DISCREPANCY RESOLUTION
   // ════════════════════════════════════════════════════════════
 
-  // Run discrepancy check
-  app.post("/api/deals/:dealId/run-discrepancy-check", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const { dealId } = req.params;
-      const deal = await storage.getDeal(dealId);
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
-
-      const allDocs = await storage.getDocumentsByDeal(dealId);
-      const processedDocs = allDocs.filter(d => d.isProcessed && (d.extractedText || d.extractedData));
-
-      if (processedDocs.length === 0) {
-        return res.status(400).json({ error: "No processed documents to cross-reference. Upload and process documents first." });
-      }
-
-      // Every discrepancy already on the deal: resolved ones must not come
-      // back under a new name; open ones get refreshed in place, not duplicated.
-      const existing = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
-
-      const { runDiscrepancyCheck, isSameDiscrepancy } = await import("./cim/discrepancy-engine");
-      const { items, clearedIds } = await runDiscrepancyCheck(
-        {
-          id: dealId,
-          businessName: deal.businessName,
-          industry: deal.industry,
-          extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
-          questionnaireData: deal.questionnaireData as Record<string, any> | null,
-        },
-        processedDocs.map(d => ({
-          id: d.id,
-          name: d.name,
-          category: d.category,
-          extractedText: d.extractedText,
-          extractedData: d.extractedData,
-        })),
-        existing,
-      );
-
-      const settled = existing.filter((d) => d.status === "resolved" || d.status === "accepted");
-      const unsettled = existing.filter((d) => d.status !== "resolved" && d.status !== "accepted");
-      const touched = new Set<string>();
-      const created = [];
-      let refreshedCount = 0;
-      for (const item of items) {
-        const referenced = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
-        if ((referenced && settled.includes(referenced)) || settled.some((d) => isSameDiscrepancy(item, d))) continue;
-
-        const openMatch = referenced && unsettled.includes(referenced)
-          ? referenced
-          : unsettled.find((d) => !touched.has(d.id) && isSameDiscrepancy(item, d));
-        const values = {
-          interviewValue: item.interviewValue,
-          documentValue: item.documentValue,
-          documentId: item.documentId || null,
-          documentName: item.documentName || null,
-          severity: item.severity,
-          category: item.category,
-          aiExplanation: item.aiExplanation,
-          suggestedResolution: item.suggestedResolution,
-        };
-        if (openMatch) {
-          touched.add(openMatch.id);
-          // Keep the broker's routing/status and the original field name; refresh the evidence.
-          await storage.updateDiscrepancy(openMatch.id, values);
-          refreshedCount++;
-          continue;
-        }
-        const disc = await storage.createDiscrepancy({ dealId, field: item.field, ...values, status: "open" });
-        created.push(disc);
-      }
-
-      // Open rows the model explicitly re-evaluated and found consistent.
-      // Rows the broker routed to the seller stay with the seller.
-      let clearedCount = 0;
-      for (const id of clearedIds) {
-        const row = existing.find((d) => d.id === id);
-        if (!row || touched.has(id) || (row.status !== "open" && row.status !== "seller_responded")) continue;
-        await storage.updateDiscrepancy(id, { status: "superseded" });
-        clearedCount++;
-      }
-
-      res.json({
-        success: true,
-        count: created.length,
-        refreshed: refreshedCount,
-        cleared: clearedCount,
-        discrepancies: created,
-      });
-    } catch (error: any) {
-      console.error("Error running discrepancy check:", error);
-      res.status(500).json({ error: error.message || "Discrepancy check failed" });
-    }
-  });
-
-  // Get discrepancies for a deal
-  app.get("/api/deals/:dealId/discrepancies", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const discrepancies = await storage.getDiscrepanciesByDeal(req.params.dealId);
-      res.json(discrepancies);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to fetch discrepancies" });
-    }
-  });
-
-  // Update a discrepancy (resolve, respond, etc.)
-  app.patch("/api/discrepancies/:id", requireBroker, async (req, res) => {
-    try {
-      const existingDisc = await storage.getDiscrepancy(req.params.id);
-      if (!existingDisc || !(await ownsDeal(req, existingDisc.dealId))) return res.status(404).json({ error: "Discrepancy not found" });
-      const { sellerResponse, brokerNotes, resolvedValue, status } = req.body;
-      const DISCREPANCY_STATUSES = new Set(["open", "seller_responded", "resolved", "accepted", "ask_seller", "superseded"]);
-      if (status !== undefined && !DISCREPANCY_STATUSES.has(String(status))) {
-        return res.status(400).json({ error: `Invalid status "${status}"` });
-      }
-      const updates: any = {};
-      if (sellerResponse !== undefined) updates.sellerResponse = sellerResponse;
-      if (brokerNotes !== undefined) updates.brokerNotes = brokerNotes;
-      if (resolvedValue !== undefined) updates.resolvedValue = resolvedValue;
-      if (status !== undefined) {
-        updates.status = status;
-        if (status === "resolved") {
-          updates.resolvedAt = new Date();
-        }
-      }
-      const updated = await storage.updateDiscrepancy(req.params.id, updates);
-      if (!updated) return res.status(404).json({ error: "Discrepancy not found" });
-      // The broker's resolution becomes the fact on file (source "broker"),
-      // with the conflicting values kept as alternates — not just a read-time
-      // overlay. (The overlays in the KB/generation paths keep working.)
-      if (updated.status === "resolved" && typeof updated.resolvedValue === "string" && updated.resolvedValue.trim()) {
-        try {
-          const { applyDiscrepancyResolution } = await import("./information/facts");
-          await applyDiscrepancyResolution(updated);
-        } catch (e) {
-          console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
-        }
-      }
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to update discrepancy" });
-    }
-  });
+  // Run the check, list, resolve, link a resolution to its fact and carry
+  // it through to other facts: server/routes/discrepancies.ts.
+  registerDiscrepancyRoutes(app);
 
   // ════════════════════════════════════════════════════════════
   // DEAL TEAMS — Members, roles, notifications
