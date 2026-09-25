@@ -200,6 +200,13 @@ export async function redactOneSection(
   // any honorific-named person in this section's own text ("Dr. Marcus Lee").
   const ownText = [section.sectionTitle || "", content, ...collectStrings(layoutData)].join("\n");
   const terms = blindLeakTerms(deal, { codename, extraPeople: honorificNames(ownText) });
+  // Everyday-word names are listed with how they count, so the model keeps
+  // the ordinary word ("winter", "a normal week") and only drops the name.
+  const termNote = new Map<string, string>();
+  for (const t of terms) {
+    if (t.titled) termNote.set(t.text, " (this surname after any title, or as a family name — the ordinary word is fine)");
+    else if (t.common) termNote.set(t.text, " (as a name — the ordinary lowercase word is fine)");
+  }
   const watchList = Array.from(new Set([...knownIdentifiers, ...terms.map((t) => t.text)]));
 
   // Deterministic net on the model's output: known names → codename
@@ -227,7 +234,8 @@ export async function redactOneSection(
 10. Redact the section title too, keeping it a natural heading (return it unchanged if it holds nothing identifying)
 
 ## Known identifiers — none of these may appear in your output:
-${watchList.map((id) => `- "${id}"`).join("\n") || "- (none on file)"}
+${watchList.map((id) => `- "${id}"${termNote.get(id) ?? ""}`).join("\n") || "- (none on file)"}
+Job titles, departments and industry words are not identifiers — keep them as written (e.g. "Patient Care Coordinator", "accounts payable", "quality control").
 
 ## Section to redact:
 Title: ${section.sectionTitle}

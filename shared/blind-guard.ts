@@ -9,29 +9,52 @@
  * draft that does is never shared.
  *
  * Terms come from the deal's facts (extractedInfo) — never guessed from the
- * text being checked, so a clean blind text can't trip it:
- *   - names:    every business-name variant, owners, website (blindIdentifiers)
- *   - people:   names in people facts (owner, staff, key employees, contacts…):
- *               "Dr. Anita Patel" → "Anita Patel", "Patel"; "Maria, 9 years" → "Maria"
- *   - places:   street lines, distinctive street words, cities, postal codes —
- *               provinces/states/countries are allowed in a Blind CIM and skipped
- *   - contacts: email addresses and phone numbers
+ * text being checked, so a clean blind text can't trip it. Two tiers:
  *
- * Role and profession phrases ("Licensed Plumbers: 4", "Registered Massage
- * Therapists (6)", "Certified Welders") are never read as people — a Blind
- * CIM must be able to say what the team does.
+ *   CERTAIN (fail-closed) — what the facts say outright:
+ *     - every business-name variant (blindIdentifiers) and its distinctive
+ *       core ("Harbourline Dental Group" → "Harbourline"), owners, website,
+ *       email domains and social handles;
+ *     - the people in people facts (owner, staff, key employees, office
+ *       manager, associates, contacts…) and dedicated name fields;
+ *     - city, street, postal code from location facts, street lines and
+ *       postal codes anywhere in the facts;
+ *     - email addresses and phone numbers anywhere in the facts.
+ *   A person in a people fact is read from its structure, whatever follows
+ *   the name: "Carlos Reyes (12)", "Hygienists: Priya (7), Thomas (3)",
+ *   "Chris Jones: 6 yrs", "Maria Teller (bookkeeper)", "Anita Patel 51%".
  *
- * Matching is whole-word on accent-, punctuation- and whitespace-folded text
- * and ignores case: "KITCHENER", "Kitchener" and "kitchener" are all the
- * city. The one exception is a person or place whose name is also an
- * everyday word ("Market" Street, "Bill" the driver): its all-lowercase form
- * is the word ("the market", "the bill"), so only a capitalised or all-caps
- * occurrence counts. Pure — used by the server (redaction, view room, Q&A,
- * outreach) and the broker's client-side preview.
+ *   CONSERVATIVE (heuristic) — a capitalised phrase is a person only when it
+ *   is very likely one: it starts with a known given name ("Amy Evans"), it
+ *   follows a title ("Dr. Frost"), or it stands alone as a list entry
+ *   ("Xiaoling Wu (12)"). Job titles and staffing phrases are never people:
+ *   "Patient Care Coordinator", "Lawn Care Technician", "Accounts Payable",
+ *   "Licensed Plumbers: 4", "Registered Massage Therapists (6)".
+ *
+ * A single everyday word ("Frost", "Normal", "Bill", "Market") is never an
+ * identifier on its own merely because it appears inside a longer name —
+ * "Emma Winter" is caught as "Emma Winter" or "Ms. Winter", not as
+ * "winter". When the fact itself IS that one word (a town called Normal,
+ * a driver called Bill), it counts only capitalised or in capitals: the
+ * all-lowercase form is the word ("a normal week", "pay the bill").
+ *
+ * Matching is whole-word on accent-, punctuation- and whitespace-folded
+ * text and ignores case otherwise: "KITCHENER", "Kitchener" and "kitchener"
+ * are all the city; "KITCHENER'S" and "Carlos (12)" are caught too. Phone
+ * numbers also match digit-for-digit ("5195550142"). Pure — used by the
+ * server (redaction, view room, Q&A, outreach) and the broker's preview.
  */
 import { blindIdentifiers } from "./blind-identifiers";
 import { isRegionLabel } from "./cim-media";
-import { EVERYDAY_NAME_WORDS, isPluralRole, isRoleWord } from "./blind-vocabulary";
+import { GIVEN_NAMES } from "./blind-given-names";
+import {
+  EVERYDAY_NAME_WORDS,
+  isCommonWord,
+  isOccupationWord,
+  isPluralRole,
+  isRoleWord,
+  isSurnameOccupation,
+} from "./blind-vocabulary";
 
 export type BlindTermKind = "name" | "person" | "place" | "contact";
 
@@ -40,11 +63,17 @@ export interface BlindTerm {
   text: string;
   kind: BlindTermKind;
   /**
-   * A one-word person or place name that is also an everyday word: an
-   * all-lowercase occurrence is the word, not the name. Every other term
-   * matches in any case.
+   * A one-word name that is also an everyday word: an all-lowercase
+   * occurrence is the word, not the name. Every other term matches in any
+   * case.
    */
   common: boolean;
+  /**
+   * A surname that is also an everyday word ("Ms. Winter" for Emma Winter):
+   * it counts only with a title in front ("Mr. Winter", "DR WINTER") or
+   * "family" after it — never as the word on its own.
+   */
+  titled?: boolean;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -59,14 +88,14 @@ const TRANSLITERATE: Record<string, string> = {
  * Accent-, punctuation- and whitespace-folded text with single spaces
  * between words (ASCII letters and digits only), lowercased unless
  * `keepCase`. Invisible characters (soft hyphen, zero-width space) are
- * dropped, so "Kitch\u00ADener" is "Kitchener".
+ * dropped, so "Kitch­ener" is "Kitchener".
  */
 export function foldForMatch(s: string, keepCase = false): string {
   const t = s
-    .replace(/[\u00AD\u200B-\u200D\u2060\uFEFF]/g, "")
+    .replace(/[­​-‍⁠﻿]/g, "")
     .replace(/[øØæÆœŒßłŁđĐðÐþÞı]/g, (c) => TRANSLITERATE[c] ?? c)
     .normalize("NFKD")
-    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[̀-ͯ]/g, "")
     .replace(/[^A-Za-z0-9]+/g, " ")
     .trim();
   return keepCase ? t : t.toLowerCase();
@@ -106,6 +135,8 @@ const NOT_NAME_WORDS = new Set([
   "this", "that", "these", "those", "is", "was", "has", "have", "will", "would", "may", "might", "can", "could",
   "if", "when", "after", "before", "since", "until", "while", "during", "only", "just", "mostly", "mainly",
   "willing", "open", "plans", "plan", "low", "high", "turnover", "tenure", "people", "person", "persons",
+  "since", "joined", "hired", "left", "retired", "retiring", "remains", "stays", "staying", "leaving", "handles",
+  "vacant", "tbd", "tba", "pending", "hiring", "open", "position", "role", "contract", "contractor", "temp", "various",
 ]);
 
 /**
@@ -123,6 +154,7 @@ const COMMON_WORD_SURNAMES = new Set([
   "crane", "drake", "finch", "hawk", "swan", "hope", "joy", "faith", "grace", "will", "case", "cash", "dean",
   "major", "mark", "rich", "noble", "sterling", "chance", "bond", "street", "church", "english", "french",
   "german", "welsh", "england", "holland", "wall", "gates", "fair", "free", "good", "hardy", "wise", "bright",
+  "frost", "winter", "summer", "spring", "autumn", "storm", "rain", "cloud", "sun", "moon", "star", "stars",
 ]);
 
 /** Street words too generic to identify anything on their own. */
@@ -136,125 +168,332 @@ const GENERIC_STREET_WORDS = new Set([
 /** Connector words allowed inside a place name ("Plaza on Fairway Road", "Niagara-on-the-Lake"). */
 const PLACE_CONNECTORS = new Set(["on", "of", "the", "de", "du", "la", "le", "les", "des", "and", "at", "sur", "upon", "in"]);
 
-// Letters, including accented ones ("Émilie", "Åberg"). JS \b is ASCII-only,
-// so word edges are written out as "not a letter" instead.
-const LETTER = "A-Za-zÀ-ÖØ-öø-ÿ";
-const UPPER = "A-ZÀ-ÖØ-Þ";
-const LOWER = "a-zà-öø-ÿ";
-const UPPER_START = new RegExp(`^[${UPPER}]`);
-const startsUpper = (w: string) => UPPER_START.test(w);
-const HONORIFIC = new RegExp(
-  `\\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof|Sir|Dame)\\.?[ \\t]+((?:[${UPPER}]\\.[ \\t]*)*[${UPPER}][${LETTER}'’-]+(?:[ \\t]+[${UPPER}][${LETTER}'’-]+){0,2})`,
-  "g",
-);
-/** One capitalised name word: "Anita", "McDonald", "O'Brien", "Jean-Luc". */
-const WORD = `[${UPPER}][${LOWER}]*(?:[${UPPER}][${LOWER}]+)?(?:['’-][${LETTER}][${LOWER}]*)*`;
-/** A run of capitalised words ("Office Manager Sandra Lee", "Licensed Plumbers"). */
-const CAP_RUN = new RegExp(`(^|[^${LETTER}'’-])(${WORD}(?:[ \\t]+${WORD})*)(?![${LETTER}])`, "g");
-/** "Maria (office manager…", "Priya 7 years", "Maria, 9 years". */
-const SINGLE_NAME = new RegExp(`(^|[^${LETTER}'’-])(${WORD})(?=[ \\t]*\\(|,?[ \\t]+\\d+[ \\t]*(?:years?|yrs?)\\b)`, "g");
-
 /** Words that follow an organisation's or a place's name ("Kowalski Hospitality Inc", "Fairway Plaza"). */
 const ORG_WORDS = new Set([
   "company", "co", "corporation", "corp", "inc", "incorporated", "ltd", "limited", "llc", "llp", "lp", "ulc", "group",
   "holdings", "enterprises", "services", "solutions", "partners", "associates", "cpa", "bank", "trust", "insurance",
   "dental", "medical", "health", "clinic", "practice", "plaza", "centre", "center", "mall", "building", "road",
-  "street", "avenue", "drive", "boulevard",
+  "street", "avenue", "drive", "boulevard", "pllc", "pc",
 ]);
 
-const isNameWord = (w: string) => w.length >= 2 && !NOT_NAME_WORDS.has(w.toLowerCase()) && !isRoleWord(w);
+/**
+ * A one-word name that is also an everyday word ("Bill", "Market", "Frost",
+ * "Normal", "Teller"). Takes a folded (lowercase ASCII) word.
+ */
+function isEverydayWord(folded: string): boolean {
+  if (!folded || folded.includes(" ")) return false;
+  return EVERYDAY_NAME_WORDS.has(folded) || COMMON_WORD_SURNAMES.has(folded) || GENERIC_STREET_WORDS.has(folded) ||
+    NOT_NAME_WORDS.has(folded) || ORG_WORDS.has(folded) || isCommonWord(folded);
+}
 
-const NUMBER_WORDS = /^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|multiple|many|few|some)$/i;
-/** A head count just before the words: "4 ", "four ", "x3 ". */
-const COUNT_BEFORE = /(?:\b\d{1,4}|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|multiple|many|few))[ \t]*[x×]?[ \t]*$/i;
-/** A head count just after the words: " (6)", ": 4", " x 3" — not a share, tenure or hours. */
-const COUNT_AFTER = /^[ \t]*(?:\([ \t]*\d{1,4}[ \t]*\)|[:=][ \t]*\d{1,4}(?![\d.,]|[ \t]*(?:%|percent|years?|yrs?|months?|hours?|hrs?)\b)|[x×][ \t]*\d{1,4}\b)/i;
-const pluralish = (w: string) => /s$/i.test(w) || isPluralRole(w);
+// ── Reading people out of a people fact ───────────────────────────────────
 
-// ── Term extraction ───────────────────────────────────────────────────────
+// Letters, including accented ones ("Émilie", "Åberg"). JS \b is ASCII-only,
+// so word edges are written out as "not a letter" instead.
+const LETTER = "A-Za-zÀ-ÖØ-öø-ÿ";
+const UPPER = "A-ZÀ-ÖØ-Þ";
+const UPPER_START = new RegExp(`^[${UPPER}]`);
+const ALL_CAPS = new RegExp(`^[${UPPER}'’-]+$`);
+const startsUpper = (w: string) => UPPER_START.test(w);
+/** A word: "Anita", "O'Brien", "Jean-Luc", "Patel's". */
+const WORD_RE = new RegExp(`[${LETTER}](?:[${LETTER}]|['’](?=[${LETTER}])|-(?=[${LETTER}]))*`, "g");
 
-/** People named after an honorific — "Dr. Anita Patel", "Mr. Lee". High precision. */
-export function honorificNames(text: string): string[] {
-  const out: string[] = [];
-  for (const m of Array.from(text.matchAll(HONORIFIC))) {
-    const words = m[1].split(/\s+/).filter((w) => !/^[A-ZÀ-ÖØ-Þ]\.$/.test(w)).filter(isNameWord);
-    if (words.length === 0) continue;
-    if (words.length >= 2) out.push(words.join(" "));
-    const surname = words[words.length - 1];
-    if (surname.length >= 3 && !COMMON_WORD_SURNAMES.has(surname.toLowerCase())) out.push(surname);
+const HONORIFICS = new Set(["dr", "dre", "mr", "mrs", "ms", "miss", "mx", "prof", "sir", "dame"]);
+/** Lowercase name particles inside a name ("Maria de la Cruz", "Ludwig van Dyke"). */
+const PARTICLES = new Set(["de", "del", "della", "der", "den", "di", "da", "dos", "das", "du", "la", "le", "van", "von", "ter", "ten", "bin", "ibn", "al", "el"]);
+const NUMBER_WORD = /^(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|multiple|many|few|some|both|all)$/;
+
+interface Tok {
+  /** The word as written, possessive dropped ("Patel's" → "Patel"). */
+  text: string;
+  /** Folded lowercase form ("brodeur lefevre" for "Brodeur-Lefèvre"). */
+  key: string;
+  /** Folded first part — the given-name check ("jean" for "Jean-Luc"). */
+  head: string;
+  cap: boolean;
+  allCaps: boolean;
+  initial: boolean;
+  start: number;
+  end: number;
+}
+
+function tokens(text: string): Tok[] {
+  const out: Tok[] = [];
+  for (const m of Array.from(text.matchAll(WORD_RE))) {
+    const raw = m[0];
+    const t = raw.replace(/['’][sS]$/, "");
+    const key = foldForMatch(t);
+    if (!key) continue;
+    out.push({
+      text: t,
+      key,
+      head: key.split(" ")[0],
+      cap: startsUpper(t),
+      allCaps: t.length > 1 && ALL_CAPS.test(t),
+      initial: t.length === 1 && startsUpper(t),
+      start: m.index ?? 0,
+      end: (m.index ?? 0) + raw.length,
+    });
   }
   return out;
+}
+
+const isHonorific = (t: Tok) => t.cap && HONORIFICS.has(t.key);
+const isGiven = (t: Tok) => GIVEN_NAMES.has(t.head) || GIVEN_NAMES.has(t.key.replace(/ /g, ""));
+const everyday = (t: Tok) => t.key.split(" ").every((p) => isEverydayWord(p));
+/** Words that are never (part of) a person's name. */
+const isStop = (t: Tok) =>
+  isHonorific(t) || NUMBER_WORD.test(t.key) || (NOT_NAME_WORDS.has(t.key) && !isGiven(t)) || isRoleWord(t.text);
+/** Title words that may precede a name ("Office Manager Sandra Lee", "Lead Plumber"). */
+const isTitle = (t: Tok) => isHonorific(t) || NOT_NAME_WORDS.has(t.key) || isOccupationWord(t.text) || t.initial;
+
+/**
+ * Runs of capitalised words, as written ("Office Manager Sandra Lee",
+ * "Dr. A. Patel", "Maria de la Cruz"). A run breaks at any punctuation,
+ * digit or lowercase word, except the dot after a title or an initial.
+ */
+function capitalRuns(text: string): Tok[][] {
+  const toks = tokens(text);
+  const runs: Tok[][] = [];
+  let run: Tok[] = [];
+  const flush = () => {
+    while (run.length && !run[run.length - 1].cap) run.pop(); // a trailing particle
+    if (run.length) runs.push(run);
+    run = [];
+  };
+  toks.forEach((t, i) => {
+    const prev = run[run.length - 1];
+    const gap = prev ? text.slice(prev.end, t.start) : "";
+    const joins = !!prev && (/^[ \t]+$/.test(gap) || (/^\.[ \t]*$/.test(gap) && (isHonorific(prev) || prev.initial)));
+    // A particle joins when more particles and then a capitalised word follow ("de la Cruz").
+    let k = i;
+    while (k < toks.length && !toks[k].cap && PARTICLES.has(toks[k].key) && !!toks[k + 1] && /^[ \t]+$/.test(text.slice(toks[k].end, toks[k + 1].start))) k++;
+    const particle = !t.cap && k > i && !!toks[k]?.cap;
+    if (t.cap || (particle && joins)) {
+      if (!joins) flush();
+      run.push(t);
+    } else flush();
+  });
+  flush();
+  return runs;
+}
+
+/** The run is a whole list entry on its own: after a line start, comma, colon, bracket, "and"… */
+function entryStartsAt(text: string, at: number): boolean {
+  const before = text.slice(0, at);
+  if (/^[ \t]*$/.test(before)) return true;
+  return /(?:[,;:(\[\n•·|/&–—*-]|\d[.)]|\band)[ \t]*$/.test(before.slice(-24));
+}
+/** …and ends one: end of text, punctuation, a bracket, a number ("Anita Patel 51%", "Carlos (12)"). */
+function entryEndsAt(text: string, at: number): boolean {
+  return /^[ \t]*(?:$|[,;:()\[\]\n•·|/&–—.!?-]|and\b|\d)/.test(text.slice(at, at + 24));
+}
+/** "Receptionist: Bree", "Estimator – Chen": a job label, then the person. */
+function afterRoleLabel(text: string, at: number): boolean {
+  const m = text.slice(Math.max(0, at - 40), at).match(/([A-Za-zÀ-ÖØ-öø-ÿ'’]+)[ \t]*[:–—-][ \t]*$/);
+  if (!m) return false;
+  const f = foldForMatch(m[1]);
+  return isRoleWord(m[1]) || (NOT_NAME_WORDS.has(f) && /(?:er|or|ist|ian|ant|ent|staff|team|crew|head|lead|admin)$/.test(f));
+}
+/** A lone unfamiliar word counts only with a tell-tale after it: "Xiaoling (7 years)", "Xiaoling, 9 years", "Xiaoling: 12". */
+const LONE_NAME_TELL = /^(?:[ \t]*\(|,?[ \t]*\d+\+?[ \t]*(?:years?|yrs?)\b|[ \t]*[:–—-][ \t]*\d)/i;
+
+/** English word endings no personal name has — "Ownership (100%)", "Maintenance (2)" are not people. */
+const STRONG_NOT_A_NAME_ENDING = /(?:ship|tion|sion|ment|ness|ity|ance|ence|ics|ism|ware|hood)$/i;
+/** …and, for a lone unfamiliar word, a wider set ("Scheduling (2)", "Procedure (1)"). */
+const NOT_A_NAME_ENDING = /(?:ship|tion|sion|ment|ness|ity|ance|ence|ing|ics|ism|ware|hood|ure|ery|ory|ary|ive|ous|ful|less|able|ible|ize|ise|ized|ised|ed)$/i;
+
+/**
+ * Record a person: the full name, and the surname alone when it can't be an
+ * everyday word. An everyday surname ("Emma Winter", "Dr. Frost") is
+ * recorded only with a title or as "<surname> family" — never as the word.
+ */
+function pushPerson(out: string[], name: Tok[], opts: { surnameAlone: boolean; title?: Tok }) {
+  const parts = name.filter((t) => !t.initial);
+  if (parts.length === 0) return;
+  const last = parts[parts.length - 1];
+  const lastOk = last.key.replace(/ /g, "").length >= 3 && !everyday(last);
+  if (parts.length === 1 && !opts.title) {
+    out.push(last.text); // "Carlos (12)", "Bill (driver)" — the fact itself is the one word
+    return;
+  }
+  if (parts.length >= 2) out.push(parts.map((t) => t.text).join(" "));
+  if (lastOk && (opts.surnameAlone || opts.title)) out.push(last.text);
+  else out.push(`${opts.title ? capitalise(opts.title.text) : "Ms"}. ${last.text}`); // a titled term — see TITLED
+}
+const capitalise = (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
+
+/**
+ * "Ms. Winter", "Dr. Frost": a surname that counts only with a title in
+ * front of it (any title — "Mr. Winter", "DR WINTER") or "family" after it.
+ */
+const TITLED = /^(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof|Sir|Dame)\. (.+)$/;
+const TITLE_WORDS = new Set(["dr", "dre", "mr", "mrs", "ms", "miss", "mx", "prof", "sir", "dame"]);
+
+/**
+ * Extend a name from `i`: words that can be part of a name, up to four. An
+ * occupation that is also a surname counts right after a given name
+ * ("Maria Teller"); an everyday word ends the name ("Emma Winter").
+ */
+function extendName(run: Tok[], i: number, afterGiven: boolean): number {
+  let j = i;
+  let n = 0;
+  while (j < run.length && n < 4) {
+    const t = run[j];
+    if (t.initial || (!t.cap && PARTICLES.has(t.key))) {
+      j++;
+      continue;
+    }
+    if (n > 0) {
+      if (isHonorific(t) || NUMBER_WORD.test(t.key) || isPluralRole(t.text)) break;
+      if (NOT_NAME_WORDS.has(t.key) && !isGiven(t)) break;
+      if (isRoleWord(t.text) && !(afterGiven && isSurnameOccupation(t.text))) break;
+      // A second given name after a full name starts the next person.
+      if (n >= 2 && isGiven(t) && !everyday(t)) break;
+    }
+    j++;
+    n++;
+    if (n > 1 && everyday(t)) break;
+  }
+  return j;
 }
 
 /**
- * A counted group of people — "4 Licensed Plumbers", "Registered Massage
- * Therapists (6)", "Framers: 3". A person is never counted, so the words are
- * a role, whatever they are.
+ * How much to read from a text: `titles` — only people named after a title
+ * ("Dr. Frost"); `prose` — also names that start with a known given name
+ * (free prose about the owner); `people` — also an unfamiliar name that
+ * stands alone as a list entry (a staffing fact).
  */
-function isCountedGroup(text: string, at: number, run: string): boolean {
-  const words = run.split(/[ \t]+/);
-  if (!pluralish(words[words.length - 1])) return false;
-  if (NUMBER_WORDS.test(words[0])) return true;
-  const end = at + run.length;
-  return COUNT_BEFORE.test(text.slice(Math.max(0, at - 16), at)) || COUNT_AFTER.test(text.slice(end, end + 24));
-}
+type ReadMode = "titles" | "prose" | "people";
 
-/** People in a free-text people fact (plus the honorific names). */
-function peopleIn(text: string): string[] {
-  const out = honorificNames(text);
-  for (const m of Array.from(text.matchAll(CAP_RUN))) {
-    const words = m[2].split(/[ \t]+/);
-    if (words.length < 2 || isCountedGroup(text, (m.index ?? 0) + m[1].length, m[2])) continue;
-    // Split the run at role words: "Office Manager Sandra Lee" → "Sandra Lee".
-    // Words just before a plural role describe it ("Early Childhood
-    // Educators", "Massage Therapists") — a group, not a person. Words just
-    // before "Inc"/"Group"/"Plaza"… name an organisation or a place: the
-    // whole name identifies, its last word alone ("Hospitality") doesn't.
-    let seg: string[] = [];
-    const flush = (next: string | undefined) => {
-      const describesGroup = next !== undefined && isPluralRole(next);
-      const namesOrg = next !== undefined && ORG_WORDS.has(next.toLowerCase());
-      if (seg.length >= 2 && seg.length <= 4 && !describesGroup) {
-        out.push(seg.join(" "));
-        const surname = seg[seg.length - 1];
-        if (!namesOrg && surname.length >= 3 && !COMMON_WORD_SURNAMES.has(surname.toLowerCase())) out.push(surname);
-      }
-      seg = [];
-    };
-    for (const w of words) {
-      if (isNameWord(w)) seg.push(w);
-      else flush(w);
+function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
+  const runStart = run[0].start;
+  const runEnd = run[run.length - 1].end;
+  const wholeEntryEnd = entryEndsAt(text, runEnd);
+  let i = 0;
+  while (i < run.length) {
+    const t = run[i];
+    const titlesBefore = run.slice(0, i).every(isTitle);
+    const startsEntry = i === 0 ? entryStartsAt(text, runStart) : titlesBefore;
+
+    // Title + name: "Dr. Anita Patel", "Mr Lee", "DR. FROST".
+    if (isHonorific(t)) {
+      const j = extendName(run, i + 1, true);
+      const name = run.slice(i + 1, j);
+      const first = name.find((x) => !x.initial);
+      // "MS Office", "Dr Office Hours" — a title word before a non-name.
+      if (first && (!isStop(first) || isGiven(first) || isSurnameOccupation(first.text))) pushPerson(out, name, { surnameAlone: true, title: t });
+      i = Math.max(j, i + 1);
+      continue;
     }
-    flush(undefined);
+    if (mode === "titles") {
+      i++;
+      continue;
+    }
+
+    // A known given name: "Carlos Reyes", "Maria Teller", "Priya".
+    if (isGiven(t) && !t.initial) {
+      const j = extendName(run, i, true);
+      const name = run.slice(i, j).filter((x) => !x.initial);
+      const next = run[j];
+      const ambiguous = everyday(t); // "Will", "Grace", "Summer", "May"
+      const reachesEnd = !next && wholeEntryEnd;
+      let ok: boolean;
+      if (next && isPluralRole(next.text)) ok = false; // "Summer Students" — a group
+      else if (name.length === 1) {
+        ok = ambiguous
+          ? reachesEnd && startsEntry && !/^[ \t]*\d/.test(text.slice(runEnd, runEnd + 8)) // "Bill (driver)", not "May 2019"
+          : !next || isStop(next); // "Carlos", "Sandra Office Manager"
+      } else {
+        ok = !(ambiguous && everyday(name[1])) || (reachesEnd && startsEntry); // not "Will Assist", "Grace Period"
+      }
+      if (ok) pushPerson(out, name, { surnameAlone: true });
+      i = Math.max(j, i + 1);
+      continue;
+    }
+
+    // An unfamiliar name standing alone as a list entry: "Xiaoling Wu (12)",
+    // "Office Manager: Oluwaseun Adeyemi". Never a phrase made of everyday
+    // words or one that ends in a job ("Patient Care Coordinator").
+    if (mode === "people" && !isStop(t) && !everyday(t) && !t.initial) {
+      const j = extendName(run, i, false);
+      const name = run.slice(i, j).filter((x) => !x.initial);
+      const next = run[j];
+      const groupWord = /(?:er|or|ist|ian|ant|ent)s$/i.test(name[name.length - 1].text) && !isGiven(name[name.length - 1]);
+      // "Handles Scheduling", "Oversees Estimating" — a verb, not a first name.
+      const wordy = name.some((x) => STRONG_NOT_A_NAME_ENDING.test(x.key)) || /s$/i.test(name[0].text);
+      let ok = false;
+      if (startsEntry && !groupWord && !wordy) {
+        if (name.length >= 2) {
+          // Followed by a job ("Xiaoling Wu Office Manager") only when every word is unfamiliar.
+          ok = next ? name.every((x) => !everyday(x)) && isStop(next) : wholeEntryEnd;
+        } else {
+          const w = name[0];
+          ok = !next && !/s$/i.test(w.text) && !(w.allCaps && w.text.length <= 5) && w.key.length >= 3 &&
+            !NOT_A_NAME_ENDING.test(w.key) &&
+            (LONE_NAME_TELL.test(text.slice(runEnd, runEnd + 24)) || (i === 0 && afterRoleLabel(text, runStart)));
+        }
+      }
+      const last = name[name.length - 1];
+      if (ok) pushPerson(out, name, { surnameAlone: !next && name.length >= 2 && !NOT_A_NAME_ENDING.test(last.key) });
+      i = Math.max(j, i + 1);
+      continue;
+    }
+    i++;
   }
-  for (const m of Array.from(text.matchAll(SINGLE_NAME))) {
-    const w = m[2];
-    if (w.length < 3 || !isNameWord(w) || COMMON_WORD_SURNAMES.has(w.toLowerCase())) continue;
-    const at = (m.index ?? 0) + m[1].length;
-    // "Framers (4)" — a head count, not a person.
-    if (isCountedGroup(text, at, w)) continue;
-    // Part of a capitalised title ("Lead Programmer (Miguel…") — not a name.
-    if (/[A-ZÀ-ÖØ-Þ][A-Za-zÀ-ÖØ-öø-ÿ'’-]*[ \t]+$/.test(text.slice(Math.max(0, at - 40), at))) continue;
-    // "Controller (Jennifer Wu, …)" — the name is inside the brackets, the word is a role.
-    if (/^[ \t]*\([ \t]*[A-ZÀ-ÖØ-Þ]/.test(text.slice(at + w.length, at + w.length + 6))) continue;
-    out.push(w);
+}
+
+/** People named after a title — "Dr. Anita Patel", "Mr. Lee", "Ms. Winter". High precision. */
+export function honorificNames(text: string): string[] {
+  const out: string[] = [];
+  for (const run of capitalRuns(text)) readRun(text, run, out, "titles");
+  return Array.from(new Set(out));
+}
+
+/** The people in a people fact ("Staff: Carlos Reyes (12), Ana Torres (4)"), or in prose about people. */
+export function peopleInFact(text: string, mode: ReadMode = "people"): string[] {
+  const out: string[] = [];
+  for (const run of capitalRuns(text)) readRun(text, run, out, mode);
+  return Array.from(new Set(out));
+}
+
+/** A dedicated name field ({ name: "Maria" }) — the value is a person, however it is written. */
+function personField(v: string): string[] {
+  const clean = v.replace(/\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof)\.?\s+/gi, "").trim();
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length === 0 || words.length > 4 || /[\d@(),;:]/.test(clean)) return peopleInFact(v);
+  // A job or a placeholder in the name slot ("Office Manager", "Vacant", "TBD") is not a person.
+  const toks = tokens(clean);
+  if (/^(?:vacant|tbd|tba|none|unknown|n\/?a|open|hiring|pending|various)$/i.test(clean)) return [];
+  if (toks.some((t) => isStop(t) && !isGiven(t)) || toks.every((t) => everyday(t) && !isGiven(t))) {
+    // One everyday word as the whole name ("Frost") still counts — capitalised (see `common`).
+    return toks.length === 1 && !isStop(toks[0]) ? [words[0]] : [];
   }
+  if (words.length === 1) return [words[0]];
+  const out = [words.join(" ")];
+  const last = foldForMatch(words[words.length - 1]);
+  if (last.length >= 3 && !isEverydayWord(last)) out.push(words[words.length - 1]);
+  else out.push(`Ms. ${words[words.length - 1]}`);
   return out;
 }
 
-/** A person's name held in a dedicated name field ({ name: "Maria" }). */
-function personField(v: string): string[] {
-  const words = v.replace(/\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof)\.?\s+/g, "").split(/\s+/).filter(Boolean);
-  if (words.length === 0 || words.length > 4 || !words.every((w) => startsUpper(w) && isNameWord(w))) return peopleIn(v);
-  const out = [words.join(" ")];
-  const last = words[words.length - 1];
-  if (words.length > 1 && last.length >= 3 && !COMMON_WORD_SURNAMES.has(last.toLowerCase())) out.push(last);
-  if (words.length === 1 && (last.length < 3 || COMMON_WORD_SURNAMES.has(last.toLowerCase()))) return [];
-  return out;
-}
+// ── Places, contacts and web identity ────────────────────────────────────
 
 const CA_POSTAL = /\b[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z] ?\d[ABCEGHJ-NPRSTV-Z]\d\b/gi;
 const UNIT_LINE = /^(?:unit|suite|ste|apt|apartment|floor|fl|bay|#)\b/i;
+const STREET_SUFFIX =
+  "Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Boulevard|Blvd|Crescent|Cres|Court|Ct|Lane|Ln|Way|Place|Pl|Parkway|Pkwy|Highway|Hwy|Line|Sideroad|Concession|Trail|Terrace|Circle|Square|Row|Close|Gate";
+/** "210 Fairway Road South", "45 Market St." anywhere in the facts. */
+const STREET_LINE = new RegExp(
+  `(?:^|[^\\w])(\\d{1,6}[A-Za-z]?[ \\t]+((?:[${UPPER}][${LETTER}'’.-]*[ \\t]+){1,4})(?:${STREET_SUFFIX})\\b\\.?(?:[ \\t]+(?:North|South|East|West|N|S|E|W))?)`,
+  "g",
+);
+const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+const PHONE = /(?:\+?1[ .-]?)?\(?\b\d{3}\)?[ .-]?\d{3}[ .-]\d{4}\b/g;
+const URL = /\b(?:https?:\/\/|www\.)[^\s,;)"'<>]+/gi;
+const BARE_DOMAIN = /\b((?:[a-z0-9-]+\.)+(?:ca|com|net|org|biz|info|co|io|us|shop|store|dental|health|clinic))\b(?:\/[^\s,;)"'<>]*)?/gi;
+/** Mail and social platforms: their own names identify nothing. */
+const PLATFORM_HOSTS = /^(?:gmail|googlemail|outlook|hotmail|live|msn|yahoo|icloud|me|mac|aol|protonmail|proton|shaw|rogers|bell|sympatico|telus|cogeco|videotron|eastlink|facebook|fb|instagram|linkedin|twitter|x|tiktok|youtube|youtu|yelp|google|goo|maps|bit|linktr|wa|pinterest|threads|square|squareup|wixsite|wordpress|shopify|godaddy)$/i;
 
 /**
  * Identifying pieces of a place fact: street lines and postal codes
@@ -289,11 +528,72 @@ function placesIn(value: string, anyCase = false): { names: string[]; lines: str
   return { names, lines };
 }
 
-const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|ceo|cfo|coo|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord)/i;
+/** A web host's name terms: "harbourlinedental.ca" → itself and "harbourlinedental". */
+function hostTerms(host: string): string[] {
+  const h = host.toLowerCase().replace(/^www\./, "").replace(/\.$/, "");
+  const labels = h.split(".");
+  if (labels.length < 2) return [];
+  const stem = labels[labels.length - 2];
+  if (PLATFORM_HOSTS.test(stem)) return [];
+  const out = [h];
+  if (stem.length >= 5 && !isEverydayWord(stem)) out.push(stem);
+  return out;
+}
+
+/** A social profile's handle: "facebook.com/harbourlinedental" → "harbourlinedental". */
+function handleOf(url: string): string | null {
+  const m = url.replace(/^https?:\/\//i, "").replace(/^www\./i, "").match(/^[^/]+\/(?:@)?([A-Za-z0-9._-]{5,})/);
+  if (!m || /^(?:pages|groups|people|in|company|profile|channel|user|c|p|watch|reel|share|photo|photos|maps|search)$/i.test(m[1])) return null;
+  const h = m[1].replace(/[._-]+$/, "");
+  return isEverydayWord(h.toLowerCase()) ? null : h;
+}
+
+/**
+ * The distinctive part of a business name, which identifies it on its own:
+ * generic words dropped from the end ("Harbourline Dental Group" →
+ * "Harbourline", "Frostline HVAC Services" → "Frostline"), and for a longer
+ * name its lead words ("Nonna Lucia's Trattoria" → "Nonna Lucia"). Never a
+ * phrase of everyday words ("Main Street", "Family Dental").
+ */
+function distinctiveCores(name: string): string[] {
+  if (/[\n,;@/]|\s[—–-]\s|\.[a-z]{2,}\b/i.test(name)) return [];
+  const all = name.replace(/['’]s\b/g, "").split(/\s+/).filter(Boolean);
+  const generic = (w: string) => {
+    const f = foldForMatch(w);
+    // Trailing trade acronyms ("HVAC", "RV", "IT") describe the business too.
+    return !f || f === "and" || isEverydayWord(f) || ORG_WORDS.has(f) || /^[A-Z]{2,5}$/.test(w);
+  };
+  const trim = (words: string[]) => {
+    const w = [...words];
+    while (w.length > 1 && generic(w[w.length - 1])) w.pop();
+    while (w.length > 1 && /^(?:the|le|la|les|l)$/i.test(w[0])) w.shift();
+    return w;
+  };
+  const out: string[] = [];
+  const consider = (words: string[]) => {
+    if (words.length === all.length) return;
+    const folded = words.map((w) => foldForMatch(w)).filter(Boolean);
+    if (folded.length === 0 || folded.every((f) => isEverydayWord(f))) return;
+    if (folded.length === 1 && folded[0].length < 5) return;
+    out.push(words.join(" "));
+  };
+  consider(trim(all));
+  if (all.length >= 3) {
+    const lead = trim(all.slice(0, -1));
+    if (lead.length >= 2) consider(lead);
+  }
+  return Array.from(new Set(out));
+}
+
+// ── Terms ────────────────────────────────────────────────────────────────
+
+const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|ceo|cfo|coo|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord|seller|bookkeeper|receptionist|nurse|crew|worker|heir)/i;
+const NOT_PEOPLE_KEY = /(salary|salaries|wages?|fees?|costs?|comp|compensation|pay|payroll|count|number|tenure|hours|involvement)$/i;
 const PLACE_KEY = /(address|street|city|town|municipality|postal|zip)/i;
 const PLACE_KEYS = new Set(["locations", "location", "primarylocation", "businesslocation", "headquarters", "headoffice", "premises", "sitelocation"]);
 const CONTACT_KEY = /(email|phone|fax|mobile|cell)/i;
-const NAME_FIELDS = new Set(["name", "fullname", "firstname", "lastname", "contactname", "personname"]);
+const WEB_KEY = /(website|web|url|domain|site|social|facebook|instagram|linkedin|twitter|tiktok|youtube|handle)/i;
+const NAME_FIELDS = new Set(["name", "fullname", "firstname", "lastname", "contactname", "personname", "ownername", "employeename", "staffname"]);
 
 /** Every string in a fact value ({ value } wrappers, arrays, objects). */
 function factStrings(v: unknown, depth = 0): { text: string; nameField: boolean }[] {
@@ -306,6 +606,8 @@ function factStrings(v: unknown, depth = 0): { text: string; nameField: boolean 
     }
     const out: { text: string; nameField: boolean }[] = [];
     for (const [k, x] of Object.entries(v)) {
+      // A written-out key is data too ({ "Carlos Reyes": "12 years" }); a camelCase field name isn't.
+      if (/\s/.test(k.trim()) || /^[A-ZÀ-ÖØ-Þ]/.test(k)) out.push({ text: k, nameField: false });
       if (typeof x === "string" && NAME_FIELDS.has(k.toLowerCase())) out.push({ text: x, nameField: true });
       else out.push(...factStrings(x, depth + 1));
     }
@@ -323,29 +625,39 @@ export function blindLeakTerms(
   opts: { codename?: string | null; extraPeople?: string[] } = {},
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
-  const terms: Array<{ text: string; kind: BlindTermKind }> = [];
-  const add = (text: string, kind: BlindTermKind) => {
+  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean }> = [];
+  const add = (text: string, kind: BlindTermKind, common?: boolean) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
-    terms.push({ text: t, kind });
+    terms.push({ text: t, kind, common });
   };
 
-  for (const id of blindIdentifiers({ businessName: deal.businessName, extractedInfo: info as Record<string, any> })) add(id, "name");
+  // Business names — every variant, and each one's distinctive core.
+  const ids = blindIdentifiers({ businessName: deal.businessName, extractedInfo: info as Record<string, any> });
+  for (const id of ids) add(id, "name");
+  for (const id of ids) {
+    // A one-word core ("Harbourline", "Precision") may be an English word
+    // the lists don't know: it counts capitalised or in capitals only.
+    for (const core of distinctiveCores(id)) add(core, "name", !core.includes(" ") || undefined);
+  }
 
   for (const [key, value] of Object.entries(info)) {
     if (key.startsWith("_")) continue;
     const strings = factStrings(value);
     if (strings.length === 0) continue;
-    if (PERSON_KEY.test(key) && !/(salary|salaries|wages?|fees?|costs?|comp|compensation|pay|payroll|count|number|tenure|hours|involvement)$/i.test(key)) {
-      for (const s of strings) for (const p of s.nameField ? personField(s.text) : peopleIn(s.text)) add(p, "person");
-    } else if (/involvement/i.test(key)) {
-      // Free prose about the owner — honorific names only.
-      for (const s of strings) for (const p of honorificNames(s.text)) add(p, "person");
+    const peopleFact = PERSON_KEY.test(key) && !NOT_PEOPLE_KEY.test(key);
+    for (const s of strings) {
+      if (peopleFact || s.nameField) {
+        for (const p of s.nameField ? personField(s.text) : peopleInFact(s.text)) add(p, "person");
+      } else if (/involvement/i.test(key)) {
+        // Free prose about the owner or family — titled names and known given names only.
+        for (const p of peopleInFact(s.text, "prose")) add(p, "person");
+      }
     }
     if (PLACE_KEY.test(key) || PLACE_KEYS.has(key.toLowerCase())) {
+      // A city/town field ("city", "businessCity" — not "capacity"): a place however it's typed.
+      const cityField = /^(?:city|town|municipality)$|[a-z](?:City|Town|Municipality)$/.test(key);
       for (const s of strings) {
-        // A city/town field ("city", "businessCity" — not "capacity"): a place however it's typed.
-        const cityField = /^(?:city|town|municipality)$|[a-z](?:City|Town|Municipality)$/.test(key);
         const { names, lines } = placesIn(s.text, cityField);
         [...names, ...lines].forEach((p) => add(p, "place"));
       }
@@ -357,11 +669,43 @@ export function blindLeakTerms(
         else if ((t.match(/\d/g) || []).length >= 7) add(t, "contact");
       }
     }
+    // Anywhere in the facts: street lines, postal codes, emails, phones, web addresses.
+    for (const s of strings) {
+      for (const m of Array.from(s.text.matchAll(STREET_LINE))) {
+        add(m[1].replace(/\.$/, ""), "place");
+        for (const w of m[2].split(/[ \t]+/)) {
+          const f = foldForMatch(w);
+          if (f.length >= 4 && !GENERIC_STREET_WORDS.has(f) && !isEverydayWord(f) && !isRegionLabel(w)) add(w, "place");
+        }
+      }
+      for (const m of Array.from(s.text.matchAll(CA_POSTAL))) add(m[0], "place");
+      for (const m of Array.from(s.text.matchAll(EMAIL))) {
+        add(m[0], "contact");
+        for (const h of hostTerms(m[0].split("@")[1])) add(h, "name");
+      }
+      for (const m of Array.from(s.text.matchAll(PHONE))) add(m[0], "contact");
+      for (const m of Array.from(s.text.matchAll(URL))) {
+        const host = m[0].replace(/^https?:\/\//i, "").split(/[/?#]/)[0];
+        for (const h of hostTerms(host)) add(h, "name");
+        const handle = handleOf(m[0]);
+        if (handle && PLATFORM_HOSTS.test(host.replace(/^www\./i, "").split(".")[0])) add(handle, "name");
+      }
+      if (WEB_KEY.test(key)) {
+        for (const m of Array.from(s.text.matchAll(BARE_DOMAIN))) {
+          const host = m[1];
+          for (const h of hostTerms(host)) add(h, "name");
+          const handle = handleOf(m[0]);
+          if (handle && PLATFORM_HOSTS.test(host.split(".").slice(-2)[0])) add(handle, "name");
+        }
+        for (const m of Array.from(s.text.matchAll(/(?:^|\s)@([A-Za-z0-9._]{5,})/g))) {
+          if (!isEverydayWord(m[1].toLowerCase())) add(m[1], "name");
+        }
+      }
+    }
   }
   for (const p of opts.extraPeople ?? []) add(p, "person");
 
-  // De-duplicate on the folded form (the stricter reading wins); drop
-  // anything inside the codename.
+  // De-duplicate on the folded form; drop anything inside the codename.
   const code = opts.codename ? ` ${foldForMatch(opts.codename)} ` : "";
   const byFold = new Map<string, BlindTerm>();
   for (const t of terms) {
@@ -371,18 +715,17 @@ export function blindLeakTerms(
     // Business names and contacts need 4+ characters ("Inc" alone isn't a name).
     if ((t.kind === "name" || t.kind === "contact") && letters < 4) continue;
     if (code && code.includes(` ${folded} `)) continue;
-    const common = (t.kind === "person" || t.kind === "place") && isEverydayWord(folded);
-    const prev = byFold.get(folded);
-    if (prev && (!prev.common || common)) continue;
-    byFold.set(folded, { text: t.text, kind: t.kind, common });
+    const titled = t.kind === "person" ? TITLED.exec(t.text) : null;
+    if (titled) {
+      // One titled term per surname, whichever title the facts used.
+      const key = `titled:${foldForMatch(titled[1])}`;
+      if (!byFold.has(key) && !byFold.has(foldForMatch(titled[1]))) byFold.set(key, { text: t.text, kind: t.kind, common: false, titled: true });
+      continue;
+    }
+    if (byFold.has(folded)) continue;
+    byFold.set(folded, { text: t.text, kind: t.kind, common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)) });
   }
   return Array.from(byFold.values());
-}
-
-/** One-word person/place names that are also everyday words ("Bill", "Market", "Hope"). */
-function isEverydayWord(folded: string): boolean {
-  return !folded.includes(" ") &&
-    (EVERYDAY_NAME_WORDS.has(folded) || COMMON_WORD_SURNAMES.has(folded) || GENERIC_STREET_WORDS.has(folded) || NOT_NAME_WORDS.has(folded));
 }
 
 // ── Matching ──────────────────────────────────────────────────────────────
@@ -400,11 +743,15 @@ export function collectStrings(value: unknown, out: string[] = [], depth = 0): s
   return out;
 }
 
+/** Digit runs that could be a phone number ("(519) 555-0142", "+1 519.555.0142", "5195550142"). */
+const DIGIT_RUN = /\+?\d[\d \t().-]{5,}\d/g;
+
 /**
  * The terms (their fact text) that appear in the given text(s), in any case
  * ("KITCHENER", "kitchener"), across accents, punctuation and line breaks.
  * An everyday-word term (`common`) counts only where it is capitalised or in
- * capitals. Empty = nothing identifying found.
+ * capitals. A phone number also matches on its digits alone. Empty =
+ * nothing identifying found.
  */
 export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindTerm[]): string[] {
   if (terms.length === 0) return [];
@@ -413,10 +760,26 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
   // Folded text is plain ASCII, so the lowercase copy lines up character for character.
   const cased = ` ${foldForMatch(all, true)} `;
   const lower = cased.toLowerCase();
+  let digitRuns: string[] | null = null;
   const hits: string[] = [];
   for (const t of terms) {
     const f = foldForMatch(t.text);
     if (!f) continue;
+    if (t.kind === "contact" && !/[a-z]/i.test(t.text)) {
+      const digits = t.text.replace(/\D/g, "");
+      if (digits.length >= 7) {
+        const core = digits.length > 10 ? digits.slice(-10) : digits;
+        digitRuns ??= (all.match(DIGIT_RUN) || []).map((r) => r.replace(/\D/g, ""));
+        if (digitRuns.some((r) => r.includes(core))) {
+          hits.push(t.text);
+          continue;
+        }
+      }
+    }
+    if (t.titled) {
+      if (titledSurnameIn(lower, foldForMatch(TITLED.exec(t.text)?.[1] ?? t.text))) hits.push(t.text);
+      continue;
+    }
     const needle = ` ${f} `;
     let at = lower.indexOf(needle);
     if (at < 0) continue;
@@ -432,6 +795,18 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
     }
   }
   return hits;
+}
+
+/** " dr winter ", " winter family ", " winter s family " in folded lowercase text. */
+function titledSurnameIn(lower: string, surname: string): boolean {
+  if (!surname) return false;
+  const needle = ` ${surname} `;
+  for (let at = lower.indexOf(needle); at >= 0; at = lower.indexOf(needle, at + 1)) {
+    const before = lower.slice(0, at).split(" ").pop() ?? "";
+    const after = lower.slice(at + needle.length);
+    if (TITLE_WORDS.has(before) || /^(?:s )?family\b/.test(after)) return true;
+  }
+  return false;
 }
 
 /** Convenience: is this text free of the deal's identifying terms? */
