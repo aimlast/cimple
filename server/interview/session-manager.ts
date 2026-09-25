@@ -16,6 +16,7 @@ import {
   needsScreen,
   screenQuestionnaireAnswers,
   scrubUnscreenedAnswer,
+  splitStillValid,
   unscreenedAnswers,
   QUESTIONNAIRE_SCREEN_KEY,
   type QuestionnaireScreen,
@@ -1627,8 +1628,16 @@ export function seedExtractedInfoFromQuestionnaire(
   for (const [key, answer] of facts) {
     let value = answer;
     if (needsScreen(key, answer)) {
-      const cached = screen[key]?.hash === answerHash(answer) ? screen[key] : null;
+      const onFile = screen[key]?.hash === answerHash(answer) ? screen[key] : null;
+      // A split recorded before today's checks that fails them (a figure the
+      // answer never states) is not used, and the value it seeded goes.
+      const cached = onFile && splitStillValid(answer, onFile) ? onFile : null;
       const split = cached ?? keywordSplit(answer);
+      const stale = getQuestionnaireScreen(existing)[key];
+      if (
+        stale && stale.hash === answerHash(answer) && stale.publicValue && stale.publicValue !== split.publicValue &&
+        !splitStillValid(answer, stale) && scrubUnscreenedAnswer(seeded, key, stale.publicValue)
+      ) added = true;
       for (const note of split.privateNotes) {
         if (addPrivateNote(seeded, note, { questionnaire: true, reason: "From the intake questionnaire" })) added = true;
       }

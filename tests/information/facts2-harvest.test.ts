@@ -130,11 +130,13 @@ type Info = Record<string, unknown>;
     assert.equal(addPrivateNote(junk, "Sample document labeled as fictional business for demonstration purposes", { documentId: "fs" }), false);
     assert.equal(addPrivateNote(junk, "Extract marked confidential and prepared for corporation's advisers only", { documentId: "mb" }), false);
     assert.equal(getPrivateNotes(junk).length, 0);
-    // Grandchildren in Kelowna, said twice on the seller side → one note.
+    // Where the daughter lives and what the owner wants are two statements
+    // (round 2: relatives say whose matter it is — a wrong merge used to
+    // discard the second note's words).
     const kids: Info = {};
     addPrivateNote(kids, "Seller's daughter and two grandchildren live in Kelowna BC, seller's wife Donna wants to relocate there", { documentId: "call" });
     addPrivateNote(kids, "Owner wants to spend time with grandkids in Kelowna", { questionnaire: true, reason: "From the intake questionnaire" });
-    assert.equal(getPrivateNotes(kids).length, 1);
+    assert.equal(getPrivateNotes(kids).length, 2);
   }
   ok("private notes: same content in other words → one note, two sources; different figures/people stay apart");
 
@@ -228,8 +230,11 @@ type Info = Record<string, unknown>;
       { id: "i", documentName: "Insurance Policies", category: "legal", status: "missing" },
     ];
     assert.equal(findMatchingRequirement(lease, "Commercial Lease Agreement.pdf", "legal")?.id, "l");
-    assert.equal(findMatchingRequirement(lease, "Commercial Lease Agreement.pdf", "other"), undefined, "'other' is no wildcard");
-    assert.equal(findMatchingRequirement(lease, "Email thread - yard lease renewal", "legal"), undefined, "one generic word isn't a match");
+    // Round 2: an uncategorised upload may match any row, but only on a word that identifies it.
+    assert.equal(findMatchingRequirement(lease, "Commercial Lease Agreement.pdf", "other")?.id, "l", "an uncategorised lease links on 'lease'");
+    assert.equal(findMatchingRequirement(lease, "Agreement.pdf", "other"), undefined, "a generic word alone never links an uncategorised upload");
+    assert.equal(findMatchingRequirement(lease, "Email thread - yard lease renewal", "legal"), undefined, "correspondence about the lease is not the lease");
+    assert.equal(findMatchingRequirement(lease, "RE: lease renewal.pdf", "legal"), undefined);
     assert.equal(autoLinkableKind("email"), false);
     assert.equal(autoLinkableKind("call"), false);
     assert.equal(autoLinkableKind("document"), true);

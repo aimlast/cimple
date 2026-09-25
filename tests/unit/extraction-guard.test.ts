@@ -101,7 +101,9 @@ LOCATION EBITDA,449851,-23751,426100`;
     assert.equal(out.amortization2024, "$72,740");
     assert.equal(out.managementSalaryShareholder2024, "$185,000");
     assert.deepEqual(out.revenueByYear, { "2023": "$8,640,200", "2024": "$9,120,400" });
-    assert.equal(out._privateNotes, "Personal guarantee of shareholder");
+    // A company transaction filed as a private note is the business fact it is (round 2).
+    assert.equal(out._privateNotes, undefined);
+    assert.equal(out.personalGuarantees, "Personal guarantee of shareholder");
     const notes = String(out.keyFinancialNotes);
     assert.ok(!/EBITDA calculated/.test(notes), "the EBITDA calculation sentence is gone");
     assert.ok(/Revenue growth of 5\.6%/.test(notes) && /Compounding grew/.test(notes), "the rest of the note stays");

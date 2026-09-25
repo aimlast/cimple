@@ -27,6 +27,8 @@
  */
 
 import { SOURCE_META_KEYS } from "../interview/info-merger";
+import { mentionsPrivateMatter } from "../interview/questionnaire-privacy";
+import { businessFactForNote, noteRecordedAsFact } from "@shared/private-notes";
 
 /** Source kinds whose text is speech (figures said in words, not printed). */
 export const SPOKEN_KINDS: ReadonlySet<string> = new Set(["call", "video_call", "interview"]);
@@ -102,8 +104,29 @@ const ARITHMETIC_RE =
 const STATED_AS_CALCULATION_RE =
   /\bcalculated (?:as|by|from|using)\b|\(calculated\b|\bcalculation:|\b(?:19|20)\d{2} calculation\b|\bcomputed (?:as|by|from)\b|=\s*\$\s?\d/i;
 
-/** A figure the source doesn't give on its own ("Included in $1,442,300 salaries and wages"). */
-const NOT_STATED_RE = /\bnot (?:separately|individually) (?:stated|disclosed|shown|broken out)\b|\bincluded in (?:the )?\$/i;
+/** "Not separately stated / disclosed": the source gives no figure of its own. */
+const NOT_SEPARATELY_RE = /\bnot (?:separately|individually) (?:stated|disclosed|shown|broken out)\b/i;
+
+/**
+ * True when a figure is one the source doesn't give on its own — the value
+ * only points at a larger line ("Included in $1,442,300 salaries and
+ * wages", "Owner salary included in $1.4M wages"). Not when the value has a
+ * figure of its own ("Inventory (~$180,000 at cost) included in the $3.2M
+ * asking price"), says what is NOT included ("Building not included in the
+ * $6.5M price"), is unsure ("unclear if included in $4.2M backlog"), or is
+ * about what a price, backlog or offer covers — those are stated deal
+ * terms, not figures.
+ */
+export function figureNotStatedOnItsOwn(clause: string): boolean {
+  if (NOT_SEPARATELY_RE.test(clause)) return true;
+  const m = /\bincluded in (?:the )?(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|b|million|thousand)?)\s*([^;.]*)/i.exec(clause);
+  if (!m) return false;
+  const before = clause.slice(0, m.index);
+  if (/\b(?:not|n['’]t|never|if|whether|unclear|unsure|possibly|maybe|may be|might be|could be|also|all|fully)\s+(?:\w+\s+){0,2}$/i.test(before)) return false;
+  if (amountsIn(before).length > 0) return false;
+  if (/^(?:\w+\s+){0,3}(?:price|backlog|offer|deal|consideration|valuation|purchase|sale|loi|package)\b/i.test(m[2])) return false;
+  return true;
+}
 
 /** True when the value is written as a calculation rather than a stated figure. */
 export function looksComputed(value: string): boolean {
@@ -235,8 +258,12 @@ export function guardExtraction(
    * A spoken source (a call or video-call transcript): the seller names the
    * metric but says the figure in words ("about seven-eighty"), so the
    * figure isn't matched against the text — a calculation is still dropped.
+   * `document`: the source is a document (statements, minute book, lease,
+   * tax return) — only there are company transactions filed as private
+   * notes promoted to facts (promoteBusinessNotes); an e-mail, call or CRM
+   * note about a guarantee is second-hand and full of deal process.
    */
-  opts: { spoken?: boolean } = {},
+  opts: { spoken?: boolean; document?: boolean } = {},
 ): GuardResult {
   const data: Extraction = {};
   const stated: string[] = [];
@@ -283,7 +310,7 @@ export function guardExtraction(
     } else if (isNarrative(key, value)) {
       value = stripComputedSentences(value);
     } else if (
-      NOT_STATED_RE.test(value.split(/;\s|\.\s/)[0]) ||
+      figureNotStatedOnItsOwn(value.split(/;\s|\.\s/)[0]) ||
       // A calculation counts as stated when the source prints it that way
       // (a lease reading "$11.50 per sq ft = $322,000 per annum").
       (STATED_AS_CALCULATION_RE.test(value.split(/;\s|\.\s/)[0]) && !(text && allFiguresPrinted(value.split(/;\s|\.\s/)[0], sourceDigits)))
@@ -318,7 +345,37 @@ export function guardExtraction(
   }
 
   if (stated.length > 0) data[STATED_METRICS_KEY] = stated.join(",");
+  if (opts.document) promoteBusinessNotes(data);
   return { data, stated, dropped };
+}
+
+/**
+ * Company transactions with the owner that the extractor filed as private
+ * notes anyway (an older prompt did it routinely: the Class D dividend, the
+ * personal guarantee on the term loan, the related-party lease, "unaudited
+ * compilation") become the business facts they are (mutates): the note's
+ * words are the fact, under dividendsDeclared / personalGuarantees /
+ * shareholderLoans / relatedPartyTransactions / auditStatus, or appended to
+ * the source's own fact of that family when the note adds something to it.
+ * A note that also names a personal matter or a negotiation position stays a
+ * note. Idempotent.
+ */
+export function promoteBusinessNotes(data: Extraction): void {
+  const raw = data._privateNotes;
+  const notes = Array.isArray(raw) ? raw.map((n) => String(n ?? "")) : typeof raw === "string" ? raw.split("\n") : [];
+  if (notes.length === 0) return;
+  const kept: string[] = [];
+  for (const note of notes.map((n) => n.trim()).filter(Boolean)) {
+    const fact = businessFactForNote(note);
+    if (!fact || mentionsPrivateMatter(note)) { kept.push(note); continue; }
+    if (noteRecordedAsFact(note, data)) continue; // the source already records it
+    const key = Object.keys(data).find((k) => !k.startsWith("_") && fact.family.test(k) && typeof data[k] === "string") ?? fact.canonical;
+    const current = typeof data[key] === "string" ? String(data[key]).trim() : "";
+    data[key] = current ? `${current}; ${note}` : note;
+  }
+  if (kept.length === notes.length) return;
+  if (kept.length > 0) data._privateNotes = Array.isArray(raw) ? kept : kept.join("\n");
+  else delete data._privateNotes;
 }
 
 /** The derived-metric keys an extraction recorded as printed in its source. */

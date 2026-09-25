@@ -283,11 +283,25 @@ const NAME_STOPWORDS = new Set([
   "list", "summary", "report", "copy", "copies", "pdf", "final", "draft",
 ]);
 
+/**
+ * One spelling per word, so a file and a checklist row meet however each is
+ * written: "licence"/"licenses" → "license", "statements" → "statement",
+ * "policies" → "policy".
+ */
+function normWord(w: string): string {
+  let x = w.replace(/^licen[cs]/, "licens");
+  if (x.length > 5 && x.endsWith("ies")) x = x.slice(0, -3) + "y";
+  else if (/(?:x|ch|sh|ss)es$/.test(x)) x = x.slice(0, -2);
+  else if (x.length > 4 && x.endsWith("s") && !/(?:ss|us)$/.test(x)) x = x.slice(0, -1);
+  return x.replace(/^licens(e|ing)?$/, "license");
+}
+
 function keywords(value: string): string[] {
   return value
     .toLowerCase()
     .split(/[^a-z0-9]+/)
-    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w));
+    .filter((w) => w.length >= 3 && !NAME_STOPWORDS.has(w))
+    .map(normWord);
 }
 
 // How brokers and accountants actually name the files, mapped onto the
@@ -301,7 +315,7 @@ const FILE_ALIASES: Array<[RegExp, string[]]> = [
 function fileKeywords(fileName: string): Set<string> {
   const words = new Set(keywords(fileName));
   for (const [pattern, extra] of FILE_ALIASES) {
-    if (pattern.test(fileName)) extra.forEach((w) => words.add(w));
+    if (pattern.test(fileName)) extra.forEach((w) => words.add(normWord(w)));
   }
   return words;
 }
@@ -309,17 +323,18 @@ function fileKeywords(fileName: string): Set<string> {
 /**
  * Words too common in document names to identify a checklist row on their
  * own: "Financial statements FY2023" shares "statements" with "Bank
- * Statements (3 Months)", an email about a yard lease shares "lease" with
- * "Commercial Lease Agreement". A match needs two shared words, or one
- * distinguishing word.
+ * Statements (3 Months)". A match needs two shared words, or one
+ * distinguishing word. ("Lease" and "licence" do identify a row: any lease
+ * file is the lease. An e-mail about a yard lease is kept out by its kind —
+ * only documents are matched by name.)
  */
 const GENERIC_NAME_WORDS = new Set([
   "statement", "statements", "financial", "financials", "agreement", "agreements", "report", "reports",
-  "lease", "leases", "document", "documents", "records", "record", "schedule", "schedules", "contract",
+  "document", "documents", "records", "record", "schedule", "schedules", "contract",
   "contracts", "details", "detail", "information", "info", "business", "company", "file", "files", "data",
   "tax", "taxes", "return", "returns", "form", "forms", "letter", "letters", "notes", "policy", "policies",
   "plan", "plans", "email", "thread", "call", "transcript", "renewal", "annual", "monthly", "quarterly", "bank",
-]);
+].map(normWord));
 
 /** Only a document upload is matched to a checklist row by name (no kind = an older caller: a document). */
 export function autoLinkableKind(sourceKind: string | null | undefined): boolean {
@@ -347,12 +362,19 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
 ): T | undefined {
   // Transcripts and marketing collateral are never checklist items.
   if (docCategory === "transcripts" || docCategory === "marketing") return undefined;
+  // Correspondence about a document is not the document ("Email thread -
+  // yard lease renewal", "RE: lease", a printed e-mail uploaded as a file).
+  if (/\b(?:e-?mails?|thread|correspondence)\b|^\s*(?:re|fwd?)\s*:/i.test(fileName)) return undefined;
   const fileWords = fileKeywords(fileName);
   if (fileWords.size === 0) return undefined;
 
-  // The category must match — an "other" upload is not a wildcard for every row.
+  // The category must match. An upload with no category ("other" — a
+  // seller dropping "Lease.pdf" outside the checklist) may match any row,
+  // but only on a word that identifies it, or on every word of the row's
+  // name ("Financial statements FY2023" → "Financial Statements (3 Years)").
+  const uncategorised = docCategory === "other";
   const candidates = requirements.filter(
-    (r) => r.status === "missing" && docCategoryForRequirement(r.category) === docCategory,
+    (r) => r.status === "missing" && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
   );
 
   const scored = candidates
@@ -363,7 +385,7 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
       return { r, hits: shared.length, distinguishing, total: words.length };
     })
     // Two shared words, or one word that actually identifies the row.
-    .filter((s) => s.hits >= 2 || s.distinguishing >= 1)
+    .filter((s) => s.distinguishing >= 1 || (s.hits >= 2 && (!uncategorised || s.hits === s.total)))
     .sort((a, b) => b.hits - a.hits || b.distinguishing - a.distinguishing || (a.r.sortOrder ?? 0) - (b.r.sortOrder ?? 0));
 
   const [best, second] = scored;

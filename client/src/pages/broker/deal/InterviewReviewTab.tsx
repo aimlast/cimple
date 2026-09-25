@@ -16,6 +16,8 @@ interface PrivateNoteSource {
   documentId?: string;
   brokerOnly?: boolean;
   questionnaire?: boolean;
+  /** This source's own words, when they differ from the note's. */
+  wording?: string;
 }
 
 interface BrokerPrivateNote extends PrivateNoteSource {
@@ -50,9 +52,17 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
   if (notes.length === 0) return null;
   // Notes recorded before restatements were merged on write can say the same
   // thing in other words — shown once, with every source that said it.
+  // Every source keeps its own words: a restatement in other words is shown
+  // under the note, never dropped.
   const groups = groupSameNotes(notes.filter((n) => !isHousekeepingNote(n.note))).map(({ note, same }) => ({
     ...note,
-    alsoFrom: [...(note.alsoFrom ?? []), ...same.flatMap((s) => [s, ...(s.alsoFrom ?? [])])],
+    alsoFrom: [
+      ...(note.alsoFrom ?? []),
+      ...same.flatMap((s) => [
+        { ...s, wording: s.wording ?? s.note },
+        ...(s.alsoFrom ?? []).map((a) => ({ ...a, wording: a.wording ?? s.note })),
+      ]),
+    ].map((a) => (a.wording && a.wording.trim().toLowerCase() === note.note.trim().toLowerCase() ? { ...a, wording: undefined } : a)),
   }));
   if (groups.length === 0) return null;
   const shown = expanded ? groups : groups.slice(0, VISIBLE_NOTES);
@@ -85,8 +95,14 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
             <p className="text-sm">{n.note}</p>
             <p className="text-[11px] text-muted-foreground mt-1">
               {sourceLabel(n)}
-              {n.alsoFrom.length > 0 && ` · also ${n.alsoFrom.map(alsoLabel).join(", ")}`}
+              {n.alsoFrom.some((a) => !a.wording) && ` · also ${n.alsoFrom.filter((a) => !a.wording).map(alsoLabel).join(", ")}`}
             </p>
+            {n.alsoFrom.filter((a) => a.wording).map((a, j) => (
+              <p key={j} className="mt-1.5 border-l-2 border-border pl-2 text-xs text-muted-foreground" data-testid={`private-note-${i}-wording-${j}`}>
+                <span className="text-foreground/80">“{a.wording}”</span>
+                <span className="text-[11px]"> · {alsoLabel(a)}</span>
+              </p>
+            ))}
           </div>
         ))}
         {groups.length > VISIBLE_NOTES && (

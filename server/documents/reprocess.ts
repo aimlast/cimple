@@ -45,8 +45,8 @@ import {
   SOURCE_META_KEYS,
   type FieldSource,
 } from "../interview/info-merger";
-import { documentKind, mergeableExtraction, addPrivateNotes } from "./ingest";
-import { removePrivateNoteSource, compactPrivateNotes } from "../interview/info-merger";
+import { documentKind, mergeableExtraction, refreshSourceNotes } from "./ingest";
+import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 
 export async function reprocessDealDocuments(
@@ -77,7 +77,7 @@ export async function reprocessDealDocuments(
     // SDE or EBITDA an older prompt computed must not come back as a fact.
     const stored =
       doc.extractedData && typeof doc.extractedData === "object"
-        ? (guardExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText, { spoken: SPOKEN_KINDS.has(documentKind(doc)) }).data as ExtractedDocumentData)
+        ? (guardExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText, { spoken: SPOKEN_KINDS.has(documentKind(doc)), document: documentKind(doc) === "document" }).data as ExtractedDocumentData)
         : null;
 
     let text: string | null = null;
@@ -186,14 +186,14 @@ export async function reprocessDealDocuments(
     rebuilt[FIELD_ALTERNATES_KEY] = mergeAlternateMaps(rebuilt[FIELD_ALTERNATES_KEY] as Record<string, unknown>, addedSince);
 
     // Private notes follow the re-extraction: each source's notes are what it
-    // says now (a business fact an older prompt filed as private — a
-    // dividend, a guarantee — is a fact now), and notes that say the same
-    // thing in other words are folded into one.
-    for (const { doc, data } of results) {
-      if (!data) continue;
-      removePrivateNoteSource(rebuilt, doc.id);
-      addPrivateNotes(rebuilt, data._privateNotes, doc);
-    }
+    // says now, and notes that say the same thing in other words are folded
+    // into one (keeping every source's words). A note the fresh run simply
+    // didn't repeat is KEPT — a model run is not a correction, and the note
+    // may be the broker's only record of it. It goes only when this source
+    // now records it as a business fact (a dividend, a guarantee an older
+    // prompt filed as private), or when it is no note at all ("NDA in
+    // place", a sample-document label).
+    for (const { doc, data } of results) if (data) refreshSourceNotes(rebuilt, doc, data);
     compactPrivateNotes(rebuilt);
 
     await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);

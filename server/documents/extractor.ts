@@ -268,7 +268,8 @@ Any other clearly business-relevant fact may use its own specific camelCase key 
 
 For ANY source, also extract: summary (1-2 sentences), keyFacts (most important facts as a comma-separated list), redFlags (any concerning items noted)
 
-PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes (a list of short, factual notes, each stated once). Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes.
+PRIVATE MATTERS: personal or sensitive things about the owner, their family or staff that must never appear in a sales document — health, family or marital matters, personal money trouble outside the company, legal trouble not about the business, the seller's bottom line or other negotiation positions, or anything the source marks private / confidential / "don't share" — go ONLY in _privateNotes. Never put them in a business field: e.g. reasonForSale stays neutral ("Owner retiring") and the health detail goes in _privateNotes. One short, factual note per matter: put everything the source says about that matter in the one note (the heart episode, the stent and "keep it out of the brochure" are one note, not three), and name whose matter it is ("Owner's wife…").
+Deal-process status and to-dos (an NDA or engagement letter signed, who attended or was copied, documents still to ask for, next steps), contact details (phone numbers, e-mail and office addresses) and the source's own confidentiality stamp are neither facts nor private notes: next steps go in actionItems, the rest stays in summary / keyFacts.
 Company transactions that involve the owner or their family are BUSINESS facts, not private notes — a buyer's due diligence needs them and the financial analysis reads them: dividends declared or paid (dividendsDeclared, with class, amount and date), shareholder loans and amounts due to or from shareholders (shareholderLoans), personal guarantees of company debt (personalGuarantees), related-party leases, contracts and family members on the payroll (relatedPartyTransactions), and the audit / review / compilation status (auditStatus). Record them under those keys.
 Ignore document housekeeping — "sample" or "fictional" labels, page footers, confidentiality stamps: it is neither a fact nor a note.${checklistBlock(checklist)}`;
 }
@@ -324,7 +325,7 @@ export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: s
     else if (Array.isArray(v)) out[k] = v.map((x) => (typeof x === "string" ? x : JSON.stringify(x))).join(", ");
     else out[k] = JSON.stringify(v);
   }
-  const guarded = guardExtraction(out, sourceText, { spoken: SPOKEN_KINDS.has(kind) });
+  const guarded = guardExtraction(out, sourceText, { spoken: SPOKEN_KINDS.has(kind), document: kind === "document" });
   if (guarded.dropped.length > 0) {
     // Keys and reasons only in production (values are the seller's business data).
     const shown = (d: { key: string; reason: string }) =>
