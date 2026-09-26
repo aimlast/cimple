@@ -83,8 +83,11 @@ const DIVIDEND_MENTION_RE = /\b(?:dividends?|owner'?s?\s+draws?|shareholder\s+dr
 /** The clause says the dividend is NOT in the figure. */
 const EXCLUSION_RE =
   /\b(?:exclud(?:e|es|ed|ing)|not\s+(?:included|added|counted|part\s+of|in\s+(?:the|this)|an?\s+add-?back|compensation)|isn'?t|is\s+not|are\s+not|was\s+not|never|without|separate(?:ly)?|rather\s+than|removed|taken\s+out|left\s+out|net\s+of|a\s+distribution,?\s+not)\b/i;
-/** The clause says the dividend IS in the figure. */
-const INCLUSION_RE = /\+|\bplus\b|\binclud(?:es|ing|ed)\b|\band\b|\bcombined\b|\btotal(?:l?ing)?\b|\bmade\s+up\s+of\b|\bconsist(?:s|ing)\s+of\b/i;
+/**
+ * The clause says the dividend IS in the figure. Not "and": "$180,000
+ * salary and $60,000 in dividends" lists two amounts, it doesn't total them.
+ */
+const STRONG_INCLUSION_RE = /\+|\bplus\b|\binclud(?:es|ing|ed)\b|\bcombined\b|\btotal(?:l?ing)?\b|\bmade\s+up\s+of\b|\bconsist(?:s|ing)\s+of\b/i;
 
 /** The clauses of a description that mention a dividend or draw. */
 function dividendClauses(text: string): string[] {
@@ -124,43 +127,122 @@ export function isOwnerCompDiscrepancy(field: string | null | undefined, factKey
   return OWNER_WORD_RE.test(text) && /\b(?:comp|compensation|salary|salaries|wages?|pay|remuneration|add-?backs?)\b/i.test(text);
 }
 
-const DIVIDEND_EXCLUDED_NOTE_RE = /excludes the \$[\d,]+ dividend/i;
+// ── Owner pay: reading a stated breakdown ──
+
+/** A money amount, never glued to the next word ("$180,000 management fee" is not $180M). */
+const PAY_MONEY_RE = /\$\s?\d(?:[\d,]*\d)?(?:\.\d+)?(?:\s?(?:k|mm|m|million|thousand)\b)?/gi;
+/** Where one term of a breakdown ends: "+", ";", "(", ")", "=", "plus", "and", "totalling", " — ". A comma inside a number isn't one. */
+const TERM_SEP_RE = /\s*(?:\+|;|,(?=\s)|\(|\)|=|\bplus\b|\band\b|\balong\s+with\b|\binclud(?:es|ing|ed)\b|\bof\s+which\b|\btotall?ing\b|\bfor\s+a\s+total\s+of\b|\s[—–]\s|\s-\s)\s*/gi;
+const TOTAL_SEP_RE = /^\s*(?:=|totall?ing|for\s+a\s+total\s+of)\s*$/i;
+const TOTAL_WORD_RE = /\b(?:total|in\s+all|combined|altogether|all[- ]in)\b/i;
+const PAY_KIND_RE = /\b(?:salary|salaries|wages?|t4|payroll|bonus(?:es)?|benefits?|compensation|comp|remuneration|management\s+fees?|pension|rrsp|allowance|pay)\b/i;
+const OTHER_KIND_RE =
+  /\b(?:personal|perks?|vehicle|truck|car|auto|fuel|meals?|travel|cell|phone|tickets?|club|family|spouse|wife|husband|son|daughter|relatives?|expenses?|costs?|run\s+through)\b/i;
+
+type PayTermKind = "pay" | "distribution" | "other" | "unknown";
+interface PayTerm {
+  value: number;
+  /** The term as written ("T4 salary $180,000"). */
+  text: string;
+  kind: PayTermKind;
+  totalHint: boolean;
+  /** The text says this amount is NOT in the figure ("dividends of $60,000 paid separately"). */
+  excludedInText: boolean;
+}
+
+function termKind(label: string): PayTermKind {
+  if (DIVIDEND_MENTION_RE.test(label) || /\bdraws?\b|\bdistributions?\b/i.test(label)) return "distribution";
+  // "personal expenses", "Donna's wage" are not the owner's pay even with a pay word.
+  if (/\b(?:personal|perks?|family|spouse|wife|husband|son|daughter|relatives?)\b/i.test(label)) return "other";
+  if (PAY_KIND_RE.test(label)) return "pay";
+  if (OTHER_KIND_RE.test(label)) return "other";
+  return "unknown";
+}
 
 /**
- * One side of an owner-compensation discrepancy with a folded-in dividend
- * taken out — the dividend rule applied to the conflict the broker reads,
- * not only to the add-backs. "$268,000 total (T4 salary $180,000 + T5
- * dividends $60,000 + personal expenses $28,000)" becomes "$208,000 total
- * (T4 salary $180,000 + personal expenses $28,000) — excludes the $60,000
- * dividend, a distribution rather than compensation". A " — source" label
- * is kept. Null when no dividend is folded in (or the value already says
- * it is excluded).
+ * The terms of a stated owner-pay figure: every amount with the words of
+ * its own term, what kind of money it is, and which amount (if any) is the
+ * total of the others. "$268,000 total (T4 salary $180,000 + T5 dividends
+ * $60,000 + personal expenses $28,000)" → total $268,000 = pay $180,000 +
+ * distribution $60,000 + other $28,000. "$180,000 T4 salary and $60,000 in
+ * dividends" has no total: the salary is not a figure that includes the
+ * dividend (the round-1 reader took the first amount as a total and made
+ * $120,000 of it).
  */
-export function withoutDividend(value: string | null | undefined): string | null {
-  if (!value || DIVIDEND_EXCLUDED_NOTE_RE.test(value)) return null;
-  const cut = value.indexOf(" — ");
-  // The " — source" label stays as it is — unless the breakdown is in it.
-  const inMain = cut > 0 && dividendClauses(value.slice(0, cut)).length > 0;
-  const main = cut > 0 && inMain ? value.slice(0, cut) : value;
-  const label = cut > 0 && inMain ? value.slice(cut) : "";
-  const clauses = dividendClauses(main);
-  if (clauses.length === 0 || clauses.some((c) => EXCLUSION_RE.test(c))) return null;
-  const d = dividendAmount(clauses[0]) ?? dividendAmount(main);
-  const leadMatch = main.match(new RegExp(MONEY_AMOUNT, "i"));
-  const lead = leadMatch ? moneyValue(leadMatch[0]) : null;
-  if (!d || !lead || lead <= d) return null;
-  // The leading figure must be a total that includes the dividend.
-  if (!clauses.some((c) => INCLUSION_RE.test(c)) && !dividendAddsUp(main, d, { v: lead })) return null;
-  const total = fmt(lead - d);
-  let rebuilt: string;
-  const group = main.match(/\(([^()]*)\)/g)?.find((g) => DIVIDEND_MENTION_RE.test(g));
-  if (group) {
-    const kept = group.slice(1, -1).split(/\s*(?:\+|;|,\s+(?:and\s+)?|\bplus\b|\band\b)\s*/i).filter((t) => t.trim() && !DIVIDEND_MENTION_RE.test(t));
-    rebuilt = main.replace(leadMatch![0].trim(), total).replace(group, kept.length > 0 ? `(${kept.join(" + ")})` : "").replace(/\s{2,}/g, " ").trim();
-  } else {
-    rebuilt = `${total} (stated as ${main.trim()})`;
+export function ownerPayBreakdown(text: string): { total: PayTerm | null; parts: PayTerm[] } | null {
+  const seps = Array.from(text.matchAll(TERM_SEP_RE)).map((m) => ({ start: m.index!, end: m.index! + m[0].length, text: m[0] }));
+  const terms: PayTerm[] = [];
+  const amounts = Array.from(text.matchAll(PAY_MONEY_RE));
+  amounts.forEach((m, i) => {
+    const s = m.index!;
+    const e = s + m[0].length;
+    const value = moneyValue(m[0]);
+    if (value === null) return;
+    const before = seps.filter((x) => x.end <= s).pop();
+    const after = seps.find((x) => x.start >= e);
+    // A term holds one amount: two in one stretch of words split between them.
+    const prevEnd = i > 0 ? amounts[i - 1].index! + amounts[i - 1][0].length : 0;
+    const nextStart = i < amounts.length - 1 ? amounts[i + 1].index! : text.length;
+    const segStart = Math.max(before ? before.end : 0, prevEnd);
+    const segEnd = Math.min(after ? after.start : text.length, nextStart);
+    const termText = text.slice(segStart, segEnd).replace(/\s+/g, " ").trim();
+    const label = `${text.slice(segStart, s)} ${text.slice(e, segEnd)}`;
+    terms.push({
+      value,
+      text: termText,
+      kind: termKind(label),
+      totalHint: TOTAL_WORD_RE.test(label) || (!!before && TOTAL_SEP_RE.test(before.text)),
+      excludedInText: EXCLUSION_RE.test(label),
+    });
+  });
+  if (terms.length === 0) return null;
+  // The total: the amount the others add up to, else one the text calls a total.
+  let total: PayTerm | null = null;
+  if (terms.length >= 3) {
+    total = terms.find((t) => within(t.value, terms.filter((x) => x !== t).reduce((s, x) => s + x.value, 0))) ?? null;
   }
-  return `${rebuilt} — excludes the ${fmt(d)} dividend, a distribution rather than compensation${label}`;
+  if (!total) {
+    const hinted = terms.filter((t) => t.totalHint);
+    if (hinted.length > 0) total = hinted.reduce((a, b) => (b.value > a.value ? b : a));
+  }
+  return { total, parts: terms.filter((t) => t !== total) };
+}
+
+const PAY_ONLY_MARK_RE = /\bthe owner's pay only\b|excludes the \$[\d,]+ dividend/i;
+
+/**
+ * One side of an owner-compensation discrepancy restated as the owner's pay
+ * only — the dividend rule (and "one add-back is not owner pay") applied to
+ * the conflict the broker reads, not only to the add-backs. "$268,000 total
+ * (T4 salary $180,000 + T5 dividends $60,000 + personal expenses through
+ * company $28,000)" becomes "$180,000 — the owner's pay only (T4 salary
+ * $180,000); not counted: T5 dividends $60,000 (a distribution, not pay),
+ * personal expenses through company $28,000 (a separate add-back, not
+ * pay)". A trailing " — source" label is kept. Null when the value lists no
+ * dividend or other non-pay amount (a bare "$260,000 total owner
+ * compensation" is left as stated), when the text already says the
+ * dividend is left out, or when it is already restated.
+ */
+export function ownerPayOnly(value: string | null | undefined): string | null {
+  if (!value || PAY_ONLY_MARK_RE.test(value)) return null;
+  // A " — source" label after the figure stays as it is — unless the breakdown is in it.
+  const cut = value.lastIndexOf(" — ");
+  const tail = cut > 0 ? value.slice(cut + 3) : "";
+  const tailHasMoney = /\$\s?\d/.test(tail);
+  const main = cut > 0 && !tailHasMoney ? value.slice(0, cut) : value;
+  const label = cut > 0 && !tailHasMoney ? value.slice(cut) : "";
+  const bd = ownerPayBreakdown(main);
+  if (!bd) return null;
+  const { total, parts } = bd;
+  // A dividend the text itself keeps out ("paid separately") isn't in the figure.
+  if (parts.some((p) => p.kind === "distribution" && p.excludedInText)) return null;
+  const excluded = parts.filter((p) => p.kind === "distribution" || p.kind === "other");
+  if (excluded.length === 0) return null;
+  const kept = parts.filter((p) => p.kind === "pay" || p.kind === "unknown");
+  const pay = kept.length > 0 ? kept.reduce((s, p) => s + p.value, 0) : total ? total.value - excluded.reduce((s, p) => s + p.value, 0) : 0;
+  if (!(pay > 0)) return null;
+  const why = (p: PayTerm) => (p.kind === "distribution" ? "a distribution, not pay" : "a separate add-back, not pay");
+  return `${fmt(pay)} — the owner's pay only${kept.length > 0 ? ` (${kept.map((p) => p.text).join(" + ")})` : ""}; not counted: ${excluded.map((p) => `${p.text} (${why(p)})`).join(", ")}${label}`;
 }
 
 /** Owner-decided add-backs (custom, or approval toggled by the broker) are never rewritten. */
@@ -333,12 +415,33 @@ export function applyAddbackRules(n: UiNormalization | null): UiNormalization | 
     const clauses = isOwnerComp(out) ? dividendClauses(description) : [];
     const clause = clauses[0];
     if (clause && !clauses.some((c) => EXCLUSION_RE.test(c))) {
-      const d = dividendAmount(clause) ?? dividendAmount(description);
-      const included = INCLUSION_RE.test(clause) || (d !== null && dividendAddsUp(description, d, out.amounts));
-      const years = Object.keys(out.amounts).filter((y) => (out.amounts[y] ?? 0) >= (d ?? Infinity) * 0.98);
+      // The stated breakdown decides whether the amount includes the
+      // dividend: the amount equals the figure WITH it ("salary $180K +
+      // $60K dividend + $28K benefits" = $268K), or the figure without it
+      // ("$180,000 T4 salary and $60,000 in dividends" on a $180K line: the
+      // dividend was never in it — nothing to take out).
+      const bd = ownerPayBreakdown(description);
+      const divParts = bd?.parts.filter((p) => p.kind === "distribution") ?? [];
+      let d: number | null;
+      let included: boolean;
+      let years: string[];
+      let alreadyOut = false;
+      if (bd && divParts.length > 0 && bd.parts.length + (bd.total ? 1 : 0) >= 2) {
+        d = divParts.reduce((s, p) => s + p.value, 0);
+        const withDividend = bd.total ? bd.total.value : bd.parts.reduce((s, p) => s + p.value, 0);
+        years = Object.keys(out.amounts).filter((y) => within(out.amounts[y] ?? 0, withDividend));
+        alreadyOut = years.length === 0 && Object.values(out.amounts).some((v) => within(Number(v) || 0, withDividend - d!));
+        included = years.length > 0;
+      } else {
+        d = dividendAmount(clause) ?? dividendAmount(description);
+        included = STRONG_INCLUSION_RE.test(clause) || (d !== null && dividendAddsUp(description, d, out.amounts));
+        years = Object.keys(out.amounts).filter((y) => (out.amounts[y] ?? 0) >= (d ?? Infinity) * 0.98);
+      }
       const named = years.filter((y) => description.includes(y));
       const target = named.length > 0 ? named : years.length === 1 ? years : [];
-      if (included && d && target.length > 0) {
+      if (alreadyOut) {
+        // The amount is the pay without the dividend — nothing to do.
+      } else if (included && d && target.length > 0) {
         for (const y of target) {
           out.amounts[y] = Math.round(out.amounts[y] - d);
           if (out.ownerActualComp && (out.ownerActualComp[y] ?? 0) >= d * 0.98) out.ownerActualComp[y] = Math.round(out.ownerActualComp[y] - d);
@@ -402,6 +505,30 @@ const isExcludedLiability = (name: string) => DEBT_RE.test(name);
 const yearOf = (period: string | null | undefined) => String(period ?? "").match(/(?:19|20)\d{2}/g)?.pop() ?? null;
 
 /**
+ * A balance-sheet section's rows for one year, signed the way the section
+ * reads: assets and liabilities are positive, and a contra or opposite
+ * balance keeps its minus sign (an allowance for doubtful accounts reduces
+ * current assets; a net HST receivable or a debit gift-card balance filed
+ * under current liabilities reduces them). Summed with their signs, as the
+ * balance-sheet table and the working-capital panel sum them. A section the
+ * model wrote with negative liabilities throughout (the opposite
+ * convention) is turned round as a whole, so its contra rows still count
+ * against it — never Math.abs row by row, which made a −$57,167 gift-card
+ * balance a $57,167 liability.
+ */
+function signedSectionRows(
+  bs: UiReclassifiedTable,
+  category: string,
+  year: string,
+  excluded: (name: string) => boolean,
+): Array<{ name: string; amount: number }> {
+  const rows = bs.rows.filter((r) => r.category === category && Number.isFinite(r.values?.[year]) && !excluded(r.name));
+  const net = rows.reduce((s, r) => s + r.values[year], 0);
+  const flip = net < 0 && rows.filter((r) => r.values[year] < 0).length > rows.length / 2 ? -1 : 1;
+  return rows.map((r) => ({ name: r.name, amount: flip * r.values[year] }));
+}
+
+/**
  * Year-end net working capital for every year the balance sheet has both
  * current assets and current liabilities — cash-free and debt-free, by the
  * same exclusions as the working-capital panel. Keyed by the table's year.
@@ -414,9 +541,7 @@ export function workingCapitalHistory(bs: UiReclassifiedTable | null | undefined
     const has = (category: string) => bs.rows.some((r) => r.category === category && Number.isFinite(r.values?.[y]));
     if (!has("Current Assets") || !has("Current Liabilities")) continue;
     const total = (category: string, excluded: (name: string) => boolean) =>
-      bs.rows
-        .filter((r) => r.category === category && Number.isFinite(r.values?.[y]) && !excluded(r.name))
-        .reduce((s, r) => s + Math.abs(r.values[y]), 0);
+      signedSectionRows(bs, category, y, excluded).reduce((s, r) => s + r.amount, 0);
     out[y] = Math.round(total("Current Assets", isExcludedAsset) - total("Current Liabilities", isExcludedLiability));
   }
   return out;
@@ -504,12 +629,8 @@ export function applyWorkingCapitalRules(
   // add up to that year's balance-sheet figure, list the balance sheet's own.
   const asOfKey = historyYears.find((k) => yearOf(k) === yearOf(wc.asOfPeriod)) ?? (wc.asOfPeriod ? undefined : historyYears[historyYears.length - 1]);
   if (asOfKey && balanceSheet && Math.abs(netWorkingCapital - history[asOfKey]) > Math.max(1, Math.abs(history[asOfKey]) * 0.001)) {
-    const items = (category: string, excluded: (n: string) => boolean) =>
-      balanceSheet.rows
-        .filter((r) => r.category === category && Number.isFinite(r.values?.[asOfKey]) && !excluded(r.name))
-        .map((r) => ({ name: r.name, amount: Math.abs(r.values[asOfKey]) }));
-    currentAssets = items("Current Assets", isExcludedAsset);
-    currentLiabilities = items("Current Liabilities", isExcludedLiability);
+    currentAssets = signedSectionRows(balanceSheet, "Current Assets", asOfKey, isExcludedAsset);
+    currentLiabilities = signedSectionRows(balanceSheet, "Current Liabilities", asOfKey, isExcludedLiability);
     netWorkingCapital = history[asOfKey];
     notes.push(`The ${yearOf(asOfKey) ?? asOfKey} working capital lines are taken from the balance sheet (net working capital ${fmt(netWorkingCapital)}).`);
   }
@@ -656,8 +777,19 @@ const LINK_WORDS = new Set([
 ]);
 /** Right after the figure: it is a difference or a part, not the metric itself. */
 const AFTER_BREAK_RE = /^\s*(?:excess|above|over|more|less|higher|lower|below|increase|decrease|improvement|decline|drop|gap|difference|shortfall|of\s+add-?backs?|in\s+add-?backs?|add-?backs?|adjustments?|per\s+(?:month|week)|a\s+(?:month|week))\b/i;
-/** Followed by an operator and another amount: the figure is a term of a sum. */
+/**
+ * Followed by an operator and another amount: the figure is a term of a sum —
+ * right after it ("$563,190 + …") or after its own label ("$896,410 net
+ * income + …"). A label never names a metric: "$1,552,000 and SDE − …" is
+ * not a term.
+ */
 const TERM_RE = /^\s*(?:\([^)]*\)\s*)?(?:[+=×*/]|[-−–]\s*[$(\d])/;
+const LABELLED_TERM_RE = /^\s*(?:\([^)]*\)\s*)?(?:(?!(?:adjusted|normali[sz]ed|reported|ebitda|sde|and|or|was|is|in|for)\b)[A-Za-z&'’.-]+\s+){1,5}(?:[+×*/]|[-−–]\s*[$(\d])/i;
+const isTerm = (rest: string) => TERM_RE.test(rest) || LABELLED_TERM_RE.test(rest);
+/** A sentence that heads a worked calculation: "SDE calculation: …", "Adjusted EBITDA by year:". */
+const CALC_HEADER_RE = /\b(adjusted\s+|normali[sz]ed\s+|reported\s+|unadjusted\s+)?(ebitda|sde)\s*(?:\([^)]{0,20}\)\s*)?(?:calculation|computation|build[- ]?up|bridge|reconciliation|breakdown|by\s+year|walk)?\s*:/i;
+/** A sentence that opens with its year: "2022: $386,174 + … = $969,000." */
+const YEAR_LED_RE = /^\s*\(?(?:FY\s?)?(?:19|20)\d{2}\)?\s*[:–—-]/i;
 const APPROX_RE = /(?:~|≈|\babout|\bapprox\.?|\bapproximately|\baround|\broughly|\bnearly|\bclose to)\s*$/i;
 
 interface MoneyAt { value: number; raw: string; index: number; end: number }
@@ -716,8 +848,14 @@ function metricOf(m: RegExpMatchArray): { metric: "EBITDA" | "SDE"; qualifier: s
   return { metric: m[2].toUpperCase() as "EBITDA" | "SDE", qualifier: (m[1] || "").trim().toLowerCase() };
 }
 
-/** Every EBITDA/SDE figure a sentence states, with its year. */
-function statedFigures(sentence: string): StatedFigure[] {
+/**
+ * Every EBITDA/SDE figure a sentence states, with its year. `carried` is the
+ * metric a previous sentence's worked calculation was about, for a sentence
+ * that continues it ("SDE calculation: Net income + all add-backs. 2022: …
+ * = $969,000. 2023: … = $1,157,000."). Returns the metric the next sentence
+ * may carry on with.
+ */
+function statedFigures(sentence: string, carried: RegExpMatchArray | null = null): { figures: StatedFigure[]; carry: RegExpMatchArray | null } {
   const out: StatedFigure[] = [];
   const monies = moneyIn(sentence);
   const metrics = Array.from(sentence.matchAll(METRIC_RE));
@@ -735,18 +873,35 @@ function statedFigures(sentence: string): StatedFigure[] {
   const eqs = Array.from(sentence.matchAll(/=|≈/g)).map((m) => m.index!);
   let chainStart = 0;
   let subject: RegExpMatchArray | null = null;
-  let inherited: RegExpMatchArray | null = null;
+  let ownSubject = false;
+  // Only a sentence that opens with its year continues the previous one's
+  // calculation ("2022: … = $969,000."); anything else starts afresh.
+  let inherited: RegExpMatchArray | null = carried && YEAR_LED_RE.test(sentence) ? carried : null;
+  let lastSubject: RegExpMatchArray | null = null;
   for (const p of eqs) {
     if (p < chainStart) continue;
     const before = sentence.slice(chainStart, p);
     const depth = (before.match(/\(/g) ?? []).length - (before.match(/\)/g) ?? []).length;
     if (depth > 0) continue; // a sub-calculation inside parentheses
-    if (!subject) subject = [...metrics].reverse().find((m) => m.index! >= chainStart && m.index! < p) ?? inherited;
+    if (!subject) {
+      const own = [...metrics].reverse().find((m) => m.index! >= chainStart && m.index! < p) ?? null;
+      subject = own ?? inherited;
+      ownSubject = !!own;
+    }
     const result = monies.find((x) => x.index > p);
     const between = result ? sentence.slice(p + 1, result.index) : "";
     if (!result || !/^\s*(?:approximately|approx\.?|about|~)?\s*$/i.test(between)) continue; // "SDE = adjusted EBITDA + …": a definition
-    if (TERM_RE.test(sentence.slice(result.end))) continue; // "SDE = $896,410 + …": the first term, the result comes later
-    if (subject) {
+    if (isTerm(sentence.slice(result.end))) continue; // "SDE = $896,410 net income + …": the first term, the result comes later
+    // A weighting ("2024 SDE $208,032 × 30% + 2025 SDE $216,018 × 70% =
+    // $213,622 weighted average") gives no year's figure as its result; its
+    // labelled terms are the statements, read below.
+    const weighted = /[×*]|\bx\s*\d/.test(sentence.slice(chainStart, p)) || /^\s*(?:weighted|average|blended|multiple)\b/i.test(sentence.slice(result.end));
+    // Every other chain's amounts before its result are terms, never a
+    // statement of the metric ("SDE 2024: $896,410 net income + … = …").
+    const termsFrom = subject && ownSubject ? subject.index! : chainStart;
+    if (!weighted) for (const x of monies) if (x.index >= termsFrom && x.index < result.index) used.add(x.index);
+    if (subject && !weighted) {
+      lastSubject = subject;
       const clauseYears = yearsIn(sentence.slice(chainStart, p));
       out.push({
         ...metricOf(subject),
@@ -770,12 +925,16 @@ function statedFigures(sentence: string): StatedFigure[] {
     const push = (amount: MoneyAt, contextYears: string[], hedged: boolean) => {
       if (used.has(amount.index) || AFTER_BREAK_RE.test(sentence.slice(amount.end))) return;
       // A term of a sum ("SDE: $563,190 + $130K + … = …"), not the figure.
-      if (TERM_RE.test(sentence.slice(amount.end))) return;
+      // A weight on it ("2024 SDE $208,032 × 30%") still leaves it the year's figure.
+      const rest = sentence.slice(amount.end);
+      if (isTerm(rest) && !/^\s*(?:[×*]|x\s*\d)/.test(rest)) return;
       used.add(amount.index);
       const ty = trailingYear(amount);
+      // "2024 SDE $208,032": the year written just before the metric.
+      const leading = sentence.slice(Math.max(0, m.index! - 12), m.index!).match(/\b(?:FY\s?)?((?:19|20)\d{2})\s*$/i)?.[1];
       out.push({
         metric, qualifier, amount, hedged,
-        year: ty ? ty[1] ?? ty[2] : contextYears.length > 0 ? contextYears[contextYears.length - 1] : onlyYear,
+        year: ty ? ty[1] ?? ty[2] : contextYears.length > 0 ? contextYears[contextYears.length - 1] : leading ?? onlyYear,
         attributionText: sentence.slice(0, amount.end) + after(amount),
       });
     };
@@ -801,7 +960,10 @@ function statedFigures(sentence: string): StatedFigure[] {
       push(prev, yearsIn(lead), APPROX_RE.test(lead));
     }
   }
-  return out;
+  // What the next sentence may continue: this one's calculation, or a
+  // heading that announces one ("SDE calculation: Net income + all add-backs").
+  const header = out.length === 0 ? sentence.match(CALC_HEADER_RE) : null;
+  return { figures: out, carry: lastSubject ?? header ?? (out.length === 0 ? inherited : null) };
 }
 
 /**
@@ -819,8 +981,14 @@ function statedFigures(sentence: string): StatedFigure[] {
 export function findEarningsMismatches(text: string, computed: CanonicalEarnings): Array<Omit<EarningsMismatch, "where">> {
   const out: Array<Omit<EarningsMismatch, "where">> = [];
   const years = Object.keys(computed.adjustedEbitda);
+  // The text says "2025" or "FY2025"; the analysis may key its years either way.
+  const keyFor = (y: string) => years.find((k) => k === y) ?? years.find((k) => (k.match(/(?:19|20)\d{2}/g)?.pop() ?? k) === y) ?? null;
+  let carried: RegExpMatchArray | null = null;
   for (const sentence of text.split(/(?<=[.!?])\s+(?=[A-Z0-9$(])/)) {
-    for (const f of statedFigures(sentence)) {
+    const { figures, carry } = statedFigures(sentence, carried);
+    carried = carry;
+    for (const stated of figures) {
+      const f = { ...stated, year: stated.year ? keyFor(stated.year) ?? `?${stated.year}` : null };
       if (ATTRIBUTION_RE.test(f.attributionText)) continue;
       const { metric, qualifier } = f;
       const adjusted = qualifier.startsWith("adjusted") || qualifier.startsWith("normali");

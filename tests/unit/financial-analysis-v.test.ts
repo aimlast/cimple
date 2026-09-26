@@ -16,7 +16,7 @@ import {
   flagEarningsNotes,
   flagEarningsStatements,
   isOwnerCompDiscrepancy,
-  withoutDividend,
+  ownerPayOnly,
   workingCapitalHistory,
 } from "../../server/financial/normalization-rules";
 import {
@@ -98,21 +98,52 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   assert.ok(carryForwardBrokerEdits(approvedV1, fresh).normalization!.addbacks.filter((a) => a.ownerCompPart).every((a) => a.approved && a.approvedOverride));
 }
 
-// ── fa-owner-comp-row-still-268k: owner-comp conflicts follow the dividend rule ──
+// ── fa-owner-comp-row-still-268k: an owner-comp conflict compares the owner's pay only ──
 {
+  // The exact stored Ridgeline document side: pay only is the $180,000 T4
+  // salary — neither the dividend nor the personal expenses (a separate
+  // add-back) — so the panel no longer contradicts the analysis.
   assert.equal(
-    withoutDividend("$268,000 total (T4 salary $180,000 + T5 dividends $60,000 + personal expenses through company $28,000)"),
-    "$208,000 total (T4 salary $180,000 + personal expenses through company $28,000) — excludes the $60,000 dividend, a distribution rather than compensation",
+    ownerPayOnly("$268,000 total (T4 salary $180,000 + T5 dividends $60,000 + personal expenses through company $28,000)"),
+    "$180,000 — the owner's pay only (T4 salary $180,000); not counted: T5 dividends $60,000 (a distribution, not pay), personal expenses through company $28,000 (a separate add-back, not pay)",
   );
-  assert.equal(withoutDividend("$260,000 total owner compensation per seller's add-back list"), null, "no dividend, untouched");
-  assert.equal(withoutDividend("$180,000 T4 salary; the $60,000 dividend is excluded"), null, "already excluded");
-  const once = withoutDividend("$240,000 = $180,000 salary + $60,000 dividends")!;
-  assert.match(once, /^\$180,000 /);
-  assert.equal(withoutDividend(once), null, "idempotent");
-  assert.equal(withoutDividend("$240,000 — T2 2024 (salary $180,000 plus $60,000 Class D dividends)"), "$180,000 — T2 2024 (salary $180,000) — excludes the $60,000 dividend, a distribution rather than compensation");
+  assert.equal(ownerPayOnly("$260,000 total owner compensation per seller's add-back list"), null, "a bare total is left as stated");
+  assert.equal(ownerPayOnly("$260,000 (salary + dividends) — seller's add-back list"), null, "no amount for the dividend: the seller's claim stays as claimed");
+  assert.equal(ownerPayOnly("$180,000 T4 salary; the $60,000 dividend is excluded"), null, "already excluded");
+  assert.equal(ownerPayOnly("$180,000 T4 salary — dividends of $60,000 paid separately"), null, "the text keeps the dividend out");
+  const once = ownerPayOnly("$240,000 = $180,000 salary + $60,000 dividends")!;
+  assert.match(once, /^\$180,000 — the owner's pay only/);
+  assert.equal(ownerPayOnly(once), null, "idempotent");
+  // Salary written first: the salary is not a total that includes the
+  // dividend (round 1 turned each of these into $120,000).
+  for (const v of [
+    "$180,000 T4 salary and $60,000 in dividends",
+    "T4 salary $180,000 plus T5 dividends of $60,000, totalling $240,000",
+    "$180,000 salary plus $60,000 dividends = $240,000 total",
+    "$180,000 salary (T4) and dividends of $60,000 on Class D shares",
+    "T4 salary $180,000; T5 dividends $60,000",
+    "$240,000 ($180,000 salary + $60,000 dividends)",
+    "$240,000 total owner compensation including $60,000 dividends",
+    "$240,000 — T2 2024 (salary $180,000 plus $60,000 Class D dividends)",
+  ]) assert.match(ownerPayOnly(v) ?? "", /^\$180,000 — the owner's pay only/, v);
+  // Pay components (benefits) stay in; nothing to restate without a non-pay part.
+  assert.equal(ownerPayOnly("$150,000 salary + $12,000 benefits = $162,000"), null);
+  // "$180,000 management fee" is $180,000, not $180 million.
+  assert.match(ownerPayOnly("$180,000 management fee and $60,000 dividends")!, /^\$180,000 /);
   assert.ok(isOwnerCompDiscrepancy("Owner compensation (2024)"));
   assert.ok(isOwnerCompDiscrepancy("Add-back list", "ownerSalary"));
   assert.ok(!isOwnerCompDiscrepancy("Signed backlog (May 2025)", "signedBacklog"));
+
+  // The same reader decides the add-back: a salary-first description on a
+  // $180K line has nothing to take out; a folded-in dividend still comes out.
+  const n = { metric: "sde" as const, years: ["2024"], netIncome: { "2024": 1_000_000 } };
+  const salaryFirst = applyAddbackRules({ ...n, addbacks: [ab({ label: "Owner salary", category: "owner_comp", type: "sde", description: "$180,000 T4 salary and $60,000 in dividends", amounts: { "2024": 180_000 } })] })!;
+  assert.equal(salaryFirst.addbacks[0].amounts["2024"], 180_000, "not cut to $120,000");
+  assert.ok(!salaryFirst.notes!.some((x) => /included a \$60,000 dividend/.test(x)));
+  const folded = applyAddbackRules({ ...n, addbacks: [ab({ label: "Owner salary", category: "owner_comp", type: "sde", description: "$180,000 T4 salary and $60,000 in dividends", amounts: { "2024": 240_000 } })] })!;
+  assert.equal(folded.addbacks[0].amounts["2024"], 180_000);
+  const including = applyAddbackRules({ ...n, addbacks: [ab({ label: "Owner salary", category: "owner_comp", type: "sde", description: "Owner salary including $60,000 of dividends", amounts: { "2024": 240_000 } })] })!;
+  assert.equal(including.addbacks[0].amounts["2024"], 180_000, "an inclusion word with a single amount still takes it out");
 }
 
 // ── earnings-flagger-false-and-missed (Lakeshore v2 wording) ──
@@ -145,6 +176,48 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   assert.deepEqual(found("Owner claims ~$1.5M SDE for 2024."), []);
   // A year outside the analysis (a forecast) is never judged.
   assert.deepEqual(found("FY2025 adjusted EBITDA of approximately $1.4M is management's estimate."), []);
+
+  // The EXACT stored Lakeshore v2 notes (vfd2/lake-fa.json): the per-year
+  // chains are separate sentences after a "… calculation:" heading.
+  const lakeComputed = {
+    reportedEbitda: { "2022": 644_000, "2023": 793_000, "2024": 917_000 },
+    adjustedEbitda: { "2022": 843_000, "2023": 1_017_000, "2024": 1_163_000 },
+    sde: { "2022": 983_000, "2023": 1_157_000, "2024": 1_303_000 },
+    latestYear: "2024",
+  };
+  const lake = (t: string) => findEarningsMismatches(t, lakeComputed).map((f) => `${f.year} ${f.label} ${f.stated} vs ${f.expected}`);
+  assert.deepEqual(
+    lake("SDE calculation: Net income + all add-backs listed above. 2022: $386,174 + $582,826 = $969,000. 2023: $482,930 + $674,070 = $1,157,000. 2024: $563,190 + $749,810 = $1,313,000."),
+    ["2022 SDE 969000 vs 983000", "2024 SDE 1313000 vs 1303000"],
+  );
+  assert.deepEqual(
+    lake("Adjusted EBITDA calculation: Net income + non-owner add-backs + (owner actual comp - market salary). 2022: $386,174 + $362,826 + ($220,000 - $140,000) = $829,000. 2023: $482,930 + $434,070 + ($240,000 - $140,000) = $1,017,000. 2024: $563,190 + $509,810 + ($240,000 - $140,000) = $1,173,000."),
+    ["2022 adjusted EBITDA 829000 vs 843000", "2024 adjusted EBITDA 1173000 vs 1163000"],
+  );
+  assert.deepEqual(
+    lake("Owner compensation: Tony Moretti's $220K-$240K salary is above market for the role. A qualified general manager for a $7M+ HVAC/plumbing business in Hamilton would cost approximately $140K all-in (salary, benefits, vehicle allowance). The $100K excess is discretionary owner benefit. For SDE, the full owner salary is added back; for adjusted EBITDA, only the $100K excess is added back."),
+    [],
+  );
+  // A sentence that doesn't open with its year never inherits a metric.
+  assert.deepEqual(lake("SDE calculation: see above. Gross profit: $3,100,000 + $200,000 = $3,300,000."), []);
+
+  // Year keys written "FY2025" (both Harbourline versions): still judged.
+  const fy = { latestYear: "FY2025", reportedEbitda: { FY2023: 299_000, FY2024: 354_500, FY2025: 411_500 }, adjustedEbitda: { FY2023: 305_000, FY2024: 389_000, FY2025: 418_500 }, sde: { FY2023: 511_000, FY2024: 599_000, FY2025: 627_000 } };
+  const fyFound = (t: string) => findEarningsMismatches(t, fy).map((f) => `${f.year} ${f.label} ${f.stated} vs ${f.expected}`);
+  assert.deepEqual(fyFound("FY2025 SDE: Net Income $362,500 + Owner Salary $180,000 + Owner Vehicle $15,000 + Depreciation $49,000 + Discretionary Marketing $13,500 = $620,000."), ["FY2025 SDE 620000 vs 627000"]);
+  assert.deepEqual(fyFound("SDE for FY2024 of $540,000."), ["FY2024 SDE 540000 vs 599000"]);
+  assert.deepEqual(fyFound("Adjusted EBITDA in 2025 was $380,000."), ["FY2025 adjusted EBITDA 380000 vs 418500"]);
+  assert.deepEqual(fyFound("SDE of $627,000 in FY2025."), []);
+  assert.deepEqual(fyFound("FY2026 SDE of $700,000 is the seller's forecast."), [], "a year outside the analysis");
+
+  // A labelled first term is a term, not a statement of the metric.
+  const lab = { reportedEbitda: { "2024": 1_000_000 }, adjustedEbitda: { "2024": 1_100_000 }, sde: { "2024": 1_697_000 }, latestYear: "2024" };
+  const labFound = (t: string) => findEarningsMismatches(t, lab).map((f) => `${f.year} ${f.label} ${f.stated}`);
+  assert.deepEqual(labFound("SDE 2024: $896,410 net income + $800,590 add-backs = $1,697,000."), []);
+  assert.deepEqual(labFound("2024 SDE = $896,410 net income + $800,590 add-backs = $1,697,000."), []);
+  assert.deepEqual(labFound("2024 SDE = $896,410 net income + $800,590 add-backs = $1,700,000."), ["2024 SDE 1700000"], "the result is still judged");
+  assert.deepEqual(labFound("Adjusted EBITDA was $1,100,000; SDE = $1,100,000 + $597,000 = $1,697,000."), [], "a statement before a chain is still read");
+  assert.deepEqual(labFound("Adjusted EBITDA was $1,150,000; SDE = $1,100,000 + $597,000 = $1,697,000."), ["2024 adjusted EBITDA 1150000"]);
 
   // End to end: the note check and the insight check use the same reader.
   const n: UiNormalization = {
@@ -252,6 +325,60 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   assert.ok(kept.notes!.some((x) => /cash cushion/.test(x)));
   assert.ok(!kept.notes!.some((x) => /\$262,000/.test(x)), "a misstated year-end goes (the balance sheet says $257,000)");
 
+  // Contra and opposite balances keep their sign (never Math.abs per row):
+  // an allowance reduces current assets, a net HST receivable filed under
+  // liabilities reduces liabilities — as the balance-sheet table sums them.
+  const contra: UiReclassifiedTable = {
+    years: ["2023", "2024"],
+    rows: [
+      { id: "1", category: "Current Assets", name: "Accounts receivable", values: { "2023": 480_000, "2024": 500_000 } },
+      { id: "2", category: "Current Assets", name: "Allowance for doubtful accounts", values: { "2023": -18_000, "2024": -20_000 } },
+      { id: "3", category: "Current Assets", name: "Inventory", values: { "2023": 290_000, "2024": 300_000 } },
+      { id: "4", category: "Current Liabilities", name: "Accounts payable", values: { "2023": 240_000, "2024": 250_000 } },
+      { id: "5", category: "Current Liabilities", name: "HST payable (receivable)", values: { "2023": 12_000, "2024": -15_000 } },
+    ],
+  };
+  assert.deepEqual(workingCapitalHistory(contra), { "2023": 500_000, "2024": 545_000 });
+  const signed = applyWorkingCapitalRules({
+    asOfPeriod: "2024-12-31",
+    currentAssets: [{ name: "Accounts receivable (net of allowance)", amount: 480_000 }, { name: "Inventory", amount: 300_000 }],
+    currentLiabilities: [{ name: "Accounts payable", amount: 250_000 }, { name: "HST (net receivable)", amount: -15_000 }],
+    netWorkingCapital: 545_000, pegAmount: null, targetNwc: null, notes: [],
+  }, contra)!;
+  assert.equal(signed.netWorkingCapital, 545_000, "the model's correctly signed lines stay");
+  assert.equal(signed.currentLiabilities.length, 2);
+  assert.ok(!signed.notes!.some((x) => /taken from the balance sheet/.test(x)));
+  assert.equal(signed.pegAmount, 522_500);
+  // SariKnotSari v4 (a real business): a debit "Gift Card Liabilities −57,168".
+  const sari: UiReclassifiedTable = {
+    years: ["2024"],
+    rows: [
+      { id: "c", category: "Current Assets", name: "Cash and Deposits", values: { "2024": 91_402 } },
+      { id: "i", category: "Current Assets", name: "Inventory", values: { "2024": 71_712 } },
+      { id: "p", category: "Current Assets", name: "Prepaid Expenses", values: { "2024": 57_168 } },
+      { id: "o", category: "Current Assets", name: "Other Current Assets", values: { "2024": 8_402 } },
+      { id: "ap", category: "Current Liabilities", name: "Accounts Payable", values: { "2024": 120 } },
+      { id: "cc", category: "Current Liabilities", name: "Credit Card Payable", values: { "2024": 4_351 } },
+      { id: "tx", category: "Current Liabilities", name: "Taxes Payable", values: { "2024": -755 } },
+      { id: "ed", category: "Current Liabilities", name: "Employee Deductions Payable", values: { "2024": 1_007 } },
+      { id: "gc", category: "Current Liabilities", name: "Gift Card Liabilities", values: { "2024": -57_168 } },
+      { id: "sh", category: "Current Liabilities", name: "Due to Shareholders", values: { "2024": 17_849 } },
+    ],
+  };
+  assert.deepEqual(workingCapitalHistory(sari), { "2024": 189_727 }, "≈ the analysis's own $189.5K, not $73,881");
+  // A liabilities section written negative throughout is turned round as a
+  // whole: its one positive (contra) row still counts against it.
+  const negConv: UiReclassifiedTable = {
+    years: ["2024"],
+    rows: [
+      { id: "a", category: "Current Assets", name: "Accounts receivable", values: { "2024": 500_000 } },
+      { id: "l1", category: "Current Liabilities", name: "Accounts payable", values: { "2024": -250_000 } },
+      { id: "l2", category: "Current Liabilities", name: "Accrued liabilities", values: { "2024": -50_000 } },
+      { id: "l3", category: "Current Liabilities", name: "HST receivable (net)", values: { "2024": 15_000 } },
+    ],
+  };
+  assert.deepEqual(workingCapitalHistory(negConv), { "2024": 215_000 });
+
   // One balance sheet: no peg.
   const one = applyWorkingCapitalRules({ currentAssets: [{ name: "AR", amount: 500 }], currentLiabilities: [{ name: "AP", amount: 100 }], netWorkingCapital: 400, pegAmount: 420 },
     { years: ["2024"], rows: [{ id: "a", name: "AR", category: "Current Assets", values: { "2024": 500 } }, { id: "b", name: "AP", category: "Current Liabilities", values: { "2024": 100 } }] })!;
@@ -337,6 +464,49 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   );
   assert.equal(v.aiExplanation, "The seller says about $20,000 is personal.");
   assert.equal(v.suggestedResolution, "Ask the seller how the $63,000 splits.");
+
+  // A coincidental shared amount about something else is not support (the
+  // round-1 check failed open on round figures: 13 of 25 typical CRM amounts
+  // found some shared figure within 0.5% on Ridgeline).
+  const ridge = buildFigureIndex(
+    [
+      "T5 slips: dividends Class D 2022: $40,000; 2023: $60,000; 2024: $60,000",
+      "Balance sheet 2022\nCash and deposits 164,630\nAccounts receivable 1,268,000",
+      "Operating expenses 2024: utilities $71,000, vehicle expenses $63,000, computer & software $22,000",
+      "Crane rebuild (one-time) $64,000 in 2024",
+      "management salary 180,000",
+    ],
+    ["CRM note: owner runs ~$40K of personal vehicle costs through the company. Replacement GM ~165K. Donna's SUV lease $11,340 a year; cabin costs $8,275."],
+  );
+  const vehicle = postProcessAnalysis(output({
+    normalization: {
+      metric: "sde", years: ["2024"], netIncome: { "2024": 896_410 },
+      addbacks: [
+        ab({ label: "Owner personal vehicle costs", category: "discretionary", type: "ebitda", amounts: { "2024": 40_000 } }),
+        ab({ label: "Crane rebuild (one-time)", category: "one_time", type: "ebitda", amounts: { "2024": 64_000 } }),
+        ab({ label: "Computer & software upgrade", category: "one_time", type: "ebitda", amounts: { "2024": 22_000 } }),
+      ],
+    },
+  }));
+  const vm = markPrivateMaterial(vehicle, ridge).normalization!.addbacks;
+  assert.equal(vm.find((a) => /vehicle/.test(a.label))!.privateEvidence, true, "the 2022 $40,000 dividend is not support for $40K of vehicle costs");
+  assert.equal(vm.find((a) => /vehicle/.test(a.label))!.approved, false);
+  assert.ok(!vm.find((a) => /Crane/.test(a.label))!.privateEvidence);
+  assert.ok(!vm.find((a) => /Computer/.test(a.label))!.privateEvidence, "not private: the private notes don't state $22,000");
+  const bridge = buildCimFinancials({ id: "a", version: 2, status: "completed", brokerReviewedAt: null, normalization: markPrivateMaterial(vehicle, ridge).normalization } as any)!.bridge!.addbacks.map((a) => a.label);
+  assert.ok(!bridge.some((l) => /vehicle/.test(l)) && bridge.some((l) => /Crane/.test(l)), "the private line stays out of the CIM bridge");
+  // A $165,000 figure quoted in a question: a $164,630 cash balance is not support.
+  assert.deepEqual(privateOnlyFigures("The owner's compensation of $165,000 doesn't appear in the statements — where is it booked?", ridge), ["$165,000"]);
+  assert.equal(
+    withoutPrivateFigureSentences("The owner's compensation of $165,000 doesn't appear in the statements. Where is the owner's pay booked in the general ledger?", ridge),
+    "Where is the owner's pay booked in the general ledger?",
+  );
+  // Shared figures about the same thing stay shared even when a private note repeats them.
+  const echo = buildFigureIndex(["Crane rebuild (one-time) $64,000 in 2024", "management salary 180,000"], ["CRM: crane rebuild ~$64K; owner salary 180K"]);
+  assert.deepEqual(privateOnlyFigures("Was the $64,000 crane rebuild in 2024 a one-time repair?", echo), []);
+  assert.deepEqual(privateOnlyFigures("Is the owner's $180,000 salary the full T4 amount?", echo), []);
+  // The very same non-round amount anywhere shared is support.
+  assert.deepEqual(privateOnlyFigures("The lease costs $11,340 a year.", buildFigureIndex(["GL 6120 11,340.00"], ["CRM: SUV lease $11,340"])), []);
 
   // The deal's shared vs private material: broker-only files and CRM-only facts are private.
   const texts = dealFigureTexts(

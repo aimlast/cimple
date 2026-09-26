@@ -35,7 +35,7 @@ import {
   isOwnerCompDiscrepancy,
   isOwnerPayLine,
   withCanonicalEarnings,
-  withoutDividend,
+  ownerPayOnly,
 } from "./normalization-rules";
 import {
   buildFigureIndex,
@@ -1031,7 +1031,7 @@ function kindFromSourceLabel(label: string): string {
   return "document";
 }
 
-const DIVIDEND_NOTE = "Dividends are distributions of after-tax profit, not owner compensation, so any dividend is left out of the owner-pay figures here.";
+const DIVIDEND_NOTE = "Owner pay here is the owner's salary, wages and benefits only: a dividend is a distribution of after-tax profit and personal expenses are a separate add-back, so neither is counted in these figures.";
 
 const CLAIM_SIDE_KINDS = new Set(["interview", "call", "video_call", "questionnaire", "email", "crm"]);
 
@@ -1124,12 +1124,12 @@ async function persistFinancialDiscrepancies(
 
   // Dividends are distributions, not owner compensation — in the conflict
   // the broker reads too, not only in the add-backs: a side that folds a
-  // dividend into the owner's pay is restated without it (and may then
-  // agree with the other side).
+  // dividend (or another add-back, like personal expenses) into the owner's
+  // pay is restated as the pay alone (and may then agree with the other side).
   const reframed = rawItems.map((item) => {
     if (!isOwnerCompDiscrepancy(item.field, item.factKey)) return item;
-    const a = withoutDividend(item.sourceA.value);
-    const b = withoutDividend(item.sourceB.value);
+    const a = ownerPayOnly(item.sourceA.value);
+    const b = ownerPayOnly(item.sourceB.value);
     if (!a && !b) return item;
     return {
       ...item,
@@ -1188,8 +1188,8 @@ async function persistFinancialDiscrepancies(
     const row = unsettled[i];
     if (row.source !== "financial_analysis" || refreshed.has(row.id) || !row.interviewValue || !row.documentValue) continue;
     if (!isOwnerCompDiscrepancy(row.field, row.factKey)) continue;
-    const a = withoutDividend(row.interviewValue);
-    const b = withoutDividend(row.documentValue);
+    const a = ownerPayOnly(row.interviewValue);
+    const b = ownerPayOnly(row.documentValue);
     if (!a && !b) continue;
     const patch = {
       interviewValue: a ?? row.interviewValue,
