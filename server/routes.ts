@@ -3385,12 +3385,23 @@ Return JSON only.`,
       // The interview reads this row: a sentence that quotes the broker's
       // private material (a CRM note, "per broker recast") is dropped, and
       // the row is flagged so the interview asks neutrally.
+      // A sentence that quotes a figure only the broker's private material
+      // holds goes too, whether or not it names the source ("The owner's
+      // $185K isn't in the statements" when only a CRM note says $185K).
       const { mentionsPrivateSource } = await import("@shared/discrepancy-sides");
-      const publicQuestion = String(question.question)
+      const { loadDealFigureIndex, privateOnlyFigures } = await import("./financial/private-figures");
+      const figureIndex = await loadDealFigureIndex(req.params.dealId, storage);
+      const isPrivateSentence = (sentence: string) => mentionsPrivateSource(sentence) || privateOnlyFigures(sentence, figureIndex).length > 0;
+      const keptQuestion = String(question.question)
         .split(/(?<=[.?!])\s+/)
-        .filter((sentence) => !mentionsPrivateSource(sentence))
+        .filter((sentence) => !isPrivateSentence(sentence))
         .join(" ")
         .trim();
+      // What is left after a cut must still stand as a question ("Can you
+      // confirm what is booked there?" alone asks nothing) — otherwise the
+      // broker resolves it here.
+      const cut = keptQuestion !== String(question.question).trim();
+      const publicQuestion = cut && keptQuestion.split(/\s+/).filter(Boolean).length < 8 ? "" : keptQuestion;
       const routedField = normalizeField(publicQuestion.slice(0, 200));
       if (!discrepancy) {
         const existingRouted = (await storage.getDiscrepanciesByDeal(req.params.dealId)).find(
@@ -3408,12 +3419,12 @@ Return JSON only.`,
         const severity = question.severity === "low" ? "minor" : "significant";
         if (!publicQuestion) {
           return res.status(409).json({
-            error: "This question quotes your private notes, so it can't be sent to the seller as written. Resolve it here instead.",
+            error: "This question quotes your private notes (a source or a figure only they hold), so it can't be sent to the seller as written. Resolve it here instead.",
             code: "private_question",
           });
         }
         const rawContext = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
-        const privateContext = !!rawContext && mentionsPrivateSource(rawContext);
+        const privateContext = !!rawContext && isPrivateSentence(rawContext);
         const context = privateContext ? null : rawContext;
         const hadPrivate = privateContext || publicQuestion !== String(question.question).trim();
         discrepancy = await storage.createDiscrepancy({
@@ -3476,7 +3487,9 @@ Return JSON only.`,
     const orderedYears: string[] = Array.isArray(norm.years) && norm.years.length > 0
       ? norm.years.map(String)
       : [];
-    return (norm.addbacks || []).map((a: any) => {
+    // The seller reviews these: an add-back that rests only on the broker's
+    // private notes stays out until the broker has approved it.
+    return (norm.addbacks || []).filter((a: any) => !a?.privateEvidence || (a.approvedOverride === true && a.approved)).map((a: any) => {
       const amounts: Record<string, number> = {};
       for (const [year, v] of Object.entries(a.amounts || {})) {
         const n = Number(v);

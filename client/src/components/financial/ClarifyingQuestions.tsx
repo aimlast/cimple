@@ -22,6 +22,8 @@ export interface ClarifyingQuestion {
   discrepancyId?: string;
   /** Set by a re-run that carried this question over from an earlier analysis version. */
   carriedFromVersion?: number;
+  /** Figures in the question that only the broker's private notes hold (never sent to the seller). */
+  privateFigures?: string[];
 }
 
 /** The subset of a discrepancy row the cards need to reflect real routing state. */
@@ -322,6 +324,12 @@ function QuestionCard({
                       <p className="text-2xs text-muted-foreground mt-1">{linked.sellerResponse}</p>
                     )}
                   </div>
+                )}
+
+                {question.privateFigures && question.privateFigures.length > 0 && question.status !== "answered" && question.status !== "dismissed" && (
+                  <p className="text-xs text-amber-400 mt-2">
+                    Only your private notes have {question.privateFigures.join(", ")}. If you send this to the seller, the part that quotes {question.privateFigures.length > 1 ? "those figures" : "it"} is left out.
+                  </p>
                 )}
 
                 {routing === "unrouted" && (

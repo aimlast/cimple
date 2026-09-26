@@ -13,9 +13,11 @@
  *     owner's full pay, adjusted EBITDA only the excess.
  *  2. Working capital is cash-free and debt-free: cash, bank debt, the
  *     current portion of long-term debt, shareholder loans and income taxes
- *     are out of NWC, and a single period's NWC is never the peg.
- *     (Beacon: cash of $871,410 counted in NWC "excluding cash", and the peg
- *     set equal to it.)
+ *     are out of NWC. Year-end NWC comes from the balance sheet, and the peg
+ *     is their average — computed here, never one period's balance and
+ *     never with a buffer on top. (Beacon: cash of $871,410 counted in NWC
+ *     "excluding cash", and the peg set equal to it. Ridgeline: "trailing
+ *     average plus 10% buffer".)
  *  3. EBITDA and SDE are computed in code from their components and stored
  *     as the canonical figures; any insight or note that states a different
  *     amount is flagged with the computed one. (Beacon: EBITDA stated as
@@ -25,7 +27,7 @@
  * broker edit. Broker decisions (custom add-backs, approval overrides) are
  * never undone.
  */
-import type { UiAddback, UiInsights, UiInsight, UiNormalization, UiWorkingCapital, UiWorkingCapitalItem } from "./shape";
+import type { UiAddback, UiInsights, UiInsight, UiNormalization, UiReclassifiedTable, UiWorkingCapital, UiWorkingCapitalItem } from "./shape";
 import { numberTokens } from "../cim/discrepancy-filter";
 
 const fmt = (n: number) => `$${Math.round(n).toLocaleString("en-US")}`;
@@ -114,6 +116,51 @@ function dividendAddsUp(description: string, dividend: number, amounts: Record<s
     if (!Number.isFinite(n) || n <= dividend) return false;
     return (figures.length >= 2 && within(n, total)) || others.some((x) => within(n, x + dividend));
   });
+}
+
+/** A discrepancy about the owner's pay ("Owner compensation (2024)", factKey ownerSalary). */
+export function isOwnerCompDiscrepancy(field: string | null | undefined, factKey?: string | null): boolean {
+  const text = `${field ?? ""} ${(factKey ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")}`;
+  return OWNER_WORD_RE.test(text) && /\b(?:comp|compensation|salary|salaries|wages?|pay|remuneration|add-?backs?)\b/i.test(text);
+}
+
+const DIVIDEND_EXCLUDED_NOTE_RE = /excludes the \$[\d,]+ dividend/i;
+
+/**
+ * One side of an owner-compensation discrepancy with a folded-in dividend
+ * taken out — the dividend rule applied to the conflict the broker reads,
+ * not only to the add-backs. "$268,000 total (T4 salary $180,000 + T5
+ * dividends $60,000 + personal expenses $28,000)" becomes "$208,000 total
+ * (T4 salary $180,000 + personal expenses $28,000) — excludes the $60,000
+ * dividend, a distribution rather than compensation". A " — source" label
+ * is kept. Null when no dividend is folded in (or the value already says
+ * it is excluded).
+ */
+export function withoutDividend(value: string | null | undefined): string | null {
+  if (!value || DIVIDEND_EXCLUDED_NOTE_RE.test(value)) return null;
+  const cut = value.indexOf(" — ");
+  // The " — source" label stays as it is — unless the breakdown is in it.
+  const inMain = cut > 0 && dividendClauses(value.slice(0, cut)).length > 0;
+  const main = cut > 0 && inMain ? value.slice(0, cut) : value;
+  const label = cut > 0 && inMain ? value.slice(cut) : "";
+  const clauses = dividendClauses(main);
+  if (clauses.length === 0 || clauses.some((c) => EXCLUSION_RE.test(c))) return null;
+  const d = dividendAmount(clauses[0]) ?? dividendAmount(main);
+  const leadMatch = main.match(new RegExp(MONEY_AMOUNT, "i"));
+  const lead = leadMatch ? moneyValue(leadMatch[0]) : null;
+  if (!d || !lead || lead <= d) return null;
+  // The leading figure must be a total that includes the dividend.
+  if (!clauses.some((c) => INCLUSION_RE.test(c)) && !dividendAddsUp(main, d, { v: lead })) return null;
+  const total = fmt(lead - d);
+  let rebuilt: string;
+  const group = main.match(/\(([^()]*)\)/g)?.find((g) => DIVIDEND_MENTION_RE.test(g));
+  if (group) {
+    const kept = group.slice(1, -1).split(/\s*(?:\+|;|,\s+(?:and\s+)?|\bplus\b|\band\b)\s*/i).filter((t) => t.trim() && !DIVIDEND_MENTION_RE.test(t));
+    rebuilt = main.replace(leadMatch![0].trim(), total).replace(group, kept.length > 0 ? `(${kept.join(" + ")})` : "").replace(/\s{2,}/g, " ").trim();
+  } else {
+    rebuilt = `${total} (stated as ${main.trim()})`;
+  }
+  return `${rebuilt} — excludes the ${fmt(d)} dividend, a distribution rather than compensation${label}`;
 }
 
 /** Owner-decided add-backs (custom, or approval toggled by the broker) are never rewritten. */
@@ -350,24 +397,101 @@ const EXCLUDED_ASSET_RE =
 const DEBT_RE =
   /\b(?:bank\s+(?:indebtedness|loans?|overdraft|debt)|(?:operating\s+)?lines?\s+of\s+credit|operating\s+(?:line|loan)|credit\s+facilit(?:y|ies)|current\s+portion|long[- ]term\s+debt|term\s+loans?|shareholder(?:'s)?\s+loans?|due\s+to\s+(?:shareholders?|related|directors?|owners?|affiliates?)|advances?\s+from\s+shareholders?|income\s+tax(?:es)?\s+payable|corporate\s+(?:income\s+)?tax(?:es)?\s+payable|dividends?\s+payable|(?:capital|finance)\s+lease\s+obligations?|notes?\s+payable|equipment\s+loans?|vehicle\s+loans?)\b/i;
 
-export function applyWorkingCapitalRules(wc: UiWorkingCapital | null): UiWorkingCapital | null {
+const isExcludedAsset = (name: string) => (CASH_RE.test(name) && !/receivable/i.test(name)) || EXCLUDED_ASSET_RE.test(name);
+const isExcludedLiability = (name: string) => DEBT_RE.test(name);
+const yearOf = (period: string | null | undefined) => String(period ?? "").match(/(?:19|20)\d{2}/g)?.pop() ?? null;
+
+/**
+ * Year-end net working capital for every year the balance sheet has both
+ * current assets and current liabilities — cash-free and debt-free, by the
+ * same exclusions as the working-capital panel. Keyed by the table's year.
+ */
+export function workingCapitalHistory(bs: UiReclassifiedTable | null | undefined): Record<string, number> {
+  if (!bs || !Array.isArray(bs.rows)) return {};
+  const years = bs.years?.length ? bs.years : Array.from(new Set(bs.rows.flatMap((r) => Object.keys(r.values ?? {}))));
+  const out: Record<string, number> = {};
+  for (const y of years) {
+    const has = (category: string) => bs.rows.some((r) => r.category === category && Number.isFinite(r.values?.[y]));
+    if (!has("Current Assets") || !has("Current Liabilities")) continue;
+    const total = (category: string, excluded: (name: string) => boolean) =>
+      bs.rows
+        .filter((r) => r.category === category && Number.isFinite(r.values?.[y]) && !excluded(r.name))
+        .reduce((s, r) => s + Math.abs(r.values[y]), 0);
+    out[y] = Math.round(total("Current Assets", isExcludedAsset) - total("Current Liabilities", isExcludedLiability));
+  }
+  return out;
+}
+
+/** A note about working capital that states a year-end figure the balance sheet doesn't give. */
+function contradictsHistory(note: string, history: Record<string, number>): boolean {
+  if (!/\b(?:nwc|net\s+working\s+capital|working\s+capital)\b/i.test(note)) return false;
+  const byYear = new Map(Object.entries(history).map(([k, v]) => [yearOf(k) ?? k, v]));
+  const noteYears = Array.from(new Set(Array.from(note.matchAll(/\b(?:FY\s?)?((?:19|20)\d{2})\b/gi)).map((m) => m[1]))).filter((y) => byYear.has(y));
+  const money = new RegExp(String.raw`\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?\b`, "gi");
+  for (const m of Array.from(note.matchAll(money))) {
+    const value = moneyValue(m[0]);
+    if (value === null || value < 1000) continue;
+    const start = m.index!;
+    const end = start + m[0].length;
+    // The year the text ties this figure to: "$1,099,630 (2022)", "$X in 2023",
+    // "2024: $X", or the result of "… = $X" in a note about one year. A
+    // component ("$505K AR + …") has none of these and is never judged.
+    const after = note.slice(end, end + 20).match(/^\s*(?:\(\s*(?:FY\s?)?((?:19|20)\d{2})\s*\)|(?:in|for|at)\s+(?:FY\s?|fiscal\s+)?((?:19|20)\d{2})\b)/i);
+    const before = note.slice(Math.max(0, start - 14), start).match(/\b((?:19|20)\d{2})\s*[:–-]\s*$/);
+    const result = /=\s*$/.test(note.slice(Math.max(0, start - 4), start)) && noteYears.length === 1 ? noteYears[0] : null;
+    const year = after?.[1] ?? after?.[2] ?? before?.[1] ?? result;
+    const h = year ? byYear.get(year) : undefined;
+    if (h === undefined || h === 0) continue;
+    // A note that IS a statement of net working capital ("NWC at December 31,
+    // 2024 = … = $1,555,130") is judged on its result whatever its size (that
+    // one counted the cash); elsewhere only an NWC-sized figure is.
+    const aboutNwc = result !== null && /^\s*(?:net\s+working\s+capital|nwc)\b/i.test(note);
+    const nwcSized = aboutNwc || Math.abs(value - h) / Math.abs(h) <= 0.15;
+    if (nwcSized && Math.abs(value - h) > Math.max(1000, Math.abs(h) * 0.005)) return true;
+  }
+  return false;
+}
+
+/** Model notes about a peg or target — the peg is set in code, so these would contradict it. */
+const PEG_NOTE_RE = /\bpeg\b|\btarget\s+(?:nwc|net\s+working\s+capital|working\s+capital)\b/i;
+
+/**
+ * Working capital is cash-free and debt-free, its figures come from the
+ * balance sheet, and the peg is worked out in code: the average of the
+ * year-end net working capital of every balance sheet on file — never one
+ * period's balance, never a figure with a buffer added. (Ridgeline: a peg
+ * of "trailing average plus 10% buffer" that matched neither; historical
+ * NWC stated as $1,099,630 against $1,072,000 on the statements. Lakeshore:
+ * a $300,000 peg next to a $301,000 closing balance.)
+ */
+export function applyWorkingCapitalRules(
+  wc: UiWorkingCapital | null,
+  balanceSheet?: UiReclassifiedTable | null,
+): UiWorkingCapital | null {
   if (!wc) return wc;
   const sum = (xs: UiWorkingCapitalItem[]) => xs.reduce((s, i) => s + (Number(i.amount) || 0), 0);
   const originalNwc = Number.isFinite(wc.netWorkingCapital) ? wc.netWorkingCapital : sum(wc.currentAssets) - sum(wc.currentLiabilities);
   const removed: UiWorkingCapitalItem[] = [];
   // "Accounts receivable" etc. never match; a row named for cash or a
   // shareholder balance does.
-  const currentAssets = wc.currentAssets.filter((i) => {
-    const out = (CASH_RE.test(i.name) && !/receivable/i.test(i.name)) || EXCLUDED_ASSET_RE.test(i.name);
+  let currentAssets = wc.currentAssets.filter((i) => {
+    const out = isExcludedAsset(i.name);
     if (out) removed.push(i);
     return !out;
   });
-  const currentLiabilities = wc.currentLiabilities.filter((i) => {
-    const out = DEBT_RE.test(i.name);
+  let currentLiabilities = wc.currentLiabilities.filter((i) => {
+    const out = isExcludedLiability(i.name);
     if (out) removed.push(i);
     return !out;
   });
-  const notes = [...(wc.notes ?? [])];
+  const history = workingCapitalHistory(balanceSheet);
+  const historyYears = Object.keys(history).sort((a, b) => (yearOf(a) ?? a).localeCompare(yearOf(b) ?? b));
+  // With a balance sheet the peg and the year-end figures are the code's;
+  // the model's own peg notes and any year-end figure it misstated go.
+  const incoming = wc.notes ?? [];
+  const notes = historyYears.length > 0
+    ? incoming.filter((n) => !PEG_NOTE_RE.test(n) && !contradictsHistory(n, history))
+    : [...incoming];
   let netWorkingCapital = wc.netWorkingCapital;
   if (removed.length > 0) {
     netWorkingCapital = sum(currentAssets) - sum(currentLiabilities);
@@ -375,23 +499,69 @@ export function applyWorkingCapitalRules(wc: UiWorkingCapital | null): UiWorking
       `Net working capital is on a cash-free, debt-free basis: cash, bank debt, the current portion of long-term debt, shareholder loans and income taxes are excluded. Removed: ${removed.map((i) => `${i.name} (${fmt(i.amount)})`).join(", ")}.`,
     );
   }
-  // A peg is a normalized trailing average — never one period's NWC.
-  const isSinglePeriod = (v: number | null | undefined) =>
-    typeof v === "number" && [originalNwc, netWorkingCapital].some((n) => Math.abs(v - n) <= Math.max(1, Math.abs(n) * 0.001));
+
+  // The closing period ties to the balance sheet: if the listed items don't
+  // add up to that year's balance-sheet figure, list the balance sheet's own.
+  const asOfKey = historyYears.find((k) => yearOf(k) === yearOf(wc.asOfPeriod)) ?? (wc.asOfPeriod ? undefined : historyYears[historyYears.length - 1]);
+  if (asOfKey && balanceSheet && Math.abs(netWorkingCapital - history[asOfKey]) > Math.max(1, Math.abs(history[asOfKey]) * 0.001)) {
+    const items = (category: string, excluded: (n: string) => boolean) =>
+      balanceSheet.rows
+        .filter((r) => r.category === category && Number.isFinite(r.values?.[asOfKey]) && !excluded(r.name))
+        .map((r) => ({ name: r.name, amount: Math.abs(r.values[asOfKey]) }));
+    currentAssets = items("Current Assets", isExcludedAsset);
+    currentLiabilities = items("Current Liabilities", isExcludedLiability);
+    netWorkingCapital = history[asOfKey];
+    notes.push(`The ${yearOf(asOfKey) ?? asOfKey} working capital lines are taken from the balance sheet (net working capital ${fmt(netWorkingCapital)}).`);
+  }
+
   let pegAmount = wc.pegAmount ?? null;
   let targetNwc = wc.targetNwc ?? null;
-  if (isSinglePeriod(pegAmount) || isSinglePeriod(targetNwc)) {
-    pegAmount = isSinglePeriod(pegAmount) ? null : pegAmount;
-    targetNwc = isSinglePeriod(targetNwc) ? null : targetNwc;
-    notes.push("A working-capital peg is normally a trailing-twelve-month average of monthly net working capital; one period's balance isn't a peg. Set it once monthly balances are available.");
+  let pegBasis: string | undefined;
+  if (historyYears.length >= 2) {
+    const avg = Math.round(historyYears.reduce((s, k) => s + history[k], 0) / historyYears.length);
+    pegAmount = avg;
+    targetNwc = avg;
+    const first = yearOf(historyYears[0]) ?? historyYears[0];
+    const last = yearOf(historyYears[historyYears.length - 1]) ?? historyYears[historyYears.length - 1];
+    pegBasis = `Average of year-end net working capital, ${first}–${last} (${historyYears.length} balance sheets)`;
+    notes.push(
+      `Suggested peg ${fmt(avg)}: the average of year-end net working capital (${historyYears.map((k) => `${yearOf(k) ?? k} ${fmt(history[k])}`).join(", ")}), on the same cash-free, debt-free basis. Monthly balance sheets would allow a trailing-twelve-month average; any allowance for growth or seasonality is yours to negotiate.`,
+    );
+  } else if (historyYears.length === 1) {
+    pegAmount = null;
+    targetNwc = null;
+    notes.push(`No peg is suggested yet: only the ${yearOf(historyYears[0]) ?? historyYears[0]} year-end balance sheet is on file, and a peg is an average over several periods. Add earlier balance sheets or monthly balances to set one.`);
+  } else {
+    // No balance sheet to average: a peg equal to one period's NWC, or one
+    // with a buffer on top, isn't a peg.
+    const isSinglePeriod = (v: number | null | undefined) =>
+      typeof v === "number" && [originalNwc, netWorkingCapital].some((n) => Math.abs(v - n) <= Math.max(1, Math.abs(n) * 0.005));
+    const buffered = incoming.some((n) => /\bpeg\b|\btarget\b/i.test(n) && /\bbuffer\b|\bcushion\b|\bplus\s+\d+(?:\.\d+)?\s*%/i.test(n));
+    if (buffered || isSinglePeriod(pegAmount) || isSinglePeriod(targetNwc)) {
+      if (pegAmount !== null || targetNwc !== null) {
+        notes.push("A working-capital peg is the average net working capital over several periods, with nothing added on top — one period's balance isn't a peg. Set it once earlier balance sheets or monthly balances are on file.");
+      }
+      pegAmount = null;
+      targetNwc = null;
+    }
+    // The peg IS the target NWC; a different "peg" is usually the closing
+    // adjustment (actual minus target) put in the wrong place.
+    if (targetNwc !== null && pegAmount !== null && Math.abs(pegAmount - targetNwc) > Math.max(1, Math.abs(targetNwc) * 0.01)) {
+      notes.push(`The peg is the target net working capital, ${fmt(targetNwc)}. Any difference between the closing balance and the target is settled as the closing adjustment.`);
+      pegAmount = targetNwc;
+    }
   }
-  // The peg IS the target NWC. A different "peg" is usually the closing
-  // adjustment (actual minus target) put in the wrong place.
-  if (targetNwc !== null && pegAmount !== null && Math.abs(pegAmount - targetNwc) > Math.max(1, Math.abs(targetNwc) * 0.01)) {
-    notes.push(`The peg is the target net working capital (${fmt(targetNwc)}); ${fmt(pegAmount)} was shown as the peg and has been replaced — any difference between the closing balance and the target is the closing adjustment, not the peg.`);
-    pegAmount = targetNwc;
-  }
-  return { ...wc, currentAssets, currentLiabilities, netWorkingCapital, pegAmount, targetNwc, notes: Array.from(new Set(notes)) };
+  return {
+    ...wc,
+    currentAssets,
+    currentLiabilities,
+    netWorkingCapital,
+    pegAmount,
+    targetNwc,
+    ...(historyYears.length > 0 ? { history: Object.fromEntries(historyYears.map((k) => [k, history[k]])) } : {}),
+    ...(pegBasis ? { pegBasis } : {}),
+    notes: Array.from(new Set(notes)),
+  };
 }
 
 // ── 3. Canonical EBITDA / SDE ──
@@ -459,6 +629,8 @@ export function withCanonicalEarnings<T extends UiNormalization | null>(n: T): T
 export interface EarningsMismatch {
   where: string;
   metric: "EBITDA" | "SDE";
+  /** How the text names it: "SDE", "adjusted EBITDA", "reported EBITDA", "EBITDA". */
+  label: string;
   year: string;
   stated: number;
   expected: number;
@@ -467,11 +639,26 @@ export interface EarningsMismatch {
 const METRIC_RE = /\b(adjusted\s+|normali[sz]ed\s+|reported\s+|unadjusted\s+)?(ebitda|sde)\b/gi;
 
 const MONEY_RE = /\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|mm|m|million|thousand)?\b|\b\d[\d,]*(?:\.\d+)?\s*(?:k|mm|m|million|thousand)\b/gi;
-const YEAR_RE = /\b(?:FY\s?)?((?:19|20)\d{2})\b/;
+const YEAR_RE_G = /\b(?:FY\s?)?((?:19|20)\d{2})\b/gi;
 const ATTRIBUTION_RE = /\b(?:claim(?:s|ed)?|stated?|states|says|said|quoted|expects?|estimated by|per (?:the )?(?:seller|broker|buyer|owner|accountant|cpa)|seller'?s|owner'?s|buyer'?s|broker'?s|initially|originally|previously|earlier)\b/i;
-// Words between a metric and a figure that mean the figure is something else
-// ("EBITDA adds back owner salary above a $140,000 market salary").
-const GAP_BREAK_RE = /[+=×*\/]|\b(?:above|below|salary|salaries|wages?|replacement|excluding|including|before|after|plus|minus|less|adds?|margin|multiple|times|x)\b/i;
+/**
+ * The only words that may sit between a metric and its figure ("adjusted
+ * EBITDA for FY2024 of $1,552,000", "SDE grew 33% from 2022 to 2024, reaching
+ * $1.31M"). Anything else — "includes", "above", "adds back" — means the
+ * figure is about something else ("EBITDA includes the $100K above market").
+ */
+const LINK_WORDS = new Set([
+  "of", "is", "was", "were", "at", "to", "for", "in", "the", "a", "an", "year", "years", "fiscal", "ended", "fy",
+  "reached", "reaching", "reaches", "total", "totals", "totaled", "totalled", "totaling", "totalling", "came", "comes",
+  "stood", "stands", "sits", "grew", "grows", "rose", "rises", "increased", "increasing", "decreased", "declined", "fell",
+  "from", "approximately", "approx", "about", "roughly", "around", "nearly", "equals", "equal", "would", "be", "been",
+  "will", "into", "now", "then", "further", "normalized", "normalised", "adjusted", "reported", "and",
+]);
+/** Right after the figure: it is a difference or a part, not the metric itself. */
+const AFTER_BREAK_RE = /^\s*(?:excess|above|over|more|less|higher|lower|below|increase|decrease|improvement|decline|drop|gap|difference|shortfall|of\s+add-?backs?|in\s+add-?backs?|add-?backs?|adjustments?|per\s+(?:month|week)|a\s+(?:month|week))\b/i;
+/** Followed by an operator and another amount: the figure is a term of a sum. */
+const TERM_RE = /^\s*(?:\([^)]*\)\s*)?(?:[+=×*/]|[-−–]\s*[$(\d])/;
+const APPROX_RE = /(?:~|≈|\babout|\bapprox\.?|\bapproximately|\baround|\broughly|\bnearly|\bclose to)\s*$/i;
 
 interface MoneyAt { value: number; raw: string; index: number; end: number }
 function moneyIn(text: string): MoneyAt[] {
@@ -486,87 +673,175 @@ function moneyIn(text: string): MoneyAt[] {
   return out;
 }
 
+function yearsIn(text: string): string[] {
+  return Array.from(text.matchAll(YEAR_RE_G)).map((m) => m[1]);
+}
+
 /**
- * EBITDA/SDE amounts stated in text that don't match the computed figures
- * (1% tolerance; rounded figures at their precision). Deliberately
- * conservative — a false "doesn't tie" erodes trust — so only clear
- * statements are read:
- *  - a worked sum ("2024 SDE = $896,410 + … = $1,777,000"): the result after
- *    the last "=", for the metric the sentence starts with;
- *  - "<metric> [for FY2024] [is/of/was/reached …] $X", with nothing between
- *    them that makes $X something else ("above a $140,000 salary", "+");
+ * How far a stated figure may be from the computed one: the rounding its
+ * own writing implies ("$1.31M" → ±$5,000; "$1,313,000" → ±$500), with a
+ * 0.1% floor for the components' own rounding — and 2% when hedged
+ * ("approximately $1.3M"). A flat 1% hid real misstatements: "$1,313,000"
+ * against a computed $1,303,000 is a different figure, not a rounding.
+ */
+function allowedDifference(raw: string, computed: number, hedged: boolean): number {
+  const m = raw.replace(/\$/g, "").trim().match(/^(\d[\d,]*)(?:\.(\d+))?\s*(k|mm|m|million|thousand)?/i);
+  let unit = 1;
+  if (m) {
+    const suffix = (m[3] || "").toLowerCase();
+    const mult = suffix === "k" || suffix === "thousand" ? 1e3 : suffix ? 1e6 : 1;
+    if (m[2]) unit = mult * Math.pow(10, -m[2].length);
+    else if (suffix) unit = mult;
+    else {
+      const trailingZeros = m[1].replace(/,/g, "").match(/0*$/)?.[0].length ?? 0;
+      unit = Math.pow(10, Math.min(trailingZeros, 3));
+    }
+  }
+  const base = Math.max(unit / 2, Math.abs(computed) * 0.001, 1);
+  return hedged ? Math.max(base, Math.abs(computed) * 0.02) : base;
+}
+
+interface StatedFigure {
+  metric: "EBITDA" | "SDE";
+  qualifier: string;
+  amount: MoneyAt;
+  hedged: boolean;
+  /** The fiscal year the text ties the figure to, when it does. */
+  year: string | null;
+  /** Where attribution is judged ("as claimed by the seller"): the words up to and just after the figure. */
+  attributionText: string;
+}
+
+function metricOf(m: RegExpMatchArray): { metric: "EBITDA" | "SDE"; qualifier: string } {
+  return { metric: m[2].toUpperCase() as "EBITDA" | "SDE", qualifier: (m[1] || "").trim().toLowerCase() };
+}
+
+/** Every EBITDA/SDE figure a sentence states, with its year. */
+function statedFigures(sentence: string): StatedFigure[] {
+  const out: StatedFigure[] = [];
+  const monies = moneyIn(sentence);
+  const metrics = Array.from(sentence.matchAll(METRIC_RE));
+  const sentenceYears = Array.from(new Set(yearsIn(sentence)));
+  const onlyYear = sentenceYears.length === 1 ? sentenceYears[0] : null;
+  const used = new Set<number>();
+  const after = (a: MoneyAt) => sentence.slice(a.end, a.end + 40).split(/[(;]|\s[—–]\s/)[0];
+  const trailingYear = (a: MoneyAt) =>
+    sentence.slice(a.end, a.end + 18).match(/^\s*(?:\(\s*(?:FY\s?)?((?:19|20)\d{2})\s*\)|(?:in|for|during)\s+(?:FY\s?|fiscal\s+)?((?:19|20)\d{2})\b)/i);
+
+  // 1. Worked sums: "2024 SDE: $563,190 + $749,810 = $1,313,000". A chain's
+  //    subject is the metric just before its first "=" (inherited by the next
+  //    clause of a list: "…; 2023: … = $…"); its result is the figure right
+  //    after an "=" outside parentheses; its year is the clause's own.
+  const eqs = Array.from(sentence.matchAll(/=|≈/g)).map((m) => m.index!);
+  let chainStart = 0;
+  let subject: RegExpMatchArray | null = null;
+  let inherited: RegExpMatchArray | null = null;
+  for (const p of eqs) {
+    if (p < chainStart) continue;
+    const before = sentence.slice(chainStart, p);
+    const depth = (before.match(/\(/g) ?? []).length - (before.match(/\)/g) ?? []).length;
+    if (depth > 0) continue; // a sub-calculation inside parentheses
+    if (!subject) subject = [...metrics].reverse().find((m) => m.index! >= chainStart && m.index! < p) ?? inherited;
+    const result = monies.find((x) => x.index > p);
+    const between = result ? sentence.slice(p + 1, result.index) : "";
+    if (!result || !/^\s*(?:approximately|approx\.?|about|~)?\s*$/i.test(between)) continue; // "SDE = adjusted EBITDA + …": a definition
+    if (TERM_RE.test(sentence.slice(result.end))) continue; // "SDE = $896,410 + …": the first term, the result comes later
+    if (subject) {
+      const clauseYears = yearsIn(sentence.slice(chainStart, p));
+      out.push({
+        ...metricOf(subject),
+        amount: result,
+        hedged: sentence[p] === "≈" || /\S/.test(between),
+        year: clauseYears.length > 0 ? clauseYears[clauseYears.length - 1] : onlyYear,
+        attributionText: sentence.slice(0, result.end) + after(result),
+      });
+    }
+    used.add(result.index);
+    inherited = subject;
+    subject = null;
+    chainStart = result.end;
+  }
+
+  // 2. Plain statements: "<metric> [for FY2024] [of/was/reached …] $X",
+  //    "<metric> grew from $A (2022) to $B (2024)", "$X of adjusted EBITDA".
+  for (const m of metrics) {
+    const { metric, qualifier } = metricOf(m);
+    const metricEnd = m.index! + m[0].length;
+    const push = (amount: MoneyAt, contextYears: string[], hedged: boolean) => {
+      if (used.has(amount.index) || AFTER_BREAK_RE.test(sentence.slice(amount.end))) return;
+      // A term of a sum ("SDE: $563,190 + $130K + … = …"), not the figure.
+      if (TERM_RE.test(sentence.slice(amount.end))) return;
+      used.add(amount.index);
+      const ty = trailingYear(amount);
+      out.push({
+        metric, qualifier, amount, hedged,
+        year: ty ? ty[1] ?? ty[2] : contextYears.length > 0 ? contextYears[contextYears.length - 1] : onlyYear,
+        attributionText: sentence.slice(0, amount.end) + after(amount),
+      });
+    };
+    const next = monies.find((x) => x.index >= metricEnd);
+    if (next && !used.has(next.index)) {
+      const gap = sentence.slice(metricEnd, next.index);
+      const words = gap.toLowerCase().split(/[^a-z0-9.%]+/).filter(Boolean);
+      const linkOnly = gap.length <= 70 && !/[=+×*/]/.test(gap) &&
+        words.every((w) => LINK_WORDS.has(w) || /^(?:fy)?(?:19|20)\d{2}$/.test(w) || /^\d+(?:\.\d+)?%$/.test(w));
+      if (linkOnly) {
+        push(next, yearsIn(gap), APPROX_RE.test(gap));
+        // "… from $A (2022) to $B (2024)"
+        const rest = sentence.slice(next.end);
+        const to = rest.match(/^\s*(?:\(\s*(?:FY\s?)?(?:19|20)\d{2}\s*\)|in\s+(?:FY\s?)?(?:19|20)\d{2})?\s*,?\s*to\s+(?:~|about\s+|approximately\s+)?/i);
+        const second = to ? monies.find((x) => x.index === next.end + to[0].length) : undefined;
+        if (to && second) push(second, [], /~|about|approximately/i.test(to[0]));
+        continue;
+      }
+    }
+    const prev = [...monies].reverse().find((x) => x.end <= m.index!);
+    if (prev && /^\s*(?:in\s+|of\s+)?$/i.test(sentence.slice(prev.end, m.index!))) {
+      const lead = sentence.slice(Math.max(0, prev.index - 16), prev.index);
+      push(prev, yearsIn(lead), APPROX_RE.test(lead));
+    }
+  }
+  return out;
+}
+
+/**
+ * EBITDA/SDE amounts stated in text that don't match the computed figures.
+ * Conservative about WHAT is read — a false "doesn't tie" erodes trust — but
+ * strict about a figure once it is read (its written precision, not a flat
+ * 1%):
+ *  - worked sums: every "= $X" result of a chain whose subject is the metric
+ *    ("SDE calculation: 2022: … = $969,000; 2023: … = …");
+ *  - "<metric> [for FY2024] [is/of/was/reached …] $X" with only link words
+ *    between them, and "… from $A to $B";
  *  - "$X EBITDA" / "$X in SDE".
- * The year is the one written next to the figure, or the sentence's only year.
+ * Someone else's figure ("Seller initially claimed $4.1M") is never judged.
  */
 export function findEarningsMismatches(text: string, computed: CanonicalEarnings): Array<Omit<EarningsMismatch, "where">> {
   const out: Array<Omit<EarningsMismatch, "where">> = [];
   const years = Object.keys(computed.adjustedEbitda);
-  for (const sentence of text.split(/(?<=[.!?])\s+/)) {
-    const sentenceYears = Array.from(new Set((sentence.match(new RegExp(YEAR_RE.source, "g")) ?? []).map((y) => y.replace(/\D/g, ""))));
-    const eq = sentence.lastIndexOf("=");
-    const monies = moneyIn(sentence);
-    METRIC_RE.lastIndex = 0;
-    let m: RegExpExecArray | null;
-    let first = true;
-    while ((m = METRIC_RE.exec(sentence)) !== null) {
-      const isFirst = first;
-      first = false;
-      const qualifier = (m[1] || "").trim().toLowerCase();
-      const metric = m[2].toUpperCase() as "EBITDA" | "SDE";
-      const metricEnd = m.index + m[0].length;
-      let amount: MoneyAt | undefined;
-      let yearText = "";
-      if (eq >= 0) {
-        // Worked sum: only the sentence's subject, only the result — a figure
-        // right after the last "=" ("= $1,592,000"). "SDE = adjusted EBITDA +
-        // …" is a definition, not a stated figure.
-        if (!isFirst || eq < metricEnd) break;
-        const result = monies.find((x) => x.index > eq);
-        if (!result || !/^\s*(?:approximately|approx\.?|about|~)?\s*$/i.test(sentence.slice(eq + 1, result.index))) break;
-        amount = result;
-        yearText = sentence.slice(0, eq);
-      } else {
-        const next = monies.find((x) => x.index >= metricEnd);
-        const gap = next ? sentence.slice(metricEnd, next.index) : "";
-        const gapOk = next && gap.length <= 32 && !GAP_BREAK_RE.test(gap) && !/\d/.test(gap.replace(YEAR_RE, ""));
-        if (gapOk) {
-          amount = next;
-          yearText = gap + sentence.slice(next!.end, next!.end + 16);
-        } else {
-          const prev = [...monies].reverse().find((x) => x.end <= m!.index);
-          const between = prev ? sentence.slice(prev.end, m.index) : "";
-          if (prev && /^\s*(?:in\s+|of\s+)?(?:adjusted\s+|normali[sz]ed\s+|reported\s+)?$/i.test(between)) {
-            amount = prev;
-            yearText = sentence.slice(Math.max(0, prev.index - 16), prev.index) + sentence.slice(metricEnd, metricEnd + 16);
-          }
-        }
-      }
-      if (!amount) continue;
-      // Someone else's figure ("Seller initially claimed $4.1M adjusted
-      // EBITDA", "$4.1M as claimed by the seller") is reported, not stated —
-      // never "corrected". Judged on the words up to the figure and right
-      // after it, not on a later aside ("= $1,777,000 (rounds to the seller's
-      // claimed ~$1.8M)" is still the analysis's own figure).
-      const after = sentence.slice(amount.end, amount.end + 40).split(/[(;]|\s[—–]\s/)[0];
-      if (ATTRIBUTION_RE.test(sentence.slice(0, amount.end) + after)) continue;
-      const near = yearText.match(YEAR_RE)?.[1];
-      const statedYear = near && years.includes(near) ? near : sentenceYears.length === 1 && years.includes(sentenceYears[0]) ? sentenceYears[0] : null;
+  for (const sentence of text.split(/(?<=[.!?])\s+(?=[A-Z0-9$(])/)) {
+    for (const f of statedFigures(sentence)) {
+      if (ATTRIBUTION_RE.test(f.attributionText)) continue;
+      const { metric, qualifier } = f;
+      const adjusted = qualifier.startsWith("adjusted") || qualifier.startsWith("normali");
       const candidatesFor = (y: string) =>
         metric === "SDE" ? [computed.sde[y]]
-        : qualifier.startsWith("adjusted") || qualifier.startsWith("normali") ? [computed.adjustedEbitda[y]]
+        : adjusted ? [computed.adjustedEbitda[y]]
         : qualifier ? [computed.reportedEbitda[y]]
         : [computed.reportedEbitda[y], computed.adjustedEbitda[y]];
-      const checkYears = statedYear ? [statedYear] : years;
-      const tolerance = (x: number) => Math.max(1000, Math.abs(x) * 0.01);
-      const precision = /m\b|million/i.test(amount.raw) ? 0.05 : /k\b|thousand/i.test(amount.raw) ? 0.01 : 0;
-      const value = amount.value;
-      const matches = checkYears.some((y) => candidatesFor(y).some((c) => typeof c === "number" && Math.abs(c - value) <= Math.max(tolerance(c), Math.abs(c) * precision)));
+      if (f.year && !years.includes(f.year)) continue; // a year the analysis doesn't cover (a forecast, FY2025 YTD)
+      const checkYears = f.year ? [f.year] : years;
+      const value = f.amount.value;
+      const matches = checkYears.some((y) =>
+        candidatesFor(y).some((c) => typeof c === "number" && Math.abs(c - value) <= allowedDifference(f.amount.raw, c, f.hedged)),
+      );
       if (matches) continue;
       // Without a year, only flag when the figure matches no year at all.
-      const y = statedYear ?? computed.latestYear!;
+      const y = f.year ?? computed.latestYear!;
       const expected = candidatesFor(y)[0];
       if (typeof expected !== "number") continue;
-      out.push({ metric, year: y, stated: value, expected });
+      const label = metric === "SDE" ? "SDE" : adjusted ? "adjusted EBITDA" : qualifier ? "reported EBITDA" : "EBITDA";
+      out.push({ metric, label, year: y, stated: value, expected });
     }
   }
   return out;
@@ -590,7 +865,7 @@ export function flagEarningsStatements(
       const found = findEarningsMismatches(`${i.title}. ${i.detail}`, computed);
       if (found.length === 0) return i;
       found.forEach((f) => mismatches.push({ ...f, where: `Insight "${i.title}"` }));
-      const check = found.map((f) => `the normalization computes ${f.year} ${f.metric} as ${fmt(f.expected)}, not ${fmt(f.stated)}`).join("; ");
+      const check = found.map((f) => `the normalization computes ${f.year} ${f.label} as ${fmt(f.expected)}, not ${fmt(f.stated)}`).join("; ");
       const flagged: UiInsight & { flag?: string } = { ...i, detail: `${i.detail} (Check: ${check}.)`, flag: check };
       return flagged;
     });
@@ -609,7 +884,7 @@ export function flagEarningsNotes(normalization: UiNormalization | null): UiNorm
     notes.push(note);
     if (/^Check:/.test(note)) continue;
     for (const f of findEarningsMismatches(note, computed)) {
-      notes.push(`Check: the note above states ${f.year} ${f.metric} as ${fmt(f.stated)}; the add-backs listed here compute ${fmt(f.expected)}.`);
+      notes.push(`Check: the note above states ${f.year} ${f.label} as ${fmt(f.stated)}; the add-backs listed here compute ${fmt(f.expected)}.`);
     }
   }
   return { ...normalization, notes: Array.from(new Set(notes)) };
