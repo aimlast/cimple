@@ -914,17 +914,22 @@ async function reviewOnce(dealId: string): Promise<ReviewResult> {
       modelFailed = true;
     }
   }
-  // Still many notes: fold the ones about one matter — asked once per set of notes.
-  first = applyNotesReview(info, review, docs);
-  const groups = currentGroups(allItems, review);
-  if (!modelFailed && first.pending.length === 0 && getPrivateNotes(first.info).length > FOLD_ABOVE && review.foldedFor !== foldKey(groups)) {
+  // Still many notes: fold the ones about one matter — asked once per set of
+  // notes (at most twice in a row, while a fold still brings the count down).
+  for (let round = 0; round < 2 && !modelFailed; round++) {
+    first = applyNotesReview(info, review, docs);
+    const groups = currentGroups(allItems, review);
+    const count = getPrivateNotes(first.info).length;
+    if (first.pending.length > 0 || count <= FOLD_ABOVE || review.foldedFor === foldKey(groups)) break;
     try {
       review = await placeBatch(dealId, review, [], groups, facts(), docs, common);
       review.foldedFor = foldKey(currentGroups(allItems, review));
       askedModel = true;
     } catch (err) {
       console.error(`[private-notes] fold failed for deal ${dealId}:`, (err as Error)?.message ?? err);
+      break;
     }
+    if (getPrivateNotes(applyNotesReview(info, review, docs).info).length >= count) break;
   }
   const reviewChanged = JSON.stringify(review) !== JSON.stringify(stored);
   if (reviewChanged) review.at = new Date().toISOString();
