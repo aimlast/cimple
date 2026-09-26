@@ -223,11 +223,15 @@ function withdrawMapYears(
   const suppressed = [...getSuppressedKeys(info)];
   const withdrawn: Record<string, unknown> = {};
   let restored = false;
+  // Per-year suppression is read by the by-year merge only (mergeYearMapInto).
+  // A map keyed by something else ("employeesByRole") is re-read whole, so a
+  // withdrawn transcript value suppresses the key, as before (review round 2).
+  const byYear = Object.keys(map).every((y) => /\d{4}/.test(y));
   for (const y of sellerYears) {
     withdrawn[y] = map[y];
     const ys = years[y];
     if (ys.documentId) {
-      const k = yearSuppressionKey(key, y, ys.documentId);
+      const k = byYear ? yearSuppressionKey(key, y, ys.documentId) : key;
       if (!suppressed.includes(k)) suppressed.push(k);
     }
     const altKey = `${key}.${y}`;

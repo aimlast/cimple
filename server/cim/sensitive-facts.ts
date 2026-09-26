@@ -19,7 +19,7 @@
  * shortlist, confidential", "don't put this in writing") — see
  * holdConfidentialFacts below.
  */
-import { SELLER_KEEP_OUT_REASON_RE, carriesPrivateDetail, getSellerKeepOut, type SellerKeepOutEntry } from "../interview/seller-keep-out";
+import { SELLER_KEEP_OUT_REASON_RE, getSellerKeepOut, privatePiecesOf, type SellerKeepOutEntry } from "../interview/seller-keep-out";
 
 const PERSON = String.raw`(?:his|her|my|their|the owner'?s|owner'?s|founder'?s|seller'?s|vendor'?s|wife'?s|husband'?s|spouse'?s|partner'?s|son'?s|daughter'?s|father'?s|mother'?s)`;
 
@@ -265,7 +265,8 @@ function clausesOf(text: string): string[] {
   return text.split(/(?<=[.!?])\s+(?=[A-Z0-9])|\s*;\s*|\n+/).map((s) => s.trim()).filter(Boolean);
 }
 
-const PHRASE_STOP = /^(?:the|a|an|and|or|of|in|on|at|to|for|with|by|from|potential|new|rfp|nda|loi|cim|ceo|cfo|vp|gm|fy|q[1-4]|inc|ltd|llc|corp|co|confidential|keep|kept|marked|seller|owner|broker|buyer|buyers|note)$/i;
+// (Number words too: "pipeline: Three open bids: …" names no party "Three".)
+const PHRASE_STOP = /^(?:the|a|an|and|or|of|in|on|at|to|for|with|by|from|potential|new|rfp|nda|loi|cim|ceo|cfo|vp|gm|fy|q[1-4]|inc|ltd|llc|corp|co|confidential|keep|kept|marked|seller|owner|broker|buyer|buyers|note|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|several|many|most|some|all|both|each)$/i;
 
 /** Names in a held clause: runs of Capitalised words ("Harvest Lane Markets"), not a lone sentence-opening word. */
 export function namesIn(clause: string): string[] {
@@ -521,7 +522,9 @@ function sellerKeepOutHolds(info: Record<string, unknown>, facts: string): KeepO
     }
     for (const [key, value] of Object.entries(info)) {
       if (key.startsWith("_")) continue;
-      for (const c of clausesOf(plainTextDeep(value))) if (carriesPrivateDetail(c, req)) out.clauses.push({ key, text: c });
+      // A clause right after one that says the detail and points back to it
+      // ("Wife is sick; owner wants to care for her") is held with it.
+      for (const p of privatePiecesOf(plainTextDeep(value), req)) if (p.held) out.clauses.push({ key, text: p.text.replace(/;$/, "") });
     }
   }
   return out;

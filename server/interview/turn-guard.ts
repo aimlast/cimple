@@ -589,55 +589,108 @@ const SHORT_ONLY_STOP_PHRASES: string[] = [
 // Two tiers (review RV-INT-1: "Once the inspector signs off, that's it, no
 // more questions." and "they just stop asking" force-ended interviews,
 // because a lead-in of "just", "now", "so" or any comma let the phrase stand
-// mid-answer, and a pattern firm stop overruled the classifier):
-// - STANDING — said to the interviewer beyond doubt: the whole message
-//   ("Stop."), the phrase opening its sentence after nothing but filler
-//   ("Please stop with the questions", "Seriously, stop asking me things",
-//   "No more questions."), an explicit addressee after a clause break
-//   ("…, stop asking me", "…, no more questions for today"), or the seller
-//   about themselves ("I'm done answering questions"). Nothing else reads
-//   that way: it stands even when the classifier reads the turn otherwise.
-// - PATTERN — the bare phrase closing a very short clause after a comma
-//   ("I'm tired, no more questions."). A stop more often than not, but the
-//   classifier's reading decides when there is one (seller-intent.ts
-//   combineIntent). A longer clause in front ("Once the inspector signs off,
-//   that's it, no more questions.") describes the business: no stop at all.
-// "customers stop asking for discounts", "the bank had no more questions"
-// and "the reps just stop asking" match neither.
+// mid-answer, and a pattern firm stop overruled the classifier; round 2:
+// "The auditor finished Tuesday, no more questions for now.", "No more
+// questions, they signed the renewal the same week." and "I'm done with the
+// questions from the lender" still stood):
+// - STANDING — said to the interviewer beyond doubt, so it stands even when
+//   the classifier reads the turn otherwise: the whole message ("Stop."); an
+//   imperative opening its sentence after nothing but filler ("Please stop
+//   with the questions", "Seriously, stop asking me things", "Enough with the
+//   questions"); "No more questions" as the whole closing sentence ("No more
+//   questions for today, please."); an explicit addressee after a clause
+//   break ("…, stop asking me", "…, no more questions for me / please"); or
+//   the seller about themselves with nothing after it ("I'm done answering
+//   questions", "I don't want to answer any more questions").
+// - PATTERN — a stop more often than not, but the classifier's reading
+//   decides when there is one (seller-intent.ts combineIntent): the bare
+//   phrase closing a very short clause ("I'm tired, no more questions.",
+//   "…, no more questions for now."), or "No more questions" opening a
+//   sentence that goes on ("No more questions, I'm exhausted.").
+// A longer clause in front ("Once the inspector signs off, that's it, no
+// more questions."), "customers stop asking for discounts", "the bank had no
+// more questions", "the reps just stop asking", "no more questions from the
+// bank", "I'm done with the questions from the lender", "I'm done answering
+// the CRA's questions" and "I don't want to answer any more questions about
+// the lawsuit" (one topic declined — the classifier's to read) match neither.
 const STOP_PHRASE_CORE = String.raw`(?:please )?stop (?:asking(?: me)?(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?|with (?:the|all the|these|all these) questions|the questions)(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`;
-const NO_MORE_CORE = String.raw`(?:no|enough|not any) more questions(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`;
+const NO_MORE_WORDS = String.raw`(?:no|enough|not any) more questions`;
+const NO_MORE_CORE = String.raw`${NO_MORE_WORDS}(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`;
 const ENOUGH_CORE = String.raw`enough (?:with the )?questions${CLAUSE_END}`;
 // Filler that may open the sentence before the phrase ("Ok, look, please …").
 const IMPERATIVE_FILLER = String.raw`(?:(?:please|just|ok|okay|look|honestly|seriously|sorry|alright|can you|could you|would you|will you)[,!]?\s+)*`;
-// The start of a sentence or of a transcript line ("Seller: …").
-const SENTENCE_START = String.raw`(?:^|[.!?]\s+|\n\s*)(?:[a-z]{2,12}:\s*)?`;
-const STANDING_FIRM_PHRASES: string[] = [
-  String.raw`${SENTENCE_START}${IMPERATIVE_FILLER}(?:${STOP_PHRASE_CORE}|${NO_MORE_CORE}|${ENOUGH_CORE})`,
-  // An explicit addressee after a clause break.
-  String.raw`(?:^|[.!?,;:—–]\s*)${IMPERATIVE_FILLER}stop asking me(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
-  String.raw`(?:^|[.!?,;:—–]\s*)${IMPERATIVE_FILLER}(?:no|enough|not any) more questions (?:for (?:me|now|today|tonight)|from you|today|please)${CLAUSE_END}`,
-  // The seller about themselves.
-  String.raw`\bi(?:'m| am) (?:done|finished) (?:answering(?: questions)?|with (?:the|these|your) questions)`,
-  String.raw`\bi (?:don'?t|do not) want to answer any (?:more|further) questions`,
-];
-const STANDING_FIRM_RE = new RegExp(`(?:${STANDING_FIRM_PHRASES.join("|")})`, "i");
+// What may follow the phrase in its own sentence without making it about
+// anything else ("No more questions for today, please.").
+const STOP_TAIL = String.raw`(?:[,\s]+(?:please|thanks|thank you|ok(?:ay)?|now|right now|for (?:me|now|today|tonight)|from you|today|tonight))*`;
+// The phrase is where its sentence ends.
+const SENTENCE_END = String.raw`\s*[.!?…]*\s*$`;
+// Nothing about the business follows the seller's words about themselves.
+const SELF_END = String.raw`(?=\s*(?:[.!?,;:—–…]|$|\s(?:please|thanks|thank you|sorry|ok|okay|i|i'm|i've)\b))`;
+// Opening the sentence (after filler) — an imperative is said to someone.
+const IMPERATIVE_OPEN_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}(?:${STOP_PHRASE_CORE}|${ENOUGH_CORE})`, "i");
+// "No more questions" as the whole sentence.
+const NO_MORE_WHOLE_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}${NO_MORE_WORDS}${STOP_TAIL}${SENTENCE_END}`, "i");
+// "No more questions, …" opening a sentence that goes on.
+const NO_MORE_OPEN_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}${NO_MORE_CORE}`, "i");
+const STANDING_IN_SENTENCE_RE = new RegExp(
+  [
+    // An explicit addressee after a clause break.
+    String.raw`(?:^|[,;:—–]\s*)${IMPERATIVE_FILLER}stop asking me(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
+    String.raw`(?:^|[,;:—–]\s*)${IMPERATIVE_FILLER}${NO_MORE_WORDS}(?: (?:for (?:now|today|tonight)|today|now))?,? (?:for me|from you|please)${CLAUSE_END}`,
+    // The seller about themselves.
+    String.raw`\bi(?:'m| am) (?:done|finished) (?:answering(?: (?:your |these |the |any more |more |all (?:the |these |your ))?questions)?|with (?:the|these|your|all (?:the|these|your)) questions)(?: (?:for (?:now|today|tonight)|today|now|here))?${SELF_END}`,
+    String.raw`\bi (?:don'?t|do not) want to answer any (?:more|further) questions(?: (?:today|now|right now|for (?:now|today|tonight)))?${SELF_END}`,
+  ].join("|"),
+  "i",
+);
 // The bare phrase after a clause break — a PATTERN firm stop only when the
 // clause before it is a few words ("I'm tired, no more questions.").
 const CLAUSE_FIRM_RE = new RegExp(String.raw`[,;:—–]\s*(?:(?:please|just|ok|okay|look|honestly|seriously)[,!]?\s+)*(?:${STOP_PHRASE_CORE}|${NO_MORE_CORE}|${ENOUGH_CORE})`, "i");
 const CLAUSE_FIRM_MAX_LEAD_WORDS = 4;
+// A longer clause in front that is about the seller's patience or time, not
+// the business ("I've had enough of this, no more questions.", "Look, I've
+// got a customer waiting, no more questions.") — still a PATTERN stop, so a
+// real stop is honoured even when the classifier is down.
+const STOP_MOOD_RE =
+  /\b(?:i'?m|i am|i'?ve|i have|i'?ve got|i)\b[^,;:.]{0,30}\b(?:enough|tired|exhausted|done|busy|fed up|sick of|had it|wiped|beat|over (?:this|it))\b|\b(?:customer|customers|patient|patients|client|clients|someone|people|guy|lady|truck|delivery) (?:is |are )?waiting\b|\b(?:you'?ve|you have|you) (?:already |just )?asked me\b|\balready told you\b|\b(?:got|have|need) to (?:go|run|leave)\b|\bgotta (?:go|run)\b|\bno time\b|\b(?:don'?t|do not) have (?:the )?time\b|\btaking (?:forever|too long)\b/i;
+// After "No more questions." as its own sentence, what may still follow for
+// it to stand ("No more questions. I'm tired." — not "No more questions.
+// They signed off on the loan in a week.").
+const AFTER_STOP_MAX_WORDS = 5;
 // The whole message is "Stop." / "Stop now please."
 const BARE_STOP_RE = /^\s*(?:(?:ok(?:ay)?|please|just)[,\s]+)?stop(?:[,\s]+(?:please|now|it|there))*\s*[.!]*\s*$/i;
+// A transcript line's speaker label ("Seller: …").
+const SPEAKER_LABEL_RE = /^\s*[a-z]{2,12}:\s*/i;
 
 /** "stands": said to the interviewer beyond doubt; "pattern": probably a firm stop; null: none. */
 export type FirmStopTier = "stands" | "pattern" | null;
 
 function firmStopTier(text: string): FirmStopTier {
-  if (BARE_STOP_RE.test(text) || STANDING_FIRM_RE.test(text)) return "stands";
-  for (const s of text.split(/(?<=[.!?])\s+|\n+/)) {
+  if (BARE_STOP_RE.test(text)) return "stands";
+  const sentences = text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(SPEAKER_LABEL_RE, "").trim())
+    .filter(Boolean);
+  let tier: FirmStopTier = null;
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (IMPERATIVE_OPEN_RE.test(s) || STANDING_IN_SENTENCE_RE.test(s)) return "stands";
+    if (NO_MORE_WHOLE_RE.test(s)) {
+      const after = sentences.slice(i + 1);
+      if (wordCount(after.join(" ")) <= AFTER_STOP_MAX_WORDS) return "stands";
+      tier = "pattern";
+      continue;
+    }
+    if (NO_MORE_OPEN_RE.test(s)) {
+      tier = "pattern";
+      continue;
+    }
     const m = CLAUSE_FIRM_RE.exec(s);
-    if (m && wordCount(s.slice(0, m.index).replace(/^\s*[a-z]{2,12}:\s*/i, "")) <= CLAUSE_FIRM_MAX_LEAD_WORDS) return "pattern";
+    if (!m) continue;
+    const lead = s.slice(0, m.index);
+    if (wordCount(lead) <= CLAUSE_FIRM_MAX_LEAD_WORDS || STOP_MOOD_RE.test(lead)) tier = "pattern";
   }
-  return null;
+  return tier;
 }
 
 const ADDRESSED_STOP_RE = new RegExp(`\\b(?:${ADDRESSED_STOP_PHRASES.join("|")})`, "i");

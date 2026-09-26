@@ -62,7 +62,7 @@ import {
   type StopLevel,
 } from "./seller-intent";
 import {
-  SELLER_KEEP_OUT_REASON,
+  HELD_BACK_NOTE_REASON,
   addSellerKeepOut,
   carriesPrivateDetail,
   getSellerKeepOut,
@@ -76,7 +76,6 @@ import {
   applyLegalGroundingGuard,
   findLegalAssertions,
   discrepanciesSettledByRetraction,
-  termRegex,
   type RetractedValue,
 } from "./fact-guards";
 import {
@@ -2112,21 +2111,31 @@ export async function processTurn(
   // Details the seller asked kept out of the book stay out: a later turn
   // writing one into a fact from the transcript is held back — this
   // session's specific terms, and every request kept on the deal
-  // (seller-keep-out.ts, any session). Never silently: a held-back value
-  // that says more than the detail goes to the broker's private notes.
+  // (seller-keep-out.ts, any session). A value is held back only where it
+  // says the detail — a term with the detail's own context — never for a
+  // term alone (round 2: the owner's wife's "MS" held back the clinic's
+  // "stroke, MS and Parkinson's programs" in every later session). Never
+  // silently: a held-back value that says more than the detail goes to the
+  // broker's private notes.
   const keptOnDeal = getSellerKeepOut(existingExtracted);
+  // A session term with no request on the deal behind it (an earlier build)
+  // is all there is to go by.
+  const keptEntries = [
+    ...keptOnDeal,
+    ...priorPrivateTerms
+      .filter((t) => !keptOnDeal.some((e) => e.terms.some((x) => x.toLowerCase() === t.toLowerCase())))
+      .map((t) => ({ detail: "", terms: [t] })),
+  ];
   const heldBackNotes: Array<{ note: string; reason: string }> = [];
-  if (priorPrivateTerms.length > 0 || keptOnDeal.length > 0) {
-    const leaking = changes.filter(
-      (c) => priorPrivateTerms.some((t) => termRegex(t)!.test(c.newValue)) || keptOnDeal.some((e) => carriesPrivateDetail(c.newValue, e)),
-    );
+  if (keptEntries.length > 0) {
+    const leaking = changes.filter((c) => keptEntries.some((e) => carriesPrivateDetail(c.newValue, e)));
     if (leaking.length > 0) {
       console.warn(`[session-manager] Privacy guard: held back ${leaking.length} value(s) carrying a detail the seller asked kept private: ${leaking.map((c) => c.fieldName).join(", ")}`);
       changes = changes.filter((c) => !leaking.includes(c));
       for (const c of leaking) {
         if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
         else delete updatedConfidence[c.fieldName];
-        if ((c.newValue.match(/\S+/g) ?? []).length > 8) heldBackNotes.push({ note: `${c.fieldName}: ${c.newValue}`, reason: SELLER_KEEP_OUT_REASON });
+        if ((c.newValue.match(/\S+/g) ?? []).length > 8) heldBackNotes.push({ note: `${c.fieldName}: ${c.newValue}`, reason: HELD_BACK_NOTE_REASON });
       }
     }
   }
@@ -2364,12 +2373,12 @@ export async function processTurn(
     // A withdrawn claim inside a fact, or a private detail moved out of one
     // (only where the fact is still the value it was planned against).
     if (partialEdits.length > 0) {
-      const done = new Set(applyPartialEdits(toSave, partialEdits));
+      const done = new Set(applyPartialEdits(toSave, partialEdits, { turn: userTurnCount }));
       for (const e of partialEdits.filter((p) => done.has(p.key) && p.kind === "withdrawn")) {
         withdrawnNow.push({ key: e.key, value: e.removed, turn: userTurnCount });
       }
       console.log(
-        `[session-manager] Seller intent on deal ${dealId}: ${partialEdits.map((e) => `${e.key} ${done.has(e.key) ? (e.kind === "private" ? "— private detail moved to the broker's notes" : "— part withdrawn") : "— changed meanwhile, left alone"}`).join("; ")}`,
+        `[session-manager] Seller intent on deal ${dealId}: ${partialEdits.map((e) => `${e.key} ${done.has(e.key) ? (e.kind === "private" ? "— private detail taken out (full answer in the deleted-facts history)" : "— part withdrawn") : "— changed meanwhile, left alone"}`).join("; ")}`,
       );
     }
     // The seller's keep-out requests last beyond this session: screened in

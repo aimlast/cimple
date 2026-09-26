@@ -155,6 +155,12 @@ export const BUSINESS: string[] = [
   "Our regulars know the menu, so they just stop asking after the first visit.",
   "Customers call a few times, then they stop asking.",
   "Customers just stop asking me for discounts once they see the warranty.",
+  // …and these stood against the classifier until round 2.
+  "We filed everything with the city, no more questions for now.",
+  "I'm done with the questions from the lender, they approved the refinancing in May.",
+  "I'm done answering the CRA's questions, they closed the audit last month.",
+  "The inspector left happy. No more questions after that.",
+  "No more questions from the bank since we refinanced.",
 ];
 
 /** Ordinary answers with no intent at all. */

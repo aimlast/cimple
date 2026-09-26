@@ -42,6 +42,8 @@ import {
 import { canonicalFieldName, getFieldSources, isLiveSellerKind, resolvedYearSources, type FieldChange } from "./info-merger";
 import {
   SELLER_KEEP_OUT_REASON,
+  HELD_BACK_NOTE_REASON,
+  recordKeepOutCut,
   carriesPrivateDetail,
   cutPrivateDetail,
   distinctivePrivateTerms,
@@ -515,9 +517,13 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
   const retractions: Retraction[] = [];
   const partialEdits: PartialEdit[] = [];
   const unrecordedWithdrawals: string[] = [];
-  const withdraw = (key: string, reason: string) => {
+  const withdraw = (key: string, reason: string, claim?: string) => {
     if (correctedKeys.has(key) || retractions.some((r) => r.field === key) || partialEdits.some((p) => p.key === key)) return;
-    retractions.push({ field: key, reason });
+    // A by-year map: only the years the seller's words name, when they name
+    // any ("Scratch that, I was guessing on the 2024 number") — not every
+    // year they ever stated (review R2, round 2).
+    const named = claim && isPlainMap(info[key]) ? claimYearsInMap(claim, info[key] as Record<string, unknown>) : [];
+    retractions.push(named.length > 0 ? { field: key, reason, years: named } : { field: key, reason });
   };
   if (intent.via === "model") {
     const modelKeys = input.modelRetracted.map((r) => canonicalFieldName(r.field, keys)).filter(live);
@@ -589,8 +595,12 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
             log.push(`${key}: couldn't tell which of the seller's years was withdrawn — left alone`);
             continue;
           }
-          if (!correctedKeys.has(key) && !retractions.some((x) => x.field === key)) {
-            retractions.push({ field: key, reason: `withdrew "${r.what}"`, years: sellerYears });
+          if (!correctedKeys.has(key)) {
+            // Two withdrawals of one map ("the 2023 and the 2024 numbers were
+            // guesses", read as two claims) add up — the second isn't dropped.
+            const prior = retractions.find((x) => x.field === key);
+            if (!prior) retractions.push({ field: key, reason: `withdrew "${r.what}"`, years: sellerYears });
+            else if (prior.years) prior.years = Array.from(new Set([...prior.years, ...sellerYears]));
             log.push(`${key}: ${sellerYears.length} year(s) withdrawn`);
           }
           continue;
@@ -620,10 +630,10 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
     const named = input.modelRetracted
       .map((r) => ({ field: canonicalFieldName(r.field, keys), reason: r.reason }))
       .filter((r) => live(r.field) && !correctedKeys.has(r.field));
-    if (named.length > 0) for (const r of named) withdraw(r.field, r.reason || "the seller withdrew it");
+    if (named.length > 0) for (const r of named) withdraw(r.field, r.reason || "the seller withdrew it", sellerMessage);
     else {
       for (const k of guessRetractedFields(info, sellerMessage, { sessionId: input.sessionId, turn: input.turn })) {
-        withdraw(k, "the seller withdrew their previous answer");
+        withdraw(k, "the seller withdrew their previous answer", sellerMessage);
       }
       if (retractions.length > 0) log.push(`model named no field — withdrawing ${retractions.map((r) => r.field).join(", ")} from the seller's previous answer`);
     }
@@ -644,14 +654,16 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
   const keepOut: SellerKeepOutEntry[] = [];
   const saidText = `${sellerMessage}\n${input.prevSellerMessage ?? ""}`;
   const noteText = (s: string) => s.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
+  // A note already says the detail only when it really does — not because
+  // the interview model wrote some other private note this turn (round 2: a
+  // lawsuit the seller asked kept out was never noted, because the model had
+  // noted who referred him).
   const noteCovers = (entry: SellerKeepOutEntry) =>
     !entry.detail ||
-    [...input.modelPrivateNotes, ...privateNotes].some((n) =>
-      entry.terms.length > 0 ? carriesPrivateDetail(n.note, entry) : n.note.trim().length > 0,
-    );
-  const addNote = (note: string) => {
+    [...input.modelPrivateNotes, ...privateNotes].some((n) => carriesPrivateDetail(n.note, entry, { loose: true }));
+  const addNote = (note: string, reason = SELLER_KEEP_OUT_REASON) => {
     if ([...input.modelPrivateNotes, ...privateNotes].some((n) => noteText(n.note) === noteText(note))) return;
-    privateNotes.push({ note, reason: SELLER_KEEP_OUT_REASON });
+    privateNotes.push({ note, reason });
   };
   for (const p of intent.privacyRequests) {
     const detail = (p.detail || p.what).trim();
@@ -671,16 +683,19 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
     // years" — stays, rather than a remnant of the rewrite); a new fact keeps
     // its other sentences, and a list is never cut in the middle — the whole
     // value is held back instead. Nothing disappears silently: a held-back
-    // value that says more than the detail goes to the broker's notes.
-    for (const c of changes.filter((x) => carriesPrivateDetail(x.newValue, entry))) {
+    // value that says more than the detail goes to the broker's notes (as the
+    // broker's record, not a keep-out request of its own). Read loosely: the
+    // value comes from the very message that asked for privacy, so the
+    // detail in everyday words counts too ("Lawsuit filed by an ex-manager").
+    for (const c of changes.filter((x) => carriesPrivateDetail(x.newValue, entry, { loose: true }))) {
       const replacing = hasValue(c.fieldName);
-      const rest = replacing ? "" : cutPrivateDetail(c.newValue, entry);
+      const rest = replacing ? "" : cutPrivateDetail(c.newValue, entry, { loose: true });
       if (rest) {
         c.newValue = rest;
         log.push(`kept private: the detail was cut from ${c.fieldName}`);
       } else {
         changes = changes.filter((x) => x !== c);
-        if ((c.newValue.match(/\S+/g) ?? []).length > 8) addNote(`${c.fieldName}: ${c.newValue}`);
+        if ((c.newValue.match(/\S+/g) ?? []).length > 8) addNote(`${c.fieldName}: ${c.newValue}`, HELD_BACK_NOTE_REASON);
         log.push(`kept private (not written): ${c.fieldName}`);
       }
     }
@@ -693,9 +708,14 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
     const moved = new Set<string>();
     if (key && !changed(key) && !gone.has(key)) {
       const value = valueText(info[key]);
-      const rest = entry.terms.length > 0
-        ? removeClaim(value, detail, p.remainingValue, entry.terms, { termsOnly: true })
-        : live(key) ? cutPrivateDetail(value, entry) : null;
+      // Only a hinted fact that really holds the detail (or that the
+      // classifier rewrote without it) — a term alone is no proof.
+      const holds = !!(p.remainingValue ?? "").trim() || carriesPrivateDetail(value, entry, { loose: true });
+      const rest = !holds
+        ? null
+        : entry.terms.length > 0
+          ? removeClaim(value, detail, p.remainingValue, entry.terms, { termsOnly: true })
+          : live(key) ? cutPrivateDetail(value, entry, { loose: true }) : null;
       if (rest !== null && rest !== value) {
         partialEdits.push({ key, from: value, to: rest, removed: detail, kind: "private" });
         moved.add(key);
@@ -706,7 +726,7 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
       partialEdits.push({ key: cut.key, from: cut.from, to: cut.to, removed: detail, kind: "private" });
       moved.add(cut.key);
     }
-    if (moved.size > 0) log.push(`private detail moved out of ${Array.from(moved).join(", ")} (kept in the broker's private notes)`);
+    if (moved.size > 0) log.push(`private detail taken out of ${Array.from(moved).join(", ")} (the full answer is in the deleted-facts history)`);
   }
 
   return {
@@ -725,13 +745,16 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
 /**
  * Applies the partial edits to the facts as they are NOW (under the facts
  * lock): only where the value is still the one the edit was planned
- * against. "" removes the fact (its source goes too). Returns the keys
- * edited. Mutates `info`.
+ * against. "" removes the fact (its source goes too). A private detail taken
+ * out of a fact leaves the full answer in the deleted-facts history, so the
+ * broker sees what was cut (review round 2: facts vanished without a trace).
+ * Returns the keys edited. Mutates `info`.
  */
-export function applyPartialEdits(info: Record<string, unknown>, edits: PartialEdit[]): string[] {
+export function applyPartialEdits(info: Record<string, unknown>, edits: PartialEdit[], ctx: { turn?: number; at?: string } = {}): string[] {
   const done: string[] = [];
   for (const e of edits) {
     if (valueText(info[e.key]).trim() !== e.from.trim()) continue;
+    if (e.kind === "private") recordKeepOutCut(info, { key: e.key, from: info[e.key], to: e.to }, ctx);
     if (e.to === "") {
       delete info[e.key];
       const sources = { ...getFieldSources(info) };
