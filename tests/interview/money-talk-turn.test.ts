@@ -77,10 +77,10 @@ const lakeshore = () =>
     const h = installHarness(lakeshore(), { messages: [ai(T1), seller("Twenty-four vans."), ai("How many of your techs hold the 313A?")], documents: [statementsDoc] });
     h.script.push({ message: T6, whyItMatters: "Buyers want to know whether key licensed technicians will stay.", targetSection: "employees" });
     const t = await processTurn("deal-1", "sess-1", S6);
-    assert.match(h.systems[0], /They stated \$1\.5M\. The financials on file \(seller-visible\) show net income of \$563,190 for FY2024/);
+    assert.match(h.systems[0], /They stated \$1\.5M\. The statements on file \(seller-visible\) report net income of \$563,190 for FY2024 \(after tax\) — a different measure from theirs/);
     assert.equal(
       t.message,
-      "On the $1.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements. For reference, the FY2024 financials on file show net income of $563,190 (after tax).\n\nOn the retention question for the other licensed techs beyond Dave and Sal: is there anything you'd put in place to keep them through a transition?",
+      "On the $1.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements. For reference, the FY2024 statements on file report net income of $563,190 after tax, before any adjustments.\n\nOn the retention question for the other licensed techs beyond Dave and Sal: is there anything you'd put in place to keep them through a transition?",
     );
     assert.doesNotMatch(t.message, /so that tracks|add|SDE of|\$1,312,000/);
     const stored = h.sessions[0].messages[h.sessions[0].messages.length - 1];
@@ -89,9 +89,33 @@ const lakeshore = () =>
     ok("Lakeshore T6 replay: the earnings question gets the hand-off and the statements' own figure; the confirmation filler goes");
   }
 
+  // ── 3. Broker-led ("together"): the broker's own words raise nothing; the seller's question is the broker's to answer ──
+  {
+    // The broker says the SDE out loud; the seller only talks about leases.
+    const h = installHarness(lakeshore(), { messages: [ai("How are the service vans financed?")], documents: [statementsDoc], sessionMeta: { _conductedBy: "broker_with_seller" } });
+    h.script.push({ message: "When do the Ford Credit leases end?", whyItMatters: "Buyers need to know the fleet commitments they take on.", targetSection: "operations" });
+    const exchange = "Broker: And just so you know, your SDE is about $1.2M after the add-backs.\nSeller: Yeah, sounds right. The vans are all leased through Ford Credit.";
+    const t = await processTurn("deal-1", "sess-1", exchange, undefined, { conductedBy: "broker_with_seller" });
+    assert.doesNotMatch(h.systems[0], /# THE SELLER RAISED EARNINGS/, "the broker's line is not the seller raising it");
+    assert.equal(t.message, "When do the Ford Credit leases end?", "no hand-off on the broker's question card");
+    ok("together replay: the broker saying 'your SDE is about $1.2M' puts no earnings hand-off on the broker's card");
+  }
+  {
+    // The seller asks; the broker is in the room — the card carries only the next question.
+    const h = installHarness(lakeshore(), { messages: [ai("How are the service vans financed?")], documents: [statementsDoc], sessionMeta: { _conductedBy: "broker_with_seller" } });
+    h.script.push({ message: "When do the Ford Credit leases end?", whyItMatters: "Buyers need to know the fleet commitments they take on.", targetSection: "operations" });
+    const exchange = "Broker: How are the vans financed?\nSeller: Ford Credit leases, all of them. Hey — what's the SDE going in the book?";
+    const t = await processTurn("deal-1", "sess-1", exchange, undefined, { conductedBy: "broker_with_seller" });
+    assert.match(h.systems[0], /The broker is in the room and will answer this themselves/);
+    assert.doesNotMatch(h.systems[0], /say plainly that the earnings figure/);
+    assert.equal(t.message, "When do the Ford Credit leases end?");
+    ok("together replay: the seller's SDE question is left to the broker in the room — no hand-off line read aloud");
+  }
+
   process.stdout.write(`\n${n} groups passed\n`);
   process.exit(0);
 })().catch((err) => {
-  console.error(err);
+  // (The harness routes console.* into its log; the failure goes to stderr directly.)
+  process.stderr.write(`${err?.stack ?? err}\n${err?.actual !== undefined ? `actual: ${JSON.stringify(err.actual)}\n` : ""}`);
   process.exit(1);
 });

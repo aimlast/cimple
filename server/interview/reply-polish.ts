@@ -48,6 +48,13 @@ export interface PolishContext {
   priorAiText?: string;
   /** The seller-visible statements' reported earnings (money-talk.statementEarnings). */
   statements?: StatementEarnings | null;
+  /**
+   * A broker-led session: the reply is the broker's question card and the
+   * seller's message is the room's labelled exchange. The broker is there to
+   * answer earnings and add-back questions, so no hand-off line is put in
+   * (add-back calls are still removed).
+   */
+  together?: boolean;
 }
 
 /** Where the business is, as one string ("Calgary, AB"). */
@@ -128,6 +135,7 @@ export function buildPolishContext(args: {
     today: args.today ?? new Date(),
     priorAiText: aiSaid.filter((x, i) => aiSaid.indexOf(x) === i).join("\n"),
     statements: statementEarnings(args.info, (k) => sources[k]?.source),
+    together: args.kb.conductedBy === "broker_with_seller",
   };
 }
 
@@ -161,7 +169,7 @@ export function polishMessage(message: string, ctx: PolishContext, opts: { closi
   const unjudged = stripQuestionVerdicts(text);
   if (unjudged !== text) report.filler = true;
   text = unjudged;
-  const norm = removeNormalisationAssertions(text, ctx.sellerMessage, { callAlreadyCut: callBefore });
+  const norm = removeNormalisationAssertions(text, ctx.sellerMessage, { callAlreadyCut: callBefore, noHandoff: ctx.together });
   report.normalisation = norm.removed.length > 0 ? norm.removed : callBefore ? findNormalisationAssertions(message, ctx.sellerMessage) : [];
   text = norm.message;
   const single = enforceSingleQuestion(text);
@@ -179,7 +187,7 @@ export function polishMessage(message: string, ctx: PolishContext, opts: { closi
   // Last, on the finished text: a seller who asked about the earnings
   // figure, SDE or add-backs (or first stated what the business "clears")
   // is answered — never dodged (money-talk.ts).
-  if (!opts.opening) {
+  if (!opts.opening && !ctx.together) {
     const ack = ensureEarningsAcknowledged(text, { sellerMessage: ctx.sellerMessage, priorAiText: ctx.priorAiText, statements: ctx.statements });
     if (ack.added) report.earningsAck = true;
     text = ack.message;

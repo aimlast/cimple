@@ -1227,7 +1227,7 @@ export async function processTurn(
   // hands it to the broker — never a dodge, never an add-back list — with
   // the seller-visible statements' own figure to note neutrally. (The polish
   // pass puts the hand-off in when a draft still misses it.)
-  const earningsBlock = earningsNudge(sellerMessage, polishCtx.statements ?? null);
+  const earningsBlock = earningsNudge(sellerMessage, polishCtx.statements ?? null, { together: polishCtx.together });
   if (earningsBlock) systemBlocks.push({ type: "text", text: earningsBlock });
   // RE-ASK GUARD context: every earlier question the seller answered (all
   // sessions, in full, plus this transcript), the facts on file as the agent

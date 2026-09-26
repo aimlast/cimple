@@ -36,26 +36,141 @@
  */
 
 // ═══════════════════════ Reading the seller ═══════════════════════
+//
+// Every trigger below puts a sentence in front of the seller or pays for a
+// corrective rewrite, so each is read in context, never off a bare word: "I've
+// told you multiple times", "we have multiple locations", "the cash flow
+// statement", "what's the number you have for our patients", "Maria takes
+// home about $85K", "we clear $60K in scrap metal sales", "that's personal,
+// I'd rather not say" and "it comes out to 40 hours a week" are not earnings
+// talk (round-A review; each had reached the seller through polishMessage).
 
-/** Earnings / normalisation vocabulary. */
-const EARNINGS_TERM_RE =
-  /\b(?:sde|seller'?s discretionary|discretionary (?:earnings|cash ?flow)|add[- ]?backs?|added[- ]back|adding (?:it |that |them |this |those |everything |it all |all (?:of )?that )?back|add (?:it|that|them|this|those|everything|it all|all (?:of )?that|all of it) back|normali[sz]\w*|recast|cash ?flow|ebitda|earnings|bottom line|multiple)\b/i;
-/** "The number going in the book", "what figure is she using". */
-const BOOK_NUMBER_RE =
-  /\b(?:the|that|this|what|which|your|her|his|their|morgan'?s|the broker'?s)\s+(?:actual\s+|real\s+|final\s+)?(?:number|figure)\b[^.?!]{0,60}\b(?:book|cim|memorandum|listing|package|buyers?|going in|goes in|put(?:ting)? in|using|use|telling|came up with|come up with|working (?:with|from|off))\b|\bwhat(?:'s| is) the (?:actual |real |final )?(?:number|figure)\b/i;
-/** A question about the figure itself (not about one item's treatment). */
-const FIGURE_TERM_RE = /\b(?:sde|seller'?s discretionary|discretionary (?:earnings|cash ?flow)|ebitda|cash ?flow|earnings|bottom line|multiple|recast)\b/i;
+/** A valuation multiple, as a noun ("what multiple is she using", "4x SDE") — not "multiple times / locations". */
+const MULTIPLE_NOUN = String.raw`(?:(?:what|which|the|a|an|your|my|our|his|her|their|that|this|same|[a-z]+'s)\s+(?:(?:kind|sort|type) of\s+)?(?:(?:valuation|earnings|sde|ebitda|typical|usual|fair|good|decent|market|going|industry|standard|realistic|higher|lower|same)\s+)*multiples?(?![\w-])(?!\s+(?:times|locations?|sites?|stores?|shops?|clinics?|branches|offices?|trucks?|vans?|vehicles?|customers?|clients?|patients?|people|staff|employees|techs?|units?|offers?|buyers?|years?|reasons?|ways?|sources?|contracts?|jobs?|projects?|suppliers?|vendors?|properties|buildings?|leases?|accounts?|products?|services?|lines?|owners?|shareholders?|partners?|kids|children|things|items|occasions|visits|calls|emails|documents|files|copies|versions|departments?|divisions?|brands?|streams?|revenue)\b)|multiples? (?:of|on) (?:the )?(?:earnings|sde|ebitda|cash ?flow|profit|business)|\d+(?:\.\d+)?\s?(?:x|times) (?:earnings|sde|ebitda|cash ?flow|profit))`;
+/** Cash flow as earnings — not the statement, report or schedule. */
+const CASH_FLOW = String.raw`cash[- ]?flows?(?!\s+(?:statements?|reports?|sheets?|spreadsheets?|schedules?|files?|documents?|forecasts?|projections?|budgets?|templates?)\b)`;
 /**
- * An earnings figure the owner states: a figure right after "clears",
- * "nets", "throws off", "takes home", or after "SDE / EBITDA / cash flow /
- * earnings / profit is…" — the cue must lead straight into the figure, so
- * "$1.4M net of trade-ins", "gets cleared at closing" or "80% of gross
- * profit … $6.2 million in revenue" (seeding corpus) are not claims.
+ * Normalising earnings — not the working-capital peg ("we've pegged
+ * normalized working capital at about $2.4M") or a rent structure ("that
+ * normalizes the rent for a buyer's model").
+ */
+const NORMALISE = String.raw`normali[sz]\w*\b(?!\s+(?:the\s+|our\s+|net\s+)?(?:working capital|nwc|peg|inventory|capex|capital expenditures?|rent|lease|occupancy)\b)`;
+/** "The bottom line" as earnings — not "the bottom line is, I want out". */
+const BOTTOM_LINE = String.raw`bottom[- ]line(?!\s*(?:is|was|here)?\s*[,:—–-])`;
+/** Earnings / normalisation vocabulary. */
+const EARNINGS_TERM_RE = new RegExp(
+  String.raw`\b(?:sde|seller'?s discretionary|discretionary (?:earnings|cash ?flow)|add[- ]?backs?|added[- ]back|adding (?:it |that |them |this |those |everything |it all |all (?:of )?that )?back|add (?:it|that|them|this|those|everything|it all|all (?:of )?that|all of it) back|${NORMALISE}|recast|${CASH_FLOW}|ebitda|earnings|${BOTTOM_LINE}|${MULTIPLE_NOUN})\b`,
+  "i",
+);
+/** "The number going in the book", "what figure is she using" — never "the number of techs". */
+const BOOK_NUMBER_RE =
+  /\b(?:the|that|this|what|which|your|her|his|their|morgan'?s|the broker'?s)\s+(?:actual\s+|real\s+|final\s+)?(?:number|figure)\b(?!\s+(?:of|for|to|i|you|we)\b)[^.?!]{0,60}\b(?:book|cim|memorandum|listing|package|buyers?|going in|goes in|put(?:ting)? in|using|use|telling|came up with|come up with|working (?:with|from|off))\b|\bwhat(?:'s| is) the (?:actual |real |final )?(?:number|figure)\s*\?/i;
+/** A question about the figure itself (not about one item's treatment). */
+const FIGURE_TERM_RE = new RegExp(
+  String.raw`\b(?:sde|seller'?s discretionary|discretionary (?:earnings|cash ?flow)|ebitda|${CASH_FLOW}|earnings|${BOTTOM_LINE}|recast|${MULTIPLE_NOUN})\b`,
+  "i",
+);
+/**
+ * A question about something else: clarifying what the interviewer asked
+ * ("which number are we talking about here — you mean the EBITDA or
+ * something specific on the P&L?", i-privacy-ux run 2), or offering a
+ * document ("should I send you the EBITDA breakdown by division?").
+ */
+const CLARIFY_Q_RE =
+  /\b(?:(?:do|did) you mean|you mean|are you asking|you'?re asking|(?:are|were) we talking about|we talking about|what do you mean|are you referring|you referring|which (?:one|number|figure) (?:do|did|are) you)\b/i;
+const DOC_OFFER_Q_RE =
+  /\b(?:(?:should|can|could|shall|want me to|need me to|i'?ll|i can|i could) (?:i )?(?:send|upload|share|give|attach|forward|provide|pull|email)|do you (?:need|want)(?: me to (?:send|upload|share|pull|forward))?)\b[^?]{0,60}\b(?:statements?|breakdown|reports?|schedules?|spreadsheets?|sheets?|files?|documents?|summary|worksheet|pdf|copy|copies)\b/i;
+
+/**
+ * Add-backs raised by the seller: the vocabulary, or an expense they say is
+ * personal or comes out ("my RAM and Maria's Lexus lease, that's personal,
+ * that comes out"). "That's personal, I'd rather not say", "it comes out to
+ * about 40 hours a week" and "the sign comes out of the window" are not.
+ */
+const ADDBACK_EXPLICIT_RE = new RegExp(
+  String.raw`\b(?:add[- ]?backs?|added[- ]back|add(?:s|ed|ing)? (?:it |that |them |this |those |all |everything |it all |all (?:of )?(?:it|that|this) )?back|sde|seller'?s discretionary|discretionary (?:earnings|cash ?flow)|${NORMALISE}|recast\w*)\b`,
+  "i",
+);
+const ADDBACK_IMPLICIT_RE =
+  /\b(?:that|it|this|those|these|which|they)(?:'s| is| are|'re| was| were)\s+(?:all\s+|just\s+|really\s+|purely\s+|totally\s+)?(?:personal|discretionary)\b(?!\s+(?:matter|question|thing|information|info|stuff|reasons?|choice|decision|preference|call|life|opinion|business|to me|for me)\b)|\b(?:comes?|came|should come|would come|gets? taken|should be taken|taken|take (?:it|that|them|those|this)|pull (?:it|that|them|those|this)|back (?:it|that|them|those|this)) out\b(?!\s+(?:to|at|with|in|on|for|of (?!(?:the |my |our )?(?:numbers|earnings|profit|p&l|books|expenses|financials|business)\b)))/i;
+const EXPENSE_OR_MONEY_RE =
+  /\$\s?\d|\b\d[\d,.]*\s?(?:k|grand|thousand|million)\b|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[- ]\w+)? (?:grand|thousand)\b|\b(?:salary|salaries|wages?|pay|interest|amorti[sz]ation|depreciation|vehicles?|trucks?|cars?|lease|insurance|premiums?|meals?|entertainment|travel|legal|fees|settlement|rent|bonus(?:es)?|perks?|dividends?|draws?|donations?|club|box|phone|expenses?|costs?)\b/i;
+
+/**
+ * The seller's side of a broker-led exchange ("Broker: …\nSeller: …", the
+ * together mode's labelled transcript): a broker who says "your SDE is
+ * about $1.2M" has not raised anything as the seller. Unlabelled text comes
+ * back as is; with only "Speaker N" labels (nobody identified yet) every
+ * line is kept.
+ */
+export function sellerSideOf(message: string | null | undefined): string | null {
+  if (!message) return message ?? null;
+  const LABEL = /^\s*(Broker|Seller|Speaker \d+)\s*:\s*/i;
+  const lines = message.split("\n");
+  if (!lines.some((l) => LABEL.test(l))) return message;
+  const hasSeller = lines.some((l) => /^\s*Seller\s*:/i.test(l));
+  const out: string[] = [];
+  let keep = true;
+  for (const l of lines) {
+    const m = l.match(LABEL);
+    if (m) {
+      const who = m[1].toLowerCase();
+      keep = hasSeller ? who === "seller" : who !== "broker";
+      if (keep) out.push(l.slice(m[0].length));
+    } else if (keep) out.push(l);
+  }
+  return out.join("\n");
+}
+
+/** Did the seller raise add-backs (the vocabulary, or an expense that is personal / comes out)? */
+export function sellerRaisesAddbacks(sellerMessage: string | null | undefined): boolean {
+  const text = sellerSideOf(sellerMessage);
+  if (!text) return false;
+  const t = text.replace(/[’‘]/g, "'");
+  if (ADDBACK_EXPLICIT_RE.test(t)) return true;
+  return sentencesOf(t).some((s) => ADDBACK_IMPLICIT_RE.test(s) && EXPENSE_OR_MONEY_RE.test(s));
+}
+
+/**
+ * An earnings figure the owner states about the BUSINESS: "the business
+ * clears about a million and a half", "we net around $600K", "I take home
+ * 400 grand", "our SDE is about $1.2M". The cue must lead straight into the
+ * figure ("$1.4M net of trade-ins", "gets cleared at closing" and "80% of
+ * gross profit … $6.2 million in revenue" are not claims — seeding corpus);
+ * a verb cue needs the business or the owner as its subject ("Maria takes
+ * home about $85K" and "my shop foreman takes home $95K" are wages); and a
+ * figure for one line or one period ("$60K in scrap metal sales", "$120K a
+ * month") is not what the business earns.
  */
 const CLAIM_FIGURE = String.raw`\$\s?\d[\d,.]*(?:\s?(?:k|m|mm|thousand|million|grand)\b)?|\d[\d,.]*\s?(?:k|m|mm|thousand|million|grand)\b|(?:a|one) million and a half|one and a half million|(?:a|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety)(?:[- ](?:one|two|three|four|five|six|seven|eight|nine))?(?: hundred)?(?: and a half)? (?:thousand|grand|million)`;
-const CLAIM_CUE = String.raw`(?:clears?|cleared|clearing|nets?(?! of)|netted|netting|throws? off|threw off|takes? home|took home|pockets?|pocketed|(?<!gross )(?:sde|ebitda|cash ?flow|earnings|bottom line|take-home|(?:net )?profit)(?:'s|\s+(?:is|was|of|runs?(?: at)?|comes? (?:in )?(?:at|to)|came (?:in )?(?:at|to)|sits? at|would be|should be|around|about|at))?)`;
+const CLAIM_VERB = String.raw`clears?|cleared|clearing|nets?(?! of)|netted|netting|throws? off|threw off|takes? home|took home|pockets?|pocketed`;
+const CLAIM_NOUN = String.raw`(?<!gross )(?:sde|ebitda|cash ?flow|earnings|bottom line|take-home|(?:net )?profit)(?:'s|\s+(?:is|was|of|runs?(?: at)?|comes? (?:in )?(?:at|to)|came (?:in )?(?:at|to)|sits? at|would be|should be|around|about|at))?`;
 const CLAIM_HEDGE = String.raw`(?:about|around|roughly|approximately|close to|nearly|almost|over|under|north of|just over|just under|call it|maybe|like|a solid|a good|probably|easily)`;
-const CLAIM_RE = new RegExp(String.raw`\b${CLAIM_CUE}\s+(?:me\s+|us\s+|the owner\s+)?(?:${CLAIM_HEDGE}\s+){0,2}(${CLAIM_FIGURE})`, "gi");
+const CLAIM_RE = new RegExp(String.raw`\b(?:(${CLAIM_VERB})|${CLAIM_NOUN})\s+(?:me\s+|us\s+|the owner\s+)?(?:${CLAIM_HEDGE}\s+){0,2}(${CLAIM_FIGURE})`, "gi");
+/** The words right before a verb cue name the business or the owner. */
+const CLAIM_SUBJECT_RE =
+  /(?:^|[\s,;:(])(?:i|we|it|(?:the|this|that|my|our|the whole) (?:business|company|shop|store|practice|clinic|firm|operation|place|pharmacy|restaurant|cafe|café|dealership|agency|franchise|plant|garage|thing|outfit))\s+(?:(?:usually|typically|normally|really|still|only|easily|basically|honestly|just|actually|consistently|always|probably|now|currently|comfortably|reliably|historically|roughly|generally)\s+){0,2}$/i;
+/** Someone else's earnings in front of a noun cue ("Maria's take-home is $85K"). */
+const OTHER_PERSON_BEFORE_RE = /(?:\b[A-Z][a-z]+'s|\b(?:his|her|their|your))\s+(?:\w+\s+)?$/;
+/** A figure for one line or one period. */
+const PARTIAL_FIGURE_AFTER_RE =
+  /^\s+(?:a (?:month|week|day)|per (?:month|week|day)|monthly|weekly|in (?:(?:the|our|my)\s+)?(?:[a-z&-]+\s+){0,3}(?:sales|revenue|contracts?|jobs?|work|rentals?|fees|installs?|service|parts|commissions?|tips|billings?)\b|from (?:(?:the|our|my)\s+)?(?!(?:business|company)\b)(?:[a-z&-]+\s+){0,3}(?:contracts?|jobs?|work|rentals?|division|side|line|account|customer|client|location|store|shop|sales)\b|on (?:the|that|this|each|every|a|per) (?:[a-z&-]+\s+){0,2}(?:job|contract|unit|install|sale|deal|project|truck|van|call)\b)/i;
+
+/** The largest earnings figure (≥ $50K) the text states about the business, or null. */
+function earningsClaim(text: string): number | null {
+  let claim: number | null = null;
+  CLAIM_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = CLAIM_RE.exec(text)) !== null) {
+    const before = text.slice(0, m.index);
+    const clause = before.split(/[.;!?\n]|,\s|\s[—–-]\s/).pop() ?? "";
+    if (m[1] ? !CLAIM_SUBJECT_RE.test(clause) : OTHER_PERSON_BEFORE_RE.test(before.slice(-40))) continue;
+    if (PARTIAL_FIGURE_AFTER_RE.test(text.slice(m.index + m[0].length))) continue;
+    const amounts = moneyAmounts(m[2]).filter((n) => n >= 50_000);
+    if (amounts.length > 0) claim = Math.max(claim ?? 0, ...amounts);
+  }
+  return claim;
+}
 
 const SPELLED: Record<string, number> = {
   one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12,
@@ -115,27 +230,24 @@ export interface EarningsTalk {
  * the message is about something else.
  */
 export function sellerEarningsTalk(sellerMessage: string | null | undefined): EarningsTalk | null {
-  if (!sellerMessage) return null;
-  const text = sellerMessage.replace(/[’‘]/g, "'");
+  // (In a broker-led exchange, only what the seller said.)
+  const own = sellerSideOf(sellerMessage);
+  if (!own) return null;
+  const text = own.replace(/[’‘]/g, "'");
   // Question sentences: the text up to each "?" since the last sentence end.
   // A tag ("…when you add it all back, you know what I mean?", "…, right?")
   // makes a statement, not a question (seeding corpus: "Denise adds all that
-  // back when they're showing the real cash flow, you know what I mean?").
+  // back when they're showing the real cash flow, you know what I mean?");
+  // so does a question about the interviewer's question or a document offer.
   const TAG_RE = /,?\s*\b(?:you know what i mean|you know|right|correct|ok(?:ay)?|eh|yeah|no|isn'?t it|don'?t you think|agreed|see what i mean)\s*\?$/i;
-  const questions = (text.match(/[^.!?\n]*\?/g) ?? []).filter((q) => !TAG_RE.test(q.trim()));
+  const questions = (text.match(/[^.!?\n]*\?/g) ?? []).filter((q) => !TAG_RE.test(q.trim()) && !CLARIFY_Q_RE.test(q) && !DOC_OFFER_Q_RE.test(q));
   const asked = questions.some((q) => EARNINGS_TERM_RE.test(q) || BOOK_NUMBER_RE.test(q));
   // What the business earns — not one item the seller counts as an add-back
   // ("my $240K salary is an add-back" is an item, not earnings).
-  let claim: number | null = null;
-  CLAIM_RE.lastIndex = 0;
-  let m: RegExpExecArray | null;
-  while ((m = CLAIM_RE.exec(text)) !== null) {
-    const amounts = moneyAmounts(m[1]).filter((n) => n >= 50_000);
-    if (amounts.length > 0) claim = Math.max(claim ?? 0, ...amounts);
-  }
+  const claim = earningsClaim(text);
   if (!asked && claim === null) return null;
   const aboutFigure = claim !== null || questions.some((q) => FIGURE_TERM_RE.test(q) || BOOK_NUMBER_RE.test(q));
-  const termMatch = text.match(/\b(sde|add[- ]?backs?|cash ?flow|ebitda|earnings)\b/i);
+  const termMatch = (questions.join(" ") || text).match(/\b(sde|add[- ]?backs?|cash ?flow|ebitda|earnings)\b/i);
   const term = termMatch ? (/^sde$/i.test(termMatch[1]) ? "SDE" : /^ebitda$/i.test(termMatch[1]) ? "EBITDA" : termMatch[1].toLowerCase()) : null;
   return { asked, aboutFigure, claim, term };
 }
@@ -165,14 +277,24 @@ export interface StatementEarnings {
   basis: string | null;
 }
 
-/** Reported (never normalised) earnings keys, most useful first. */
+/**
+ * Reported (never normalised) earnings keys, the measure nearest a seller's
+ * "what it clears" first: reported EBITDA, then income before tax, then net
+ * income. (Round A set after-tax net income — $563,190 — against a claim
+ * that included add-backs; reported EBITDA, $917,000 on the same file, is
+ * the statements' closest line. Neither is the seller's measure, which is
+ * why the note says "as reported, before any adjustments".)
+ */
 const STATEMENT_EARNINGS_KEYS: Array<[RegExp, string]> = [
+  [/^(?:ebitda|EBITDA|reportedEbitda|ebitdaReported)$/, "EBITDA"],
+  [/^(?:netIncomeBeforeTax(?:es)?|incomeBeforeTax(?:es)?|pretaxIncome|preTaxIncome)$/, "income before tax"],
   [/^netIncome$/, "net income"],
   [/^netIncomeAfterTax(?:es)?$/, "net income"],
   [/^netProfit$/, "net profit"],
   [/^netEarnings$/, "net earnings"],
-  [/^(?:netIncomeBeforeTax(?:es)?|incomeBeforeTax(?:es)?|pretaxIncome|preTaxIncome)$/, "income before tax"],
 ];
+/** A value that is itself normalised ("adjusted EBITDA $1.1M", "$1,312,000 SDE"). */
+const NORMALISED_VALUE_RE = /\b(?:adjusted|normali[sz]ed|recast|pro[- ]?forma|sde|add[- ]?backs?|seller'?s discretionary)\b/i;
 
 /**
  * The seller-visible statements' reported earnings for the latest year on
@@ -192,6 +314,7 @@ export function statementEarnings(
     if (typeof raw !== "string" && typeof raw !== "number") continue;
     // The headline clause ("$563,190 after tax (FY2024); FY2023 $482,930…").
     const head = String(raw).split(/;|\n/)[0];
+    if (NORMALISED_VALUE_RE.test(head)) continue;
     const fig = head.match(/-?\$\s?\d[\d,]*(?:\.\d+)?\s?(?:[kKmM](?![a-z])|million|thousand)?/);
     if (!fig) continue;
     const amounts = moneyAmounts(fig[0]);
@@ -226,16 +349,25 @@ const GENERIC_HANDOFF_RE = /\s*Your broker will confirm what gets added back whe
  * earnings question. Carries no add-back vocabulary and no normalised
  * figure (the add-back guard reads it as a hand-off, never as a call).
  */
-export function earningsHandoffLine(talk: EarningsTalk): string {
+export function earningsHandoffLine(talk: EarningsTalk, priorAiText = ""): string {
   // A question about how items are treated gets the add-back hand-off.
   if (!talk.aboutFigure) return GENERIC_ADDBACK_HANDOFF;
   const what = talk.claim !== null ? `the ${formatMoney(talk.claim)}` : talk.term === "SDE" ? "the SDE question" : talk.term && /add/.test(talk.term) ? "the add-backs" : "your earnings question";
-  return `On ${what}: the earnings figure that goes in the book is your broker's to walk you through, against your statements.`;
+  // Asked again, the seller hears it in other words, not the same sentence
+  // word for word (a stuck record reads as a dodge too).
+  const variants = [
+    `On ${what}: the earnings figure that goes in the book is your broker's to walk you through, against your statements.`,
+    "That figure is one your broker will go through with you directly, line by line against your statements.",
+    "The number itself is your broker's to walk you through — it's worth putting to them directly.",
+  ];
+  const said = priorAiText.replace(/[’‘]/g, "'");
+  const uses = variants.map((v) => said.split(v.replace(/^On [^:]+: /, "")).length - 1);
+  return variants[uses.indexOf(Math.min(...uses))];
 }
 
-/** The neutral note of what the statements show ("For reference, …"). */
+/** The neutral note of what the statements show ("For reference, …") — the reported line, named as such. */
 export function statementNoteLine(s: StatementEarnings): string {
-  return `For reference, the ${s.period ? `${s.period} ` : ""}financials on file show ${s.label} of ${s.shown}${s.basis ? ` (${s.basis})` : ""}.`;
+  return `For reference, the ${s.period ? `${s.period} ` : ""}statements on file report ${s.label} of ${s.shown}${s.basis ? ` ${s.basis}` : ""}, before any adjustments.`;
 }
 
 /** Is the statements' figure already in this text? */
@@ -282,7 +414,7 @@ export function ensureEarningsAcknowledged(message: string, ctx: EarningsAckCont
     s && talk.claim !== null && Math.abs(talk.claim - s.amount) / Math.max(talk.claim, Math.abs(s.amount)) > 0.1 && !mentionsAmount(`${prior} ${body}`, s.amount)
       ? ` ${statementNoteLine(s)}`
       : "";
-  const lead = `${earningsHandoffLine(talk)}${note}`;
+  const lead = `${earningsHandoffLine(talk, prior)}${note}`;
   const rest = body.trim();
   const out = rest ? `${lead}\n\n${rest.charAt(0).toUpperCase()}${rest.slice(1)}` : lead;
   return { message: out, added: true };
@@ -293,10 +425,21 @@ export function ensureEarningsAcknowledged(message: string, ctx: EarningsAckCont
  * earnings, SDE or add-backs (null otherwise) — so the draft answers it
  * the right way the first time.
  */
-export function earningsNudge(sellerMessage: string | null | undefined, statements: StatementEarnings | null): string | null {
+export function earningsNudge(
+  sellerMessage: string | null | undefined,
+  statements: StatementEarnings | null,
+  opts: { together?: boolean } = {},
+): string | null {
+  // (Both readers take the seller's own lines of a broker-led exchange.)
   const talk = sellerEarningsTalk(sellerMessage);
-  const addbacksRaised = !!sellerMessage && /\badd[- ]?backs?\b|\badd(?:ed|ing)? (?:it |that |them |this |those |everything |it all )?back\b|\b(?:that|it|this)(?:'s| is) personal\b|\bcomes? out\b/i.test(sellerMessage);
-  if (!talk && !addbacksRaised) return null;
+  if (!talk && !sellerRaisesAddbacks(sellerMessage)) return null;
+  if (opts.together) {
+    // Broker-led: the broker is in the room and answers it themselves.
+    return [
+      "# THE SELLER RAISED EARNINGS / SDE / ADD-BACKS",
+      "The broker is in the room and will answer this themselves — do not answer it, hand it off or comment on it. Do NOT list, name or total items that are or might be added back, and do NOT agree that an item is an add-back. Record what the seller said as their view, and give the broker the next question.",
+    ].join("\n");
+  }
   const lines = [
     "# THE SELLER RAISED EARNINGS / SDE / ADD-BACKS",
     "Never ignore or dodge this, and never turn it into a list. In ONE or TWO sentences before your next question:",
@@ -304,7 +447,7 @@ export function earningsNudge(sellerMessage: string | null | undefined, statemen
   ];
   if (talk?.claim != null && statements) {
     lines.push(
-      `- They stated ${formatMoney(talk.claim)}. The financials on file (seller-visible) show ${statements.label} of ${statements.shown}${statements.period ? ` for ${statements.period}` : ""}${statements.basis ? ` (${statements.basis})` : ""}. If you haven't already, you may note that figure NEUTRALLY ("For reference, the ${statements.period ?? "latest"} financials show ${statements.label} of ${statements.shown}") — no bridge between the two, no adjustments, no verdict on their number.`,
+      `- They stated ${formatMoney(talk.claim)}. The statements on file (seller-visible) report ${statements.label} of ${statements.shown}${statements.period ? ` for ${statements.period}` : ""}${statements.basis ? ` (${statements.basis})` : ""} — a different measure from theirs (as reported, before any adjustments). If you haven't already, you may note that figure NEUTRALLY and name it as the reported line ("For reference, the ${statements.period ?? "latest"} statements report ${statements.label} of ${statements.shown}, before any adjustments") — no bridge between the two, no adjustments, no verdict on their number.`,
     );
   }
   lines.push(
@@ -324,7 +467,10 @@ const EXPENSE_WORD_RE =
   /\b(?:salary|salaries|wages?|comp(?:ensation)?|pay|interest|amorti[sz]ation|depreciation|vehicles?|trucks?|cars?|lease|insurance|premiums?|meals?|entertainment|travel|legal|fees|settlement|personal|owner|rent|bonus(?:es)?|perks?|dividends?|draws?|donations?|club|box|family)\b/i;
 const AGREE_START_RE =
   /^(?:you'?re (?:absolutely |completely |totally )?(?:right|correct)|that'?s (?:right|correct|true|fair)|correct|agreed|exactly|fair point|good (?:point|catch))\b/i;
-const AGREE_OBJECT_RE = /\b(?:items?|those|them|they|these|expenses?|costs?|sheet|list|schedule|documents?|breakdown|add[- ]?backs?)\b/i;
+// What the agreement is about: the items / the list — not "it's in the
+// documents", which is the apology the never-re-ask rule asks for ("You're
+// right — it's in the documents Denise sent, and I should have checked.").
+const AGREE_OBJECT_RE = /\b(?:items?|expenses?|costs?|sheet|list|schedule|breakdown|add[- ]?backs?)\b/i;
 const PROMISE_RE =
   /\b(?:i'?ll|i will|we'?ll|we will|let me)\s+(?:make sure|ensure|include|add|capture|count|list|put)\b|\bi(?:'ve| have) (?:got|captured|included|added|listed)\b/i;
 
@@ -337,12 +483,13 @@ const moneyCount = (s: string): number =>
  * agree to the seller's add-back claims (question sentences never count —
  * asking about one-time or personal costs is the interviewer's job). Only
  * in money context: the seller raised earnings / add-backs, or the reply
- * itself talks about them.
+ * itself talks about them. "Raised" is read in context (sellerRaisesAddbacks,
+ * sellerEarningsTalk): "I've told you multiple times" or "I already gave you
+ * the cash flow statement" is a re-ask complaint, and its apology stays.
  */
 export function candidateListStatements(message: string, sellerMessage?: string | null): string[] {
   const text = message.replace(/[’‘]/g, "'");
-  const seller = (sellerMessage ?? "").replace(/[’‘]/g, "'");
-  const sellerRaised = !!seller && (EARNINGS_TERM_RE.test(seller) || /\b(?:that|it|this)(?:'s| is) personal\b|\bcomes? out\b|\bone-?time\b/i.test(seller));
+  const sellerRaised = sellerRaisesAddbacks(sellerMessage) || !!sellerEarningsTalk(sellerMessage)?.asked;
   const sentences = sentencesOf(text);
   const replyMoney = sentences.some((s) => EARNINGS_TERM_RE.test(s) || CANDIDATE_FRAME_RE.test(s));
   if (!sellerRaised && !replyMoney) return [];

@@ -1208,6 +1208,18 @@ const AGREEMENT_TAIL_RE =
   /(?:^|[,;:—–]\s*|\s-\s|\s)(?:so\s+|and\s+)?(?:that|this|it|which)\s+(?:(?:all|really|definitely|certainly|also)\s+)?(?:tracks|checks out|lines up|adds up|matches(?: up)?|squares(?: up)?|is consistent|fits)(?:\s+with\s+[^.?!]{1,80})?\s*[.!]?$/i;
 
 /**
+ * A question with no subject of its own — it leans on the sentence before
+ * it ("How many are seasonal?", "Of those, …", "Is that driven by…?",
+ * "Are they all on salary?").
+ */
+const LEANS_ON_LEAD_RE =
+  /^(?:(?:and|so|but)\s+)?(?:how many (?:of (?:those|them|these)\s+)?(?:are|were|is|do|does|did|have|work|hold|of)\b|how much of (?:that|it|this|those)\b|what (?:share|portion|percentage|part|proportion|fraction|number) (?:of (?:those|them|these|that|it)|are|is)\b|(?:of|among) (?:those|them|these)\b|(?:are|were|do|did|have|will|would) (?:they|those|these|all of them)\b|(?:is|was|does|did|has|will|would) (?:that|it|this)\b|which (?:of (?:those|them|these)|ones?)\b|who (?:are|were) they\b|(?:where|when|why|how) (?:are|were|do|did|is|was|does) (?:they|those|these|that|it)\b)/i;
+
+/** A clause naming what is still open — never part of a recap. */
+const OPEN_ITEM_RE =
+  /\b(?:still (?:outstanding|open|missing|pending|to come|needed|needs?|waiting)|outstanding|open (?:items?|questions?|points?)|the (?:one|only|last|main) (?:thing|item|piece|question|gap)s? (?:still |left |we |i |that )|follow(?:s|ing)? up|circle back|pending|waiting (?:on|for)|(?:can|could|will|would|should) (?:send|upload|share|pull|forward|get us|get me|get your broker)|(?:send|upload|share|forward) (?:it|that|them|those|over)|next (?:step|time|session)|left to (?:cover|do|confirm|get))\b/i;
+
+/**
  * A session recap inside a sentence ("Of course — we've covered a lot of
  * ground.") — the clause and whatever lists after it go; what came before
  * stays ("Of course."). "" when nothing is left. Unchanged when there is none.
@@ -1218,7 +1230,14 @@ function dropSessionRecap(sentence: string): string {
   const core = sentence.trim();
   if (!core || core.includes("?")) return sentence;
   const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
-  const clauses = clausesOf(core.slice(0, core.length - end.length));
+  // (Split finer than clausesOf: ", and the one thing still outstanding
+  // is…" after a recap is its own clause here.)
+  const clauses = clausesOf(core.slice(0, core.length - end.length)).flatMap((c) => {
+    const parts = c.text.split(/(,\s+(?=(?:and|but|so|while)\s))/);
+    const res: Clause[] = [{ sep: c.sep, text: parts[0] ?? "" }];
+    for (let k = 1; k < parts.length; k += 2) res.push({ sep: parts[k], text: parts[k + 1] ?? "" });
+    return res;
+  });
   const plain = (t: string) => t.replace(/[’‘]/g, "'");
   // (A recap listing "capex versus growth investments" is not reconciling
   // anything — the reconciliation pattern doesn't make it work here.)
@@ -1226,8 +1245,10 @@ function dropSessionRecap(sentence: string): string {
   const at = clauses.findIndex((c) => RECAP_START_RE.test(plain(c.text).trim().replace(LEADING_CONJ_RE, "")) && !works(c.text));
   if (at < 0) return sentence;
   // The recap and the topics listed after it go; a later clause that does
-  // work ("— if Rob can send the tooling list, …") stays.
-  const resume = clauses.findIndex((c, i) => i > at && works(c.text));
+  // work ("— if Rob can send the tooling list, …") or names what is still
+  // open ("…, and the one thing still outstanding is the zoning letter",
+  // "— your broker will follow up on the WSIB letters") stays.
+  const resume = clauses.findIndex((c, i) => i > at && (works(c.text) || OPEN_ITEM_RE.test(plain(c.text))));
   const keptClauses = [...clauses.slice(0, at), ...(resume > 0 ? clauses.slice(resume) : [])];
   const kept = keptClauses
     .map((c, i) => (i === 0 ? c.text.replace(LEADING_CONJ_RE, "") : c.sep + c.text))
@@ -1250,7 +1271,13 @@ export function stripQuestionVerdicts(message: string): string {
   let changed = false;
   const out = spans.map((sp) => {
     if (!sp.text.includes("?")) return sp.text;
-    const t = sp.text.replace(QUESTION_VERDICT_CLAUSE_RE, "");
+    // A comparison that carries the other figure is the reconciliation the
+    // question asks about ("…$1.2M in revenue, which is low compared to the
+    // $1.5M you mentioned — which figure is right?"), not a verdict: it stays.
+    const t = sp.text.replace(QUESTION_VERDICT_CLAUSE_RE, (clause) =>
+      // (A year alone — "which is high for 2024" — is no second figure.)
+      /\$\s?\d|\d\s?%|\b(?!(?:19|20)\d{2}\b)\d[\d,.]*\b|\byou (?:mentioned|said|told|gave|quoted|estimated)\b/i.test(clause) ? clause : "",
+    );
     if (t !== sp.text) changed = true;
     return t;
   });
@@ -1391,7 +1418,24 @@ export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string 
   // out ("Quick clarification: the staff roster shows Sal starting in 2009,
   // which would be about sixteen years — so that tracks.") clarifies
   // nothing: it is the answer played back with a verdict (round A, Lakeshore T6).
-  if (AGREEMENT_TAIL_RE.test(core.replace(/[’‘]/g, "'"))) return "";
+  const agreed = core.replace(/[’‘]/g, "'").match(AGREEMENT_TAIL_RE);
+  if (agreed) {
+    // …unless the question stands on the sentence's fact ("Your T4 summary
+    // shows 42 employees, which lines up with the roster. How many are
+    // seasonal?" — cut whole, the question has no antecedent): then the
+    // fact stays and only the verdict goes.
+    const fact = core.slice(0, agreed.index).replace(/[,;:\s—–-]+$/, "").replace(/^(?:quick |one quick |just a )?clarification:\s*/i, "");
+    if (
+      ctx.question &&
+      LEANS_ON_LEAD_RE.test(ctx.question.trim().replace(/[’‘]/g, "'")) &&
+      fact &&
+      (CITES_FILE_RE.test(fact) || FACT_CONTEXT_RE.test(fact)) &&
+      !echoesSeller(fact, ctx.sellerMessage)
+    ) {
+      return `${lead}${capitalise(fact)}.${trail}`;
+    }
+    return "";
+  }
   const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
   const body = core.slice(0, core.length - end.length);
   // An aside between dashes is part of the clause around it: "That

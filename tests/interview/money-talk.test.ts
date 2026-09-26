@@ -91,7 +91,10 @@ const wellFormed = (text: string) => {
   const r1 = removeNormalisationAssertions(T1, S1);
   assert.doesNotMatch(r1.message, /\$240K|\$85K|\$38K|\$214K|typically get considered/);
   assert.match(r1.message, /Are there any expenses in 2024 that were one-time or discretionary/, "'other' no longer points at a removed list");
-  assert.match(r1.message, new RegExp(`${NORMALISATION_HANDOFF.replace(/[.]/g, "\\.")} Are there any expenses`));
+  // The reply already hands the figure to Morgan ("The SDE calculation is something Morgan finalizes…"):
+  // no second, generic hand-off is spliced in (round-A review: repeated hand-offs).
+  assert.match(r1.message, /^The SDE calculation is something Morgan finalizes directly with the financials — [^\n]*\. Are there any expenses/);
+  assert.doesNotMatch(r1.message, /Your broker will confirm/);
   wellFormed(r1.message);
 
   const t2 = candidateListStatements(T2_DRAFT, S2);
@@ -201,18 +204,19 @@ const wellFormed = (text: string) => {
 
   // T3 (the first time the seller states it): the fleet probe stays, the claim is acknowledged, the statements noted.
   const t3 = polishMessage(T3, ctxFor(S3, T1)).message;
-  assert.match(t3, /^On the \$1\.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements\. For reference, the FY2024 financials on file show net income of \$563,190 \(after tax\)\.\n\nOne quick clarification: [^\n]*twenty-six trucks on the road, but the fleet list Denise sent shows 24 service vans/);
+  assert.match(t3, /^On the \$1\.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements\. For reference, the FY2024 statements on file report net income of \$563,190 after tax, before any adjustments\.\n\nOne quick clarification: [^\n]*twenty-six trucks on the road, but the fleet list Denise sent shows 24 service vans/);
   // T6: asked — the "so that tracks" confirmation goes, the hand-off is first; the statements aren't repeated once shown.
   const shownBefore = `${T1}\n${t3}`;
   const t6 = polishMessage(T6, ctxFor(S6, shownBefore)).message;
   assert.doesNotMatch(t6, /so that tracks|Quick clarification/);
-  assert.match(t6, /^On the \$1\.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements\.\n\nOn the retention question/);
+  // Asked again, answered again — in other words, not the same sentence word for word (round-A review).
+  assert.match(t6, /^That figure is one your broker will go through with you directly, line by line against your statements\.\n\nOn the retention question/);
   assert.doesNotMatch(t6, /For reference/, "the statements' figure is noted once");
-  // T7 and T8: asked again → answered again.
-  const t7 = polishMessage(T7, ctxFor(S7, shownBefore)).message;
-  assert.match(t7, /^On the \$1\.5M: the earnings figure that goes in the book is your broker's to walk you through/);
-  const t8 = polishMessage("Could Denise send over a breakdown showing each tech's name alongside their certifications?", ctxFor(S8, shownBefore)).message;
-  assert.match(t8, /^On the SDE question: the earnings figure that goes in the book is your broker's to walk you through/);
+  // T7 and T8: asked again → answered again, each time.
+  const t7 = polishMessage(T7, ctxFor(S7, `${shownBefore}\n${t6}`)).message;
+  assert.match(t7, /^The number itself is your broker's to walk you through — it's worth putting to them directly\.\n\nLet me ask about something else/);
+  const t8 = polishMessage("Could Denise send over a breakdown showing each tech's name alongside their certifications?", ctxFor(S8, `${shownBefore}\n${t6}\n${t7}`)).message;
+  assert.match(t8, /^On the SDE question: the earnings figure that goes in the book is your broker's to walk you through/, "all three used once: back to the first");
   // Never an add-back call: the inserted lines pass the add-back guard, and it is idempotent.
   for (const [t, s] of [[t3, S3], [t6, S6], [t7, S7], [t8, S8]]) {
     assert.deepEqual(findNormalisationAssertions(t, s), [], t);
