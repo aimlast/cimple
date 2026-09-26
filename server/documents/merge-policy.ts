@@ -890,8 +890,11 @@ export function mergeYearMapInto(info: Info, key: string, incoming: Record<strin
 
 /** Lead kinds: second-hand or public figures, never a headline next to a firm one. */
 const HEADLINE_LEAD_KINDS: ReadonlySet<string> = new Set(["crm", "website", "social"]);
+// A broker-only value the broker vouched for (a discrepancy settled on the
+// broker's own figure: brokerOnly + acceptedByBroker) is private from the
+// seller, but a firm figure — not a lead.
 const isLeadSource = (s: Partial<FieldSource> | null | undefined) =>
-  !!s && (!!s.brokerOnly || HEADLINE_LEAD_KINDS.has(String(s.source)));
+  !!s && ((!!s.brokerOnly && !s.acceptedByBroker) || HEADLINE_LEAD_KINDS.has(String(s.source)));
 const isYearKey = (y: string) => /^(?:19|20)\d{2}$/.test(y);
 /**
  * A source that closes a fiscal year's figure for the headline: a written

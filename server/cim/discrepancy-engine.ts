@@ -42,6 +42,7 @@ import { sliceRelevantText } from "../financial/analyzer";
 import { filterDiscrepancyItems, isMissingSide, sidesEquivalent, numberTokens, tokensMatch, type NumTok } from "./discrepancy-filter";
 import type { DiscrepancySideSources, DiscrepancySideSource } from "@shared/discrepancy-sides";
 import { scrubPrivateText } from "./discrepancy-privacy";
+import { likeForLikeCountConflict, stripSourceRefs, sameConflictByFigures } from "./discrepancy-backstop";
 import { HEADLINE_MAPS } from "../documents/merge-policy";
 import type { SourceKind } from "@shared/schema";
 
@@ -99,6 +100,8 @@ export interface ExistingDiscrepancy {
   interviewValue?: string | null;
   documentValue?: string | null;
   resolvedValue?: string | null;
+  /** The row's explanation — the figures a finding shares with it identify the same conflict. */
+  aiExplanation?: string | null;
 }
 
 export interface CheckDocument {
@@ -120,8 +123,11 @@ export function normalizeDiscrepancyFieldKey(field: string): string {
 
 /**
  * Deterministic backstop for the model's existingId: the same fact key (and
- * year), the same normalized field key, or a shared meaningful word in the
- * field plus a shared value.
+ * year), the same normalized field key, a shared meaningful word in the
+ * field plus a shared value — or, across sources and field names, the same
+ * two figures and a shared distinctive word (the check's
+ * "westlockProjectStatus" and the analysis's "Signed backlog (May 2025)" are
+ * one conflict: $4.2M claimed incl. the $1.1M Westlock award).
  */
 export function isSameDiscrepancy(
   item: { field: string; factKey?: string | null; factYear?: string | null; interviewValue?: string | null; documentValue?: string | null },
@@ -145,6 +151,7 @@ export function isSameDiscrepancy(
     (!item.factYear || !existing.factYear || item.factYear === existing.factYear) &&
     existingValues.some((v) => itemValues.has(v))
   ) return true;
+  if (sameConflictByFigures(item, existing)) return true;
   const tokens = (s: string) =>
     new Set(s.toLowerCase().replace(/[^a-z0-9]+/g, " ").split(" ").filter((t) => t.length >= 3));
   const a = tokens(item.field);
@@ -193,6 +200,8 @@ export interface DiscrepancyInput {
   candidates: ConflictCandidate[];
   evidenceDocs: CheckDocument[];
   factKeys: string[];
+  /** Every value on file with its source ref — winners and other values alike (a finding's fact key is found from them). */
+  entries?: FactEntry[];
 }
 
 const CLAIM_KINDS = new Set(["interview", "questionnaire", "call", "video_call", "email"]);
@@ -422,6 +431,7 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
     candidates: candidates.slice(0, 60),
     evidenceDocs: documents.filter((d) => isEvidenceDocument(d) && (d.extractedText || d.extractedData)),
     factKeys,
+    entries: Array.from(byTarget.values()).flatMap((list) => list.map((x) => x.entry)),
   };
 }
 
@@ -452,6 +462,54 @@ function validFactKey(key: unknown, input: DiscrepancyInput): string | null {
   const k = key.trim();
   if (!k || !/^[a-z][A-Za-z0-9]*$/.test(k)) return null;
   if (input.factKeys.includes(k) || GENERIC_FIELD_LABELS[k] || k === "revenueByYear") return k;
+  return null;
+}
+
+const flatText = (s: string) => s.toLowerCase().replace(/[^a-z0-9%$.]+/g, " ").replace(/\s+/g, " ").trim();
+
+/** One text states the other: equal, or the shorter (12+ characters) inside the longer. */
+function statesValue(onFile: string, finding: string): boolean {
+  const a = flatText(onFile);
+  const b = flatText(finding);
+  if (!a || !b) return false;
+  if (a === b) return true;
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 12 && long.includes(short);
+}
+
+/** "Lease expiry" → "leaseExpiry" — a label that spells a fact key. */
+function labelKey(label: string): string {
+  const words = label.replace(/\([^)]*\)/g, " ").replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/).filter(Boolean);
+  return words.map((w, i) => (i === 0 ? w.toLowerCase() : w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())).join("");
+}
+
+/**
+ * The fact a finding is about when the model left factKey empty (or named
+ * one that doesn't exist): the conflict candidate it reports, else the one
+ * fact on file whose value (or other value) the finding quotes from the
+ * same source, else a label that spells a fact key ("Lease expiry" →
+ * leaseExpiry). Harborview's "Lease expiry" came back with no key while
+ * leaseExpiry was on file — the resolution then had nowhere to go. The
+ * resolution's own guards still refuse a fact that isn't the figure.
+ */
+export function inferFactKey(
+  input: DiscrepancyInput,
+  finding: { field: string; claimValue: string; evidenceValue: string; claimRef?: string; evidenceRef?: string; candidate?: ConflictCandidate },
+): { factKey: string; factYear: string | null } | null {
+  if (finding.candidate) return { factKey: finding.candidate.factKey, factYear: finding.candidate.factYear ?? null };
+  const entries = input.entries ?? [];
+  const keysFrom = (ref: string | undefined, value: string) =>
+    ref && value ? entries.filter((e) => e.ref === ref && statesValue(e.value, value)) : [];
+  const hits = [...keysFrom(finding.claimRef, finding.claimValue), ...keysFrom(finding.evidenceRef, finding.evidenceValue)];
+  const keys = Array.from(new Set(hits.map((e) => e.key)));
+  if (keys.length === 1) {
+    const years = Array.from(new Set(hits.map((e) => e.year).filter((y): y is string => !!y)));
+    return { factKey: keys[0], factYear: years.length === 1 ? years[0] : null };
+  }
+  const spelled = labelKey(finding.field);
+  if (spelled && input.factKeys.includes(spelled)) return { factKey: spelled, factYear: null };
+  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([k, l]) => l.toLowerCase() === finding.field.trim().toLowerCase() && input.factKeys.includes(k));
+  if (byLabel) return { factKey: byLabel[0], factYear: null };
   return null;
 }
 
@@ -561,6 +619,7 @@ ${facts.length > 0 ? `Facts it states:\n${facts.map(renderEntry).join("\n")}\n` 
     "You are a due diligence verification agent for an M&A deal. You compare what the seller said with what the documents show and report only REAL conflicts.",
     "Report a conflict only when two identifiable sources state different values for the same thing. Never report missing data or a document that wasn't provided. Never report two ways of saying the same value (a monthly vs an annual amount, a start year vs years of tenure, '23' vs '23 employees', rounding).",
     "Never compare an adjusted/normalized earnings figure (adjusted EBITDA, SDE, recast) with a reported one — they are different metrics.",
+    "Never compare proposed, future or not-yet-agreed terms (a proposed new lease rate, a renewal under negotiation) with the terms in force — different things, not a conflict. A seller who states a proposed or optional term AS the current one (the lease 'expires 2034' when 2034 is only an unexercised option) IS a conflict.",
     "Never compare a part with a whole or a different period: one division's or segment's revenue (long-term care, dispensary only) with total revenue, one location with the company, one year with another. A value that is plainly mislabelled in the facts (a segment figure filed as total revenue) is not a seller conflict — skip it.",
     "Material conflicts to look for especially: revenue, EBITDA/SDE, owner compensation and add-backs claimed vs supported; customer concentration (a seller's 'about a quarter' vs a document's 41% IS a conflict); lease expiry, term and renewal options (a different year IS a conflict — and a lease 'expiring 2034' when the lease runs to 2029 with an unexercised option to 2034 IS a conflict: the lease expires in 2029 unless the option is exercised); headcount by role (licensed technicians, drivers, full-time vs part-time); fleet or equipment counts; tenure and dates; contract terms; licences.",
     "Every conflict candidate (C1, C2, …) needs a decision: report it (with its candidateId) or list it in dismissedCandidates with the reason. A candidate is a real conflict when the two values state the same thing differently; dismiss it when they describe different things or agree.",
@@ -569,7 +628,8 @@ ${facts.length > 0 ? `Facts it states:\n${facts.map(renderEntry).join("\n")}\n` 
     "factKey is the fact whose value IS the conflicting figure (the broker's resolution replaces that value), chosen from the fact keys shown. A part of a broader fact is not that fact — licensed technicians are not total employees, one customer's share is not the revenue mix — leave factKey empty then. For a per-year fact shown with [year], give factYear.",
     "claimSource and evidenceSource are the S-refs shown. The claim side is the seller-side or BROKER-PRIVATE source; the evidence side is always a document.",
     "BROKER-PRIVATE sources are the broker's own notes. You may compare them, but the explanation and suggestedResolution must NEVER quote their value or name them (no 'CRM', 'broker note', 'site visit', 'recast'): describe only what the document shows and what needs confirming — this text may be read to the seller.",
-    "Write values plainly (the value only, no source name) and explanations in plain broker English.",
+    "Write values plainly (the value only, no source name, no S-ref) and explanations in plain broker English. Never write the S-refs (S1, S2, …) anywhere except claimSource / evidenceSource — name the source in words instead ('the premises lease', 'the video call').",
+    "A count of the same role or thing on both sides that differs (24 vs 22 licensed field technicians) is a conflict even when one side reads like a rough count — report it; the broker decides which is current.",
   ].join("\n");
 
   const user = `## Business: ${deal.businessName}
@@ -615,6 +675,26 @@ Report the real conflicts with the report_discrepancies tool.`;
         }
       : undefined;
 
+  // Broker-facing names for the prompt's source refs; a private one is never
+  // named (null), an unknown one isn't ours (undefined).
+  const REF_KIND_NAME: Record<string, string> = {
+    interview: "the seller interview",
+    questionnaire: "the seller questionnaire",
+    call: "the call with the seller",
+    video_call: "the video call with the seller",
+    email: "the seller's email",
+    broker: "your edit",
+    document: "a document",
+  };
+  const refName = (ref: string): string | null | undefined => {
+    const r = refMap.get(ref);
+    if (!r) return undefined;
+    if (r.cls === "private") return null;
+    const docName = r.documentId ? docMap.get(r.documentId)?.name : undefined;
+    if (docName) return `“${docName}”`;
+    return REF_KIND_NAME[r.kind] ?? "another source";
+  };
+
   const mapped: DiscrepancyItem[] = [];
   for (const raw of rawItems) {
     if (!raw || !raw.field || !raw.explanation) continue;
@@ -648,8 +728,19 @@ Report the real conflicts with the report_discrepancies tool.`;
       }
     }
     if (claimRef && evidenceRef && claimRef.documentId && claimRef.documentId === evidenceRef.documentId) continue;
-    const factKey = validFactKey(raw.factKey, input);
-    const factYear = factKey && typeof raw.factYear === "string" && /^(?:FY\s*)?\d{4}$|^[A-Za-z0-9 ]{2,12}$/.test(raw.factYear.trim()) ? raw.factYear.trim() : null;
+    // Internal source refs never reach broker-facing text.
+    claimValue = stripSourceRefs(claimValue, refName, "value");
+    evidenceValue = stripSourceRefs(evidenceValue, refName, "value");
+    const field = stripSourceRefs(String(raw.field), refName, "value");
+    let factKey = validFactKey(raw.factKey, input);
+    let factYear = factKey && typeof raw.factYear === "string" && /^(?:FY\s*)?\d{4}$|^[A-Za-z0-9 ]{2,12}$/.test(raw.factYear.trim()) ? raw.factYear.trim() : null;
+    if (!factKey) {
+      const candidate = fromCandidate ?? input.candidates.find(
+        (c) => c.claim.ref === claimRef?.ref && c.evidence.ref === evidenceRef?.ref && (statesValue(c.claim.value, claimValue) || statesValue(c.evidence.value, evidenceValue)),
+      );
+      const inferred = inferFactKey(input, { field, claimValue, evidenceValue, claimRef: claimRef?.ref, evidenceRef: evidenceRef?.ref, candidate });
+      if (inferred) ({ factKey, factYear } = inferred);
+    }
     const evidenceDoc = evidenceRef?.documentId ? docMap.get(evidenceRef.documentId) : undefined;
     const sideSources: DiscrepancySideSources = {};
     const claimSide = toSide(claimRef);
@@ -657,15 +748,15 @@ Report the real conflicts with the report_discrepancies tool.`;
     if (claimSide) sideSources.interview = claimSide;
     if (evidenceSide) sideSources.document = evidenceSide;
     const scrubbed = scrubPrivateText({
-      field: String(raw.field),
+      field,
       interviewValue: claimValue,
       documentValue: evidenceValue,
-      aiExplanation: String(raw.explanation),
-      suggestedResolution: String(raw.suggestedResolution ?? ""),
+      aiExplanation: stripSourceRefs(String(raw.explanation), refName, "prose"),
+      suggestedResolution: stripSourceRefs(String(raw.suggestedResolution ?? ""), refName, "prose"),
       sideSources,
     });
     mapped.push({
-      field: String(raw.field).trim().slice(0, 200),
+      field: field.trim().slice(0, 200),
       factKey,
       factYear,
       interviewValue: scrubbed.interviewValue,
@@ -680,6 +771,61 @@ Report the real conflicts with the report_discrepancies tool.`;
       existingId: isUuid(raw.existingId) && existingIds.has(raw.existingId) ? raw.existingId : undefined,
     });
   }
+
+  // Backstop: a candidate the model did not report, where both sides count
+  // the same role or thing and give different numbers (Lakeshore: "24
+  // licensed field technicians" vs the roster's 22, dismissed as "seller's
+  // rough count"), is raised anyway — the broker decides which is current.
+  const reportedIds = new Set(rawItems.map((r) => String(r?.candidateId ?? "").trim().toUpperCase()).filter(Boolean));
+  input.candidates.forEach((c, i) => {
+    if (reportedIds.has(`C${i + 1}`)) return;
+    const claimRef = refMap.get(c.claim.ref);
+    const evidenceRef = refMap.get(c.evidence.ref);
+    if (!claimRef || !evidenceRef || evidenceRef.cls !== "evidence" || (claimRef.cls !== "claim" && claimRef.cls !== "private")) return;
+    if (claimRef.documentId && claimRef.documentId === evidenceRef.documentId) return;
+    const hit = likeForLikeCountConflict(c.claim.value, c.evidence.value);
+    if (!hit) return;
+    // Already reported under another candidate or wording.
+    const sameCounts = (m: DiscrepancyItem) =>
+      likeForLikeCountConflict(m.interviewValue, m.documentValue)?.claim.key === hit.claim.key ||
+      (m.interviewValue.includes(hit.claim.text) && m.documentValue.includes(hit.evidence.text));
+    if (mapped.some(sameCounts)) return;
+    const evidenceDoc = evidenceRef.documentId ? docMap.get(evidenceRef.documentId) : undefined;
+    const docLabel = evidenceDoc ? `“${evidenceDoc.name}”` : "the document";
+    const what = hit.claim.phrase.charAt(0).toUpperCase() + hit.claim.phrase.slice(1);
+    const priv = claimRef.cls === "private";
+    const sideSources: DiscrepancySideSources = {};
+    const claimSide = toSide(claimRef);
+    const evidenceSide = toSide(evidenceRef);
+    if (claimSide) sideSources.interview = claimSide;
+    if (evidenceSide) sideSources.document = evidenceSide;
+    const scrubbed = scrubPrivateText({
+      field: what,
+      interviewValue: hit.claim.text,
+      documentValue: hit.evidence.text,
+      aiExplanation: priv
+        ? `${docLabel} shows ${hit.evidence.text}; another figure on file for ${hit.claim.phrase.toLowerCase()} is different. The same thing is counted two ways — confirm which is current.`
+        : `The seller's side says ${hit.claim.text}; ${docLabel} shows ${hit.evidence.text}. The same thing is counted two ways — confirm which is current.`,
+      suggestedResolution: `Confirm the current number of ${hit.claim.phrase.toLowerCase()} with the seller, and whether ${docLabel} is up to date.`,
+      sideSources,
+    });
+    mapped.push({
+      field: what,
+      factKey: c.factKey,
+      factYear: c.factYear ?? null,
+      interviewValue: scrubbed.interviewValue,
+      documentValue: scrubbed.documentValue,
+      documentId: evidenceDoc?.id ?? "",
+      documentName: evidenceDoc?.name ?? "",
+      sideSources: scrubbed.sideSources,
+      // The prompt's scale: 5–10% (or an operational inconsistency) is significant.
+      severity: Math.abs(hit.claim.value - hit.evidence.value) / Math.max(hit.claim.value, hit.evidence.value) >= 0.05 ? "significant" : "minor",
+      category: hit.claim.money ? "financial" : "operational",
+      aiExplanation: scrubbed.aiExplanation,
+      suggestedResolution: scrubbed.suggestedResolution,
+    });
+    console.info(`[discrepancy-check] ${deal.id}: raised C${i + 1} (${what}: counted differently) — the model had not reported it`);
+  });
 
   const { kept, dropped } = filterDiscrepancyItems(mapped, opts.today ?? new Date());
   // Backstop: a settled conflict never comes back, whatever the model called it.

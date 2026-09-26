@@ -700,7 +700,7 @@ function UpdateRelatedFactsDialog({ dealId, disc, onClose }: { dealId: string; d
         <DialogHeader>
           <DialogTitle>Update facts that still say the old value</DialogTitle>
           <DialogDescription>
-            {disc ? <>You settled “{discrepancyFieldLabel(disc)}” as <span className="text-foreground">{disc.resolvedValue}</span>. These facts still repeat what you ruled out, and the CIM is written from them.</> : null}
+            {disc ? <>You settled “{discrepancyFieldLabel(disc)}” as <span className="text-foreground">{disc.resolvedValue}</span>. These facts don't match it yet, and the CIM is written from them. Review each suggested update before it's saved.</> : null}
           </DialogDescription>
         </DialogHeader>
         {isLoading ? (
@@ -725,7 +725,9 @@ function UpdateRelatedFactsDialog({ dealId, disc, onClose }: { dealId: string; d
                   <label htmlFor={`upd-${p.key}`} className="min-w-0 flex-1">
                     <p className="text-xs font-medium">{p.label}</p>
                     <p className="text-2xs text-muted-foreground">
-                      Still says {p.outdated.map((o) => `“${o}”`).join(", ")}
+                      {p.outdated.length > 0
+                        ? <>Still says {p.outdated.map((o) => `“${o}”`).join(", ")}</>
+                        : <>A description — the settled value is worked into it, nothing else changes</>}
                       {p.method === "manual" ? " — edit the text below" : ""}
                     </p>
                   </label>
