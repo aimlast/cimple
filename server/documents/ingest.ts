@@ -25,16 +25,17 @@ import {
   addPrivateNote,
   isSourceKind,
   privateNoteTextsFromSource,
-  removePrivateNoteSource,
+  removePrivateNoteWordings,
   sourceRowLookup,
   SOURCE_META_KEYS,
   type SourceKind,
 } from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
-import { noteRecordedAsFact } from "@shared/private-notes";
+import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
-import { recordMergeConflicts } from "./merge-conflicts";
+import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { scheduleNotesReview } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
 import { setBrokerFact } from "../information/facts";
 
@@ -222,7 +223,9 @@ export function addPrivateNotes(
  * record of it. An earlier note goes only when this source now records it
  * as a business fact (a dividend, a guarantee an older prompt filed as
  * private), or when it is no note at all ("NDA in place", a sample label).
- * Restatements fold into one note, keeping each wording.
+ * The earlier wordings stay exactly where they are — taking them out and
+ * adding them back re-folded the notes in another order and split some on
+ * every reprocess — and new wordings fold into the note they restate.
  */
 export function refreshSourceNotes(
   info: Record<string, unknown>,
@@ -230,9 +233,8 @@ export function refreshSourceNotes(
   data: Record<string, unknown>,
 ): void {
   const earlier = privateNoteTextsFromSource(info, doc.id);
-  removePrivateNoteSource(info, doc.id);
+  removePrivateNoteWordings(info, doc.id, earlier.filter((t) => noteRecordedAsFact(t, data) || isHousekeepingNote(t)));
   addPrivateNotes(info, data._privateNotes, doc, data);
-  addPrivateNotes(info, earlier.filter((t) => !noteRecordedAsFact(t, data)), doc);
 }
 
 // The per-deal facts queue lives in its own module so broker edits and the
@@ -362,5 +364,11 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
   // Material conflicts still standing after the merge become discrepancies (deduplicated).
   await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
     console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
+  // Earlier merge rows this source settled (its figure agrees now, or it
+  // restates a value another row already disputes) stop standing.
+  await settleMergeRowsQuietly(doc.dealId, "ingest");
+  // New private notes are consolidated with the deal's others shortly after
+  // (several sources finishing together → one review).
+  if (extracted._privateNotes) scheduleNotesReview(doc.dealId);
   return result;
 }

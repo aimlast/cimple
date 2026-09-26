@@ -9,7 +9,23 @@ import {
   lastStatementsYear, reconcileHeadlines, settleConflicts, EARLY_YEAR_NOTE, FORECAST_YEAR_NOTE, UNREVIEWED_YEAR_NOTE, type MergeConflict,
 } from "../../server/documents/merge-policy";
 import { splitFactsForCim } from "../../server/information/cim-facts";
-import { conflictsNotYetRaised } from "../../server/documents/merge-conflicts";
+import { sameConflict, staleMergeRowReason } from "../../server/documents/merge-conflicts";
+
+// The dedupe recordMergeConflicts applies (merge-conflicts.ts, after the
+// f-conflicts-notes merge): a conflict matching any existing row
+// (sameConflict: same fact family, each value one side) is not raised again,
+// and a row it raises counts for the rest of the batch.
+type RaisedRow = { factKey: string | null; factYear: string | null; field?: string; interviewValue: string | null; documentValue: string | null };
+function conflictsNotYetRaised(existing: RaisedRow[], conflicts: MergeConflict[]): MergeConflict[] {
+  const rows = existing.map((r) => ({ field: r.field ?? r.factKey ?? "", resolvedValue: null, ...r }));
+  const out: MergeConflict[] = [];
+  for (const c of conflicts) {
+    if (rows.some((r) => sameConflict(c.factKey, c.winner.value, c.loser.value, r))) continue;
+    rows.push({ field: c.factKey, resolvedValue: null, factKey: c.factKey, factYear: c.factYear ?? null, interviewValue: c.loser.value, documentValue: c.winner.value });
+    out.push(c);
+  }
+  return out;
+}
 
 type Info = Record<string, unknown>;
 let n = 0;
@@ -248,6 +264,29 @@ const alts = (info: Info, key: string) => getFieldAlternates(info)[key] ?? [];
     assert.equal(conflictsNotYetRaised([], [c("backlog", "$3,100,000", "$4.2M"), c("backlog", "$3,100,000", "$4.2M")]).length, 1, "duplicates in one batch collapse");
   }
   ok("discrepancies: a dispute already raised (any status) isn't raised again by a later reprocess");
+
+  // ── 9. A stand-alone figure's row survives its year being synced into the map ──
+  {
+    // The T2's $180,000 is the headline and 2024 on the map; the email's
+    // $260,000 is now kept only as the map year's other value.
+    const info: Info = {
+      ownerSalary: "$180,000",
+      ownerSalaryByYear: { "2023": "$180,000", "2024": "$180,000" },
+      _fieldSources: { ownerSalary: { source: "document", documentId: "T2" }, ownerSalaryByYear: { source: "document", documentId: "T2" } },
+      _fieldAlternates: { "ownerSalaryByYear.2024": [{ value: "$260,000", source: "email", documentId: "EM" }] },
+    };
+    const docs = new Map([["T2", { id: "T2", name: "T2 2024" }], ["EM", { id: "EM", name: "Email" }]] as any);
+    const row: any = {
+      id: "r1", source: "merge", status: "open", severity: "significant", category: "financial", createdAt: new Date(1),
+      field: "Owner salary", factKey: "ownerSalary", factYear: null, interviewValue: "$260,000", documentValue: "$180,000",
+      resolvedValue: null, documentId: "T2", documentName: "T2 2024",
+      sideSources: { interview: { kind: "email", documentId: "EM" }, document: { kind: "document", documentId: "T2" } },
+    };
+    assert.equal(staleMergeRowReason(row, info, docs as any), null, "the email's figure is still stated (as the map year's other value)");
+    const gone: Info = { ...info, _fieldAlternates: {} };
+    assert.ok(staleMergeRowReason(row, gone, docs as any), "…and once no source states it, the row stops standing");
+  }
+  ok("discrepancies: a stand-alone figure's row still stands when its losing value lives on the synced map year");
 
   console.log(`\n${n} f-merge round-2 checks passed`);
 })().catch((e) => { console.error(e); process.exit(1); });

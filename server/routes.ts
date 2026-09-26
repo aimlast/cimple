@@ -42,6 +42,7 @@ import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
 import { registerDiscrepancyRoutes } from "./routes/discrepancies.js";
 import { ensureDiscrepancyGate } from "./cim/discrepancy-check.js";
+import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
@@ -232,10 +233,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Product rule: unresolved CRITICAL discrepancies block every CIM-producing
   // step (content, layout, publish). "ask_seller" counts as handled.
   const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
-  const blockingCriticalDiscrepancies = async (dealId: string) =>
-    (await storage.getDiscrepanciesByDeal(dealId)).filter(
+  const blockingCriticalDiscrepancies = async (dealId: string) => {
+    // A merge row whose conflict no longer stands (its source deleted, its facts moved on) never blocks.
+    await settleMergeRowsQuietly(dealId, "discrepancy-gate");
+    return (await storage.getDiscrepanciesByDeal(dealId)).filter(
       (d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status),
     );
+  };
   const discrepancyBlockResponse = (res: Response, open: { id: string; field: string }[], verb: string) =>
     res.status(409).json({
       error: `${open.length} critical discrepanc${open.length === 1 ? "y" : "ies"} must be resolved before ${verb}`,

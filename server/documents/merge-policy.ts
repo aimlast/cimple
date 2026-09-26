@@ -60,6 +60,7 @@ import {
   type SourceKind,
   type SourceRowLookup,
 } from "../interview/info-merger";
+import { shareClaimsConflict } from "./conflict-measures";
 
 type Info = Record<string, unknown>;
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -697,6 +698,9 @@ export function materiallyDifferent(key: string, a: string, b: string): boolean 
     const eb = leaseEndYears(b, key);
     if (ea.size > 0 && eb.size > 0 && !Array.from(ea).some((y) => eb.has(y))) return true;
   }
+  // Two values giving different shares of the same thing ("medical is about
+  // a third of revenue" vs "Medical 24% of 2024 sales") disagree, however long.
+  if (shareClaimsConflict(a, b)) return true;
   const figureKey = (isDocumentAuthoritativeField(key) || isPeriodFigure(key)) && !NARRATIVE_KEY.test(key);
   // Narrative claims are compared only when both are short, figure-like
   // statements — two descriptions quoting different numbers are not a conflict.

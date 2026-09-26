@@ -24,6 +24,7 @@ import {
   type CheckDocument,
 } from "./discrepancy-engine";
 import { dropReason } from "./discrepancy-filter";
+import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 
 type DocRow = CheckDocument & { isProcessed?: boolean | null };
 
@@ -124,6 +125,8 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
       throw Object.assign(new Error("No processed documents to cross-reference. Upload and process documents first."), { status: 400 });
     }
 
+    // Merge rows that no longer stand go first, so the check never refreshes or matches them.
+    await settleMergeRowsQuietly(dealId, "discrepancy-check");
     const existing = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
     const { items, clearedIds, dropped } = await runDiscrepancyCheck(
       {
@@ -269,6 +272,8 @@ export async function ensureDiscrepancyGate(
     }
     ranCheck = true;
   }
+  // A merge row whose conflict no longer stands never blocks.
+  await settleMergeRowsQuietly(dealId, "discrepancy-gate");
   const rows = await storage.getDiscrepanciesByDeal(dealId);
   const blocking = rows.filter((d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status));
   if (blocking.length > 0) throw new DiscrepancyGateError(blocking.map((d) => ({ id: d.id, field: d.field })));

@@ -352,6 +352,13 @@ export const deals = pgTable("deals", {
   discrepancyCheckedAt: timestamp("discrepancy_checked_at"),
   discrepancyCheckSources: text("discrepancy_check_sources"),
   // @anchor:deals-cols:h-facts
+  // The supporting model's review of the broker-private notes
+  // (server/documents/private-notes-review.ts), per note wording: which
+  // notes are one matter (and that matter's consolidated note), which are no
+  // note at all (housekeeping), which are business facts moved into the
+  // facts — re-applied on every reprocess without asking again.
+  // { v, items: { [wording]: decision }, groups: { [id]: { text, members } }, nextId, at }.
+  privateNotesReview: jsonb("private_notes_review"),
   // @anchor:deals-cols:h-findisc
   // @anchor:deals-cols:h-interview
   // Conflicts between the deal's seller-visible sources, found by the

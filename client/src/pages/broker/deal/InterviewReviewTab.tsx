@@ -49,24 +49,37 @@ const VISIBLE_NOTES = 5;
  */
 function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
   const [expanded, setExpanded] = useState(false);
+  const [openWordings, setOpenWordings] = useState<Set<number>>(new Set());
   if (notes.length === 0) return null;
   // Notes recorded before restatements were merged on write can say the same
   // thing in other words — shown once, with every source that said it.
   // Every source keeps its own words: a restatement in other words is shown
-  // under the note, never dropped.
-  const groups = groupSameNotes(notes.filter((n) => !isHousekeepingNote(n.note))).map(({ note, same }) => ({
-    ...note,
-    alsoFrom: [
+  // under the note (folded away until asked for), never dropped.
+  const groups = groupSameNotes(notes.filter((n) => !isHousekeepingNote(n.note))).map(({ note, same }) => {
+    const { alsoFrom: _a, note: text, ...own } = note;
+    const sources: PrivateNoteSource[] = [
+      own,
       ...(note.alsoFrom ?? []),
-      ...same.flatMap((s) => [
-        { ...s, wording: s.wording ?? s.note },
-        ...(s.alsoFrom ?? []).map((a) => ({ ...a, wording: a.wording ?? s.note })),
-      ]),
-    ].map((a) => (a.wording && a.wording.trim().toLowerCase() === note.note.trim().toLowerCase() ? { ...a, wording: undefined } : a)),
-  }));
+      ...same.flatMap((s) => {
+        const { alsoFrom: _sa, note: sText, ...sOwn } = s;
+        return [
+          { ...sOwn, wording: sOwn.wording ?? sText },
+          ...(s.alsoFrom ?? []).map((a) => ({ ...a, wording: a.wording ?? sText })),
+        ];
+      }),
+    ].map((a) => (a.wording && a.wording.trim().toLowerCase() === text.trim().toLowerCase() ? { ...a, wording: undefined } : a));
+    return { note: text, sources };
+  });
   if (groups.length === 0) return null;
   const shown = expanded ? groups : groups.slice(0, VISIBLE_NOTES);
   const hidden = groups.length - shown.length;
+  const toggleWordings = (i: number) =>
+    setOpenWordings((prev) => {
+      const next = new Set(prev);
+      if (next.has(i)) next.delete(i);
+      else next.add(i);
+      return next;
+    });
   return (
     <Card className="border-amber-600/30" data-testid="panel-broker-private-notes">
       <CardHeader className="pb-3">
@@ -86,25 +99,44 @@ function BrokerPrivateNotesPanel({ notes }: { notes: BrokerPrivateNote[] }) {
         </p>
       </CardHeader>
       <CardContent className="space-y-3">
-        {shown.map((n, i) => (
-          <div
-            key={i}
-            className="rounded-md border border-border bg-muted/40 px-3 py-2.5"
-            data-testid={`private-note-${i}`}
-          >
-            <p className="text-sm">{n.note}</p>
-            <p className="text-[11px] text-muted-foreground mt-1">
-              {sourceLabel(n)}
-              {n.alsoFrom.some((a) => !a.wording) && ` · also ${n.alsoFrom.filter((a) => !a.wording).map(alsoLabel).join(", ")}`}
-            </p>
-            {n.alsoFrom.filter((a) => a.wording).map((a, j) => (
-              <p key={j} className="mt-1.5 border-l-2 border-border pl-2 text-xs text-muted-foreground" data-testid={`private-note-${i}-wording-${j}`}>
-                <span className="text-foreground/80">“{a.wording}”</span>
-                <span className="text-[11px]"> · {alsoLabel(a)}</span>
+        {shown.map((n, i) => {
+          const worded = n.sources.filter((a) => a.wording);
+          const open = openWordings.has(i);
+          return (
+            <div
+              key={i}
+              className="rounded-md border border-border bg-muted/40 px-3 py-2.5"
+              data-testid={`private-note-${i}`}
+            >
+              <p className="text-sm">{n.note}</p>
+              <p className="text-[11px] text-muted-foreground mt-1">
+                {sourceLabel(n.sources[0])}
+                {(() => {
+                  const also = Array.from(new Set(n.sources.slice(1).map(alsoLabel))).filter((l) => l !== alsoLabel(n.sources[0]));
+                  if (also.length === 0) return null;
+                  return ` · also ${also.slice(0, 2).join(", ")}${also.length > 2 ? ` and ${also.length - 2} more` : ""}`;
+                })()}
               </p>
-            ))}
-          </div>
-        ))}
+              {worded.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleWordings(i)}
+                  className="mt-1.5 flex items-center gap-1 text-[11px] text-muted-foreground hover:text-foreground"
+                  data-testid={`button-private-note-${i}-wordings`}
+                >
+                  {open ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+                  {open ? "Hide each source's words" : `Each source's own words (${worded.length})`}
+                </button>
+              )}
+              {open && worded.map((a, j) => (
+                <p key={j} className="mt-1.5 border-l-2 border-border pl-2 text-xs text-muted-foreground" data-testid={`private-note-${i}-wording-${j}`}>
+                  <span className="text-foreground/80">“{a.wording}”</span>
+                  <span className="text-[11px]"> · {alsoLabel(a)}</span>
+                </p>
+              ))}
+            </div>
+          );
+        })}
         {groups.length > VISIBLE_NOTES && (
           <button
             type="button"
