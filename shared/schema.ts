@@ -200,6 +200,8 @@ export interface ExternalAcquirer {
   sources: string[];                // URLs
   inYourList?: boolean;
   unverified?: boolean;             // named in the research but not tied to a returned source
+  claimsChecked?: boolean;          // every claim shown was checked against the cited pages (server/matching/claim-check.ts)
+  claimsUnchecked?: boolean;        // the claim check couldn't run for this entry — check before reaching out
 }
 export interface ExternalAcquirerSearch {
   status: "running" | "done" | "failed";
@@ -211,6 +213,7 @@ export interface ExternalAcquirerSearch {
   channels?: Array<{ name: string; how: string; url?: string | null }>;
   includeExcluded?: boolean;        // broker asked to include buyer types the seller ruled out
   droppedCount?: number;            // organisations left out because the research didn't back them
+  removedClaims?: number;           // claims taken out because the cited pages didn't back them
   error?: string;
 }
 

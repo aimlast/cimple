@@ -76,6 +76,9 @@ interface SuggestedBuyer {
   };
   lastActivityAt: string | null;
   passesFirstPass?: boolean;
+  /** Rules out this deal’s industry — listed apart, never selectable. */
+  excluded?: boolean;
+  excludedBy?: string | null;
   rankScore?: number;
   aiCheck?: {
     verdict: "strong" | "good" | "possible" | "unlikely";
@@ -93,6 +96,7 @@ interface SuggestedBuyersResponse {
   suggested: SuggestedBuyer[];
   totalCandidates: number;
   firstPassCount?: number;
+  counts?: { suggested: number; deepCheckable: number; excluded: number; withAccess: number };
   deepCheck?: {
     status: "running" | "done" | "failed";
     total: number; done: number; skipped: number;
@@ -252,14 +256,21 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   });
 
   // ── Derived ──────────────────────────────────────────────────────────────
-  // Candidates = everyone who could still be contacted (buyers who already
-  // have access are never re-suggested). The contacted toggle filters within
-  // that set, so it must stay reachable even when it hides every row —
-  // otherwise contacted buyers could never be revisited.
+  // Candidates = everyone who could still be contacted: buyers who already
+  // have access are never re-suggested, and buyers who rule out this
+  // industry are never suggested (they're listed apart, unselectable). The
+  // same set the server's deep check reads, so counts agree. The contacted
+  // toggle filters within that set, so it must stay reachable even when it
+  // hides every row — otherwise contacted buyers could never be revisited.
   const candidates = useMemo(
-    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess),
+    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && !b.excluded),
     [data],
   );
+  const excludedBuyers = useMemo(
+    () => (data?.suggested ?? []).filter(b => !b.alreadyHasAccess && b.excluded),
+    [data],
+  );
+  const [showExcluded, setShowExcluded] = useState(false);
   const contactedCandidates = useMemo(
     () => candidates.filter(b => b.alreadyContacted),
     [candidates],
@@ -269,15 +280,14 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
     [candidates, showContacted],
   );
 
-  const stats = useMemo(() => {
-    if (!data) return { total: 0, hot: 0, warm: 0, contacted: 0 };
-    return {
-      total: data.suggested.length,
-      hot: data.suggested.filter(b => b.qualifiedScore.tier === "hot").length,
-      warm: data.suggested.filter(b => b.qualifiedScore.tier === "warm").length,
-      contacted: data.suggested.filter(b => b.alreadyContacted).length,
-    };
-  }, [data]);
+  // Counted over the candidates the list shows (contacted ones behind the
+  // toggle included), never over access holders or excluded buyers.
+  const stats = useMemo(() => ({
+    total: candidates.length,
+    hot: candidates.filter(b => b.qualifiedScore.tier === "hot").length,
+    warm: candidates.filter(b => b.qualifiedScore.tier === "warm").length,
+    contacted: contactedCandidates.length,
+  }), [candidates, contactedCandidates]);
 
   const toggleSelect = (id: string) => {
     setSelected(prev => {
@@ -357,7 +367,7 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
             ? `The AI is reviewing every buyer who matches this CIM — ${data.deepCheck.done} of ${data.deepCheck.total} done.`
             : data.deepCheck.status === "failed"
               ? (data.deepCheck.error || "The deep check didn't finish — run it again to continue where it stopped.")
-              : `AI deep check: ${data.deepCheck.total} matching buyer${data.deepCheck.total === 1 ? "" : "s"} reviewed against the full CIM facts${data.deepCheck.skipped ? ` · ${data.deepCheck.skipped} clear mismatch${data.deepCheck.skipped === 1 ? "" : "es"} skipped` : ""}${data.deepCheck.error ? ` · ${data.deepCheck.error}` : ""}. Re-run after the CIM or buyer profiles change — only what changed is re-checked.`}
+              : `AI deep check: ${data.deepCheck.total} matching buyer${data.deepCheck.total === 1 ? "" : "s"} reviewed against the full CIM facts${data.deepCheck.skipped ? ` · ${data.deepCheck.skipped} clear mismatch${data.deepCheck.skipped === 1 ? "" : "es"} (no criteria met) not reviewed` : ""}${data.deepCheck.error ? ` · ${data.deepCheck.error}` : ""}. Re-run after the CIM or buyer profiles change — only what changed is re-checked.`}
         </div>
       )}
 
@@ -427,7 +437,9 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
               (data?.suggested.length ?? 0) > 0 ? (
                 <>
                   <p className="text-sm text-muted-foreground" data-testid="text-all-have-access">
-                    Every candidate already has access to this deal
+                    {excludedBuyers.length > 0
+                      ? "No one left to suggest — the rest of your list already has access or rules out this industry"
+                      : "Every candidate already has access to this deal"}
                   </p>
                   <p className="text-xs text-muted-foreground/70 mt-1">
                     Add more buyers to your contact list to see new suggestions.
@@ -472,9 +484,40 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
               buyer={buyer}
               selected={selected.has(buyer.buyerUserId)}
               onToggle={() => toggleSelect(buyer.buyerUserId)}
+              deepChecked={!!data?.deepCheck}
             />
           ))}
         </div>
+      )}
+
+      {/* Buyers who rule out this industry: never suggested, never selectable —
+          listed so the broker knows why someone on their list isn't here. */}
+      {excludedBuyers.length > 0 && (
+        <Collapsible open={showExcluded} onOpenChange={setShowExcluded}>
+          <CollapsibleTrigger asChild>
+            <Button variant="ghost" size="sm" className="w-full justify-between h-auto py-1.5" data-testid="button-toggle-excluded">
+              <span className="text-xs text-muted-foreground text-left">
+                {excludedBuyers.length === 1 ? "1 buyer on your list rules" : `${excludedBuyers.length} buyers on your list rule`} out this industry — not suggested
+              </span>
+              {showExcluded ? <ChevronUp className="h-3 w-3 shrink-0" /> : <ChevronDown className="h-3 w-3 shrink-0" />}
+            </Button>
+          </CollapsibleTrigger>
+          <CollapsibleContent className="mt-1.5 space-y-1.5">
+            {excludedBuyers.map((b) => (
+              <div
+                key={b.buyerUserId}
+                className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded border border-border/60 bg-muted/5 px-3 py-2 text-xs text-muted-foreground"
+                data-testid={`excluded-buyer-${b.buyerUserId}`}
+              >
+                <span className="font-medium text-foreground/70">{b.name}</span>
+                {b.company && <span>· {b.company}</span>}
+                <Badge variant="outline" className="text-2xs font-normal border-border text-muted-foreground">
+                  Rules out {b.excludedBy ? `“${b.excludedBy}”` : "this industry"}
+                </Badge>
+              </div>
+            ))}
+          </CollapsibleContent>
+        </Collapsible>
       )}
 
       {/* Outreach history (collapsible) */}
@@ -646,10 +689,12 @@ function BuyerRow({
   buyer,
   selected,
   onToggle,
+  deepChecked,
 }: {
   buyer: SuggestedBuyer;
   selected: boolean;
   onToggle: () => void;
+  deepChecked?: boolean;
 }) {
   const tier = TIER_STYLES[buyer.qualifiedScore.tier];
 
@@ -704,6 +749,15 @@ function BuyerRow({
             {buyer.aiCheck.watchOuts.length > 0 && (
               <div className="text-2xs text-amber-400/90 pl-1">Watch: {buyer.aiCheck.watchOuts.join(" · ")}</div>
             )}
+          </div>
+        )}
+
+        {/* The deep check reads buyers who pass the first pass; say why this one wasn't. */}
+        {deepChecked && !buyer.aiCheck && buyer.passesFirstPass === false && (
+          <div className="text-2xs text-muted-foreground" data-testid={`ai-skipped-${buyer.buyerUserId}`}>
+            {(buyer.match?.criteriaTested ?? 0) >= 2
+              ? "Not AI-checked — none of this buyer's criteria are met"
+              : "Not AI-checked — their profile doesn't say enough yet"}
           </div>
         )}
 

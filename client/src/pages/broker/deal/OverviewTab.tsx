@@ -19,6 +19,7 @@ import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadin
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
 import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
+import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
 import type { DealSellerContact } from "@shared/schema";
@@ -106,22 +107,6 @@ const stripExt = (name?: string | null) => (name || "").replace(/\.[a-z0-9]{1,5}
 /* ═══════════════════════════════════════════
    SHARED HELPERS
 ═══════════════════════════════════════════ */
-/** "Who does this" badge shown next to each checklist item. */
-function ActorBadge({ who }: { who: "broker" | "seller" | "auto" }) {
-  const map = {
-    broker: { label: "You", cls: "bg-teal/10 text-teal" },
-    seller: { label: "Waiting on seller", cls: "bg-amber-500/10 text-amber-600" },
-    auto: { label: "Automatic", cls: "bg-muted text-muted-foreground" },
-  } as const;
-  const m = map[who];
-  return (
-    <span
-      className={`text-2xs font-medium px-1.5 py-0.5 rounded ${m.cls} shrink-0`}
-    >
-      {m.label}
-    </span>
-  );
-}
 
 /**
  * Error carrying the server's parsed `{ error, ... }` body. Mutations throw
@@ -842,21 +827,9 @@ Signed electronically via the Cimple platform.`;
               />
             )}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <p
-                  className={`text-sm font-medium ${step.done ? "line-through text-muted-foreground" : ""}`}
-                >
-                  {step.label}
-                </p>
-                {/* "Waiting on seller" is only true while the step is open —
-                    a received questionnaire is not waiting on anyone. */}
-                {!step.done && <ActorBadge who={step.who} />}
-                {step.optional && !step.done && (
-                  <span className="text-2xs text-muted-foreground/60">
-                    optional
-                  </span>
-                )}
-              </div>
+              {/* "Waiting on seller" is only true while the step is open —
+                  a received questionnaire is not waiting on anyone. */}
+              <ChecklistStepTitle label={step.label} done={step.done} who={step.who} optional={step.optional} />
               <p className="text-xs text-muted-foreground mt-0.5">
                 {step.desc}
               </p>
@@ -1229,15 +1202,8 @@ function Phase2Center() {
             <Circle className="h-[1.125rem] w-[1.125rem] text-muted-foreground/30 shrink-0" />
           )}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p
-                className={`text-sm font-medium ${deal.questionnaireData ? "line-through text-muted-foreground" : ""}`}
-              >
-                Seller onboarding
-              </p>
-              {/* Same rule as Phase 1: a finished step isn't waiting on anyone. */}
-              {!deal.questionnaireData && <ActorBadge who="seller" />}
-            </div>
+            {/* Same rule as Phase 1: a finished step isn't waiting on anyone. */}
+            <ChecklistStepTitle label="Seller onboarding" done={!!deal.questionnaireData} who="seller" />
             <p className="text-xs text-muted-foreground">
               {deal.questionnaireData
                 ? "Systems, key people, business basics — completed by the seller"

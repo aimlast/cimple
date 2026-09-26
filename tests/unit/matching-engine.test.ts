@@ -5,15 +5,18 @@
  */
 import assert from "node:assert/strict";
 import {
+  criterionBound,
   excludedIndustryMatches,
   finiteScore,
+  formatMoney,
   firstJsonObject,
   matchBuyerToDeal,
   scoreAiDimensions,
   setMatchingAiForTests,
 } from "../../server/matching/engine";
 import { matchBuyerDealRow } from "../../server/matching/match-run";
-import { passesFirstPass, reachedBuyers } from "../../server/matching/suggested";
+import { isExcludedBuyer, passesFirstPass, reachedBuyers, suggestionPools } from "../../server/matching/suggested";
+import { calculateQualifiedLeadScore } from "../../server/scoring/buyer-score";
 
 async function main() {
   // ── 1. Exclusions: qualified phrases strict, bare sector names cover the sector ──
@@ -158,6 +161,73 @@ async function main() {
   assert.deepEqual(reached({ id: "u-contacted", email: "c@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true });
   assert.deepEqual(reached({ id: "u-new", email: "SOMEONE@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true });
   assert.deepEqual(reached({ id: "u-fresh", email: "" }), { alreadyHasAccess: false, alreadyContacted: false });
+
+  // ── 5. Unreadable criteria are not "tested"; "0" is not a limit ──────────
+  setMatchingAiForTests(null);
+  const pcl = { industry: "Transportation & Logistics", askingPrice: "18000000", extractedInfo: { annualRevenue: "$31,020,000", ebitda: "$3,900,000", employees: "148 (96 drivers + 52 staff)" } };
+  const junkRow = await matchBuyerToDeal({ revenueMin: "abc", multipleMax: "0", ebitdaMin: "N/A", minEmployees: "lots" } as any, pcl, { skipAI: true });
+  assert.equal(junkRow.criteriaTested, 0, JSON.stringify(junkRow.financialFit.details));
+  assert.equal(junkRow.criteriaMatched, 0);
+  assert.equal(junkRow.deterministicScore, 0, "nothing tested → no half-credit score");
+  assert.deepEqual(Object.keys(junkRow.financialFit.details), []);
+  // A readable criterion next to junk still counts, and money reads well.
+  const mixed = await matchBuyerToDeal({ revenueMin: "20M", revenueMax: "abc", ebitdaMin: "3,000,000", multipleMax: "0" } as any, pcl, { skipAI: true });
+  assert.equal(mixed.criteriaTested, 2);
+  assert.equal(mixed.criteriaMatched, 2);
+  assert.equal(mixed.financialFit.details.revenue.note, "$31M — Meets minimum");
+  assert.equal(mixed.financialFit.details.ebitda.note, "$3.9M — Meets minimum");
+  assert.ok(!("askingMultiple" in mixed.financialFit.details));
+  const realMultiple = await matchBuyerToDeal({ multipleMax: "4" } as any, pcl, { skipAI: true });
+  assert.match(realMultiple.financialFit.details.askingMultiple.note, /4\.6x — exceeds 4x max/);
+  assert.equal(formatMoney(31_020_000), "$31M");
+  assert.equal(formatMoney(3_900_000), "$3.9M");
+  assert.equal(formatMoney(2_450_000), "$2.45M");
+  assert.equal(formatMoney(628_000), "$628K");
+  assert.equal(formatMoney(18_000_000), "$18M");
+  assert.equal(criterionBound("0"), null);
+  assert.equal(criterionBound("N/A"), null);
+  assert.equal(criterionBound("$2.5M"), 2_500_000);
+  // Headcount: a year in the staff list is not the staff count.
+  const beaconEmp = { industry: "Pharmacy", extractedInfo: { employees: "Key personnel: Daniel (LTC lead pharmacist, since 2014), Mei-Lin (since 2018). Total headcount 23 (incl. owner)." } };
+  const emp = await matchBuyerToDeal({ maxEmployees: "50" } as any, beaconEmp, { skipAI: true });
+  assert.match(emp.operationalFit.details.employees.note, /^23 employees/);
+
+  // ── 6. A buyer who excludes the industry is never a warm suggestion ──────
+  const excludedMatch = await matchBuyerToDeal({ excludedIndustries: ["Trucking"], revenueMin: "5000000", revenueMax: "50000000", targetLocations: ["British Columbia"] } as any,
+    { industry: "Transportation & Logistics", subIndustry: "Regional trucking & warehousing", extractedInfo: { annualRevenue: "$31M", location: "Delta, BC" } }, { skipAI: true });
+  assert.equal(excludedMatch.excludedIndustry, true);
+  assert.equal(excludedMatch.excludedBy, "Trucking");
+  const excludedScore = calculateQualifiedLeadScore({
+    buyer: { profileCompletionPct: 100, hasProofOfFunds: true, buyerType: "financial", liquidFunds: null, buyerCriteria: {}, targetIndustries: [] } as any,
+    match: excludedMatch,
+    engagement: { viewCount: 5, sectionsViewed: 10, totalTimeSeconds: 900, questionCount: 3, ndaSigned: true },
+  });
+  assert.equal(excludedScore.tier, "cold");
+  assert.ok(excludedScore.total <= 20, String(excludedScore.total));
+  assert.equal(excludedScore.breakdown.matchFit, 0);
+  assert.deepEqual(excludedScore.reasons, ["Rules out “Trucking”"]);
+  // …while the same buyer without the exclusion is warm or better.
+  const fine = await matchBuyerToDeal({ revenueMin: "5000000", revenueMax: "50000000", targetLocations: ["British Columbia"] } as any,
+    { industry: "Transportation & Logistics", extractedInfo: { annualRevenue: "$31M", location: "Delta, BC" } }, { skipAI: true });
+  assert.ok(!fine.excludedIndustry);
+  assert.ok(["warm", "hot"].includes(calculateQualifiedLeadScore({ buyer: { profileCompletionPct: 100, hasProofOfFunds: true } as any, match: fine }).tier));
+
+  // ── 7. One pool for the list and the deep check ───────────────────────────
+  const sb = (id: string, email: string, bd: any, extra: any = {}) => ({ buyer: { id, email, background: "x", buyerCriteria: {}, targetIndustries: [], ...extra }, breakdown: bd, contact: null, lastActivityAt: null, fundsRange: null, score: {} as any });
+  const scoredList = [
+    sb("strong", "s@x.invalid", { criteriaTested: 3, criteriaMatched: 3 }),
+    sb("excluded", "e@x.invalid", { ...excludedMatch }),
+    sb("mismatch", "m@x.invalid", { criteriaTested: 3, criteriaMatched: 0 }),
+    sb("has-access", "A@X.invalid", { criteriaTested: 2, criteriaMatched: 2 }),
+    sb("junk-access", "j@x.invalid", { criteriaTested: 0, criteriaMatched: 0 }),
+  ];
+  const pools = suggestionPools(scoredList as any, reachedBuyers([], [{ buyerEmail: "a@x.invalid" }, { buyerUserId: "junk-access" }]));
+  assert.deepEqual(pools.pool.map((s) => s.buyer.id), ["strong", "mismatch"]);
+  assert.deepEqual(pools.candidates.map((s) => s.buyer.id), ["strong"], "deep check = what the button counts");
+  assert.deepEqual(pools.excluded.map((s) => s.buyer.id), ["excluded"]);
+  assert.deepEqual(pools.withAccess.map((s) => s.buyer.id), ["has-access", "junk-access"]);
+  assert.equal(isExcludedBuyer(scoredList[1] as any), true);
+  assert.equal(passesFirstPass(scoredList[1] as any), false);
 
   console.log("matching-engine: all assertions passed");
 }

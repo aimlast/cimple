@@ -17,6 +17,10 @@
 import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "../interview/config/load-config";
+import { parseHeadcount } from "./fact-numbers";
+
+const asFactText = (v: unknown): string | number | null =>
+  typeof v === "string" || typeof v === "number" ? v : v && typeof v === "object" && "value" in (v as any) ? asFactText((v as any).value) : null;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 type AiCreate = (params: any) => Promise<{ content: any[] }>;
@@ -117,6 +121,10 @@ export interface MatchBreakdown {
   criteriaMatched: number;
   criteriaTested: number;
   dataCompleteness: number;  // 0-100 — how much deal data was available to match
+  /** The buyer excludes this deal's industry — never a suggestion, whatever else matches. */
+  excludedIndustry?: boolean;
+  /** Which of the buyer's exclusions ruled it out ("Trucking"). */
+  excludedBy?: string | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -145,6 +153,26 @@ function parsePercent(val: string | undefined | null): number | null {
 
 function parseNum(val: string | undefined | null): number | null {
   return firstNumber(val);
+}
+
+/**
+ * A buyer's criterion as a usable bound: a positive number, or null. A
+ * criterion that can't be read ("abc", "N/A", "lots") or is zero ("0" as a
+ * maximum multiple is a blank form field, not a real limit) is not a
+ * criterion at all — never "tested", never scored.
+ */
+export function criterionBound(val: string | number | undefined | null): number | null {
+  const n = firstNumber(val as any);
+  return n !== null && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** "$31.0M", "$3.9M", "$628K", "$950" — one money format for match notes. */
+export function formatMoney(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, "")}M`;
+  if (a >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
 }
 
 function rangeScore(value: number, min: number | null, max: number | null): { score: number; note: string } {
@@ -516,38 +544,34 @@ export async function matchBuyerToDeal(
   const financialDetails: Record<string, { score: number; max: number; note: string }> = {};
 
   // Revenue
+  // A criterion counts as tested only when it can be read (criterionBound):
+  // "abc" / "N/A" / "0" never produce a "No criteria specified" half-score.
+  const ranged = (key: string, value: number | null, minRaw: unknown, maxRaw: unknown) => {
+    const min = criterionBound(minRaw as any), max = criterionBound(maxRaw as any);
+    if (!value || (min === null && max === null)) return;
+    const r = rangeScore(value, min, max);
+    financialDetails[key] = { score: r.score, max: 100, note: `${formatMoney(value)} — ${r.note}` };
+  };
   const dealRevenue = parseCurrency(info.annualRevenue) || parseCurrency(fa?.reclassifiedPnl?.totalRevenue);
-  if (dealRevenue && (criteria.revenueMin || criteria.revenueMax)) {
-    const r = rangeScore(dealRevenue, parseCurrency(criteria.revenueMin), parseCurrency(criteria.revenueMax));
-    financialDetails.revenue = { score: r.score, max: 100, note: `$${(dealRevenue / 1e6).toFixed(1)}M — ${r.note}` };
-  }
+  ranged("revenue", dealRevenue, criteria.revenueMin, criteria.revenueMax);
 
   // EBITDA
   const dealEbitda = parseCurrency(fa?.normalization?.adjustedEbitda) || parseCurrency(info.ebitda);
-  if (dealEbitda && (criteria.ebitdaMin || criteria.ebitdaMax)) {
-    const r = rangeScore(dealEbitda, parseCurrency(criteria.ebitdaMin), parseCurrency(criteria.ebitdaMax));
-    financialDetails.ebitda = { score: r.score, max: 100, note: `$${(dealEbitda / 1e3).toFixed(0)}K — ${r.note}` };
-  }
+  ranged("ebitda", dealEbitda, criteria.ebitdaMin, criteria.ebitdaMax);
 
   // SDE
   const dealSde = parseCurrency(fa?.normalization?.adjustedSde) || parseCurrency(info.sde);
-  if (dealSde && (criteria.sdeMin || criteria.sdeMax)) {
-    const r = rangeScore(dealSde, parseCurrency(criteria.sdeMin), parseCurrency(criteria.sdeMax));
-    financialDetails.sde = { score: r.score, max: 100, note: `$${(dealSde / 1e3).toFixed(0)}K — ${r.note}` };
-  }
+  ranged("sde", dealSde, criteria.sdeMin, criteria.sdeMax);
 
   // Asking price — the broker's listed price (a broker correction on the
   // Information tab wins over a stale deal column), else the price on file.
   const dealPrice = parseCurrency(effectiveAskingPrice({ askingPrice: deal.askingPrice ?? null, extractedInfo: info }));
-  if (dealPrice && (criteria.askingPriceMin || criteria.askingPriceMax)) {
-    const r = rangeScore(dealPrice, parseCurrency(criteria.askingPriceMin), parseCurrency(criteria.askingPriceMax));
-    financialDetails.askingPrice = { score: r.score, max: 100, note: `$${(dealPrice / 1e6).toFixed(2)}M — ${r.note}` };
-  }
+  ranged("askingPrice", dealPrice, criteria.askingPriceMin, criteria.askingPriceMax);
 
   // Gross margin
   const dealGrossMargin = parsePercent(info.operatingMargins) || (fa?.reclassifiedPnl?.grossProfit && dealRevenue ? (parseCurrency(fa.reclassifiedPnl.grossProfit)! / dealRevenue) * 100 : null);
-  if (dealGrossMargin && criteria.grossMarginMin) {
-    const minGm = parsePercent(criteria.grossMarginMin)!;
+  const minGm = criterionBound(criteria.grossMarginMin);
+  if (dealGrossMargin && minGm !== null) {
     financialDetails.grossMargin = dealGrossMargin >= minGm
       ? { score: 100, max: 100, note: `${dealGrossMargin.toFixed(1)}% — meets minimum ${minGm}%` }
       : { score: dealGrossMargin >= minGm * 0.85 ? 50 : 0, max: 100, note: `${dealGrossMargin.toFixed(1)}% — below ${minGm}%` };
@@ -555,8 +579,9 @@ export async function matchBuyerToDeal(
 
   // EBITDA margin
   const dealEbitdaMargin = parsePercent(fa?.normalization?.ebitdaMargin);
-  if (dealEbitdaMargin && criteria.ebitdaMarginMin) {
-    const min = parsePercent(criteria.ebitdaMarginMin)!;
+  const minEbitdaMargin = criterionBound(criteria.ebitdaMarginMin);
+  if (dealEbitdaMargin && minEbitdaMargin !== null) {
+    const min = minEbitdaMargin;
     financialDetails.ebitdaMargin = dealEbitdaMargin >= min
       ? { score: 100, max: 100, note: `${dealEbitdaMargin.toFixed(1)}% — meets minimum ${min}%` }
       : { score: dealEbitdaMargin >= min * 0.85 ? 50 : 0, max: 100, note: `${dealEbitdaMargin.toFixed(1)}% — below ${min}%` };
@@ -564,8 +589,10 @@ export async function matchBuyerToDeal(
 
   // Revenue growth
   const dealGrowth = parsePercent(info.revenueGrowth);
-  if (dealGrowth !== null && criteria.revenueGrowthMin) {
-    const min = parsePercent(criteria.revenueGrowthMin)!;
+  // Growth may legitimately be 0 or negative ("not shrinking") — any readable number counts.
+  const minGrowth = parsePercent(criteria.revenueGrowthMin);
+  if (dealGrowth !== null && minGrowth !== null) {
+    const min = minGrowth;
     financialDetails.revenueGrowth = dealGrowth >= min
       ? { score: 100, max: 100, note: `${dealGrowth.toFixed(1)}% growth — meets minimum` }
       : { score: dealGrowth >= 0 ? 40 : 0, max: 100, note: `${dealGrowth.toFixed(1)}% growth — below ${min}%` };
@@ -573,8 +600,9 @@ export async function matchBuyerToDeal(
 
   // Customer concentration
   const dealConcentration = parsePercent(info.customerConcentration);
-  if (dealConcentration !== null && criteria.maxCustomerConcentration) {
-    const max = parsePercent(criteria.maxCustomerConcentration)!;
+  const maxConcentration = criterionBound(criteria.maxCustomerConcentration);
+  if (dealConcentration !== null && maxConcentration !== null) {
+    const max = maxConcentration;
     financialDetails.customerConcentration = dealConcentration <= max
       ? { score: 100, max: 100, note: `${dealConcentration}% — within acceptable range` }
       : { score: dealConcentration <= max * 1.2 ? 50 : 0, max: 100, note: `${dealConcentration}% — exceeds ${max}% max` };
@@ -582,17 +610,20 @@ export async function matchBuyerToDeal(
 
   // Recurring revenue
   const dealRecurring = parsePercent(info.recurringRevenue);
-  if (dealRecurring !== null && criteria.recurringRevenueMin) {
-    const min = parsePercent(criteria.recurringRevenueMin)!;
+  const minRecurring = criterionBound(criteria.recurringRevenueMin);
+  if (dealRecurring !== null && minRecurring !== null) {
+    const min = minRecurring;
     financialDetails.recurringRevenue = dealRecurring >= min
       ? { score: 100, max: 100, note: `${dealRecurring}% recurring — meets minimum` }
       : { score: dealRecurring >= min * 0.5 ? 40 : 0, max: 100, note: `${dealRecurring}% recurring — below ${min}%` };
   }
 
   // Asking multiple
-  if (dealPrice && dealEbitda && criteria.multipleMax) {
+  // "0" as a maximum multiple is a blank field, not a limit (criterionBound).
+  const maxMultiple = criterionBound(criteria.multipleMax);
+  if (dealPrice && dealEbitda && maxMultiple !== null) {
     const multiple = dealPrice / dealEbitda;
-    const max = parseNum(criteria.multipleMax)!;
+    const max = maxMultiple;
     financialDetails.askingMultiple = multiple <= max
       ? { score: 100, max: 100, note: `${multiple.toFixed(1)}x — within ${max}x max` }
       : { score: multiple <= max * 1.15 ? 50 : 0, max: 100, note: `${multiple.toFixed(1)}x — exceeds ${max}x max` };
@@ -603,6 +634,7 @@ export async function matchBuyerToDeal(
   // ── INDUSTRY FIT ───────────────────────────────────────────────────────────
   const industryDetails: Record<string, { score: number; max: number; note: string }> = {};
   const dealIndustry = deal.industry || "";
+  let excludedBy: string | null = null;
   const dealIndustryText = dealBusinessText(deal, info);
 
   if (criteria.targetIndustries && criteria.targetIndustries.length > 0) {
@@ -613,15 +645,17 @@ export async function matchBuyerToDeal(
   }
 
   if (criteria.excludedIndustries && criteria.excludedIndustries.length > 0) {
-    const excluded = excludedIndustryMatches([dealIndustry, deal.subIndustry].filter(Boolean).join(" · "), criteria.excludedIndustries);
-    if (excluded) {
+    const label = [dealIndustry, deal.subIndustry].filter(Boolean).join(" · ");
+    const hit = criteria.excludedIndustries.find((e) => excludedIndustryMatches(label, [e]));
+    if (hit) {
+      excludedBy = String(hit).trim();
       industryDetails.excluded = { score: 0, max: 100, note: `${dealIndustry} — EXCLUDED industry` };
     }
   }
 
-  if (criteria.yearsInBusinessMin) {
+  if (criterionBound(criteria.yearsInBusinessMin) !== null) {
     const dealYears = parseNum(info.yearsOperating);
-    const minYears = parseNum(criteria.yearsInBusinessMin)!;
+    const minYears = criterionBound(criteria.yearsInBusinessMin)!;
     if (dealYears !== null) {
       industryDetails.yearsInBusiness = dealYears >= minYears
         ? { score: 100, max: 100, note: `${dealYears} years — meets ${minYears} year minimum` }
@@ -648,9 +682,9 @@ export async function matchBuyerToDeal(
   const opDetails: Record<string, { score: number; max: number; note: string }> = {};
 
   // Owner involvement
-  if (criteria.ownerInvolvementMax) {
+  if (criterionBound(criteria.ownerInvolvementMax) !== null) {
     const dealOwnerHrs = parseNum(info.ownerInvolvement) || parseNum(info.ownerHoursPerWeek);
-    const maxHrs = parseNum(criteria.ownerInvolvementMax)!;
+    const maxHrs = criterionBound(criteria.ownerInvolvementMax)!;
     if (dealOwnerHrs !== null) {
       opDetails.ownerInvolvement = dealOwnerHrs <= maxHrs
         ? { score: 100, max: 100, note: `${dealOwnerHrs}hrs/wk — within ${maxHrs}hr max` }
@@ -659,9 +693,11 @@ export async function matchBuyerToDeal(
   }
 
   // Employee count
-  const dealEmployees = parseNum(info.employees) || parseNum(info.totalEmployees);
-  if (dealEmployees !== null && (criteria.minEmployees || criteria.maxEmployees)) {
-    const r = rangeScore(dealEmployees, parseNum(criteria.minEmployees), parseNum(criteria.maxEmployees));
+  // Headcount, not "the first number" (a "since 2014" in the staff list is not 2,014 staff).
+  const dealEmployees = parseHeadcount(asFactText(info.totalEmployees)) ?? parseHeadcount(asFactText(info.employees));
+  const minEmp = criterionBound(criteria.minEmployees), maxEmp = criterionBound(criteria.maxEmployees);
+  if (dealEmployees !== null && (minEmp !== null || maxEmp !== null)) {
+    const r = rangeScore(dealEmployees, minEmp, maxEmp);
     opDetails.employees = { score: r.score, max: 100, note: `${dealEmployees} employees — ${r.note}` };
   }
 
@@ -674,9 +710,9 @@ export async function matchBuyerToDeal(
   }
 
   // Lease length
-  if (criteria.leaseLengthMin) {
+  if (criterionBound(criteria.leaseLengthMin) !== null) {
     const leaseInfo = info.leaseDetails || info.leaseExpiry || "";
-    const minYears = parseNum(criteria.leaseLengthMin)!;
+    const minYears = criterionBound(criteria.leaseLengthMin)!;
     if (leaseInfo) {
       // Try to extract years from lease info
       const yearMatch = String(leaseInfo).match(/(\d+)\s*year/i);
@@ -847,5 +883,6 @@ ${buyerProfile}`,
       .filter(d => d.score >= 60).length,
     criteriaTested,
     dataCompleteness,
+    ...(excludedBy ? { excludedIndustry: true, excludedBy } : {}),
   };
 }
