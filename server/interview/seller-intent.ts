@@ -34,6 +34,7 @@ import {
   detectPrivacyRequest,
   guessRetractedFields,
   removeClaim,
+  restatesWithdrawnValue,
   termRegex,
   type Retraction,
 } from "./fact-guards";
@@ -486,6 +487,31 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
         continue;
       }
       for (const key of targets) {
+        // The interview model rewrote the fact this turn: its new value is
+        // what gets checked — already without the claim, it stands.
+        const ch = changes.find((c) => c.fieldName === key);
+        const onFile = valueText(info[key]);
+        if (ch) {
+          const restNew = removeClaim(ch.newValue, r.what);
+          // A claim named without its figures ("those mold numbers") can't be
+          // found by them — a new value that repeats the withdrawn figures
+          // (and the seller didn't say them again) is the guess again.
+          const restated =
+            restNew === null && !/\d/.test(r.what) && /\d/.test(ch.newValue) && !!onFile &&
+            restatesWithdrawnValue(ch.newValue, onFile, sellerMessage);
+          if (restated) {
+            changes = changes.filter((c) => c !== ch);
+          } else if (restNew === null) {
+            log.push(`${key}: this turn's value already leaves out "${r.what}"`);
+            continue;
+          } else if (restNew !== "") {
+            ch.newValue = restNew;
+            log.push(`${key}: "${r.what}" taken out of this turn's value`);
+            continue;
+          } else {
+            changes = changes.filter((c) => c !== ch);
+          }
+        }
         const value = valueText(info[key]);
         const rest = removeClaim(value, r.what, key === hinted ? r.remainingValue : undefined);
         if (rest === "" || (rest === null && key === hinted && !(r.remainingValue ?? "").trim())) {
@@ -527,7 +553,7 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
   const privateNotes: Array<{ note: string; reason: string }> = [];
   const noteCovers = (detail: string, p: IntentPrivacy) =>
     [...input.modelPrivateNotes, ...privateNotes].some((n) =>
-      p.sensitiveTerms.length > 0 ? p.sensitiveTerms.some((t) => n.note.toLowerCase().includes(t.toLowerCase())) : n.note.trim().length > 0,
+      p.sensitiveTerms.length > 0 ? p.sensitiveTerms.some((t) => termRegex(t)?.test(n.note) ?? false) : n.note.trim().length > 0,
     ) || !detail;
   for (const p of intent.privacyRequests) {
     const detail = (p.detail || p.what).trim();
@@ -535,12 +561,20 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
       privateNotes.push({ note: detail, reason: "the seller asked that this stay out of the sale document" });
       log.push(`private note added: "${detail.slice(0, 80)}"`);
     }
-    // This turn's values: one carrying the private detail never lands (the
-    // value on file — "Retirement after 30 years" — stays).
-    const leaking = changes.filter((c) => carriesPrivateDetail(c.newValue, p));
-    if (leaking.length > 0) {
-      changes = changes.filter((c) => !leaking.includes(c));
-      log.push(`kept private (not written): ${leaking.map((c) => c.fieldName).join(", ")}`);
+    // This turn's values: the private detail never lands. A value replacing
+    // one on file isn't written (the value on file — "Retirement after 30
+    // years" — stays, rather than a remnant of the rewrite); a new fact keeps
+    // what's left once the part carrying the detail is cut.
+    for (const c of changes.filter((x) => carriesPrivateDetail(x.newValue, p))) {
+      const replacing = hasValue(c.fieldName);
+      const rest = replacing ? null : removeClaim(c.newValue, detail, null, p.sensitiveTerms, { termsOnly: true });
+      if (rest) {
+        c.newValue = rest;
+        log.push(`kept private: the detail was cut from ${c.fieldName}`);
+      } else {
+        changes = changes.filter((x) => x !== c);
+        log.push(`kept private (not written): ${c.fieldName}`);
+      }
     }
     // A fact already on file that holds the detail: the detail moves out.
     const key = resolve(p.fieldHint);

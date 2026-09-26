@@ -170,6 +170,15 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     // No field hint: the seller's own facts holding the claim (latest turn).
     const plan2 = planIntentEdits({ intent: modelIntent({ retractions: [{ what: "40 trucks" }] }), info, changes: [], modelRetracted: [], modelPrivateNotes: [], sellerMessage: RETRACTIONS[1].message, sessionId: "s1", turn: 6 });
     assert.equal(plan2.partialEdits[0]?.key, "outboundLogistics");
+    // The interview model rewrote the fact this turn without the guess: that stands.
+    const clean = "Contract hauler Buckeye Freight handles dedicated outbound lanes; customer trucks pick up at the dock for JIT pulls.";
+    const planClean = planIntentEdits({ intent, info, changes: [change("outboundLogistics", clean, "confirmed", value)], modelRetracted: [], modelPrivateNotes: [], sellerMessage: RETRACTIONS[1].message, sessionId: "s1", turn: 6 });
+    assert.deepEqual(planClean.partialEdits, []);
+    assert.deepEqual(planClean.retractions, []);
+    assert.equal(planClean.changes[0].newValue, clean);
+    // …or kept the guess in part: that part is cut from this turn's value.
+    const planMixed = planIntentEdits({ intent, info, changes: [change("outboundLogistics", "Buckeye Freight handles outbound lanes. About 40 trucks a week pick up at the dock.", "confirmed", value)], modelRetracted: [], modelPrivateNotes: [], sellerMessage: RETRACTIONS[1].message, sessionId: "s1", turn: 6 });
+    assert.equal(planMixed.changes[0].newValue, "Buckeye Freight handles outbound lanes.");
     // A withdrawn claim nothing on file holds is remembered, not guessed at.
     const plan3 = planIntentEdits({ intent: modelIntent({ retractions: [{ what: "the 12 forklifts" }] }), info, changes: [], modelRetracted: [], modelPrivateNotes: [], sellerMessage: "ignore what I said about 12 forklifts", sessionId: "s1", turn: 6 });
     assert.deepEqual(plan3.retractions, []);
@@ -213,6 +222,13 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     assert.deepEqual(plan.changes.map((c) => c.fieldName), ["yearsOwned"], "the value carrying the detail never lands; others do");
     assert.equal(plan.privateNotes.length, 1);
     assert.match(plan.privateNotes[0].note, /cancer/);
+    // A new fact keeps its public part; only the sentence with the detail goes.
+    const planNew = planIntentEdits({
+      intent: modelIntent({ privacyRequests: [{ what: "wife's health", detail: "wife's cancer diagnosis", sensitiveTerms: ["cancer"] }] }),
+      info, changes: [change("ownerTransition", "Owner will stay 6 months for training. Wife's cancer diagnosis means he wants out by spring.")],
+      modelRetracted: [], modelPrivateNotes: [], sellerMessage: PRIVACY[0].message, sessionId: "s1", turn: 5,
+    });
+    assert.equal(planNew.changes[0].newValue, "Owner will stay 6 months for training.");
     // A note the interview model already wrote isn't doubled.
     const plan2 = planIntentEdits({
       intent: modelIntent({ privacyRequests: [{ what: "health", detail: "wife's cancer diagnosis", sensitiveTerms: ["cancer"] }] }),
