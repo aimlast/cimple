@@ -100,6 +100,36 @@ export function reachedBuyers(
   };
 }
 
+/** The buyer rules out this deal's industry (never suggested, never deep-checked). */
+export function isExcludedBuyer(s: Pick<ScoredBuyer, "breakdown">): boolean {
+  const bd: any = s.breakdown;
+  return !!(bd?.excludedIndustry || bd?.industryFit?.details?.excluded);
+}
+
+/**
+ * Who the Suggested buyers list and the AI deep check work on — one
+ * definition for both, so the button's count, the job's "N reviewed" and the
+ * list always agree:
+ *   - `pool`: buyers who could still be approached (no access to this deal
+ *     yet) and don't rule out its industry — what the list shows;
+ *   - `candidates`: those in the pool who pass the first pass — what the
+ *     deep check reads;
+ *   - `excluded`: buyers who rule out the industry (listed apart, never
+ *     selectable).
+ */
+export function suggestionPools<T extends ScoredBuyer>(
+  scored: T[],
+  reached: (buyer: { id: string; email?: string | null }) => { alreadyHasAccess: boolean },
+): { pool: T[]; candidates: T[]; excluded: T[]; withAccess: T[] } {
+  const withAccess: T[] = [], excluded: T[] = [], pool: T[] = [];
+  for (const s of scored) {
+    if (reached(s.buyer).alreadyHasAccess) withAccess.push(s);
+    else if (isExcludedBuyer(s)) excluded.push(s);
+    else pool.push(s);
+  }
+  return { pool, candidates: pool.filter(passesFirstPass), excluded, withAccess };
+}
+
 /**
  * "Matches the CIM in the first place": not an excluded industry, and not a
  * clear rule-based mismatch (2+ criteria testable and none met). Buyers with
@@ -108,7 +138,7 @@ export function reachedBuyers(
  */
 export function passesFirstPass(s: ScoredBuyer): boolean {
   const bd: any = s.breakdown;
-  if (bd?.industryFit?.details?.excluded) return false;
+  if (isExcludedBuyer(s)) return false;
   const tested = bd?.criteriaTested ?? 0;
   const matched = bd?.criteriaMatched ?? 0;
   if (tested >= 2 && matched === 0) return false;

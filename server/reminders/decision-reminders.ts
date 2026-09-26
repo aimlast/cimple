@@ -20,10 +20,13 @@
  *     (firstViewedAt = now, reminderStage "none") — a new day-3/6/8 cycle.
  *   - A cycle is never started for a first view older than the link's
  *     30-day life: a "quick check-in" weeks later is noise.
+ *   - A buyer on the Blind CIM (teaser / full access) is never told the
+ *     business's name by email: the project codename, or neutral wording.
  */
 import { storage } from "../storage";
 import { notify } from "../notifications/service";
 import type { BuyerAccess, Deal } from "@shared/schema";
+import { cimModeForAccessLevel } from "@shared/cim-layouts";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_MS = 3 * DAY_MS; // day 3
@@ -77,7 +80,7 @@ async function emailBuyer(to: string, subject: string, html: string): Promise<bo
         Authorization: `Bearer ${apiKey}`,
       },
       body: JSON.stringify({
-        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.app>",
+        from: process.env.RESEND_FROM_EMAIL || "Cimple <notifications@cimple.ca>",
         to: [to],
         subject,
         html,
@@ -90,8 +93,13 @@ async function emailBuyer(to: string, subject: string, html: string): Promise<bo
   }
 }
 
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
 function buildBuyerEmail(opts: {
-  businessName: string;
+  /** Already HTML-escaped. */
+  headerLabel: string;
   viewUrl: string;
   headline: string;
   body: string;
@@ -106,7 +114,7 @@ function buildBuyerEmail(opts: {
     <div style="background:#141414;border:1px solid #222;border-radius:12px;padding:32px;">
       <div style="margin-bottom:20px;">
         <span style="font-size:12px;font-weight:600;color:#2dd4bf;letter-spacing:0.6px;text-transform:uppercase;">Cimple</span>
-        <span style="color:#666;font-size:12px;margin-left:8px;">· ${opts.businessName}</span>
+        <span style="color:#666;font-size:12px;margin-left:8px;">· ${opts.headerLabel}</span>
       </div>
       <h2 style="color:#f5f5f4;font-size:20px;font-weight:600;margin:0 0 14px;line-height:1.35;">${opts.headline}</h2>
       <p style="color:#a8a29e;font-size:14px;line-height:1.65;margin:0 0 24px;">${opts.body}</p>
@@ -122,6 +130,99 @@ function buildBuyerEmail(opts: {
 </html>`;
 }
 
+type DealNaming = Pick<Deal, "businessName"> & { blindCodename?: string | null };
+
+/**
+ * How the business is named in an email to this buyer. A buyer whose access
+ * level serves the Blind CIM (teaser, full — see cimModeForAccessLevel) has
+ * never been told who the business is: the email uses the deal's project
+ * codename, or neutral wording when there is no codename yet — never the
+ * business name. LOI and due-diligence buyers read the named CIM, so their
+ * emails name the business.
+ */
+export function buyerFacingDealName(deal: DealNaming, access: Pick<BuyerAccess, "accessLevel">): { blind: boolean; name: string | null } {
+  if (cimModeForAccessLevel(access.accessLevel) === "blind") {
+    const code = (deal.blindCodename || "").trim();
+    return { blind: true, name: code || null };
+  }
+  return { blind: false, name: deal.businessName };
+}
+
+export interface ReminderEmail {
+  subject: string;
+  html: string;
+}
+
+/**
+ * The buyer's email for one reminder stage. Pure — the pipeline and the
+ * tests share it.
+ */
+export function buildReminderEmail(
+  stage: "reminder" | "warning" | "lapse",
+  deal: DealNaming,
+  access: Pick<BuyerAccess, "accessLevel" | "buyerName">,
+  viewUrl: string,
+): ReminderEmail {
+  const { blind, name } = buyerFacingDealName(deal, access);
+  const safe = name ? escapeHtml(name) : null;
+  const first = (access.buyerName || "").trim().split(/\s+/)[0];
+  const greeting = first ? `Hi ${escapeHtml(first)},` : "Hello,";
+  const header = safe ?? "Confidential opportunity";
+  // "the Confidential Information Memorandum for X" names the business; a
+  // blind buyer only ever saw a confidential profile under a codename.
+  const reviewed = !safe
+    ? "the confidential business profile you were sent"
+    : blind
+      ? `the confidential business profile <strong>${safe}</strong>`
+      : `the Confidential Information Memorandum for <strong>${safe}</strong>`;
+  const regarding = safe ? `<strong>${safe}</strong>` : "the confidential opportunity you reviewed";
+
+  if (stage === "reminder") {
+    return {
+      subject: name ? `Quick check-in — ${name}` : "Quick check-in on the opportunity you reviewed",
+      html: buildBuyerEmail({
+        headerLabel: header,
+        viewUrl,
+        headline: `A quick check-in on ${safe ?? "the confidential opportunity"}`,
+        body: `${greeting}<br/><br/>It's been a few days since you first reviewed ${reviewed}. When you have a moment, please let us know whether you'd like to move forward or if this opportunity isn't the right fit — the broker would appreciate your decision either way so they can coordinate next steps.`,
+        cta: "Review & share your decision",
+      }),
+    };
+  }
+  if (stage === "warning") {
+    return {
+      subject: name ? `Final follow-up — ${name}` : "Final follow-up on the opportunity you reviewed",
+      html: buildBuyerEmail({
+        headerLabel: header,
+        viewUrl,
+        headline: `Final follow-up on ${safe ?? "the confidential opportunity"}`,
+        body: `${greeting}<br/><br/>We still haven't received a response regarding ${regarding}. If we don't hear back within the next 48 hours, this opportunity will be automatically marked as <strong>lapsed</strong> and the sell-side will be informed that you're no longer actively evaluating it.<br/><br/>If you'd still like to explore this opportunity, please let us know by selecting a decision on the CIM.`,
+        cta: "Share your decision now",
+      }),
+    };
+  }
+  return {
+    subject: name ? `${name} — marked as lapsed` : "The opportunity you reviewed has been marked as lapsed",
+    html: buildBuyerEmail({
+      headerLabel: header,
+      viewUrl,
+      headline: `${safe ?? "The confidential opportunity"} has been marked as lapsed`,
+      body: `${greeting}<br/><br/>Because we didn't receive a decision from you within the review window, this opportunity has been automatically marked as lapsed and the sell-side has been informed. If this was a mistake or you'd still like to explore ${safe ? `<strong>${safe}</strong>` : "it"}, please contact the broker directly and they can reactivate your access.`,
+      cta: "Open the CIM",
+    }),
+  };
+}
+
+/**
+ * "Need more time" only applies while the buyer is still deciding. It never
+ * undoes a final decision (interested / not interested / lapsed): an
+ * "interested" may already be in the broker's CRM, and a lapsed buyer is
+ * reactivated by the broker, not by themselves.
+ */
+export function canSnoozeDecision(decision: string | null | undefined): boolean {
+  return !decision || decision === "under_review";
+}
+
 /**
  * Act on one buyer-access row: send the due email and advance the stage, or
  * lapse. Returns what it did. Exported so a single row can be exercised
@@ -134,18 +235,11 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   if (!deal) return "none";
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
-  const buyerGreeting = access.buyerName ? `Hi ${access.buyerName.split(" ")[0]},` : "Hello,";
 
   // ── Stage 1: Day 3 reminder ─────────────────────────────────
   if (action === "reminder") {
-    const html = buildBuyerEmail({
-      businessName: deal.businessName,
-      viewUrl,
-      headline: `A quick check-in on ${deal.businessName}`,
-      body: `${buyerGreeting}<br/><br/>It's been a few days since you first reviewed the Confidential Information Memorandum for <strong>${deal.businessName}</strong>. When you have a moment, please let us know whether you'd like to move forward or if this opportunity isn't the right fit — the broker would appreciate your decision either way so they can coordinate next steps.`,
-      cta: "Review & share your decision",
-    });
-    await emailBuyer(access.buyerEmail, `Quick check-in — ${deal.businessName}`, html);
+    const email = buildReminderEmail("reminder", deal, access, viewUrl);
+    await emailBuyer(access.buyerEmail, email.subject, email.html);
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "reminder_sent",
@@ -156,14 +250,8 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
 
   // ── Stage 2: Day 6 warning (or the first email for a late arrival) ──
   if (action === "warning") {
-    const html = buildBuyerEmail({
-      businessName: deal.businessName,
-      viewUrl,
-      headline: `Final follow-up on ${deal.businessName}`,
-      body: `${buyerGreeting}<br/><br/>We still haven't received a response regarding <strong>${deal.businessName}</strong>. If we don't hear back within the next 48 hours, this opportunity will be automatically marked as <strong>lapsed</strong> and the sell-side will be informed that you're no longer actively evaluating the business.<br/><br/>If you'd still like to explore this opportunity, please let us know by selecting a decision on the CIM.`,
-      cta: "Share your decision now",
-    });
-    await emailBuyer(access.buyerEmail, `Final follow-up — ${deal.businessName}`, html);
+    const email = buildReminderEmail("warning", deal, access, viewUrl);
+    await emailBuyer(access.buyerEmail, email.subject, email.html);
     await storage.updateBuyerAccess(access.id, {
       decision: "under_review",
       reminderStage: "warning_sent",
@@ -181,16 +269,10 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   } as any);
 
   // Final courtesy email to the buyer
-  const buyerHtml = buildBuyerEmail({
-    businessName: deal.businessName,
-    viewUrl,
-    headline: `${deal.businessName} has been marked as lapsed`,
-    body: `${buyerGreeting}<br/><br/>Because we didn't receive a decision from you within the review window, this opportunity has been automatically marked as lapsed and the sell-side has been informed. If this was a mistake or you'd still like to explore <strong>${deal.businessName}</strong>, please contact the broker directly and they can reactivate your access.`,
-    cta: "Open the CIM",
-  });
-  await emailBuyer(access.buyerEmail, `${deal.businessName} — marked as lapsed`, buyerHtml);
+  const lapseEmail = buildReminderEmail("lapse", deal, access, viewUrl);
+  await emailBuyer(access.buyerEmail, lapseEmail.subject, lapseEmail.html);
 
-  // Notify broker + seller team
+  // Notify broker + seller team (the sell side — the business's name is fine here)
   const buyerLabel = access.buyerName
     ? `${access.buyerName}${access.buyerCompany ? ` (${access.buyerCompany})` : ""}`
     : access.buyerEmail;

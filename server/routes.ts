@@ -56,7 +56,7 @@ import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensiti
 import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
-import { runDecisionReminders } from "./reminders/decision-reminders.js";
+import { runDecisionReminders, canSnoozeDecision } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
@@ -779,7 +779,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/deals/:dealId/suggested-buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { scoreBuyersForDeal, topDimensions, passesFirstPass, reachedBuyers } = await import("./matching/suggested.js");
+      const { scoreBuyersForDeal, topDimensions, passesFirstPass, reachedBuyers, suggestionPools, isExcludedBuyer } = await import("./matching/suggested.js");
       const { isDeepCheckRunning } = await import("./matching/deep-check.js");
       // Read "is it running" BEFORE the deal: the job writes its final state
       // and only then stops running, so a stored "running" with no live job
@@ -798,11 +798,18 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // buyer's account until they verify, so id-only missed them.
       const reached = reachedBuyers(existingOutreach, existingAccess);
       const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
+      // One definition of who is suggested / deep-checked (suggestionPools),
+      // shared with the deep-check job so every count agrees.
+      const pools = suggestionPools(scoredRaw, reached);
+      const inPool = new Set(pools.pool.map((s) => s.buyer.id));
 
       const scored = scoredRaw.map((s) => {
         const { buyer: buyerUser, contact, breakdown, score, lastActivityAt } = s;
-        const aiCheck = deep?.results?.[buyerUser.id] ?? null;
+        // A verdict is shown only for a buyer the list still suggests (an
+        // older check may hold results for buyers who since got access).
+        const aiCheck = inPool.has(buyerUser.id) ? deep?.results?.[buyerUser.id] ?? null : null;
         const { alreadyHasAccess, alreadyContacted } = reached(buyerUser);
+        const excluded = isExcludedBuyer(s);
         // With an AI verdict, rank on it (60%) blended with the lead score.
         const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
         return {
@@ -820,6 +827,10 @@ export async function registerRoutes(app: Express): Promise<Server> {
           alreadyHasAccess,
           alreadyContacted,
           passesFirstPass: passesFirstPass(s),
+          excluded,
+          excludedBy: excluded ? (breakdown?.excludedBy ?? null) : null,
+          // An exclusion that may not apply (a market the business serves, a narrower slice): the broker checks.
+          exclusionCaution: !excluded ? (breakdown?.exclusionCaution?.note ?? null) : null,
           match: breakdown ? {
             criteriaMatched: breakdown.criteriaMatched,
             criteriaTested: breakdown.criteriaTested,
@@ -862,7 +873,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           total: deep.total, done: deep.done, skipped: deep.skipped ?? 0,
           startedAt: deep.startedAt, finishedAt: deep.finishedAt ?? null, error: deep.error ?? null,
         } : null,
-        firstPassCount: scored.filter((s) => s.passesFirstPass && !s.alreadyHasAccess).length,
+        firstPassCount: pools.candidates.length,
+        counts: {
+          suggested: pools.pool.length,
+          deepCheckable: pools.candidates.length,
+          excluded: pools.excluded.length,
+          withAccess: pools.withAccess.length,
+        },
       });
     } catch (err: any) {
       console.error("Error fetching suggested buyers:", err);
@@ -4790,6 +4807,14 @@ Return JSON only.`,
       // "Need more time" isn't a terminal decision — it resets the reminder
       // clock (fresh day-3/6/8 cycle) and leaves the buyer under review.
       if (decision === "need_more_time") {
+        // Only while still deciding: it never reverts a final decision
+        // (an "interested" already synced to the CRM, or a lapse).
+        if (!canSnoozeDecision(access.decision)) {
+          return res.status(409).json({
+            error: "Your decision is already recorded. To change it, contact the broker.",
+            decision: access.decision,
+          });
+        }
         await storage.updateBuyerAccess(access.id, {
           // Still deciding: back under review, so the reminder pipeline
           // picks it up again (a NULL decision was never selected).

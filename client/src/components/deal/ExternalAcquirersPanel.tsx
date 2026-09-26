@@ -22,6 +22,8 @@ interface Acquirer {
   sources: string[];
   inYourList?: boolean;
   unverified?: boolean;
+  claimsChecked?: boolean;
+  claimsUnchecked?: boolean;
 }
 interface SearchState {
   status: "none" | "running" | "done" | "failed";
@@ -34,6 +36,7 @@ interface SearchState {
   channels?: Array<{ name: string; how: string; url?: string | null }>;
   includeExcluded?: boolean;
   droppedCount?: number;
+  removedClaims?: number;
 }
 
 const TYPE_LABELS: Record<Acquirer["type"], string> = {
@@ -139,6 +142,11 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
           {data.droppedCount === 1 ? "1 more organisation was" : `${data.droppedCount} more organisations were`} left out because the research didn't back {data.droppedCount === 1 ? "it" : "them"} up with a source.
         </p>
       )}
+      {data?.status === "done" && !!data.removedClaims && (
+        <p className="text-2xs text-muted-foreground" data-testid="external-removed-claims">
+          Every claim below was checked against the pages it cites — {data.removedClaims === 1 ? "1 claim was" : `${data.removedClaims} claims were`} taken out because the source didn't say {data.removedClaims === 1 ? "it" : "them"}.
+        </p>
+      )}
 
       <div className="space-y-2">
         {results.map((a, i) => (
@@ -152,6 +160,11 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
               {a.unverified && (
                 <Badge variant="outline" className="text-2xs font-normal text-amber-400 border-amber-400/40" title="Named in the research, but no source page was returned for it — check before reaching out.">
                   No source link — check first
+                </Badge>
+              )}
+              {a.claimsUnchecked && (
+                <Badge variant="outline" className="text-2xs font-normal text-amber-400 border-amber-400/40" title="The facts below couldn't be checked against the source pages this time — read the sources before reaching out." data-testid={`external-unchecked-${i}`}>
+                  Facts not checked — read sources first
                 </Badge>
               )}
               {a.website && (

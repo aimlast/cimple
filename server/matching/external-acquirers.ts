@@ -20,26 +20,32 @@ import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import type { Deal, ExternalAcquirer, ExternalAcquirerSearch } from "@shared/schema";
 import { blindLeakTerms, findBlindLeaks, honorificNames, peopleInFact, type BlindTerm } from "@shared/blind-guard";
-import { isRegionLabel } from "@shared/cim-media";
-import { EVERYDAY_NAME_WORDS, isCommonWord, isOccupationWord } from "@shared/blind-vocabulary";
+import { isRegionLabel, isRegionWord } from "@shared/cim-media";
+import { splitFactsForCim } from "../information/cim-facts";
+import { briefRegion } from "./regions";
+import { firstMoney, headcountBand, parseHeadcount } from "./fact-numbers";
+import {
+  applyClaimChecks, claimsFor, stripTracking, CHANNEL_TOOL, CHECK_SYSTEM, CHECK_TOOL,
+  type AcquirerCheck, type AppliedChecks, type Channel, type ChannelCheck,
+} from "./claim-check";
+import { EVERYDAY_NAME_WORDS, isBroadRegionWord, isCommonWord, isOccupationWord } from "@shared/blind-vocabulary";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const running = new Set<string>();
 
-const PROVINCES: Record<string, string> = { ON: "Ontario", QC: "Quebec", BC: "British Columbia", AB: "Alberta", MB: "Manitoba", SK: "Saskatchewan", NS: "Nova Scotia", NB: "New Brunswick", NL: "Newfoundland and Labrador", PE: "Prince Edward Island" };
 const REGION_NAMES = ["Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba", "Saskatchewan", "Nova Scotia", "New Brunswick", "Newfoundland", "Prince Edward Island", "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"];
-const REGION_RE = new RegExp(`\\b(${[...REGION_NAMES, "ON", "QC", "BC", "AB", "MB", "SK", "NS", "NB", "NL", "PE"].join("|")})\\b`);
 // Multi-word region names: "British Columbia" is the province, even though
 // the facts' people parser may list "Columbia" as a name.
 const MULTI_WORD_REGION = new RegExp(`\\b(?:${REGION_NAMES.filter((n) => n.includes(" ")).join("|")})\\b`, "gi");
 
 const txt = (v: unknown): string => (typeof v === "string" ? v : v && typeof v === "object" && "value" in (v as any) ? txt((v as any).value) : "");
-function band(raw: string): string | null {
-  const m = raw.replace(/,/g, "").match(/\$?\s*([\d.]+)\s*(m|mm|million|k|thousand)?/i);
-  if (!m) return null;
-  let n = parseFloat(m[1]);
-  const u = (m[2] || "").toLowerCase();
-  if (u.startsWith("m")) n *= 1_000_000; else if (u.startsWith("k") || u === "thousand") n *= 1000;
+/**
+ * A money fact as a size band. Reads the first real money figure — a "$"
+ * amount or a number with a million/thousand unit — so prose such as
+ * "2024 net sales: $58,241,630, up 6.5%" is $58M, not "2024".
+ */
+export function band(raw: string): string | null {
+  const n = firstMoney(raw);
   if (!n || n < 10_000) return null;
   if (n < 500_000) return "under $500K";
   if (n < 1_000_000) return "$500K–$1M";
@@ -196,6 +202,60 @@ export function labelBrands(label: string): string[] {
   return found;
 }
 
+// A run of capitalised words, joined by a space, a hyphen or a small linking
+// word ("Port of Vancouver", "Hartwell's", "Veridian and Halvorsen").
+const CAP_RUN = new RegExp(`(?<![${L}'’])[A-Z][${L}'’]*(?:(?:[ -]|\\s(?:of|de|du|la|le|the|and|&)\\s)[A-Z][${L}'’]*)*`, "g");
+// Ordinary English word shapes: a capitalised one at a sentence start is a word, not a name.
+const ENGLISH_SHAPE = /(?:ing|ings|ed|tion|tions|sion|sions|ment|ments|ness|ity|ities|ive|ives|al|als|ic|ics|ous|ful|less|able|ible|ary|ery|ory|ance|ence|ism|ize|ise|ly|er|ers|ies|ian|ians)$/i;
+const LINKING = new Set(["of", "de", "du", "la", "le", "the", "and", "&"]);
+// Titles and abbreviations: never a name themselves, and their "." ends no sentence.
+const ABBREV_WORD = /^(?:Dr|Dre|Mr|Mrs|Ms|Mx|Miss|Prof|St|Ste|Mt|Ft|Jr|Sr|Inc|Ltd|Co|Corp|No|Approx|Incl|Est)$/;
+// Capitalised words that name nobody: pronouns, holidays, methods.
+const GENERIC_CAPS = new Set([
+  "someone", "somebody", "anyone", "anybody", "everyone", "nobody", "whoever", "likely", "possibly", "ideally", "preferably",
+  "thanksgiving", "easter", "halloween", "valentine", "hanukkah", "diwali", "ramadan", "eid", "passover", "boxing",
+  "pilates", "yoga", "zumba", "crossfit", "keto", "vegan", "halal", "kosher", "celsius", "fahrenheit", "naics",
+]);
+const ABBREV_BEFORE = /\b(?:Dr|Dre|Mr|Mrs|Ms|Mx|Prof|St|Ste|Mt|Ft|Jr|Sr|e\.g|i\.e|vs|approx|incl|est|No)\.\s*$/i;
+
+/**
+ * Replace proper names the deal's term list doesn't know — customers,
+ * suppliers, towns — with a neutral phrase. A capitalised word is kept when
+ * it is an everyday word, an acronym ("LTC", "GM"), part of a province /
+ * state / country name, or — at a sentence start — shaped like an ordinary
+ * English word ("Compounding", "Wholesale"). Brands and region names must
+ * already be masked by the caller.
+ */
+export function scrubProperNames(text: string, replacement: string): string {
+  return text.replace(CAP_RUN, (run: string, offset: number, whole: string) => {
+    const before = whole.slice(0, offset);
+    const sentenceStart = /(?:^|[.!?;:]\s*|\n\s*)$/.test(before) && !ABBREV_BEFORE.test(before);
+    const words = run.split(/[ -]+/).filter((w) => w && !LINKING.has(w.toLowerCase()));
+    // A region wider than a province or state ("the Midwest", "Atlantic
+    // Canada", "the Maritime provinces") names no business — a Blind CIM
+    // keeps it (blind-vocabulary isBroadRegionWord). Only a run that is ALL
+    // region stays: "Midwest Plastics" is still a name.
+    const regionOnly = words.every((w) => {
+      const core = w.replace(/['’]s$/, "");
+      return isBroadRegionWord(core) || isRegionWord(core) || isRegionLabel(core) || (words.length > 1 && /^(?:provinces?|states?|region)$/i.test(core));
+    });
+    if (regionOnly) return run;
+    const unknown = words.some((w, i) => {
+      const core = w.replace(/['’]s$/, "");
+      if (core.length <= 1 || ABBREV_WORD.test(core) || DEAL_WORDS.test(core) || GENERIC_CAPS.has(core.toLowerCase())) return false;
+      if (/^[A-Z0-9&]{2,6}s?$/.test(core)) return false;            // acronym
+      if (isCommonWord(core) || isRegionWord(core) || isRegionLabel(core)) return false;
+      if (sentenceStart && i === 0 && ENGLISH_SHAPE.test(core)) return false;
+      return true;
+    });
+    if (!unknown) return run;
+    const possessive = /['’]s$/.test(run) ? "’s" : "";
+    const capitalise = /(?:^|[.!?]\s*|\n\s*)$/.test(before) && !ABBREV_BEFORE.test(before);
+    const phrase = capitalise ? replacement.charAt(0).toUpperCase() + replacement.slice(1) : replacement;
+    return `${phrase}${possessive}`;
+  });
+}
+
 /**
  * Free text from the facts made blind: every identifying term the facts
  * name (business names, people, city, street, contacts) and any titled or
@@ -204,7 +264,7 @@ export function labelBrands(label: string): string[] {
  * Returns null when something identifying is still there — the caller
  * leaves the line out (fail closed).
  */
-export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: boolean; brands?: string[] } = {}): string | null {
+export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: boolean; brands?: string[]; scrubNames?: string } = {}): string | null {
   // prose=false: only the deal's own terms — for AI output about OTHER
   // organisations, where the name heuristics would rewrite real names.
   const prose = opts.prose !== false;
@@ -230,6 +290,10 @@ export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: 
       for (const p of [...honorificNames(x), ...peopleInFact(x, "prose")].sort((a, b) => b.length - a.length)) {
         x = neutralise(x, p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), ""), "person", false);
       }
+      // Names the facts never list as identifiers — customers, suppliers,
+      // towns ("Maplecrest 5 homes ~41%", "wholesale to Hartwell's") — with
+      // brands and provinces masked, so they stay.
+      if (opts.scrubNames) x = scrubProperNames(x, opts.scrubNames);
       return x;
     });
   });
@@ -289,33 +353,63 @@ export class BlindBriefError extends Error {}
  * left out). The whole brief is checked again before it is returned; if it
  * still names anything, it throws (the research never runs).
  */
-export function blindBrief(deal: Deal): { brief: string; region: string | null; withheld: number } {
+/** The free-text facts the brief describes (each rewritten generically when AI is available). */
+export const BRIEF_TEXT_FIELDS = ["businessType", "revenueStreams", "idealBuyer"] as const;
+export type BriefTextField = (typeof BRIEF_TEXT_FIELDS)[number];
+
+/**
+ * The facts the brief may be built from: confirmed business facts only.
+ * Anything only a broker-only source asserted (CRM notes, private files —
+ * cim-facts.isPrivateToBroker) and unconfirmed website/social leads never
+ * become the research brief, least of all the binding buyer preferences.
+ */
+export function briefFacts(deal: Deal): Record<string, unknown> {
   const info = ((deal as any).extractedInfo || {}) as Record<string, unknown>;
+  return Object.fromEntries(splitFactsForCim(info).confirmed);
+}
+
+export function blindBrief(
+  deal: Deal,
+  opts: { rewritten?: Partial<Record<BriefTextField, string | null>> | null } = {},
+): { brief: string; region: string | null; withheld: number } {
+  const info = briefFacts(deal);
   const terms = briefTerms(deal);
   let withheld = 0;
   const industryLabel = `${deal.industry || "unknown"}${(deal as any).subIndustry ? ` — ${(deal as any).subIndustry}` : ""}`;
   const brands = labelBrands(industryLabel);
-  const free = (label: string, raw: string, max: number): string => {
+  const free = (label: string, raw: string, max: number, scrubNames?: string): string => {
     if (!raw.trim()) return "";
-    const clean = blindFreeText(clip(raw, max * 2), terms, { brands });
+    const clean = blindFreeText(clip(raw, max * 2), terms, { brands, scrubNames });
     if (!clean) { withheld++; return ""; }
     return `${label}${clip(clean, max)}`;
   };
-  const locText = [txt(info.locationSite), txt(info.location), txt(info.leaseAddress)].join(" ");
-  const m = REGION_RE.exec(locText);
-  const region = m ? PROVINCES[m[1]] ?? m[1] : null;
-  const country = region && Object.values(PROVINCES).includes(region) ? "Canada" : region ? "United States" : null;
+  // The generic rewrite (buildResearchBrief) when there is one, else the fact itself.
+  const rewrote = (field: BriefTextField) => {
+    const r = opts.rewritten?.[field];
+    return typeof r === "string" && r.trim() ? r : null;
+  };
+  const text = (field: BriefTextField): string => rewrote(field) ?? txt(info[field]);
+  // The proper-name net: always on revenue streams (customer names live
+  // there); on the other lines only when the AI rewrite isn't available —
+  // a rewritten buyer preference may name other companies' home towns
+  // ("a Toronto-based consolidator"), which identify nothing.
+  const net = (field: BriefTextField, phrase: string) => (field === "revenueStreams" || !rewrote(field) ? phrase : undefined);
+  const where = briefRegion(deal as any, info);
+  const region = where?.region ?? null;
+  const country = where?.country ?? null;
   const industry = free("", industryLabel, 240) || `${deal.industry && !briefLeaks(deal.industry, terms).length ? deal.industry : "unknown"}`;
+  const headcount = parseHeadcount(txt(info.totalEmployees) || txt(info.employees));
   const lines = [
     `Industry: ${industry}`,
-    free("Business type: ", txt(info.businessType), 200),
+    free("Business type: ", text("businessType"), 200, net("businessType", "a named company")),
     region ? `Region: ${region}${country ? `, ${country}` : ""}` : "",
     band(txt(info.annualRevenue)) ? `Revenue: ${band(txt(info.annualRevenue))}` : "",
     band(txt(info.sde)) ? `SDE: ${band(txt(info.sde))}` : "",
     band(txt(info.ebitda)) ? `EBITDA: ${band(txt(info.ebitda))}` : "",
-    txt(info.employees) ? `Employees: ${txt(info.employees).replace(/[^0-9–-]+/g, " ").trim().split(" ")[0] || "n/a"}` : "",
-    free("Services / revenue streams: ", txt(info.revenueStreams), 300),
-    free("SELLER'S BUYER PREFERENCES (binding): ", txt(info.idealBuyer), 400),
+    headcount ? `Employees: ${headcountBand(headcount)}` : "",
+    // Customer and supplier names are identifying pre-NDA: scrubbed.
+    free("Services / revenue streams: ", text("revenueStreams"), 300, net("revenueStreams", "a named client")),
+    free("SELLER'S BUYER PREFERENCES (binding): ", text("idealBuyer"), 400, net("idealBuyer", "a named company")),
   ];
   const brief = lines.filter(Boolean).join("\n");
   // The fixed labels ("SELLER'S BUYER PREFERENCES") are ours; check what follows them.
@@ -325,6 +419,186 @@ export function blindBrief(deal: Deal): { brief: string; region: string | null; 
   const values = lines.filter((l) => l && !l.startsWith("Region: ")).map((l) => l.slice(l.indexOf(": ") + 2)).join("\n");
   if (briefLeaks(values, terms).length) throw new BlindBriefError("research brief still names the business");
   return { brief, region, withheld };
+}
+
+type AiCreate = (params: any, options?: any) => Promise<any>;
+let aiCreate: AiCreate = (params, options) => anthropic.messages.create(params, options) as any;
+/** Tests replace the model calls (no network). */
+export function setAcquirerAiForTests(fn: AiCreate | null): void {
+  aiCreate = fn ?? ((params, options) => anthropic.messages.create(params, options) as any);
+}
+
+const REWRITE_TOOL = {
+  name: "generic_lines",
+  description: "The same facts, rewritten with no proper names.",
+  input_schema: {
+    type: "object",
+    properties: Object.fromEntries(BRIEF_TEXT_FIELDS.map((f) => [f, { type: ["string", "null"] }])),
+    required: [...BRIEF_TEXT_FIELDS],
+  },
+};
+
+/**
+ * The brief's free-text lines rewritten generically by the supporting model:
+ * every customer, supplier, person, business, brand, street and town becomes
+ * a description ("the largest client group, 5 homes, ~41% of LTC revenue").
+ * The deterministic checks in blindBrief still run on the result. Null when
+ * the model isn't available — blindBrief then scrubs the facts itself.
+ */
+export async function genericBriefLines(deal: Deal): Promise<Partial<Record<BriefTextField, string | null>> | null> {
+  const facts = briefFacts(deal);
+  const input = Object.fromEntries(BRIEF_TEXT_FIELDS.map((f) => [f, clip(txt(facts[f]), 900) || null]));
+  if (!Object.values(input).some(Boolean) || !process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const r = await aiCreate({
+      model: agentConfig.models.supportingAgents,
+      max_tokens: 1200,
+      temperature: 0,
+      tools: [REWRITE_TOOL],
+      tool_choice: { type: "tool", name: REWRITE_TOOL.name },
+      system: [
+        "You prepare a confidential business profile for web research on likely acquirers. Rewrite each line so it can be searched without identifying the business.",
+        "Remove EVERY proper name: customers, clients, suppliers, landlords, people, the business itself, its brands or programmes, streets, neighbourhoods, cities and towns where the business or its customers are. Replace each with a plain description (e.g. 'the largest client group', 'a local grocer', 'a key employee', 'a 9-location competitor chain').",
+        "Keep everything else: services, customer TYPES, counts, percentages, sizes, margins, the seller's buyer preferences and exclusions, franchise brand names the business operates under, and provinces/states.",
+        "Never add facts or opinions. Keep each line about as long as the original. Return null for a line that is null.",
+      ].join(" "),
+      messages: [{ role: "user", content: JSON.stringify(input) }],
+    });
+    const block = (r?.content || []).find((b: any) => b.type === "tool_use");
+    const out = (block?.input || {}) as Record<string, unknown>;
+    const lines: Partial<Record<BriefTextField, string | null>> = {};
+    for (const f of BRIEF_TEXT_FIELDS) lines[f] = typeof out[f] === "string" && (out[f] as string).trim() ? String(out[f]).slice(0, 1200) : null;
+    return lines;
+  } catch (err) {
+    console.warn("[external-acquirers] generic brief rewrite failed:", (err as Error)?.message);
+    return null;
+  }
+}
+
+// ── Claim check (claim-check.ts holds the rules) ──────────────────────────
+const CHECK_BATCH = 4;
+const CHECK_CONCURRENCY = 3;
+// Web fetch was a beta on the supporting model's generation; the header is
+// harmless where it is generally available.
+const FETCH_HEADERS = { headers: { "anthropic-beta": "web-fetch-2025-09-10" } };
+
+async function checkClaimBatch(
+  batch: Array<{ ref: string; a: ExternalAcquirer }>,
+  excerpts: Map<string, string[]>,
+  deadline: number,
+): Promise<Map<string, AcquirerCheck>> {
+  const payload = batch.map(({ ref, a }) => ({
+    ref,
+    organisation: a.name,
+    claims: claimsFor(a),
+    sources: a.sources.map((u) => ({ url: u, excerpts: (excerpts.get(normaliseUrl(u)) ?? []).slice(0, 8).map((t) => clip(t, 500)) })),
+  }));
+  const domains = Array.from(new Set(batch.flatMap(({ a }) => a.sources.map((u) => normaliseUrl(u).split("/")[0]).filter(Boolean))));
+  const fetchTool = { type: "web_fetch_20250910", name: "web_fetch", max_uses: Math.min(12, batch.length * 3), allowed_domains: domains, max_content_tokens: 6000 };
+  const parse = (r: any): Map<string, AcquirerCheck> | null => {
+    const block = (r?.content || []).find((b: any) => b.type === "tool_use" && b.name === CHECK_TOOL.name);
+    if (!block) return null;
+    const out = new Map<string, AcquirerCheck>();
+    for (const e of Array.isArray(block.input?.entries) ? block.input.entries : []) {
+      if (e?.ref && Array.isArray(e.claims)) out.set(String(e.ref), { claims: e.claims, supportedWhy: e.supportedWhy ?? null });
+    }
+    return out;
+  };
+  const messages: any[] = [{ role: "user", content: `Check every claim against its sources.\n${JSON.stringify(payload)}` }];
+  let withFetch = domains.length > 0;
+  for (let turn = 0; turn < 5 && Date.now() < deadline; turn++) {
+    const force = turn >= 3 || !withFetch;
+    let r: any;
+    try {
+      r = await aiCreate({
+        model: agentConfig.models.supportingAgents,
+        max_tokens: 4000,
+        temperature: 0,
+        system: CHECK_SYSTEM,
+        tools: withFetch ? [fetchTool, CHECK_TOOL] : [CHECK_TOOL],
+        tool_choice: force ? { type: "tool", name: CHECK_TOOL.name } : { type: "auto" },
+        messages,
+      }, { ...(withFetch ? FETCH_HEADERS : {}), timeout: Math.max(20_000, deadline - Date.now()) });
+    } catch (err: any) {
+      // Page fetching unavailable for this key/model: check against the excerpts alone.
+      // Only a complaint about the tool itself — a billing or other 400 would fail the same way again.
+      if (withFetch && err?.status === 400 && turn === 0 && /web_fetch|tool|beta|allowed_domains|not supported/i.test(String(err?.message ?? ""))) {
+        console.warn("[external-acquirers] claim check without page fetch:", err?.message);
+        withFetch = false;
+        turn--;
+        continue;
+      }
+      throw err;
+    }
+    const got = parse(r);
+    if (got) return got;
+    messages.push({ role: "assistant", content: r.content });
+    if (r.stop_reason !== "pause_turn") messages.push({ role: "user", content: "Now call report_claim_checks with every ref and claim id." });
+  }
+  return new Map();
+}
+
+async function checkChannels(channels: Channel[], corpus: string, deadline: number): Promise<Array<ChannelCheck | null> | null> {
+  if (!channels.length) return [];
+  const r: any = await aiCreate({
+    model: agentConfig.models.supportingAgents,
+    max_tokens: 1500,
+    temperature: 0,
+    system: "You check suggested outreach channels for an M&A buyer search against what a web search returned. General advice needs no source. An organisation named as an example must appear in the research text in that role (a lender as a lender, an association as an association); otherwise remove it from 'how'. Drop a channel (keep=false) only if it rests on a factual claim the research contradicts or doesn't back. Never add facts.",
+    tools: [CHANNEL_TOOL],
+    tool_choice: { type: "tool", name: CHANNEL_TOOL.name },
+    messages: [{ role: "user", content: `CHANNELS:\n${JSON.stringify(channels.map((c, i) => ({ ref: String(i + 1), name: c.name, how: c.how })))}\n\nRESEARCH TEXT:\n${corpus.slice(0, 20000)}` }],
+  }, { timeout: Math.max(20_000, deadline - Date.now()) });
+  const block = (r?.content || []).find((b: any) => b.type === "tool_use");
+  const list = Array.isArray(block?.input?.channels) ? block.input.channels : null;
+  if (!list) return null;
+  return channels.map((_, i) => {
+    const c = list.find((x: any) => String(x?.ref) === String(i + 1));
+    return c ? { keep: c.keep !== false, how: typeof c.how === "string" ? c.how : null } : null;
+  });
+}
+
+/**
+ * Check every organisation's claims (and the channels) against what the
+ * research cited. Failures never hide an organisation — it is kept and
+ * marked unchecked.
+ */
+export async function checkAcquirerClaims(
+  results: ExternalAcquirer[],
+  channels: Channel[],
+  ctx: { excerpts: Map<string, string[]>; corpus: string },
+): Promise<AppliedChecks> {
+  const deadline = Date.now() + 3 * 60_000;
+  const checks: Array<AcquirerCheck | null> = results.map(() => null);
+  const batches: Array<Array<{ ref: string; a: ExternalAcquirer; i: number }>> = [];
+  results.forEach((a, i) => {
+    if (i % CHECK_BATCH === 0) batches.push([]);
+    batches[batches.length - 1].push({ ref: String(i + 1), a, i });
+  });
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, batches.length) }, async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      try {
+        const got = await checkClaimBatch(batch, ctx.excerpts, deadline);
+        for (const { ref, i } of batch) checks[i] = got.get(ref) ?? null;
+      } catch (err) {
+        console.error("[external-acquirers] claim check batch failed:", (err as Error)?.message ?? err);
+      }
+    }
+  }));
+  let channelChecks: Array<ChannelCheck | null> | null = null;
+  try {
+    channelChecks = await checkChannels(channels, ctx.corpus, deadline);
+  } catch (err) {
+    console.error("[external-acquirers] channel check failed:", (err as Error)?.message ?? err);
+  }
+  return applyClaimChecks(results, checks, channels, channelChecks, ctx.corpus);
+}
+
+/** The research brief: the AI's generic rewrite where available, always through blindBrief's checks. */
+export async function buildResearchBrief(deal: Deal): Promise<ReturnType<typeof blindBrief>> {
+  return blindBrief(deal, { rewritten: await genericBriefLines(deal) });
 }
 
 const REPORT_TOOL = {
@@ -375,8 +649,8 @@ export async function startExternalAcquirerSearch(dealId: string, opts: { includ
   const state: ExternalAcquirerSearch = { status: "running", startedAt: new Date().toISOString(), results: ((deal.externalAcquirers as ExternalAcquirerSearch | null)?.results) || [] };
   await storage.updateDeal(dealId, { externalAcquirers: state } as any);
   void research(deal, !!opts.includeExcluded)
-    .then(async ({ results, mode, note, channels, droppedCount }) => {
-      await storage.updateDeal(dealId, { externalAcquirers: { status: "done", startedAt: state.startedAt, finishedAt: new Date().toISOString(), mode, results, note, channels, droppedCount, includeExcluded: !!opts.includeExcluded } } as any);
+    .then(async ({ results, mode, note, channels, droppedCount, removedClaims }) => {
+      await storage.updateDeal(dealId, { externalAcquirers: { status: "done", startedAt: state.startedAt, finishedAt: new Date().toISOString(), mode, results, note, channels, droppedCount, removedClaims, includeExcluded: !!opts.includeExcluded } } as any);
     })
     .catch(async (err) => {
       const blind = err instanceof BlindBriefError;
@@ -489,7 +763,7 @@ export function buildAcquirerList(
       .map((n: unknown) => sourceList[Number(n) - 1])
       .filter((u: string | undefined): u is string => !!u);
     const byUrl = (Array.isArray(a.sources) ? a.sources : []).map(String).filter(urlOk);
-    const sources = Array.from(new Set([...byRef, ...byUrl])).slice(0, 4);
+    const sources = Array.from(new Set([...byRef, ...byUrl].map(stripTracking))).slice(0, 4);
     let isVerified = true;
     if (mode === "web" && sources.length === 0) {
       // Named in the research but not tied to a source: keep it, flagged.
@@ -518,8 +792,8 @@ export function buildAcquirerList(
   return { results: [...verified, ...unverified].slice(0, 15), note, channels, droppedCount };
 }
 
-async function research(deal: Deal, includeExcluded: boolean): Promise<{ results: ExternalAcquirer[]; mode: "web" | "knowledge"; note: string | null; channels: Array<{ name: string; how: string; url?: string | null }>; droppedCount: number }> {
-  let { brief, region } = blindBrief(deal);
+async function research(deal: Deal, includeExcluded: boolean): Promise<{ results: ExternalAcquirer[]; mode: "web" | "knowledge"; note: string | null; channels: Array<{ name: string; how: string; url?: string | null }>; droppedCount: number; removedClaims: number }> {
+  let { brief, region } = await buildResearchBrief(deal);
   const terms = briefTerms(deal);
   if (includeExcluded) brief = brief.replace("SELLER'S BUYER PREFERENCES (binding):", "Seller's stated preference (broker asked to include ALL buyer types anyway — list them, and flag any that conflict with it):");
   // The brief is blind by construction; logging it lets anyone audit what
@@ -538,13 +812,21 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
 
   const urls = new Set<string>();
   const citedText: string[] = [];
+  // What the search returned per page (titles + cited text), for the claim check.
+  const excerpts = new Map<string, string[]>();
+  const addExcerpt = (url: string, text: string) => {
+    const k = normaliseUrl(url);
+    const list = excerpts.get(k) ?? [];
+    if (!list.includes(text)) list.push(text);
+    excerpts.set(k, list);
+  };
   let finalText = "";
   let mode: "web" | "knowledge" = "web";
   // Bounded research: ~8 searches, at most one continuation, 4 minutes overall.
   const deadline = Date.now() + 4 * 60_000;
   try {
     for (let turn = 0; turn < 2 && Date.now() < deadline; turn++) {
-      const r: any = await anthropic.messages.create({
+      const r: any = await aiCreate({
         model: agentConfig.models.supportingAgents,
         max_tokens: 5000,
         system,
@@ -553,13 +835,20 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
       } as any, { timeout: Math.max(30_000, deadline - Date.now()) });
       for (const b of r.content as any[]) {
         if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-          for (const item of b.content) if (item?.url) urls.add(String(item.url));
+          for (const item of b.content) {
+            if (!item?.url) continue;
+            urls.add(String(item.url));
+            if (item.title) addExcerpt(String(item.url), String(item.title));
+          }
         }
         if (b.type === "text") {
           finalText += b.text;
           for (const c of b.citations || []) {
             if (c?.url) urls.add(String(c.url));
-            if (c?.cited_text) citedText.push(String(c.cited_text));
+            if (c?.cited_text) {
+              citedText.push(String(c.cited_text));
+              if (c.url) addExcerpt(String(c.url), String(c.cited_text));
+            }
           }
         }
       }
@@ -578,7 +867,7 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
   const sourceList = Array.from(urls).slice(0, 120);
   const sourcesBlock = sourceList.map((u, i) => `[${i + 1}] ${u}`).join("\n");
   const prefLine = brief.split("\n").find((l) => l.startsWith("SELLER'S BUYER PREFERENCES")) ?? "";
-  const structure = async (extra = "") => anthropic.messages.create({
+  const structure = async (extra = "") => aiCreate({
     model: agentConfig.models.supportingAgents,
     max_tokens: 4000,
     temperature: 0,
@@ -605,7 +894,7 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
   }
 
   const toList = (resp: Awaited<ReturnType<typeof structure>>) => {
-    const block = resp.content.find((b) => b.type === "tool_use");
+    const block = (resp?.content || []).find((b: any) => b.type === "tool_use");
     const input = (block && block.type === "tool_use" ? block.input : {}) as StructuredAcquirerInput;
     return buildAcquirerList(input, { mode, sourceList, researchText: finalText, citedText: citedText.join("\n"), theirs, terms });
   };
@@ -617,6 +906,15 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
     if (retry.results.length > 0) out = retry;
     else out.droppedCount = Math.max(out.droppedCount, retry.droppedCount);
   }
+  // Every claim checked against the pages it cites (claim-check.ts).
+  let removedClaims = 0;
+  if (mode === "web" && (out.results.length || out.channels.length)) {
+    const corpus = [...citedText, ...Array.from(excerpts.values()).flat()].join("\n");
+    const checked = await checkAcquirerClaims(out.results, out.channels, { excerpts, corpus });
+    removedClaims = checked.removedClaims;
+    out = { ...out, results: checked.results, channels: checked.channels, droppedCount: out.droppedCount + checked.droppedUnsupported };
+    console.log(`[external-acquirers] deal ${deal.id}: claim check — ${checked.removedClaims} claim(s) removed, ${checked.droppedUnsupported} organisation(s) dropped, ${checked.unchecked} unchecked`);
+  }
   if (out.droppedCount) console.log(`[external-acquirers] deal ${deal.id}: ${out.results.length} kept, ${out.droppedCount} left out (not backed by the research)`);
-  return { ...out, mode };
+  return { ...out, mode, removedClaims };
 }

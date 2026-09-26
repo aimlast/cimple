@@ -12,7 +12,15 @@ import {
   clip,
   normaliseUrl,
   urlMatches,
+  band,
+  buildResearchBrief,
+  checkAcquirerClaims,
+  scrubProperNames,
+  setAcquirerAiForTests,
 } from "../../server/matching/external-acquirers";
+import { applyClaimChecks, stripTracking } from "../../server/matching/claim-check";
+import { regionInText } from "../../server/matching/regions";
+import { parseHeadcount } from "../../server/matching/fact-numbers";
 import { isBlindSafe } from "../../shared/blind-guard";
 
 // ── 1. The brief is blind ─────────────────────────────────────────────────
@@ -187,4 +195,174 @@ assert.equal(clip("Short.", 50), "Short.");
 assert.equal(clip("First sentence here. Second sentence that is long.", 30), "First sentence here.");
 assert.equal(clip("one two three four five six", 12), "one two…");
 
-console.log("external-acquirers: all assertions passed");
+// ── 5. Round V: customer names, headcount, region, revenue prose, provenance ──
+async function roundV() {
+  // Customer names in revenue streams never reach the brief (Beacon, Maple & Main).
+  const beacon: any = {
+    businessName: "Beacon Specialty Pharmacy Inc.",
+    industry: "Pharmacy",
+    subIndustry: "Independent community pharmacy with LTC services",
+    location: "Ottawa, Ontario",
+    extractedInfo: {
+      revenueStreams: "Long-term care home dispensing (14 homes, 1,046 beds; Maplecrest 5 homes ~41% of LTC revenue), community/retail dispensing, compounding",
+      employees: "Key personnel mentioned: Daniel Okafor (LTC lead pharmacist, since 2014), Mei-Lin (compounding pharmacist, since 2018). Total headcount 23 (incl. owner).",
+      annualRevenue: "$9,120,400 (FY2024)",
+    },
+  };
+  const bb = blindBrief(beacon).brief;
+  assert.ok(!/maplecrest/i.test(bb), bb);
+  assert.match(bb, /14 homes, 1,046 beds; a named client 5 homes ~41% of LTC revenue/);
+  assert.match(bb, /Employees: 10–24/, bb);
+  assert.ok(!/2014|2,014/.test(bb), bb);
+  assert.match(bb, /Region: Ontario, Canada/);
+  assert.match(bb, /Revenue: \$5M–\$10M/);
+  const maple: any = {
+    businessName: "Maple & Main Café", industry: "Food service", location: "Guelph, Ontario",
+    extractedInfo: { revenueStreams: "Coffee (~40%); wholesale baking to 3 accounts (Hartwell's grocer, Speedvale Book Nook café, Clair Road co-op); seasonal Christmas pies; Saturday farmers market May-Thanksgiving", employees: "7 employees (not counting owner)" },
+  };
+  const mbr = blindBrief(maple).brief;
+  assert.ok(!/hartwell|speedvale|book nook|clair/i.test(mbr), mbr);
+  assert.match(mbr, /Christmas pies; Saturday farmers market May-Thanksgiving/, mbr);
+  assert.match(mbr, /Employees: under 10/);
+
+  // Region from the deal's own location, US state codes and known cities.
+  const clearwater: any = { businessName: "Clearwater Physiotherapy & Wellness Inc.", industry: "Healthcare", location: "Calgary, Alberta", extractedInfo: { leaseAddress: "Hillhurst: 2217 Wexford Ave NW; Seton: 118 Hollowbrook Gate SE", annualRevenue: "$3,318,600 (FY2024, year ended December 31, 2024); FY2023 $3,082,400", employees: "22 total: 11 physiotherapists, 6 RMTs, 5 admin staff" } };
+  const cb = blindBrief(clearwater).brief;
+  assert.match(cb, /Region: Alberta, Canada/, cb);
+  assert.match(cb, /Employees: 10–24/, cb);
+  assert.ok(!/calgary|hillhurst|seton|wexford/i.test(cb), cb);
+  const greatLakes: any = { businessName: "Great Lakes Precision Plastics, Inc.", industry: "Manufacturing", extractedInfo: { location: "Toledo, OH", annualRevenue: "2024 net sales: $58,241,630, up approximately 6.5% year-over-year. 2025 budget: $61.5 million", employees: "212 employees plus 12-15 temporary workers depending on week" } };
+  const gb = blindBrief(greatLakes).brief;
+  assert.match(gb, /Region: Ohio, United States/, gb);
+  assert.match(gb, /Revenue: \$25M\+/, gb);
+  assert.match(gb, /Employees: 100–249/, gb);
+  assert.ok(!/toledo/i.test(gb), gb);
+  assert.equal(regionInText("Calgary")?.region, "Alberta");
+  assert.equal(regionInText("Toledo")?.region, "Ohio");
+  assert.equal(regionInText("Austin, TX 78701")?.country, "United States");
+  assert.equal(regionInText("Unit 3, 1742 Merivale Road, Ottawa ON K2G 4A1")?.region, "Ontario");
+  assert.equal(regionInText("somewhere nice"), null);
+  assert.equal(band("2024 net sales: $58,241,630"), "$25M+");
+  assert.equal(band("$1.2 million in 2023"), "$1M–$2M");
+  assert.equal(band("about 2019"), null);
+  assert.equal(parseHeadcount("148 (96 drivers + 52 staff, Dec 31, 2024)"), 148);
+  assert.equal(parseHeadcount("36 employees plus owner (37 total)"), 37);
+  assert.equal(parseHeadcount("5 year-round employees plus 14 seasonal employees. Total peak season: 19 employees."), 19);
+  assert.equal(parseHeadcount("Owner since 2014"), null);
+
+  // Facts only a broker-only source asserted never shape the brief.
+  const crm: any = {
+    businessName: "Acme Test Co", industry: "Manufacturing", location: "Hamilton, Ontario",
+    extractedInfo: {
+      idealBuyer: "Strategic acquirer only — seller hates PE",
+      annualRevenue: "$40M",
+      revenueStreams: "Contract machining",
+      _fieldSources: {
+        idealBuyer: { source: "crm", documentId: "doc-crm" },
+        annualRevenue: { source: "document", documentId: "doc-private", brokerOnly: true },
+        revenueStreams: { source: "interview" },
+      },
+    },
+  };
+  const crmBrief = blindBrief(crm).brief;
+  assert.ok(!/PREFERENCES|hates PE/.test(crmBrief), crmBrief);
+  assert.ok(!/Revenue:/.test(crmBrief), crmBrief);
+  assert.match(crmBrief, /Services \/ revenue streams: Contract machining/);
+
+  // The proper-name net keeps ordinary words, acronyms, provinces and brands.
+  assert.equal(scrubProperNames("Wholesale to Hartwell's grocer and LTC homes in Ontario", "a named client"), "Wholesale to a named client’s grocer and LTC homes in Ontario");
+  assert.equal(scrubProperNames("Compounding (human and veterinary); Maplecrest 5 homes", "a named client"), "Compounding (human and veterinary); a named client 5 homes");
+  assert.equal(scrubProperNames("Someone who will treat the head baker well", "a named company"), "Someone who will treat the head baker well");
+
+  // The AI rewrite is used when present; the brief's checks still run on it.
+  let seen: any = null;
+  setAcquirerAiForTests(async (params: any) => {
+    seen = params;
+    return { content: [{ type: "tool_use", name: "generic_lines", input: { businessType: null, revenueStreams: "Long-term care dispensing to 14 homes (1,046 beds); the largest client group (5 homes) is ~41% of LTC revenue", idealBuyer: null } }] };
+  });
+  const rewritten = await buildResearchBrief(beacon);
+  assert.match(rewritten.brief, /the largest client group \(5 homes\) is ~41% of LTC revenue/);
+  assert.ok(seen && JSON.stringify(seen.messages).includes("Maplecrest"), "the model sees the fact to rewrite");
+  // A rewrite that still names the business is caught by the deterministic guard.
+  setAcquirerAiForTests(async () => ({ content: [{ type: "tool_use", name: "generic_lines", input: { businessType: null, revenueStreams: "Beacon Specialty Pharmacy's LTC dispensing", idealBuyer: null } }] }));
+  const leaky = await buildResearchBrief(beacon);
+  assert.ok(!/beacon/i.test(leaky.brief), leaky.brief);
+  // AI down → the facts scrubbed deterministically.
+  setAcquirerAiForTests(async () => { throw new Error("overloaded"); });
+  const down = await buildResearchBrief(beacon);
+  assert.ok(!/maplecrest/i.test(down.brief), down.brief);
+
+  // ── 6. Claims are checked against the cited text ─────────────────────────
+  const tfi: any = {
+    name: "TFI International Inc.", type: "strategic", website: "www.tfiintl.com", sources: ["https://www.freightwaves.com/news/manitoulin-acquires-british-columbia-trucking-firm-courier"],
+    whyInterested: "TFI acquired Keystone Western in 2024. Manitoulin Group (a TFI company) acquired Diamond Delivery in 2021.",
+    evidence: ["Acquired Keystone Western (Vancouver terminals), 2024", "Manitoulin Group (TFI company) acquired BC carrier Diamond Delivery, 2021"],
+  };
+  const kriska: any = { name: "Kriska Transportation", type: "strategic", sources: ["https://www.freightwaves.com/tag/kriska?utm_source=x"], whyInterested: "Kriska buys BC reefer carriers.", evidence: ["Acquired a BC reefer carrier in 2023"] };
+  const mullen: any = { name: "Mullen Group", type: "strategic", sources: ["https://www.mullen-group.com/news"], whyInterested: "Mullen acquired BC carriers.", evidence: ["Acquired Argus Carriers, 2019"] };
+  const channels = [
+    { name: "Transportation finance lenders", how: "Speak to transport lenders' acquisition desks (e.g., Element Fleet Management, Northbridge Financial)" },
+    { name: "Trucking association", how: "Post in the BC Trucking Association member bulletin (e.g., BC Trucking Association)" },
+  ];
+  const applied = applyClaimChecks(
+    [tfi, kriska, mullen, { ...mullen, name: "Unchecked Co" }],
+    [
+      { claims: [{ id: "why", supported: false }, { id: "e1", supported: true }, { id: "e2", supported: false }], supportedWhy: "TFI acquired Keystone Western, a carrier with Vancouver terminals, in 2024." },
+      { claims: [{ id: "why", supported: false }, { id: "e1", supported: false }], supportedWhy: null },
+      { claims: [{ id: "why", supported: true }, { id: "e1", supported: true }] },
+      null,
+    ],
+    channels,
+    [{ keep: true, how: "Speak to transport lenders' acquisition desks (e.g., Element Fleet Management, Northbridge Financial)" }, null],
+    "Element Fleet Management provides fleet financing … BC Trucking Association",
+  );
+  const [t, m, u] = applied.results;
+  assert.equal(applied.results.length, 3, "Kriska: nothing backed → dropped");
+  assert.equal(applied.droppedUnsupported, 1);
+  assert.equal(t.name, "TFI International Inc.");
+  assert.ok(!/manitoulin/i.test(`${t.whyInterested} ${(t.evidence ?? []).join(" ")}`), JSON.stringify(t));
+  assert.deepEqual(t.evidence, ["Acquired Keystone Western (Vancouver terminals), 2024"]);
+  assert.equal(t.claimsChecked, true);
+  assert.equal(m.whyInterested, "Mullen acquired BC carriers.");
+  assert.equal(u.claimsUnchecked, true);
+  assert.equal(applied.unchecked, 1);
+  assert.equal(applied.removedClaims, 4); // TFI why + e2, Kriska why + e1
+  assert.match(applied.channels[0].how, /\(e\.g\. Element Fleet Management\)$/, applied.channels[0].how);
+  assert.ok(!/Northbridge/.test(applied.channels[0].how));
+  assert.equal(applied.channels[1].how, "Post in the BC Trucking Association member bulletin", "unchecked channel: examples dropped");
+  assert.equal(stripTracking("https://www.freightwaves.com/tag/kriska?utm_source=x&utm_medium=y&page=2"), "https://www.freightwaves.com/tag/kriska?page=2");
+  assert.equal(stripTracking("https://x.com/a?fbclid=1"), "https://x.com/a");
+
+  // The checker call: excerpts per source, page fetch limited to the entry's own sites,
+  // and a batch that fails leaves its entries marked unchecked (never silently trusted).
+  const calls: any[] = [];
+  setAcquirerAiForTests(async (params: any) => {
+    calls.push(params);
+    if (params.tools.some((t: any) => t.name === "report_channel_checks")) {
+      return { content: [{ type: "tool_use", name: "report_channel_checks", input: { channels: [{ ref: "1", keep: true, how: "Speak to transport lenders' acquisition desks" }] } }] };
+    }
+    const payload = JSON.parse(params.messages[0].content.replace(/^[^\n]*\n/, ""));
+    if (payload.some((e: any) => e.organisation === "Explodes Inc")) throw new Error("boom");
+    return {
+      content: [{ type: "tool_use", name: "report_claim_checks", input: { entries: payload.map((e: any) => ({ ref: e.ref, claims: e.claims.map((c: any) => ({ id: c.id, supported: !/Manitoulin/.test(c.text), reason: "x" })), supportedWhy: "TFI acquired Keystone Western in 2024." })) } }],
+    };
+  });
+  const excerpts = new Map([["freightwaves.com/news/manitoulin-acquires-british-columbia-trucking-firm-courier", ["Manitoulin Group acquired Diamond Delivery"]]]);
+  const five = [tfi, mullen, { ...mullen, name: "M2" }, { ...mullen, name: "M3" }, { ...mullen, name: "Explodes Inc" }];
+  const checked = await checkAcquirerClaims(five, [channels[0]], { excerpts, corpus: "research text" });
+  const claimCalls = calls.filter((c) => c.tools.some((t: any) => t.name === "report_claim_checks"));
+  assert.equal(claimCalls.length, 2, "batches of 4");
+  const fetchTool = claimCalls[0].tools.find((t: any) => t.name === "web_fetch");
+  assert.ok(fetchTool && fetchTool.allowed_domains.includes("freightwaves.com") && fetchTool.allowed_domains.includes("mullen-group.com"), JSON.stringify(fetchTool));
+  assert.ok(claimCalls[0].messages[0].content.includes("Manitoulin Group acquired Diamond Delivery"), "excerpts are sent");
+  assert.equal(checked.results[0].whyInterested, "TFI acquired Keystone Western in 2024.");
+  assert.deepEqual(checked.results[0].evidence, ["Acquired Keystone Western (Vancouver terminals), 2024"]);
+  assert.equal(checked.results.find((r) => r.name === "Explodes Inc")?.claimsUnchecked, true);
+  assert.equal(checked.channels[0].how, "Speak to transport lenders' acquisition desks");
+  setAcquirerAiForTests(null);
+}
+
+roundV().then(
+  () => console.log("external-acquirers: all assertions passed"),
+  (err) => { console.error(err); process.exit(1); },
+);

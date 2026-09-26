@@ -5,22 +5,30 @@
  */
 import assert from "node:assert/strict";
 import {
+  criterionBound,
   excludedIndustryMatches,
+  exclusionCautionNote,
   finiteScore,
+  formatMoney,
   firstJsonObject,
+  industryExclusion,
   matchBuyerToDeal,
   scoreAiDimensions,
   setMatchingAiForTests,
+  splitIndustryLabel,
 } from "../../server/matching/engine";
 import { matchBuyerDealRow } from "../../server/matching/match-run";
-import { passesFirstPass, reachedBuyers } from "../../server/matching/suggested";
+import { isExcludedBuyer, passesFirstPass, reachedBuyers, suggestionPools } from "../../server/matching/suggested";
+import { calculateQualifiedLeadScore } from "../../server/scoring/buyer-score";
 
 async function main() {
   // ── 1. Exclusions: qualified phrases strict, bare sector names cover the sector ──
   assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service & replacement", ["New-build construction"]), false);
   assert.equal(excludedIndustryMatches("HVAC · Residential HVAC service & replacement", ["New-construction mechanical"]), false);
   assert.equal(excludedIndustryMatches("Construction · General contractor", ["construction"]), true);
-  assert.equal(excludedIndustryMatches("Construction · General contractor", ["New-build construction"]), true);
+  // A narrower slice of the deal's sector may or may not apply: flagged for the broker, never hidden.
+  assert.equal(excludedIndustryMatches("Construction · General contractor", ["New-build construction"]), false);
+  assert.deepEqual(industryExclusion("Construction", "General contractor", ["New-build construction"]), { by: "New-build construction", certain: false, why: "narrower" });
   assert.equal(excludedIndustryMatches("Healthcare · Dental practice", ["Healthcare"]), true);
   assert.equal(excludedIndustryMatches("Retail · Vape shop", ["cannabis", "vape"]), true);
   assert.equal(excludedIndustryMatches("", ["construction"]), false);
@@ -49,6 +57,72 @@ async function main() {
   assert.equal(excludedIndustryMatches(beacon, ["Manufacturing", "Food service"]), false);
   assert.equal(excludedIndustryMatches("Transportation & Logistics · Regional trucking", ["Long-haul trucking"]), false);
   assert.equal(excludedIndustryMatches("Transportation & Logistics · Regional trucking", ["Trucking"]), true);
+
+  // ── 1b. End markets are not the deal's industry (live probe, round V r2) ──
+  // The sub-industry often names who the business sells to. Those markets must
+  // not hide a buyer: before, an IT-services buyer who rules out healthcare was
+  // hidden from an MSP for dental practices, and a plastics-moulding buyer from
+  // a moulder that makes medical-device parts.
+  const harborview = ["IT / Managed Services", "Managed service provider (MSP) for dental, legal and accounting practices"] as const;
+  const greatLakes = ["Manufacturing", "Custom injection molding — automotive Tier-2 and medical device components (IATF 16949 + ISO 13485)"] as const;
+  const ridgeline = ["Manufacturing", "Custom structural & miscellaneous metal fabrication and welding (oil & gas, agriculture, commercial construction)"] as const;
+  assert.deepEqual(splitIndustryLabel(...harborview), {
+    own: "IT / Managed Services · Managed service provider MSP",
+    context: "for dental, legal and accounting practices",
+  });
+  assert.deepEqual(splitIndustryLabel(...greatLakes), {
+    own: "Manufacturing · Custom injection molding",
+    context: "IATF 16949 + ISO 13485 · automotive Tier-2 and medical device components",
+  });
+  assert.equal(splitIndustryLabel(...ridgeline).own, "Manufacturing · Custom structural & miscellaneous metal fabrication and welding");
+  assert.equal(splitIndustryLabel("Transportation & Logistics", "Regional trucking (dry van + reefer), port drayage & 3PL cross-dock warehousing").own,
+    "Transportation & Logistics · Regional trucking, port drayage & 3PL cross-dock warehousing");
+  assert.deepEqual(industryExclusion(...harborview, ["Restaurants", "Retail", "Construction", "Healthcare"]), { by: "Healthcare", certain: false, why: "market" });
+  assert.deepEqual(industryExclusion(...harborview, ["Home care", "Pharmacy", "Dental"]), { by: "Dental", certain: false, why: "market" });
+  assert.deepEqual(industryExclusion(...harborview, ["Healthcare", "Retail", "Technology", "Trucking"]), { by: "Technology", certain: true, why: "industry" }, "an MSP IS technology");
+  assert.deepEqual(industryExclusion(...greatLakes, ["Restaurants", "Retail", "Healthcare"]), { by: "Healthcare", certain: false, why: "market" });
+  assert.deepEqual(industryExclusion(...greatLakes, ["Consumer retail", "Restaurants", "Healthcare services", "Software"]), { by: "Healthcare services", certain: false, why: "market" });
+  assert.deepEqual(industryExclusion(...greatLakes, ["Restaurants", "Heavy manufacturing"]), { by: "Heavy manufacturing", certain: false, why: "narrower" });
+  assert.deepEqual(industryExclusion(...greatLakes, ["Services", "Manufacturing"]), { by: "Manufacturing", certain: true, why: "industry" });
+  assert.deepEqual(industryExclusion(...ridgeline, ["Restaurants", "Retail", "Construction", "Healthcare"]), { by: "Construction", certain: false, why: "market" });
+  assert.deepEqual(industryExclusion(...ridgeline, ["Restaurants", "Oil & gas services", "Construction"]), { by: "Oil & gas services", certain: false, why: "market" });
+  assert.equal(industryExclusion(...ridgeline, ["Upstream oilfield services", "Retail", "Healthcare"]), null);
+  // …while what the business itself does still rules it out for certain.
+  assert.deepEqual(industryExclusion("Pharmacy", "Independent community pharmacy with LTC/retirement home services (14 homes) and non-sterile compounding", ["Healthcare"]),
+    { by: "Healthcare", certain: true, why: "industry" });
+  assert.deepEqual(industryExclusion("Retail", null, ["Healthcare", "Consumer retail"]), { by: "Consumer retail", certain: true, why: "industry" });
+  assert.deepEqual(industryExclusion("Transportation & Logistics", "Regional trucking (dry van + reefer)", ["Trucking"]), { by: "Trucking", certain: true, why: "industry" });
+  assert.deepEqual(industryExclusion("Software", "Practice management software for dental clinics", ["Healthcare", "Software"]), { by: "Software", certain: true, why: "industry" });
+  assert.match(exclusionCautionNote({ by: "Healthcare", certain: false, why: "market" }), /^Rules out “Healthcare”\. This business serves that market but isn't part of it/);
+  // End to end: the IT buyer stays suggestible on the MSP, with the caution.
+  const itBuyer = await matchBuyerToDeal(
+    { targetIndustries: ["IT managed services", "B2B services"], excludedIndustries: ["Restaurants", "Retail", "Construction", "Healthcare"], targetLocations: ["Nova Scotia"] } as any,
+    { industry: harborview[0], subIndustry: harborview[1], extractedInfo: { annualRevenue: "$7,400,000", locationSite: "Halifax, Nova Scotia" } },
+    { skipAI: true },
+  );
+  assert.ok(!itBuyer.excludedIndustry);
+  assert.ok(!itBuyer.industryFit.details.excluded);
+  assert.equal(itBuyer.exclusionCaution?.by, "Healthcare");
+  assert.equal(itBuyer.exclusionCaution?.why, "market");
+  assert.equal(itBuyer.industryFit.details.industry.score, 100);
+  const itScore = calculateQualifiedLeadScore({ buyer: { profileCompletionPct: 90, hasProofOfFunds: true } as any, match: itBuyer });
+  assert.ok(!itScore.excluded && itScore.tier !== "cold", `${itScore.tier} ${itScore.total}`);
+  const itPools = suggestionPools([{ buyer: { id: "it", email: "it@x.invalid", background: "x" }, breakdown: itBuyer, contact: null, lastActivityAt: null, fundsRange: null, score: itScore }] as any, reachedBuyers([], []));
+  assert.deepEqual(itPools.pool.map((s) => s.buyer.id), ["it"]);
+  assert.deepEqual(itPools.candidates.map((s) => s.buyer.id), ["it"], "deep-checked, where the AI judges the exclusion");
+  assert.equal(itPools.excluded.length, 0);
+  // The plastics moulder on Great Lakes: industry, revenue written as prose
+  // (the year in front is not the figure) and a US state code all match.
+  const moulder = await matchBuyerToDeal(
+    { targetIndustries: ["Plastics manufacturing", "Injection molding"], excludedIndustries: ["Healthcare", "Retail"], targetLocations: ["Ohio", "Michigan"], revenueMin: "20000000", revenueMax: "90000000" } as any,
+    { industry: greatLakes[0], subIndustry: greatLakes[1], extractedInfo: { annualRevenue: "2024 net sales: $58,241,630, up approximately 6.5% year-over-year.", location: "Toledo, OH" } },
+    { skipAI: true },
+  );
+  assert.equal(moulder.criteriaMatched, 3, JSON.stringify([moulder.financialFit.details, moulder.locationFit.details]));
+  assert.match(moulder.financialFit.details.revenue.note, /^\$58\.2M/);
+  assert.equal(moulder.exclusionCaution?.by, "Healthcare");
+  const bareYear = await matchBuyerToDeal({ revenueMin: "1000000" } as any, { industry: "Retail", extractedInfo: { annualRevenue: "2024 figures not provided yet" } }, { skipAI: true });
+  assert.equal(bareYear.financialFit.details.revenue, undefined, "a year alone is not revenue");
 
   // End to end: the Lakeshore case keeps its best buyers in the first pass.
   const lakeshore = {
@@ -158,6 +232,73 @@ async function main() {
   assert.deepEqual(reached({ id: "u-contacted", email: "c@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true });
   assert.deepEqual(reached({ id: "u-new", email: "SOMEONE@x.invalid" }), { alreadyHasAccess: false, alreadyContacted: true });
   assert.deepEqual(reached({ id: "u-fresh", email: "" }), { alreadyHasAccess: false, alreadyContacted: false });
+
+  // ── 5. Unreadable criteria are not "tested"; "0" is not a limit ──────────
+  setMatchingAiForTests(null);
+  const pcl = { industry: "Transportation & Logistics", askingPrice: "18000000", extractedInfo: { annualRevenue: "$31,020,000", ebitda: "$3,900,000", employees: "148 (96 drivers + 52 staff)" } };
+  const junkRow = await matchBuyerToDeal({ revenueMin: "abc", multipleMax: "0", ebitdaMin: "N/A", minEmployees: "lots" } as any, pcl, { skipAI: true });
+  assert.equal(junkRow.criteriaTested, 0, JSON.stringify(junkRow.financialFit.details));
+  assert.equal(junkRow.criteriaMatched, 0);
+  assert.equal(junkRow.deterministicScore, 0, "nothing tested → no half-credit score");
+  assert.deepEqual(Object.keys(junkRow.financialFit.details), []);
+  // A readable criterion next to junk still counts, and money reads well.
+  const mixed = await matchBuyerToDeal({ revenueMin: "20M", revenueMax: "abc", ebitdaMin: "3,000,000", multipleMax: "0" } as any, pcl, { skipAI: true });
+  assert.equal(mixed.criteriaTested, 2);
+  assert.equal(mixed.criteriaMatched, 2);
+  assert.equal(mixed.financialFit.details.revenue.note, "$31M — Meets minimum");
+  assert.equal(mixed.financialFit.details.ebitda.note, "$3.9M — Meets minimum");
+  assert.ok(!("askingMultiple" in mixed.financialFit.details));
+  const realMultiple = await matchBuyerToDeal({ multipleMax: "4" } as any, pcl, { skipAI: true });
+  assert.match(realMultiple.financialFit.details.askingMultiple.note, /4\.6x — exceeds 4x max/);
+  assert.equal(formatMoney(31_020_000), "$31M");
+  assert.equal(formatMoney(3_900_000), "$3.9M");
+  assert.equal(formatMoney(2_450_000), "$2.45M");
+  assert.equal(formatMoney(628_000), "$628K");
+  assert.equal(formatMoney(18_000_000), "$18M");
+  assert.equal(criterionBound("0"), null);
+  assert.equal(criterionBound("N/A"), null);
+  assert.equal(criterionBound("$2.5M"), 2_500_000);
+  // Headcount: a year in the staff list is not the staff count.
+  const beaconEmp = { industry: "Pharmacy", extractedInfo: { employees: "Key personnel: Daniel (LTC lead pharmacist, since 2014), Mei-Lin (since 2018). Total headcount 23 (incl. owner)." } };
+  const emp = await matchBuyerToDeal({ maxEmployees: "50" } as any, beaconEmp, { skipAI: true });
+  assert.match(emp.operationalFit.details.employees.note, /^23 employees/);
+
+  // ── 6. A buyer who excludes the industry is never a warm suggestion ──────
+  const excludedMatch = await matchBuyerToDeal({ excludedIndustries: ["Trucking"], revenueMin: "5000000", revenueMax: "50000000", targetLocations: ["British Columbia"] } as any,
+    { industry: "Transportation & Logistics", subIndustry: "Regional trucking & warehousing", extractedInfo: { annualRevenue: "$31M", location: "Delta, BC" } }, { skipAI: true });
+  assert.equal(excludedMatch.excludedIndustry, true);
+  assert.equal(excludedMatch.excludedBy, "Trucking");
+  const excludedScore = calculateQualifiedLeadScore({
+    buyer: { profileCompletionPct: 100, hasProofOfFunds: true, buyerType: "financial", liquidFunds: null, buyerCriteria: {}, targetIndustries: [] } as any,
+    match: excludedMatch,
+    engagement: { viewCount: 5, sectionsViewed: 10, totalTimeSeconds: 900, questionCount: 3, ndaSigned: true },
+  });
+  assert.equal(excludedScore.tier, "cold");
+  assert.ok(excludedScore.total <= 20, String(excludedScore.total));
+  assert.equal(excludedScore.breakdown.matchFit, 0);
+  assert.deepEqual(excludedScore.reasons, ["Rules out “Trucking”"]);
+  // …while the same buyer without the exclusion is warm or better.
+  const fine = await matchBuyerToDeal({ revenueMin: "5000000", revenueMax: "50000000", targetLocations: ["British Columbia"] } as any,
+    { industry: "Transportation & Logistics", extractedInfo: { annualRevenue: "$31M", location: "Delta, BC" } }, { skipAI: true });
+  assert.ok(!fine.excludedIndustry);
+  assert.ok(["warm", "hot"].includes(calculateQualifiedLeadScore({ buyer: { profileCompletionPct: 100, hasProofOfFunds: true } as any, match: fine }).tier));
+
+  // ── 7. One pool for the list and the deep check ───────────────────────────
+  const sb = (id: string, email: string, bd: any, extra: any = {}) => ({ buyer: { id, email, background: "x", buyerCriteria: {}, targetIndustries: [], ...extra }, breakdown: bd, contact: null, lastActivityAt: null, fundsRange: null, score: {} as any });
+  const scoredList = [
+    sb("strong", "s@x.invalid", { criteriaTested: 3, criteriaMatched: 3 }),
+    sb("excluded", "e@x.invalid", { ...excludedMatch }),
+    sb("mismatch", "m@x.invalid", { criteriaTested: 3, criteriaMatched: 0 }),
+    sb("has-access", "A@X.invalid", { criteriaTested: 2, criteriaMatched: 2 }),
+    sb("junk-access", "j@x.invalid", { criteriaTested: 0, criteriaMatched: 0 }),
+  ];
+  const pools = suggestionPools(scoredList as any, reachedBuyers([], [{ buyerEmail: "a@x.invalid" }, { buyerUserId: "junk-access" }]));
+  assert.deepEqual(pools.pool.map((s) => s.buyer.id), ["strong", "mismatch"]);
+  assert.deepEqual(pools.candidates.map((s) => s.buyer.id), ["strong"], "deep check = what the button counts");
+  assert.deepEqual(pools.excluded.map((s) => s.buyer.id), ["excluded"]);
+  assert.deepEqual(pools.withAccess.map((s) => s.buyer.id), ["has-access", "junk-access"]);
+  assert.equal(isExcludedBuyer(scoredList[1] as any), true);
+  assert.equal(passesFirstPass(scoredList[1] as any), false);
 
   console.log("matching-engine: all assertions passed");
 }

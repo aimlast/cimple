@@ -19,7 +19,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { createHash } from "crypto";
 import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
-import { scoreBuyersForDeal, passesFirstPass, type ScoredBuyer } from "./suggested";
+import { scoreBuyersForDeal, suggestionPools, reachedBuyers, type ScoredBuyer } from "./suggested";
 import type { BuyerDeepCheck, BuyerDeepCheckResult, CrmBuyerProfile, Deal } from "@shared/schema";
 import { blindLeakTerms, isBlindSafe } from "@shared/blind-guard";
 
@@ -72,6 +72,8 @@ function buyerCard(s: ScoredBuyer): Record<string, unknown> {
     brokerCrmSummary: crm?.background || null,
     listingsTheyAskedAbout: (crm?.inquiries || []).slice(0, 8).map((q) => q.title),
     ruleBasedMatch: s.breakdown ? `${s.breakdown.criteriaMatched}/${s.breakdown.criteriaTested} criteria met` : "not testable",
+    // An exclusion the rules couldn't settle (a market the business only serves, or a narrower slice) — the AI judges it.
+    ...(s.breakdown?.exclusionCaution ? { exclusionToJudge: `Buyer rules out "${s.breakdown.exclusionCaution.by}"; ${s.breakdown.exclusionCaution.why === "market" ? "the business names it only as a market it serves" : "that may be narrower than this business"} — decide whether the exclusion applies.` } : {}),
   };
 }
 
@@ -154,8 +156,14 @@ async function runDeepCheck(deal: Deal) {
   const previous = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
   const reusable = previous && previous.dealKey === dealKey ? previous.results : {};
 
-  const scored = await scoreBuyersForDeal(deal);
-  const candidates = scored.filter(passesFirstPass);
+  const [scored, outreach, access] = await Promise.all([
+    scoreBuyersForDeal(deal),
+    storage.getDealOutreachByDeal(deal.id),
+    storage.getBuyerAccessByDeal(deal.id),
+  ]);
+  // Exactly the buyers the Suggested list would show and the button counted:
+  // never those who already have access or who rule out the industry.
+  const { pool, candidates } = suggestionPools(scored, reachedBuyers(outreach, access));
   const results: Record<string, BuyerDeepCheckResult> = {};
   const todo: Array<{ id: string; ref: string; card: Record<string, unknown>; key: string }> = [];
   candidates.forEach((s, i) => {
@@ -168,7 +176,8 @@ async function runDeepCheck(deal: Deal) {
 
   const state: BuyerDeepCheck = {
     status: "running", startedAt: new Date().toISOString(), dealKey,
-    total: candidates.length, done: Object.keys(results).length, skipped: scored.length - candidates.length, results,
+    // skipped = clear rule mismatches the list still shows (0 of 2+ criteria met).
+    total: candidates.length, done: Object.keys(results).length, skipped: pool.length - candidates.length, results,
   };
   await storage.updateDeal(deal.id, { buyerDeepCheck: state } as any);
 
