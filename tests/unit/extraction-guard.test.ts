@@ -247,7 +247,9 @@ LOCATION EBITDA,449851,-23751,426100`;
     const rebuilt = overlayExistingFacts(fresh, existing);
     assert.equal(rebuilt.sde2024, undefined, "the calculated SDE is gone");
     assert.equal(rebuilt.sde, "$690,000", "the broker's SDE stays");
-    assert.equal(rebuilt.netIncome2024, "$496,728");
+    // The row's fresh read files the year on its map: the old suffixed key is replaced.
+    assert.equal(rebuilt.netIncome2024, undefined);
+    assert.equal((rebuilt.netIncomeByYear as Record<string, string>)["2024"], "$496,728");
   }
   ok("reprocess drops a calculated SDE the document no longer yields, keeps the broker's");
 

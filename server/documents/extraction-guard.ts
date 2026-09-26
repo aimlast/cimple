@@ -26,7 +26,7 @@
  * Pure — no I/O. The extractor applies it to every extraction.
  */
 
-import { SOURCE_META_KEYS } from "../interview/info-merger";
+import { SOURCE_META_KEYS, spelledNumbers, typedNumericValues } from "../interview/info-merger";
 import { mentionsPrivateMatter } from "../interview/questionnaire-privacy";
 import { businessFactForNote, noteRecordedAsFact } from "@shared/private-notes";
 
@@ -59,15 +59,20 @@ interface DerivedMetric {
   key: RegExp;
   /** The source must use this term for the figure to count as printed. */
   term: RegExp;
+  /** Every figure in the value must be printed (a ratio or growth rate worked out from printed figures is not). */
+  allFigures?: boolean;
 }
 
 const DERIVED_METRICS: DerivedMetric[] = [
   // "ccaDiscretionaryClaim" (a tax-return line) is not SDE — only discretionary earnings / cash flow are.
   { name: "SDE", key: /\bsde\b|\bdiscretionary (?:earnings|cash)|\bsellers? discretionary\b|\bowner'?s? benefit\b/, term: /\bSDE\b|discretionary/i },
-  { name: "EBITDA", key: /\bebitda\b|\bebit\b/, term: /\bEBITDA\b|\bEBIT\b/i },
+  // A seller on a call spells it out: "earnings before interest, amortization and tax".
+  { name: "EBITDA", key: /\bebitda\b|\bebit\b/, term: /\bEBITDA\b|\bEBIT\b|\bearnings before interest\b[^.;\n]{0,80}?\b(?:tax(?:es)?|depreciation|amorti[sz]ation)\b/i },
   { name: "add-backs", key: /\badd ?backs?\b|\baddbacks?\b|\bnormali[sz]ation\b|\bnormali[sz]ed\b|\brecast\b/, term: /add[\s-]?backs?|normali[sz]|recast/i },
   { name: "working capital", key: /\bworking capital\b/, term: /working capital/i },
   { name: "margin", key: /\bmargins?\b/, term: /margin/i },
+  // Growth rates and ratios ("revenueGrowthRate", "debtToEquityRatio"), not "growthOpportunities".
+  { name: "growth rate / ratio", key: /\b(?:growth|cagr|yoy|ratio)(?: (?:rate|pct|percent|percentage))?$/, term: /\S/, allFigures: true },
 ];
 
 /** The derived metric a key names (SDE, EBITDA, add-backs, working capital, margin), or null. */
@@ -164,7 +169,10 @@ function amountsIn(value: string): string[] {
 
 /** The source text with thousands separators and spaces inside numbers removed, for figure lookups. */
 function normaliseSourceDigits(text: string): string {
-  return text.replace(/(\d)[,\s](?=\d{3}\b)/g, "$1");
+  // Commas and non-breaking / thin spaces group thousands ("1 199 100"); a
+  // plain space separates two figures ("EBITDA 1,199,100 920,600" is two
+  // columns, never 1199100920600).
+  return text.replace(/(\d)[,  ](?=\d{3}\b)/g, "$1");
 }
 
 /** True when the value's leading figure is printed in the source ("$845,252" ↔ "845,252" / "845252"). */
@@ -173,8 +181,8 @@ function figurePrinted(value: string, sourceDigits: string): boolean {
   if (!first) return false;
   const esc = first.replace(".", "\\.");
   if (new RegExp(`(^|[^\\d.])${esc}(?![\\d])`).test(sourceDigits)) return true;
-  // "$1.2M" in the value, "1,200,000" in the source.
-  const m = value.match(/(\d+(?:\.\d+)?)\s?(k|m|million|thousand)\b/i);
+  // "$1.2M" (or "1,398K") in the value, "1,200,000" in the source.
+  const m = value.replace(/(\d),(?=\d{3}(?!\d))/g, "$1").match(/(\d+(?:\.\d+)?)\s?(k|m|million|thousand)\b/i);
   if (m) {
     const mult = /^m/i.test(m[2]) ? 1_000_000 : 1_000;
     const whole = String(Math.round(parseFloat(m[1]) * mult));
@@ -221,7 +229,7 @@ export function isClassificationCode(value: string): boolean {
 function stripStrayMetricWords(value: string, sourceText: string): string {
   let out = value;
   for (const [word, present] of [
-    ["ebitda", /\bEBITDA\b/i],
+    ["ebitda", /\bEBITDA\b|\bearnings before interest\b/i],
     ["sde", /\bSDE\b/i],
   ] as const) {
     if (present.test(sourceText)) continue;
@@ -275,6 +283,9 @@ export function guardExtraction(
   const derivedRejection = (metric: DerivedMetric, value: string): string | null => {
     if (!text) return `${metric.name}: no source text to check it against`;
     if (!metric.term.test(text)) return `${metric.name}: the source never names it — a calculated figure`;
+    if (!opts.spoken && metric.allFigures && amountsIn(value).length > 0 && !allFiguresPrinted(value, sourceDigits)) {
+      return `${metric.name}: worked out from other figures`;
+    }
     if (opts.spoken ? looksComputed(value) : amountsIn(value).length > 0 && !figurePrinted(value, sourceDigits)) {
       return opts.spoken ? `${metric.name}: written as a calculation` : `${metric.name}: the figure is not printed in the source`;
     }
@@ -427,6 +438,123 @@ export function promoteBusinessNotes(data: Extraction): void {
   if (kept.length === notes.length) return;
   if (kept.length > 0) data._privateNotes = Array.isArray(raw) ? kept : kept.join("\n");
   else delete data._privateNotes;
+}
+
+// ─── Grounding a value in its source's text (reprocess) ─────────────────────
+
+/** Words that carry no fact on their own, for the word-overlap check. */
+const GROUNDING_STOP = new Set([
+  "the", "and", "for", "with", "from", "that", "this", "than", "into", "over", "under", "per", "total", "about",
+  "approximately", "approx", "around", "roughly", "including", "includes", "included", "plus", "only", "also",
+  "year", "years", "ended", "ending", "fiscal", "each", "which", "their", "its", "are", "was", "were", "has", "have",
+]);
+
+/** Lower-case words of a text, punctuation dropped ("Oil & gas, agricultural" → ["oil","gas","agricultural"]). */
+function plainWords(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[’']/g, "")
+    .replace(/([a-z])(\d)/g, "$1 $2") // "promotion26,000" (glued PDF columns) → "promotion 26,000"
+    .replace(/(\d)([a-z])/g, "$1 $2") // "8520Advertising" → "8520 advertising"
+    .split(/[^a-z0-9]+/)
+    .filter(Boolean);
+}
+
+/** Every number the source states — printed digits, and (spoken sources) numbers said in words. */
+function sourceNumbers(text: string, spoken: boolean): number[] {
+  const out = typedNumericValues(text).map((t) => t.value);
+  // Commas only as thousands groups: a CSV row "972600,344800,1530400" is three figures.
+  for (const m of text.match(/\d{1,3}(?:,\d{3}(?!\d))+(?:\.\d+)?|\d+(?:\.\d+)?/g) ?? []) {
+    const n = parseFloat(m.replace(/,/g, ""));
+    if (Number.isFinite(n)) out.push(n);
+  }
+  if (spoken) out.push(...spelledNumbers(text), ...spokenDecimals(text));
+  return out;
+}
+
+const DIGIT_WORDS: Record<string, string> = {
+  zero: "0", oh: "0", one: "1", two: "2", three: "3", four: "4", five: "5", six: "6", seven: "7", eight: "8", nine: "9",
+};
+/** "four point two million" → 4,200,000; "one point three five million" → 1,350,000. */
+function spokenDecimals(text: string): number[] {
+  const out: number[] = [];
+  const digit = `(?:${Object.keys(DIGIT_WORDS).join("|")}|\\d)`;
+  const re = new RegExp(`\\b(${digit}|ten|eleven|twelve|\\d+)\\s+point\\s+((?:${digit}\\s+){0,2}${digit})\\s+(thousand|million|billion)\\b`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const whole = /^\d+$/.test(m[1]) ? m[1] : ({ ten: "10", eleven: "11", twelve: "12" } as Record<string, string>)[m[1].toLowerCase()] ?? DIGIT_WORDS[m[1].toLowerCase()];
+    const frac = m[2].trim().split(/\s+/).map((w) => (/^\d$/.test(w) ? w : DIGIT_WORDS[w.toLowerCase()])).join("");
+    const scale = { thousand: 1_000, million: 1_000_000, billion: 1_000_000_000 }[m[3].toLowerCase() as "thousand" | "million" | "billion"];
+    const n = parseFloat(`${whole}.${frac}`) * scale;
+    if (Number.isFinite(n)) out.push(Math.round(n));
+  }
+  return out;
+}
+
+/** The value's figures (money, percentages, counts ≥ 10), as numbers. */
+function valueNumbers(value: string): number[] {
+  const typed = typedNumericValues(value).map((t) => t.value);
+  // "$1.35M" is 1,350,000 (typed above), not also 1.35.
+  const unscaled = value.replace(/\d[\d,]*(?:\.\d+)?\s*(?:k|mm?|million|thousand|b|billion)(?![a-z0-9])/gi, " ");
+  const plain = amountsIn(unscaled).map((d) => parseFloat(d)).filter((n) => Number.isFinite(n));
+  return Array.from(new Set([...typed, ...plain]));
+}
+
+/**
+ * True when a value the source row asserted earlier is still grounded in
+ * that row's own text — a fact the source actually states, which a fresh
+ * read simply didn't repeat (model variance), as opposed to one an older
+ * prompt worked out, garbled or mislabelled. Reprocess keeps an omitted
+ * value only then:
+ *  - it passes today's extraction guard unchanged (a derived metric the
+ *    source never names or prints, a calculation, NAICS text as the
+ *    industry, a stray "ebitda" in prose — all fail);
+ *  - every figure in it is stated in the text (printed; on a call or video
+ *    call, also said in words) — a computed ratio, growth rate or total
+ *    ("= 0.62", "13.2% year-over-year", "= 51 total") is not;
+ *  - its words are the source's: prose without figures must appear in the
+ *    text word for word; a figure with a few words around it needs most of
+ *    them in the text.
+ */
+export function groundedInSource(key: string, value: unknown, sourceText: string | null | undefined, opts: { spoken?: boolean } = {}): boolean {
+  if (!sourceText || (typeof value !== "string" && typeof value !== "number")) return false;
+  const v = String(value).trim();
+  if (!v) return false;
+  const guarded = guardExtraction({ [key]: v }, sourceText, { spoken: opts.spoken });
+  if (guarded.data[key] !== v) return false;
+  const nums = valueNumbers(v);
+  if (nums.length > 0) {
+    const inSource = sourceNumbers(sourceText, !!opts.spoken);
+    // PDF text often glues a statement's columns together ("Cash431,720164,630"):
+    // a figure with thousands separators is also found as written.
+    const printedAsWritten = (n: number) => Number.isInteger(n) && n >= 1000 && sourceText.includes(n.toLocaleString("en-US"));
+    // A spreadsheet's share ("0.028") is the value's "2.8%".
+    const asShare = (n: number) => n > 0 && n <= 100 && inSource.some((s) => s > 0 && s < 1 && Math.abs(s * 100 - n) <= 0.05);
+    const stated = (n: number) =>
+      inSource.some((s) => s === n || (n !== 0 && Math.abs(s - n) / Math.abs(n) <= 0.005)) || printedAsWritten(n) || asShare(n);
+    if (!nums.every(stated)) return false;
+  }
+  const words = plainWords(v).filter((w) => !/^\d/.test(w));
+  const content = words.filter((w) => w.length >= 3 && !GROUNDING_STOP.has(w));
+  if (content.length === 0) return nums.length > 0;
+  const textWords = plainWords(sourceText);
+  // Word for word (punctuation aside) is always grounded.
+  if (` ${textWords.join(" ")} `.includes(` ${words.join(" ")} `)) return true;
+  // A metric term must sit where the source puts it: "oil & gas, ebitda
+  // agricultural" is a glitch even when the statements say EBITDA elsewhere.
+  const bigrams = new Set(textWords.slice(1).map((w, i) => `${textWords[i]} ${w}`));
+  for (let i = 0; i < words.length; i++) {
+    if (!/^(?:ebitda|ebit|sde)$/.test(words[i])) continue;
+    const before = i > 0 ? `${words[i - 1]} ${words[i]}` : null;
+    const after = i < words.length - 1 ? `${words[i]} ${words[i + 1]}` : null;
+    if (!(before && bigrams.has(before)) && !(after && bigrams.has(after))) return false;
+  }
+  // Otherwise the source's own words: nearly all of them for prose (the
+  // model's summary of what was said, not something it added), most of them
+  // around a stated figure.
+  const vocab = new Set(textWords);
+  const present = content.filter((w) => vocab.has(w)).length;
+  return present / content.length >= (nums.length === 0 ? 0.85 : 0.6);
 }
 
 /** The derived-metric keys an extraction recorded as printed in its source. */

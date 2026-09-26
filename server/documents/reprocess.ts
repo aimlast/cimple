@@ -14,23 +14,28 @@
  *      targetMarket, seasonality, …) get captured.
  *   2. Falls back to replaying the stored extractedData through the NEW
  *      canonicalising merge only when no fresh extraction was possible.
- *   3. Rebuilds deal.extractedInfo additively: documents merge into a fresh
- *      object first, then the deal's EXISTING extractedInfo values are
- *      overlaid on top — interview/questionnaire-confirmed data always wins
- *      on key collision.
+ *   3. Rebuilds deal.extractedInfo: documents merge into a fresh object
+ *      first, then the deal's EXISTING values are laid over it
+ *      (overlayExistingFacts) — the broker's and the seller's own values
+ *      stay; each source row's contribution is replaced by its fresh read,
+ *      keeping only what its text still states; a row whose read failed
+ *      keeps what it had.
  *
- * No route is registered here — callers wire their own endpoint/script.
+ * The broker's endpoint runs it as a background job (reprocess-jobs.ts).
  */
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
-import { isDerivedMetricKey } from "./extraction-guard";
+import { groundedInSource, SPOKEN_KINDS } from "./extraction-guard";
 import { recordFactSpeakers } from "../interview/fact-guards";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
+  canonicalFieldName,
   getFieldSources,
+  getFieldAlternates,
+  getFieldCorroborations,
   setFieldSource,
   mergeAlternateMaps,
   recordAlternate,
@@ -43,6 +48,8 @@ import {
   resolvedYearSources,
   summariseMapSource,
   sourceRowLookup,
+  yearSource,
+  typedNumericValues,
   FIELD_SOURCES_KEY,
   FIELD_ALTERNATES_KEY,
   FIELD_CORROBORATIONS_KEY,
@@ -50,17 +57,60 @@ import {
   LEGACY_SOURCE_NOTE,
   SOURCE_META_KEYS,
   type FieldSource,
+  type SourceKind,
 } from "../interview/info-merger";
 import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, rememberPeriodEnd } from "./ingest";
 import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
-import { cleanYearMap, effectiveRank, interimYears, isBrokerProcessKey, noteConflict, outranksFor, reconcileHeadlines, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
+import {
+  cleanYearMap,
+  effectiveRank,
+  interimYears,
+  isBrokerProcessKey,
+  isSpecialistSource,
+  isYearMapKey,
+  mergeMapEntryInto,
+  mergeScalarInto,
+  mergeYearMapInto,
+  noteConflict,
+  outranksFor,
+  periodForYear,
+  receivablesMeasureKey,
+  reconcileHeadlines,
+  stampSourceDetails,
+  yearMapKeyFor,
+  yearSuffixedKey,
+  type MergeConflict,
+  type MergeContext,
+} from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
 import { recordMergeConflicts } from "./merge-conflicts";
+import { reconcileMirroredFacts } from "../information/deal-mirror";
+import { setBrokerFact } from "../information/facts";
+
+/** Where a running reprocess is (for the broker's progress display). */
+export interface ReprocessProgress {
+  phase: "reading" | "merging" | "saving";
+  /** Sources read so far / to read. */
+  done: number;
+  total: number;
+}
+
+export interface ReprocessResult {
+  documentsReprocessed: number;
+  fieldsAfter: number;
+  /** Sources whose fresh read failed (they keep what they had). */
+  documentsKeptAsBefore: number;
+  /** Values the sources no longer yield and their text does not state (removed). */
+  removed: OverlayReport["dropped"];
+  /** Values a source no longer yielded but still states word for word (kept). */
+  keptFromText: OverlayReport["kept"];
+}
 
 export async function reprocessDealDocuments(
   dealId: string,
-): Promise<{ documentsReprocessed: number; fieldsAfter: number }> {
+  onProgress?: (p: ReprocessProgress) => void,
+): Promise<ReprocessResult> {
   const deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
 
@@ -79,9 +129,11 @@ export async function reprocessDealDocuments(
   // no fresh extraction happened — replaying both would append near-duplicate
   // stale phrasing under every narrative field (merge appends on difference).
   const checklist = extractionChecklist(deal);
+  /** The row's extraction, and the text when it was freshly re-read from it. */
+  type Read = { data: ExtractedDocumentData | null; freshText: string | null };
   const extractForDoc = async (
     doc: (typeof documents)[number],
-  ): Promise<ExtractedDocumentData | null> => {
+  ): Promise<Read> => {
     // A stored extraction replayed as-is still goes through the guard (and
     // the current structure): an SDE or EBITDA an older prompt computed must
     // not come back as a fact.
@@ -106,7 +158,13 @@ export async function reprocessDealDocuments(
 
     if (text) {
       try {
-        const fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
+        let fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
+        // A dropped connection or an overloaded API gives the failure stub:
+        // one more try before the source falls back to what it had.
+        if (fresh.summary === "Extraction failed") {
+          await new Promise((r) => setTimeout(r, 3000));
+          fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
+        }
         // extractDocumentData never throws — API failures come back as a
         // stub ({_confidence:"low", summary:"Extraction failed"} or
         // {_documentType:"unreadable"}). A stub must not overwrite the
@@ -124,7 +182,7 @@ export async function reprocessDealDocuments(
             isProcessed: true,
             ...rememberPeriodEnd(doc, fresh),
           } as any);
-          return fresh;
+          return { data: fresh, freshText: text };
         }
       } catch (err) {
         console.error(`[reprocess] re-extraction failed for doc ${doc.id} (${doc.name}) — falling back to stored extraction:`, err);
@@ -132,17 +190,20 @@ export async function reprocessDealDocuments(
     } else {
       console.log(`[reprocess] no file or stored text for doc ${doc.id} (${doc.name}) — replaying stored extraction only`);
     }
-    return stored;
+    return { data: stored, freshText: null };
   };
 
   // Claude calls run in bounded-parallel batches; merging happens afterwards
   // in stable document order so precedence stays deterministic.
   const BATCH_SIZE = 4;
-  const results: { doc: (typeof documents)[number]; data: ExtractedDocumentData | null }[] = [];
+  const results: { doc: (typeof documents)[number]; data: ExtractedDocumentData | null; freshText: string | null }[] = [];
+  onProgress?.({ phase: "reading", done: 0, total: documents.length });
   for (let i = 0; i < documents.length; i += BATCH_SIZE) {
     const batch = documents.slice(i, i + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map(async (d) => ({ doc: d, data: await extractForDoc(d) })))));
+    results.push(...(await Promise.all(batch.map(async (d) => ({ doc: d, ...(await extractForDoc(d)) })))));
+    onProgress?.({ phase: "reading", done: results.length, total: documents.length });
   }
+  onProgress?.({ phase: "merging", done: documents.length, total: documents.length });
   // Keys the broker deleted stay deleted — the merge skips them.
   const suppressed = (deal.extractedInfo as Record<string, unknown> | null)?.[BROKER_SUPPRESSED_KEY];
   if (Array.isArray(suppressed) && suppressed.length > 0) docsMerged[BROKER_SUPPRESSED_KEY] = suppressed;
@@ -167,7 +228,21 @@ export async function reprocessDealDocuments(
   //    recorded as document-derived are refreshed from the re-extraction so
   //    stale facts don't survive, and provenance maps are merged, not clobbered.
   const existing = (deal.extractedInfo as Record<string, unknown> | null) || {};
-  let rebuilt = overlayExistingFacts(docsMerged, existing, ctx);
+  // A row's contribution is replaced by its fresh read; a row whose read
+  // failed (replayed from its stored extraction) keeps everything it had.
+  const rows = new Map<string, RereadRow>();
+  for (const { doc, data, freshText } of results) {
+    if (!data || freshText === null) continue;
+    const type = typeof data._documentType === "string" ? data._documentType : "";
+    const { period, dated, brokerOnly } = mergeSourceFor(doc, data);
+    rows.set(doc.id, { text: freshText, kind: documentKind(doc), title: [doc.name, doc.subcategory, type].filter(Boolean).join(" · "), period, dated, brokerOnly });
+  }
+  const report: OverlayReport = { dropped: [], kept: [] };
+  let rebuilt = overlayExistingFacts(docsMerged, existing, ctx, { rows, report });
+  if (report.dropped.length > 0 || report.kept.length > 0) {
+    // Keys only (values are the seller's business data).
+    console.log(`[reprocess] ${dealId}: removed ${report.dropped.length} value(s) no source states any more (${report.dropped.map((d) => d.key).slice(0, 60).join(", ")}); kept ${report.kept.length} a source still states`);
+  }
   // Headlines follow their by-year maps; every source entry carries its
   // row's visibility. Broker process data the fresh extractions set aside
   // (referral source, fees…) is in their _privateNotes and joins the
@@ -180,8 +255,10 @@ export async function reprocessDealDocuments(
   // Re-extraction can take minutes. Re-read the deal and carry over anything
   // that changed meanwhile (an interview turn, a broker edit, another upload)
   // so this rebuild never clobbers it — under the deal's facts lock.
+  onProgress?.({ phase: "saving", done: documents.length, total: documents.length });
   return withDealFactsLock(dealId, async () => {
-    const latest = ((await storage.getDeal(dealId))?.extractedInfo as Record<string, unknown> | null) || {};
+    const latestDeal = await storage.getDeal(dealId);
+    const latest = (latestDeal?.extractedInfo as Record<string, unknown> | null) || {};
     const latestSources = getFieldSources(latest);
     const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
     const carried: string[] = [];
@@ -223,7 +300,11 @@ export async function reprocessDealDocuments(
     for (const { doc, data } of results) if (data) refreshSourceNotes(rebuilt, doc, data);
     compactPrivateNotes(rebuilt);
 
-    await storage.updateDeal(dealId, { extractedInfo: rebuilt } as any);
+    // The deal's own name, industry and listed price are the broker's facts
+    // (deal-mirror.ts): a tax return's NAICS line or a CRM note's "steel fab"
+    // stays another value — saved that way, not only shown that way.
+    const { columnPatch } = reconcileMirroredFacts(latestDeal ?? deal, rebuilt, setBrokerFact);
+    await storage.updateDeal(dealId, { extractedInfo: rebuilt, ...columnPatch } as any);
     // Material conflicts the rebuild saw become discrepancies (deduplicated).
     await recordMergeConflicts(dealId, conflicts, documents, rebuilt).catch((err) =>
       console.error(`[reprocess] recording merge conflicts failed for ${dealId}:`, err));
@@ -234,7 +315,13 @@ export async function reprocessDealDocuments(
       ([k, v]) => KNOWN_EXTRACTED_FIELDS.has(k) && v !== null && v !== undefined && v !== "",
     ).length;
 
-    return { documentsReprocessed, fieldsAfter };
+    return {
+      documentsReprocessed,
+      fieldsAfter,
+      documentsKeptAsBefore: results.filter((r) => r.data && r.freshText === null).length,
+      removed: report.dropped,
+      keptFromText: report.kept,
+    };
   });
 }
 
@@ -278,18 +365,58 @@ export function carryCorroborations(
   return merged;
 }
 
+/** A source row re-read in this run: the text it was read from, its kind and title. */
+export interface RereadRow {
+  text: string | null;
+  kind: SourceKind;
+  /** The row's title (and type) — decides the measure a customer figure is (receivablesMeasureKey). */
+  title?: string;
+  /** The row's source details today (mergeSourceFor): fiscal period, own date, visibility. */
+  period?: string;
+  dated?: string;
+  brokerOnly?: boolean;
+}
+
+/** What a rebuild did with the values source rows had asserted before. */
+export interface OverlayReport {
+  /** Values a re-read row no longer yields and its text does not state — gone. */
+  dropped: Array<{ key: string; value: string; documentId?: string }>;
+  /** Values a re-read row no longer yields but its text states word for word — kept. */
+  kept: Array<{ key: string; value: string; documentId?: string }>;
+}
+
+export interface OverlayOptions {
+  /**
+   * The rows re-read in this run (documentId → text). A row NOT listed —
+   * its re-read failed, or it had no text to read — keeps everything it had.
+   * Omitted: every row counts as re-read, with no text to check against.
+   */
+  rows?: ReadonlyMap<string, RereadRow>;
+  report?: OverlayReport;
+}
+
 /**
  * Pure: lays the deal's existing facts over a fresh re-extraction of its
  * sources (`docsMerged`).
- * - A value a source row asserted (document, email, transcript, CRM note…)
- *   is refreshed from that row's re-extraction.
+ * - A source row's contribution (document, email, transcript, CRM note…) is
+ *   REPLACED by that row's re-extraction: a value the row yields again (as
+ *   the fact on file, another value or a confirmation) is the fresh one. A
+ *   value the fresh read no longer yields — a stale year-suffixed key
+ *   ("cash2021") next to the new by-year maps, a ratio or growth rate an
+ *   older prompt worked out, NAICS text as the industry, a garbled line —
+ *   goes, UNLESS the row's own text still states it (groundedInSource): a
+ *   figure the source printed is never lost to model variance. Such a value
+ *   is merged back as the row's (a suffixed key onto its by-year map) and
+ *   the usual authority decides. A row whose re-read failed keeps
+ *   everything it had.
  * - Everything else — broker edits and choices, the seller's interview and
  *   intake answers, untracked legacy values — is kept as it was, whatever
  *   documentId an older merge bug stamped on its source; a differing fresh
  *   value is kept as an alternate (never silently dropped), an equal one as
  *   a corroboration.
  * - Map facts (revenue by year) merge year by year: years a source row
- *   contributed are refreshed, years the broker or seller set are kept.
+ *   contributed follow the row rule above, years the broker or seller set
+ *   are kept.
  * - Per-source notes (summary, red flags, …) are never deal facts.
  */
 export function overlayExistingFacts(
@@ -297,14 +424,85 @@ export function overlayExistingFacts(
   existing: Record<string, unknown>,
   /** Collects material conflicts; `lookup` reads older bare-id year entries as their rows. */
   ctx: MergeContext = {},
+  opts: OverlayOptions = {},
 ): Record<string, unknown> {
   const existingSources = getFieldSources(existing);
   const freshSources = getFieldSources(docsMerged);
+  const freshAlts = getFieldAlternates(docsMerged);
+  const freshCorr = getFieldCorroborations(docsMerged);
   const rebuilt: Record<string, unknown> = { ...docsMerged };
   const clearSource = (key: string) => {
     const s = { ...getFieldSources(rebuilt) };
     delete s[key];
     rebuilt[FIELD_SOURCES_KEY] = s;
+  };
+  const text = (v: unknown) => (typeof v === "string" ? v : JSON.stringify(v));
+  const note = (list: "dropped" | "kept", key: string, value: unknown, documentId?: string) =>
+    opts.report?.[list].push({ key, value: text(value), ...(documentId ? { documentId } : {}) });
+
+  /** The row was re-read in this run (a failed re-read keeps what it had). */
+  const reread = (docId: string) => !opts.rows || opts.rows.has(docId);
+  /** The row's fresh read yields this fact (or this year of it): on file, as another value or as a confirmation. */
+  const yielded = (docId: string, key: string, sub?: string): boolean => {
+    const k = sub === undefined ? key : `${key}.${sub}`;
+    const fs = freshSources[key];
+    if (sub === undefined) {
+      if (fs?.documentId === docId) return true;
+    } else if (fs && isMap(docsMerged[key]) && yearSource(fs, sub, ctx.lookup)?.documentId === docId) {
+      return true;
+    }
+    const mentions = (list: unknown) => Array.isArray(list) && list.some((a) => a && (a as FieldSource).documentId === docId);
+    return mentions(freshAlts[k]) || mentions(freshCorr[k]);
+  };
+  /** The row's own text still states the value (see groundedInSource). */
+  const grounded = (key: string, value: unknown, src: FieldSource): boolean => {
+    if (src.valueInferred || !src.documentId) return false;
+    const row = opts.rows?.get(src.documentId);
+    return !!row && groundedInSource(key, value, row.text, { spoken: SPOKEN_KINDS.has(row.kind) });
+  };
+
+  /**
+   * The source a value merged back from its row records: the row as it is
+   * read today (its period, date, visibility; a specialist for this fact or
+   * not) — an older write often recorded none of it.
+   */
+  const replaySource = (src: FieldSource, key: string, year?: string): FieldSource => {
+    const row = opts.rows?.get(src.documentId!);
+    const { years: _y, specialist: _s, ...base } = src;
+    const period = row?.period ?? base.period;
+    return {
+      ...base,
+      ...(year ? { period: periodForYear(year, period) } : period ? { period } : {}),
+      ...(row?.dated && !base.dated ? { dated: row.dated } : {}),
+      ...(row?.brokerOnly !== undefined ? { brokerOnly: row.brokerOnly } : {}),
+      ...(row?.title && isSpecialistSource(key, row.title) ? { specialist: true } : {}),
+    };
+  };
+  // A value merged back is one the fresh read no longer asserts: it keeps
+  // its place by authority, but opens no discrepancy of its own (the
+  // conflicts the fresh read sees are raised by the fresh merge).
+  const replayCtx: MergeContext = { lookup: ctx.lookup };
+
+  /** A value a re-read row asserted and no longer yields: merged back when its text states it. */
+  const replayScalar = (key: string, value: unknown, src: FieldSource) => {
+    const docId = src.documentId!;
+    // "cash2021": a figure for a year belongs on its by-year map.
+    const suffixed = yearSuffixedKey(key);
+    if (suffixed) {
+      const mapKey = yearMapKeyFor(suffixed.metric);
+      const { map: valid } = cleanYearMap(suffixed.metric, { [suffixed.year]: typeof value === "string" ? value : String(value) });
+      const [y, v] = Object.entries(valid)[0] ?? [];
+      if (y && yielded(docId, mapKey, y)) return; // the row's fresh figure for that year replaces it
+      if (!y || !grounded(mapKey, v, src)) return note("dropped", key, value, docId);
+      mergeYearMapInto(rebuilt, mapKey, { [y]: v }, replaySource(src, mapKey, y), replayCtx);
+      return note("kept", `${mapKey}.${y}`, v, docId);
+    }
+    // Today's name for the fact ("backlogValue" is "backlog"), and its measure.
+    const target = receivablesMeasureKey(canonicalFieldName(key), value, opts.rows?.get(docId)?.title);
+    if (target !== key && yielded(docId, target)) return; // replaced under today's name for it
+    if (!grounded(target, value, src)) return note("dropped", key, value, docId);
+    mergeScalarInto(rebuilt, target, value, replaySource(src, target), replayCtx);
+    note("kept", target, value, docId);
   };
 
   for (const [key, rawValue] of Object.entries(existing)) {
@@ -319,7 +517,7 @@ export function overlayExistingFacts(
     const rowBacked = isRowBackedSource(src);
     if (rowBacked && isBrokerProcessKey(key)) {
       // Broker process data a source row put in the facts (referral source,
-      // fees…) is the broker's private note, never a business fact.
+      // fees, earlier approaches…) is the broker's private note, never a business fact.
       addPrivateNote(rebuilt, `${fieldLabelText(key)}: ${typeof value === "string" ? value : JSON.stringify(value)}`, {
         documentId: src!.documentId,
         reason: "Broker process detail",
@@ -330,29 +528,28 @@ export function overlayExistingFacts(
       continue;
     }
 
-    if (isMap(value) && isMap(fresh)) {
+    if (isMap(value) && (fresh === undefined || isMap(fresh))) {
       // Year by year, each year through its own source (info-merger
-      // yearSource): years a source row stated are refreshed from the
-      // re-extraction; years the broker or seller set (or legacy) are kept.
+      // yearSource): a row's years follow the row rule; years the broker or
+      // seller set (or legacy) are kept.
       const years: Record<string, FieldSource> = src
         ? resolvedYearSources(src, value, ctx.lookup)
         : Object.fromEntries(Object.keys(value).map((y) => [y, { source: "system", note: LEGACY_SOURCE_NOTE } as FieldSource]));
-      const out: Record<string, unknown> = { ...fresh };
-      const outYears: Record<string, FieldSource> = freshSrc ? resolvedYearSources(freshSrc, fresh, ctx.lookup) : {};
+      const out: Record<string, unknown> = { ...(fresh ?? {}) };
+      const outYears: Record<string, FieldSource> = fresh && freshSrc ? resolvedYearSources(freshSrc, fresh, ctx.lookup) : {};
+      const replays: Array<[string, unknown, FieldSource]> = [];
       for (const [y, v] of Object.entries(value)) {
         const ys = years[y];
         if (isRowBackedSource(ys)) {
-          // A derived figure's year the rows no longer yield was calculated by an older prompt.
-          if (isDerivedMetricKey(key)) continue;
-          // A row's year is kept only if it is still a valid yearly figure
-          // under the current rules ("FY25" → "2025"; a budget, an SDE
-          // figure or "Last year" under revenue is dropped).
-          const { map: valid } = cleanYearMap(key.replace(/ByYear$/, "") || key, { [y]: typeof v === "string" ? v : String(v) });
-          const [vy, vv] = Object.entries(valid)[0] ?? [];
-          if (!vy) continue;
-          if (out[vy] !== undefined) continue; // the rows' fresh figure wins
-          out[vy] = vv; // re-extraction missed it — keep the figure on file
-          outYears[vy] = ys;
+          const docId = ys.documentId!;
+          if (yielded(docId, key, y)) continue; // the row's fresh figure replaces it
+          if (!reread(docId)) {
+            // Its re-read failed: the year stays — beside a fresh figure when there is one.
+            if (out[y] === undefined) { out[y] = v; outYears[y] = ys; }
+            else if (String(out[y]) !== String(v)) recordAlternate(rebuilt, `${key}.${y}`, v, ys);
+            continue;
+          }
+          replays.push([y, v, ys]);
           continue;
         }
         if (out[y] !== undefined) {
@@ -379,33 +576,62 @@ export function overlayExistingFacts(
         delete out[y];
         delete outYears[y];
       }
-      rebuilt[key] = out;
-      if (Object.values(outYears).every((s) => isUntrackedSource(s))) clearSource(key);
-      else setFieldSource(rebuilt, key, summariseMapSource(outYears)!);
+      if (Object.keys(out).length === 0) {
+        delete rebuilt[key];
+        clearSource(key);
+      } else {
+        rebuilt[key] = out;
+        if (Object.values(outYears).every((s) => isUntrackedSource(s))) clearSource(key);
+        else setFieldSource(rebuilt, key, summariseMapSource(outYears)!);
+      }
+      // A row's year its fresh read no longer yields: back only when its text states it.
+      for (const [y, v, ys] of replays) {
+        if (!grounded(key, v, ys)) { note("dropped", `${key}.${y}`, v, ys.documentId); continue; }
+        if (isYearMapKey(key)) {
+          const { map: valid } = cleanYearMap(key.replace(/ByYear$/, "") || key, { [y]: typeof v === "string" ? v : String(v) });
+          const [vy, vv] = Object.entries(valid)[0] ?? [];
+          if (!vy) { note("dropped", `${key}.${y}`, v, ys.documentId); continue; }
+          mergeYearMapInto(rebuilt, key, { [vy]: vv }, replaySource(ys, key, vy), replayCtx);
+        } else {
+          mergeMapEntryInto(rebuilt, key, y, String(v), replaySource(ys, key), replayCtx);
+        }
+        note("kept", `${key}.${y}`, v, ys.documentId);
+      }
       continue;
     }
 
-    if (rowBacked && fresh !== undefined) continue; // fresh extraction wins
-    // A derived figure (SDE, EBITDA, add-backs…) a source row no longer
-    // yields was one an older prompt calculated — it goes, never kept. On a
-    // by-year map only the rows' years go; years the broker or the seller
-    // set stay.
-    if (isDerivedMetricKey(key)) {
-      if (isMap(value) && src && fresh === undefined) {
-        const ys = resolvedYearSources(src, value, ctx.lookup);
-        const own = Object.keys(value).filter((y) => !isRowBackedSource(ys[y]));
-        if (own.length === 0) continue;
-        if (own.length < Object.keys(value).length) {
-          rebuilt[key] = Object.fromEntries(own.map((y) => [y, value[y]]));
-          const ownSources = Object.fromEntries(own.filter((y) => ys[y]).map((y) => [y, ys[y]]));
-          if (Object.values(ownSources).every((s) => isUntrackedSource(s))) clearSource(key);
-          else setFieldSource(rebuilt, key, summariseMapSource(ownSources)!);
-          continue;
-        }
-      } else if (rowBacked) continue;
+    if (rowBacked) {
+      const docId = src!.documentId!;
+      if (yielded(docId, key)) continue; // the row's fresh read replaces it
+      if (!reread(docId)) {
+        // Its re-read failed: what it had stays (weighed against any fresh value).
+        if (fresh === undefined) {
+          rebuilt[key] = value;
+          setFieldSource(rebuilt, key, src!);
+        } else mergeScalarInto(rebuilt, key, value, src!, ctx);
+        continue;
+      }
+      replayScalar(key, value, src!);
+      continue;
     }
+
     const keptSrc: FieldSource | null = src ? { ...src } : null;
-    if (keptSrc && !rowBacked) delete keptSrc.documentId; // stray link from an older merge bug
+    if (keptSrc) delete keptSrc.documentId; // stray link from an older merge bug
+    // The broker's figure for a year under a year-suffixed key ("sde2024",
+    // "revenue2023") goes on that metric's by-year map as the broker's year
+    // — one place for the year, the broker's value kept (it outranks any
+    // statement's figure, which stays another value).
+    // The broker's own words are kept as the year's value.
+    const suffixed = keptSrc?.source === "broker" && (typeof value === "string" || typeof value === "number") ? yearSuffixedKey(key) : null;
+    if (suffixed && typedNumericValues(String(value)).some((t) => t.kind === "currency")) {
+      const mapKey = yearMapKeyFor(suffixed.metric);
+      const onFile = rebuilt[mapKey];
+      // (A free-text value on file under the map key: the broker's key stays as it is.)
+      if (onFile === undefined || onFile === null || onFile === "" || isMap(onFile)) {
+        mergeYearMapInto(rebuilt, mapKey, { [suffixed.year]: String(value) }, { ...keptSrc!, period: periodForYear(suffixed.year, keptSrc!.period) }, replayCtx);
+        continue;
+      }
+    }
     // The broker's and the seller's own values stay; a statement, lease or
     // registry document outranks the intake questionnaire for the facts it
     // is the authority on (founder decision A).

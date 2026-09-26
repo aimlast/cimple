@@ -19,6 +19,7 @@ import { templateForDeal } from "./templates";
 import type { CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
+import { brokerFactsView } from "../information/facts";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
 import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
@@ -118,8 +119,11 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
   // Every source entry stamped with its row's visibility (facts1): a
   // broker-only / CRM fact or year never reaches the writer, even on facts
   // recorded before the stamp existed.
+  // The deal's own name, industry and listed price are the broker's facts
+  // (deal-mirror.ts) — never a tax return's NAICS line or a CRM note's
+  // wording, even on facts saved before that rule.
   const extractedInfo = stampSourceDetails(
-    overlayResolvedFacts((deal.extractedInfo as Record<string, unknown>) || {}, resolvedDiscrepancies),
+    overlayResolvedFacts((brokerFactsView(deal).extractedInfo as Record<string, unknown>) || {}, resolvedDiscrepancies),
     await storage.getDocumentsByDeal(deal.id),
   );
   const [branding, insights, analyses, factSourceWords] = await Promise.all([

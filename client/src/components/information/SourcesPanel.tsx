@@ -23,7 +23,7 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { AlertCircle, ExternalLink, Loader2, Lock, Plus, Trash2 } from "lucide-react";
 import type { InformationSource } from "@shared/information";
-import { sourceContributionText, sourceCountText } from "@shared/information";
+import { sourceContributionText, sourceCountText, sourceFoundNothing } from "@shared/information";
 import type { DocumentSourceMeta, SourceKind } from "@shared/schema";
 import { KIND_META, formatShortDate, sourceDateValue } from "./source-kinds";
 import { informationKey, requestJson, useInformationAction } from "./useInformation";
@@ -89,7 +89,7 @@ export function SourcesPanel({
       <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border/60">
         <div>
           <h3 className="text-sm font-semibold">Sources</h3>
-          <p className="text-[11px] text-muted-foreground" data-testid="sources-count">{sourceCountText(sources)}</p>
+          <p className="text-[11px] text-muted-foreground" data-testid="sources-count">{sourceCountText(sources, untrackedFacts)}</p>
           {untrackedFacts > 0 && (
             <p className="text-[11px] text-muted-foreground/80 mt-0.5 max-w-[15rem] leading-snug" data-testid="sources-untracked-note">
               {untrackedFacts} earlier fact{untrackedFacts === 1 ? "" : "s"} can't be traced to one of these.
@@ -135,8 +135,7 @@ export function SourcesPanel({
                       <StatusBit status={s.status} />
                       {/* Read, but nothing came out of it (a scanned org chart, a photo of a list): the
                           broker should open it — the interview can only use what's legible in it. */}
-                      {s.factCount === 0 && untrackedFacts === 0 && s.status !== "pending" && s.status !== "parsing" && s.status !== "failed" &&
-                        ["document", "call", "video_call", "email"].includes(s.kind) && (
+                      {sourceFoundNothing(s, untrackedFacts) && (
                           <span
                             className="inline-flex items-center gap-1 text-amber-500"
                             title="Nothing was extracted from this source. Open it to check it's readable — if it's a scan or a picture, add a typed or text copy."

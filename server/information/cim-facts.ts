@@ -24,7 +24,7 @@ import {
   type SourceKind,
   type SourceRowLookup,
 } from "../interview/info-merger";
-import { isBrokerProcessKey } from "../documents/merge-policy";
+import { isBrokerProcessKey, isPartYearFigure, isUnreviewedFigure, normaliseYearKey } from "../documents/merge-policy";
 
 /** Note the website "Accept into facts" action writes on the source. */
 export const WEBSITE_ACCEPTED_NOTE = WEBSITE_ACCEPTED_SOURCE_NOTE;
@@ -99,6 +99,22 @@ export interface CimFactOptions {
 }
 
 /**
+ * A by-year map holds fiscal years' reported figures only — never a quarter,
+ * a run-rate or an unreviewed number (the merge moves those to their own
+ * facts; this catches any that slipped onto a map another way).
+ */
+function fiscalYearsOnly(key: string, value: unknown): unknown {
+  if (!/ByYear$/.test(key) || !value || typeof value !== "object" || Array.isArray(value)) return value;
+  const out: Record<string, unknown> = {};
+  for (const [y, v] of Object.entries(value as Record<string, unknown>)) {
+    if (normaliseYearKey(y) === null) continue;
+    if (typeof v === "string" && (isPartYearFigure(v) || isUnreviewedFigure(v))) continue;
+    out[y] = v;
+  }
+  return out;
+}
+
+/**
  * The deal's facts as CIM input:
  * - broker process data (referral source, fees, prior approaches) is never CIM input;
  * - a fact (or one year of a by-year map) from a broker-only source or a
@@ -114,7 +130,7 @@ export function splitFactsForCim(info: Record<string, unknown> | null | undefine
   const sources = getFieldSources(info);
   for (const [key, raw] of Object.entries(info)) {
     if (!isFactKey(key) || isBrokerProcessKey(key)) continue;
-    const value = repairCharIndexedValue(raw);
+    const value = fiscalYearsOnly(key, repairCharIndexedValue(raw));
     if (!hasValue(value)) continue;
     const src = sources[key];
     if (src?.years && value && typeof value === "object" && !Array.isArray(value)) {

@@ -20,6 +20,8 @@ import {
   compareYearKeysDesc,
   getFieldSources,
   setFieldSource,
+  recordAlternate,
+  typedNumericValues,
   SOURCE_META_KEYS,
   type FieldSource,
   type SourceKind,
@@ -36,6 +38,7 @@ import {
   normalisePeriod,
   periodForYear,
   periodYear,
+  receivablesMeasureKey,
   reconcileHeadlines,
   leadingYearFigure,
   singleYearFigure,
@@ -558,8 +561,20 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     const headRawKey = Object.keys(out).find((k) => headlineKeyFor(k) === head);
     const map = maps[mapKey];
     if (headRawKey) {
-      const year = periodYear(keyPeriods[headRawKey] ?? periodEnd);
       const value = out[headRawKey];
+      // A headline with no year of its own that the map already holds under a
+      // year ("$1.35 million" = its 2024) is that year's figure — not also the
+      // year of the source's date (a call on Mar 31, 2025 is not FY2025).
+      if (!keyPeriods[headRawKey] && map && typeof value === "string") {
+        const n = typedNumericValues(value).find((t) => t.kind === "currency")?.value;
+        const same = n === undefined ? undefined : Object.keys(map).sort(compareYearKeysDesc)
+          .find((y) => typedNumericValues(map[y]).some((t) => t.kind === "currency" && Math.abs(t.value - n) < 0.5));
+        if (same) {
+          keyPeriods[headRawKey] = periodForYear(same, periodEnd);
+          continue;
+        }
+      }
+      const year = periodYear(keyPeriods[headRawKey] ?? periodEnd);
       // A worked-out headline never becomes a year's figure; the rest is checked like any year.
       if (year && typeof value === "string" && /\d/.test(value) && !inferred.has(headRawKey) && !maps[mapKey]?.[year]) {
         addYears(mapKey, headRawKey, { [year]: value });
@@ -743,10 +758,20 @@ export function mergeExtractedData(
     ...(inferredKeys.has(rawKey) ? { valueInferred: true } : {}),
   });
 
-  const mergeValue = (rawKey: string, key: string, value: unknown) => {
+  const mergeValue = (rawKey: string, canonicalKey: string, value: unknown) => {
+    // An A/R aging's "largest customer" is a share of receivables — its own measure.
+    const key = receivablesMeasureKey(canonicalKey, value, title);
     if (isSuppressed(merged, key)) return; // the broker deleted it — stays deleted
     if (isBrokerProcessKey(key)) return; // never a business fact
     const src = srcFor(rawKey, key);
+    // A headline figure with no amount in it ("call it a million and a half",
+    // "close to 1.8") is a remark, not the figure: kept as another value,
+    // never the headline.
+    if (HEADLINE_MAPS.some((h) => h.head === key) && typeof value === "string" &&
+        !typedNumericValues(value).some((t) => t.kind === "currency")) {
+      recordAlternate(merged, key, value, src);
+      return;
+    }
     if (isYearMapKey(key)) {
       let map: Record<string, string> | null = null;
       if (value && typeof value === "object" && !Array.isArray(value)) map = value as Record<string, string>;

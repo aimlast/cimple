@@ -35,6 +35,8 @@ import { noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { recordMergeConflicts } from "./merge-conflicts";
+import { reconcileMirroredFacts } from "../information/deal-mirror";
+import { setBrokerFact } from "../information/facts";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -347,10 +349,13 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
     recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
     // A note that only repeats a business fact this source recorded is not a note.
     addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
+    // The deal's own name, industry and listed price stay the broker's facts
+    // (deal-mirror.ts) — a CRM note's or a tax return's wording is another value.
+    const { columnPatch } = reconcileMirroredFacts(deal, merged, setBrokerFact);
     const fieldsWritten = Object.keys(merged).filter(
       (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
     );
-    await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
+    await storage.updateDeal(doc.dealId, { extractedInfo: merged, ...columnPatch } as any);
     saved = merged;
     return { status: "extracted" as const, fieldsWritten };
   });
