@@ -14,7 +14,7 @@
  * or changed seller answer makes the check stale; a broker edit doesn't.
  */
 import { createHash } from "crypto";
-import { storage } from "../storage";
+import { storage, type IStorage } from "../storage";
 import type { Deal, Discrepancy } from "@shared/schema";
 import {
   runDiscrepancyCheck,
@@ -209,6 +209,10 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
       cleared++;
     }
 
+    // One conflict, one row: an open row of this check that the financial
+    // analysis or the fact merge also raised gives way to theirs.
+    cleared += await supersedeCheckDuplicates(dealId);
+
     await storage.updateDeal(dealId, {
       discrepancyCheckedAt: new Date(),
       discrepancyCheckSources: JSON.stringify(fingerprint),
@@ -218,6 +222,34 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
   })().finally(() => running.delete(dealId));
   running.set(dealId, task);
   return task;
+}
+
+/**
+ * One conflict, one row. The verification check and the financial analysis
+ * (or the fact merge) can raise the same conflict under different names —
+ * Ridgeline's "westlockProjectStatus" (check) and "Signed backlog (May
+ * 2025)" (analysis) were two open criticals for the one $1.1M Westlock
+ * award counted in the $4.2M backlog. The other engine's row carries the
+ * better fact key and its own lifecycle, so an OPEN check row that matches
+ * one of theirs (live or settled — isSameDiscrepancy: fact key, field, or
+ * the same two figures and a distinctive word) is superseded. Rows the
+ * broker routed to the seller or answered are left alone. Runs after
+ * every check and every analysis. Returns how many rows it superseded.
+ */
+export async function supersedeCheckDuplicates(
+  dealId: string,
+  store: Pick<IStorage, "getDiscrepanciesByDeal" | "updateDiscrepancy"> = storage,
+): Promise<number> {
+  const live = (await store.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
+  const others = live.filter((d) => d.source && d.source !== "interview");
+  let n = 0;
+  for (const own of live) {
+    if ((own.source && own.source !== "interview") || own.status !== "open") continue;
+    if (!others.some((o) => isSameDiscrepancy(own, o))) continue;
+    await store.updateDiscrepancy(own.id, { status: "superseded" });
+    n++;
+  }
+  return n;
 }
 
 // ── Gate before a full CIM generation ──

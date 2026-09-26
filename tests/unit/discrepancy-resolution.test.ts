@@ -57,8 +57,14 @@ const row = (o: Record<string, unknown>) =>
   const d = row({ source: "interview", field: "Licensed field technicians", factKey: "employees", resolvedValue: "22 licensed technicians", interviewValue: "24 licensed field technicians", documentValue: "22 licensed field technicians" });
   assert.equal(applyResolutionToInfo(info, d), NEEDS_MAPPING, "the headcount is not overwritten");
   assert.equal(info.employees, "36 employees plus owner (37 total)");
-  // …unless the broker picked it.
-  assert.equal(applyResolutionToInfo({ ...info }, d, { brokerChoseFact: true }), "employees");
+  // The broker's pick is trusted as the fact — but "36 employees plus owner"
+  // says more than the figure, so it is offered for a rewrite, never
+  // replaced with the bare "22 licensed technicians" (round V).
+  assert.equal(applyResolutionToInfo({ ...info }, d, { brokerChoseFact: true }), NARRATIVE_FACT);
+  // A fact the broker picked that is just a figure is written.
+  const picked: Info = { fieldStaff: "two dozen" };
+  assert.equal(applyResolutionToInfo(picked, { ...d, factKey: "fieldStaff" }, { brokerChoseFact: true }), "fieldStaff");
+  assert.equal(picked.fieldStaff, "22 licensed technicians");
 }
 
 // ── A description the figure is only part of is not overwritten ──

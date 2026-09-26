@@ -124,10 +124,18 @@ export function privateSourceMatcher(
   };
 }
 
-/** Best alternate for `altKey`: highest-ranked source, then newest. */
+/** Note on the values a discrepancy resolution ruled out (server/information/facts.ts). */
+const RULED_OUT_NOTE = "Conflicting value (discrepancy)";
+
+/**
+ * Best alternate for `altKey`: highest-ranked source, then newest. A value
+ * the broker ruled out when settling a discrepancy is never promoted: when
+ * the broker settled on their own private figure, the fact is simply not on
+ * the interview's file (the knowledge base says it is settled).
+ */
 function bestAlternate(list: FieldAlternate[] | undefined): FieldAlternate | undefined {
   return (list ?? [])
-    .filter((a) => a && typeof a.value === "string" && a.value.trim() !== "")
+    .filter((a) => a && typeof a.value === "string" && a.value.trim() !== "" && a.note !== RULED_OUT_NOTE)
     .sort((a, b) => sourceRank(b.source) - sourceRank(a.source) || String(b.at ?? "").localeCompare(String(a.at ?? "")))[0];
 }
 

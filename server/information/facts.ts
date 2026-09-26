@@ -37,6 +37,7 @@ import {
   FIELD_ALTERNATES_KEY,
   LEGACY_SOURCE_NOTE,
   type FieldSource,
+  type FieldAlternate,
 } from "../interview/info-merger";
 import { GENERIC_FIELD_LABELS, fieldLabel } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
@@ -52,7 +53,20 @@ import {
 } from "./deal-mirror";
 import type { Deal, Discrepancy } from "@shared/schema";
 import { humanizeFieldKey } from "@shared/discrepancy-sides";
-import { numberTokens, tokensMatch } from "../cim/discrepancy-filter";
+import {
+  planResolution,
+  targetForFactKey,
+  valueAtTarget,
+  sourceAtTarget,
+  sameFigure,
+  bareDiscrepancyValue,
+  resolutionSourceExtras,
+  RESOLVED_NOTE,
+  type DiscrepancyTarget,
+} from "./resolution-write";
+
+// The write rules (shared with the CIM-time overlay) — re-exported for the routes and older callers.
+export { isNarrativeTarget, targetRelatesToSides, type DiscrepancyTarget } from "./resolution-write";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
 export const BROKER_SECTION_OF_KEY = "_brokerSectionOf";
@@ -141,7 +155,7 @@ export function setBrokerFact(info: Info, key: string, value: unknown, extra: Pa
  * years (see summariseMapSource). The displaced figure is kept as that
  * year's alternate under its real kind.
  */
-export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string): void {
+export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string, extra: Partial<FieldSource> = {}): void {
   const repaired = repairCharIndexedValue(info[parent]);
   if (repaired !== undefined && repaired !== null && repaired !== "" && !isPlainMap(repaired)) {
     throw new FactError("That fact isn't a list of values by year — edit the whole fact instead");
@@ -160,7 +174,7 @@ export function setBrokerMapEntry(info: Info, parent: string, sub: string, value
     recordAlternate(info, altKey, previous, prevYearSrc);
   }
   map[sub] = value;
-  years[sub] = { source: "broker", at: new Date().toISOString(), note };
+  years[sub] = { source: "broker", at: new Date().toISOString(), note, ...extra };
   displaceCorroborations(info, altKey, value);
   dropAlternateValue(info, altKey, serialize(value));
   info[parent] = map;
@@ -399,13 +413,6 @@ function acceptWebsiteValue(info: Info, key: string, value: string): { key: stri
   return { key, addedAs: "alternate" };
 }
 
-/** Where a discrepancy resolution lands: a fact, or one year of a map fact. */
-export interface DiscrepancyTarget {
-  key: string;
-  /** Year (sub-key) of a map fact — "2024" of revenueByYear. */
-  sub?: string;
-}
-
 /**
  * "2024 Revenue", "FY2024 revenue", "Revenue 2024", "Total sales (2024)" →
  * "2024". The financial analysis names its per-year figures this way.
@@ -451,18 +458,17 @@ export function discrepancyFactKey(field: string, info: Info): string | null {
   return discrepancyFactTarget(field, info)?.key ?? null;
 }
 
-/** "$1,894,000 — 2024 P&L" → "$1,894,000" (the financial analysis appends where a value came from). */
-function bareDiscrepancyValue(v: string): string {
+/** The kind of source a financial-analysis value label names ("… — Seller interview"); null when it names none. */
+function kindFromValueLabel(v: string): FieldSource["source"] | null {
   const idx = v.indexOf(" — ");
-  return (idx > 0 ? v.slice(0, idx) : v).trim();
-}
-
-/** The kind of source a financial-analysis value label names ("… — Seller interview"). */
-function kindFromValueLabel(v: string): FieldSource["source"] {
-  const label = v.indexOf(" — ") > 0 ? v.slice(v.indexOf(" — ") + 3).toLowerCase() : "";
+  if (idx <= 0) return null;
+  const label = v.slice(idx + 3).toLowerCase();
+  if (/video|zoom|teams|meet\b/.test(label)) return "video_call";
+  if (/\bcall\b|phone/.test(label)) return "call";
   if (/interview|seller said|told/.test(label)) return "interview";
   if (/questionnaire|intake/.test(label)) return "questionnaire";
   if (/e-?mail/.test(label)) return "email";
+  if (/\bcrm\b|pipedrive|hubspot|salesforce/.test(label)) return "crm";
   return "document";
 }
 
@@ -485,14 +491,6 @@ export const NEEDS_MAPPING = "needs_mapping" as const;
  */
 export const NARRATIVE_FACT = "narrative" as const;
 
-export function isNarrativeTarget(info: Info, target: DiscrepancyTarget, resolved: string): boolean {
-  if (target.sub) return false;
-  const cur = repairCharIndexedValue(info[target.key]);
-  return typeof cur === "string" && cur.length > 160 && resolved.length < cur.length * 0.4;
-}
-
-const FACT_KEY_SHAPE = /^[a-z][A-Za-z0-9]*$/;
-
 /**
  * Where a resolution lands: the row's own factKey (chosen from the deal's
  * real keys by the engine, the analysis, the merge — or by the broker in
@@ -504,49 +502,63 @@ export function resolutionTarget(
 ): DiscrepancyTarget | typeof NO_FACT_KEY | null {
   const factKey = (d.factKey || "").trim();
   if (factKey === NO_FACT_KEY) return NO_FACT_KEY;
-  if (factKey && FACT_KEY_SHAPE.test(factKey) && isFactKey(factKey)) {
-    const year = (d.factYear || "").trim().replace(/^FY\s*/i, "");
-    const cur = repairCharIndexedValue(info[factKey]);
-    const mapLike = cur === undefined || cur === null || cur === "" ? factKey === "revenueByYear" || /ByYear$/.test(factKey) : isPlainMap(cur);
-    if (year && mapLike) return { key: factKey, sub: year };
-    return { key: factKey };
-  }
-  return discrepancyFactTarget(d.field, info);
+  return targetForFactKey(info, factKey, d.factYear) ?? discrepancyFactTarget(d.field, info);
 }
 
 /**
- * A model-chosen fact key must hold the figure in question: the fact is
- * empty, or states one side's value (or a figure from it). "22 licensed
- * technicians" resolved into employees = "36 employees plus owner" is the
- * wrong fact — the broker is asked instead of the headcount being lost.
+ * Where one side's value came from, as a fact source: the row's recorded
+ * side source; else the source of the value on file (or of an alternate)
+ * that states it — read BEFORE the resolution overwrites anything; else
+ * the analysis's " — source" label; else the side's own kind (the
+ * interview side is the seller's, the document side a document).
  */
-export function targetRelatesToSides(
+function sideSource(
   info: Info,
+  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "documentId" | "source"> & Partial<Pick<Discrepancy, "sideSources">>,
+  side: "interview" | "document",
   target: DiscrepancyTarget,
-  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "source">,
-): boolean {
-  const raw = repairCharIndexedValue(info[target.key]);
-  const cur = target.sub && isPlainMap(raw) ? raw[target.sub] : raw;
-  if (cur === undefined || cur === null || cur === "") return true;
-  const text = typeof cur === "string" ? cur : JSON.stringify(cur);
-  const sides = [d.interviewValue, d.documentValue].map((v) => bareDiscrepancyValue(v || "")).filter(Boolean);
-  if (sides.length === 0) return true; // nothing to compare against (an answered question)
-  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9%.]+/g, " ").trim();
-  if (sides.some((v) => norm(text).includes(norm(v)) || norm(v).includes(norm(text)))) return true;
-  const curNums = numberTokens(text, { keepSourceLabel: true }).filter((t) => !t.year);
-  return sides.some((v) => numberTokens(v).filter((t) => !t.year).some((s) => curNums.some((c) => tokensMatch(c, s))));
-}
-
-/** The side a discrepancy value came from, as a fact source kind. */
-function sideKind(d: Partial<Pick<Discrepancy, "sideSources" | "source">>, side: "interview" | "document", raw: string): FieldSource["source"] {
-  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { kind?: string } | undefined>;
-  const kind = sides[side]?.kind;
-  // "broker": a merge row (facts1) can set the broker's own earlier value against a source.
-  if (kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social", "broker"].includes(kind)) {
-    return kind as FieldSource["source"];
+): FieldSource {
+  const raw = (side === "interview" ? d.interviewValue : d.documentValue) || "";
+  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { kind?: string; documentId?: string; brokerOnly?: boolean } | undefined>;
+  const recorded = sides[side];
+  const note = "Conflicting value (discrepancy)";
+  const docId = side === "document" ? d.documentId || recorded?.documentId : recorded?.documentId;
+  // "broker": a merge row can set the broker's own earlier value against a source.
+  if (recorded?.kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social", "broker"].includes(recorded.kind)) {
+    return {
+      source: recorded.kind as FieldSource["source"],
+      ...(docId ? { documentId: docId } : {}),
+      ...(recorded.brokerOnly ? { brokerOnly: true } : {}),
+      note,
+    };
   }
-  if (d.source === "financial_analysis") return kindFromValueLabel(raw);
-  return side === "interview" ? "interview" : "document";
+  // Legacy rows (no side sources): the fact on file, or one of its other
+  // values, that states this side's figure knows where it came from.
+  const value = bareDiscrepancyValue(raw);
+  if (value) {
+    const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
+    const current = valueAtTarget(info, target);
+    const curSrc = sourceAtTarget(info, target);
+    const candidates: Array<{ src: FieldSource; text: string }> = [];
+    if (typeof current === "string" && curSrc && !isUntrackedSource(curSrc) && sameFigure(current, value)) candidates.push({ src: curSrc, text: current });
+    for (const alt of getFieldAlternates(info)[altKey] ?? []) {
+      if (alt && typeof alt.value === "string" && alt.note !== note && !isUntrackedSource(alt) && sameFigure(alt.value, value)) candidates.push({ src: alt, text: alt.value });
+    }
+    // A document side stays a document, a seller side a seller's source.
+    const fitting = candidates.filter((c) => (side === "interview" ? c.src.source !== "document" : c.src.source === "document"));
+    const best = fitting.find((c) => c.text.trim() === value) ?? fitting[0];
+    if (best) {
+      const { value: _v, years: _y, at: _a, note: _n, ...rest } = best.src as FieldSource & { value?: string };
+      return { ...rest, ...(side === "document" && docId && !rest.documentId ? { documentId: docId } : {}), note };
+    }
+  }
+  const fromLabel = d.source === "financial_analysis" ? kindFromValueLabel(raw) : null;
+  return {
+    source: fromLabel ?? (side === "interview" ? "interview" : "document"),
+    ...(docId ? { documentId: docId } : {}),
+    ...(recorded?.brokerOnly ? { brokerOnly: true } : {}),
+    note,
+  };
 }
 
 /**
@@ -558,6 +570,11 @@ function sideKind(d: Partial<Pick<Discrepancy, "sideSources" | "source">>, side:
  * (nothing is overwritten — the broker reviews a minimal rewrite instead);
  * null when there is nothing to write (no resolved value, or the broker
  * chose to keep it as a note only).
+ *
+ * The rules live in resolution-write.ts (planResolution) and are the same
+ * ones the CIM-time overlay applies. A headline figure and its by-year map
+ * are corrected together; a value taken from the broker's own private side
+ * is recorded as private provenance (brokerOnly + acceptedByBroker).
  */
 export function applyResolutionToInfo(
   info: Info,
@@ -570,42 +587,42 @@ export function applyResolutionToInfo(
   const target = resolutionTarget(info, d);
   if (target === NO_FACT_KEY) return null;
   if (!target) return NEEDS_MAPPING;
-  if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, target, d)) return NEEDS_MAPPING;
-  if (isNarrativeTarget(info, target, resolved)) return NARRATIVE_FACT;
+  const plan = planResolution(info, target, d, opts);
+  if (plan.kind === "none") return null;
+  if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
+  if (plan.kind === "narrative") return NARRATIVE_FACT;
   const labelled = d.source === "financial_analysis";
-  const note = "Resolved discrepancy";
   const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
-  if (target.sub) setBrokerMapEntry(info, target.key, target.sub, resolved, note);
-  else setBrokerFact(info, target.key, coerceBrokerValue(info[target.key], resolved), { note });
+  // Where each ruled-out value came from — read before anything is overwritten.
+  const sideSrc = { interview: sideSource(info, d, "interview", target), document: sideSource(info, d, "document", target) };
+  const extra = resolutionSourceExtras(d, resolved);
+  for (const w of plan.writes) {
+    if (w.sub) setBrokerMapEntry(info, w.key, w.sub, w.value, RESOLVED_NOTE, extra);
+    else setBrokerFact(info, w.key, coerceBrokerValue(info[w.key], w.value), { note: RESOLVED_NOTE, ...extra, ...(w.period ? { period: w.period } : {}) });
+  }
   // The conflicting values the broker ruled on stay visible as alternates —
   // bare figures (the " — source" label stripped) under their real kind.
   // A broker-only side stays broker-only as an alternate (FieldSource.brokerOnly
   // is what the seller view and the CIM inputs filter on).
-  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { documentId?: string; brokerOnly?: boolean } | undefined>;
-  const conflicting: Array<{ raw: string | null; src: FieldSource }> = [
-    {
-      raw: d.interviewValue,
-      src: {
-        source: sideKind(d, "interview", d.interviewValue || ""),
-        ...(sides.interview?.documentId ? { documentId: sides.interview.documentId } : {}),
-        ...(sides.interview?.brokerOnly ? { brokerOnly: true } : {}),
-        note: "Conflicting value (discrepancy)",
-      },
-    },
-    {
-      raw: d.documentValue,
-      src: {
-        source: sideKind(d, "document", d.documentValue || ""),
-        ...(d.documentId || sides.document?.documentId ? { documentId: d.documentId || sides.document!.documentId } : {}),
-        ...(sides.document?.brokerOnly ? { brokerOnly: true } : {}),
-        note: "Conflicting value (discrepancy)",
-      },
-    },
-  ];
-  for (const { raw, src } of conflicting) {
+  for (const side of ["interview", "document"] as const) {
+    const raw = side === "interview" ? d.interviewValue : d.documentValue;
     if (!raw || !raw.trim()) continue;
     const value = labelled ? bareDiscrepancyValue(raw) : raw.trim();
-    if (value && value !== resolved) recordAlternate(info, altKey, value, src);
+    if (value && value !== resolved) recordAlternate(info, altKey, value, sideSrc[side]);
+  }
+  // Settled on the broker's own private figure: the fact is hidden from the
+  // seller view, which would otherwise show the best other value in its
+  // place — the very value just ruled out. Mark every displaced value that
+  // states a ruled-out figure as ruled out, so none is promoted.
+  if (extra.brokerOnly) {
+    const losing = [d.interviewValue, d.documentValue].map((v) => bareDiscrepancyValue(v || "")).filter((v) => v && !sameFigure(v, resolved));
+    const alts = { ...getFieldAlternates(info) } as Record<string, FieldAlternate[]>;
+    for (const w of plan.writes) {
+      const k = w.sub ? `${w.key}.${w.sub}` : w.key;
+      if (!Array.isArray(alts[k])) continue;
+      alts[k] = alts[k].map((a) => (a && typeof a.value === "string" && losing.some((l) => sameFigure(a.value, l)) ? { ...a, note: "Conflicting value (discrepancy)" } : a));
+    }
+    info[FIELD_ALTERNATES_KEY] = alts;
   }
   return altKey;
 }
@@ -776,7 +793,9 @@ export async function applyDiscrepancyResolution(
   const resolved = (d.resolvedValue || "").trim();
   if (probe === NO_FACT_KEY || !resolved) return null;
   if (!probe) return NEEDS_MAPPING;
-  if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, probe, d)) return NEEDS_MAPPING;
-  if (isNarrativeTarget(info, probe, resolved)) return NARRATIVE_FACT;
+  const plan = planResolution(info, probe, d, opts);
+  if (plan.kind === "none") return null;
+  if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
+  if (plan.kind === "narrative") return NARRATIVE_FACT;
   return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d, opts));
 }

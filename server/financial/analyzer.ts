@@ -505,6 +505,14 @@ export async function runFinancialAnalysis(
       existingDiscrepancies,
       sources.docMetaById,
     );
+    // One conflict, one row: a verification-check row for a conflict this
+    // analysis raised gives way to the analysis's row (discrepancy-check.ts).
+    try {
+      const { supersedeCheckDuplicates } = await import("../cim/discrepancy-check");
+      await supersedeCheckDuplicates(dealId, storage);
+    } catch (e) {
+      console.warn("[financial-analysis] couldn't fold duplicate check rows:", e);
+    }
 
     return analysis.id;
   } catch (err: any) {

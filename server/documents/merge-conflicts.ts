@@ -535,8 +535,15 @@ export function planMergeRowSupersession(rows: Discrepancy[], info: Record<strin
   const ordered = [...rows].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt) || a.id.localeCompare(b.id));
   const out: string[] = [];
   // Weighed against every row a new conflict is (comparableRows): settled
-  // rows, the check's and the analysis' rows, and earlier live merge rows.
-  const kept: Discrepancy[] = comparableRows(ordered).filter((r) => !(r.source === "merge" && LIVE_STATUSES.has(r.status)));
+  // rows, the check's and the analysis' rows, and earlier live merge rows —
+  // but never a superseded row of any source. Repeating a row that is no
+  // longer in front of the broker is not a second row for one dispute: the
+  // discrepancy check supersedes its own open row in favour of this merge
+  // row (discrepancy-check.ts supersedeCheckDuplicates), and superseding
+  // this one in turn would leave the conflict with no row at all.
+  const kept: Discrepancy[] = comparableRows(ordered).filter(
+    (r) => r.status !== "superseded" && !(r.source === "merge" && LIVE_STATUSES.has(r.status)),
+  );
   for (const r of ordered) {
     if (r.source !== "merge" || !LIVE_STATUSES.has(r.status)) continue;
     if (staleMergeRowReason(r, info, docs)) { out.push(r.id); continue; }

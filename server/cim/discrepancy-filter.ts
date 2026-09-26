@@ -17,15 +17,18 @@
 
 export interface DiscrepancyCandidateLike {
   field: string;
+  suggestedResolution?: string | null;
   interviewValue?: string | null;
   documentValue?: string | null;
   /** The model's own explanation (the check's `aiExplanation`, the analysis's `explanation`). */
   explanation?: string | null;
   aiExplanation?: string | null;
   severity?: string | null;
+  /** The model's own verdict on the pair, when it gave one (see FindingRelation). */
+  relation?: FindingRelation | string | null;
 }
 
-export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "not_a_conflict";
+export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "proposed_vs_current" | "not_a_conflict";
 
 export interface FilterResult<T> {
   kept: T[];
@@ -213,19 +216,58 @@ export function isAdjustedVsReported(item: DiscrepancyCandidateLike): boolean {
 // ("a timing clarification rather than a conflict", "both can be true").
 const NOT_A_CONFLICT_RE =
   /\b(?:(?:is|are|this is|it is|it's)\s+not\s+(?:a|an)\s+(?:real\s+|actual\s+|true\s+|genuine\s+|material\s+)?(?:conflict|discrepancy|contradiction|inconsistency)|(?:there is|there's)\s+no\s+(?:real\s+|actual\s+|true\s+|genuine\s+|material\s+)?(?:conflict|discrepancy|contradiction|inconsistency)|not\s+(?:actually\s+)?(?:contradictory|inconsistent|in conflict)|(?:do|does)\s+not\s+(?:actually\s+)?(?:contradict|conflict)|(?:timing|wording|terminology)\s+clarification|clarification\s+rather\s+than|rather\s+than\s+a\s+(?:conflict|discrepancy|contradiction)|both\s+(?:can|could|may)\s+be\s+(?:true|correct|accurate)|(?:sources|values|figures)\s+(?:are\s+)?(?:consistent|compatible|complementary))\b/i;
+
+/**
+ * The model's own verdict on a finding it reported. The check asks for it
+ * as a field (`relation`) instead of the filter trying to read intent out
+ * of the explanation: "consistent with a 2029 expiry, not the 2034 the
+ * seller stated", "which is correct for the 2023 roster; the 2024 roster
+ * shows 22" and "the new lease runs to 2032" are real conflicts that any
+ * phrase list reading "consistent", "correct" or "new lease" throws away.
+ *  - conflict: the two sources state different values for the same thing,
+ *    as of the same time — the only verdict that becomes a row;
+ *  - same_value: they agree (the same value in other words, rounding);
+ *  - different_things: a different period, a part vs the whole, a
+ *    proposed / future / optional term vs the terms in force.
+ */
+export type FindingRelation = "conflict" | "same_value" | "different_things" | "proposed_vs_current";
+export const FINDING_RELATIONS: FindingRelation[] = ["conflict", "same_value", "different_things", "proposed_vs_current"];
+
+/**
+ * The explanation, taken as a whole, is the verdict that the sides agree:
+ * a sentence that opens with "This is consistent" / "No conflict", with
+ * nothing anywhere after it that contrasts, narrows or disagrees. (Beacon:
+ * "… This is consistent - the seller's statement that the window 'opens in
+ * 2028' aligns with the lease terms.") Deliberately narrow — the verdict
+ * itself comes from `relation`; this only catches the model contradicting
+ * its own field in plain words.
+ */
+const AGREEMENT_VERDICT_RE =
+  /(?:^|[.!?]\s+)(?:this|that|it)\s+is\s+(?:fully\s+|entirely\s+)?consistent\b|(?:^|[.!?]\s+)no\s+(?:real\s+|actual\s+)?(?:conflict|discrepancy)\b/i;
+// Anything after the verdict that walks it back or names a difference.
+const WALK_BACK_RE =
+  /\b(?:but|however|although|though|yet|except|not|never|while|whereas|only|unless|than|differ\w*|conflict\w*|contradict\w*|instead|rather|wrong|incorrect|overstat\w*|understat\w*|higher|lower|more|less|fewer)\b|\w+n['’]t\b/i;
 const CONTRAST_AFTER_RE = /\b(?:but|however|although|though|yet|except)\b/i;
 
 /**
- * The model reported a finding and, in its own explanation, said it isn't a
- * conflict. Only for non-critical findings, and only when nothing after that
- * statement walks it back ("not a conflict on the date, but the amount…").
+ * The model reported a finding and, in its own words, said it isn't a
+ * conflict. Only for non-critical findings, and only when nothing after
+ * that statement walks it back ("not a conflict on the date, but the
+ * amount…").
  */
 export function selfDeclaredNonConflict(item: DiscrepancyCandidateLike): boolean {
   if ((item.severity ?? "").toLowerCase() === "critical") return false;
   const text = item.explanation ?? item.aiExplanation ?? "";
-  const m = text.match(NOT_A_CONFLICT_RE);
-  if (!m || m.index === undefined) return false;
-  return !CONTRAST_AFTER_RE.test(text.slice(m.index + m[0].length));
+  for (const re of [NOT_A_CONFLICT_RE, AGREEMENT_VERDICT_RE]) {
+    const m = text.match(re);
+    if (!m || m.index === undefined) continue;
+    const rest = text.slice(m.index + m[0].length);
+    if (!(re === NOT_A_CONFLICT_RE ? CONTRAST_AFTER_RE : WALK_BACK_RE).test(rest)) return true;
+  }
+  // "No conflict - both sources agree …" as the suggested resolution.
+  const suggestion = item.suggestedResolution ?? "";
+  const s = suggestion.match(/^\s*no (?:real |actual )?(?:conflict|discrepancy)\b/i);
+  return !!s && !WALK_BACK_RE.test(suggestion.slice(s[0].length));
 }
 
 /** Why a finding should be dropped, or null to keep it. */
@@ -233,6 +275,9 @@ export function dropReason(item: DiscrepancyCandidateLike, today: Date = new Dat
   if (isMissingSide(item.interviewValue) || isMissingSide(item.documentValue)) return "missing_side";
   if (sidesEquivalent(item.interviewValue ?? "", item.documentValue ?? "", today)) return "equal";
   if (isAdjustedVsReported(item)) return "adjusted_vs_reported";
+  // The model's own verdict (the check asks for it; the financial analysis doesn't).
+  if (item.relation === "proposed_vs_current") return "proposed_vs_current";
+  if (item.relation === "same_value" || item.relation === "different_things") return "not_a_conflict";
   if (selfDeclaredNonConflict(item)) return "not_a_conflict";
   return null;
 }

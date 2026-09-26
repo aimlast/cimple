@@ -19,17 +19,17 @@ import {
   suggestFactTargets,
   mutateDealInfo,
   setBrokerFact,
+  setBrokerMapEntry,
   addFact,
   NEEDS_MAPPING,
   NARRATIVE_FACT,
   NO_FACT_KEY,
   resolutionTarget,
-  isNarrativeTarget,
-  targetRelatesToSides,
   factDisplayLabel,
   FactError,
 } from "../information/facts";
 import { findStaleFacts, proposeRewrites, type ResolutionSubject } from "../information/resolution-propagation";
+import { planResolution, valueAtTarget, resolutionSourceExtras } from "../information/resolution-write";
 import { isFactKey } from "../interview/info-merger";
 import { numberTokens, tokensMatch } from "../cim/discrepancy-filter";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
@@ -68,17 +68,35 @@ export function resolutionSubject(d: Discrepancy): ResolutionSubject | null {
   return {
     field: discrepancyFieldLabel(d),
     factKey: d.factKey && !d.factKey.startsWith("_") ? d.factKey : null,
+    factYear: d.factYear || null,
     resolvedValue,
     supersededValues: superseded,
   };
 }
 
-async function staleFactsFor(d: Discrepancy) {
-  const subject = resolutionSubject(d);
-  if (!subject || d.status !== "resolved") return { subject: null, stale: [] };
+/**
+ * Facts that still say what a resolution ruled out — plus the resolution's
+ * own fact when it is a description the value wasn't written into (it is
+ * offered for a rewrite instead of being overwritten with a bare value).
+ */
+export function staleFactsForRow(info: Record<string, unknown>, d: Discrepancy, opts: { brokerChoseFact?: boolean } = {}) {
+  const base = resolutionSubject(d);
+  if (!base || d.status !== "resolved") return { subject: null, stale: [] as ReturnType<typeof findStaleFacts> };
+  const target = resolutionTarget(info, d);
+  let subject: ResolutionSubject = base;
+  if (target && target !== NO_FACT_KEY) {
+    if (!subject.factKey) subject = { ...subject, factKey: target.key, factYear: subject.factYear ?? target.sub ?? null };
+    const cur = valueAtTarget(info, target);
+    const written = typeof cur === "string" && cur.trim() === base.resolvedValue;
+    if (!written && planResolution(info, target, d, opts).kind === "narrative") subject = { ...subject, includeTarget: target.key };
+  }
+  return { subject, stale: findStaleFacts(info, subject) };
+}
+
+async function staleFactsFor(d: Discrepancy, opts: { brokerChoseFact?: boolean } = {}) {
   const deal = await storage.getDeal(d.dealId);
   const info = ((deal?.extractedInfo as Record<string, unknown> | null) || {});
-  return { subject, stale: findStaleFacts(info, subject) };
+  return staleFactsForRow(info, d, opts);
 }
 
 function validFactKeyFor(info: Record<string, unknown>, key: string): boolean {
@@ -128,21 +146,24 @@ export function registerDiscrepancyRoutes(app: Express) {
           if (d.status !== "resolved" || !(d.resolvedValue || "").trim()) return d;
           const resolvedValue = (d.resolvedValue || "").trim();
           let target = resolutionTarget(info, d);
+          let narrative = false;
           if (target && target !== NO_FACT_KEY) {
-            // Written already (the fact holds the resolved value), or a fact
-            // that plainly isn't this figure — then it still needs a pick.
-            const raw = info[target.key];
-            const cur = target.sub && raw && typeof raw === "object" ? (raw as Record<string, unknown>)[target.sub] : raw;
+            // Written already (the fact holds the resolved value); otherwise
+            // the same rules as the write decide: a fact that plainly isn't
+            // this figure still needs a pick, a description gets a rewrite.
+            const cur = valueAtTarget(info, target);
             const written = typeof cur === "string" && cur.trim() === resolvedValue;
-            if (!written && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, target, d)) target = null;
+            if (!written) {
+              const plan = planResolution(info, target, d);
+              if (plan.kind === "needs_mapping") target = null;
+              else narrative = plan.kind === "narrative";
+            }
           }
-          const narrative = !!target && target !== NO_FACT_KEY && isNarrativeTarget(info, target, resolvedValue);
           const linkedFact =
             target && target !== NO_FACT_KEY && !narrative
               ? { key: target.sub ? `${target.key}.${target.sub}` : target.key, label: factDisplayLabel(info, target.key) + (target.sub ? ` (${target.sub})` : "") }
               : null;
-          const subject = resolutionSubject(d);
-          const staleFactCount = subject ? findStaleFacts(info, subject).length : 0;
+          const staleFactCount = staleFactsForRow(info, d).stale.length;
           return { ...d, linkedFact, needsFactMapping: target === null, staleFactCount };
         }),
       );
@@ -233,7 +254,7 @@ export function registerDiscrepancyRoutes(app: Express) {
             const deal = await storage.getDeal(updated.dealId);
             const target = resolutionTarget(((deal?.extractedInfo as Record<string, unknown> | null) || {}), updated);
             factWrite = { status: "narrative", key: target && target !== NO_FACT_KEY ? target.key : "" };
-            staleFacts = (await staleFactsFor(updated)).stale;
+            staleFacts = (await staleFactsFor(updated, { brokerChoseFact: factKey !== undefined })).stale;
           }
           else {
             factWrite = { status: "written", key: result };
@@ -299,12 +320,27 @@ export function registerDiscrepancyRoutes(app: Express) {
         .map((e) => ({ key: String(e.key), value: String(e.value).trim() }));
       if (clean.length === 0) return res.status(400).json({ error: "Nothing to apply" });
       const label = discrepancyFieldLabel(d);
+      // A rewrite that carries a figure the broker took from their own
+      // private notes stays private from the seller, like the resolution.
+      const extra = resolutionSourceExtras(d, (d.resolvedValue || "").trim());
       const applied = await mutateDealInfo(d.dealId, (info) => {
         const done: string[] = [];
         for (const e of clean) {
-          if (!isFactKey(e.key) || e.key.startsWith("_") || info[e.key] === undefined || info[e.key] === null) continue;
-          if (info[e.key] === e.value) continue;
-          setBrokerFact(info, e.key, e.value, { note: `Updated to match the resolved ${label}` });
+          // "revenueByYear.2024": one year of a by-year map.
+          const dot = e.key.indexOf(".");
+          const key = dot > 0 ? e.key.slice(0, dot) : e.key;
+          const sub = dot > 0 ? e.key.slice(dot + 1) : "";
+          if (!isFactKey(key) || key.startsWith("_") || info[key] === undefined || info[key] === null) continue;
+          const note = `Updated to match the resolved ${label}`;
+          if (sub) {
+            const map = info[key];
+            if (!map || typeof map !== "object" || Array.isArray(map) || !(sub in (map as Record<string, unknown>))) continue;
+            if ((map as Record<string, unknown>)[sub] === e.value) continue;
+            setBrokerMapEntry(info, key, sub, e.value, note, extra);
+          } else {
+            if (info[key] === e.value) continue;
+            setBrokerFact(info, key, e.value, { note, ...extra });
+          }
           done.push(e.key);
         }
         return done;

@@ -9,7 +9,7 @@ import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
-import { resolvedNotes, overlayResolvedFacts, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
+import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
   buildSourceDigests,
   buildFlaggedRisks,
@@ -432,11 +432,12 @@ export function assembleKnowledgeBase(
   // value that came FROM a private side (the broker's recast, a CRM note's
   // figure) is neither listed nor overlaid — the agent only learns that the
   // item is settled (resolvedPrivately), never the figure or where it came from.
-  const resolvedValues: ResolvedDiscrepancyNote[] = [];
-  for (const d of resolvedDiscrepancies) {
-    if (d.status === "ask_seller") continue;
-    const [note] = resolvedNotes([d]);
-    if (!note) continue;
+  const rowById = new Map(resolvedDiscrepancies.map((d) => [d.id, d]));
+  const noted: ResolvedDiscrepancyNote[] = [];
+  // All at once: one final value per settled thing (resolvedNotes).
+  for (const note of resolvedNotes(resolvedDiscrepancies.filter((d) => d.status !== "ask_seller"))) {
+    const d = note.id ? rowById.get(note.id) : undefined;
+    if (!d) continue;
     const p = privacy(d);
     const privateValues = [p.privateA ? d.interviewValue : null, p.privateB ? d.documentValue : null].filter((v): v is string => !!v);
     const publicValues = [p.privateA ? null : d.interviewValue, p.privateB ? null : d.documentValue].filter((v): v is string => !!v);
@@ -446,10 +447,10 @@ export function assembleKnowledgeBase(
       (privateValues.some((v) => sameFigure(note.resolvedValue, v)) && !publicValues.some((v) => sameFigure(note.resolvedValue, v)));
     const field = PRIVATE_MATERIAL_RE.test(note.field) ? safeFieldLabel(note.field, note.factKey) : note.field;
     if (fromPrivate) {
-      resolvedValues.push({ ...note, field, resolvedValue: "", supersededValues: [], resolvedPrivately: true });
+      noted.push({ ...note, field, resolvedValue: "", supersededValues: [], resolvedPrivately: true });
       continue;
     }
-    resolvedValues.push({
+    noted.push({
       ...note,
       field,
       supersededValues: note.supersededValues.filter(
@@ -457,10 +458,14 @@ export function assembleKnowledgeBase(
       ),
     });
   }
-  const extractedInfo = overlayResolvedFacts(
-    baseExtractedInfo as Record<string, unknown>,
-    resolvedValues.filter((n) => !n.resolvedPrivately),
-  ) as Partial<ExtractedInfo>;
+  // What became of each against the facts the interview reads: applied,
+  // replaced by a later edit (dropped — the newer figure stands), or refused
+  // by the write rules (listed, but the fact on file is not the broker's value).
+  const settledFacts = settleResolvedFacts(baseExtractedInfo as Record<string, unknown>, noted, {
+    apply: (n) => !(n as ResolvedDiscrepancyNote).resolvedPrivately,
+  });
+  const resolvedValues = currentResolvedNotes(settledFacts.notes) as ResolvedDiscrepancyNote[];
+  const extractedInfo = settledFacts.facts as Partial<ExtractedInfo>;
 
   // Discrepancies the broker explicitly routed to the interview. One side
   // from a broker-only source (a CRM note, a private email): the agent never
@@ -494,8 +499,16 @@ export function assembleKnowledgeBase(
   // broker-only sources aren't in the view at all; a CRM note the broker
   // shared is labelled so the agent confirms it without citing the CRM.)
   const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
+  // Only a fact that now holds the broker's value is "confirmed by the
+  // broker". One the write rules refused (a description the figure is only
+  // part of: "Largest customer Alderbrook is about 18% … under 20%" resolved
+  // as 22.0%) still says what its source said — labelled as partly outdated.
   for (const n of resolvedValues) {
-    if (n.factKey && !n.year && !n.resolvedPrivately) factSourceLabels[n.factKey] = "confirmed by the broker";
+    if (!n.factKey || n.year || n.resolvedPrivately) continue;
+    if (n.status === "applied") factSourceLabels[n.factKey] = "confirmed by the broker";
+    else if (n.status === "not_written" && factSourceLabels[n.factKey]) {
+      factSourceLabels[n.factKey] = `${factSourceLabels[n.factKey]} — partly outdated: the broker settled "${n.field}" (see SETTLED BY THE BROKER)`;
+    }
   }
 
   // Sources: digests, flagged risks, conflicts (seller-visible only — the
@@ -908,7 +921,9 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   if ((kb.resolvedValues ?? []).length > 0) {
     parts.push(`## SETTLED BY THE BROKER — final values (never re-ask, re-open or contradict)`);
     for (const n of kb.resolvedValues!) {
-      const what = n.year ? `${n.factKey ?? n.field} (${n.year})` : (n.factKey ?? n.field);
+      // (Two settled things can share a fact — "employees: Licensed field technicians" and "employees: Total headcount".)
+      const same = (a: string, b: string) => a.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.toLowerCase().replace(/[^a-z0-9]+/g, "");
+      const what = resolvedNoteLabel(n, n.factKey ? (same(n.factKey, n.field) ? n.factKey : `${n.factKey} — ${n.field}`) : n.field);
       if (n.resolvedPrivately) {
         // The final figure came from the broker's own material: the agent
         // knows only that it is settled — nothing to quote, nothing to re-open.

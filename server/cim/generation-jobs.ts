@@ -20,7 +20,7 @@ import type { CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schem
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { brokerFactsView } from "../information/facts";
-import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
+import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
 import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
 import { hasMonthYear } from "./fact-dates";
@@ -115,17 +115,20 @@ export async function factSourceWordsFor(
  */
 export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
   void mode;
-  const resolvedDiscrepancies = resolvedNotes(await storage.getResolvedDiscrepancies(deal.id));
-  // Every source entry stamped with its row's visibility (facts1): a
-  // broker-only / CRM fact or year never reaches the writer, even on facts
-  // recorded before the stamp existed.
+  // (A resolution a later edit or resolution replaced comes back marked
+  // superseded — it neither overlays nor reaches the RESOLVED block.)
   // The deal's own name, industry and listed price are the broker's facts
   // (deal-mirror.ts) — never a tax return's NAICS line or a CRM note's
   // wording, even on facts saved before that rule.
-  const extractedInfo = stampSourceDetails(
-    overlayResolvedFacts((brokerFactsView(deal).extractedInfo as Record<string, unknown>) || {}, resolvedDiscrepancies),
-    await storage.getDocumentsByDeal(deal.id),
+  const settled = settleResolvedFacts(
+    (brokerFactsView(deal).extractedInfo as Record<string, unknown>) || {},
+    resolvedNotes(await storage.getResolvedDiscrepancies(deal.id)),
   );
+  const resolvedDiscrepancies = currentResolvedNotes(settled.notes);
+  // Every source entry stamped with its row's visibility (facts1): a
+  // broker-only / CRM fact or year never reaches the writer, even on facts
+  // recorded before the stamp existed.
+  const extractedInfo = stampSourceDetails(settled.facts, await storage.getDocumentsByDeal(deal.id));
   const [branding, insights, analyses, factSourceWords] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
