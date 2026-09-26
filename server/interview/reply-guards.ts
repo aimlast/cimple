@@ -63,14 +63,24 @@ export const NORMALISATION_HANDOFF =
  * normalization is the broker's to explain, not the interviewer's.
  */
 const NEGATIVE_OR_ITEM_CALL_RE =
-  /\b(?:nothing|no(?:thing)? (?:amount|part)) (?:to|that(?:'s| is| gets)?) (?:be )?["“']?add(?:ed)?["”']? back\b|\bnothing to ["“']?add back\b|\b(?:is|are|'s)(?:n't| not)\s+(?:an? |really an? )?["“']?(?:add[- ]?backs?|added back)\b|\bnot (?:an? )?["“']?add[- ]?backs?\b|\b(?:don'?t|doesn'?t|won'?t|wouldn'?t|never|can'?t) (?:get |be |need to be )?["“']?add(?:ed)? back\b|\b(?:salary|salaries|wages?|expenses?|comp(?:ensation)?|dividends?|draws?|perks?|personal (?:expenses|costs))\b[^.?;]{0,40}\b(?:flows?|comes?|goes?) (?:back|through)\b(?!\s+(?:the|your|my|our|his|her) (?:company|business|books|corporation|accounts?|shop|clinic|payroll|ledger|p&l))/i;
+  /\b(?:nothing|no(?:thing)? (?:amount|part)) (?:to|that(?:'s| is| gets)?) (?:be )?["“']?add(?:ed)?["”']? back\b|\bnothing to ["“']?add back\b|\b(?:is|are|'s)(?:n't| not)\s+(?:an? |really an? )?["“']?(?:add[- ]?backs?|added back)\b|\bnot (?:an? )?["“']?add[- ]?backs?\b|\b(?:don'?t|doesn'?t|won'?t|wouldn'?t|never|can'?t) (?:get |be |need to be )?["“']?add(?:ed)? back\b|\b(?:salary|salaries|wages?|expenses?|comp(?:ensation)?|dividends?|draws?|perks?|personal (?:expenses|costs))\b[^.?;]{0,40}\b(?:(?:flows?|comes?|goes?) back\b(?!\s+(?:the|your|my|our|his|her) (?:company|business|books|corporation|accounts?|shop|clinic|payroll|ledger|p&l))|(?:flows?|comes?|goes?) through(?=\s*(?:$|[.,;:!?)\u2014\u2013]|(?:and|but|so|to (?:the|a) (?:buyer|new owner))\b)))/i;
+// "flows through ADP", "goes through the payroll company" name a route, not a call.
 // A hand-off followed by the call anyway ("Your broker will confirm the full
 // normalization, but the short answer is…") is still a call.
 const HEDGE_THEN_CALL_RE = /\b(?:but|however|though|the short answer|in short|basically|that said)\b/i;
 
 /** True when a clause asserts how something is treated in SDE / EBITDA. */
+/**
+ * A figure the interviewer cites from the seller's own documents ("Your
+ * documents show SDE of $690K for 2024") is the document speaking, not a
+ * treatment call — it is set aside before the checks, so a call added to it
+ * ("…, which is an add-back") is still caught.
+ */
+const CITED_FIGURE_RE =
+  /\b(?:your|the) (?:documents?|statements?|financials?|financial statements|p&l|t2|tax returns?|broker'?s? (?:package|summary)|listing|valuation(?: report)?|report|spreadsheet|summary|recast|add[- ]?back (?:list|schedule|summary|sheet))\s+(?:shows?|lists?|puts?|has|have|records?|gives?|reports?|states?|says?)\s+(?:an? |the |your )?(?:SDE|adjusted EBITDA|discretionary earnings|normali[sz]ed (?:EBITDA|earnings)|add[- ]?backs?)\s+(?:of|at|as|totall?ing|around|about)\s+(?:about |around |roughly )?\$?[\d.,]+\s?[kKmM]?\b/gi;
+
 export function assertsNormalisation(text: string): boolean {
-  const t = text.replace(/[’‘]/g, "'");
+  const t = text.replace(/[’‘]/g, "'").replace(CITED_FIGURE_RE, "the figure on file");
   const hedged = TREATMENT_HEDGE_RE.test(t) && !HEDGE_THEN_CALL_RE.test(t);
   if (OWNER_COST_CALL_RE.test(t) || NEGATIVE_OR_ITEM_CALL_RE.test(t)) return !hedged;
   if (!NORM_TERM_RE.test(t)) return false;
@@ -248,10 +258,41 @@ export function guardNormalisationFields(
 
 const Q_START = String.raw`(?:are|is|was|were|do|does|did|have|has|had|can|could|would|will|should|what|how|when|where|who|which|why|any)`;
 // "…the pre-audit prep, and are there any findings…?" — a second question
-// joined onto the first.
+// joined onto the first. Only a real question counts: the joint must be a
+// comma or a dash ("Which employees are key and will stay…?" is one
+// question), and what follows must be inverted — an auxiliary before its
+// subject ("and are there…", "and does it need…", "and has the landlord
+// said…") or a wh-word before an auxiliary ("and how old are they", "and
+// what capital would a buyer need"). A list that ends "…, and any other
+// perks?" and an embedded clause ("…what you sell and how you price it?")
+// are not questions.
 const Q_LEAD = String.raw`(?:(?:if so|if not|separately|also|roughly|approximately|briefly|generally|typically|specifically|in (?:general|short)),?\s+)?`;
-const COMPOUND_RE = new RegExp(String.raw`,?\s+(?:and|plus|also)\s+${Q_LEAD}(?=${Q_START}\b)|\s[—–]\s(?:and|also)\s+${Q_LEAD}(?=${Q_START}\b)`, "i");
-const QUESTION_SHAPED_RE = new RegExp(String.raw`(?:^|[:—–]\s*|,\s*)${Q_START}\b|\b${Q_START}\b[^.?!]*$`, "i");
+const JOINT_RE = new RegExp(String.raw`(?:,\s+|\s[\u2014\u2013]\s)(?:and|plus|also)\s+${Q_LEAD}`, "gi");
+const AUX = String.raw`(?:are|is|was|were|do|does|did|have|has|had|can|could|would|will|should)`;
+const PRONOUN_SUBJECT = String.raw`(?:there|you|they|it|he|she|we|I|that|this|those|these|anyone|anything|anybody|someone|any of)`;
+const PARTICIPLE = String.raw`(?:\w+ed|\w+en|said|made|told|done|had|gone|got|gotten|paid|sold|built|kept|left|met|put|set|run|seen|known|brought|bought|taken|given|held|lost|won|spent|sent|thought|heard|found)`;
+const INVERTED_RE = new RegExp(
+  String.raw`^(?:${AUX}\s+${PRONOUN_SUBJECT}\b` +
+    // do/can/will + a named subject: "does the lease need…", "can Dana run…"
+    String.raw`|(?:do|does|did|can|could|would|will|should)\s+(?:the|your|a|an|any|[A-Z][\w'-]+)\b` +
+    // have/be + a named subject + a participle: "has the landlord said…"
+    String.raw`|(?:are|is|was|were|have|has|had)\s+(?:the|your|a|an|[A-Z][\w'-]+)\s+(?:[\w'-]+\s+){0,3}?${PARTICIPLE}\b` +
+    // wh-word, then an auxiliary before any subject pronoun: "how old are they", "what's the…"
+    String.raw`|(?:how|what|when|where|who|which|why)(?:'s|'re|\s+(?:(?!(?:you|they|it|we|he|she|I)\b)[\w$%.,'-]+\s+){0,4}?(?:${AUX}|'s|'re)\b))`,
+  // Case-sensitive: a capital is a name ("can Dana run…"), never a verb ("can work").
+);
+const QUESTION_SHAPED_RE = new RegExp(String.raw`(?:^|[:\u2014\u2013]\s*|,\s*)${Q_START}\b|\b${Q_START}\b[^.?!]*$`, "i");
+
+/** Where a second, inverted question is joined onto the first (-1 when none). */
+function secondQuestionAt(body: string): { at: number; len: number } | null {
+  JOINT_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = JOINT_RE.exec(body)) !== null) {
+    const rest = body.slice(m.index + m[0].length);
+    if (INVERTED_RE.test(rest.replace(/[’‘]/g, "'"))) return { at: m.index, len: m[0].length };
+  }
+  return null;
+}
 
 // "Specifically, …?" — the precise version of the question before it.
 const SPECIFIC_LEAD_RE = /^(?:specifically|in particular|more specifically|concretely|put (?:another|differently)|to be (?:more )?specific)[,:]?\s+/i;
@@ -316,10 +357,10 @@ export function enforceSingleQuestion(message: string, chips: string[] = []): { 
   const q = spans[keep].text;
   const trail = q.match(/\s*$/)?.[0] ?? "";
   const body = q.trim();
-  const m = COMPOUND_RE.exec(body);
-  if (m && m.index > 0) {
-    const first = body.slice(0, m.index).replace(/[,;:\s]+$/, "");
-    const second = body.slice(m.index + m[0].length);
+  const m = secondQuestionAt(body);
+  if (m && m.at > 0) {
+    const first = body.slice(0, m.at).replace(/[,;:\s]+$/, "");
+    const second = body.slice(m.at + m.len);
     if (QUESTION_SHAPED_RE.test(first) && first.split(/\s+/).length >= 3 && second.includes("?")) {
       dropped.push(second.trim());
       spans[keep] = { text: `${first.replace(/\?+$/, "")}?${trail}` };
@@ -340,19 +381,36 @@ const FUTURE_CUE_RE =
 const PAST_FRAME_RE = /^(?:(?:and|so|but)\s+)?(?:did|was|were|had|when did|what year did|which year did)\b/i;
 const YEAR_LIST_RE = /\b(20\d{2})((?:\s*,\s*20\d{2})*)(\s*,?\s+or\s+|\s*[-–]\s*|\s+to\s+)(20\d{2})\b/g;
 
+// The offered years must be WHEN the future thing happens — the slot after
+// "for / in / by / during / around / until / before", with nothing after but
+// the end of the clause or "or later". Years named as a comparison ("closer
+// to 2024 or 2025 levels", "back to the 2019 or 2020 headcount", "recover to
+// 2022–2023 levels") are history and stay exactly as written.
+const TIME_SLOT_BEFORE_RE = /(?:^|\b(?:for|in|by|during|around|until|till|before|sometime in|some time in|as early as|as late as|early|late|mid)[- ]?\s*(?:(?:early|late|mid)[- ]?|(?:the )?(?:spring|summer|fall|autumn|winter|end|start|beginning|first half|second half|middle) of\s+|q[1-4]\s+(?:of\s+)?|fy\s?)?)$/i;
+const TIME_SLOT_AFTER_RE = /^\s*(?:$|[?!.,;:)\u2014\u2013]|or (?:later|so|after|beyond|thereabouts)\b|at the (?:latest|earliest)\b|and beyond\b)/i;
+const inTimeSlot = (text: string, offset: number, length: number): boolean =>
+  TIME_SLOT_BEFORE_RE.test(text.slice(0, offset).trimStart()) && TIME_SLOT_AFTER_RE.test(text.slice(offset + length));
+
 /**
  * A future-framed question offering a year that has already passed ("Is it
  * on the schedule for 2025 or 2026?" asked in September 2026) is re-anchored
  * to today: the offered years move forward so the first is this year
  * ("…for 2026 or 2027?"). Chips carrying the same years move with them;
- * a chip offering a past year for a future event is dropped.
+ * a chip offering a past year for a future event is dropped. Only years in
+ * the time slot move (inTimeSlot) — comparison years never do.
  */
 export function anchorYearOptions(message: string, chips: string[] = [], today: Date = new Date()): { message: string; chips: string[]; shifted: number } {
   const year = today.getUTCFullYear();
   let shift = 0;
+  let comparison = false;
+  const future = (sentence: string) => sentence.includes("?") && FUTURE_CUE_RE.test(sentence) && !PAST_FRAME_RE.test(sentence.trim());
   const fixSentence = (sentence: string): string => {
-    if (!sentence.includes("?") || !FUTURE_CUE_RE.test(sentence) || PAST_FRAME_RE.test(sentence.trim())) return sentence;
-    return sentence.replace(YEAR_LIST_RE, (all, a: string, more: string, sep: string, b: string) => {
+    if (!future(sentence)) return sentence;
+    return sentence.replace(YEAR_LIST_RE, (all: string, a: string, more: string, _sep: string, b: string, offset: number) => {
+      if (!inTimeSlot(sentence, offset, all.length)) {
+        comparison = true;
+        return all;
+      }
       const years = [a, ...(more.match(/20\d{2}/g) ?? []), b].map(Number);
       const min = Math.min(...years);
       if (min >= year) return all;
@@ -363,13 +421,25 @@ export function anchorYearOptions(message: string, chips: string[] = [], today: 
   };
   const spans = splitSentences(message);
   const fixed = spans.map((s) => fixSentence(s.text)).join("");
-  const questionFuture = spans.some((s) => s.text.includes("?") && FUTURE_CUE_RE.test(s.text) && !PAST_FRAME_RE.test(s.text.trim()));
+  // A single past year named as history ("back to 2019 levels") also makes
+  // the question a comparison — its chips keep their years.
+  for (const s of spans) {
+    if (!future(s.text)) continue;
+    for (const m of Array.from(s.text.matchAll(/\b20\d{2}\b/g))) {
+      if (Number(m[0]) < year && !inTimeSlot(s.text, m.index ?? 0, 4)) comparison = true;
+    }
+  }
+  const questionFuture = spans.some((s) => future(s.text));
   let outChips = chips;
-  if (questionFuture) {
+  if (questionFuture && !comparison) {
     outChips = chips
-      .map((c) => (shift > 0 ? c.replace(/\b20\d{2}\b/g, (y) => (Number(y) < year + 3 && Number(y) >= year - shift ? String(Number(y) + shift) : y)) : c))
+      .map((c) =>
+        shift > 0
+          ? c.replace(/\b20\d{2}\b/g, (y: string, off: number) => (inTimeSlot(c, off, 4) && Number(y) < year + 3 && Number(y) >= year - shift ? String(Number(y) + shift) : y))
+          : c,
+      )
       .filter((c) => {
-        const ys = (c.match(/\b20\d{2}\b/g) ?? []).map(Number);
+        const ys = Array.from(c.matchAll(/\b20\d{2}\b/g)).filter((m) => inTimeSlot(c, m.index ?? 0, 4)).map((m) => Number(m[0]));
         // "Planned for 2025" on a future question, after the shift: a past year left over.
         return !(ys.length > 0 && ys.every((y) => y < year) && !/\b(?:done|did|was|were|last|already|in the past|back in|since)\b/i.test(c));
       });
@@ -481,15 +551,45 @@ export function foreignTerms(text: string, j: Jurisdiction | null, location = ""
  */
 export function localiseTerms(text: string, j: Jurisdiction | null, location = "", sellerText = ""): string {
   if (!j || !text) return text;
-  let out = text;
-  for (const [re, to] of swapsFor(j, location)) {
-    out = out.replace(re, (...args: any[]) => {
-      const m = args[0] as string;
-      if (sellerText && new RegExp(`\\b${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(sellerText)) return m;
-      return typeof to === "string" ? to : to(m, ...(args.slice(1, -2) as string[]));
-    });
-  }
-  return out;
+  const swaps = swapsFor(j, location);
+  return splitSentences(text)
+    .map(({ text: sentence }) => {
+      // A sentence about the other country — its lanes, a subsidiary there,
+      // its taxes — keeps that country's terms ("California state
+      // regulations", "does the US subsidiary file with the IRS", "is any of
+      // it subject to GST or HST" for a US business shipping to Ontario).
+      if (aboutOtherCountry(sentence, j)) return sentence;
+      let out = sentence;
+      const inserted = new Set<string>();
+      for (const [re, to] of swaps) {
+        re.lastIndex = 0;
+        out = out.replace(re, (...args: any[]) => {
+          const m = args[0] as string;
+          if (sellerText && new RegExp(`\\b${m.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "i").test(sellerText)) return m;
+          const r = typeof to === "string" ? to : to(m, ...(args.slice(1, -2) as string[]));
+          inserted.add(r);
+          return r;
+        });
+      }
+      // Two terms that map to one ("GST or HST" → "sales tax or sales tax") say it once.
+      for (const r of Array.from(inserted)) {
+        const e = r.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        out = out.replace(new RegExp(`\\b${e}(?:\\s*\\/\\s*|,? or |,? and )${e}\\b`, "g"), r);
+      }
+      return out;
+    })
+    .join("");
+}
+
+const US_PLACE_RE = new RegExp(
+  String.raw`\b(?:US|U\.S\.A?\.?|USA|United States|America|American|stateside|Americans|${STATES.map((s) => s.replace(/\b\w/g, (c) => c.toUpperCase())).join("|")})\b`,
+);
+const CA_PLACE_RE = new RegExp(
+  String.raw`\b(?:Canada|Canadian|Canadians|${Object.keys(PROVINCES).filter((p) => p !== "québec").map((p) => p.replace(/\b\w/g, (c) => c.toUpperCase())).join("|")}|Québec|Toronto|Montreal|Montréal|Vancouver|Calgary|Edmonton|Ottawa|Winnipeg|Halifax)\b`,
+);
+/** True when a sentence is about the other country than the business's own. */
+function aboutOtherCountry(sentence: string, j: Jurisdiction): boolean {
+  return j === "CA" ? US_PLACE_RE.test(sentence) : CA_PLACE_RE.test(sentence);
 }
 
 /** The prompt line that tells the agent which vocabulary the business uses. */
@@ -522,64 +622,139 @@ export interface AttributionFact {
 export interface AttributionContext {
   /** Everything the seller has said or written: every session's answers, the questionnaire. */
   sellerText: string;
+  /**
+   * The same, one utterance per entry (an answer, a questionnaire field, a
+   * fact the seller stated). A claim counts as the seller's only when ONE of
+   * them carries it — words scattered across a dozen answers ("2019" in one,
+   * "didn't" in another) are not the seller mentioning a union drive.
+   * Defaults to `sellerText` split by line.
+   */
+  sellerUtterances?: string[];
   /** Facts on the interview's file, with where they came from. */
   facts: AttributionFact[];
 }
 
-const YOU_SAID_RE = /\b(as )?you(?:'ve| have)? (mentioned|said|told me|noted|flagged|raised|described|indicated|brought up|shared)( that| earlier| before| on the call| in the call)?(?: that)?\b/gi;
-const stems = (text: string): string[] =>
-  (text.toLowerCase().match(/[a-z][a-z'-]{3,}|\d[\d,.]*/g) ?? [])
-    .map((w) => w.replace(/[,.]+$/, "").replace(/,/g, ""))
-    .filter((w) => !/^(?:that|this|with|from|have|there|their|they|them|about|would|could|should|which|what|when|where|your|yours|into|some|also|just|than|then|were|been|being|more|most|very|only|over|such|much|many|didn|doesn|don't|isn't|wasn't)$/.test(w))
-    .map((w) => (/^\d/.test(w) ? w : w.slice(0, 5)));
+/**
+ * "you mentioned / you said / you told me / you noted" at the head of a
+ * clause — the seller as the source of a claim that follows. A relative
+ * clause ("Everything you've shared is saved", "the five you've described
+ * as…") is not an attribution and is never touched (see clauseHead).
+ */
+const YOU_SAID_RE = /\b(as )?you(?:'ve| have| had)?(?: also| earlier| previously| already)? (mentioned|said|told me|noted)( that| earlier| before| on the call| in the call| in your (?:email|questionnaire|intake(?: form)?|notes))?(?: that)?\b/gi;
+/** What may come right before an attribution: the start, punctuation, a conjunction, "I know"… */
+const CLAUSE_HEAD_RE = /(?:^|[.!?;:,(\u2014\u2013-]\s*|\b(?:and|but|so|because|since|while|though|although|when|where|if|as)\s+|\b(?:I know|I believe|I think|I recall|I understand|I remember|I see|earlier|before|previously|also)\s+)$/i;
+/** Hedges that go with the attribution when it is rewritten ("I know you mentioned" → "your documents show"). */
+const HEDGE_BEFORE_RE = /\b(?:I know|I believe|I think|I recall|I understand|I remember|I see)\s+$/i;
+
+const ATTR_STOP = new Set(
+  "that this with from have there their they them about would could should which what when where your yours into some also just than then were been being more most very only over such much many didn't doesn't don't isn't wasn't aren't weren't haven't hasn't won't wouldn't never still since any each every other those these here even ever really around roughly about approximately maybe will shall well like want need needs said told mentioned noted mention".split(" "),
+);
+/** The content of a claim: stems of its meaningful words, and its figures (380,000 = 380K = $380K). */
+export function claimTokens(text: string): string[] {
+  const out: string[] = [];
+  const t = text.toLowerCase().replace(/[’‘]/g, "'");
+  for (const m of Array.from(t.matchAll(/\$?(\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|%)?(?![\d])|[a-z][a-z'-]{3,}/g))) {
+    if (m[1] !== undefined) {
+      let v = Number(m[1].replace(/,/g, ""));
+      const unit = m[2] ?? "";
+      if (/^k|thousand$/.test(unit)) v *= 1_000;
+      else if (/^(?:m|mm|million)$/.test(unit)) v *= 1_000_000;
+      out.push(`#${Math.round(v * 100) / 100}${unit === "%" ? "%" : ""}`);
+      continue;
+    }
+    const w = m[0].replace(/'s$/, "");
+    if (ATTR_STOP.has(w) || /n't$/.test(w)) continue;
+    out.push(w.slice(0, 5));
+  }
+  return Array.from(new Set(out));
+}
+const coverage = (claim: string[], text: string | Set<string>): number => {
+  if (claim.length === 0) return 0;
+  const have = typeof text === "string" ? new Set(claimTokens(text)) : text;
+  return claim.filter((w) => have.has(w)).length / claim.length;
+};
+
+const isSellerSpeaker = (speaker?: string) => !!speaker && /\bseller\b/i.test(speaker);
+const SELLER_KINDS = new Set(["interview", "questionnaire"]);
 
 function speakerFirstName(speaker: string): string {
   return speaker.replace(/\(.*$/, "").trim().split(/\s+/)[0] || speaker;
 }
-const isSellerSpeaker = (speaker?: string) => !!speaker && /\bseller\b/i.test(speaker);
 
 /**
- * "you mentioned X" is kept only when the seller said X (their answers in
- * any session, their questionnaire). Otherwise it names who did: "Rob
- * mentioned X" (a call participant on file as the speaker), "the call
- * notes mention X" (a call, speaker unknown), or "I have a note about X"
- * (anything else — never the source itself, which may be the broker's).
+ * Who the claim belongs to, when it isn't the seller: the call participant
+ * on file as the speaker ("Rob mentioned"), a call with no speaker ("the
+ * call notes show"), a document ("your documents show"), anything else ("my
+ * notes show" — never the source itself, which may be the broker's). Each
+ * wording takes a noun phrase or a clause alike ("Rob mentioned a union
+ * drive in 2019" / "Rob mentioned the vote failed"), so the sentence stays
+ * grammatical whatever follows.
+ */
+function attributionFor(fact: AttributionFact | null, gerund: boolean): string {
+  // "…show wanting to stay on" doesn't read; "…mention wanting to stay on" does.
+  const verb = gerund ? "mention" : "show";
+  if (fact?.speaker && !isSellerSpeaker(fact.speaker)) return `${speakerFirstName(fact.speaker)} mentioned`;
+  if (fact && (fact.source === "call" || fact.source === "video_call")) return `the call notes ${verb}`;
+  if (fact && fact.source === "document") return `your documents ${verb}`;
+  return `my notes ${verb}`;
+}
+
+/**
+ * "you mentioned X" is kept unless the claim is traceably someone else's:
+ *  - kept when one of the seller's own utterances carries most of it (or it
+ *    names the seller's channel: "in your email", "in your questionnaire");
+ *  - rewritten when a fact on file from someone else (a manager on the call,
+ *    a document, a note) carries it — or when the seller's words clearly
+ *    don't (under a third of it in any one answer).
+ * Anything in between is left alone: a paraphrase of the seller is theirs.
  */
 export function fixAttribution(message: string, ctx: AttributionContext): { message: string; fixes: string[] } {
-  const said = new Set(stems(ctx.sellerText));
-  const factStems = ctx.facts.map((f) => ({ f, s: new Set(stems(f.value)) }));
+  const utterances = (ctx.sellerUtterances ?? ctx.sellerText.split(/\n+/)).filter((u) => u && u.trim());
+  const utteranceTokens = utterances.map((u) => new Set(claimTokens(u)));
+  const sellerFacts = ctx.facts.filter((f) => SELLER_KINDS.has(f.source ?? "") || isSellerSpeaker(f.speaker)).map((f) => new Set(claimTokens(f.value)));
+  const otherFacts = ctx.facts.filter((f) => !SELLER_KINDS.has(f.source ?? "") && !isSellerSpeaker(f.speaker)).map((f) => ({ f, s: new Set(claimTokens(f.value)) }));
   const fixes: string[] = [];
-  const out = message.replace(YOU_SAID_RE, (whole: string, as: string | undefined, verb: string, tail: string | undefined, offset: number) => {
-    const after = message.slice(offset + whole.length).split(/[.?!;—–]/)[0] ?? "";
-    const claim = stems(after).slice(0, 14);
-    if (claim.length < 2) return whole;
-    const heard = claim.filter((w) => said.has(w)).length / claim.length;
-    if (heard >= 0.5) return whole;
-    // Whose words are they?
+  let out = "";
+  let last = 0;
+  YOU_SAID_RE.lastIndex = 0;
+  let m: RegExpExecArray | null;
+  while ((m = YOU_SAID_RE.exec(message)) !== null) {
+    const [whole, as, , tail] = m;
+    const offset = m.index;
+    const before = message.slice(0, offset);
+    // A relative clause ("Everything you've shared…", "the figure you mentioned") is not an attribution.
+    if (!as && !CLAUSE_HEAD_RE.test(before)) continue;
+    // The seller's own channel, named: theirs by definition.
+    if (/\bin your\b/i.test(tail ?? "")) continue;
+    const after = message.slice(offset + whole.length).split(/[.?!;\u2014\u2013]|,\s+(?:but|and|so|which)\s/)[0] ?? "";
+    const claim = claimTokens(after).slice(0, 14);
+    if (claim.length < 2) continue;
+    const heard = Math.max(0, ...utteranceTokens.map((u) => coverage(claim, u)), ...sellerFacts.map((s) => coverage(claim, s)));
+    if (heard >= 0.5) continue;
     let best: AttributionFact | null = null;
     let bestScore = 0;
-    for (const { f, s } of factStems) {
-      const score = claim.filter((w) => s.has(w)).length / claim.length;
+    for (const { f, s } of otherFacts) {
+      const score = coverage(claim, s);
       if (score > bestScore) { best = f; bestScore = score; }
     }
-    const match = bestScore >= 0.4 ? best : null;
-    const that = /that/.test(tail ?? "") || /^(?:said|told me)$/i.test(verb) || /^\s*(?:the|your|it|they|there|we|he|she|[A-Z])[^,]*\b(?:is|are|was|were|has|have|had|will|would|runs?|came|comes|went|did)\b/.test(after);
-    let replacement: string;
-    if (match?.speaker && !isSellerSpeaker(match.speaker)) {
-      const name = speakerFirstName(match.speaker);
-      replacement = /told me|said/i.test(verb) ? `${name} said${that ? " that" : ""}` : `${name} mentioned${that ? " that" : ""}`;
-    } else if (match && (match.source === "call" || match.source === "video_call") && !isSellerSpeaker(match.speaker)) {
-      replacement = that ? "the call notes say that" : "the call notes mention";
-    } else if (match && match.source === "document") {
-      replacement = that ? "the documents say that" : "the documents mention";
-    } else {
-      replacement = that ? "I have a note that" : "I have a note about";
-    }
-    if (as) replacement = `as ${replacement.replace(/ (?:that|about)$/, "").replace(/^I have a note$/, "noted")}`;
-    const cased = /^[A-Z]/.test(whole) ? replacement.charAt(0).toUpperCase() + replacement.slice(1) : replacement;
-    fixes.push(`${whole.trim()} → ${cased}`);
-    return cased;
-  });
+    const owner = bestScore >= 0.5 && bestScore > heard ? best : null;
+    if (!owner && !(heard < 0.34 && claim.length >= 3)) continue;
+    let replacement = attributionFor(owner, /^\s*(?:not\s+)?[a-z]+ing\b/i.test(after) && !/^\s*(?:nothing|something|anything|everything|thing|spring|morning|evening|building|ceiling|ring|king|string)\b/i.test(after));
+    // "as you mentioned, …" → "as Rob mentioned, …" / "as my notes show, …"
+    if (as) replacement = `as ${replacement}`;
+    // A stated "that" survives ("you mentioned that X" → "my notes show that X").
+    if (/that/i.test(tail ?? "") || /\bthat$/i.test(whole)) replacement += " that";
+    // "I know you mentioned X" → "your documents show X" (the hedge was about the seller).
+    const hedge = before.match(HEDGE_BEFORE_RE);
+    const keepBefore = hedge ? before.slice(0, before.length - hedge[0].length) : before;
+    const startsSentence = /(?:^|[.!?]\s+|\n\s*)$/.test(keepBefore);
+    const cased = startsSentence ? replacement.charAt(0).toUpperCase() + replacement.slice(1) : replacement;
+    fixes.push(`${(hedge?.[0] ?? "") + whole.trim()} → ${cased}`);
+    out += message.slice(last, keepBefore.length) + cased;
+    last = offset + whole.length;
+  }
+  if (fixes.length === 0) return { message, fixes };
+  out += message.slice(last);
   return { message: out, fixes };
 }
 

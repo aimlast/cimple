@@ -4,6 +4,7 @@
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused npx tsx tests/interview/reply-polish-turn.test.ts
 import assert from "node:assert/strict";
 import { installHarness, baseDeal, ai, seller, type Harness } from "./turn-harness";
+import Anthropic from "@anthropic-ai/sdk";
 import { processTurn, startOrResumeSession } from "../../server/interview/session-manager";
 
 let n = 0;
@@ -23,11 +24,38 @@ const has = (h: Harness, re: RegExp) => h.logs.some((l) => re.test(l));
     assert.equal(t.message, "How many are T4 employees versus independent contractors?");
     assert.deepEqual(t.suggestedAnswers, ["Mostly T4", "Mostly T4A", "About half and half"]);
     assert.ok(t.whyItMatters && t.whyItMatters.length > 20, "a question never ships without 'Why we ask this'");
-    assert.equal(t.targetSection, "employees", "the section follows the question's words when the label call can't run");
+    assert.equal(t.targetSection, "asking_price", "when the label call can't run, the interview model's own section stands (a keyword guess never overrides it)");
     const stored = h.sessions[0].messages[h.sessions[0].messages.length - 1];
     assert.equal(stored.content, t.message, "what is saved is what is shown");
     assert.ok(has(h, /Reply polish \(filler, extra question dropped/));
-    ok("a Calgary turn: filler cut, one question, Canadian terms in the message and chips, a rationale and the right section");
+    ok("a Calgary turn: filler cut, one question, Canadian terms in the message and chips, a rationale; the model's own section when the labeller is down");
+  }
+
+  // ── 1b. The supporting model relabels the section (round-V evidence: a direct-billing question labelled asking_price) ──
+  {
+    const h = installHarness(baseDeal(), { messages: [ai("How do patients pay?"), seller("Most of it is direct-billed to the insurers.")] });
+    const proto = (Anthropic as any).Messages.prototype;
+    const interviewCreate = proto.create;
+    const labelled: string[] = [];
+    proto.create = async function (params: any) {
+      if (params?.tools?.[0]?.name !== "question_label") return interviewCreate.call(this, params);
+      labelled.push(params.messages[0].content);
+      return { content: [{ type: "tool_use", id: "l", name: "question_label", input: { targetSection: "revenue_sources", whyItMatters: "Buyers need to know insurer payments keep flowing without a gap after the sale." } }], stop_reason: "tool_use" };
+    };
+    h.script.push({
+      message: "For a share sale, do you know whether the direct billing credentials with the major insurers transfer automatically, or would the buyer need to re-enroll?",
+      whyItMatters: "Any gap in direct billing credentials would mean delayed revenue for a buyer after closing.",
+      targetSection: "asking_price",
+      importance: "critical",
+    });
+    const t = await processTurn("deal-1", "sess-1", "Most of it is direct-billed to the insurers, maybe 80%.");
+    proto.create = interviewCreate;
+    assert.equal(labelled.length, 1, "one label call");
+    assert.match(labelled[0], /QUESTION \(as the owner sees it\): For a share sale/);
+    assert.equal(t.targetSection, "revenue_sources");
+    assert.equal(t.whyItMatters, "Any gap in direct billing credentials would mean delayed revenue for a buyer after closing.", "the interview model's fitting rationale is kept");
+    assert.ok(has(h, /Question label .* relabelled from asking_price/));
+    ok("the section is the supporting model's reading of the question; the fitting rationale stays");
   }
 
   // ── 2. An add-back call is neither said nor recorded ──

@@ -120,7 +120,7 @@ import { ensureSourceReview } from "./source-review";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
 import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
-import { ensureQuestionRationale } from "./question-rationale";
+import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel } from "./question-rationale";
 
 // =====================
 // Types
@@ -1113,6 +1113,7 @@ export async function processTurn(
   // The parsed result stays authoritative (governance/merge/persist below).
   const shown = createMessageRelease(onDelta);
   let reaskAttempt = 0;
+  let labelPrefetch: PrefetchedLabel | null = null;
   let pendingFindings: ReaskFinding[] = [];
   const earlyFindings: ReaskFinding[] = [];
   const checkMessage = async (text: string): Promise<boolean> => {
@@ -1140,7 +1141,17 @@ export async function processTurn(
       pendingFindings = found;
       return false;
     }
-    shown.release(polishMessage(text, polishCtx).message);
+    const released = polishMessage(text, polishCtx).message;
+    shown.release(released);
+    // The question's section label starts now, while the rest of the turn
+    // is still being generated (question-rationale.ts).
+    labelPrefetch = prefetchQuestionLabel({
+      message: released,
+      prevAiMessage,
+      sections: rationaleSections(kb),
+      businessLine: businessLine(kb, polishCtx.location),
+      vocabulary: vocabularyNote(polishCtx),
+    });
     return true;
   };
   let conversation = [...apiMessages];
@@ -1546,20 +1557,26 @@ export async function processTurn(
   }
 
   // "Why we ask this" and the section chip (question-rationale.ts): every
-  // question gets a rationale that belongs to it and a section its words
-  // support — the model's own when they fit, else one short supporting-model
-  // call, else a plain per-section line. Started now, while the turn saves.
+  // question gets a rationale that belongs to it (the model's own when it
+  // fits, else the supporting model's, else a plain per-section line) and
+  // the section the supporting model reads it as filling — that call
+  // started at the stream gate when the question was released; otherwise
+  // it starts now, while the turn saves.
   const rationaleRun =
     !degraded && !aiResponse.shouldEnd && asksQuestion(aiResponse.message)
-      ? ensureQuestionRationale({
-          message: aiResponse.message,
-          whyItMatters: aiResponse.whyItMatters,
-          targetSection: aiResponse.targetSection,
-          prevAiMessage,
-          sections: rationaleSections(kb),
-          businessLine: businessLine(kb, polishCtx.location),
-          vocabulary: vocabularyNote(polishCtx),
-        }).catch(() => null)
+      ? ensureQuestionRationale(
+          {
+            message: aiResponse.message,
+            whyItMatters: aiResponse.whyItMatters,
+            targetSection: aiResponse.targetSection,
+            prevAiMessage,
+            sections: rationaleSections(kb),
+            businessLine: businessLine(kb, polishCtx.location),
+            vocabulary: vocabularyNote(polishCtx),
+          },
+          undefined,
+          labelPrefetch,
+        ).catch(() => null)
       : null;
 
   // GROUNDING GUARD — mechanical backstop for the prompt-side dodge rules:
@@ -2038,7 +2055,7 @@ export async function processTurn(
   // stated as fact — and a question turn is never left without one.
   const rationale = rationaleRun ? await rationaleRun : null;
   if (rationale) {
-    if (rationale.how !== "kept") console.log(`[session-manager] Question label on session ${sessionId}: ${rationale.how}`);
+    console.log(`[session-manager] Question label on session ${sessionId}: ${rationale.how}`);
     if (rationale.targetSection !== aiResponse.targetSection) aiResponse.importance = undefined; // the section's own level applies
     aiResponse.whyItMatters = polishRationale(rationale.whyItMatters, polishCtx);
     aiResponse.targetSection = rationale.targetSection;
@@ -2824,10 +2841,7 @@ function openingPriorityHint(kb: KnowledgeBase): string {
 
 /** Section keys → titles for the question labeller (the deal's coverage rows). */
 function rationaleSections(kb: KnowledgeBase): Record<string, string> {
-  const out: Record<string, string> = {};
-  for (const s of kb.sectionCoverage) out[s.key] = s.title;
-  for (const key of Object.keys(kb.sectionImportance?.sections ?? {})) out[key] ??= key.replace(/_/g, " ");
-  return out;
+  return sectionsForLabel(kb.sectionCoverage, Object.keys(kb.sectionImportance?.sections ?? {}));
 }
 
 /** "Physiotherapy clinic — Calgary, AB" for the question labeller. */

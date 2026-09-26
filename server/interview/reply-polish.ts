@@ -38,6 +38,8 @@ export interface PolishContext {
   location: string;
   /** Everything the seller has said or written (all sessions, the questionnaire). */
   sellerText: string;
+  /** The same, one utterance per entry (an answer, a questionnaire field, a fact the seller stated). */
+  sellerUtterances?: string[];
   facts: AttributionFact[];
   today: Date;
 }
@@ -67,6 +69,16 @@ export function vocabularyPromptLines(kb: Pick<KnowledgeBase, "business" | "indu
 const sellerMessagesOf = (sessions: Array<{ messages?: unknown }>): string[] =>
   sessions.flatMap((s) => (Array.isArray(s.messages) ? (s.messages as ConversationMessage[]) : []).filter((m) => m?.role === "user").map((m) => String(m.content ?? "")));
 
+/** Each answer of a questionnaire (nested objects and lists flattened). */
+function leafStrings(data: unknown, depth = 0): string[] {
+  if (data === null || data === undefined || depth > 6) return [];
+  if (typeof data === "string") return [data];
+  if (typeof data === "number" || typeof data === "boolean") return [String(data)];
+  if (Array.isArray(data)) return data.flatMap((d) => leafStrings(d, depth + 1));
+  if (typeof data === "object") return Object.values(data as Record<string, unknown>).flatMap((d) => leafStrings(d, depth + 1));
+  return [];
+}
+
 export function buildPolishContext(args: {
   kb: KnowledgeBase;
   dealLocation?: string | null;
@@ -85,8 +97,8 @@ export function buildPolishContext(args: {
     ...sellerMessagesOf(args.sessions),
     ...(args.currentMessages ?? []).filter((m) => m.role === "user").map((m) => m.content),
     args.sellerMessage ?? "",
-    args.questionnaireData ? JSON.stringify(args.questionnaireData) : "",
-  ];
+    ...leafStrings(args.questionnaireData),
+  ].filter((x) => x && x.trim());
   const facts: AttributionFact[] = [];
   for (const [key, value] of Object.entries(args.info)) {
     if (key.startsWith("_") || value === null || value === undefined || value === "") continue;
@@ -102,6 +114,7 @@ export function buildPolishContext(args: {
     jurisdiction: jurisdictionOf(location),
     location,
     sellerText: said.join("\n"),
+    sellerUtterances: said,
     facts,
     today: args.today ?? new Date(),
   };
@@ -142,7 +155,7 @@ export function polishMessage(message: string, ctx: PolishContext, opts: { closi
   const local = localiseTerms(text, ctx.jurisdiction, ctx.location, ctx.sellerText);
   report.vocabulary = local !== text;
   text = local;
-  const attr = fixAttribution(text, { sellerText: ctx.sellerText, facts: ctx.facts });
+  const attr = fixAttribution(text, { sellerText: ctx.sellerText, sellerUtterances: ctx.sellerUtterances, facts: ctx.facts });
   report.attribution = attr.fixes;
   text = attr.message;
   return { message: text, report };

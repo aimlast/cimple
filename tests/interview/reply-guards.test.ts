@@ -22,7 +22,7 @@ import {
   NORMALISATION_HANDOFF,
 } from "../../server/interview/reply-guards";
 import { polishMessage, polishChips, type PolishContext } from "../../server/interview/reply-polish";
-import { ensureQuestionRationale, sectionUnsupported, fallbackRationale } from "../../server/interview/question-rationale";
+import { ensureQuestionRationale, prefetchQuestionLabel, fallbackRationale } from "../../server/interview/question-rationale";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log("✓", name); };
@@ -102,7 +102,15 @@ const ok = (name: string) => { n++; console.log("✓", name); };
     "What personal expenses run through the company, roughly?",
     "About $20K of personal expenses flow through the company.",
     "Buyers don't pay for goodwill they can't verify.",
+    // A route, not a call; a document's own figure, cited.
+    "Payroll expenses flow through ADP, right?",
+    "Your documents show SDE of $690K for 2024 — does that match your understanding of the business's earnings?",
   ]) assert.deepEqual(findNormalisationAssertions(fine), [], fine);
+  // …but a call tacked onto a cited figure is still a call.
+  assert.equal(findNormalisationAssertions("Your P&L shows $180K in salary, which is an add-back. Who does the books?").length, 1);
+  const route: Record<string, any> = { payrollProvider: { value: "Payroll expenses flow through ADP; bi-weekly pay run", confidence: "confirmed", basis: "verbatim" } };
+  guardNormalisationFields(route, []);
+  assert.equal(route.payrollProvider.value, "Payroll expenses flow through ADP; bi-weekly pay run", "a payroll route is a fact, not a call");
   ok("treatment calls are removed from the message; the seller who raised it gets the hand-off");
 }
 
@@ -161,6 +169,28 @@ const ok = (name: string) => { n++; console.log("✓", name); };
   );
   const one = "Is there anything you feel buyers should know that we haven't touched on, or shall we wrap up for today?";
   assert.equal(enforceSingleQuestion(one).message, one, "an either/or is one question");
+  // Round-V check: a list ending ", and any …" or a shared subject ("… and
+  // will stay …") is ONE question — real turns were cut to "…salary, vehicles?".
+  for (const single of [
+    "What does your total package come to in total, including salary, vehicles, and any other perks?",
+    "What portion of your revenue is commercial work — like the property management stuff, co-ops, and any builder work — versus homeowner calls?",
+    "What are the specific terms you'd need in that lease — length, renewal options, and any rent escalations?",
+    "Which of your trucks, trailers, and any other rolling stock are financed?",
+    "Who handles scheduling, invoicing, and any customer complaints day to day?",
+    "Which employees are key and will stay through the transition?",
+    "Who has been with you the longest and has the most customer contact?",
+    "Which techs are licensed, and can work unsupervised on commercial jobs?",
+    "Could you walk me through what you sell, and how you price it?",
+    "Do you track retention and any churn by membership tier?",
+  ]) assert.equal(enforceSingleQuestion(single).message, single, single);
+  // …while a real second question joined on still goes.
+  assert.equal(enforceSingleQuestion("How many trucks do you run, and how old are they?").message, "How many trucks do you run?");
+  assert.equal(
+    enforceSingleQuestion("On the fleet replacement side: what's the age profile of your power units and trailers, and what capital would a buyer need to budget for replacements over the next 24 months?").message,
+    "On the fleet replacement side: what's the age profile of your power units and trailers?",
+  );
+  assert.equal(enforceSingleQuestion("Is the lease in the company's name, and does it need landlord consent for a share sale?").message, "Is the lease in the company's name?");
+  assert.equal(enforceSingleQuestion("Who is your main steel supplier, and has the landlord ever raised the rent mid-term?").message, "Who is your main steel supplier?");
   ok("one question per turn: extra sentences, joined second questions and 'Specifically…' restatements go; either/or stays");
 }
 
@@ -175,6 +205,19 @@ const ok = (name: string) => { n++; console.log("✓", name); };
   assert.equal(p.message, "Is the press replacement planned for 2026 or 2027?");
   assert.deepEqual(polishChips(["2025", "2026", "Not scheduled yet"], p.message, p.report, ctx), ["2026", "2027", "Not scheduled yet"]);
   assert.deepEqual(polishChips(["Planned for 2025", "Not scheduled"], "When is the next audit planned?", { ...p.report, yearShift: 0 }, ctx), ["Not scheduled"], "a past year offered for a future event goes");
+  // Round-V check: years named as history in a future question are comparisons — never moved.
+  for (const cmp of [
+    "Do you expect 2026 revenue to land closer to 2024 or 2025 levels?",
+    "Are you expecting margins to recover to 2022–2023 levels?",
+    "Is the plan to get back to the 2019 or 2020 headcount?",
+    "Looking ahead, do you see volumes returning to where they were in 2021 or 2022 levels?",
+  ]) {
+    const r = anchorYearOptions(cmp, ["Closer to 2024", "Closer to 2025", "Somewhere between"], today);
+    assert.equal(r.message, cmp, cmp);
+    assert.deepEqual(r.chips, ["Closer to 2024", "Closer to 2025", "Somewhere between"], `chips of: ${cmp}`);
+  }
+  assert.equal(anchorYearOptions("When do you expect the roof replacement — is it budgeted for 2025 or 2026?", [], today).message, "When do you expect the roof replacement — is it budgeted for 2026 or 2027?");
+  assert.equal(anchorYearOptions("Is the expansion planned for 2024–2025 or later?", [], today).message, "Is the expansion planned for 2026–2027 or later?");
   ok("a future question never offers a year that has passed; chips move with it");
 }
 
@@ -194,23 +237,77 @@ const ok = (name: string) => { n++; console.log("✓", name); };
   assert.equal(localiseTerms("Is your HST filing current with CRA?", "US", "Toledo, OH"), "Is your sales tax filing current with IRS?");
   assert.equal(localiseTerms("How many of your W-2 staff…", "CA", "Calgary, AB", "we put the US crew on W-2"), "How many of your W-2 staff…", "the seller's own word stays");
   assert.deepEqual(foreignTerms("Is it an S-corp?", "US"), [], "S-corp is right for a US business");
+  // Round-V check: a sentence about the other country keeps its terms.
+  for (const [text, j, loc] of [
+    ["Are your trucks compliant with California state regulations for emissions on those lanes?", "CA", "Surrey, British Columbia"],
+    ["For the California lanes, do your drivers need any state licensing beyond their Class 1?", "CA", "Surrey, British Columbia"],
+    ["Does the US subsidiary file with the IRS separately?", "CA", "Calgary, AB"],
+    ["Do you ship to customers in Ontario, and is any of it subject to GST or HST?", "US", "Toledo, Ohio"],
+    ["Does Megan hold a T4 slip from your Canadian subsidiary?", "US", "Toledo, Ohio"],
+  ] as const) assert.equal(localiseTerms(text, j, loc), text, text);
+  // …the rest of the reply is still localised, and two terms that map to one are said once.
+  assert.equal(
+    localiseTerms("Does the US subsidiary file with the IRS separately? And how many W-2 staff are in Calgary?", "CA", "Calgary, AB"),
+    "Does the US subsidiary file with the IRS separately? And how many T4 staff are in Calgary?",
+  );
+  assert.equal(localiseTerms("Are your GST or HST filings current?", "US", "Toledo, Ohio"), "Are your sales tax filings current?");
+  assert.equal(localiseTerms("Is the business growing more and more each year?", "US", "Toledo, Ohio"), "Is the business growing more and more each year?");
   assert.match(jurisdictionPromptLines("CA", "Calgary, AB").join(" "), /T4 employees.*WCB.*Never US terms/);
   ok("Canadian deals get Canadian terms and US deals US ones; the seller's own words are kept");
 }
 
 // ── 8. Who said it ──
 {
-  const facts = [{ value: "Union organizing drive in 2019 failed 61-39", source: "video_call", speaker: "Rob Kline (plant manager)" }];
-  const a = fixAttribution("On the labor side, you mentioned a union organizing attempt in 2019 that didn't succeed — has there been any activity since?", { sellerText: "We run two shifts.", facts });
+  const rob = [{ value: "Union organizing drive in 2019 failed 61-39", source: "video_call", speaker: "Rob Kline (plant manager)" }];
+  const a = fixAttribution("On the labor side, you mentioned a union organizing attempt in 2019 that didn't succeed — has there been any activity since?", { sellerText: "We run two shifts.", facts: rob });
   assert.equal(a.message, "On the labor side, Rob mentioned a union organizing attempt in 2019 that didn't succeed — has there been any activity since?");
   const b = fixAttribution("You mentioned a union organizing attempt in 2019 — any activity since?", { sellerText: "", facts: [{ value: "union organizing attempt 2019 failed", source: "crm" }] });
-  assert.equal(b.message, "I have a note about a union organizing attempt in 2019 — any activity since?", "a broker's note is never named — nor put in the seller's mouth");
+  assert.equal(b.message, "My notes show a union organizing attempt in 2019 — any activity since?", "a broker's note is never named — nor put in the seller's mouth");
   const c = fixAttribution("You mentioned the 110-ton brake is leaking — when is it due for replacement?", { sellerText: "The 110-ton brake is leaking hydraulic fluid.", facts: [] });
   assert.equal(c.message, "You mentioned the 110-ton brake is leaking — when is it due for replacement?", "the seller's own words keep 'you mentioned'");
-  assert.equal(fixAttribution("As you mentioned, the lease runs to 2027. Is there a renewal option?", { sellerText: "", facts: [] }).message, "As noted, the lease runs to 2027. Is there a renewal option?");
+  assert.equal(
+    fixAttribution("As you mentioned, the lease runs to 2027 with one renewal. Is there a renewal option?", { sellerText: "", facts: [{ value: "Lease runs to March 2027, one 5-year renewal", source: "document" }] }).message,
+    "As your documents show, the lease runs to 2027 with one renewal. Is there a renewal option?",
+  );
   const d = fixAttribution("You said the backlog is $4.2M — how much of that is signed?", { sellerText: "", facts: [{ value: "Backlog $4.2M including Westlock", source: "call" }] });
-  assert.equal(d.message, "The call notes say that the backlog is $4.2M — how much of that is signed?");
-  ok("'you mentioned' is kept only for the seller's words; a manager is named, a call or a note is attributed as such");
+  assert.equal(d.message, "The call notes show the backlog is $4.2M — how much of that is signed?");
+  // Round-V check: the seller's words scattered over many answers ("2019" in one, "didn't" and "success" in others) are not the seller saying it.
+  const scattered = fixAttribution("On the labor side, you mentioned a union organizing attempt in 2019 that didn't succeed — can you tell me what happened?", {
+    sellerText: "",
+    sellerUtterances: ["We bought the second press in 2019.", "It didn't work out with that customer.", "The success of the line came from Diane's team."],
+    facts: [],
+  });
+  assert.equal(scattered.message, "On the labor side, my notes show a union organizing attempt in 2019 that didn't succeed — can you tell me what happened?");
+  // Every rewrite reads as a sentence, whatever follows (a clause or a noun phrase).
+  const clause = fixAttribution("On the people side — you've mentioned Devin handles estimating and takeoffs. If Devin left, how long would it take to get someone else up to speed?", { sellerText: "", facts: [{ value: "Devin handles estimating and takeoffs (per the org chart)", source: "document" }] });
+  assert.equal(clause.message, "On the people side — your documents show Devin handles estimating and takeoffs. If Devin left, how long would it take to get someone else up to speed?");
+  const hedge = fixAttribution("On the employment side: I know you mentioned there are no formal employment contracts with key staff. Has that been discussed?", { sellerText: "", facts: [{ value: "No formal employment contracts or non-competes with key staff", source: "crm" }] });
+  assert.equal(hedge.message, "On the employment side: my notes show there are no formal employment contracts with key staff. Has that been discussed?");
+  // Not attributions: a goodbye, a relative clause, the seller's own channel named.
+  const goodbyes = [
+    "Understood — thanks for your time today. Everything you've shared is saved, and you can pick this up again whenever suits you. Take care.",
+    "Of course — everything you've told me is saved, and we can pick up right where we left off. Thanks for your time today.",
+    "No problem at all. Thanks for everything you've shared today — it's all saved, and you can come back anytime.",
+    "Of Dana, Rohan and Grace — the five you've described as the business alongside Kyle — are any of them the main contact for key clients?",
+    "The $380,000 quote you mentioned — is that work already scheduled?",
+    "You mentioned in your email that owner compensation was $260,000 in 2024 — what's in that figure beyond salary?",
+  ];
+  for (const g of goodbyes) assert.equal(fixAttribution(g, { sellerText: "", facts: [{ value: "Owner compensation $260,000", source: "crm" }] }).message, g, g);
+  assert.equal(
+    fixAttribution("You also mentioned wanting to stay on for six months after the sale. Is that still the plan?", { sellerText: "", facts: [{ value: "Seller wants to stay on six months after the sale", source: "call" }] }).message,
+    "The call notes mention wanting to stay on for six months after the sale. Is that still the plan?",
+    "a gerund reads with 'mention', not 'show'",
+  );
+  // A paraphrase of the seller stays theirs.
+  assert.equal(
+    fixAttribution("You mentioned Walt and Henry are your senior welders and will likely retire in a few years — who else holds a Red Seal?", {
+      sellerText: "",
+      sellerUtterances: ["Walt and Henry are my two senior welders — both probably retiring in two or three years."],
+      facts: [],
+    }).message,
+    "You mentioned Walt and Henry are your senior welders and will likely retire in a few years — who else holds a Red Seal?",
+  );
+  ok("'you mentioned' is kept only for the seller's words; a manager is named, a call, document or note is attributed as such; goodbyes and relative clauses untouched");
 }
 
 // ── 9. Asking what it told the seller itself ──
@@ -231,21 +328,43 @@ const ok = (name: string) => { n++; console.log("✓", name); };
   const base = { sections, businessLine: "Physiotherapy clinic — Calgary, AB" };
   let calls = 0;
   const failing = async () => { calls++; return null; };
-  const kept = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", whyItMatters: "Buyers look at how many physiotherapists carry the caseload and whether it depends on the owner.", targetSection: "employees" }, failing);
-  assert.equal(kept.how, "kept");
-  assert.equal(calls, 0, "no supporting-model call when both fit");
+  // The labeller is asked on every question: the section is its call.
+  const kept = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", whyItMatters: "Buyers look at how many physiotherapists carry the caseload and whether it depends on the owner.", targetSection: "employees" }, async () => ({ targetSection: "employees" }));
+  assert.equal(kept.whyItMatters, "Buyers look at how many physiotherapists carry the caseload and whether it depends on the owner.");
+  assert.equal(kept.targetSection, "employees");
   const missing = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "employees" }, async () => ({ whyItMatters: "Buyers want to know the clinic's caseload doesn't rest on the owner's own hours." }));
   assert.equal(missing.whyItMatters, "Buyers want to know the clinic's caseload doesn't rest on the owner's own hours.");
   const fallback = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "employees" }, failing);
   assert.ok(fallback.whyItMatters && fallback.whyItMatters.length > 20, "never empty");
+  // Round-V evidence: a direct-billing question that mentions a share sale, and a lien question with no keyword at all, are relabelled by the model.
   const relabelled = await ensureQuestionRationale(
-    { ...base, message: "Do you direct-bill the insurers for every patient, or do patients pay and claim?", whyItMatters: "Direct billing affects how quickly the clinic is paid by insurers.", targetSection: "asking_price" },
+    { ...base, message: "For a share sale, do you know whether the direct billing credentials with the major insurers transfer automatically, or would the buyer need to re-enroll?", whyItMatters: "Any gap in direct billing credentials would mean delayed revenue for a buyer after closing.", targetSection: "asking_price" },
     async () => ({ targetSection: "revenue_sources" }),
   );
   assert.equal(relabelled.targetSection, "revenue_sources");
-  const keywordOnly = await ensureQuestionRationale({ ...base, message: "Is the lease on the Seton premises assignable to a buyer?", whyItMatters: "Buyers need the premises to transfer with the business.", targetSection: "asking_price" }, failing);
-  assert.equal(keywordOnly.targetSection, "real_estate", "when the model can't be asked, the question's own words decide");
-  assert.equal(sectionUnsupported("Do you direct-bill the insurers?", "asking_price", Object.keys(sections)), true);
+  // When the labeller fails, the interview model's own section stands — a keyword guess never overrides it…
+  calls = 0;
+  const own = await ensureQuestionRationale({ ...base, message: "Has Karen's vehicle lease been included in the personal expenses figure?", whyItMatters: "Buyers and their accountants look closely at personal expenses run through the business.", targetSection: "financials" }, failing);
+  assert.equal(own.targetSection, "financials");
+  assert.equal(calls, 1);
+  // …and a keyword section only fills a label the model didn't give.
+  const keywordOnly = await ensureQuestionRationale({ ...base, message: "Is the lease on the Seton premises assignable to a buyer?", whyItMatters: "Buyers need the premises to transfer with the business." }, failing);
+  assert.equal(keywordOnly.targetSection, "real_estate");
+  // A label started at the stream gate is reused for the same text (no second call).
+  calls = 0;
+  const counting = async () => { calls++; return { targetSection: "employees", whyItMatters: "Buyers look at whether the clinic's caseload depends on the owner." }; };
+  const pre = prefetchQuestionLabel({ ...base, message: "How many physiotherapists are on staff today?" }, counting);
+  const reused = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "operations" }, counting, pre);
+  assert.equal(calls, 1, "the prefetched call is reused");
+  assert.equal(reused.targetSection, "employees");
+  const other = await ensureQuestionRationale({ ...base, message: "What does a typical week look like for you at the clinic?", targetSection: "operations" }, counting, pre);
+  assert.equal(calls, 2, "a different final text is labelled afresh");
+  assert.equal(other.targetSection, "employees");
+  // A slow labeller is not waited on past the timeout.
+  const t0 = Date.now();
+  const slow = await ensureQuestionRationale({ ...base, message: "How many physiotherapists are on staff today?", targetSection: "employees", timeoutMs: 50 }, () => new Promise((r) => setTimeout(() => r({ targetSection: "operations" }), 400)));
+  assert.ok(Date.now() - t0 < 300);
+  assert.equal(slow.targetSection, "employees");
   assert.equal((await ensureQuestionRationale({ ...base, message: "Thanks for your time today — everything is saved." }, failing)).how, "none");
   assert.match(fallbackRationale(undefined, "Before we wrap, is there anything a buyer should know that we haven't touched on?"), /on your terms/);
   // The model's rationale is refused when it makes an add-back call.

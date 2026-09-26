@@ -7,15 +7,22 @@
  * 8 question turns with no rationale (the model left it out, or the fit
  * check dropped one written for the previous question) and labelled a
  * direct-billing question, a vehicle-lease question and a real-estate
- * question "asking_price". So after the reply is final:
- *   1. the model's rationale is kept when it fits the question (word check
- *      in turn-guard.whyItMattersFits, no legal rule stated as fact, no
- *      add-back call) and its section when the question's words support it;
- *   2. otherwise the supporting model writes the rationale and/or picks the
- *      section for the question as asked (one short tool-forced call, only on
- *      those turns, bounded by a timeout);
- *   3. if that fails, a plain per-section rationale and the best keyword
- *      section stand in — never an empty "Why we ask this".
+ * question "asking_price" (it labels the topic it is working through, not
+ * the question it wrote). Word lists can't settle that — a direct-billing
+ * question that mentions a share sale, a lien question with no keyword at
+ * all — so the section is the supporting model's call on every question:
+ *   1. one short tool-forced call reads the question as the seller sees it
+ *      and picks its section (and writes a rationale). On a streamed turn it
+ *      starts the moment the question is released to the seller
+ *      (prefetchQuestionLabel), while the rest of the turn is still being
+ *      generated, so it rarely adds any wait;
+ *   2. the interview model's rationale is kept when it fits the question
+ *      (word check in turn-guard.whyItMattersFits, no legal rule stated as
+ *      fact, no add-back talk); otherwise the labeller's is used;
+ *   3. if the call fails or times out, the interview model's own section
+ *      stands (a keyword guess never overrides it — it was wrong about half
+ *      the time), a keyword section only fills a missing one, and a plain
+ *      per-section rationale stands in — never an empty "Why we ask this".
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "./config/load-config";
@@ -62,16 +69,23 @@ export function bestSection(question: string, keys: string[]): string | null {
 }
 
 /**
- * True when the label isn't a section of this deal, or when nothing in the
- * question points at it while something points at another section ("Do you
- * direct-bill the insurers?" labelled asking_price). A question whose words
- * point nowhere keeps the model's label — no call for it.
+ * Section keys → "Title — what it records" (its fields and checklist items)
+ * for the labeller, so it can tell "asking price & terms" from "real estate".
  */
-export function sectionUnsupported(question: string, section: string | undefined, keys: string[]): boolean {
-  if (!section || !keys.includes(section)) return true;
-  if (!SECTION_WORDS[section]) return false;
-  const scores = sectionScores(question);
-  return (scores[section] ?? 0) === 0 && keys.some((k) => k !== section && (scores[k] ?? 0) > 0);
+export function sectionsForLabel(
+  coverage: Array<{ key: string; title: string; fields: Array<{ fieldName: string; label?: string }> }>,
+  extraKeys: string[] = [],
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const s of coverage) {
+    const holds = s.fields
+      .map((f) => f.label || f.fieldName.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase())
+      .filter((x, i, a) => x && a.indexOf(x) === i)
+      .slice(0, 10);
+    out[s.key] = holds.length > 0 ? `${s.title} — ${holds.join(", ")}` : s.title;
+  }
+  for (const key of extraKeys) out[key] ??= key.replace(/_/g, " ");
+  return out;
 }
 
 /** The plain rationale used when nothing better can be had. */
@@ -114,7 +128,7 @@ const RATIONALE_TOOL = {
 };
 
 let client: Anthropic | null = null;
-/** How long the label call may take (it runs while the turn saves). */
+/** How long the label call may take once the turn is otherwise done. */
 export const RATIONALE_TIMEOUT_MS = 4_500;
 
 export interface RationaleInput {
@@ -123,7 +137,7 @@ export interface RationaleInput {
   whyItMatters?: string;
   targetSection?: string;
   prevAiMessage?: string | null;
-  /** Section keys → titles, for the deal. */
+  /** Section keys → "Title — holds: what the section records", for the deal. */
   sections: Record<string, string>;
   /** "Physiotherapy clinic in Calgary, AB" — keeps the rationale specific. */
   businessLine: string;
@@ -145,44 +159,39 @@ function usableRationale(text: unknown): text is string {
   return t.length >= 20 && t.length <= 320 && !t.includes("?") && findLegalAssertions(t).length === 0 && !assertsNormalisation(t) && !mentionsNormalisation(t);
 }
 
-type LabelCall = (input: RationaleInput, need: { rationale: boolean; section: boolean }) => Promise<{ whyItMatters?: string; targetSection?: string } | null>;
+export type LabelOut = { whyItMatters?: string; targetSection?: string } | null;
+export type LabelCall = (input: RationaleInput) => Promise<LabelOut>;
 
-const modelLabel: LabelCall = async (input, need) => {
+/** The supporting model's label for a question (null on failure; the caller bounds the wait). */
+const modelLabel: LabelCall = async (input) => {
   client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const keys = Object.keys(input.sections);
-  const call = client.messages.create({
-    model: agentConfig.models.supportingAgents,
-    max_tokens: 300,
-    temperature: 0,
-    tools: [RATIONALE_TOOL],
-    tool_choice: { type: "tool", name: "question_label" },
-    system:
-      "An interviewer is helping a business owner prepare the confidential memorandum buyers will read. You label ONE question the interviewer just asked. " +
-      "targetSection: the section the ANSWER fills — pick by what the question asks about, not by words it happens to mention. " +
-      "whyItMatters: one plain sentence to the owner on why buyers care about this specific answer, for this kind of business. No praise, no figures, no valuation multiples, " +
-      "never state a law or regulation as fact, and never say whether an item is added back or how earnings are normalized (don't use the words add-back, SDE or normalize at all). " +
-      (input.vocabulary ? `${input.vocabulary} ` : "") +
-      "If the candidate rationale already explains THIS question, return it unchanged.",
-    messages: [
-      {
-        role: "user",
-        content:
-          `BUSINESS: ${input.businessLine}\n\nQUESTION (as the owner sees it): ${input.message}\n\n` +
-          `CANDIDATE RATIONALE: ${input.whyItMatters ?? "(none)"}\n` +
-          `CANDIDATE SECTION: ${input.targetSection ?? "(none)"}\n\n` +
-          `SECTIONS:\n${keys.map((k) => `- ${k}: ${input.sections[k]}`).join("\n")}\n\n` +
-          `Needed: ${[need.rationale ? "a rationale for this question" : "", need.section ? "the right section" : ""].filter(Boolean).join(" and ")}.`,
-      },
-    ],
-  });
-  call.catch(() => {});
-  const timeout = new Promise<null>((resolve) => setTimeout(() => resolve(null), input.timeoutMs ?? RATIONALE_TIMEOUT_MS));
   try {
-    const res = await Promise.race([call, timeout]);
-    if (!res) {
-      console.warn("[question-rationale] timed out — using the fallback");
-      return null;
-    }
+    const res = await client.messages.create({
+      model: agentConfig.models.supportingAgents,
+      max_tokens: 300,
+      temperature: 0,
+      tools: [RATIONALE_TOOL],
+      tool_choice: { type: "tool", name: "question_label" },
+      system:
+        "An interviewer is helping a business owner prepare the confidential memorandum buyers will read. You label ONE question the interviewer just asked. " +
+        "targetSection: the section of the memorandum where the ANSWER will be written up. Decide by what the question actually asks the owner for — not by the topic the interviewer was on before, and not by words it only mentions in passing " +
+        "(a question about whether insurer billing credentials carry over in a share sale is about how revenue gets collected, not the asking price; a question about personal expenses run through the company is about the financials; " +
+        "whether the building is sold with the business or leased back is about the real estate; liens, lawsuits and claims against the business belong with the business's history unless they are about a lease or a customer contract). " +
+        "whyItMatters: one plain sentence to the owner on why buyers care about this specific answer, for this kind of business. No praise, no figures, no valuation multiples, " +
+        "never state a law or regulation as fact, and never say whether an item is added back or how earnings are normalized (don't use the words add-back, SDE or normalize at all). " +
+        (input.vocabulary ? `${input.vocabulary} ` : "") +
+        "If the candidate rationale already explains THIS question, return it unchanged.",
+      messages: [
+        {
+          role: "user",
+          content:
+            `BUSINESS: ${input.businessLine}\n\nQUESTION (as the owner sees it): ${input.message}\n\n` +
+            `CANDIDATE RATIONALE: ${input.whyItMatters ?? "(none)"}\n\n` +
+            `SECTIONS (key: title — what it records):\n${keys.map((k) => `- ${k}: ${input.sections[k]}`).join("\n")}`,
+        },
+      ],
+    });
     const block = res.content.find((b) => b.type === "tool_use");
     const out = (block && block.type === "tool_use" ? block.input : {}) as { whyItMatters?: unknown; targetSection?: unknown };
     return {
@@ -190,35 +199,61 @@ const modelLabel: LabelCall = async (input, need) => {
       targetSection: typeof out.targetSection === "string" ? out.targetSection.trim() : undefined,
     };
   } catch (err: any) {
-    console.warn("[question-rationale] failed — using the fallback:", err?.message || err);
+    console.warn("[question-rationale] label call failed:", err?.message || err);
     return null;
   }
 };
 
+/** A label call already running for a message (started when the question was released on the stream). */
+export interface PrefetchedLabel {
+  message: string;
+  result: Promise<LabelOut>;
+}
+
+/**
+ * Starts the label call for a question now — at the stream gate, the moment
+ * the seller starts reading it — so the answer is ready by the time the rest
+ * of the turn is. ensureQuestionRationale uses it when the final message is
+ * the same text.
+ */
+export function prefetchQuestionLabel(input: RationaleInput, label: LabelCall = modelLabel): PrefetchedLabel | null {
+  if (!input.message.includes("?")) return null;
+  const result = label(input).catch(() => null);
+  return { message: input.message, result };
+}
+
+function withTimeout<T>(p: Promise<T>, ms: number): Promise<T | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<null>((resolve) => {
+    timer = setTimeout(() => {
+      console.warn("[question-rationale] label call timed out — keeping the interview model's section");
+      resolve(null);
+    }, ms);
+  });
+  return Promise.race([p, timeout]).finally(() => timer && clearTimeout(timer));
+}
+
 /**
  * The rationale and section for a question turn (see the file comment). A
- * turn that asks nothing gets neither. `label` is injectable for tests.
+ * turn that asks nothing gets neither. `label` is injectable for tests;
+ * `prefetched` is a call started on the same text at the stream gate.
  */
-export async function ensureQuestionRationale(input: RationaleInput, label: LabelCall = modelLabel): Promise<RationaleResult> {
+export async function ensureQuestionRationale(input: RationaleInput, label: LabelCall = modelLabel, prefetched?: PrefetchedLabel | null): Promise<RationaleResult> {
   const keys = Object.keys(input.sections);
   if (!input.message.includes("?")) return { how: "none" };
   const questionText = (input.message.match(/[^.!?\n]*\?/g) ?? []).join(" ") || input.message;
   const rationaleOk =
     usableRationale(input.whyItMatters) && whyItMattersFits(input.message, input.whyItMatters, false, input.prevAiMessage);
-  // The section is judged on the question (and the sentence leading into it).
-  const sectionOk = !!input.targetSection && keys.includes(input.targetSection) && !sectionUnsupported(input.message, input.targetSection, keys);
-  if (rationaleOk && sectionOk) return { whyItMatters: input.whyItMatters!.trim(), targetSection: input.targetSection, how: "kept" };
-
-  const got = await label(input, { rationale: !rationaleOk, section: !sectionOk }).catch(() => null);
-  const modelSection = got?.targetSection && keys.includes(got.targetSection) ? got.targetSection : undefined;
-  const section = sectionOk ? input.targetSection : modelSection ?? bestSection(input.message, keys) ?? (input.targetSection && keys.includes(input.targetSection) ? input.targetSection : undefined);
-  const why = rationaleOk
-    ? input.whyItMatters!.trim()
-    : usableRationale(got?.whyItMatters)
-      ? got!.whyItMatters!.trim()
-      : fallbackRationale(section, questionText);
+  const running = prefetched && prefetched.message === input.message ? prefetched.result : label(input).catch(() => null);
+  const got = await withTimeout(running, input.timeoutMs ?? RATIONALE_TIMEOUT_MS);
+  const labelled = got?.targetSection && keys.includes(got.targetSection) ? got.targetSection : undefined;
+  const own = input.targetSection && keys.includes(input.targetSection) ? input.targetSection : undefined;
+  const section = labelled ?? own ?? bestSection(input.message, keys) ?? undefined;
+  const modelWhy = usableRationale(got?.whyItMatters) ? got!.whyItMatters!.trim() : undefined;
+  const why = rationaleOk ? input.whyItMatters!.trim() : modelWhy ?? fallbackRationale(section, questionText);
+  const sectionHow = labelled ? (labelled === input.targetSection ? "confirmed" : `relabelled from ${input.targetSection ?? "none"}`) : own ? "kept (no label)" : section ? "keyword" : "none";
   const how =
-    `${rationaleOk ? "kept" : usableRationale(got?.whyItMatters) ? "model" : "fallback"} rationale, ${sectionOk ? "kept" : modelSection ? "model" : "keyword"} section` +
-    (!rationaleOk && got?.whyItMatters && !usableRationale(got.whyItMatters) ? ` (refused: "${String(got.whyItMatters).slice(0, 120)}")` : !rationaleOk && !got ? " (no answer from the labeller)" : "");
+    `${rationaleOk ? "kept" : modelWhy ? "model" : "fallback"} rationale, section ${section ?? "-"} ${sectionHow}` +
+    (!rationaleOk && got?.whyItMatters && !modelWhy ? ` (refused: "${String(got.whyItMatters).slice(0, 120)}")` : !got ? " (no answer from the labeller)" : "");
   return { whyItMatters: why, targetSection: section, how };
 }
