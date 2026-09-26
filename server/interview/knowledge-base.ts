@@ -8,7 +8,7 @@ import { coverageAdjustmentsForDeal } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
-import { sellerInterviewView, privateSourceMatcher } from "./seller-view";
+import { sellerInterviewView, privateSourceMatcher, heldByBroker, withHeldFacts } from "./seller-view";
 import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
   buildSourceDigests,
@@ -24,6 +24,7 @@ import {
   type PriorExchange,
 } from "./source-context";
 import { reviewConflictsForDeal } from "./source-review";
+import { scrubBrokerWorkItems, isBrokerWorkText, BROKER_WORK_KEY_RE, sameResolvedValue, screenBrokerWork } from "./source-privacy";
 import { claimConflicts } from "./claim-conflicts";
 
 // =====================
@@ -120,6 +121,10 @@ export interface KnowledgeBase {
   priorExchanges?: PriorExchange[];
   // Discrepancies the broker settled — final values.
   resolvedValues?: ResolvedDiscrepancyNote[];
+  // Facts the broker settled whose value the interview may not see (the
+  // broker's own normalisation work, a figure from their private material):
+  // "saleType", "sdeByYear (2024)". Settled — never asked, never quoted.
+  heldByBroker?: string[];
   // What still blocks a wrap-up (critical gaps, seller-only topics,
   // unreconciled critical conflicts, open flagged risks). Set per turn.
   wrapUpBlockers?: string[];
@@ -432,6 +437,7 @@ export function assembleKnowledgeBase(
   // value that came FROM a private side (the broker's recast, a CRM note's
   // figure) is neither listed nor overlaid — the agent only learns that the
   // item is settled (resolvedPrivately), never the figure or where it came from.
+  const heldKeys = new Set(heldByBroker(baseExtractedInfo as Record<string, unknown>));
   const rowById = new Map(resolvedDiscrepancies.map((d) => [d.id, d]));
   const noted: ResolvedDiscrepancyNote[] = [];
   // All at once: one final value per settled thing (resolvedNotes).
@@ -441,17 +447,27 @@ export function assembleKnowledgeBase(
     const p = privacy(d);
     const privateValues = [p.privateA ? d.interviewValue : null, p.privateB ? d.documentValue : null].filter((v): v is string => !!v);
     const publicValues = [p.privateA ? null : d.interviewValue, p.privateB ? null : d.documentValue].filter((v): v is string => !!v);
+    // (Same value: a shared significant figure, or the same text / headline
+    // figure — small counts like "41 incl. 5 seasonal" have no figure ≥ 100.)
+    const same = (a: string, b: string) => sameFigure(a, b) || sameResolvedValue(a, b);
     const fromPrivate =
       PRIVATE_MATERIAL_RE.test(note.resolvedValue) ||
       p.namesPrivateSource(note.resolvedValue) ||
-      (privateValues.some((v) => sameFigure(note.resolvedValue, v)) && !publicValues.some((v) => sameFigure(note.resolvedValue, v)));
+      (privateValues.some((v) => same(note.resolvedValue, v)) && !publicValues.some((v) => same(note.resolvedValue, v)));
     const field = PRIVATE_MATERIAL_RE.test(note.field) ? safeFieldLabel(note.field, note.factKey) : note.field;
-    if (fromPrivate) {
+    // The broker's settled value is broker-written: screened exactly like a
+    // fact the broker typed (seller-view.ts) — else the overlay below would
+    // put back what the view held or trimmed (an SDE / add-back figure, a
+    // recast clause). A fact the view holds stays held.
+    const screened = note.factKey ? screenBrokerWork(note.factKey, note.resolvedValue, { source: "broker" }) : ({ kind: "keep" } as const);
+    const isHeld = !!note.factKey && (heldKeys.has(note.factKey) || (!!note.year && heldKeys.has(`${note.factKey} (${note.year})`)));
+    if (fromPrivate || isHeld || screened.kind === "private") {
       noted.push({ ...note, field, resolvedValue: "", supersededValues: [], resolvedPrivately: true });
       continue;
     }
     noted.push({
       ...note,
+      ...(screened.kind === "redacted" ? { resolvedValue: screened.value } : {}),
       field,
       supersededValues: note.supersededValues.filter(
         (v) => !privateValues.some((pv) => pv.trim() === v.trim()) && !PRIVATE_MATERIAL_RE.test(v) && !p.namesPrivateSource(v),
@@ -510,6 +526,14 @@ export function assembleKnowledgeBase(
       factSourceLabels[n.factKey] = `${factSourceLabels[n.factKey]} — partly outdated: the broker settled "${n.field}" (see SETTLED BY THE BROKER)`;
     }
   }
+  // An SDE / add-back fact still in view is what a seller-side source said
+  // (the broker's own working never is — see seller-view.ts): it stops a
+  // re-ask, it is not something to confirm back or build on.
+  for (const key of Object.keys(factSourceLabels)) {
+    if (BROKER_WORK_KEY_RE.test(key)) {
+      factSourceLabels[key] += " — on file so you don't re-ask; never tell the seller what is added back or what earnings come to after adjustments";
+    }
+  }
 
   // Sources: digests, flagged risks, conflicts (seller-visible only — the
   // view above already dropped broker-only alternates), earlier sessions.
@@ -548,7 +572,9 @@ export function assembleKnowledgeBase(
       description: deal.description,
       location: parseLocation(deal, questionnaireData, baseExtractedInfo),
     },
-    sectionCoverage: buildSectionCoverage(extractedInfo, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
+    // (A fact the broker settled but the interview can't see is on file,
+    // not a gap to ask about.)
+    sectionCoverage: buildSectionCoverage(withHeldFacts(extractedInfo as Record<string, unknown>) as Partial<ExtractedInfo>, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
     sectionImportance,
     outline,
     conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
@@ -573,11 +599,23 @@ export function assembleKnowledgeBase(
     askSellerDiscrepancies,
     fieldConfidence: confidenceLevels,
     factSourceLabels,
-    sourceDigests: buildSourceDigests(documents),
-    flaggedRisks: buildFlaggedRisks(documents),
+    // The sources as the seller interview may read them: no item framed as
+    // the broker's normalisation work (add-backs, SDE, a recast, valuation
+    // multiples) — the agent never asserts those to the seller, and a
+    // digest line "owner add-backs $395K" invited it to (source-privacy.ts).
+    sourceDigests: buildSourceDigests(documents).map((d) => ({
+      ...d,
+      summary: scrubBrokerWorkItems(d.summary),
+      keyFacts: scrubBrokerWorkItems(d.keyFacts),
+    })),
+    flaggedRisks: buildFlaggedRisks(documents).filter((r) => !isBrokerWorkText(r.text)),
     sourceConflicts,
     priorExchanges: extras.sessions ? buildPriorExchanges(extras.sessions, currentSessionId) : [],
     resolvedValues,
+    heldByBroker: heldByBroker(baseExtractedInfo as Record<string, unknown>).filter(
+      // (A settled discrepancy already says the same for its key.)
+      (h) => !resolvedValues.some((n) => n.resolvedPrivately && n.factKey && (h === n.factKey || h.startsWith(`${n.factKey} (`))),
+    ),
   };
 }
 
@@ -918,9 +956,14 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
 
   // Values the broker settled — final. Anything else on file that repeats
   // a replaced value is outdated.
-  if ((kb.resolvedValues ?? []).length > 0) {
+  if ((kb.resolvedValues ?? []).length > 0 || (kb.heldByBroker ?? []).length > 0) {
     parts.push(`## SETTLED BY THE BROKER — final values (never re-ask, re-open or contradict)`);
-    for (const n of kb.resolvedValues!) {
+    for (const what of kb.heldByBroker ?? []) {
+      // The broker set it from their own work: the agent knows only that it
+      // is settled — nothing to quote, nothing to ask, nothing to re-open.
+      parts.push(`- ${what}: settled by the broker (the value is with the broker — don't ask the seller for it, don't quote or estimate a figure for it, and don't mention the broker's notes or workings)`);
+    }
+    for (const n of kb.resolvedValues ?? []) {
       // (Two settled things can share a fact — "employees: Licensed field technicians" and "employees: Total headcount".)
       const same = (a: string, b: string) => a.toLowerCase().replace(/[^a-z0-9]+/g, "") === b.toLowerCase().replace(/[^a-z0-9]+/g, "");
       const what = resolvedNoteLabel(n, n.factKey ? (same(n.factKey, n.field) ? n.factKey : `${n.factKey} — ${n.field}`) : n.field);

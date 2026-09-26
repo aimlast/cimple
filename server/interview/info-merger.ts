@@ -678,6 +678,12 @@ export interface FieldSource {
   dated?: string;
   /** Asserted by a broker-only source row (documents.visibility = 'broker_only'); false = a shared row. */
   brokerOnly?: boolean;
+  /**
+   * The broker's own figure taken from their private material (a discrepancy
+   * resolved to a CRM note's / broker-only file's value): a fact for the CIM
+   * (the broker's call), never shown to the seller interview.
+   */
+  hiddenFromSeller?: boolean;
   /** A dedicated source for this fact (the org chart for key employees, the lease for lease terms). */
   specialist?: boolean;
   /**

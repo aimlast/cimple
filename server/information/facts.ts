@@ -52,7 +52,8 @@ import {
   type MirroredFactColumn,
 } from "./deal-mirror";
 import type { Deal, Discrepancy } from "@shared/schema";
-import { humanizeFieldKey } from "@shared/discrepancy-sides";
+import { humanizeFieldKey, discrepancyHasPrivateSide, getSideSources } from "@shared/discrepancy-sides";
+import { resolvedFromPrivateSide as resolvedFromPrivateValues } from "../interview/source-privacy";
 import {
   planResolution,
   targetForFactKey,
@@ -339,15 +340,18 @@ export function useAlternate(info: Info, altKey: string, index: number): void {
   const alt = list[index];
   const note = `Chose ${describeSource(alt)}`;
   const chosen = repairCharIndexedValue(parseAlternateValue(alt.value));
+  // A value from the broker's own material (a CRM note, a broker-only row)
+  // stays as private as its source once chosen (see resolvedToPrivateSide).
+  const hidden = alt.brokerOnly === true || alt.source === "crm" || alt.hiddenFromSeller === true ? { hiddenFromSeller: true } : {};
   const dot = altKey.indexOf(".");
   if (dot > 0) {
     // One year of a map: the broker's pick is theirs — no longer tied to
     // either document, so deleting the rejected (or the chosen) source
     // never takes it away.
-    setBrokerMapEntry(info, altKey.slice(0, dot), altKey.slice(dot + 1), chosen, note);
+    setBrokerMapEntry(info, altKey.slice(0, dot), altKey.slice(dot + 1), chosen, note, hidden);
     return;
   }
-  setBrokerFact(info, altKey, chosen, { note });
+  setBrokerFact(info, altKey, chosen, { note, ...hidden });
 }
 
 /** Scraped website fields → the fact key "Accept into facts" writes. */
@@ -506,6 +510,40 @@ export function resolutionTarget(
 }
 
 /**
+ * True when a discrepancy was resolved to the value of its private side
+ * (the broker's CRM note, a broker-only file, text citing the broker's own
+ * material) and not to a value the seller-visible side also states.
+ */
+export function resolvedToPrivateSide(
+  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "documentId" | "source"> & Partial<Pick<Discrepancy, "sideSources">>,
+  resolved: string,
+  brokerOnlyDocIds?: ReadonlySet<string>,
+): boolean {
+  const flags = discrepancyHasPrivateSide(d);
+  const sides = getSideSources(d);
+  const privA = flags.interview || (!!sides.interview?.documentId && !!brokerOnlyDocIds?.has(sides.interview.documentId));
+  const docB = d.documentId || sides.document?.documentId;
+  const privB = flags.document || (!!docB && !!brokerOnlyDocIds?.has(docB));
+  const bare = (v: string | null) => (d.source === "financial_analysis" ? bareDiscrepancyValue(v || "") : (v || "").trim());
+  const a = bare(d.interviewValue);
+  const b = bare(d.documentValue);
+  const privateVals = [privA ? a : "", privB ? b : ""].filter(Boolean);
+  const publicVals = [privA ? "" : a, privB ? "" : b].filter(Boolean);
+  return resolvedFromPrivateValues(resolved, privateVals, publicVals);
+}
+
+/**
+ * Marks a fact as the broker's figure from private material (never shown to
+ * the seller interview) — the same provenance a resolution to a private
+ * side writes (applyResolutionToInfo): brokerOnly + acceptedByBroker (the
+ * CIM may use it, the analysis keeps it private) + hiddenFromSeller.
+ */
+export function markHiddenFromSeller(info: Info, key: string): void {
+  const src = getFieldSources(info)[key];
+  if (src) setFieldSource(info, key, { ...src, brokerOnly: true, acceptedByBroker: true, hiddenFromSeller: true });
+}
+
+/**
  * Where one side's value came from, as a fact source: the row's recorded
  * side source; else the source of the value on file (or of an alternate)
  * that states it — read BEFORE the resolution overwrites anything; else
@@ -580,7 +618,7 @@ export function applyResolutionToInfo(
   info: Info,
   d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source"> &
     Partial<Pick<Discrepancy, "factKey" | "factYear" | "sideSources">>,
-  opts: { brokerChoseFact?: boolean } = {},
+  opts: { brokerChoseFact?: boolean; /** documents rows that are broker-only (a side backed by one is private). */ brokerOnlyDocIds?: ReadonlySet<string> } = {},
 ): string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null {
   const resolved = (d.resolvedValue || "").trim();
   if (!resolved) return null;
@@ -595,7 +633,14 @@ export function applyResolutionToInfo(
   const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
   // Where each ruled-out value came from — read before anything is overwritten.
   const sideSrc = { interview: sideSource(info, d, "interview", target), document: sideSource(info, d, "document", target) };
-  const extra = resolutionSourceExtras(d, resolved);
+  // Resolved to the value of the broker's own material (a CRM note, a
+  // broker-only file): the fact is the broker's call for the CIM, but it
+  // stays as private as its source — the seller interview never sees it.
+  // (Either check: the row's recorded private side, or a side backed by a
+  // row that is broker-only now, compared text-for-text so small counts
+  // like "41 incl. 5 seasonal" count too.)
+  const fromPrivate = !!resolutionSourceExtras(d, resolved).brokerOnly || resolvedToPrivateSide(d, resolved, opts.brokerOnlyDocIds);
+  const extra: Partial<FieldSource> = fromPrivate ? { brokerOnly: true, acceptedByBroker: true, hiddenFromSeller: true } : {};
   for (const w of plan.writes) {
     if (w.sub) setBrokerMapEntry(info, w.key, w.sub, w.value, RESOLVED_NOTE, extra);
     else setBrokerFact(info, w.key, coerceBrokerValue(info[w.key], w.value), { note: RESOLVED_NOTE, ...extra, ...(w.period ? { period: w.period } : {}) });
@@ -797,5 +842,8 @@ export async function applyDiscrepancyResolution(
   if (plan.kind === "none") return null;
   if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
   if (plan.kind === "narrative") return NARRATIVE_FACT;
-  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d, opts));
+  const brokerOnlyDocIds = new Set(
+    (await storage.getDocumentsByDeal(d.dealId)).filter((doc) => doc.visibility === "broker_only").map((doc) => doc.id),
+  );
+  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d, { ...opts, brokerOnlyDocIds }));
 }
