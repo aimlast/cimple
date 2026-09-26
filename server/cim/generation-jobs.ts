@@ -162,7 +162,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     sectionOutline: template?.sectionOutline ?? null,
     // The broker-reviewed financial analysis (else the latest completed one):
     // statement tables and bridges are copied from it, never rebuilt.
-    financials: buildCimFinancials(pickAnalysisForCim(analyses)),
+    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
     factSourceWords,
     // Items the broker's notes or the facts say must not reach buyers (AI
     // review + rules, cached per content).

@@ -27,6 +27,7 @@ type AnalysisLike = Pick<FinancialAnalysis, "id" | "version" | "status" | "broke
   normalization?: unknown;
   workingCapital?: unknown;
   reclassifiedBalanceSheet?: unknown;
+  createdAt?: Date | string | null;
 };
 
 /**
@@ -105,6 +106,13 @@ export interface CimFinancials {
    */
   bridgeWithheld?: string | null;
   workingCapital: UiWorkingCapital | null;
+  /**
+   * When the bridge's adjusted EBITDA / SDE figures last changed (ISO): a
+   * broker's add-back edit that moved them, else the run that produced them.
+   * A broker earnings figure set before this no longer overrules the bridge
+   * (earnings-canon.ts). Absent when unknown.
+   */
+  bridgeChangedAt?: string | null;
 }
 
 const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
@@ -236,8 +244,77 @@ function bridgeOf(n: UiNormalization) {
   } as CimFinancials["bridge"];
 }
 
-/** The analysis → CIM financials, every total computed here. Null when it has nothing usable. */
-export function buildCimFinancials(analysis: AnalysisLike | null | undefined): CimFinancials | null {
+// ── When the bridge last changed ─────────────────────────────────────────
+
+/** The normalization's stamp of its last earnings change (see stampEarningsChange). */
+const EARNINGS_STAMP = "earningsChangedAt";
+
+function isoOf(v: unknown): string | null {
+  if (!v) return null;
+  const d = v instanceof Date ? v : new Date(String(v));
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** The bridge's earnings figures (adjusted, SDE, adjusted-EBITDA subtotal) as a comparable string, or null. */
+function earningsKey(normalization: unknown): string | null {
+  if (!normalization || typeof normalization !== "object") return null;
+  const row = normalizeFinancialAnalysisRow({ normalization } as Record<string, unknown>) as Record<string, any>;
+  const norm = row.normalization as UiNormalization | null;
+  if (!norm || !Array.isArray(norm.addbacks)) return null;
+  const b = bridgeOf(norm);
+  if (!b) return null;
+  const round = (m: Record<string, number> | null | undefined) =>
+    Object.fromEntries(Object.entries(m ?? {}).sort(([a], [c]) => a.localeCompare(c)).map(([y, v]) => [y, Math.round(v)]));
+  return JSON.stringify({ metric: b.metric, adjusted: round(b.adjusted), sde: round(b.sde), adjustedEbitda: round(b.adjustedEbitda) });
+}
+
+/**
+ * A broker edit of the normalization (PATCH): stamps when its adjusted
+ * EBITDA / SDE figures change, and carries the earlier stamp when they
+ * don't (a note, a reclassification that moves no total). Pure.
+ */
+export function stampEarningsChange<T>(prior: unknown, next: T, now: Date): T {
+  if (!next || typeof next !== "object") return next;
+  const before = earningsKey(prior);
+  const after = earningsKey(next);
+  const priorStamp = prior && typeof prior === "object" ? (prior as Record<string, unknown>)[EARNINGS_STAMP] : undefined;
+  const out = { ...(next as Record<string, unknown>) };
+  if (before !== after) out[EARNINGS_STAMP] = now.toISOString();
+  else if (typeof priorStamp === "string") out[EARNINGS_STAMP] = priorStamp;
+  else delete out[EARNINGS_STAMP];
+  return out as T;
+}
+
+/**
+ * When the analysis's earnings figures last changed: its own stamp (a broker
+ * edit that moved them), else — when the run before it bridged to the same
+ * figures (a re-run carries the broker's add-back decisions forward) — that
+ * run's, else the run's own creation. Null when unknown.
+ */
+export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[] = []): string | null {
+  let cur: AnalysisLike | undefined = analysis;
+  const seen = new Set<string>();
+  while (cur && !seen.has(String(cur.id))) {
+    seen.add(String(cur.id));
+    const norm = cur.normalization as Record<string, unknown> | null | undefined;
+    const stamp = norm && typeof norm === "object" ? isoOf(norm[EARNINGS_STAMP]) : null;
+    if (stamp) return stamp;
+    const version: number = cur.version ?? 0;
+    const prev: AnalysisLike | undefined = history
+      .filter((a) => (a.version ?? 0) < version && (a.status === "completed" || a.status === "reviewed"))
+      .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
+    const key = earningsKey(cur.normalization);
+    if (!prev || key === null || earningsKey(prev.normalization) !== key) return isoOf(cur.createdAt);
+    cur = prev;
+  }
+  return null;
+}
+
+/**
+ * The analysis → CIM financials, every total computed here. Null when it has
+ * nothing usable. `history` (the deal's analyses) dates the bridge's last change.
+ */
+export function buildCimFinancials(analysis: AnalysisLike | null | undefined, history?: AnalysisLike[] | null): CimFinancials | null {
   if (!analysis) return null;
   const row = normalizeFinancialAnalysisRow({ ...(analysis as Record<string, unknown>) }) as Record<string, any>;
   const table = row.reclassifiedPnl as UiReclassifiedTable | null;
@@ -249,6 +326,7 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined): C
   if (!hasTable && !hasNorm && !hasWc) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
   const years = Array.from(new Set([...(hasTable ? table!.years : []), ...(hasNorm ? norm!.years ?? [] : [])])).sort();
+  const changedAt = hasNorm ? earningsChangedAt(analysis, history ?? []) : null;
   return {
     analysisId: String(analysis.id),
     version: analysis.version ?? 1,
@@ -262,6 +340,7 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined): C
       : [],
     bridge: hasNorm ? bridgeOf(norm!) : null,
     workingCapital: hasWc ? wc : null,
+    ...(changedAt ? { bridgeChangedAt: changedAt } : {}),
   };
 }
 

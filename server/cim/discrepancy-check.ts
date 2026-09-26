@@ -24,7 +24,8 @@ import {
   type CheckDocument,
 } from "./discrepancy-engine";
 import { dropReason } from "./discrepancy-filter";
-import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { sameConflictByFigures } from "./discrepancy-backstop";
+import { settleMergeRowsQuietly, sameConflict } from "../documents/merge-conflicts";
 
 type DocRow = CheckDocument & { isProcessed?: boolean | null };
 
@@ -154,11 +155,15 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
     const created: Discrepancy[] = [];
     let refreshed = 0;
     for (const item of items) {
-      const referenced = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
-      if ((referenced && settled.includes(referenced)) || settled.some((d) => isSameDiscrepancy(item, d))) continue;
+      const { referenced, covers } = matchersFor(item, existing);
+      // A settled row keeps a dispute from coming back — another engine's
+      // only when the broker settled it at this severity or above (a minor
+      // twin settled never silences a critical finding).
+      const settles = (d: Discrepancy) => isCheckRow(d) || severityRank(d.severity) >= severityRank(item.severity);
+      if ((referenced && settled.includes(referenced) && settles(referenced)) || settled.some((d) => covers(d) && settles(d))) continue;
       const openMatch = referenced && unsettled.includes(referenced)
         ? referenced
-        : unsettled.find((d) => !touched.has(d.id) && isSameDiscrepancy(item, d));
+        : unsettled.find((d) => !touched.has(d.id) && covers(d));
       const values = {
         interviewValue: item.interviewValue,
         documentValue: item.documentValue,
@@ -177,7 +182,7 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
         // Rows raised by the fact merge or the financial analysis are theirs
         // to rewrite; a verification row keeps the broker's routing/status and
         // its original field name and gets fresh evidence.
-        if (openMatch.source === "interview" || !openMatch.source) {
+        if (isCheckRow(openMatch)) {
           await storage.updateDiscrepancy(openMatch.id, {
             ...values,
             // Keep a fact key the broker already linked.
@@ -185,6 +190,9 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
             factYear: openMatch.factKey ? openMatch.factYear : values.factYear,
           });
           refreshed++;
+        } else if (severityRank(item.severity) > severityRank(openMatch.severity)) {
+          // Their row stands for this very dispute, so it carries the higher severity.
+          await storage.updateDiscrepancy(openMatch.id, { severity: item.severity });
         }
         continue;
       }
@@ -224,28 +232,93 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
   return task;
 }
 
+/** A row this check raised (legacy rows have no source). */
+const isCheckRow = (d: Pick<Discrepancy, "source">) => !d.source || d.source === "interview";
+
+const SEVERITY_RANK: Record<string, number> = { minor: 1, significant: 2, critical: 3 };
+const severityRank = (s: string | null | undefined) => SEVERITY_RANK[s || ""] ?? 0;
+const SETTLED_STATUSES: ReadonlySet<string> = new Set(["resolved", "accepted"]);
+
+type DisputeSides = Pick<Discrepancy, "field"> &
+  Partial<Pick<Discrepancy, "factKey" | "interviewValue" | "documentValue" | "resolvedValue" | "aiExplanation">>;
+
+/**
+ * `other` records the same dispute as the check's finding or row `own`: both
+ * of own's values are other's sides (sameConflict; a resolved row's chosen
+ * value counts as a side), or the same two figures under different names
+ * (sameConflictByFigures: Westlock vs "Signed backlog"). A shared fact key,
+ * year or field word alone is NOT the same dispute: the seller's "$2.3M"
+ * against the P&L's "$1,820,000" and the T2's "$1,790,000" against that P&L
+ * are two disputes about one figure. Pure.
+ */
+export function recordsSameDispute(own: DisputeSides, other: DisputeSides): boolean {
+  const a = (own.interviewValue ?? "").trim();
+  const b = (own.documentValue ?? "").trim();
+  if (!a || !b) return false;
+  const row = {
+    field: other.field,
+    factKey: other.factKey ?? null,
+    interviewValue: other.interviewValue ?? null,
+    documentValue: other.documentValue ?? null,
+    resolvedValue: other.resolvedValue ?? null,
+  };
+  if (sameConflict(own.factKey || other.factKey || own.field, a, b, row)) return true;
+  return sameConflictByFigures(
+    { field: own.field, interviewValue: a, documentValue: b, aiExplanation: own.aiExplanation },
+    { ...row, aiExplanation: other.aiExplanation },
+  );
+}
+
+/**
+ * How a finding matches the deal's existing rows. The check's own rows
+ * follow the finding (isSameDiscrepancy — they are refreshed with its new
+ * values); another engine's row, which the check never rewrites, stands for
+ * the finding only when it records the same dispute. The model's
+ * existingId is held to the same rule.
+ */
+function matchersFor<T extends DisputeSides & Pick<Discrepancy, "id" | "source">>(
+  item: DisputeSides & { existingId?: string | null; factYear?: string | null },
+  existing: T[],
+): { referenced: T | undefined; covers: (d: T) => boolean } {
+  const covers = (d: T) => (isCheckRow(d) ? isSameDiscrepancy(item, d as any) : recordsSameDispute(item, d));
+  const byId = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
+  const referenced = byId && (isCheckRow(byId) || recordsSameDispute(item, byId)) ? byId : undefined;
+  return { referenced, covers };
+}
+
 /**
  * One conflict, one row. The verification check and the financial analysis
  * (or the fact merge) can raise the same conflict under different names —
  * Ridgeline's "westlockProjectStatus" (check) and "Signed backlog (May
  * 2025)" (analysis) were two open criticals for the one $1.1M Westlock
  * award counted in the $4.2M backlog. The other engine's row carries the
- * better fact key and its own lifecycle, so an OPEN check row that matches
- * one of theirs (live or settled — isSameDiscrepancy: fact key, field, or
- * the same two figures and a distinctive word) is superseded. Rows the
- * broker routed to the seller or answered are left alone. Runs after
- * every check and every analysis. Returns how many rows it superseded.
+ * better fact key and its own lifecycle, so an OPEN check row gives way to
+ * one of theirs that records the SAME dispute (recordsSameDispute: both
+ * values, never just the fact key or a shared word). It never gives way to
+ * a row of lower severity: a live row of theirs first takes the check row's
+ * severity; a settled one of lower severity leaves the check row open (a
+ * critical must not drop out of the generation gate because a minor twin
+ * was settled). Rows the broker routed to the seller or answered are left
+ * alone. Runs after every check and every analysis. Returns how many rows
+ * it superseded.
  */
 export async function supersedeCheckDuplicates(
   dealId: string,
   store: Pick<IStorage, "getDiscrepanciesByDeal" | "updateDiscrepancy"> = storage,
 ): Promise<number> {
   const live = (await store.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
-  const others = live.filter((d) => d.source && d.source !== "interview");
+  const others = live.filter((d) => !isCheckRow(d));
   let n = 0;
   for (const own of live) {
-    if ((own.source && own.source !== "interview") || own.status !== "open") continue;
-    if (!others.some((o) => isSameDiscrepancy(own, o))) continue;
+    if (!isCheckRow(own) || own.status !== "open") continue;
+    const same = others.filter((o) => recordsSameDispute(own, o));
+    const rank = severityRank(own.severity);
+    const survivor = same.find((o) => severityRank(o.severity) >= rank) ?? same.find((o) => !SETTLED_STATUSES.has(o.status));
+    if (!survivor) continue;
+    if (severityRank(survivor.severity) < rank) {
+      await store.updateDiscrepancy(survivor.id, { severity: own.severity });
+      survivor.severity = own.severity;
+    }
     await store.updateDiscrepancy(own.id, { status: "superseded" });
     n++;
   }

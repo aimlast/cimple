@@ -464,8 +464,12 @@ export function overlayExistingFacts(
     const fs = freshSources[key];
     if (sub === undefined) {
       if (fs?.documentId === docId) return true;
-    } else if (fs && isMap(docsMerged[key]) && yearSource(fs, sub, ctx.lookup)?.documentId === docId) {
-      return true;
+    } else {
+      // Only a year the fresh map actually has: yearSource falls back to the
+      // map's base source for an unlisted year (older rows), so a year the
+      // fresh read left out would count as its own and be lost unreported.
+      const freshMap = docsMerged[key];
+      if (fs && isMap(freshMap) && freshMap[sub] !== undefined && yearSource(fs, sub, ctx.lookup)?.documentId === docId) return true;
     }
     const mentions = (list: unknown) => Array.isArray(list) && list.some((a) => a && (a as FieldSource).documentId === docId);
     return mentions(freshAlts[k]) || mentions(freshCorr[k]);

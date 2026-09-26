@@ -22,6 +22,8 @@ import { agentConfig } from "../interview/config/load-config";
 import { scoreBuyersForDeal, suggestionPools, reachedBuyers, type ScoredBuyer } from "./suggested";
 import type { BuyerDeepCheck, BuyerDeepCheckResult, CrmBuyerProfile, Deal } from "@shared/schema";
 import { blindLeakTerms, isBlindSafe } from "@shared/blind-guard";
+import { keepOutFor } from "../cim/keep-out";
+import { outreachAngleGuard, angleKeepsOut, type AngleGuard } from "./angle-keep-out";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const BATCH = 6;
@@ -103,7 +105,10 @@ const TOOL: Anthropic.Tool = {
   },
 };
 
-async function checkBatch(brief: string, batch: Array<{ ref: string; card: Record<string, unknown> }>) {
+async function checkBatch(brief: string, batch: Array<{ ref: string; card: Record<string, unknown> }>, guard: AngleGuard) {
+  const heldNote = guard.clauses.length > 0
+    ? `\n\nKEPT FROM BUYERS (the seller or broker asked that these not reach buyers — you may weigh them for whyFit and watchOuts, but the outreachAngle must not mention, describe or hint at any of them):\n${guard.clauses.map((c) => `- ${c.slice(0, 300)}`).join("\n")}`
+    : "";
   const response = await anthropic.messages.create({
     model: agentConfig.models.supportingAgents,
     max_tokens: 3000,
@@ -120,7 +125,7 @@ async function checkBatch(brief: string, batch: Array<{ ref: string; card: Recor
           "Never invent facts about the buyer or the business. Return one entry per buyer ref.",
         ].join(" "),
       },
-      { type: "text", text: `THE BUSINESS (verified facts from the CIM):\n${brief}`, cache_control: { type: "ephemeral" } },
+      { type: "text", text: `THE BUSINESS (verified facts from the CIM):\n${brief}${heldNote}`, cache_control: { type: "ephemeral" } },
     ],
     messages: [{ role: "user", content: batch.map((b) => `<buyer ref="${b.ref}">\n${JSON.stringify(b.card)}\n</buyer>`).join("\n") }],
   });
@@ -152,7 +157,10 @@ export async function startBuyerDeepCheck(dealId: string): Promise<{ started: bo
 async function runDeepCheck(deal: Deal) {
   const brief = dealBrief(deal);
   const angleTerms = blindLeakTerms(deal as any, { codename: deal.blindCodename });
-  const dealKey = hash(brief);
+  // The angle opens a pre-NDA email: it is held to the same keep-out as the CIM.
+  const info = ((deal as any).extractedInfo || {}) as Record<string, unknown>;
+  const guard = outreachAngleGuard(info, await keepOutFor(deal.id, info));
+  const dealKey = hash([brief, guard]);
   const previous = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
   const reusable = previous && previous.dealKey === dealKey ? previous.results : {};
 
@@ -189,7 +197,7 @@ async function runDeepCheck(deal: Deal) {
     while (next < batches.length) {
       const batch = batches[next++];
       try {
-        const out = await checkBatch(brief, batch.map((b) => ({ ref: b.ref, card: b.card })));
+        const out = await checkBatch(brief, batch.map((b) => ({ ref: b.ref, card: b.card })), guard);
         for (const r of out) {
           const item = batch.find((b) => b.ref === String(r?.ref));
           if (!item) continue;
@@ -198,8 +206,8 @@ async function runDeepCheck(deal: Deal) {
             fitScore: Math.max(0, Math.min(100, Math.round(Number(r.fitScore) || 0))),
             whyFit: String(r.whyFit || "").slice(0, 500),
             watchOuts: (Array.isArray(r.watchOuts) ? r.watchOuts : []).map(String).slice(0, 2),
-            // Pre-NDA hook: dropped if it names anything identifying.
-            outreachAngle: r.outreachAngle && isBlindSafe(String(r.outreachAngle), angleTerms) ? String(r.outreachAngle).slice(0, 300) : null,
+            // Pre-NDA hook: dropped if it names anything identifying or draws on an item kept from buyers.
+            outreachAngle: r.outreachAngle && isBlindSafe(String(r.outreachAngle), angleTerms) && angleKeepsOut(String(r.outreachAngle), guard) ? String(r.outreachAngle).slice(0, 300) : null,
             buyerKey: item.key,
             checkedAt: new Date().toISOString(),
           };

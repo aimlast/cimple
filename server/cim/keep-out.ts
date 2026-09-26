@@ -33,7 +33,10 @@ export interface KeepOutResult extends KeepOut {
 /** Words that can carry a keep-out instruction (a wide net — the model decides). */
 const CANDIDATE = /\bbuyers?\b|would rather|rather not|confiden|secre|private|privately|off[- ]the[- ]record|in confidence|\bnda\b|not (?:for|in|to be|be|yet)\b|don'?t|do not|never|keep|kept|stay|out of|disclos|shar(?:e|ed|ing)|mention|unannounced|announce|public|quiet|wraps|internal only|sensitive|rumou?r|shortlist|\brfp\b|\bbid\b|tender|negotiat|\bloi\b|letter of intent|term sheet|verbal/i;
 
-const MAX_CANDIDATES = 120;
+/** Items per review call; a larger file is reviewed in several calls, never truncated. */
+const BATCH_SIZE = 120;
+/** At most this many calls per review (720 items); anything past it is reported, not silently skipped. */
+const MAX_BATCHES = 6;
 
 let client: Pick<Anthropic, "messages"> | null = null;
 function anthropic(): Pick<Anthropic, "messages"> {
@@ -46,7 +49,8 @@ export function _setKeepOutModelForTests(m: Pick<Anthropic, "messages"> | null):
   cache.clear();
 }
 
-const cache = new Map<string, KeepOutResult>();
+/** The model's holds per deal and candidate list (the rules are applied fresh on every call). */
+const cache = new Map<string, KeepOut>();
 
 interface Candidate {
   ref: string;
@@ -68,15 +72,21 @@ function textOf(v: unknown): string[] {
   return [];
 }
 
-/** Fact clauses and private notes that could carry a keep-out instruction. */
+/**
+ * Private notes and fact clauses that could carry a keep-out instruction —
+ * every one of them, notes first: the broker's notes are where "keep this
+ * out of the CIM" usually lives, so a deal with many facts must never push
+ * them out of the review.
+ */
 export function keepOutCandidates(info: Record<string, unknown> | null | undefined): Candidate[] {
-  const out: Candidate[] = [];
+  const notes: Candidate[] = [];
+  for (const n of privateNoteTexts(info)) if (CANDIDATE.test(n)) notes.push({ ref: `N${notes.length + 1}`, kind: "note", text: n });
+  const facts: Candidate[] = [];
   for (const [key, value] of Object.entries(info ?? {})) {
     if (key.startsWith("_")) continue;
-    for (const t of textOf(value)) for (const c of clausesOf(t)) if (CANDIDATE.test(c)) out.push({ ref: `F${out.length + 1}`, kind: "fact", key, text: c });
+    for (const t of textOf(value)) for (const c of clausesOf(t)) if (CANDIDATE.test(c)) facts.push({ ref: `F${facts.length + 1}`, kind: "fact", key, text: c });
   }
-  for (const n of privateNoteTexts(info)) if (CANDIDATE.test(n)) out.push({ ref: `N${out.length + 1}`, kind: "note", text: n });
-  return out.slice(0, MAX_CANDIDATES);
+  return [...notes, ...facts];
 }
 
 const TOOL = {
@@ -133,24 +143,38 @@ export async function keepOutFor(dealId: string, info: Record<string, unknown> |
   const rules = keepOutFromNotes(info);
   const candidates = keepOutCandidates(info);
   if (candidates.length === 0) return { ...rules, by: "rules" };
+  // Every candidate is reviewed, in batches (notes first); the cache key
+  // covers all of them, so a note added later is always seen.
+  const batches: Candidate[][] = [];
+  for (let i = 0; i < candidates.length; i += BATCH_SIZE) batches.push(candidates.slice(i, i + BATCH_SIZE));
+  const reviewed = batches.slice(0, MAX_BATCHES);
+  const skipped = candidates.length - reviewed.reduce((n, b) => n + b.length, 0);
   const fp = `${dealId}:${fingerprint(candidates)}`;
-  const hit = cache.get(fp);
-  if (hit) return hit;
-  let result: KeepOutResult;
-  try {
-    const ai = await review(candidates, info);
-    result = { ...mergeKeepOut(rules, ai), by: "ai" };
-    cache.set(fp, result);
-  } catch (err) {
-    console.warn("[keep-out] review failed; rules only:", (err as Error).message);
-    result = {
-      ...rules,
+  let ai = cache.get(fp);
+  if (!ai) {
+    try {
+      ai = mergeKeepOut(...(await Promise.all(reviewed.map((b) => review(b, info)))));
+      cache.set(fp, ai);
+    } catch (err) {
+      console.warn("[keep-out] review failed; rules only:", (err as Error).message);
+      return {
+        ...rules,
+        by: "rules",
+        warning:
+          "The confidentiality review couldn't run, so only facts and private notes that say plainly to keep something out of the CIM were held back. Check the CIM for anything the seller asked to keep confidential before sharing it.",
+      };
+    }
+  }
+  const merged = mergeKeepOut(rules, ai);
+  if (skipped > 0) {
+    // Too much to read in full: what was read still holds, and the broker is told.
+    return {
+      ...merged,
       by: "rules",
-      warning:
-        "The confidentiality review couldn't run, so only facts and private notes that say plainly to keep something out of the CIM were held back. Check the CIM for anything the seller asked to keep confidential before sharing it.",
+      warning: `The confidentiality review read the first ${candidates.length - skipped} of ${candidates.length} facts and private notes that could ask to keep something out of the CIM; the rest got only the plain-wording rules. Check the CIM for anything the seller asked to keep confidential before sharing it.`,
     };
   }
-  return result;
+  return { ...merged, by: "ai" };
 }
 
 async function review(candidates: Candidate[], info: Record<string, unknown> | null | undefined): Promise<KeepOut> {
