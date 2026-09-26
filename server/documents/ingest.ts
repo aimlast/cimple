@@ -34,7 +34,8 @@ import type { Document, DocumentSourceMeta } from "@shared/schema";
 import { noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
 import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
-import { recordMergeConflicts } from "./merge-conflicts";
+import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { scheduleNotesReview } from "./private-notes-review";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -357,5 +358,11 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
   // Material conflicts still standing after the merge become discrepancies (deduplicated).
   await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
     console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
+  // Earlier merge rows this source settled (its figure agrees now, or it
+  // restates a value another row already disputes) stop standing.
+  await settleMergeRowsQuietly(doc.dealId, "ingest");
+  // New private notes are consolidated with the deal's others shortly after
+  // (several sources finishing together → one review).
+  if (extracted._privateNotes) scheduleNotesReview(doc.dealId);
   return result;
 }

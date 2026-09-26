@@ -153,11 +153,13 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
   if (Object.keys(corroborations).length > 0) out[FIELD_CORROBORATIONS_KEY] = corroborations;
   else delete out[FIELD_CORROBORATIONS_KEY];
 
-  // 2. Broker-private notes: only those a seller-side source states, credited to it.
+  // 2. Broker-private notes: only those a seller-side source states, credited
+  //    to it and in ITS words — a note consolidated from several sources
+  //    (private-notes-review.ts) may carry a broker-only source's detail.
   if (Array.isArray(info[BROKER_PRIVATE_NOTES_KEY])) {
     const safe = getPrivateNotes(info).flatMap((n) => {
       const src = privateNoteSources(n).find(isSellerSideNoteSource);
-      return src ? [{ note: n.note, ...src }] : [];
+      return src ? [{ ...src, note: src.wording ?? n.note }] : [];
     });
     if (safe.length > 0) out[BROKER_PRIVATE_NOTES_KEY] = safe;
     else delete out[BROKER_PRIVATE_NOTES_KEY];

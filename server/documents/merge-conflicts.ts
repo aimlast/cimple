@@ -3,7 +3,8 @@
  * merge-policy.ts MergeConflict) into discrepancy rows with source "merge",
  * so a spoken "$2.3M" against the statements' "$1,820,000", or a call's
  * "about 2029" against the lease's "August 31, 2028", is put in front of the
- * broker instead of sitting silently in the alternates.
+ * broker instead of sitting silently in the alternates — and keeps those
+ * rows true for as long as they are open.
  *
  * Conventions (shared with the discrepancy engine / panel):
  *  - factKey is the extractedInfo key, factYear the year of a by-year map;
@@ -13,18 +14,42 @@
  *    on file;
  *  - sideSources records each side's kind, row and whether it is
  *    broker-only. Explanations never quote a broker-only source's title.
- * A conflict already raised (same fact, year and pair of values — any
- * status) is never raised again, so re-ingesting or reprocessing is quiet.
+ *
+ * Raising (recordMergeConflicts): only real disputes — never two measures,
+ * two definitions, a part against the whole, two periods or the same figure
+ * written as its parts (conflict-measures.ts falseConflictReason) — and
+ * never a conflict the deal already has in ANY row (a merge row, the
+ * discrepancy check's, the financial analysis', open or settled), however
+ * the rows name the fact or order the values (sameConflict). So
+ * re-ingesting or reprocessing is quiet, and a conflict the broker resolved
+ * is never re-opened.
+ *
+ * Lifecycle (supersedeStaleMergeRows): an open merge row whose source was
+ * deleted, whose values no source on the deal states any more, whose fact
+ * moved on, which the rules above now clear, or which repeats another row
+ * is superseded (never deleted) — so it neither blocks CIM generation nor
+ * reaches the seller.
  */
 import { storage } from "../storage";
-import type { Document, InsertDiscrepancy } from "@shared/schema";
+import type { Discrepancy, Document, DocumentSourceMeta, InsertDiscrepancy } from "@shared/schema";
 import { fieldLabel } from "../interview/interview-plan";
-import { isDocumentAuthoritativeField, isPeriodFigure, periodYear, settleConflicts, HEADLINE_MAPS, type MergeConflict } from "./merge-policy";
-import { numbersMateriallyConflict, typedNumericValues, type FieldSource } from "../interview/info-merger";
+import { isDocumentAuthoritativeField, isPeriodFigure, materiallyDifferent, settleConflicts, HEADLINE_MAPS, type MergeConflict } from "./merge-policy";
+import {
+  getFieldAlternates,
+  getFieldCorroborations,
+  getFieldSources,
+  numbersMateriallyConflict,
+  repairCharIndexedValue,
+  typedNumericValues,
+  type FieldSource,
+} from "../interview/info-merger";
+import { falseConflictReason, isTaxVsBook, shareClaimsConflict, type ConflictSideInfo } from "./conflict-measures";
 
 const SPOKEN_KINDS: ReadonlySet<string> = new Set(["interview", "call", "video_call", "email", "questionnaire"]);
 const LEAD_KINDS: ReadonlySet<string> = new Set(["crm", "website", "social"]);
 const HEADLINE_FIGURE = /^(annualRevenue|revenueByYear|sde|sdeByYear|ebitda|ebitdaByYear|adjustedEbitda|adjustedEbitdaByYear|netIncome|netIncomeByYear|grossProfit|grossProfitByYear)$/;
+/** Statuses in which a merge row is still in front of the broker (or the seller). */
+const LIVE_STATUSES: ReadonlySet<string> = new Set(["open", "ask_seller", "seller_responded"]);
 
 const KIND_TEXT: Record<string, string> = {
   interview: "the seller in the interview",
@@ -40,6 +65,9 @@ const KIND_TEXT: Record<string, string> = {
   system: "an earlier record",
 };
 
+/** A source row as the conflict rules need it. */
+export type ConflictDoc = Pick<Document, "id" | "name"> & Partial<Pick<Document, "subcategory" | "sourceMeta" | "visibility">>;
+
 /** A value for dedupe: its first figure to 2 significant digits ("$6.1M" = "$6,105,400" = "$6.11M"), else its words. */
 function valueBucket(v: string | null | undefined): string {
   const t = (v ?? "").toLowerCase().replace(/\s+/g, " ").trim();
@@ -52,10 +80,132 @@ function factFamily(factKey: string): string {
   return HEADLINE_MAPS.find((p) => p.head === factKey)?.map ?? factKey;
 }
 
-function pairKey(factKey: string, factYear: string | null | undefined, a: string | null | undefined, b: string | null | undefined): string {
-  const [x, y] = [valueBucket(a), valueBucket(b)].sort();
-  return `${factFamily(factKey)}|${factYear ?? ""}|${x}|${y}`;
+/** Every key of a fact's family: the key, its headline and its by-year map. */
+function familyKeys(factKey: string): string[] {
+  const pair = HEADLINE_MAPS.find((p) => p.head === factKey || p.map === factKey);
+  return pair ? [pair.head, pair.map] : [factKey];
 }
+
+// ─── Same conflict? ──────────────────────────────────────────────────────────
+
+const GENERIC_KEY_WORDS = new Set(["total", "annual", "amount", "value", "by", "year", "the", "of", "and", "per", "fy", "number", "count", "details", "detail", "info", "percentage", "percent"]);
+
+/** Content words of a fact key or a row's field label ("leaseExpiry", "Lease expiry (2024)", "revenue2023"). */
+function keyWords(keyOrLabel: string): Set<string> {
+  const words = keyOrLabel
+    .replace(/ByYear$/, "")
+    .replace(/([a-z])([A-Z0-9])/g, "$1 $2")
+    .toLowerCase()
+    .split(/[^a-z]+/)
+    .filter((w) => w.length > 2 && !GENERIC_KEY_WORDS.has(w))
+    .map((w) => (w.length > 4 && w.endsWith("s") ? w.slice(0, -1) : w));
+  return new Set(words);
+}
+
+const yearsIn = (v: string) => Array.from(new Set(v.match(/\b(?:19|20)\d{2}\b/g) ?? []));
+const norm = (v: string) => v.toLowerCase().replace(/[^a-z0-9%.$]+/g, " ").trim();
+
+/**
+ * How `v` matches one of `others`: "figure" when its first figure is among
+ * theirs, "date" when a year it names is, "text" when the words are the
+ * same (or one contains the other), else null.
+ */
+function valueMatch(v: string | null | undefined, others: Array<string | null | undefined>): "figure" | "date" | "text" | null {
+  const text = (v ?? "").trim();
+  if (!text) return null;
+  const pool = others.map((o) => (o ?? "").trim()).filter(Boolean);
+  const first = typedNumericValues(text)[0];
+  if (first) {
+    const hit = pool.some((o) => typedNumericValues(o).some((t) => t.kind === first.kind &&
+      Math.abs(t.value - first.value) <= Math.max(Math.abs(t.value), Math.abs(first.value)) * 0.005));
+    return hit ? "figure" : null;
+  }
+  const ys = yearsIn(text);
+  if (ys.length > 0) return pool.some((o) => yearsIn(o).some((y) => ys.includes(y))) ? "date" : null;
+  const n = norm(text);
+  return pool.some((o) => {
+    const m = norm(o);
+    return m === n || (Math.min(m.length, n.length) >= 12 && (m.includes(n) || n.includes(m)));
+  }) ? "text" : null;
+}
+
+/**
+ * True when `row` records the same dispute as the pair (a, b) for `factKey`:
+ * each value matches a different side of the row (a resolved row's chosen
+ * value counts as a side), in either order — and the row is about the same
+ * fact (same family, or a legacy label sharing a word with the key), or both
+ * values matched by their figures. "$4.5M vs $1.82M" raised under
+ * annualRevenue and under revenueByYear 2024 is one dispute; so is the
+ * financial analysis' "Owner compensation: $260K vs $268K (T4 salary $180K
+ * + …)" and a merge "Owner salary: $180K vs $260K".
+ */
+export function sameConflict(
+  factKey: string,
+  a: string,
+  b: string,
+  row: Pick<Discrepancy, "field" | "interviewValue" | "documentValue" | "resolvedValue"> & Partial<Pick<Discrepancy, "factKey">>,
+): boolean {
+  const I = row.interviewValue ?? "";
+  const D = row.documentValue ?? "";
+  const R = row.resolvedValue ?? "";
+  const tries: Array<[string[], string[]]> = [[[I], [D]], [[D], [I]]];
+  if (R.trim()) tries.push([[R], [I, D]], [[I, D], [R]]);
+  let matched: Array<"figure" | "date" | "text"> | null = null;
+  for (const [xa, xb] of tries) {
+    const ma = valueMatch(a, xa);
+    const mb = ma ? valueMatch(b, xb) : null;
+    if (ma && mb) { matched = [ma, mb]; break; }
+  }
+  const kw = new Set(familyKeys(factKey).flatMap((k) => Array.from(keyWords(k))));
+  const rowWords = keyWords(`${row.factKey ?? ""} ${row.field ?? ""}`);
+  const related = (!!row.factKey && factFamily(row.factKey) === factFamily(factKey)) || Array.from(rowWords).some((w) => kw.has(w));
+  if (!matched) {
+    // Two long values that differ only in a date ("…moved in 2022; lease runs
+    // to 2029" vs "…moved in 2022. Lease runs to August 31, 2027…") are the
+    // row's dispute when the years that tell them apart are the row's sides.
+    if (!related) return false;
+    const ya = yearsIn(a);
+    const yb = yearsIn(b);
+    const da = ya.filter((y) => !yb.includes(y));
+    const db = yb.filter((y) => !ya.includes(y));
+    if (da.length === 0 || db.length === 0) return false;
+    const hit = (ys: string[], vs: string[]) => vs.some((v) => yearsIn(v).some((y) => ys.includes(y)));
+    return (hit(da, [I]) && hit(db, [D, R])) || (hit(da, [D]) && hit(db, [I, R])) || (hit(da, [R]) && hit(db, [I, D]));
+  }
+  if (related) return true;
+  return matched.every((m) => m === "figure");
+}
+
+const periodYearOf = (p?: string) => (p && /^\d{4}/.test(p) ? p.slice(0, 4) : undefined);
+
+/**
+ * Share disputes between the value on file and its other values ("medical
+ * is about a third of revenue" kept as another value next to "Medical 24%
+ * of 2024 sales"): a merge only compares the two values meeting at each
+ * step, so a claim that lost to one source, before the value on file was
+ * replaced by another, is never compared with the new one. Leads,
+ * broker-only values and inferred ones are left out.
+ */
+export function shareDisputesOnFile(info: Record<string, unknown>): MergeConflict[] {
+  const sources = getFieldSources(info);
+  const alts = getFieldAlternates(info);
+  const out: MergeConflict[] = [];
+  for (const [key, value] of Object.entries(info)) {
+    if (key.startsWith("_") || typeof value !== "string" || !/%|percent|\b(?:half|third|quarter|fifth|tenth)\b/i.test(value)) continue;
+    const src = sources[key];
+    if (!src || src.brokerOnly || LEAD_KINDS.has(String(src.source))) continue;
+    for (const a of alts[key] ?? []) {
+      if (!a || typeof a.value !== "string" || a.brokerOnly || a.valueInferred || LEAD_KINDS.has(String(a.source)) || a.source === "system") continue;
+      if (a.documentId && a.documentId === src.documentId) continue;
+      const { value: other, ...altSrc } = a;
+      if (!shareClaimsConflict(value, other, periodYearOf(src.period), periodYearOf(a.period))) continue;
+      out.push({ factKey: key, winner: { value, src }, loser: { value: other, src: altSrc as FieldSource } });
+    }
+  }
+  return out;
+}
+
+// ─── One conflict → one row ──────────────────────────────────────────────────
 
 export interface DiscrepancyDraft extends Omit<InsertDiscrepancy, "dealId"> {}
 
@@ -82,18 +232,26 @@ export function discrepancyForConflict(c: MergeConflict, docName: (id: string) =
   };
   const label = `${fieldLabel(c.factKey.replace(/ByYear$/, ""))}${c.factYear ? ` (${c.factYear})` : ""}`;
   const lead = LEAD_KINDS.has(String(w.src.source)) || LEAD_KINDS.has(String(l.src.source));
-  // Two different kinds of document (the statements vs a tax return) often
-  // define a figure differently — worth a look, rarely an error.
+  // Two different kinds of document (the statements vs a management report,
+  // a tax return's revenue vs the statements') often define a figure
+  // differently — worth a look, rarely an error.
   const docTypes = w.src.source === "document" && l.src.source === "document" && !!w.src.specialist !== !!l.src.specialist;
+  const taxVsBook = isTaxVsBook(
+    c.factKey,
+    { value: w.value, kind: w.src.source, title: w.src.documentId ? docName(w.src.documentId) : undefined },
+    { value: l.value, kind: l.src.source, title: l.src.documentId ? docName(l.src.documentId) : undefined },
+  );
   const bigGap = numbersMateriallyConflict(w.value, l.value, 0.1);
-  const severity = lead || docTypes
+  // Two shares of one thing ("a third of revenue" vs "24% of sales") is a real claim disputed.
+  const shareDispute = shareClaimsConflict(w.value, l.value);
+  const severity = lead || docTypes || taxVsBook
     ? "minor"
     : HEADLINE_FIGURE.test(c.factKey) && bigGap
       ? "critical"
-      : isDocumentAuthoritativeField(c.factKey) || isPeriodFigure(c.factKey)
+      : isDocumentAuthoritativeField(c.factKey) || isPeriodFigure(c.factKey) || shareDispute
         ? "significant"
         : "minor";
-  const category = isPeriodFigure(c.factKey)
+  const category = isPeriodFigure(c.factKey) || shareDispute
     ? "financial"
     : /lease|rent|landlord|shareholder|director|officer|incorporat|licen|permit|entityType|legalName/i.test(c.factKey)
       ? "legal"
@@ -125,36 +283,179 @@ export function discrepancyForConflict(c: MergeConflict, docName: (id: string) =
   } as DiscrepancyDraft;
 }
 
+function docTitle(d: ConflictDoc | undefined): string | undefined {
+  return d ? [d.name, d.subcategory].filter(Boolean).join(" · ") : undefined;
+}
+
+function docPeriod(d: ConflictDoc | undefined): string | undefined {
+  const meta = (d?.sourceMeta as DocumentSourceMeta | null | undefined) ?? null;
+  return meta?.periodEnd ?? undefined;
+}
+
+/** Why a conflict the merge collected is not a real dispute (conflict-measures.ts), or null. */
+export function mergeConflictFalseReason(c: MergeConflict, docs: Map<string, ConflictDoc>): string | null {
+  const side = (s: MergeConflict["winner"]): ConflictSideInfo => ({
+    value: s.value,
+    kind: String(s.src.source),
+    title: s.src.documentId ? docTitle(docs.get(s.src.documentId)) : undefined,
+    period: s.src.period,
+  });
+  return falseConflictReason(c.factKey, side(c.winner), side(c.loser));
+}
+
+/** Rows a new conflict is weighed against: every row except merge rows already superseded (those may come back). */
+function comparableRows(rows: Discrepancy[]): Discrepancy[] {
+  return rows.filter((d) => !(d.source === "merge" && d.status === "superseded"));
+}
+
 /**
- * Persists the conflicts a merge collected as open "merge" discrepancies,
- * skipping any the deal already has (same fact, year and pair of values, in
- * any status) and duplicates within the batch. Returns how many were created.
+ * Persists the conflicts a merge collected as open "merge" discrepancies —
+ * only real disputes, and none the deal already has in any row (see the
+ * module comment). Returns how many were created.
  */
 export async function recordMergeConflicts(
   dealId: string,
   collected: MergeConflict[],
-  documents: Array<Pick<Document, "id" | "name">>,
+  documents: ConflictDoc[],
   /** The facts as saved — only conflicts still standing against them are raised. */
   finalInfo?: Record<string, unknown>,
 ): Promise<number> {
-  const conflicts = finalInfo ? settleConflicts(finalInfo, collected) : collected;
+  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)]) : collected;
   if (conflicts.length === 0) return 0;
-  const existing = await storage.getDiscrepanciesByDeal(dealId);
-  const seen = new Set(
-    existing
-      .filter((d) => d.factKey)
-      .map((d) => pairKey(d.factKey!, d.factYear, d.interviewValue, d.documentValue)),
-  );
-  const names = new Map(documents.map((d) => [d.id, d.name]));
+  const docs = new Map(documents.map((d) => [d.id, d]));
+  const rows = comparableRows(await storage.getDiscrepanciesByDeal(dealId));
+  const names = (id: string) => docs.get(id)?.name;
   let created = 0;
   for (const c of conflicts) {
-    // A headline conflict is about its period's year (ebitda ↔ ebitdaByYear.2024).
-    const year = c.factYear ?? periodYear(c.winner.src.period) ?? periodYear(c.loser.src.period);
-    const key = pairKey(c.factKey, year, c.winner.value, c.loser.value);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    await storage.createDiscrepancy({ dealId, ...discrepancyForConflict(c, (id) => names.get(id)) } as InsertDiscrepancy);
+    if (mergeConflictFalseReason(c, docs)) continue;
+    if (rows.some((r) => sameConflict(c.factKey, c.winner.value, c.loser.value, r))) continue;
+    const row = await storage.createDiscrepancy({ dealId, ...discrepancyForConflict(c, names) } as InsertDiscrepancy);
+    rows.push(row);
     created++;
   }
   return created;
 }
+
+// ─── Lifecycle ───────────────────────────────────────────────────────────────
+
+interface SideSource { kind?: string; documentId?: string; brokerOnly?: boolean }
+
+/** Every value the deal holds for a fact (on file, other values, corroborations), and the ones on file. */
+function statedValues(info: Record<string, unknown>, factKey: string, factYear: string | null | undefined): { onFile: string[]; all: string[] } {
+  const serial = (v: unknown) => (typeof v === "string" ? v : v === null || v === undefined ? "" : JSON.stringify(v));
+  const alts = getFieldAlternates(info);
+  const corr = getFieldCorroborations(info);
+  const onFile: string[] = [];
+  const all: string[] = [];
+  for (const k of familyKeys(factKey)) {
+    const v = repairCharIndexedValue(info[k]);
+    if (v && typeof v === "object" && !Array.isArray(v)) {
+      const map = v as Record<string, unknown>;
+      if (factYear && map[factYear] !== undefined) onFile.push(serial(map[factYear]));
+    } else if (v !== undefined && v !== null && v !== "") onFile.push(serial(v));
+    for (const altKey of [k, ...(factYear ? [`${k}.${factYear}`] : [])]) {
+      for (const a of [...(alts[altKey] ?? []), ...(corr[altKey] ?? [])]) if (a && a.value !== undefined) all.push(String(a.value));
+    }
+  }
+  return { onFile, all: [...onFile, ...all] };
+}
+
+function sameValue(v: string, pool: string[]): boolean {
+  const b = valueBucket(v);
+  const n = norm(v);
+  return pool.some((p) => valueBucket(p) === b || norm(p) === n);
+}
+
+/**
+ * Pure: why an open merge row no longer stands against the deal as it is
+ * now, or null when it still does:
+ *  - a side's source was deleted;
+ *  - the rules now say the two values are not one fact disputed (two
+ *    measures, definitions, periods, a part and its whole, the same figure);
+ *  - the fact is gone, or a side's value is no longer stated by any source
+ *    on the deal (its source was re-read and says something else now);
+ *  - the value on file is neither side (the broker or a newer source moved
+ *    the fact on) — for a row the seller already answered, only the first
+ *    two apply, so the seller's answer is never dropped.
+ */
+export function staleMergeRowReason(
+  row: Discrepancy,
+  info: Record<string, unknown>,
+  docs: Map<string, ConflictDoc>,
+): string | null {
+  if (row.source !== "merge" || !LIVE_STATUSES.has(row.status)) return null;
+  const sides = (row.sideSources as { interview?: SideSource; document?: SideSource } | null) || {};
+  for (const s of [sides.interview, sides.document]) {
+    if (s?.documentId && !docs.has(s.documentId)) return "a source it compares was removed";
+  }
+  if (row.documentId && !docs.has(row.documentId)) return "a source it compares was removed";
+  if (!row.factKey) return null;
+  const I = row.interviewValue ?? "";
+  const D = row.documentValue ?? "";
+  const side = (value: string, s?: SideSource): ConflictSideInfo => ({
+    value,
+    kind: s?.kind,
+    title: s?.documentId ? docTitle(docs.get(s.documentId)) : undefined,
+    period: s?.documentId ? docPeriod(docs.get(s.documentId)) : undefined,
+  });
+  const why = falseConflictReason(row.factKey, side(I, sides.interview), side(D, sides.document));
+  if (why) return why;
+  if (I && D && !materiallyDifferent(row.factKey, I, D)) return "the two values agree";
+  if (row.status === "seller_responded") return null;
+  const { onFile, all } = statedValues(info, row.factKey, row.factYear);
+  if (onFile.length === 0) return "the fact is no longer on file";
+  if ((I && !sameValue(I, all)) || (D && !sameValue(D, all))) return "a value it compares is no longer stated by any source";
+  if (!sameValue(I, onFile) && !sameValue(D, onFile)) return "the fact on file has changed since";
+  return null;
+}
+
+/**
+ * Supersedes the deal's open merge rows that no longer stand (see
+ * staleMergeRowReason) or repeat another row — an earlier merge row, a
+ * settled one, or the discrepancy check's / financial analysis' row about
+ * the same dispute. Reads the deal's facts and sources itself. Returns how
+ * many rows were superseded.
+ */
+export async function supersedeStaleMergeRows(dealId: string): Promise<number> {
+  const deal = await storage.getDeal(dealId);
+  if (!deal) return 0;
+  const info = (deal.extractedInfo as Record<string, unknown> | null) || {};
+  const documents = await storage.getDocumentsByDeal(dealId);
+  const rows = await storage.getDiscrepanciesByDeal(dealId);
+  const ids = planMergeRowSupersession(rows, info, documents);
+  for (const id of ids) await storage.updateDiscrepancy(id, { status: "superseded" });
+  if (ids.length > 0) console.log(`[merge-conflicts] superseded ${ids.length} merge discrepanc${ids.length === 1 ? "y" : "ies"} on deal ${dealId}`);
+  return ids.length;
+}
+
+/** Pure: the ids supersedeStaleMergeRows would supersede. */
+export function planMergeRowSupersession(rows: Discrepancy[], info: Record<string, unknown>, documents: ConflictDoc[]): string[] {
+  const docs = new Map(documents.map((d) => [d.id, d]));
+  const ordered = [...rows].sort((a, b) => +new Date(a.createdAt) - +new Date(b.createdAt) || a.id.localeCompare(b.id));
+  const out: string[] = [];
+  // Weighed against every row a new conflict is (comparableRows): settled
+  // rows, the check's and the analysis' rows, and earlier live merge rows.
+  const kept: Discrepancy[] = comparableRows(ordered).filter((r) => !(r.source === "merge" && LIVE_STATUSES.has(r.status)));
+  for (const r of ordered) {
+    if (r.source !== "merge" || !LIVE_STATUSES.has(r.status)) continue;
+    if (staleMergeRowReason(r, info, docs)) { out.push(r.id); continue; }
+    // A row the seller already answered stays even when another row repeats it.
+    if (r.status !== "seller_responded" && r.factKey &&
+        kept.some((o) => sameConflict(r.factKey!, r.interviewValue ?? "", r.documentValue ?? "", o))) {
+      out.push(r.id);
+      continue;
+    }
+    kept.push(r);
+  }
+  return out;
+}
+
+/** Lifecycle hook for the places facts or sources change: never throws. */
+export async function settleMergeRowsQuietly(dealId: string, where: string): Promise<void> {
+  try {
+    await supersedeStaleMergeRows(dealId);
+  } catch (err) {
+    console.error(`[${where}] settling merge discrepancies failed for ${dealId}:`, err);
+  }
+}
+

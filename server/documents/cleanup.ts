@@ -11,6 +11,7 @@ import path from "path";
 import { storage } from "../storage";
 import { removeDocumentFields } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
+import { settleMergeRowsQuietly } from "./merge-conflicts";
 
 const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
 
@@ -18,16 +19,21 @@ const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public",
  * Takes a deleted source's facts off its deal (re-read under the deal's
  * facts lock). Saves whenever anything was cleaned — a source whose values
  * all lost to stronger sources still leaves alternates / corroborations /
- * private notes to drop. Returns the removed field keys.
+ * private notes to drop — then supersedes the merge discrepancies it was a
+ * side of. Returns the removed field keys.
  */
 export async function removeSourceFacts(dealId: string, docId: string): Promise<string[]> {
-  return withDealFactsLock(dealId, async () => {
+  const removed = await withDealFactsLock(dealId, async () => {
     const deal = await storage.getDeal(dealId);
     if (!deal) return [];
     const { info, removed, changed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, docId);
     if (changed) await storage.updateDeal(dealId, { extractedInfo: info } as any);
     return removed;
   });
+  // A conflict the deleted source was a side of no longer stands: it must
+  // not keep blocking CIM generation or be put to the seller.
+  await settleMergeRowsQuietly(dealId, "documents");
+  return removed;
 }
 
 export async function deleteDocumentAndProvenance(docId: string): Promise<string[]> {

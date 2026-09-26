@@ -29,6 +29,7 @@ import { createHash } from "crypto";
 import { storage } from "../storage";
 import { createAndIngestSource, withDealFactsLock } from "../documents/ingest";
 import { removeDocumentFields } from "../interview/info-merger";
+import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import {
   pdAll,
   pdData,
@@ -885,6 +886,7 @@ async function retireDocument(doc: Document): Promise<void> {
       const { info, changed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, doc.id);
       if (changed) await storage.updateDeal(doc.dealId, { extractedInfo: info } as any);
     });
+    await settleMergeRowsQuietly(doc.dealId, "crm-seller");
   } catch (err) {
     console.warn(`[crm-seller] couldn't retire superseded source ${doc.id}:`, err);
   }

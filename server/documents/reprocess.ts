@@ -56,7 +56,8 @@ import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 import { cleanYearMap, effectiveRank, interimYears, isBrokerProcessKey, noteConflict, outranksFor, reconcileHeadlines, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
-import { recordMergeConflicts } from "./merge-conflicts";
+import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { reviewPrivateNotes } from "./private-notes-review";
 
 export async function reprocessDealDocuments(
   dealId: string,
@@ -180,7 +181,7 @@ export async function reprocessDealDocuments(
   // Re-extraction can take minutes. Re-read the deal and carry over anything
   // that changed meanwhile (an interview turn, a broker edit, another upload)
   // so this rebuild never clobbers it — under the deal's facts lock.
-  return withDealFactsLock(dealId, async () => {
+  const result = await withDealFactsLock(dealId, async () => {
     const latest = ((await storage.getDeal(dealId))?.extractedInfo as Record<string, unknown> | null) || {};
     const latestSources = getFieldSources(latest);
     const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
@@ -227,6 +228,8 @@ export async function reprocessDealDocuments(
     // Material conflicts the rebuild saw become discrepancies (deduplicated).
     await recordMergeConflicts(dealId, conflicts, documents, rebuilt).catch((err) =>
       console.error(`[reprocess] recording merge conflicts failed for ${dealId}:`, err));
+    // Merge rows the rebuilt facts no longer bear out are superseded.
+    await settleMergeRowsQuietly(dealId, "reprocess");
 
     // Report the coverage-known field count — the same vocabulary as the
     // interview header and the CIM COVERAGE panel.
@@ -236,6 +239,11 @@ export async function reprocessDealDocuments(
 
     return { documentsReprocessed, fieldsAfter };
   });
+  // The notes each source re-stated in new words, and what is no note at
+  // all or a business fact, are consolidated by the supporting model (only
+  // wordings it has never seen are asked about) — outside the facts lock.
+  await reviewPrivateNotes(dealId).catch((err) => console.error(`[reprocess] private-notes review failed for ${dealId}:`, err));
+  return result;
 }
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);

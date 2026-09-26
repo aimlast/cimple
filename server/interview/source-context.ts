@@ -526,10 +526,13 @@ export function mergeDiscrepancyConflicts(rows: Discrepancy[], documents: DocLik
   for (const d of rows) {
     if (d.source !== "merge" || d.status !== "open") continue;
     const sides = (d.sideSources as { interview?: SideSource; document?: SideSource } | null) || {};
+    // A side whose source row is gone (deleted since) can't be shown to be
+    // seller-visible — and its conflict no longer stands: never raised.
     const privateSide = (s?: SideSource) =>
-      !!s && (s.brokerOnly === true || LEAD_KINDS.has(String(s.kind)) || (!!s.documentId && docs.get(s.documentId)?.visibility === "broker_only"));
+      !!s && (s.brokerOnly === true || LEAD_KINDS.has(String(s.kind)) ||
+        (!!s.documentId && (!docs.has(s.documentId) || docs.get(s.documentId)?.visibility === "broker_only")));
     if (privateSide(sides.interview) || privateSide(sides.document)) continue;
-    if (d.documentId && docs.get(d.documentId)?.visibility === "broker_only") continue;
+    if (d.documentId && (!docs.has(d.documentId) || docs.get(d.documentId)?.visibility === "broker_only")) continue;
     if (!d.interviewValue || !d.documentValue) continue;
     const key = d.factKey || d.field;
     const said = sides.interview?.kind ? sourceLabel({ source: sides.interview.kind as FieldSource["source"], documentId: sides.interview.documentId }, docs) : "said by the seller";

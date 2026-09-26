@@ -13,6 +13,7 @@ import { requireBroker, requireOwnedDeal, getOwnedDeal } from "../broker-auth/ro
 import type { Discrepancy } from "@shared/schema";
 import { discrepancyFieldLabel, discrepancySideValue, discrepancyHasPrivateSide, getSideSources } from "@shared/discrepancy-sides";
 import { runAndPersistDiscrepancyCheck, getDiscrepancyCheckStatus } from "../cim/discrepancy-check";
+import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 import {
   applyDiscrepancyResolution,
   suggestFactTargets,
@@ -117,6 +118,8 @@ export function registerDiscrepancyRoutes(app: Express) {
   // picked) and how many other facts still state the value it ruled out.
   app.get("/api/deals/:dealId/discrepancies", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      // Merge rows whose conflict no longer stands are superseded before the panel sees them.
+      await settleMergeRowsQuietly(req.params.dealId, "discrepancies");
       const rows = await storage.getDiscrepanciesByDeal(req.params.dealId);
       const deal = await storage.getDeal(req.params.dealId);
       const info = ((deal?.extractedInfo as Record<string, unknown> | null) || {});
