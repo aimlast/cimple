@@ -37,6 +37,7 @@ import { splitFactsForCim, factValueText } from "../information/cim-facts";
 import { buildCimFinancials, pickAnalysisForCim, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
 import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
 import { screenFactsForCim } from "./sensitive-facts";
+import { earningsCanon, screenEarningsFacts } from "./earnings-canon";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
 
@@ -131,7 +132,9 @@ export function buildDdContext(input: {
 }): DdInputs {
   const parts: string[] = [];
   const { confirmed } = splitFactsForCim(input.extractedInfo ?? {});
-  const { safe } = screenFactsForCim(confirmed);
+  // Confidential clauses held out (screenFactsForCim), and with an approved
+  // bridge no second adjusted EBITDA / SDE (earnings-canon.ts).
+  const safe = screenEarningsFacts(screenFactsForCim(confirmed).safe, earningsCanon(input.financials), (k) => k).safe;
 
   const customerFacts = safe.filter(([k]) => CUSTOMER_KEY.test(k));
   if (customerFacts.length > 0) {

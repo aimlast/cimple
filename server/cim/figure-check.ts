@@ -13,7 +13,12 @@
  *
  * Rounding is allowed both ways ("$3.9M" matches 3,897,000), at the
  * precision the figure is written with. Pure: no database, no AI.
+ *
+ * Prose, dates, people, customer ranks, confidential names and the one
+ * adjusted EBITDA are checked in prose-check.ts (switched on by
+ * KnownFigures.prose).
  */
+import { proseKnowledge, proseProblems, type ProseKnowledge } from "./prose-check";
 
 export interface Figure {
   value: number;
@@ -29,7 +34,7 @@ const SCALE: Record<string, number> = {
 
 // $1,234,567 · $3.9M · 3.9 million · 22.0% · (78,000) · $1.1–1.2M (range: the suffix applies to both)
 const FIGURE_RE =
-  /(?:(\$|CA\$|US\$|C\$)\s?)?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s?(?:-|–|—|to)\s?\$?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?))?(?:\s?(%)|([kKmMbB]{1,2}|bn)\b|\s(thousand|million|billion)\b)?/g;
+  /(?:(\$|CA\$|US\$|C\$)\s?)?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)(?:\s?(?:-|–|—|to)\s?\$?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?))?(?:\s?(%|percent\b|per cent\b)|([kKmMbB]{1,2}|bn)\b|\s(thousand|million|billion)\b)?/g;
 
 function one(numText: string, currency: boolean, pctSign: string | undefined, suffix: string | undefined, raw: string): Figure {
   const clean = numText.replace(/,/g, "");
@@ -43,7 +48,12 @@ function one(numText: string, currency: boolean, pctSign: string | undefined, su
 
 /** Every number written in a piece of text, with its scale and precision. */
 export function parseFigures(text: string): Figure[] {
-  const out: Figure[] = [];
+  return parseFiguresAt(text).map(({ index: _i, end: _e, ...f }) => f);
+}
+
+/** parseFigures with where each figure sits in the text (a range gives two figures at the same place). */
+export function parseFiguresAt(text: string): Array<Figure & { index: number; end: number }> {
+  const out: Array<Figure & { index: number; end: number }> = [];
   if (!text) return out;
   for (const m of Array.from(text.matchAll(FIGURE_RE))) {
     const [raw, cur, a, b, pctSign, sfx, word] = m;
@@ -51,8 +61,22 @@ export function parseFigures(text: string): Figure[] {
     const before = m.index! > 0 ? text[m.index! - 1] : "";
     if (/[A-Za-z_]/.test(before)) continue;
     const suffix = sfx || word;
-    out.push(one(a, !!cur, pctSign, suffix, raw));
-    if (b) out.push(one(b, !!cur, pctSign, suffix, raw));
+    const at = { index: m.index!, end: m.index! + raw.length };
+    // "from 11.9% in 2022 to 11.7%" / "in 2023 to $3.60 million": a year
+    // followed by "to <figure>" is not a range — the year and the figure are
+    // read separately (the range used to make the year "2022%").
+    const aNum = Number(a.replace(/,/g, "")), bNum = b ? Number(b.replace(/,/g, "")) : NaN;
+    const yearThenFigure = b && /^(?:19|20)\d{2}$/.test(a) && !/^(?:19|20)\d{2}$/.test(b) && !cur;
+    if (b && (yearThenFigure || (aNum > 0 && (bNum < aNum * 0.2 || bNum > aNum * 50)))) {
+      const bAt = m.index! + raw.lastIndexOf(b);
+      const bRaw = text.slice(bAt, at.end);
+      const bCur = /\$\s?$/.test(text.slice(Math.max(0, bAt - 4), bAt)) || !!cur;
+      out.push({ ...one(a, !!cur && !yearThenFigure, yearThenFigure ? undefined : pctSign, yearThenFigure ? undefined : suffix, a), index: m.index!, end: m.index! + raw.indexOf(a) + a.length });
+      out.push({ ...one(b, bCur, pctSign, suffix, bRaw), index: bAt, end: at.end });
+      continue;
+    }
+    out.push({ ...one(a, !!cur, pctSign, suffix, raw), ...at });
+    if (b) out.push({ ...one(b, !!cur, pctSign, suffix, raw), ...at });
   }
   return out;
 }
@@ -78,19 +102,34 @@ export interface KnownFigures {
   text: string;
   /** The analysis bridge, year by year (when the deal has one). */
   bridges?: KnownBridge[];
+  /** What the prose checks need (prose-check.ts); absent = tables/charts only. */
+  prose?: ProseKnowledge;
 }
 
 export function normalizeForLookup(s: string): string {
   return ` ${s.toLowerCase().replace(/&/g, " and ").replace(/[^a-z0-9]+/g, " ").trim()} `;
 }
 
-export function knownFiguresFrom(kbText: string, bridges?: KnownBridge[]): KnownFigures {
+/**
+ * `prose` switches on the prose checks (prose-check.ts): pass the extras the
+ * writer's knowledge base was built with (earnings canon, growth, today,
+ * held names), or `{}` for the numbers-only prose checks.
+ */
+export function knownFiguresFrom(
+  kbText: string,
+  bridges?: KnownBridge[],
+  prose?: Parameters<typeof proseKnowledge>[1],
+): KnownFigures {
   const figs = parseFigures(kbText);
+  const growthPct = (prose?.growth ?? []).map((g) => ({ value: Number(g.pct.toFixed(1)), tolerance: 0.05, kind: "percent" as const, text: `${g.pct.toFixed(1)}%` }));
+  const marginPct = (prose?.earnings?.margins ?? []).map((m) => ({ value: Number(m.pct.toFixed(1)), tolerance: 0.05, kind: "percent" as const, text: `${m.pct.toFixed(1)}%` }));
   return {
     money: figs.filter((f) => f.kind !== "percent"),
-    percent: figs.filter((f) => f.kind === "percent"),
+    // Computed growth rates and margins the knowledge base states are figures on file.
+    percent: [...figs.filter((f) => f.kind === "percent"), ...growthPct, ...marginPct],
     text: normalizeForLookup(kbText),
     bridges: bridges && bridges.length > 0 ? bridges : undefined,
+    prose: prose ? proseKnowledge(kbText, prose) : undefined,
   };
 }
 
@@ -138,6 +177,7 @@ interface SectionLike {
   layoutType: string;
   layoutData: unknown;
   tags?: unknown;
+  aiDraftContent?: unknown;
 }
 
 type Cell = { where: string; text: string; allowPlain: boolean };
@@ -457,8 +497,44 @@ function reconcileTable(section: SectionLike): string[] {
       }
     }
   }
+
+  // 4. Below EBITDA: EBITDA + other income − D&A − interest (− taxes) must
+  //    reach income before taxes and net income as printed. Leaving the
+  //    other-income row out broke every year of Pacific's table (2026-09-26).
+  if (ebitdaRow) {
+    const start = rows.indexOf(ebitdaRow);
+    const targets = rows.slice(start + 1).filter((r) => !r.header && (IBT_LABEL.test(r.bare) || NET_INCOME_LABEL.test(r.bare)));
+    for (const T of targets) {
+      const between = rows
+        .slice(start + 1, rows.indexOf(T))
+        .filter((r) => !r.header && !BREAKDOWN_LABEL.test(r.bare) && !IBT_LABEL.test(r.bare) && !/adjust|normali[sz]/i.test(r.bare) && !/margin/i.test(r.bare));
+      // The IBT row stops before taxes; net income goes through them.
+      const lines = IBT_LABEL.test(T.bare) ? between.filter((r) => !/\btax/i.test(r.bare)) : between;
+      if (lines.length === 0) continue;
+      for (let i = 0; i < cols; i++) {
+        const E = ebitdaRow.amounts[i], t = T.amounts[i];
+        if (!E || !t) continue;
+        const signed = (r: TableRow) => {
+          const a = r.amounts[i];
+          if (!a) return 0;
+          const income = INCOME_LABEL.test(r.bare) && !/\btax|expense|cost|loss/i.test(r.bare);
+          return income ? Math.abs(a.value) : -Math.abs(a.value);
+        };
+        const v = E.value + lines.reduce((s, r) => s + signed(r), 0);
+        if (off(v, t.value, E.tol + t.tol + tolOf(lines.map((r) => r.amounts[i])))) {
+          const missingOther = !lines.some((r) => INCOME_LABEL.test(r.bare) && !/\btax/i.test(r.bare));
+          out.push(
+            `${colName(i)}: EBITDA ${fmt(E.value)} and the rows below it come to ${fmt(v)}, not ${T.label} ${fmt(t.value)}${missingOther ? " — is the other-income row missing?" : ""}`,
+          );
+        }
+      }
+    }
+  }
   return out;
 }
+
+const IBT_LABEL = /^(income|earnings|profit) before (income )?tax(es)?$|^pre-?tax (income|profit|earnings)$|^ebt$/i;
+const NET_INCOME_LABEL = /^net (income|profit|earnings)( \(as reported\))?$/i;
 
 /** A bridge (waterfall) whose steps don't reach its total. */
 function reconcileWaterfall(section: SectionLike): string[] {
@@ -585,8 +661,9 @@ export function checkSectionFigures(section: SectionLike, known: KnownFigures): 
     ...(section.layoutType === "financial_table" ? reconcileTable(section) : []),
     ...(section.layoutType === "waterfall_chart" ? [...reconcileWaterfall(section), ...bridgeLines(section, known)] : []),
     ...unknownNames(section, known),
+    ...proseProblems(section, known),
   ];
-  return issues;
+  return Array.from(new Set(issues));
 }
 
 /** One broker-facing warning line per flagged section. */

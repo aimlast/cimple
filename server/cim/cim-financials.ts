@@ -55,10 +55,18 @@ export interface CimPnlYear {
   depreciation: number;
   interest: number;
   taxes: number;
+  /** EBITDA before other income + other income − other expense − D&A − interest. */
+  incomeBeforeTaxes: number;
   /** Net income as the statement rows compute it. */
   netIncomeFromRows: number | null;
   /** Net income as reported (the normalization's starting point). */
   netIncomeReported: number | null;
+  /**
+   * The rows didn't tie to reported net income, so operating expenses and
+   * EBITDA were restated from reported net income (see restateFromReported).
+   * `gap` = row EBITDA − restated EBITDA.
+   */
+  restated?: { gap: number; rowEbitda: number; rowOperatingExpenses: number; likelyCause: string | null };
 }
 
 export interface CimBridgeLine {
@@ -100,8 +108,9 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
   const computedNi = computePnlNetIncome(table);
   const out: Record<string, CimPnlYear> = {};
   for (const year of table.years) {
+    const rowsOf = (c: string) => table.rows.filter((r) => r.category === c && typeof r.values?.[year] === "number");
     const cat = (c: string) => {
-      const vals = table.rows.filter((r) => r.category === c && typeof r.values?.[year] === "number").map((r) => r.values[year]);
+      const vals = rowsOf(c).map((r) => r.values[year]);
       return { has: vals.length > 0, total: sum(vals) };
     };
     const revenue = cat("Revenue");
@@ -113,7 +122,8 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
     const abs = (x: { total: number }) => Math.abs(x.total);
     const cogsAbs = cogs.has ? abs(cogs) : null;
     const operatingExpenses = abs(opex) + abs(owner);
-    out[year] = {
+    const dep = cat("Depreciation"), interest = cat("Interest"), taxes = cat("Taxes");
+    const p: CimPnlYear = {
       revenue: revenue.total,
       cogs: cogsAbs,
       grossProfit: cogsAbs === null ? null : revenue.total - cogsAbs,
@@ -123,14 +133,61 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
       ebitda: revenue.total - (cogsAbs ?? 0) - operatingExpenses - abs(nonRec),
       otherIncome: cat("Other Income").total,
       otherExpense: abs(cat("Other Expense")),
-      depreciation: abs(cat("Depreciation")),
-      interest: abs(cat("Interest")),
-      taxes: abs(cat("Taxes")),
+      depreciation: abs(dep),
+      interest: abs(interest),
+      taxes: abs(taxes),
+      incomeBeforeTaxes: 0,
       netIncomeFromRows: typeof computedNi[year] === "number" ? computedNi[year] : null,
       netIncomeReported: typeof reported[year] === "number" ? reported[year] : null,
     };
+    // Below-the-line rows are on the analysis: the chain down to net income
+    // can be stated, and restated from the reported figure when the rows
+    // don't reach it.
+    if (dep.has || interest.has || taxes.has) {
+      restateFromReported(p, rowsOf("Non-Recurring").map((r) => ({ name: r.name, amount: Math.abs(r.values[year]) })));
+    }
+    p.incomeBeforeTaxes = p.ebitda + p.otherIncome - p.otherExpense - p.depreciation - p.interest;
+    out[year] = p;
   }
   return out;
+}
+
+/**
+ * Reported net income is the statements' own bottom line (it ties to the tax
+ * return); the analysis's expense rows are a reclassification of them. When
+ * the rows don't reach the reported figure, the difference is in the
+ * expenses — a carve-out taken out of its parent line twice (Pacific FY2024:
+ * "TMS migration consultants" $72,000 moved to one-time AND cut from the IT
+ * line, so row EBITDA was $3,619,200 while the statements' operating income
+ * is $3,547,200). The year is then restated from the reported figure:
+ * EBITDA = net income + taxes + interest + D&A + other expense − other income,
+ * and operating expenses = what's left of gross profit. Every row of the
+ * printed chain then ties, and the broker is told why.
+ */
+function restateFromReported(p: CimPnlYear, oneTime: Array<{ name: string; amount: number }>): void {
+  if (p.netIncomeReported === null || p.netIncomeFromRows === null) return;
+  const tol = Math.max(100, Math.abs(p.netIncomeReported) * 0.005);
+  if (Math.abs(p.netIncomeFromRows - p.netIncomeReported) <= tol) return;
+  const ebitda = p.netIncomeReported + p.taxes + p.interest + p.depreciation + p.otherExpense - p.otherIncome;
+  const gap = p.ebitda - ebitda;
+  // Which one-time items add up to the gap (the likely double carve-out)?
+  let likelyCause: string | null = null;
+  const n = Math.min(oneTime.length, 10);
+  for (let mask = 1; mask < 1 << n && !likelyCause; mask++) {
+    const picked = oneTime.filter((_, i) => mask & (1 << i));
+    if (Math.abs(sum(picked.map((x) => x.amount)) - Math.abs(gap)) <= tol) {
+      likelyCause = picked.map((x) => `${x.name} (${money(x.amount)})`).join(" and ");
+    }
+  }
+  // Only a gap the one-time items explain is known to sit in the expenses.
+  // Any other gap could be anywhere (a missing other-income row, a tax
+  // figure): the rows are left as they are and the year is flagged untied
+  // (Lakeshore: the rows' $917,000 IS the statements' reported EBITDA).
+  if (!likelyCause) return;
+  p.restated = { gap, rowEbitda: p.ebitda, rowOperatingExpenses: p.operatingExpenses, likelyCause };
+  p.operatingExpenses = p.operatingExpenses + gap;
+  p.ebitda = ebitda;
+  p.netIncomeFromRows = p.netIncomeReported;
 }
 
 function bridgeOf(n: UiNormalization) {
@@ -245,6 +302,8 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     const years = Object.keys(pnl).sort();
     out.push(`\nINCOME STATEMENT SUMMARY (fiscal years ${years.join(", ")}):`);
     const hasNonRecurring = years.some((y) => pnl[y].nonRecurring > 0);
+    const hasBelowTheLine = years.some((y) => pnl[y].depreciation || pnl[y].interest || pnl[y].taxes);
+    const untied = untiedYears(fin);
     const rows = [
       yearRow("Revenue", years, (y) => pnl[y].revenue, (y) => {
         const i = years.indexOf(y);
@@ -278,24 +337,50 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
       yearRow("Other expense", years, (y) => (pnl[y].otherExpense ? pnl[y].otherExpense : null)),
       yearRow("Depreciation & amortization", years, (y) => (pnl[y].depreciation ? pnl[y].depreciation : null)),
       yearRow("Interest", years, (y) => (pnl[y].interest ? pnl[y].interest : null)),
+      hasBelowTheLine
+        ? yearRow("Income before income taxes (= EBITDA before other income + other income − other expense − D&A − interest)", years, (y) => (untied.includes(y) ? null : pnl[y].incomeBeforeTaxes))
+        : null,
       yearRow("Income taxes", years, (y) => (pnl[y].taxes ? pnl[y].taxes : null)),
       yearRow("Net income (as reported)", years, (y) => pnl[y].netIncomeReported ?? pnl[y].netIncomeFromRows),
     ].filter(Boolean) as string[];
     out.push(...rows);
-    const untied = years.filter((y) => {
-      const r = pnl[y].netIncomeReported;
-      const c = pnl[y].netIncomeFromRows;
-      return typeof r === "number" && typeof c === "number" && Math.abs(r - c) > Math.max(100, Math.abs(r) * 0.005);
-    });
+    if (hasBelowTheLine) {
+      out.push(
+        "A statement table that shows EBITDA and net income prints EVERY row between them in this order — other income, other expense, depreciation & amortization, interest, income before income taxes, income taxes — so each year adds up. Never leave out the other-income row.",
+      );
+    }
+    const restated = years.filter((y) => pnl[y].restated);
+    if (restated.length > 0) {
+      out.push(
+        `Note: for ${restated.join(", ")} the operating expenses and EBITDA above are stated from the reported net income (the analysis's expense lines don't add up to it). Use these totals; do not list individual expense lines for ${restated.join(", ")}.`,
+      );
+    }
     if (untied.length > 0) {
-      out.push(`Note: the statement rows do not tie to reported net income for ${untied.join(", ")}. Show the reported net income; do not print a net income you work out from the rows.`);
+      out.push(
+        `Note: for ${untied.join(", ")} the statement rows do not reach the reported net income, so the rows below EBITDA can't be shown as adding up. In a statement table, leave every ${untied.join(", ")} cell below EBITDA empty (net income included); never print a figure worked out from the rows.`,
+      );
     }
     if (fin.lines.length > 0) {
       out.push("\nSTATEMENT LINE ITEMS (as reclassified):");
+      // A restated year's expense lines don't sum to its restated total.
+      const EXPENSE_CATS = new Set(["Operating Expenses", "Owner Compensation"]);
       for (const l of fin.lines) {
-        const cells = years.filter((y) => typeof l.values[y] === "number").map((y) => `${y} ${money(Math.abs(l.values[y]))}`);
+        const cells = years
+          .filter((y) => typeof l.values[y] === "number" && !(pnl[y].restated && EXPENSE_CATS.has(l.category)))
+          .map((y) => `${y} ${money(Math.abs(l.values[y]))}`);
         if (cells.length) out.push(`[${l.category}] ${l.name}: ${cells.join(" · ")}`);
       }
+    }
+    const growth = cimGrowth(fin);
+    if (growth.length > 0) {
+      out.push("\nGROWTH (computed from the rows above — a growth rate is quoted only with exactly this period; a two-year change is never \"year-over-year\"):");
+      const byLabel = new Map<string, string[]>();
+      for (const g of growth) {
+        const cells = byLabel.get(g.label) ?? [];
+        cells.push(`${g.from}→${g.to} ${g.pct >= 0 ? "+" : ""}${g.pct.toFixed(1)}%`);
+        byLabel.set(g.label, cells);
+      }
+      for (const [label, cells] of Array.from(byLabel)) out.push(`${label}: ${cells.join(" · ")}`);
     }
   }
 
@@ -380,4 +465,78 @@ export function analysisHeadlines(fin: CimFinancials | null | undefined): Array<
     }
   }
   return out;
+}
+
+export interface CimGrowth {
+  /** "Revenue", a revenue line's name, "Adjusted EBITDA". */
+  label: string;
+  from: string;
+  to: string;
+  /** Percent change, e.g. 35.5. */
+  pct: number;
+}
+
+/**
+ * Growth the CIM may quote, each with its exact period: year over year and
+ * first year → last year, for revenue, each revenue line and the adjusted
+ * metric. A writer reading "35% warehouse growth" in a fact can see it is
+ * FY2022→FY2024 (Pacific 2026-09-26 printed it as "year-over-year in FY2024").
+ */
+export function cimGrowth(fin: CimFinancials | null | undefined): CimGrowth[] {
+  if (!fin) return [];
+  const out: CimGrowth[] = [];
+  const series = (label: string, values: Record<string, number>) => {
+    const ys = Object.keys(values).filter((y) => typeof values[y] === "number" && values[y] > 0).sort();
+    const add = (a: string, b: string) => out.push({ label, from: a, to: b, pct: (values[b] / values[a] - 1) * 100 });
+    for (let i = 1; i < ys.length; i++) add(ys[i - 1], ys[i]);
+    if (ys.length > 2) add(ys[0], ys[ys.length - 1]);
+  };
+  if (fin.pnl) {
+    series("Revenue", Object.fromEntries(Object.entries(fin.pnl).map(([y, p]) => [y, p.revenue])));
+    const lines = fin.lines.filter((l) => l.category === "Revenue");
+    if (lines.length > 1) for (const l of lines) series(l.name, l.values);
+  }
+  const b = fin.bridge;
+  if (b) {
+    const adj = b.metric === "ebitda" ? b.adjusted : b.adjustedEbitda ?? null;
+    if (adj) series("Adjusted EBITDA", adj);
+    const sde = b.metric === "sde" ? b.adjusted : b.sde;
+    if (sde) series("SDE", sde);
+  }
+  return out;
+}
+
+/** Years whose rows still don't reach the reported net income (a gap nothing explains). */
+export function untiedYears(fin: CimFinancials | null | undefined): string[] {
+  const pnl = fin?.pnl;
+  if (!pnl) return [];
+  return Object.keys(pnl)
+    .sort()
+    .filter((y) => {
+      const r = pnl[y].netIncomeReported;
+      const c = pnl[y].netIncomeFromRows;
+      return typeof r === "number" && typeof c === "number" && Math.abs(r - c) > Math.max(100, Math.abs(r) * 0.005);
+    });
+}
+
+/**
+ * Broker warnings about the analysis rows: years restated from reported net
+ * income (restateFromReported) and years that don't tie at all.
+ */
+export function restatementWarnings(fin: CimFinancials | null | undefined): string[] {
+  const pnl = fin?.pnl;
+  if (!pnl) return [];
+  const untied = untiedYears(fin).map((y) => {
+    const gap = (pnl[y].netIncomeFromRows ?? 0) - (pnl[y].netIncomeReported ?? 0);
+    return `Financial analysis, ${y}: the Income Statement lines give net income of ${money(pnl[y].netIncomeFromRows ?? 0)}, but the reported net income is ${money(pnl[y].netIncomeReported ?? 0)} (${money(Math.abs(gap))} apart). The CIM's statement table shows ${y} only down to EBITDA. Correct the Income Statement on the Financials tab so it ties.`;
+  });
+  return Object.keys(pnl)
+    .sort()
+    .filter((y) => pnl[y].restated)
+    .map((y) => {
+      const r = pnl[y].restated!;
+      const cause = r.likelyCause ? ` — most likely ${r.likelyCause} was taken out of its original expense line as well as listed as one-time` : "";
+      return `Financial analysis, ${y}: the expense lines add up to EBITDA of ${money(r.rowEbitda)}, but the reported net income gives ${money(pnl[y].ebitda)} (a ${money(Math.abs(r.gap))} difference${cause}). The CIM states ${y} from the reported net income so every table adds up. Correct the Income Statement on the Financials tab to make the lines match.`;
+    })
+    .concat(untied);
 }

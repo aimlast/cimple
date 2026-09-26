@@ -44,6 +44,7 @@ import {
   historyWith,
   insertSectionAt,
   undoLastChange,
+  withStaleStamps,
 } from "../cim/section-ops";
 import {
   SectionTaskRunningError,
@@ -323,8 +324,7 @@ export function registerCimBuilderRoutes(app: Express): void {
           })
           .where(eq(cimSections.id, section.id))
           .returning();
-        await invalidateBlind(deal.id, [section.id]);
-        return res.json({ section: updated });
+        return res.json({ section: withStaleStamps(updated, await invalidateBlind(deal.id, [section.id])) });
       }
 
       const blocked = await discrepancyBlock(deal.id);

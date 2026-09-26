@@ -78,3 +78,103 @@ export function hasMonthYear(text: string): boolean {
   MONTH_YEAR.lastIndex = 0;
   return hit;
 }
+
+// ── Relative and dated targets ────────────────────────────────────────────
+
+const REL_MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec";
+const SPAN_WORD = String.raw`(?:\d+|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|eighteen|twenty-four|a few|a couple of|several)`;
+/**
+ * Wording whose meaning depends on when it was said: "in May", "last year",
+ * "next spring", "within one year", "before his next birthday", "over the
+ * next 18 months", "by year-end". "within one year" and "next birthday"
+ * were missed (Pacific 2026-09-26: the timeline fact reached the CIM with no
+ * recorded date and the CIM promised a sale "before fall 2026" in
+ * September 2026).
+ */
+const RELATIVE_TIME = new RegExp(
+  [
+    String.raw`\b(?:last|next|this|coming|past|previous)\s+(?:year|month|quarter|spring|summer|fall|autumn|winter|week|birthday|season|fiscal year)\b`,
+    String.raw`\b(?:recently|ago|upcoming|soon|shortly|later this year|earlier this year|year[- ]end|end of (?:the )?(?:year|month|quarter))\b`,
+    String.raw`\b(?:within|in|over|for|inside|under)\s+(?:the\s+)?(?:next\s+|coming\s+|past\s+|last\s+)?(?:roughly\s+|about\s+|approximately\s+|around\s+|~\s?)?${SPAN_WORD}\s+(?:years?|months?|weeks?|quarters?)\b`,
+    String.raw`\b(?:within|in|over)\s+(?:the\s+)?(?:next|coming)\s+(?:year|months?|quarters?)\b`,
+    String.raw`\b(?:within|in)\s+(?:a|one)\s+year\b`,
+    String.raw`\b(?:in|by|since|until|from|around|early|late|mid|end of)\s+(?:${REL_MONTHS})\b(?![\s,.-]*(?:\d{1,2}(?:st|nd|rd|th)?[\s,]*)?\d{4})`,
+  ].join("|"),
+  "i",
+);
+
+/** Does a fact's wording depend on when it was said? */
+export function hasRelativeTime(text: string): boolean {
+  return !!text && RELATIVE_TIME.test(text);
+}
+
+const SEASONS: Record<string, [number, number]> = {
+  // [first month, last month] (0-based); winter runs into the next year.
+  spring: [2, 4], summer: [5, 7], fall: [8, 10], autumn: [8, 10], winter: [11, 13],
+};
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+
+/** The period a "fall 2026" / "Q1 2027" / "March 2026" / "2026" names: [start, end). */
+export function namedPeriod(text: string): { start: Date; end: Date } | null {
+  const t = text.toLowerCase().trim();
+  let m = /^(?:(early|mid|late)[- ])?(spring|summer|fall|autumn|winter)\s+(?:of\s+)?((?:19|20)\d{2})$/.exec(t);
+  if (m) {
+    const [a, b] = SEASONS[m[2]];
+    const y = Number(m[3]);
+    return { start: new Date(Date.UTC(y, a, 1)), end: new Date(Date.UTC(y, b + 1, 1)) };
+  }
+  m = /^q([1-4])\s+(?:of\s+)?((?:19|20)\d{2})$/.exec(t);
+  if (m) {
+    const q = Number(m[1]) - 1;
+    const y = Number(m[2]);
+    return { start: new Date(Date.UTC(y, q * 3, 1)), end: new Date(Date.UTC(y, q * 3 + 3, 1)) };
+  }
+  m = /^(?:(early|mid|late)[- ])?([a-z]+)\.?\s+((?:19|20)\d{2})$/.exec(t);
+  if (m) {
+    const i = MONTH_NAMES.findIndex((n) => n.startsWith(m![2].slice(0, 3)) && m![2].length >= 3);
+    if (i >= 0) {
+      const y = Number(m[3]);
+      return { start: new Date(Date.UTC(y, i, 1)), end: new Date(Date.UTC(y, i + 1, 1)) };
+    }
+  }
+  m = /^(?:(early|mid|late)[- ])?((?:19|20)\d{2})$/.exec(t);
+  if (m) {
+    const y = Number(m[2]);
+    return { start: new Date(Date.UTC(y, 0, 1)), end: new Date(Date.UTC(y + 1, 0, 1)) };
+  }
+  return null;
+}
+
+const PERIOD = String.raw`(?:(?:early|mid|late)[- ])?(?:spring|summer|fall|autumn|winter|q[1-4]|${REL_MONTHS})\.?\s+(?:of\s+)?(?:19|20)\d{2}|(?:(?:early|mid|late)[- ])?(?:19|20)\d{2}`;
+/** "before fall 2026", "by Q1 2027", "no later than March 2026", "targeting late 2026". */
+const DEADLINE = new RegExp(String.raw`\b(before|by|no later than|until|ahead of|in time for|targeting|target(?:ed)? for|planned for|scheduled for|expected (?:in|by)|to (?:close|complete|finish) (?:in|by))\s+(?:(?:his|her|their|the owner's|the seller's)\s+)?(?:next\s+birthday\s+)?\(?(?:in\s+)?(${PERIOD})\b`, "gi");
+/** A sentence that looks ahead (a wish, plan or target), not a report of the past. */
+const FORWARD = /\b(wants?|wanted|plans?|planned|planning|intends?|intended|aims?|targets?|targeting|expects?|expected|hopes?|would like|will|to (?:complete|close|sell|finish|exit|retire)|looking to|goal|timeline|timing|before|by|no later than|ahead of)\b/i;
+
+export interface StaleTarget {
+  /** The words as written ("before fall 2026"). */
+  phrase: string;
+  period: string;
+}
+
+/**
+ * Future targets that TODAY has reached or passed: "complete the sale before
+ * fall 2026" written in September 2026. A "before X" target is stale once X
+ * starts; a "by / in X" target once X is over.
+ */
+export function staleTargets(text: string, today: Date): StaleTarget[] {
+  const out: StaleTarget[] = [];
+  if (!text) return out;
+  for (const sentence of text.split(/(?<=[.!?;])\s+|\n+/)) {
+    if (!FORWARD.test(sentence)) continue;
+    DEADLINE.lastIndex = 0;
+    for (const m of Array.from(sentence.matchAll(DEADLINE))) {
+      const p = namedPeriod(m[2]);
+      if (!p) continue;
+      const word = m[1].toLowerCase();
+      const edge = word === "before" || word === "ahead of" || word === "in time for" ? p.start : p.end;
+      if (edge.getTime() <= today.getTime()) out.push({ phrase: m[0].replace(/\(\s*/g, "").replace(/\s+/g, " ").trim(), period: m[2] });
+    }
+  }
+  return out;
+}

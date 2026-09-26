@@ -51,6 +51,7 @@ import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
+import { screenFactsForCim } from "./cim/sensitive-facts";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
@@ -147,7 +148,10 @@ async function generateSectionWithClaude(
   // Facts split by provenance: CRM notes / website / social claims are
   // leads, never presented as confirmed; per-source notes and "_" keys are
   // never CIM input.
-  const { confirmed, leads } = splitFactsForCim(data.extractedInfo);
+  const split = splitFactsForCim(data.extractedInfo);
+  // Personal details and clauses the facts mark confidential never reach CIM text.
+  const confirmed = screenFactsForCim(split.confirmed).safe;
+  const leads = screenFactsForCim(split.leads).safe;
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
