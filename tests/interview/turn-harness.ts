@@ -24,15 +24,24 @@ export interface ScriptedReply {
   streamBreaksAt?: number;
   /** Streamed only: the response ends with this stop reason (e.g. "max_tokens"). */
   stopReason?: string;
+  /** The model writes shouldEnd / endReason after the tail instead of in schema order. */
+  endLast?: boolean;
+  /** The model writes the tail (extractedFields…) before the chips and "why we ask this". */
+  chipsLast?: boolean;
 }
 
 export function toolInput(r: ScriptedReply) {
-  return {
-    message: r.message,
+  // Fields in the tool schema's order — the end decision right after the
+  // chips — unless the reply is scripted to write it last (endLast) or to
+  // write its facts and reasoning before the chips (chipsLast).
+  const end = { shouldEnd: r.shouldEnd ?? false, endReason: r.endReason };
+  const labels = {
     whyItMatters: r.whyItMatters,
     importance: r.importance,
     targetSection: r.targetSection,
     suggestedAnswers: r.suggestedAnswers ?? ["Yes", "No", "Not sure"],
+  };
+  const tail = {
     extractedFields: Object.fromEntries(
       Object.entries(r.extractedFields ?? {}).map(([k, f]) => [k, { source: "seller_statement", basis: "verbatim", ...f }]),
     ),
@@ -47,11 +56,12 @@ export function toolInput(r: ScriptedReply) {
       nextIntent: r.nextIntent ?? "",
       industryContext: { identified: false, industry: "", subIndustry: "", location: "", activeIndustryTopics: [], coveredIndustryTopics: [], regulatoryNotes: [] },
     },
-    privateNotes: [],
-    newTasks: [],
-    shouldEnd: r.shouldEnd ?? false,
-    endReason: r.endReason,
   };
+  const bookkeeping = { privateNotes: [], newTasks: [] };
+  if (r.chipsLast) return { message: r.message, ...tail, ...labels, ...end, ...bookkeeping };
+  return r.endLast
+    ? { message: r.message, ...labels, ...tail, ...bookkeeping, ...end }
+    : { message: r.message, ...labels, ...end, ...tail, ...bookkeeping };
 }
 
 export interface Harness {

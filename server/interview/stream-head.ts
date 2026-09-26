@@ -4,9 +4,10 @@
  *
  * The interview tool's fields come in schema order: the message, then what
  * the seller sees beside it (why we ask, importance, section, answer chips),
- * then the long bookkeeping tail — extracted facts, reasoning, industry
- * context, tasks, shouldEnd — which is ~2.5–5K characters and 12–25s of Opus
- * output. Everything the seller needs to answer is in the head, so:
+ * the end decision (shouldEnd, endReason — see endSoFar), then the long
+ * bookkeeping tail — extracted facts, reasoning, industry context, tasks —
+ * which is ~2.5–5K characters and 12–25s of Opus output. Everything the
+ * seller needs to answer is in the head, so:
  *   - a streamed turn can unlock the seller's answer (chips included) as soon
  *     as the head is complete, while the tail is still being generated;
  *   - a corrective rewrite that only changes the wording (the output guards,
@@ -18,6 +19,8 @@
 import type { InterviewResponse } from "./response-schema";
 
 export const HEAD_KEYS =["message", "whyItMatters", "importance", "targetSection", "suggestedAnswers"] as const;
+/** The model's end decision — right after the head in the schema (endSoFar). */
+export const END_KEYS = ["shouldEnd", "endReason"] as const;
 
 export interface StreamHead {
   message?: string;
@@ -125,17 +128,41 @@ export function topLevelEntries(buf: string): { entries: Array<[string, unknown]
 export function headSoFar(buf: string): { head: StreamHead; complete: boolean } {
   const { entries, open } = topLevelEntries(buf);
   const head: StreamHead = {};
-  let pastHead = open !== null && !(HEAD_KEYS as readonly string[]).includes(open);
+  // (The end decision sits beside the head in the schema — written before
+  // the chips, it doesn't mean the head is over.)
+  const beside = (k: string) => (HEAD_KEYS as readonly string[]).includes(k) || (END_KEYS as readonly string[]).includes(k);
+  let pastHead = open !== null && !beside(open);
   for (const [k, v] of entries) {
     if (k === "message" && typeof v === "string") head.message = v;
     else if (k === "whyItMatters" && typeof v === "string") head.whyItMatters = v;
     else if (k === "importance" && typeof v === "string") head.importance = v;
     else if (k === "targetSection" && typeof v === "string") head.targetSection = v;
     else if (k === "suggestedAnswers" && Array.isArray(v)) head.suggestedAnswers = v.filter((s): s is string => typeof s === "string");
-    else if (!(HEAD_KEYS as readonly string[]).includes(k)) pastHead = true;
+    else if (!beside(k)) pastHead = true;
   }
   const complete = head.message !== undefined && (head.suggestedAnswers !== undefined || pastHead);
   return { head, complete };
+}
+
+/**
+ * The model's end decision, once it is in the stream: shouldEnd, and the
+ * endReason when it follows. The schema puts both right after the chips
+ * (response-schema.ts), so a goodbye's decision is known seconds after its
+ * text instead of after the ~5K-character tail. `known` only once nothing
+ * more of the decision is coming: shouldEnd is false, or its endReason has
+ * closed, or the model has moved on to another field. A model that writes
+ * shouldEnd last simply makes it known late. Pure.
+ */
+export function endSoFar(buf: string): { known: boolean; shouldEnd?: boolean; endReason?: string } {
+  const { entries, open } = topLevelEntries(buf);
+  const at = entries.findIndex(([k]) => k === "shouldEnd");
+  if (at < 0 || typeof entries[at][1] !== "boolean") return { known: false };
+  const shouldEnd = entries[at][1] as boolean;
+  const reason = entries.find(([k]) => k === "endReason");
+  const endReason = reason && typeof reason[1] === "string" ? (reason[1] as string) : undefined;
+  if (!shouldEnd || endReason !== undefined) return { known: true, shouldEnd, endReason };
+  const movedOn = entries.slice(at + 1).some(([k]) => k !== "endReason") || (open !== null && open !== "endReason");
+  return movedOn ? { known: true, shouldEnd, endReason } : { known: false };
 }
 
 /**

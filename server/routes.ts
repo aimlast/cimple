@@ -1726,6 +1726,9 @@ Return JSON only.`,
             // The question on screen is final and its chips are ready: the
             // seller can answer while the turn finishes saving.
             onReady: (ready) => send({ type: "ready", ...ready }),
+            // The goodbye on screen ends the interview: the answer box closes
+            // while the turn saves.
+            onEnding: () => send({ type: "ending" }),
           },
         );
         send({ type: "done", result: await interviewResultFor(req, dealId, result) });

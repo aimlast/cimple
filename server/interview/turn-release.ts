@@ -76,16 +76,29 @@ export function forcedGoodbye(message: string): { message: string; questionRemov
 }
 
 /**
- * The text a forced goodbye will be saved with — exactly what the end of the
- * turn produces (question removed, the seller-facing polish for a closing,
- * promises reworded as the broker's) — or null when an output guard would
- * still rewrite it (it names the agent's machinery, states a legal rule as
- * fact, or makes an add-back / SDE call): that one is held until final.
+ * The text a goodbye will be saved with — exactly what the end of the turn
+ * produces (a forced goodbye's question removed, the seller-facing polish —
+ * for a closing when the turn ends — and promises reworded as the
+ * broker's) — or null when an output guard would still rewrite it (it names
+ * the agent's machinery, states a legal rule as fact, or makes an add-back /
+ * SDE call): that one is held until final.
+ *  - forced (default): the seller's stop forces the end — the question the
+ *    model slipped in goes;
+ *  - otherwise a message that asks nothing, on a turn that ends (closing)
+ *    or on a stop's turn the model carries on without a question
+ *    (closing: false).
  */
-export function closingText(raw: string, ctx: PolishContext, sellerMessage: string): string | null {
-  const bare = forcedGoodbye(raw).message;
+export function closingText(
+  raw: string,
+  ctx: PolishContext,
+  sellerMessage: string,
+  opts: { forced?: boolean; closing?: boolean } = {},
+): string | null {
+  const forced = opts.forced ?? true;
+  if (!forced && asksQuestion(raw)) return null;
+  const bare = forced ? forcedGoodbye(raw).message : raw;
   if (normalisationCallIn(bare, sellerMessage).length > 0) return null;
-  const polished = polishMessage(bare, ctx, { closing: true }).message;
+  const polished = polishMessage(bare, ctx, { closing: opts.closing ?? true }).message;
   if (leaksInternalMachinery(polished) || findLegalAssertions(polished).length > 0) return null;
   return scrubClosingPromises(polished);
 }
@@ -123,10 +136,14 @@ export function outputGuardProblems(polished: string, raw: string, sellerMessage
 /**
  * A fingerprint of everything a new session's opening is written from —
  * the facts, the sources (and their visibility), the answered sessions, the
- * open discrepancies and tasks, the broker's outline, the questionnaire.
- * Stored on the session with its opening; an opening the seller never
- * answered is reused while the fingerprint is unchanged (a returning seller
- * who left without answering used to wait 25–60s for a fresh one). Pure.
+ * open discrepancies and tasks, the broker's outline, the questionnaire,
+ * who conducts the session (the seller alone, or the broker with the seller
+ * — a different opening), and the source review and on-file evidence as
+ * they had landed (an opening written before a review finished doesn't
+ * know its conflicts). Stored on the session with its opening; an opening
+ * the seller never answered is reused while the fingerprint is unchanged (a
+ * returning seller who left without answering used to wait 25–60s for a
+ * fresh one). Pure.
  */
 export function openingBasis(input: {
   extractedInfo: unknown;
@@ -136,7 +153,22 @@ export function openingBasis(input: {
   sessions: Array<{ id: string; messages: unknown }>;
   openDiscrepancies: Array<{ id: string; status?: string | null }>;
   tasks: Array<{ id: string; status?: string | null }>;
+  conductedBy?: string | null;
+  conductedVia?: string | null;
+  /** deals.interview_source_review as the opening saw it. */
+  sourceReview?: unknown;
+  /** deals.interview_evidence as the opening saw it. */
+  evidence?: unknown;
 }): string {
+  // (A stored review or evidence build is identified by what it was built
+  // from and when — its content can be large. A failed one adds nothing
+  // the opening could have used.)
+  const stamp = (v: unknown) => {
+    if (!v || typeof v !== "object") return null;
+    const o = v as Record<string, unknown>;
+    if (o.status === "failed") return null;
+    return [o.version ?? null, o.fingerprint ?? null, o.computedAt ?? null];
+  };
   const answered = input.sessions
     .map((s) => ({ id: s.id, answers: (Array.isArray(s.messages) ? s.messages : []).filter((m: any) => m?.role === "user").length }))
     .filter((s) => s.answers > 0)
@@ -150,6 +182,9 @@ export function openingBasis(input: {
     answered.map((s) => [s.id, s.answers]),
     byId(input.openDiscrepancies).map((d) => [d.id, d.status ?? ""]),
     byId(input.tasks).map((t) => [t.id, t.status ?? ""]),
+    [input.conductedBy ?? "seller", input.conductedVia ?? ""],
+    stamp(input.sourceReview),
+    stamp(input.evidence),
   ]);
   return createHash("sha1").update(payload).digest("hex").slice(0, 20);
 }

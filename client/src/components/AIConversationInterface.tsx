@@ -269,6 +269,10 @@ export function AIConversationInterface({
   // and "why we ask this" (the "ready" event) — they show while the turn
   // finishes saving, so a seller can pick a chip right away.
   const [turnReady, setTurnReady] = useState(false);
+  // True once the server says the goodbye on screen ends the interview (the
+  // "ending" event): nothing is asked, so the answer box closes while the
+  // turn saves — an answer typed then would never be sent.
+  const [turnEnding, setTurnEnding] = useState(false);
   const queuedSendRef = useRef<QueuedSend | null>(null);
   const [queuedSend, setQueuedSend] = useState(false);
   // Where a new session's opening is (streamed by /start) — shown while it loads.
@@ -643,6 +647,7 @@ export function AIConversationInterface({
     setSuggestedAnswers([]); // Clear chips while waiting for AI response
     setSelectedAnswer(null);
     setTurnReady(false);
+    setTurnEnding(false);
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -726,6 +731,9 @@ export function AIConversationInterface({
             );
             if (!queuedSendRef.current) setSuggestedAnswers(Array.isArray(evt.suggestedAnswers) ? evt.suggestedAnswers : []);
             setTurnReady(true);
+          } else if (evt.type === "ending") {
+            // The goodbye on screen ends the interview: nothing to answer.
+            setTurnEnding(true);
           } else if (evt.type === "done") {
             result = evt.result as TurnResult;
           } else if (evt.type === "error") {
@@ -812,6 +820,7 @@ export function AIConversationInterface({
       setIsLoading(false);
       setIsStreaming(false);
       setTurnReady(false);
+      setTurnEnding(false);
     }
   }, [input, editing, isFinished, isLoading, isStreaming, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
 
@@ -842,6 +851,7 @@ export function AIConversationInterface({
       setIsLoading(false);
       setIsStreaming(false);
       setTurnReady(false);
+      setTurnEnding(false);
     }
     // An answer waiting behind the cancelled turn is not sent either.
     const waiting = queuedSendRef.current;
@@ -1571,6 +1581,8 @@ export function AIConversationInterface({
                 placeholder={
                   together
                     ? (isRecording ? "Listening… the seller can answer now" : isLoading ? "Waiting…" : "Seller's answer — press the mic while they talk, or type what they said")
+                    : turnEnding
+                    ? "Wrapping up…"
                     : isRecording
                     ? "Listening... speak now"
                     : queuedSend
@@ -1585,8 +1597,9 @@ export function AIConversationInterface({
                 }
                 className="resize-none min-h-[56px] text-sm"
                 // Typing opens as soon as the question is on screen — the
-                // server finishing the turn doesn't hold the seller up.
-                disabled={isLoading && !isStreaming}
+                // server finishing the turn doesn't hold the seller up. (Not
+                // after a goodbye that ends the interview — nothing to answer.)
+                disabled={(isLoading && !isStreaming) || turnEnding}
                 data-testid="input-message"
               />
               <div className="flex flex-col gap-1.5">
@@ -1594,7 +1607,7 @@ export function AIConversationInterface({
                   onClick={toggleRecording}
                   size="icon"
                   variant={isRecording ? "destructive" : "outline"}
-                  disabled={isFinished || (isLoading && !isStreaming)}
+                  disabled={isFinished || (isLoading && !isStreaming) || turnEnding}
                   className="h-8 w-8"
                   data-testid="button-mic-toggle"
                 >
@@ -1614,7 +1627,7 @@ export function AIConversationInterface({
                   <Button
                     onClick={() => void handleSend()}
                     size="icon"
-                    disabled={!input.replace(/​/g, "").trim() || queuedSend}
+                    disabled={!input.replace(/​/g, "").trim() || queuedSend || turnEnding}
                     className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
                     data-testid="button-send"
                   >
@@ -1626,7 +1639,9 @@ export function AIConversationInterface({
 
             <div className="max-w-3xl mx-auto mt-1.5 flex justify-between items-center">
               <span className="text-[10px] text-muted-foreground/60" data-testid="status-composer-hint">
-                {queuedSend
+                {turnEnding
+                  ? "Saving everything you shared…"
+                  : queuedSend
                   ? "Sending your answer as soon as the last reply is saved…"
                   : editing
                   ? "Enter to send your correction · Esc to cancel"

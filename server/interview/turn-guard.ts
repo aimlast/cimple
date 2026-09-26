@@ -2,7 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type ExtractedField } from "./response-schema";
 import type { SystemBlock } from "./system-prompt";
 import { guardNormalisationFields } from "./reply-guards";
-import { headSoFar, type StreamHead } from "./stream-head";
+import { endSoFar, headSoFar, type StreamHead } from "./stream-head";
 
 /**
  * turn-guard
@@ -314,9 +314,17 @@ export async function callInterviewWithRecovery(
    *    facts, reasoning, tasks) is still being generated;
    *  - headOnly: the caller uses only the head (a wording rewrite) — the
    *    call stops there and the result is marked `headOnly`: its tail is
-   *    defaults, never to be used (the caller keeps the draft's).
+   *    defaults, never to be used (the caller keeps the draft's);
+   *  - onEnd: called once the model's end decision (shouldEnd, endReason)
+   *    is in the stream and the message approved — a goodbye can then be
+   *    shown while the tail is still being generated. The final parse
+   *    stays authoritative.
    */
-  hooks: { onHead?: (head: StreamHead) => void; headOnly?: boolean } = {},
+  hooks: {
+    onHead?: (head: StreamHead) => void;
+    headOnly?: boolean;
+    onEnd?: (end: { shouldEnd: boolean; endReason?: string }) => void;
+  } = {},
 ): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean; headOnly?: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
@@ -365,6 +373,7 @@ export async function callInterviewWithRecovery(
     let emitted = 0;
     let checked = false;
     let headDone = !hooks.onHead && !hooks.headOnly;
+    let endDone = !hooks.onEnd;
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
@@ -410,6 +419,18 @@ export async function callInterviewWithRecovery(
             }
           }
         }
+        // The end decision, once the message is out (and approved, when checked).
+        if (!endDone && msg?.complete && (checked || !onMessageComplete)) {
+          const end = endSoFar(jsonBuf);
+          if (end.known) {
+            endDone = true;
+            try {
+              hooks.onEnd?.({ shouldEnd: end.shouldEnd === true, endReason: end.endReason });
+            } catch (err) {
+              console.warn("[turn-guard] end hook failed — continuing:", err);
+            }
+          }
+        }
       }
     }
 
@@ -430,7 +451,7 @@ export async function callInterviewWithRecovery(
     // (A client without streaming — a test double — gets the plain call; a
     // head-only caller then simply receives the whole response.)
     const canStream = typeof (anthropic.messages as { stream?: unknown }).stream === "function";
-    const first = canStream && (onDelta || hooks.onHead || hooks.headOnly)
+    const first = canStream && (onDelta || hooks.onHead || hooks.headOnly || hooks.onEnd)
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
     if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };

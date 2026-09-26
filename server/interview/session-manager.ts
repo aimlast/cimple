@@ -32,6 +32,7 @@ import {
   callInterviewWithRecovery,
   normalizeInterviewResponse,
   governCompletion,
+  type GovernanceResult,
   buildStopSignalNudge,
   buildClosingAnswerNudge,
   scrubClosingPromises,
@@ -552,7 +553,10 @@ async function startOrResumeSessionOnce(
   // A returning seller's opening they never answered (they left, or a later
   // page visit closed it) is theirs again when nothing it was written from
   // has changed — shown at once instead of writing a new one (25–60s).
-  const basisNow = () =>
+  // (Who conducts the session is part of it: "Interview together" never
+  // reopens an opening written for the seller alone, or the reverse. A start
+  // that names no mode carries the last session's on, as a new one would.)
+  const basisNow = (mode: { by?: string | null; via?: string | null }) =>
     openingBasis({
       extractedInfo: deal!.extractedInfo,
       questionnaireData: deal!.questionnaireData,
@@ -561,12 +565,20 @@ async function startOrResumeSessionOnce(
       sessions: existingSessions,
       openDiscrepancies,
       tasks,
+      conductedBy: mode.by,
+      conductedVia: mode.via,
+      sourceReview: (deal as { interviewSourceReview?: unknown }).interviewSourceReview,
+      evidence: (deal as { interviewEvidence?: unknown }).interviewEvidence,
     });
   const reusableOpening = (s: InterviewSession | undefined): boolean => {
     if (!s || !unansweredOpening(s)) return false;
-    const stored = (s.extractedInfo as Record<string, unknown> | null)?._openingBasis;
+    const meta = (s.extractedInfo as Record<string, unknown> | null) ?? {};
+    const stored = meta._openingBasis;
+    const mode = opts.conductedBy
+      ? { by: opts.conductedBy, via: opts.conductedVia }
+      : { by: meta._conductedBy as string | undefined, via: meta._conductedVia as string | undefined };
     const at = Date.parse(String((s.messages as ConversationMessage[])[0]?.timestamp ?? ""));
-    return typeof stored === "string" && stored === basisNow() && !Number.isNaN(at) && Date.now() - at < OPENING_REUSE_MS;
+    return typeof stored === "string" && stored === basisNow(mode) && !Number.isNaN(at) && Date.now() - at < OPENING_REUSE_MS;
   };
   if (!session && opts.resume && existingSessions[0]?.status === "completed" && reusableOpening(existingSessions[0])) {
     const again = existingSessions[0];
@@ -587,7 +599,11 @@ async function startOrResumeSessionOnce(
     // and create a fresh session with returning-seller context — unless
     // nothing that opening was written from has changed (then it stands).
     const hasCompletedSession = existingSessions.some((s) => s.status === "completed" && s.id !== session!.id);
-    if (messages.length === 0) {
+    // An unanswered opening written for the other mode (the seller alone vs
+    // "Interview together") is rewritten in place for the mode asked for.
+    const storedMode = ((session.extractedInfo as Record<string, unknown> | null)?._conductedBy as string | undefined) ?? "seller";
+    const modeChanged = !!opts.conductedBy && opts.conductedBy !== storedMode;
+    if (messages.length === 0 || (userMessageCount === 0 && modeChanged && !hasCompletedSession)) {
       reuseSessionId = session.id;
     } else if (userMessageCount === 0 && hasCompletedSession && !reusableOpening(session)) {
       await db
@@ -749,6 +765,11 @@ async function startOrResumeSessionOnce(
     | undefined;
   const priorConfidenceLevels =
     (priorMeta?._confidenceLevels as Record<string, string> | undefined) ?? {};
+  // Who conducts the new session — the opening is written for it (a spoken
+  // question when the broker reads it aloud) and it is part of the
+  // opening's basis (reusableOpening).
+  const openingMode: ConductedBy = opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller";
+  kb.conductedBy = openingMode;
 
   // The prior session's ledger (carried over — see below) and the items the
   // sources put on the agenda (conflicts, flagged risks), so the opening can
@@ -867,7 +888,7 @@ async function startOrResumeSessionOnce(
     questionsAsked: 1,
     lastActivityAt: new Date(),
     extractedInfo: {
-      _conductedBy: opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller",
+      _conductedBy: openingMode,
       ...(opts.conductedVia ? { _conductedVia: opts.conductedVia } : {}),
       _industryContext: seededIndustryContext,
       _deferredTopics: deferralTopicStrings(seededLedger),
@@ -878,7 +899,7 @@ async function startOrResumeSessionOnce(
       // the agent re-verify answers the seller already gave.
       _confidenceLevels: priorConfidenceLevels,
       // What this opening was written from (reused while unchanged — see reusableOpening).
-      _openingBasis: basisNow(),
+      _openingBasis: basisNow({ by: openingMode, via: opts.conductedVia }),
     },
   };
   if (reuseSessionId) {
@@ -952,6 +973,13 @@ export async function processTurn(
      * finishes. The returned TurnResult carries the same values.
      */
     onReady?: (ready: TurnReady) => void;
+    /**
+     * Streamed turns: called once when the goodbye on screen ends the
+     * interview for certain (a forced goodbye, or one governance already
+     * allowed) — nothing is asked, so the answer box can close while the
+     * turn saves (an answer typed meanwhile would never be sent).
+     */
+    onEnding?: () => void;
   } = {},
 ): Promise<TurnResult> {
   // The seller's message is timestamped when it arrives, not when the AI
@@ -1459,8 +1487,25 @@ export async function processTurn(
   let releasedBy: "gate" | "fix" | null = null;
   /** The model's own text of the reply released (before the seller-facing pass). */
   let approvedDraft: string | null = null;
-  /** The output guards' rewrite of a held draft, started at the gate (startOutputFix). */
-  let outputFix: Promise<InterviewResponse | null> | null = null;
+  /**
+   * Streamed calls are numbered (streamedCall): what the gate released, an
+   * output fix and a held message belong to the call that produced them —
+   * a continuation started at the gate runs while the first call's tail is
+   * still being written.
+   */
+  let callSeq = 0;
+  /** The call whose text is on screen. */
+  let releasedIn = 0;
+  /** The output guards' rewrite of a held draft, started at the gate (startOutputFix), with its call. */
+  let outputFix: { call: number; run: Promise<InterviewResponse | null> } | null = null;
+  /** The last draft the gate let through without showing it (a goodbye, an answer), with its call — see onEnd. */
+  let heldEnd: { text: string; call: number } | null = null;
+  type EndShown = { call: number; endReason?: string };
+  type EarlyContinuation = { verdict: GovernanceResult; run: Promise<{ response: InterviewResponse; degraded: boolean } | null> };
+  /** A goodbye shown as soon as the model's end decision was in (onEnd): the end stands. */
+  let endShown: EndShown | null = null;
+  /** The continuation of an end certain to be blocked, started at the gate (onEnd). */
+  let earlyContinuation: EarlyContinuation | null = null;
   /** Bumped when a new draft replaces the one an output fix was started for. */
   let outputFixToken = 0;
   /** What the seller was given to answer with (the "ready" event), once sent. */
@@ -1475,6 +1520,17 @@ export async function processTurn(
     const stored = questionLabels(kb, l.importance, l.targetSection);
     return { message, whyItMatters: l.whyItMatters, importance: stored.importance, targetSection: stored.targetSection, suggestedAnswers: chips };
   };
+  let endingSent = false;
+  /** The goodbye on screen ends the interview for certain (see opts.onEnding). */
+  const announceEnding = () => {
+    if (endingSent) return;
+    endingSent = true;
+    try {
+      opts.onEnding?.();
+    } catch {
+      // display only
+    }
+  };
   const emitReady = (r: TurnReady) => {
     if (ready) return;
     ready = r;
@@ -1487,7 +1543,7 @@ export async function processTurn(
   };
   let pendingFindings: ReaskFinding[] = [];
   const earlyFindings: ReaskFinding[] = [];
-  const checkMessage = async (text: string): Promise<boolean> => {
+  const checkMessage = async (text: string, call: number): Promise<boolean> => {
     // The classifier started with this call and is normally back by now;
     // a draft written for the wrong intent is stopped here, unseen.
     timer.mark("message");
@@ -1496,6 +1552,9 @@ export async function processTurn(
       intentRecallPending = true;
       return false;
     }
+    // (A draft let through unseen may still be shown once the model's end
+    // decision is in — see onEnd.)
+    heldEnd = { text, call };
     // A stop's turn is released only once nothing later can change it: the
     // classifier's reading is in (the stop state is final — resolveStopState
     // is the rule applied after the call too), and no guard that re-calls
@@ -1513,14 +1572,17 @@ export async function processTurn(
         if (goodbye) {
           shown.release(goodbye);
           releasedBy = "gate";
+          releasedIn = call;
           approvedDraft = text;
           timer.mark("shown");
+          announceEnding();
         }
         return true;
       }
-      // A goodbye the model may still end on is governance's call (shown when final).
+      // A goodbye the model may still end on: shown once its end decision
+      // is in (onEnd), else when the turn is final.
       if (!asksQuestion(text)) return true;
-    } else if (!/\?/.test(text)) return true; // shown when the turn is final
+    } else if (!/\?/.test(text)) return true; // shown once the end decision is in (onEnd), else when the turn is final
     // A draft a later guard will rewrite is held too (shown, fixed, when the
     // turn is final) — never released and then swapped on screen: a
     // valuation leak, the agent's machinery or a legal claim stated as fact
@@ -1536,7 +1598,7 @@ export async function processTurn(
       const polishedDraft = polishMessage(text, polishCtx).message;
       const problems = outputGuardProblems(polishedDraft, text, sellerMessage);
       if (onDelta && !stopTurn && !retractionRecallPossible(intentNow) && !(valuationFishing && valuationLeak(text)) && problems.length > 0) {
-        outputFix = startOutputFix(text, polishedDraft, problems);
+        outputFix = { call, run: startOutputFix(text, polishedDraft, problems, call) };
       }
       return true;
     }
@@ -1549,13 +1611,18 @@ export async function processTurn(
     // forces a second rewrite); on the first draft every candidate goes to
     // the supporting model, which decides (past STREAM_CHECK_TIMEOUT_MS only
     // the strong mechanical matches stand).
-    const candidates = findReasks(text, { ...reaskCtx, liveConflicts: reaskCtx.liveConflicts ?? [] });
+    // A stop's one closing question is never turned into a reconcile of a
+    // figure the seller just gave (the live claim check started before the
+    // classifier found the stop): no live conflicts on a stop's turn — as
+    // after the call (see RE-ASK GUARD).
+    const liveKnown = stopTurn ? [] : reaskCtx.liveConflicts;
+    const candidates = findReasks(text, { ...reaskCtx, liveConflicts: liveKnown ?? [] });
     const gateStart = Date.now();
     const [checked, live] = await Promise.all([
       reaskAttempt > 0 ? Promise.resolve(sureFindings(candidates)) : confirmFindings(candidates, text, undefined, STREAM_CHECK_TIMEOUT_MS),
-      reaskCtx.liveConflicts ? Promise.resolve(null) : liveClaimsWithin(liveClaimsRun, LIVE_GATE_WAIT_MS),
+      liveKnown ? Promise.resolve(null) : liveClaimsWithin(liveClaimsRun, LIVE_GATE_WAIT_MS),
     ]);
-    const claimsPending = !live && !reaskCtx.liveConflicts;
+    const claimsPending = !live && !liveKnown;
     if (live) reaskCtx.liveConflicts = live;
     let found = [...checked, ...liveConflictFindings(live ?? [], text, checked)];
     console.log(`[session-manager] Stream gate: ${Date.now() - gateStart}ms (${candidates.filter((f) => f.verify).length} candidate(s)${claimsPending ? "; claim check still running — left to the ledger" : ""})`);
@@ -1567,13 +1634,14 @@ export async function processTurn(
       pendingFindings = found;
       return false;
     }
-    releaseQuestion(text, polishMessage(text, polishCtx), stopTurn, "gate");
+    releaseQuestion(text, polishMessage(text, polishCtx), stopTurn, "gate", call);
     return true;
   };
   /** Shows an approved question (a stop's closing question keeps no promise the platform can't keep — the rewording the end of the turn applies). */
-  const releaseQuestion = (raw: string, polished: { message: string; report: PolishReport }, stopTurn: boolean, source: "gate" | "fix") => {
+  const releaseQuestion = (raw: string, polished: { message: string; report: PolishReport }, stopTurn: boolean, source: "gate" | "fix", call: number) => {
     gatePolish = polished;
     releasedBy = source;
+    releasedIn = call;
     approvedDraft = raw;
     shown.release(stopTurn ? scrubClosingPromises(polished.message) : polished.message);
     timer.mark("shown");
@@ -1623,10 +1691,14 @@ export async function processTurn(
         emitReady(readyOf(message, labelled, chips));
       });
   };
-  const onHead = (head: StreamHead) => {
+  const onHead = (head: StreamHead, call: number) => {
     // (Only for the draft the gate released — never a held draft's head.)
-    if (releasedBy !== "gate" || head.message === undefined) return;
+    if (releasedBy !== "gate" || releasedIn !== call || head.message === undefined) return;
     timer.mark("head");
+    // A model that wrote its facts before the chips: the head has none of
+    // its own, and generic ones would replace them in the saved turn — the
+    // ready event then comes from the whole response (see settleCall).
+    if (head.suggestedAnswers === undefined) return;
     prepareReady(normalizeInterviewResponse(head).response);
   };
   /**
@@ -1634,13 +1706,17 @@ export async function processTurn(
    * stream gate (head only — a wording rewrite). Its question is checked
    * like any question at the gate (re-asks, a figure the file contradicts,
    * the output guards' own criteria) and, if clean, shown at once with its
-   * chips; the turn then adopts it after the draft's tail (see OUTPUT FIX
-   * below) and the output guards find nothing left to fix. Anything short
-   * of clean returns null and the turn runs as before (the after-the-fact
-   * re-ask guard, the output guards' rewrite).
+   * chips; the call that held the draft then adopts it after the draft's
+   * tail (settleCall — the first draft, an intent re-call or a governance
+   * continuation alike) and the output guards find nothing left to fix.
+   * Anything short of clean returns null and the turn runs as before (the
+   * after-the-fact re-ask guard, the output guards' rewrite). Written from
+   * the conversation the draft was written from (a continuation's override
+   * included).
    */
-  const startOutputFix = (raw: string, polished: string, problems: string[]): Promise<InterviewResponse | null> => {
+  const startOutputFix = (raw: string, polished: string, problems: string[], call: number): Promise<InterviewResponse | null> => {
     const token = ++outputFixToken;
+    const base = [...conversation];
     return (async () => {
       timer.mark("fix_start");
       const res = await callInterviewWithRecovery(
@@ -1648,7 +1724,7 @@ export async function processTurn(
         {
           ...callParams,
           messages: [
-            ...apiMessages,
+            ...base,
             { role: "assistant" as const, content: problems.includes("normalisation") ? raw : polished },
             { role: "user" as const, content: outputGuardCorrection(problems, findLegalAssertions(polished), normalisationCallIn(raw, sellerMessage), false) },
           ],
@@ -1671,7 +1747,7 @@ export async function processTurn(
       // (Superseded meanwhile — the turn moved on to another draft — or
       // something is already on screen: not shown.)
       if (found.length > 0 || shown.released || token !== outputFixToken) return null;
-      releaseQuestion(res.response.message, candidate, false, "fix");
+      releaseQuestion(res.response.message, candidate, false, "fix", call);
       prepareReady({ ...res.response });
       return res.response;
     })().catch((err) => {
@@ -1680,10 +1756,150 @@ export async function processTurn(
     });
   };
   let conversation = [...apiMessages];
-  /** The streamed call with the gate's rewrites (a draft the gate stops is redone, streamed, from where it stopped). */
-  const streamedCall = async () => {
-    const hooks = shown.streaming ? { onHead } : {};
-    let res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, shown.streaming ? checkMessage : undefined, hooks);
+  // COMPLETION GOVERNANCE, the one rule (governCompletion): may the model's
+  // end stand, given the facts `info` and the deferral `ledger`? Applied
+  // after the call with this turn's changes (see below), and at the stream
+  // gate with the facts and ledger as they were before this turn (onEnd) —
+  // the stricter reading: a turn only adds facts and deferrals.
+  const endVerdict = (p: { info: Record<string, unknown>; ledger: DeferralEntry[]; endReason?: string; stopNow: boolean; intent: SellerIntent }): GovernanceResult => {
+    const prospectiveKb = assembleKnowledgeBase(
+      { ...deal, extractedInfo: p.info } as typeof deal,
+      documents,
+      tasks,
+      session,
+      resolvedDiscrepancies,
+      kbExtras,
+    );
+    return governCompletion({
+      shouldEnd: true,
+      endReason: p.endReason,
+      sellerMessage,
+      userTurnCount,
+      // Deferred/declined critical sections count as addressed — blocking an
+      // end over a topic the seller set aside orders the model to re-press
+      // it, contradicting the decline ban rendered in the same prompt.
+      sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({
+        key: s.key,
+        status:
+          s.status === "missing" && ledgerAddressed(s.key) ? ("partial" as const) : s.status,
+      })),
+      deferredTopics: deferralTopicStrings(p.ledger),
+      minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
+      // Only a stop THIS turn — or the answer to the one closing question a
+      // stop on the previous turn allowed — permits an early end. A seller
+      // who then says they'd rather keep going ("let's continue", "I've got
+      // a few more minutes") has withdrawn it; an older stop never counts
+      // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
+      sellerStopDetected: p.stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage) && !p.intent.continueRequest),
+      // The model's own "seller asked to stop" corroborates only when the
+      // classifier gave no verdict — and never when the seller just said
+      // they want to keep going.
+      intentStop: p.intent.continueRequest ? "none" : p.intent.via === "model" ? (p.intent.stop !== "none" ? "stop" : "none") : "unavailable",
+      // Critical checklist items, seller-only topics, critical conflicts and
+      // flagged risks not yet discussed or deferred. (A very long interview
+      // is no longer held open for them — the seller's patience wins.)
+      blockingItems: userTurnCount < MAX_TURNS_HELD_OPEN
+        ? completionBlockers({
+            sectionCoverage: prospectiveKb.sectionCoverage,
+            criticalSections: criticalSectionSet(prospectiveKb),
+            info: prospectiveKb.extractedInfo as Record<string, unknown>,
+            ledger: p.ledger,
+            exchanges: allExchanges,
+            conflicts: kb.sourceConflicts,
+            risks: kb.flaggedRisks,
+            onFileTopics: prospectiveKb.onFileTopics,
+            // A deferral or "resolved" the agent records in this very turn
+            // counts only if this turn's exchange was about it — parking
+            // every open item in the goodbye message is not covering it.
+            now: { turn: userTurnCount, lastQuestion: prevAiMessage ? questionPart(prevAiMessage) : undefined, sellerMessage },
+          })
+        : [],
+    });
+  };
+  /** The governance continuation: the model goes on into the gap instead of ending (streamed through the same gate). */
+  const continuationCall = (goodbye: string, verdict: GovernanceResult) => {
+    conversation = [
+      ...apiMessages,
+      { role: "assistant" as const, content: goodbye },
+      { role: "user" as const, content: verdict.continuationInstruction! },
+    ];
+    reaskAttempt = 0;
+    pendingFindings = [];
+    return streamedCall("continuation");
+  };
+  // END AT THE GATE: a draft the gate let through unseen because it asks
+  // nothing (a goodbye; on a stop's turn, a reply that carries on without a
+  // question) waited for the whole turn — the ~5K-character tail, then
+  // governance (round A: a closing the model chose took 55–60s with nothing
+  // on screen). The model's end decision now comes right after the chips
+  // (response-schema.ts), so once it is in:
+  //  - a goodbye governance allows even on the facts before this turn (a
+  //    seller's stop always does) is shown at once, exactly as the end of
+  //    the turn will save it (closingText), and the end stands;
+  //  - an end governance is certain to block (the turn floor — it doesn't
+  //    depend on what this turn records) starts its continuation now,
+  //    beside the tail, instead of after it.
+  // Anything that could still change the message — the intent isn't final
+  // or asks for a re-call, a withdrawal or valuation re-call, an output
+  // guard's rewrite — leaves it to the end of the turn, as before.
+  const onEnd = (end: { shouldEnd: boolean; endReason?: string }, call: number) => {
+    timer.mark("end");
+    const held = heldEnd;
+    if (!held || held.call !== call || shown.released || modelIntent === undefined) return;
+    const i = combineIntent(quick, modelIntent ?? null);
+    if (!intentSettled && promptMisfits(i)) return;
+    if (retractionRecallPossible(i) || (valuationFishing && valuationLeak(held.text))) return;
+    if (asksQuestion(held.text)) return;
+    const st = resolveStopState({ stopNow, stopSignalCount, stopLevel, closingAnswerTurn }, priorStopCount, i);
+    if (st.forcedEnd) return; // (released at the gate, or held for a guard)
+    if (!end.shouldEnd && !st.stopNow) return; // a reply with no question on a turn that goes on: the output guards' call
+    if (end.shouldEnd && !st.stopNow) {
+      const verdict = endVerdict({ info: existingExtracted, ledger: priorLedger, endReason: end.endReason, stopNow: false, intent: i });
+      if (!verdict.allowEnd) {
+        const certain = i.via === "model" && userTurnCount < agentConfig.interview.minTurnsBeforeEnd;
+        if (certain && !earlyContinuation && shown.streaming) {
+          console.warn(`[session-manager] Blocked premature interview end: ${verdict.blockReason} (decided at the stream gate — the turn floor; the continuation starts now)`);
+          timer.mark("continuation_start");
+          earlyContinuation = {
+            verdict,
+            run: continuationCall(held.text, verdict).catch((err) => {
+              console.warn(`[session-manager] Continuation started at the gate failed on session ${sessionId} — the turn's own governance runs:`, err?.message || err);
+              return null;
+            }),
+          };
+        }
+        return;
+      }
+    }
+    const text = closingText(held.text, polishCtx, sellerMessage, { forced: false, closing: end.shouldEnd });
+    if (!text) return;
+    shown.release(text);
+    releasedBy = "gate";
+    releasedIn = call;
+    approvedDraft = held.text;
+    timer.mark("shown");
+    if (end.shouldEnd) {
+      endShown = { call, endReason: end.endReason };
+      announceEnding();
+    }
+  };
+  /**
+   * A streamed call with the gate's rewrites (a draft the gate stops is
+   * redone, streamed, from where it stopped), settled: the output fix
+   * started for its draft adopted, and a reply already on screen kept.
+   * `continuation`: a governance continuation — its end is overruled, so
+   * its end decision releases nothing.
+   */
+  const streamedCall = async (kind: "turn" | "continuation" = "turn") => {
+    const call = ++callSeq;
+    const gate = (text: string) => checkMessage(text, call);
+    const hooks = shown.streaming
+      ? {
+          onHead: (h: StreamHead) => onHead(h, call),
+          ...(kind === "turn" ? { onEnd: (e: { shouldEnd: boolean; endReason?: string }) => onEnd(e, call) } : {}),
+        }
+      : {};
+    let res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, shown.streaming ? gate : undefined, hooks);
     while (res.rejected && !intentRecallPending) {
       earlyFindings.push(...pendingFindings);
       console.warn(
@@ -1695,49 +1911,62 @@ export async function processTurn(
         { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings) },
       ];
       reaskAttempt++;
-      res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, checkMessage, hooks);
+      res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, gate, hooks);
+    }
+    return settleCall(res, call);
+  };
+  const settleCall = async <R extends { response: InterviewResponse; degraded: boolean }>(res: R, call: number): Promise<R> => {
+    // OUTPUT FIX (startOutputFix): the held draft's corrective rewrite,
+    // written beside the draft's tail and already on screen, is the reply —
+    // with the draft's record of the turn (facts, reasoning, tasks,
+    // shouldEnd). Whichever call held the draft: the first, an intent
+    // re-call or a governance continuation.
+    const pending = outputFix?.call === call ? outputFix.run : null;
+    if (pending) {
+      const fix = await pending;
+      outputFix = null;
+      if (fix && releasedBy === "fix" && releasedIn === call) {
+        const r = res.response;
+        res.response = {
+          ...r,
+          // (A draft whose tail failed keeps the question on screen; the next
+          // turn recovers what this one didn't record.)
+          message: res.degraded ? shown.text! : fix.message,
+          suggestedAnswers: figureChipsKept(res.degraded ? shown.text! : fix.message, fix.suggestedAnswers),
+          whyItMatters: fix.whyItMatters,
+          importance: fix.importance ?? r.importance,
+          targetSection: fix.targetSection ?? r.targetSection,
+        };
+        console.warn(`[session-manager] Output guard — corrective rewrite written beside the draft and shown on session ${sessionId}`);
+      }
+    }
+    if (releasedIn !== call || !shown.released || !shown.text) return res;
+    // The model failed after the text was shown (the tail broke off): the text
+    // stays — never swapped for the fault notice. What this turn didn't
+    // record is recovered next turn (the RECOVERY NOTE reads the seller's
+    // unprocessed messages).
+    if (res.degraded && res.response.message !== shown.text) {
+      console.warn(`[session-manager] The model failed after the reply was shown on session ${sessionId} — it stays; the seller's answer is recovered next turn`);
+      res.response.message = shown.text;
+      return res;
+    }
+    if (!res.degraded && releasedBy === "gate" && approvedDraft !== null) {
+      if (res.response.message !== approvedDraft) {
+        // (A response cut off after the reply was shown is retried in full; the
+        // retry's record of the turn is used, with the reply already shown.)
+        console.warn(`[session-manager] The response was re-generated after the reply was shown on session ${sessionId} — the shown reply stays`);
+        res.response.message = approvedDraft;
+      } else if (gatePolish && !ready && !readyRun) {
+        // The head carried no chips of its own (the model wrote its facts
+        // first): the ready event comes from the whole response.
+        prepareReady(res.response);
+      }
     }
     return res;
   };
   const first = await streamedCall();
   let { response: aiResponse, degraded } = first;
   timer.mark("model_done");
-  // OUTPUT FIX (startOutputFix): the held draft's corrective rewrite, written
-  // beside the draft's tail and already on screen, is the reply — with the
-  // draft's record of the turn (facts, reasoning, tasks, shouldEnd).
-  // (Both are set from the gate's callbacks — TypeScript can't see that.)
-  const pendingFix = outputFix as Promise<InterviewResponse | null> | null;
-  if (pendingFix) {
-    const fix = await pendingFix;
-    outputFix = null;
-    if (fix && (releasedBy as string | null) === "fix") {
-      aiResponse = {
-        ...aiResponse,
-        // (A draft whose tail failed keeps the question on screen; the next
-        // turn recovers what this one didn't record.)
-        message: degraded ? shown.text! : fix.message,
-        suggestedAnswers: fix.suggestedAnswers,
-        whyItMatters: fix.whyItMatters,
-        importance: fix.importance ?? aiResponse.importance,
-        targetSection: fix.targetSection ?? aiResponse.targetSection,
-      };
-      aiResponse.suggestedAnswers = figureChipsKept(aiResponse.message, aiResponse.suggestedAnswers);
-      console.warn(`[session-manager] Output guard — corrective rewrite written beside the draft and shown on session ${sessionId}`);
-    }
-  }
-  // The model failed after the text was shown (the tail broke off): the text
-  // stays — never swapped for the fault notice. What this turn didn't
-  // record is recovered next turn (the RECOVERY NOTE reads the seller's
-  // unprocessed messages).
-  if (degraded && shown.released && shown.text && aiResponse.message !== shown.text) {
-    console.warn(`[session-manager] The model failed after the reply was shown on session ${sessionId} — it stays; the seller's answer is recovered next turn`);
-    aiResponse.message = shown.text;
-  } else if (!degraded && approvedDraft !== null && (releasedBy as string | null) === "gate" && aiResponse.message !== approvedDraft) {
-    // (A response cut off after the reply was shown is retried in full; the
-    // retry's record of the turn is used, with the reply already shown.)
-    console.warn(`[session-manager] The response was re-generated after the reply was shown on session ${sessionId} — the shown reply stays`);
-    aiResponse.message = approvedDraft;
-  }
 
   // The turn's intent, final: the classifier's reading (it has been running
   // since before the interview call), else the patterns'.
@@ -1794,6 +2023,24 @@ export async function processTurn(
     const redo = await streamedCall();
     aiResponse = redo.response;
     degraded = redo.degraded;
+  }
+
+  // A goodbye shown as soon as the model's end decision was in (onEnd) ends
+  // the interview — even when the response that came back differs (a retry
+  // after a cut-off tail) or broke off: the seller has read the goodbye.
+  // (Both are set from the gate's callbacks — TypeScript can't see that.)
+  const goodbyeShown = endShown as EndShown | null;
+  const early = earlyContinuation as EarlyContinuation | null;
+  if (goodbyeShown && releasedIn === goodbyeShown.call && !aiResponse.shouldEnd) {
+    console.warn(`[session-manager] The goodbye shown on session ${sessionId} ends the interview — the response's own end decision changed after it was shown`);
+    aiResponse.shouldEnd = true;
+    aiResponse.endReason = aiResponse.endReason || goodbyeShown.endReason || "Interview complete";
+  }
+  // The first draft's tail broke off while the continuation started at the
+  // gate ran: what that continuation put on screen stays.
+  if (degraded && early) {
+    await early.run;
+    if (shown.released && shown.text) aiResponse.message = shown.text;
   }
 
   // Degraded turn + stop signal: honor the stop WITHOUT a model call — the
@@ -1951,8 +2198,9 @@ export async function processTurn(
   // goes next: the model's shouldEnd on a turn that asks one is dropped
   // (outside a forced end), rather than ending with the question hanging
   // or — when governance blocked the end — replacing it on screen with a
-  // continuation re-call.
-  if (aiResponse.shouldEnd && !forcedEnd && shown.released && asksQuestion(shown.text ?? "")) {
+  // continuation re-call. (Not the continuation started at the gate: its
+  // question is on screen because governance already blocked this end.)
+  if (aiResponse.shouldEnd && !forcedEnd && !early && shown.released && asksQuestion(shown.text ?? "")) {
     console.log(`[session-manager] The model ended on a question already shown on session ${sessionId} — the interview carries on`);
     aiResponse.shouldEnd = false;
     aiResponse.endReason = undefined;
@@ -1993,88 +2241,41 @@ export async function processTurn(
   // definition a seller request — governance is skipped). When an end is
   // blocked, the model is re-called once with an instruction to continue into
   // the most important gap, so the seller sees a natural transition — not a
-  // dead stop.
-  if (aiResponse.shouldEnd && !forcedEnd) {
-    // A seller answer to a field that holds the broker's deal-row price is
-    // kept beside it (see the provenance block below) — count it here too.
-    // A seller answer replacing a broker-only source's value becomes the
-    // seller's own (as the provenance block below records it), so the
-    // interview's view counts it.
-    const prospectiveInfo: Record<string, unknown> = applyTurn();
-    const priorSourcesNow = getFieldSources(existingExtracted);
-    for (const c of changes) {
-      if (isDealRowFact(existingExtracted, c.fieldName)) {
-        recordAlternate(prospectiveInfo, c.fieldName, c.newValue, { source: "interview", at: new Date().toISOString() });
-      } else if (priorSourcesNow[c.fieldName]?.source !== "broker") {
-        setFieldSource(prospectiveInfo, c.fieldName, { source: "interview", at: new Date().toISOString() });
+  // dead stop. (An end certain to be blocked had that continuation started
+  // at the stream gate — earlyContinuation; an end shown at the gate was
+  // allowed there on the facts before this turn and stands.)
+  if (!degraded && (early || (aiResponse.shouldEnd && !forcedEnd))) {
+    let verdict: GovernanceResult | null = null;
+    if (aiResponse.shouldEnd && !forcedEnd) {
+      // A seller answer to a field that holds the broker's deal-row price is
+      // kept beside it (see the provenance block below) — count it here too.
+      // A seller answer replacing a broker-only source's value becomes the
+      // seller's own (as the provenance block below records it), so the
+      // interview's view counts it.
+      const prospectiveInfo: Record<string, unknown> = applyTurn();
+      const priorSourcesNow = getFieldSources(existingExtracted);
+      for (const c of changes) {
+        if (isDealRowFact(existingExtracted, c.fieldName)) {
+          recordAlternate(prospectiveInfo, c.fieldName, c.newValue, { source: "interview", at: new Date().toISOString() });
+        } else if (priorSourcesNow[c.fieldName]?.source !== "broker") {
+          setFieldSource(prospectiveInfo, c.fieldName, { source: "interview", at: new Date().toISOString() });
+        }
       }
+      verdict = endVerdict({ info: prospectiveInfo, ledger, endReason: aiResponse.endReason, stopNow, intent });
     }
-    const prospectiveKb = assembleKnowledgeBase(
-      { ...deal, extractedInfo: prospectiveInfo } as typeof deal,
-      documents,
-      tasks,
-      session,
-      resolvedDiscrepancies,
-      kbExtras,
-    );
-    const verdict = governCompletion({
-      shouldEnd: aiResponse.shouldEnd,
-      endReason: aiResponse.endReason,
-      sellerMessage,
-      userTurnCount,
-      // Deferred/declined critical sections count as addressed — blocking an
-      // end over a topic the seller set aside orders the model to re-press
-      // it, contradicting the decline ban rendered in the same prompt.
-      sectionCoverage: prospectiveKb.sectionCoverage.map((s) => ({
-        key: s.key,
-        status:
-          s.status === "missing" && ledgerAddressed(s.key) ? ("partial" as const) : s.status,
-      })),
-      deferredTopics: deferralTopicStrings(ledger),
-      minTurnsBeforeEnd: agentConfig.interview.minTurnsBeforeEnd,
-      // Only a stop THIS turn — or the answer to the one closing question a
-      // stop on the previous turn allowed — permits an early end. A seller
-      // who then says they'd rather keep going ("let's continue", "I've got
-      // a few more minutes") has withdrawn it; an older stop never counts
-      // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
-      sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage) && !intent.continueRequest),
-      // The model's own "seller asked to stop" corroborates only when the
-      // classifier gave no verdict — and never when the seller just said
-      // they want to keep going.
-      intentStop: intent.continueRequest ? "none" : intent.via === "model" ? (intent.stop !== "none" ? "stop" : "none") : "unavailable",
-      // Critical checklist items, seller-only topics, critical conflicts and
-      // flagged risks not yet discussed or deferred. (A very long interview
-      // is no longer held open for them — the seller's patience wins.)
-      blockingItems: userTurnCount < MAX_TURNS_HELD_OPEN
-        ? completionBlockers({
-            sectionCoverage: prospectiveKb.sectionCoverage,
-            criticalSections: criticalSectionSet(prospectiveKb),
-            info: prospectiveKb.extractedInfo as Record<string, unknown>,
-            ledger,
-            exchanges: allExchanges,
-            conflicts: kb.sourceConflicts,
-            risks: kb.flaggedRisks,
-            onFileTopics: prospectiveKb.onFileTopics,
-            // A deferral or "resolved" the agent records in this very turn
-            // counts only if this turn's exchange was about it — parking
-            // every open item in the goodbye message is not covering it.
-            now: { turn: userTurnCount, lastQuestion: prevAiMessage ? questionPart(prevAiMessage) : undefined, sellerMessage },
-          })
-        : [],
-    });
-
-    if (!verdict.allowEnd) {
-      console.warn(`[session-manager] Blocked premature interview end: ${verdict.blockReason}`);
+    if (goodbyeShown && verdict && !verdict.allowEnd) {
+      // (Should not happen: this turn only adds facts and deferrals.)
+      console.warn(`[session-manager] Governance would now block the end already shown on session ${sessionId} (${verdict.blockReason}) — the goodbye on screen stands`);
+    } else if (early || (verdict && !verdict.allowEnd)) {
+      if (early && verdict?.allowEnd) {
+        console.warn(`[session-manager] The continuation started at the gate stands on session ${sessionId} (governance now allows the end)`);
+      } else if (!early) {
+        console.warn(`[session-manager] Blocked premature interview end: ${verdict!.blockReason}`);
+      }
       // (Streamed through the same gate as the first draft: the continuation's
       // question is checked for re-asks and shown as soon as it is approved.)
-      conversation = [
-        ...apiMessages,
-        { role: "assistant" as const, content: aiResponse.message },
-        { role: "user" as const, content: verdict.continuationInstruction! },
-      ];
-      reaskAttempt = 0;
-      pendingFindings = [];
-      const { response: continued } = await streamedCall();
+      const ran = early ? await early.run : null;
+      const { response: continued } = ran ?? (await continuationCall(aiResponse.message, verdict ?? early!.verdict));
       continued.shouldEnd = false; // governance is authoritative
       // What the first reply withdrew or kept private still stands.
       continued.retractedFields = [...(aiResponse.retractedFields ?? []), ...(continued.retractedFields ?? [])];
@@ -2258,8 +2459,9 @@ export async function processTurn(
   }
   // A question the gate held: its chips are final now, and "why we ask this"
   // as soon as the labeller answers — the seller can answer while the turn
-  // saves.
-  if (!ready && rationaleRun && opts.onReady) {
+  // saves. (Not when one is already being prepared for the question on
+  // screen — from its head, its whole response or its fix.)
+  if (!ready && !readyRun && rationaleRun && opts.onReady) {
     const finalMessage = aiResponse.message;
     const chips = [...aiResponse.suggestedAnswers];
     const own = { whyItMatters: aiResponse.whyItMatters, targetSection: aiResponse.targetSection, importance: aiResponse.importance };
