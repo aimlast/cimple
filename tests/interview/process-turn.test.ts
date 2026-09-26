@@ -283,7 +283,8 @@ const TURN6 =
     const expectedYear = resolveMonthYear(9, "past", new Date());
     assert.match(String((h.deal.extractedInfo as any).practitionerForwardIntentions), new RegExp(`October ${expectedYear}`));
     assert.notEqual(h.sessions[0].extractedInfo._confidenceLevels.practitionerForwardIntentions, "confirmed");
-    assert.equal(t.whyItMatters, undefined, "a rationale for another topic is dropped");
+    // A rationale for another topic is replaced — never left empty (round V).
+    assert.ok(t.whyItMatters && !/Environmental/.test(t.whyItMatters), "a rationale for another topic is replaced, not shown");
 
     const h2 = installHarness(baseDeal(), { messages: [ai("Are there any environmental permits for the facility?")] });
     h2.script.push({
@@ -291,9 +292,9 @@ const TURN6 =
       whyItMatters: "Environmental liabilities can kill deals or require costly remediation escrows — a clean Phase I removes a common due diligence obstacle.",
     });
     const w = await processTurn("deal-1", "sess-1", "Just the air permit, which transfers with the property.");
-    assert.equal(w.whyItMatters, undefined);
+    assert.ok(w.whyItMatters && !/Environmental|Phase I/.test(w.whyItMatters), "the wrap-up question gets its own rationale");
     assert.match(w.message, /^Before we wrap/);
-    ok("in a turn: 'October 2024' → the most recent October, the grade is stripped, stale whyItMatters dropped");
+    ok("in a turn: 'October 2024' → the most recent October, the grade is stripped, a stale whyItMatters replaced");
   }
 
   // ── 8. The opening keeps its welcome ──

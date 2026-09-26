@@ -30,6 +30,7 @@ import { callInterviewWithRecovery, type InterviewCallParams } from "./turn-guar
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
 import { questionPart, questionTokens, searchSourcesTop, valuesMateriallyDiffer, sourceLabel, QUESTION_STOP, spokenFigureConflicts } from "./source-context";
 import { modelAnswerVerifier, type AnswerVerifier } from "./answer-check";
+import { selfStatedFindings } from "./reply-guards";
 import type { Document } from "@shared/schema";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
@@ -172,6 +173,8 @@ export interface ReaskContext {
   conflictKeys?: string[];
   /** The fields the model extracted this turn (for the live conflict check). */
   extractedFields?: InterviewResponse["extractedFields"];
+  /** The interviewer's own recent messages this session (asking what it just told the seller is a re-ask too). */
+  ownStatements?: string[];
 }
 
 /** Everything the draft reply re-asks (or states as settled against a document). */
@@ -322,6 +325,10 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
       findings.push({ kind: "conflict", detail: `the seller just said ${c.said}, but ${c.docName} says: «${c.snippet}»` });
     }
   }
+
+  // 5. What the interviewer itself told the seller a turn or two ago
+  //    (reply-guards.selfStatedFindings) — candidates, confirmed like 3.
+  if (question && ctx.ownStatements?.length) findings.push(...selfStatedFindings(draft, ctx.ownStatements));
 
   return findings;
 }

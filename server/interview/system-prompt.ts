@@ -5,6 +5,7 @@ import type { KnowledgeBase } from "./knowledge-base";
 import { renderKnowledgeBaseForPrompt } from "./knowledge-base";
 import { getInterviewInsightsForIndustry, renderInsightsForPrompt } from "./learning-loop";
 import { buildIndustryKnowledge, matchIndustrySection } from "./industry-loader";
+import { vocabularyPromptLines } from "./reply-polish";
 
 // Resolve paths relative to this file (works in both CJS and ESM/esbuild)
 const __dir = typeof __dirname !== "undefined"
@@ -103,8 +104,13 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
   dynamicParts.push(
     `# TODAY'S DATE: ${today}`,
     `Resolve every relative date the seller gives ("last year", "three years ago", "since COVID") against this date — never against your training data's sense of "now" — and capture resolved years with confidence "approximate" unless the seller states the year explicitly.`,
+    `Anchor every year you offer to this date: a question about something still to come ("is it scheduled for…?", "when do you expect…?") and its answer options never offer a year that has already passed.`,
     "\n---\n",
   );
+  // The business's own vocabulary (Canadian vs US terms) — reply-polish.ts
+  // also swaps any stray term mechanically.
+  const vocabulary = vocabularyPromptLines(kb);
+  if (vocabulary.length > 0) dynamicParts.push(...vocabulary, "\n---\n");
 
   // Learned patterns from past interviews in this industry (may change between
   // interviews, so kept out of the cached prefix).
