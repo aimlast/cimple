@@ -1,0 +1,232 @@
+{
+ "id": "8badfc79-82d1-4efc-81f1-eef4c8bc7da1",
+ "version": 1,
+ "status": "completed",
+ "brokerReviewedAt": null,
+ "reclassifiedBalanceSheet": {
+  "rows": [
+   {
+    "id": "row_mugzjsfu_136",
+    "name": "Cash and deposits",
+    "values": {
+     "2022": 164630,
+     "2023": 431720,
+     "2024": 642130
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_mugzjsfu_137",
+    "name": "Accounts receivable (incl. holdbacks)",
+    "values": {
+     "2022": 1268000,
+     "2023": 1392000,
+     "2024": 1486000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_mugzjsfu_138",
+    "name": "Contract assets — costs and earnings in excess of billings",
+    "values": {
+     "2022": 171000,
+     "2023": 196000,
+     "2024": 238000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_mugzjsfu_139",
+    "name": "Inventory — steel, components & consumables",
+    "values": {
+     "2022": 486000,
+     "2023": 512000,
+     "2024": 544000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_mugzjsfu_140",
+    "name": "Prepaid expenses & deposits",
+    "values": {
+     "2022": 38000,
+     "2023": 41000,
+     "2024": 46000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_mugzjsfu_141",
+    "name": "Property and equipment (net)",
+    "values": {
+     "2022": 1948000,
+     "2023": 2066000,
+     "2024": 2184000
+    },
+    "category": "Fixed Assets"
+   },
+   {
+    "id": "row_mugzjsfu_142",
+    "name": "Accounts payable & accrued liabilities",
+    "values": {
+     "2022": 712000,
+     "2023": 781000,
+     "2024": 842000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_143",
+    "name": "Contract liabilities — billings in excess of costs and earnings",
+    "values": {
+     "2022": 118000,
+     "2023": 142000,
+     "2024": 164000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_144",
+    "name": "Income taxes payable",
+    "values": {
+     "2022": 21000,
+     "2023": 29000,
+     "2024": 38000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_145",
+    "name": "Government remittances payable",
+    "values": {
+     "2022": 61000,
+     "2023": 66000,
+     "2024": 71000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_146",
+    "name": "Current portion of long-term debt",
+    "values": {
+     "2022": 262000,
+     "2023": 274000,
+     "2024": 286000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_147",
+    "name": "Long-term debt",
+    "values": {
+     "2022": 1342000,
+     "2023": 1068000,
+     "2024": 624000
+    },
+    "category": "Long-Term Liabilities"
+   },
+   {
+    "id": "row_mugzjsfu_148",
+    "name": "Share capital",
+    "values": {
+     "2022": 150950,
+     "2023": 150950,
+     "2024": 150950
+    },
+    "category": "Equity"
+   },
+   {
+    "id": "row_mugzjsfu_149",
+    "name": "Retained earnings",
+    "values": {
+     "2022": 1408680,
+     "2023": 2127770,
+     "2024": 2964180
+    },
+    "category": "Equity"
+   }
+  ],
+  "notes": [
+   "Balance sheet sourced from T2 GIFI Schedule 100 and compiled financial statements for all three years.",
+   "Accounts receivable includes statutory 10% holdbacks on commercial construction contracts: $104,000 (2023), $118,000 (2024) per accountant. May 2025 AR aging shows $122,900 in holdbacks.",
+   "Contract assets (under-billings) and contract liabilities (over-billings) reflect percentage-of-completion accounting on fixed-price contracts over $50,000. At Dec 31, 2024: contract assets $238,000, contract liabilities $164,000, net under-billed $74,000.",
+   "Property and equipment: Net book value after accumulated amortization. Gross PPE at Dec 31, 2024 = $6,524,000, accumulated amortization = $4,340,000, net = $2,184,000. Includes 2024 CNC plasma table ($468,000 cost, $448,100 NBV), 2021 CNC beam line ($486,000 cost, $358,400 NBV), and other equipment. Building and land owned by McAllister Properties Ltd. (related party) and excluded.",
+   "Long-term debt: Northreach Commercial Bank equipment term loan $1,058,000 at 4.25% fixed (matures Nov 2027) plus vehicle/equipment loans $284,000 at 4.9%-6.9% (maturing 2026-2028). Total debt Dec 31, 2024 = $910,000 ($286,000 current + $624,000 long-term). Seller made voluntary prepayment of $158,000 in 2024.",
+   "Working capital: Current assets $2,956,130 less current liabilities $1,401,000 = $1,555,130 at Dec 31, 2024. Strong liquidity position with cash $642,130 and no line of credit drawn.",
+   "Equity: Share capital unchanged (1,000 Class A common + 100 Class D common). Retained earnings grew from $1,408,680 (2022) to $2,964,180 (2024) through net income less dividends ($40,000 in 2022, $60,000 in 2023-2024).",
+   "All figures in CAD. Compilation engagement, unaudited."
+  ],
+  "years": [
+   "2022",
+   "2023",
+   "2024"
+  ]
+ },
+ "workingCapital": {
+  "notes": [
+   "Net working capital (NWC) at December 31, 2024 = Current Assets $2,956,130 less Current Liabilities $1,401,000 = $1,555,130.",
+   "NWC as % of revenue: 15.8% (2024), 15.3% (2023), 14.6% (2022). Stable and appropriate for fabrication business with 45-60 day receivables and project-based WIP.",
+   "Cash: $642,130 is strong liquidity. Seller has not drawn on line of credit in years. Excess cash above $100,000 operating minimum (~$540,000) could be distributed to seller at closing or excluded from purchase price.",
+   "Accounts receivable: $1,486,000 includes $118,000 statutory holdbacks (10% on commercial construction contracts, released 60 days after substantial completion per Alberta Prompt Payment Act). Days sales outstanding ~55 days, reasonable for customer mix (Larkspur Net 45, contractors with holdbacks).",
+   "AR quality: May 2025 aging shows 63.6% current, 22.5% 31-60 days, 2.8% 61-90 days, 3.1% over 90 days. Over-90 includes disputed Coldbrook receivable $38,700 (sent to collections March 2025, no allowance booked). Recommend $38,700 reserve or seller indemnity.",
+   "Contract assets (under-billings): $238,000 at Dec 31, 2024. Reflects percentage-of-completion accounting on fixed-price contracts over $50,000. Accountant notes buyer should review cost-to-complete estimates in diligence (not reviewed in compilation engagement). May 2025 WIP shows $3.1M backlog, 41% complete weighted average.",
+   "Inventory: $544,000 steel, plate, components, consumables. Appropriate for $9.8M revenue and $4.2M backlog. Inventory turns ~6x (COGS $6.9M / avg inventory $510K). Steel is commodity-sourced, no obsolescence risk.",
+   "Contract liabilities (over-billings): $164,000 at Dec 31, 2024. Customer deposits and progress billings ahead of costs incurred. Normal for project-based business.",
+   "Accounts payable: $842,000 includes trade payables to steel suppliers (Western Plate & Beam, Prairie Steel) and subcontractors (galvanizing, blasting). Payment terms typically Net 30. No unusual aging or disputes noted.",
+   "Current portion of long-term debt: $286,000 scheduled principal payments in 2025. Debt is assumable or can be paid off at closing (no prepayment penalties noted).",
+   "Target NWC: Recommend peg at $1,555,000 (Dec 31, 2024 level) with dollar-for-dollar adjustment at closing for actual NWC delivered. Excludes cash above $100,000 operating minimum and current portion of debt (to be paid off or assumed separately).",
+   "Working capital peg structure: Seller delivers $1,555,000 NWC at closing. If actual NWC is higher, buyer pays seller the excess; if lower, seller pays buyer the shortfall. Typical 90-day post-closing true-up based on closing balance sheet.",
+   "Seasonal considerations: Q1 is slowest (winter), Q2-Q3 busiest (agriculture pre-harvest, commercial construction season). WIP and inventory typically peak in Q2-Q3. Recommend closing in Q4 or Q1 to minimize working capital volatility.",
+   "All figures in CAD."
+  ],
+  "pegAmount": 1555000,
+  "targetNwc": 1555000,
+  "asOfPeriod": "2024-12-31",
+  "currentAssets": [
+   {
+    "name": "Cash and deposits",
+    "amount": 642130
+   },
+   {
+    "name": "Accounts receivable (incl. holdbacks)",
+    "amount": 1486000
+   },
+   {
+    "name": "Contract assets — under-billings",
+    "amount": 238000
+   },
+   {
+    "name": "Inventory — steel, components & consumables",
+    "amount": 544000
+   },
+   {
+    "name": "Prepaid expenses & deposits",
+    "amount": 46000
+   }
+  ],
+  "netWorkingCapital": 1555130,
+  "currentLiabilities": [
+   {
+    "name": "Accounts payable & accrued liabilities",
+    "amount": 842000
+   },
+   {
+    "name": "Contract liabilities — over-billings",
+    "amount": 164000
+   },
+   {
+    "name": "Income taxes payable",
+    "amount": 38000
+   },
+   {
+    "name": "Government remittances payable",
+    "amount": 71000
+   },
+   {
+    "name": "Current portion of long-term debt",
+    "amount": 286000
+   }
+  ]
+ },
+ "createdAt": "2026-09-10T19:20:00.000Z"
+}

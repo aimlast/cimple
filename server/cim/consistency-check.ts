@@ -140,11 +140,20 @@ const DATE_BEFORE_YEAR = String.raw`(?:(?:January|February|March|April|May|June|
 /** The year the text ties the figure at [index, end) to, if any ("$X (2023)", "2023: $X", "$X as of December 31, 2024"). */
 export function yearOfFigure(text: string, index: number, end: number): string | null {
   const after = text.slice(end, end + 60);
-  const a = new RegExp(String.raw`^\s*(?:\(\s*${YEAR}\s*\)|(?:[a-z]+\s+){0,2}(?:in|for|at|as of|as at|at year[- ]end)\s+(?:fiscal\s+)?${DATE_BEFORE_YEAR}${YEAR}\b)`, "i").exec(after);
+  const a = new RegExp(
+    String.raw`^\s*(?:\(\s*${YEAR}\s*\)|(?:[a-z]+\s+){0,2}(?:in|for|at|as of|as at|at year[- ]end|by(?:\s+the)?\s+(?:year[- ]end|end\s+of))\s+(?:fiscal\s+)?${DATE_BEFORE_YEAR}${YEAR}\b)`,
+    "i",
+  ).exec(after);
   if (a) return a[1] ?? a[2] ?? null;
-  const before = text.slice(Math.max(0, index - 40), index);
+  const start = Math.max(0, index - 40);
+  const before = text.slice(start, index);
   const b = new RegExp(String.raw`(?:\b${YEAR}\s*[:–-]\s*|\b(?:in|for|at|as of|as at)\s+(?:fiscal\s+)?${DATE_BEFORE_YEAR}${YEAR},?\s*(?:[a-z]+\s+){0,3})$`, "i").exec(before);
-  return b ? b[1] ?? b[2] ?? null : null;
+  if (!b) return null;
+  // A date that follows another figure is that figure's ("$7,570,000 at
+  // December 31, 2023 were reduced to $7,860,000"): never borrowed.
+  const lead = text.slice(Math.max(0, start + b.index - 30), start + b.index);
+  if (/\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million|thousand)?\s*$/i.test(lead) || /\d\s?%\s*$/.test(lead)) return null;
+  return b[1] ?? b[2] ?? null;
 }
 
 function yearsIn(text: string): string[] {
@@ -161,6 +170,8 @@ export interface CountRateMismatch {
   parts: number;
   rate: number;
   computed: number;
+  /** Every count behind the mismatch (the population and each part): what a clean-up leaves out. */
+  numbers: number[];
 }
 
 /** Rates of change or of money — never a count over a population. */
@@ -233,7 +244,13 @@ function mismatchesInGroup(group: string, extraRates: Rate[] = []): CountRateMis
       const totalParts = parts.filter((p) => p.qualifier === null);
       const sums = [totalParts.reduce((a, p) => a + p.n, 0), parts.filter((p) => p.qualifier !== null).reduce((a, p) => a + p.n, 0)].filter((x) => x > 0);
       const firstPart = Math.min(...parts.map((p) => p.at));
-      const pops = populationsIn(t, event).filter((p) => p.n >= Math.max(...sums, 1));
+      // The population is never the event itself: "60 claims" beside a claims
+      // rate, or the "45 warranty claims" a part was read from, are the
+      // counts, not what they are counted over ("… on 5,000 shipments").
+      const eventStem = stem5(event);
+      const pops = populationsIn(t, event).filter(
+        (p) => p.n >= Math.max(...sums, 1) && stem5(p.noun) !== eventStem && !allParts.some((q) => q.at === p.at),
+      );
       if (pops.length === 0 || sums.length === 0) continue;
       // The population named nearest before the counts.
       const pop = pops.filter((p) => p.at <= firstPart).pop() ?? pops[0];
@@ -243,16 +260,27 @@ function mismatchesInGroup(group: string, extraRates: Rate[] = []): CountRateMis
       });
       if (ok) continue;
       const parts0 = sums[0];
-      out.push({ phrase: group.trim(), total: pop.n, totalNoun: pop.noun, parts: parts0, rate: rate.value, computed: Math.round((parts0 / pop.n) * 1000) / 10 });
+      out.push({
+        phrase: group.trim(),
+        total: pop.n,
+        totalNoun: pop.noun,
+        parts: parts0,
+        rate: rate.value,
+        computed: Math.round((parts0 / pop.n) * 1000) / 10,
+        numbers: Array.from(new Set([pop.n, ...parts.map((p) => p.n)])),
+      });
       break;
     }
   }
   return out;
 }
 
+/** Where a fact's text breaks into groups (by-year entries, clauses, sentences); captured so a clean-up can rejoin them. */
+const GROUP_SPLIT = /(\s·\s|;\s*|\n|\.\s+(?=[A-Z0-9]))/;
+
 /** Count/rate mismatches in a piece of text, group by group (clauses and by-year entries). */
 export function countRateMismatches(text: string): CountRateMismatch[] {
-  const groups = text.split(/\s·\s|;\s*|\n|\.\s+(?=[A-Z0-9])/).filter((g) => g.trim());
+  const groups = text.split(GROUP_SPLIT).filter((g, i) => i % 2 === 0 && g.trim());
   const seen = new Set<string>();
   const out: CountRateMismatch[] = [];
   for (const g of groups) {
@@ -265,6 +293,54 @@ export function countRateMismatches(text: string): CountRateMismatch[] {
     }
   }
   return out;
+}
+
+/** Counts in a clause ("646 inspections", "1 driver OOS") — never a year, a rate or money. */
+function countsIn(clause: string): number[] {
+  return Array.from(clause.matchAll(/(?<![\d.,$])\b(\d[\d,]*)(?!\.\d)(?!\s?%)(?![\d,])/g))
+    .map((m) => Number(m[1].replace(/,/g, "")))
+    .filter((n) => !(n >= 1900 && n <= 2099));
+}
+
+/**
+ * The text with the counts that don't give their rate taken out, the rates
+ * kept: "2022: 589 inspections, 36 out-of-service, 15.5% OOS rate" →
+ * "2022: 15.5% OOS rate". A glued table misreads the counts ("58" + "9"),
+ * while the rate is printed on its own — so the counts go, never the rate
+ * (Pacific: holding the whole fact lost the true 2022 and 2023 rates).
+ * `text` is null when nothing but counts would be left.
+ */
+export function stripMismatchedCounts(input: string): { text: string | null; mismatches: CountRateMismatch[] } {
+  const pieces = input.split(GROUP_SPLIT);
+  const all: CountRateMismatch[] = [];
+  let changed = false;
+  for (let i = 0; i < pieces.length; i += 2) {
+    const group = pieces[i];
+    if (!group.trim()) continue;
+    const found = mismatchesInGroup(group);
+    if (found.length === 0) continue;
+    all.push(...found);
+    const bad = new Set(found.flatMap((m) => m.numbers));
+    // "2022: …" / "Roadside inspections: …" — the group's own label stays.
+    const label = /^\s*[^:%$\d]{0,40}(?:(?:19|20)\d{2})?[^:%$\d]{0,10}:\s*/.exec(group)?.[0] ?? "";
+    const kept = group
+      .slice(label.length)
+      .split(/,\s*|\s*\(\s*|\s*\)\s*,?\s*/)
+      .map((c) => c.trim())
+      .filter((c) => c && (/%/.test(c) || !countsIn(c).some((n) => bad.has(n))));
+    pieces[i] = kept.some((c) => /%/.test(c)) ? `${label}${kept.join(", ")}` : "";
+    changed = true;
+  }
+  if (!changed) return { text: input, mismatches: [] };
+  // Rejoin, dropping the separator of an emptied group.
+  const out: string[] = [];
+  for (let i = 0; i < pieces.length; i += 2) {
+    if (!pieces[i].trim()) continue;
+    if (out.length > 0) out.push(pieces[i - 1] ?? " · ");
+    out.push(pieces[i]);
+  }
+  const text = out.join("").trim();
+  return { text: /%/.test(text) ? text : null, mismatches: all };
 }
 
 function describeMismatch(m: CountRateMismatch): string {
@@ -285,8 +361,16 @@ const isExcludedLine = (label: string) => isExcludedWorkingCapitalAsset(label) |
 
 /** Values a CIM may give as net working capital: the cash-free, debt-free closing figure and year-end history. */
 function nwcValues(wc: CimWorkingCapital): number[] {
-  return [wc.netWorkingCapital, ...Object.values(wc.history ?? {})].filter((n) => Number.isFinite(n));
+  const tax = wc.withIncomeTaxes;
+  return [wc.netWorkingCapital, ...Object.values(wc.history ?? {}), ...(tax ? [tax.netWorkingCapital, ...Object.values(tax.history ?? {})] : [])].filter((n) => Number.isFinite(n));
 }
+
+/**
+ * Rows of a balance sheet (not a working-capital statement): cash and the
+ * current portion of debt are its own lines there, beside any NWC row.
+ */
+const BALANCE_SHEET_ROW = /\b(?:total\s+assets|total\s+liabilities\s*(?:and|&)|(?:shareholders?'?|owners?'?)\s+equity|total\s+equity|retained\s+earnings|share\s+capital|property|plant\s+and\s+equipment|fixed\s+assets|intangible|goodwill|non[- ]current|future\s+(?:\(deferred\)\s+)?income\s+tax|deferred\s+income\s+tax)\b/i;
+const isBalanceSheetTable = (rows: TableRow[]) => rows.some((r) => BALANCE_SHEET_ROW.test(r.label) || /^\s*long[- ]term\s+debt\b/i.test(r.label));
 
 function wcWhere(wc: CimWorkingCapital): string {
   return wc.asOfPeriod ? ` at ${periodLabel(wc.asOfPeriod)}` : "";
@@ -311,9 +395,11 @@ export function workingCapitalProblems(section: SectionLike, wc: CimWorkingCapit
   const out: string[] = [];
   const hasTotal = rows.some((r) => isNwcTotalLabel(r.label));
   const hasPeg = units.some((u) => PEG_WORDS.test(u) && NWC_WORDS.test(u)) || rows.some((r) => r.columns.some((c) => PEG_WORDS.test(c)));
-  if (hasTotal || hasPeg) {
+  if ((hasTotal || hasPeg) && !isBalanceSheetTable(rows)) {
     // Lines of a statement table only: a key-figure grid's "Cash position" or
-    // "Free cash flow" beside NWC is a separate figure, not one of its lines.
+    // "Free cash flow" beside NWC is a separate figure, not one of its lines;
+    // a balance sheet lists cash and the current portion of debt as its own
+    // lines, whatever NWC row it adds.
     const mixed = rows.filter(
       (r) => (r.kind === "comparison_table" || r.kind === "financial_table") && !isNwcTotalLabel(r.label) && !FLOW_LABEL.test(r.label) && isExcludedLine(r.label) && r.cells.some((c) => c.trim()),
     );
@@ -326,7 +412,7 @@ export function workingCapitalProblems(section: SectionLike, wc: CimWorkingCapit
   if (!wc) return out;
   const allowed = nwcValues(wc);
   const allIn = wc.allInNetWorkingCapital;
-  const expect = `on the cash-free, debt-free basis (the peg's) it is ${money(wc.netWorkingCapital)}${wcWhere(wc)}`;
+  const expect = `on the cash-free, debt-free basis${wc.pegAmount !== null ? " (the peg's)" : ""} it is ${money(wc.netWorkingCapital)}${wcWhere(wc)}`;
   const flagged = new Set<string>();
   const flag = (text: string, v: number, tol: number) => {
     const key = text.trim();
@@ -354,21 +440,35 @@ export function workingCapitalProblems(section: SectionLike, wc: CimWorkingCapit
       if (!allowed.some((k) => within(f.value, f.tolerance, k)) && !(wc.pegAmount && within(f.value, f.tolerance, wc.pegAmount))) flag(f.text, f.value, f.tolerance);
     }
   }
-  // A shortfall or excess the figures don't show.
+  // A shortfall or excess the figures don't show. With income taxes payable
+  // counted either way, the claim stands if either treatment shows it.
+  const text = units.join(" ");
+  const saysShort = /\b(?:shortfall|deficit|short)\s+of\s+(?:approximately\s+|about\s+|roughly\s+)?\$|\bbelow\s+the\s+(?:normali[sz]ed\s+)?(?:working\s+capital\s+)?(?:peg|target)\b/i.test(text);
+  const saysOver = /\b(?:excess|surplus)\s+of\s+(?:approximately\s+|about\s+|roughly\s+)?\$|\babove\s+the\s+(?:normali[sz]ed\s+)?(?:working\s+capital\s+)?(?:peg|target)\b/i.test(text);
   if (typeof wc.pegAmount === "number") {
-    const diff = wc.netWorkingCapital - wc.pegAmount;
-    const text = units.join(" ");
-    const saysShort = /\b(?:shortfall|deficit|short)\s+of\s+(?:approximately\s+|about\s+|roughly\s+)?\$|\bbelow\s+the\s+(?:normali[sz]ed\s+)?(?:peg|target)\b/i.test(text);
-    const saysOver = /\b(?:excess|surplus)\s+of\s+(?:approximately\s+|about\s+|roughly\s+)?\$|\babove\s+the\s+(?:normali[sz]ed\s+)?(?:peg|target)\b/i.test(text);
-    if (saysShort && diff > 0) out.push(`says working capital is short of the peg — ${expect}, ${money(Math.abs(diff))} above the ${money(wc.pegAmount)} peg`);
-    if (saysOver && diff < 0) out.push(`says working capital is above the peg — ${expect}, ${money(Math.abs(diff))} below the ${money(wc.pegAmount)} peg`);
+    const diffs = [wc.netWorkingCapital, ...(wc.withIncomeTaxes ? [wc.withIncomeTaxes.netWorkingCapital] : [])].map((n) => n - wc.pegAmount!);
+    const diff = diffs[0];
+    if (saysShort && diffs.every((d) => d > 0)) out.push(`says working capital is short of the peg — ${expect}, ${money(Math.abs(diff))} above the ${money(wc.pegAmount)} peg`);
+    if (saysOver && diffs.every((d) => d < 0)) out.push(`says working capital is above the peg — ${expect}, ${money(Math.abs(diff))} below the ${money(wc.pegAmount)} peg`);
+  } else if (wc.pegWithheld) {
+    // The stored peg is on the all-in basis: no peg, and no comparison with one.
+    const peg = wc.pegWithheld;
+    const statesPeg = units.some((u) =>
+      Array.from(u.matchAll(/\b(?:peg|target\s+(?:net\s+)?working\s+capital|normali[sz]ed\s+(?:net\s+)?working\s+capital(?:\s+target)?)\b/gi)).some((m) => {
+        const f = moneyFigures(u.slice(m.index!, m.index! + m[0].length + 60))[0];
+        return !!f && !allowed.some((k) => within(f.value, f.tolerance, k));
+      }),
+    ) || rows.some((r) => isNwcTotalLabel(r.label) && r.cells.some((c, i) => PEG_WORDS.test(r.columns[i] ?? "") && moneyFigures(c).length > 0));
+    if (statesPeg || saysShort || saysOver) {
+      out.push(`states a working capital peg or a shortfall/excess against one — ${peg.reason}; state no peg; net working capital is ${money(wc.netWorkingCapital)}${wcWhere(wc)}, cash-free and debt-free`);
+    }
   }
   return out;
 }
 
 /** The working-capital problems that mean the section mixes definitions (vs a lone stray figure). */
 export function mixesWorkingCapitalDefinitions(problems: string[]): boolean {
-  return problems.some((p) => /is listed as working capital|are listed as working capital|^net working capital given as|^says working capital is/.test(p));
+  return problems.some((p) => /is listed as working capital|are listed as working capital|^net working capital given as|^says working capital is|^states a working capital peg/.test(p));
 }
 
 /**
@@ -386,7 +486,7 @@ export function workingCapitalSectionData(wc: CimWorkingCapital): { layoutType: 
   ];
   const left = wc.excluded.map((i) => i.name.toLowerCase().replace(/\s*\(.*?\)\s*/g, " ").trim());
   const intro = [
-    "Net working capital is shown on a cash-free, debt-free basis — the same basis as the working capital peg.",
+    hasPeg ? "Net working capital is shown on a cash-free, debt-free basis — the same basis as the working capital peg." : "Net working capital is shown on a cash-free, debt-free basis.",
     left.length > 0 ? `Cash, bank debt, the current portion of long-term debt and income taxes are settled at closing and are not part of it.` : "",
   ].filter(Boolean).join(" ");
   return {
@@ -398,6 +498,79 @@ export function workingCapitalSectionData(wc: CimWorkingCapital): { layoutType: 
       rows,
     },
   };
+}
+
+/** A section title naming more than working capital: its other content isn't the analysis's to replace. */
+const OTHER_TOPIC = /\b(?:balance\s+sheet|debt|transaction|structure|deal|terms|capex|capital\s+expenditures?|financials?|summary|overview|highlights?)\b/i;
+
+/** Current-asset / current-liability line names: what a working-capital statement is made of. */
+const CURRENT_ITEM = /\b(?:current|receivables?|inventor(?:y|ies)|prepaid|payables?|accrued|accruals|deposits?|cash|debt|tax(?:es)?|deferred\s+revenue|contract|wip|unbilled|billings|remittances?|holdbacks?)\b/i;
+
+/**
+ * Is the section itself about working capital — its title, or a
+ * working-capital statement table (an NWC total over current lines, not a
+ * balance sheet)? Only such a section is rebuilt from the analysis; one that
+ * merely mentions working capital (a transaction summary, a balance sheet)
+ * keeps its own content (withoutWorkingCapitalClaims).
+ */
+export function isWorkingCapitalSection(section: SectionLike): boolean {
+  // "Working Capital" / "Net Working Capital Peg" — not "Balance Sheet & Working Capital".
+  if (NWC_WORDS.test(section.sectionTitle) && !OTHER_TOPIC.test(section.sectionTitle)) return true;
+  const rows = tableRows(section.layoutType, section.layoutData);
+  if (!rows.some((r) => isNwcTotalLabel(r.label)) || isBalanceSheetTable(rows)) return false;
+  const lines = rows.filter((r) => !isNwcTotalLabel(r.label) && r.label.trim());
+  return lines.length > 0 && lines.filter((r) => CURRENT_ITEM.test(r.label)).length * 2 >= lines.length;
+}
+
+/**
+ * A section that only mentions working capital, with the claims that failed
+ * the working-capital check taken out — the list item, table row or
+ * sentence that states them — and nothing else touched (Pacific's
+ * "Transaction Structure" kept its asking price and structure when one stray
+ * item set $1.0 million of NWC beside the peg). Null when nothing was found
+ * to take out.
+ */
+export function withoutWorkingCapitalClaims(section: SectionLike, wc: CimWorkingCapital): { layoutData: unknown; aiDraftContent: unknown; removed: string[] } | null {
+  const allowed = nwcValues(wc);
+  const removed: string[] = [];
+  const failsAsProse = (text: string) =>
+    (NWC_WORDS.test(text) || /\bpeg\b|shortfall|surplus|\bexcess\b/i.test(text)) &&
+    mixesWorkingCapitalDefinitions(workingCapitalProblems({ sectionTitle: "Working capital", layoutType: "prose_highlight", layoutData: { body: text } }, wc));
+  // A table row or key figure labelled as NWC whose figure isn't the cash-free one (or the peg).
+  const rowFails = (r: Record<string, any>) => {
+    const label = s(r.label ?? r.title ?? r.name);
+    if (!isNwcTotalLabel(label) || PEG_WORDS.test(label)) return false;
+    const cells = [r.value, r.left, ...(Array.isArray(r.values) ? r.values : [])].map(s);
+    return cells.some((c) => moneyFigures(c).some((f) => !allowed.some((k) => within(f.value, f.tolerance, k)) && !(wc.pegAmount && within(f.value, f.tolerance, wc.pegAmount))));
+  };
+  const sentences = (text: string) => {
+    const parts = text.split(/(?<=[.!?])\s+(?=[A-Z$(])/);
+    const bad = parts.filter((p) => failsAsProse(p));
+    if (bad.length === 0) return text;
+    removed.push(...bad.map((p) => p.trim()));
+    return parts.filter((p) => !bad.includes(p)).join(" ");
+  };
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return sentences(v);
+    if (Array.isArray(v)) {
+      const kept = v.filter((e) => {
+        if (!isRec(e)) return true;
+        const text = sectionUnits({ sectionTitle: "", layoutType: "", layoutData: e }).join(" ");
+        if (!rowFails(e) && !failsAsProse(text)) return true;
+        removed.push(text.trim());
+        return false;
+      });
+      // A bullet whose only sentence was taken out goes with it (an empty table cell stays).
+      return kept.map((e) => [e, walk(e)] as const).filter(([e, w]) => !(typeof e === "string" && e.trim() && typeof w === "string" && !w.trim())).map(([, w]) => w);
+    }
+    if (!isRec(v)) return v;
+    const out: Record<string, unknown> = {};
+    for (const [k, x] of Object.entries(v)) out[k] = SKIP.has(k) ? x : walk(x);
+    return out;
+  };
+  const layoutData = walk(section.layoutData);
+  const aiDraftContent = typeof section.aiDraftContent === "string" ? sentences(section.aiDraftContent) : section.aiDraftContent;
+  return removed.length > 0 ? { layoutData, aiDraftContent, removed } : null;
 }
 
 // ── Debt by year ─────────────────────────────────────────────────────────
@@ -553,6 +726,8 @@ export interface FactConsistency {
   held: string[];
   /** Words appended to a fact's line for the writer ("[… is the 2023 balance …]"). */
   notes: Record<string, string>;
+  /** A fact's text as the writer gets it, when part of it was left out (misread counts). */
+  rewrites: Record<string, string>;
   warnings: string[];
   suspectCounts: SuspectCount[];
 }
@@ -569,6 +744,7 @@ export function factConsistency(facts: Array<[string, string]>, fin: CimFinancia
   const notes: Record<string, string> = {};
   const warnings: string[] = [];
   const suspectCounts: SuspectCount[] = [];
+  const rewrites: Record<string, string> = {};
   const wc = fin?.workingCapital ?? null;
 
   // Working capital on another definition.
@@ -598,30 +774,56 @@ export function factConsistency(facts: Array<[string, string]>, fin: CimFinancia
     );
   }
 
-  // Counts that don't give the rate stated with them.
+  // Counts that don't give the rate stated with them: the counts are left
+  // out and the rates kept (a whole fact held lost true rates with them).
   const bad: string[] = [];
   for (const [key, text] of facts) {
     if (held.includes(key)) continue;
-    const mismatches = countRateMismatches(text);
+    const { text: cleaned, mismatches } = stripMismatchedCounts(text);
     if (mismatches.length === 0) continue;
-    held.push(key);
+    if (cleaned) rewrites[key] = cleaned;
+    else held.push(key);
     bad.push(`"${label(key)}" (${mismatches.map(describeMismatch).join("; ")})`);
+    // The population is the distinctive, misread figure ("646 inspections");
+    // small part counts (1, 5) would catch unrelated numbers elsewhere.
     for (const m of mismatches) suspectCounts.push({ value: m.total, noun: m.totalNoun, stem: stem5(m.totalNoun), source: label(key) });
   }
-  // The same misread counts elsewhere ("Cvsa Inspections By Year: 2024: 646").
+  // The same misread counts elsewhere ("Cvsa Inspections By Year: 2022: 589 ·
+  // 2024: 646"): those entries go; a fact left with nothing is held.
+  const population = suspectCounts.filter((sc, i) => suspectCounts.findIndex((o) => o.stem === sc.stem && o.value === sc.value) === i);
   if (suspectCounts.length > 0) {
     for (const [key, text] of facts) {
-      if (held.includes(key)) continue;
-      const t = normRate(`${key.replace(/([a-z])([A-Z])/g, "$1 $2")} ${text}`);
-      const words = new Set((t.match(/[a-z]{4,}/g) ?? []).map(stem5));
-      const values = parseFiguresAt(t).filter((f) => f.kind === "plain").map((f) => f.value);
-      if (suspectCounts.some((sc) => words.has(sc.stem) && values.includes(sc.value))) {
-        held.push(key);
-        bad.push(`"${label(key)}" (the same counts)`);
+      if (held.includes(key) || rewrites[key]) continue;
+      const keyWords = normRate(key.replace(/([a-z])([A-Z])/g, "$1 $2")).match(/[a-z]{4,}/g) ?? [];
+      const pieces = text.split(GROUP_SPLIT);
+      let dropped = 0;
+      let groups = 0;
+      for (let i = 0; i < pieces.length; i += 2) {
+        if (!pieces[i].trim()) continue;
+        groups++;
+        const t = normRate(pieces[i]);
+        const words = new Set([...keyWords, ...(t.match(/[a-z]{4,}/g) ?? [])].map(stem5));
+        const values = parseFiguresAt(t).filter((f) => f.kind === "plain").map((f) => f.value);
+        if (population.some((sc) => words.has(sc.stem) && values.includes(sc.value))) {
+          pieces[i] = "";
+          dropped++;
+        }
       }
+      if (dropped === 0) continue;
+      if (dropped === groups) held.push(key);
+      else {
+        const out: string[] = [];
+        for (let i = 0; i < pieces.length; i += 2) {
+          if (!pieces[i].trim()) continue;
+          if (out.length > 0) out.push(pieces[i - 1] ?? " · ");
+          out.push(pieces[i]);
+        }
+        rewrites[key] = out.join("").trim();
+      }
+      bad.push(`"${label(key)}" (the same counts)`);
     }
     warnings.push(
-      `Figures that don't add up were left out of the CIM: ${bad.join("; ")}. A number was probably misread from a table in the source document — check it and correct the fact on the Information tab.`,
+      `Counts that don't add up were left out of the CIM (the rates stated with them are kept): ${bad.join("; ")}. A number was probably misread from a table in the source document — check it and correct the fact on the Information tab.`,
     );
   }
 
@@ -643,5 +845,42 @@ export function factConsistency(facts: Array<[string, string]>, fin: CimFinancia
       );
     }
   }
-  return { held, notes, warnings, suspectCounts };
+  return { held, notes, rewrites, warnings, suspectCounts };
+}
+
+const COMPANION = /^\s*,?\s*(?:plus|\+|and|with)\s+(?:~\s*|about\s+|approximately\s+|roughly\s+|around\s+)?(\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|thousand|million)?)\s+(?:(?:in|of)\s+)?(legal|lawyers?'?|professional|consulting|advisory|accounting|severance|court)\s+(?:fees|costs|expenses|bills)\b/i;
+
+/**
+ * A cost the facts tie to an added-back one-time item that the add-backs
+ * leave out: "settled 2024 for $55K plus ~$29K legal fees" beside a $55,000
+ * settlement add-back (Pacific: the CIM's FY2024 one-time items were $127K,
+ * the $29K of legal fees never added back). The CIM shows the add-backs as
+ * the broker approved them; the broker is told, the figure never changed.
+ */
+export function addbackCompanions(facts: Array<[string, string]>, fin: CimFinancials | null | undefined, label: (key: string) => string): string[] {
+  const bridge = fin?.bridge;
+  if (!bridge) return [];
+  const lines = [...bridge.addbacks, ...(bridge.sdeOnly ?? [])];
+  const amounts = lines.flatMap((l) => Object.values(l.amounts)).filter((a) => Number.isFinite(a) && a !== 0);
+  const close = (a: number, b: number) => Math.abs(Math.abs(a) - Math.abs(b)) <= Math.max(500, Math.abs(b) * 0.02);
+  const out: string[] = [];
+  for (const [key, text] of facts) {
+    for (const f of moneyFigures(text)) {
+      const m = COMPANION.exec(text.slice(f.end, f.end + 80));
+      if (!m) continue;
+      const companion = parseFiguresAt(m[1])[0];
+      if (!companion || companion.value <= 0) continue;
+      for (const line of lines) {
+        const year = Object.keys(line.amounts).find((y) => line.amounts[y] > 0 && close(f.value, line.amounts[y]));
+        if (!year) continue;
+        const a = line.amounts[year];
+        if (amounts.some((x) => close(companion.value, x) || close(a + companion.value, x))) continue;
+        const kind = m[2].toLowerCase().replace(/s?'$|s$/, "");
+        out.push(
+          `"${label(key)}" ties ${m[1].trim()} of ${kind} costs to "${line.label}" (${money(a)} added back for ${year}); the add-backs don't include it. If it was expensed that year and won't recur, add it on the Financials tab — the CIM shows the add-backs as approved.`,
+        );
+      }
+    }
+  }
+  return Array.from(new Set(out));
 }

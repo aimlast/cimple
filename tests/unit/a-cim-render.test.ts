@@ -44,6 +44,18 @@ const list = renderToStaticMarkup(
 );
 assert.match(list, /Three customers make up 36% of revenue\./, "intro on another renderer");
 
+// Round 2: a title with an abbreviation is a caption, not a paragraph.
+const abbr = renderToStaticMarkup(
+  React.createElement(ComparisonTableRenderer, {
+    layoutData: { title: "U.S. vs. Canadian Revenue", leftLabel: "FY2023", rightLabel: "FY2024", rows: [{ label: "U.S.", left: "$1,000", right: "$1,200" }] },
+    content: "",
+    branding: {} as any,
+    section,
+  }),
+);
+assert.match(abbr, /<h3 class="[^"]*uppercase[^"]*">U\.S\. vs\. Canadian Revenue<\/h3>/);
+assert.ok(!/data-testid="block-intro"/.test(abbr), "no paragraph block");
+
 // Cover: the broker's name with the brokerage, or alone.
 const cover = (brokerage: Record<string, unknown>) =>
   renderToStaticMarkup(

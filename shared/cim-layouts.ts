@@ -856,8 +856,13 @@ export function isParagraphTitle(v: unknown): boolean {
   const t = v.trim();
   if (!t) return false;
   const words = t.split(/\s+/).length;
-  return words > 12 || /[.!?]["”')]?\s+\S/.test(t) || (words > 8 && /[.!?]$/.test(t));
+  // An abbreviation's period ("Revenue vs. Adjusted EBITDA", "U.S. vs.
+  // Canadian Revenue", "Dr. Smith's Patient Mix") doesn't end a sentence.
+  const plain = t.replace(ABBREVIATION, (m) => m.replace(/\./g, ""));
+  return words > 12 || /[.!?]["”')]?\s+\S/.test(plain) || (words > 8 && /[.!?]$/.test(plain));
 }
+
+const ABBREVIATION = /\b(?:vs|v|e\.g|i\.e|etc|approx|est|incl|excl|avg|dept|no|nos|fig|yr|yrs|mo|mos|dr|mr|mrs|ms|prof|st|mt|ft|jr|sr|inc|ltd|co|corp|bros)\.|\b(?:[A-Z]\.){1,3}(?=\s|$|['’-])/gi;
 
 /** Layouts whose renderer draws `title` (or a financial table's `caption`) as a caption above the content, and `intro` under it. */
 export const INTRO_LAYOUTS: ReadonlySet<string> = new Set([

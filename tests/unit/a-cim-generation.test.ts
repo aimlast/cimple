@@ -83,7 +83,7 @@ assert.ok(!warnings.some((w) => /no such ranking/.test(w)), "no rank false posit
 assert.ok(warnings.some((w) => /Check the figures in "Transaction Structure"[^]*\$7,570,000 is the 2023 year-end term debt/.test(w)), "debt year");
 assert.ok(warnings.some((w) => /Check the figures in "Safety & Compliance"[^]*counts don't match the rate/.test(w)), "counts vs rate");
 assert.ok(warnings.some((w) => /Check the figures in "Key Customer Relationships"[^]*"evergreen" for "Kestrel Building Supply"/.test(w)), "evergreen");
-assert.ok(warnings.some((w) => /Figures that don't add up were left out of the CIM/.test(w)));
+assert.ok(warnings.some((w) => /Counts that don't add up were left out of the CIM/.test(w)));
 assert.ok(warnings.some((w) => /Left out of the CIM: "Working Capital" \(\$1,022,999\)/.test(w)));
 assert.ok(!warnings.some((w) => /Check the figures in "Financial Summary"/.test(w)), "the financial summary stays clean");
 

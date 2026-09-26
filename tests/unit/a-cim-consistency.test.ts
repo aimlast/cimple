@@ -121,11 +121,17 @@ const kb = assembleKnowledgeBase(params);
   assert.deepEqual(countRateMismatches("Driver turnover 18% in 2024; 96 drivers, 24 with 10+ years"), [], "no rate/count pair");
   assert.deepEqual(countRateMismatches("On-time delivery rate of 98.5% across 12,000 deliveries"), [], "no counts of the event");
 
-  // The facts: both misread-count facts held, the rate kept, the broker told.
-  assert.doesNotMatch(kb.text, /Roadside Inspections By Year/);
+  // The facts: the misread counts left out, every year's rate kept (round 2:
+  // holding the whole fact lost the true 2022/2023 rates); the counts-only
+  // fact held; the broker told.
+  assert.match(kb.text, /Roadside Inspections By Year: 2022: 15\.5% OOS rate · 2023: 16\.9% OOS rate · 2024: 9\.4% OOS rate\n/);
+  assert.doesNotMatch(kb.text, /\b(?:589|711|646)\b/, "no misread count reaches the writer");
   assert.doesNotMatch(kb.text, /Cvsa Inspections By Year/);
   assert.match(kb.text, /Cvsa O O S Rate2024: 9\.4%|OOS Rate2024: 9\.4%|Rate2024: 9\.4%/);
-  has(kb.warnings, /Figures that don't add up were left out of the CIM: "Roadside Inspections By Year" \(36 of 589 inspections is 6\.1%/, "warning");
+  has(kb.warnings, /Counts that don't add up were left out of the CIM \(the rates stated with them are kept\): "Roadside Inspections By Year" \(36 of 589 inspections is 6\.1%/, "warning");
+  // A section with the true rate trend passes (it used to be "no source for 15.5%").
+  const trend = { sectionTitle: "Safety & Compliance", layoutType: "prose_highlight", layoutData: { body: "The out-of-service rate fell from 15.5% in 2022 and 16.9% in 2023 to 9.4% in 2024." } };
+  lacks(sectionFigureWarnings(params, trend), /15\.5|16\.9|9\.4/, "the true rates are on file");
   // The recorded Safety section is rejected for the counts.
   const safety = sectionFigureWarnings(params, section("Safety & Compliance"));
   has(safety, /the counts don't match the rate: 6 of 646 inspections is 0\.9%, not the 9\.4% stated/, "section counts");

@@ -147,11 +147,42 @@ export interface CimWorkingCapital {
   allInNetWorkingCapital: number | null;
   /** Year-end NWC per fiscal year on the same basis (from the balance sheet). */
   history?: Record<string, number>;
+  /**
+   * The same figures with income taxes payable counted as working capital.
+   * The analysis leaves them out (settled at closing); some purchase
+   * agreements keep them in, so a CIM stating that figure isn't wrong
+   * (Pacific's statements: $2,420,000 with them, $2,538,000 without).
+   */
+  withIncomeTaxes?: { incomeTaxesPayable: number; netWorkingCapital: number; history?: Record<string, number> };
   pegAmount: number | null;
   pegBasis?: string;
+  /**
+   * A stored peg that is net working capital counting cash and debt (an
+   * analysis from before the cash-free rule — Ridgeline's $1,555,000 peg was
+   * its all-in $1,555,130): never compared with the cash-free figure, so it
+   * isn't stated at all. `pegAmount` is null when this is set.
+   */
+  pegWithheld?: { amount: number; allIn: number; reason: string };
 }
 
 const itemSum = (xs: UiWorkingCapitalItem[]) => xs.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+const INCOME_TAX_PAYABLE = /\b(?:income|corporate)\s+(?:income\s+)?tax(?:es)?\s+payable\b/i;
+const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(1000, Math.abs(b) * 0.005);
+
+/** Total current assets − total current liabilities per year, cash and debt included (never NWC — only to recognise a figure on that basis). */
+function allInHistory(bs: UiReclassifiedTable | null | undefined): Record<string, number> {
+  if (!bs || !Array.isArray(bs.rows)) return {};
+  const years = bs.years?.length ? bs.years : Array.from(new Set(bs.rows.flatMap((r) => Object.keys(r.values ?? {}))));
+  const out: Record<string, number> = {};
+  for (const y of years) {
+    const total = (category: string) => bs.rows.filter((r) => r.category === category && Number.isFinite(r.values?.[y])).map((r) => r.values[y]);
+    const ca = total("Current Assets");
+    const cl = total("Current Liabilities");
+    if (ca.length === 0 || cl.length === 0) continue;
+    out[y] = Math.round(Math.abs(sum(ca)) - Math.abs(sum(cl)));
+  }
+  return out;
+}
 
 export function cimWorkingCapital(wc: UiWorkingCapital | null | undefined, balanceSheet?: UiReclassifiedTable | null): CimWorkingCapital | null {
   if (!wc || (!Array.isArray(wc.currentAssets) && !Array.isArray(wc.currentLiabilities))) return null;
@@ -169,7 +200,46 @@ export function cimWorkingCapital(wc: UiWorkingCapital | null | undefined, balan
   const netWorkingCapital = hasLines || excluded.length > 0 ? itemSum(currentAssets) - itemSum(currentLiabilities) : wc.netWorkingCapital;
   const fromSheet = workingCapitalHistory(balanceSheet);
   const history = Object.keys(fromSheet).length > 0 ? fromSheet : wc.history;
-  const peg = typeof wc.pegAmount === "number" ? wc.pegAmount : typeof wc.targetNwc === "number" ? wc.targetNwc : null;
+  let peg = typeof wc.pegAmount === "number" ? wc.pegAmount : typeof wc.targetNwc === "number" ? wc.targetNwc : null;
+
+  // Income taxes payable counted in, for a CIM that states that figure.
+  const taxLines = excluded.filter((i) => i.side === "liability" && INCOME_TAX_PAYABLE.test(i.name));
+  let withIncomeTaxes: CimWorkingCapital["withIncomeTaxes"];
+  if (taxLines.length > 0 && itemSum(taxLines) !== 0) {
+    const taxes = itemSum(taxLines);
+    const byYear: Record<string, number> = {};
+    if (Object.keys(fromSheet).length > 0 && balanceSheet) {
+      for (const [y, v] of Object.entries(fromSheet)) {
+        const t = balanceSheet.rows.filter((r) => r.category === "Current Liabilities" && INCOME_TAX_PAYABLE.test(r.name) && Number.isFinite(r.values?.[y])).map((r) => Math.abs(r.values[y]));
+        if (t.length > 0) byYear[y] = v - sum(t);
+      }
+    }
+    withIncomeTaxes = { incomeTaxesPayable: taxes, netWorkingCapital: netWorkingCapital - taxes, ...(Object.keys(byYear).length > 0 ? { history: byYear } : {}) };
+  }
+
+  // A peg on the all-in basis (cash and debt counted) is withheld: set beside
+  // the cash-free figure it would invent a shortfall or an excess.
+  let pegWithheld: CimWorkingCapital["pegWithheld"];
+  if (peg !== null) {
+    const allInYears = allInHistory(balanceSheet);
+    const allInValues = [...(excluded.length > 0 && allIn !== null ? [allIn] : []), ...Object.values(allInYears)];
+    const avg = (xs: number[]) => (xs.length > 1 ? [xs.reduce((s, x) => s + x, 0) / xs.length] : []);
+    const cashFree = [
+      netWorkingCapital,
+      ...Object.values(history ?? {}),
+      ...avg(Object.values(history ?? {})),
+      ...(withIncomeTaxes ? [withIncomeTaxes.netWorkingCapital, ...Object.values(withIncomeTaxes.history ?? {}), ...avg(Object.values(withIncomeTaxes.history ?? {}))] : []),
+    ];
+    const hit = [...allInValues, ...avg(Object.values(allInYears))].find((v) => near(peg!, v));
+    if (hit !== undefined && !cashFree.some((v) => near(peg!, v)) && !near(hit, netWorkingCapital)) {
+      pegWithheld = {
+        amount: peg,
+        allIn: Math.round(hit),
+        reason: `the peg on file (${money(peg)}) is net working capital counting cash and debt (${money(Math.round(hit))}), not the cash-free, debt-free basis a peg is set on`,
+      };
+      peg = null;
+    }
+  }
   return {
     ...(wc.asOfPeriod ? { asOfPeriod: wc.asOfPeriod } : {}),
     currentAssets,
@@ -178,8 +248,10 @@ export function cimWorkingCapital(wc: UiWorkingCapital | null | undefined, balan
     excluded,
     allInNetWorkingCapital: excluded.length > 0 ? allIn : null,
     ...(history && Object.keys(history).length > 0 ? { history } : {}),
+    ...(withIncomeTaxes ? { withIncomeTaxes } : {}),
     pegAmount: peg,
-    ...(wc.pegBasis ? { pegBasis: wc.pegBasis } : {}),
+    ...(wc.pegBasis && peg !== null ? { pegBasis: wc.pegBasis } : {}),
+    ...(pegWithheld ? { pegWithheld } : {}),
   };
 }
 
@@ -687,14 +759,29 @@ export function workingCapitalLines(wc: CimWorkingCapital | null | undefined): s
   }
   const history = Object.entries(wc.history ?? {}).sort(([a], [b]) => a.localeCompare(b));
   if (history.length > 1) out.push(`Year-end net working capital (cash-free, debt-free): ${history.map(([y, v]) => `${y} ${money(v)}`).join(" · ")}`);
+  const tax = wc.withIncomeTaxes;
+  if (tax) {
+    const taxHistory = Object.entries(tax.history ?? {}).sort(([a], [b]) => a.localeCompare(b));
+    out.push(
+      `The figures above leave income taxes payable (${money(tax.incomeTaxesPayable)}) out, as settled at closing; counted as working capital, as some purchase agreements do, net working capital${asOf ? ` at ${asOf}` : ""} is ${money(tax.netWorkingCapital)}${taxHistory.length > 1 ? ` (year-end: ${taxHistory.map(([y, v]) => `${y} ${money(v)}`).join(" · ")})` : ""}. Use one treatment throughout and say which.`,
+    );
+  }
+  const where = asOf ? `at ${asOf}` : "at the date above";
   if (typeof wc.pegAmount === "number") {
     out.push(`Working capital peg (target): ${money(wc.pegAmount)}${wc.pegBasis ? ` — ${wc.pegBasis}` : ""}`);
-    const diff = Math.round(wc.netWorkingCapital - wc.pegAmount);
-    const where = asOf ? `at ${asOf}` : "at the date above";
+    const gap = (nwc: number) => {
+      const d = Math.round(nwc - wc.pegAmount!);
+      return Math.abs(d) < 1 ? "equal to the peg" : `${money(Math.abs(d))} ${d > 0 ? "above" : "below"} the peg`;
+    };
+    // Whether the peg counts income taxes is the purchase agreement's call:
+    // both differences are given when the treatments disagree.
+    const alt = tax && !/income\s+tax/i.test(wc.pegBasis ?? "") && gap(tax.netWorkingCapital) !== gap(wc.netWorkingCapital) ? ` (${gap(tax.netWorkingCapital)} with income taxes payable counted as working capital)` : "";
     out.push(
-      Math.abs(diff) < 1
-        ? `Net working capital ${where} equals the peg.`
-        : `Net working capital ${where} was ${money(Math.abs(diff))} ${diff > 0 ? "above" : "below"} the peg. The closing adjustment is measured on the balances at closing, not these — never promise buyers a shortfall or an excess.`,
+      `Net working capital ${where} was ${gap(wc.netWorkingCapital)}${alt}. The closing adjustment is measured on the balances at closing, not these — never promise buyers a shortfall or an excess.`,
+    );
+  } else if (wc.pegWithheld) {
+    out.push(
+      `No working capital peg can be stated: ${wc.pegWithheld.reason}. Never state a peg or a target working capital, and never compare net working capital with one — describe the closing adjustment only as a mechanism.`,
     );
   }
   return out;

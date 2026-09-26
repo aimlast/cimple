@@ -31,9 +31,12 @@ import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
 import {
+  addbackCompanions,
   consistencyKnowledge,
   factConsistency,
+  isWorkingCapitalSection,
   mixesWorkingCapitalDefinitions,
+  withoutWorkingCapitalClaims,
   workingCapitalProblems,
   workingCapitalSectionData,
   type SuspectCount,
@@ -427,15 +430,29 @@ async function checkAndRepairFigures(
             }
           }
         }
-        // Working capital on two definitions reaches no buyer: rebuilt from
-        // the analysis in code (cash-free, debt-free lines beside the peg).
+        // Working capital on two definitions reaches no buyer. A section about
+        // working capital is rebuilt from the analysis in code (cash-free,
+        // debt-free lines beside the peg); any other section keeps its
+        // content, less the item, row or sentence that states it.
         const wc = sharedSystem.known.consistency?.workingCapital;
         if (wc && mixesWorkingCapitalDefinitions(workingCapitalProblems(sections[i], wc))) {
-          const rebuilt = workingCapitalSectionData(wc);
-          const candidate = { ...sections[i], layoutType: rebuilt.layoutType as LayoutType, layoutData: rebuilt.layoutData as CimLayoutSection["layoutData"], aiDraftContent: "" };
-          sections[i] = candidate;
-          final = checkSectionFigures(candidate, sharedSystem.known);
-          warnings.push(`"${section.sectionTitle}" set net working capital beside the peg on a different basis; it was rebuilt from the financial analysis on the cash-free, debt-free basis the peg uses. Review its wording before publishing.`);
+          if (isWorkingCapitalSection(sections[i])) {
+            const rebuilt = workingCapitalSectionData(wc);
+            const candidate = { ...sections[i], layoutType: rebuilt.layoutType as LayoutType, layoutData: rebuilt.layoutData as CimLayoutSection["layoutData"], aiDraftContent: "" };
+            sections[i] = candidate;
+            final = checkSectionFigures(candidate, sharedSystem.known);
+            warnings.push(`"${section.sectionTitle}" set net working capital beside the peg on a different basis; it was rebuilt from the financial analysis on the cash-free, debt-free basis the peg uses. Review its wording before publishing.`);
+          } else {
+            const trimmed = withoutWorkingCapitalClaims(sections[i], wc);
+            if (trimmed) {
+              const candidate = { ...sections[i], layoutData: trimmed.layoutData as CimLayoutSection["layoutData"], aiDraftContent: trimmed.aiDraftContent as CimLayoutSection["aiDraftContent"] };
+              sections[i] = candidate;
+              final = checkSectionFigures(candidate, sharedSystem.known);
+              warnings.push(
+                `"${section.sectionTitle}" stated working capital on a different basis from the peg; taken out: ${trimmed.removed.map((r) => `"${r.length > 140 ? `${r.slice(0, 137)}…` : r}"`).join("; ")}. The rest of the section is as written — review it before publishing.`,
+              );
+            }
+          }
         }
         if (final.length > 0) {
           sections[i] = { ...sections[i], figureWarnings: final };
@@ -1237,6 +1254,12 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   });
   const fin: CimFinancials | null = canon ? canon.financials : params.financials ?? null;
   const earningsHeld: EarningsHold[] = [];
+  const pegWithheld = fin?.workingCapital?.pegWithheld;
+  if (pegWithheld) {
+    warnings.push(
+      `No working capital peg is stated in the CIM: ${pegWithheld.reason}. Re-run the financial analysis (it sets the peg on the cash-free, debt-free basis), then regenerate.`,
+    );
+  }
 
   parts.push(`TODAY: ${today.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })} (resolve relative dates against the recorded date or today — rule 20)`);
   parts.push(`BUSINESS: ${params.businessName}`);
@@ -1298,10 +1321,10 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     const sources = getFieldSources(params.extractedInfo);
     const yearFixes: string[] = [];
     const stale: string[] = [];
-    const line = (key: string, value: unknown) => {
+    const line = (key: string, value: unknown, confirmed = false) => {
       // The seller's spoken figures as clean wording ("six-point-something
       // years" → "just over 6 years"), meaning unchanged.
-      let text = normalizeSpokenFigures(factValueText(value));
+      let text = normalizeSpokenFigures((confirmed ? consistency?.rewrites[key] : undefined) ?? factValueText(value));
       // A year the seller never said ("in May" → "May 2025") is taken out;
       // the writer gets their sentence for the tense and never adds a year.
       let said = "";
@@ -1331,18 +1354,18 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     // Facts that can't be true as written (working capital counting cash and
     // debt beside a cash-free peg, counts that don't give their own rate)
     // are held; a debt figure from an earlier year is marked with its year.
-    consistency = factConsistency(
-      confirmedSafe.filter(([k]) => !unfinished.includes(k)).map(([k, v]) => [k, factValueText(v)] as [string, string]),
-      fin,
-      formatKey,
-    );
+    const screenedFacts = confirmedSafe.filter(([k]) => !unfinished.includes(k)).map(([k, v]) => [k, factValueText(v)] as [string, string]);
+    consistency = factConsistency(screenedFacts, fin, formatKey);
     warnings.push(...consistency.warnings);
+    // Costs the facts tie to an add-back but the add-backs leave out — read
+    // against the analysis's own add-backs, even when its bridge is withheld.
+    warnings.push(...addbackCompanions(screenedFacts, params.financials ?? fin, formatKey));
     suspectCounts = consistency.suspectCounts;
     const inconsistent = consistency.held;
     const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k) && !inconsistent.includes(k));
     if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
-      for (const [key, value] of usable) parts.push(line(key, value));
+      for (const [key, value] of usable) parts.push(line(key, value, true));
     }
     if (leadsSafe.length > 0) {
       pushOther(`\n--- ${CIM_LEADS_HEADING} ---`);

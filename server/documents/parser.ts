@@ -13,11 +13,11 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
   // PDF
   if (ext === ".pdf" || mimeType === "application/pdf") {
     const pdfMod = await import("pdf-parse");
-    const pdfParse: (buf: Buffer) => Promise<{ text: string }> =
+    const pdfParse: (buf: Buffer, options?: Record<string, unknown>) => Promise<{ text: string }> =
       (pdfMod as any).default ?? (pdfMod as any);
     const buffer = fs.readFileSync(filePath);
     try {
-      const data = await pdfParse(buffer);
+      const data = await pdfParse(buffer, { pagerender: renderPdfPage });
       return data.text || "";
     } catch (err) {
       // pdf-parse's pdf.js (v1.10, loaded once per process) rejects some
@@ -66,6 +66,52 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
   return "";
 }
 
+export interface PdfTextItem {
+  str: string;
+  /** [a, b, c, d, x, y]: d (or a) is the font size, x/y the item's origin. */
+  transform: number[];
+  /** Advance width in the same units as x, when pdf.js gives it. */
+  width?: number;
+}
+
+/**
+ * A page's text items joined into lines, as pdf-parse does — with a space
+ * where two items on one line have a visible gap between them. pdf-parse
+ * glued them: a table row "2022 | 58 | 9 | 3 | 6 | 15.5%" came out as
+ * "20225893615.5%", which the extractor read as "589 inspections, 36
+ * out-of-service" beside a 15.5% rate (Pacific's safety summary), and a
+ * label column ran into its value ("National Safety Code (BC)NSC BC …").
+ */
+export function joinPdfTextItems(items: PdfTextItem[]): string {
+  let lastY: number | undefined;
+  let lastEnd: number | undefined;
+  let text = "";
+  for (const item of items) {
+    const x = item.transform?.[4];
+    const y = item.transform?.[5];
+    const size = Math.abs(item.transform?.[3] || item.transform?.[0] || 10);
+    if (lastY === undefined || !lastY) {
+      text += item.str;
+    } else if (lastY === y) {
+      const gap = lastEnd !== undefined && typeof x === "number" ? x - lastEnd : 0;
+      const space = item.str !== "" && gap > size * 0.15 && !/\s$/.test(text) && !/^\s/.test(item.str);
+      text += (space ? " " : "") + item.str;
+    } else {
+      text += `\n${item.str}`;
+    }
+    lastY = y;
+    // An empty item (pdf.js emits them) doesn't move the line's end.
+    if (item.str !== "" || lastEnd === undefined) lastEnd = typeof x === "number" && typeof item.width === "number" ? x + item.width : undefined;
+  }
+  return text;
+}
+
+/** pdf-parse's page renderer, with the gap-aware joining above. */
+async function renderPdfPage(pageData: { getTextContent: (o: Record<string, boolean>) => Promise<{ items: PdfTextItem[] }> }): Promise<string> {
+  const content = await pageData.getTextContent({ normalizeWhitespace: false, disableCombineTextItems: false });
+  return joinPdfTextItems(content.items);
+}
+
 /** Text of every page via pdf-parse's bundled pdf.js v2 (same line-joining as pdf-parse). */
 async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
   const mod: any = await import("module");
@@ -79,13 +125,7 @@ async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
     for (let i = 1; i <= doc.numPages; i++) {
       const page = await doc.getPage(i);
       const content = await page.getTextContent();
-      let lastY: number | undefined;
-      let pageText = "";
-      for (const item of content.items as Array<{ str: string; transform: number[] }>) {
-        pageText += lastY === undefined || lastY === item.transform[5] ? item.str : `\n${item.str}`;
-        lastY = item.transform[5];
-      }
-      text += `\n\n${pageText}`;
+      text += `\n\n${joinPdfTextItems(content.items as PdfTextItem[])}`;
     }
   } finally {
     doc.destroy?.();
