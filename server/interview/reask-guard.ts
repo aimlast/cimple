@@ -89,7 +89,17 @@ const BROAD_SINGLE = new Set(
 const MEASURE_STEMS = new Set(
   ["percentage", "percent", "share", "split", "portion", "proportion", "mix", "number", "count", "figure", "amount", "total", "level", "rate", "ratio", "size", "value", "roughly", "approximately", "estimate", "currently", "today", "tied", "traditional"].map((w) => w.slice(0, 5)),
 );
-const DELTA_RE = /\b(chang(?:e|ed|ing)|since (?:then|we|you|last)|still|lately|latest|now that|this year|next year|going forward|trend|update[ds]?|anything new|how has|shifted|different(?:ly)?|how did|what drove|why)\b/i;
+/** A question about what has changed since (a delta on a known fact is not a re-ask). */
+const DELTA_RE = /\b(chang(?:e|ed|ing)|since (?:then|we|you|last)|still|lately|latest|now that|this year|next year|going forward|trend|update[ds]?|anything new|how has|shifted|different(?:ly)?)\b/i;
+/**
+ * A question about the reason or the story behind something ("what drove
+ * that", "why"). A new facet of a figure on file — never a sure re-ask of
+ * it — but the file may well state the story (the 2019 union vote: "the vote
+ * failed, sixty-one to thirty-nine" on the Zoom call), so the candidates
+ * still go to the answer check. (Treated as a delta before, which skipped
+ * every candidate: the union question went out unchecked.)
+ */
+const REASON_RE = /\b(how did|what drove|why|what (?:caused|led to|happened)|reasons?)\b/i;
 const CITES_SOURCE_RE =
   /\b(?:your|the)\s[\w\s&'’().-]{0,50}?\b(?:shows?|says?|lists?|mentions?|notes?|states?|indicates?|puts?|has (?:it|you|them)|had)\b|according to|I see (?:that|from|in)|I have (?:it|you|that) down|on file|from (?:your|the) (?:call|email|questionnaire|document|report|statement)s?/i;
 const NON_ANSWER_RE = /\b(not sure|don'?t know|no idea|check|look (?:it )?up|get back|later|ask (?:my|our)|accountant (?:has|would)|skip|pass|rather not|prefer not)\b/i;
@@ -204,7 +214,7 @@ export interface ReaskContext {
 }
 
 /** How many model-checked candidates one draft may carry (strongest first). */
-const MAX_CANDIDATES = 10;
+const MAX_CANDIDATES = 8;
 
 /** Stems of a text as questionTokens makes them (5 characters, stop words out, acronyms kept). */
 const stemsOfText = (t: string) => questionTokens(t).stems;
@@ -340,6 +350,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
   if (question) {
     const q = questionTokens(question).stems;
     const delta = DELTA_RE.test(question);
+    const reason = REASON_RE.test(question);
     const cites = CITES_SOURCE_RE.test(draft);
 
     // 1. A fact already on file.
@@ -363,7 +374,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
       // split … by platform"); a one-word key ("insurance") must be asked
       // about exactly — "the deductible on your insurance" is a new facet.
       if (extras.length > (kt.length > 1 ? 1 : 0)) continue; // asks about a facet, not the fact itself
-      if (delta) continue;
+      if (delta || reason) continue;
       if (kt.every((t) => seller.has(t))) continue; // the seller just raised it
       if (deferred.some((d) => kt.every((t) => d.includes(t)))) continue; // a circle-back
       const src = sources[key];
@@ -427,7 +438,8 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
             ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`
             : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`,
           verify: true,
-          ...(onTopic && sureAnswer(p) ? { fallback: true } : {}),
+          // (A "why" after a "what" is usually the next facet — the model decides.)
+          ...(onTopic && sureAnswer(p) && !reason ? { fallback: true } : {}),
         });
         break;
       }
@@ -456,8 +468,11 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
 
     // 2b. Ranked candidates the strict rules above can't see — reworded
     // questions, a fact under another key, an on-file item, what the
-    // interviewer itself told the seller. The answer check decides each.
-    if (!delta) {
+    // interviewer itself told the seller. The answer check decides each —
+    // a delta question too (the check knows "what has changed since" is not
+    // answered by the older item; "is the union still a risk?" after the
+    // seller explained the failed vote on the call is).
+    {
       const factKeys = new Set(findings.filter((f) => f.kind === "fact").map((f) => f.detail.split(":")[0].toLowerCase()));
       const exclude = new Set([...Array.from(conflictKeys), ...Array.from(factKeys)]);
       findings.push(...rankedFactCandidates(questionWithLeadIn(draft), ctx.info, ctx.onFile ?? [], exclude, docs));
@@ -510,17 +525,24 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
   // 4c. …or one the live claim check found (live-claims.ts: a percentage,
   // a count, a claim — checked against the file by the supporting model),
   // unless the draft already raises it.
-  for (const c of ctx.liveConflicts ?? []) {
-    if (liveConflictAddressed(c, draft)) continue;
-    if (findings.some((f) => f.kind === "conflict" && f.detail === c.detail)) continue;
-    findings.push(c);
-  }
+  findings.push(...liveConflictFindings(ctx.liveConflicts ?? [], draft, findings));
 
   // Strongest candidates first, at most MAX_CANDIDATES for the answer check.
   const order = (f: ReaskFinding) => (!f.verify ? 0 : f.fallback ? 1 : f.kind === "fact" ? 2 : f.kind === "prior_question" ? 3 : f.kind === "source_text" ? 4 : 5);
   const sorted = [...findings].sort((a, b) => order(a) - order(b));
   let verifyCount = 0;
   return sorted.filter((f) => !f.verify || ++verifyCount <= MAX_CANDIDATES);
+}
+
+/** The live claim check's conflicts the draft doesn't raise (and `existing` doesn't hold already). */
+export function liveConflictFindings(live: ReaskFinding[], draft: string, existing: ReaskFinding[] = []): ReaskFinding[] {
+  const out: ReaskFinding[] = [];
+  for (const c of live) {
+    if (liveConflictAddressed(c, draft)) continue;
+    if ([...existing, ...out].some((f) => f.kind === "conflict" && f.detail === c.detail)) continue;
+    out.push(c);
+  }
+  return out;
 }
 
 /** The draft already raises a live conflict: names the file's figure, or asks which is right. */
@@ -547,11 +569,13 @@ export async function confirmFindings(
   const candidates = findings.filter((f) => f.verify);
   if (candidates.length === 0) return findings;
   const question = draftQuestions(draft) || draft;
+  const t0 = Date.now();
   const confirmed = await verifier(question, candidates.map((f, i) => ({ id: String(i + 1), text: f.detail })), timeoutMs);
+  const took = `${((Date.now() - t0) / 1000).toFixed(1)}s`;
   console.log(
     confirmed === null
-      ? `[reask-guard] answer check: no verdict — ${candidates.filter((f) => f.fallback).length} of ${candidates.length} candidate(s) stand on the strong match alone`
-      : `[reask-guard] answer check: ${confirmed.size} of ${candidates.length} candidate(s) confirmed`,
+      ? `[reask-guard] answer check: no verdict after ${took} — ${candidates.filter((f) => f.fallback).length} of ${candidates.length} candidate(s) stand on the strong match alone`
+      : `[reask-guard] answer check: ${confirmed.size} of ${candidates.length} candidate(s) confirmed (${took})`,
   );
   return findings.filter((f) => {
     if (!f.verify) return true;

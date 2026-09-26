@@ -117,13 +117,14 @@ import {
   priorQAFromSessions,
   sureFindings,
   liveConflictAddressed,
+  liveConflictFindings,
   MAX_REWRITES,
   type ReaskContext,
   type ReaskFinding,
   type OnFileFact,
 } from "./reask-guard";
 import { checkLiveClaims } from "./live-claims";
-import { ensureOnFileEvidence } from "./on-file-evidence";
+import { ensureOnFileEvidence, evidenceBuildRemainingMs, storedEvidence } from "./on-file-evidence";
 import { refreshOnFileEvidence } from "./on-file-refresh";
 import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
 import { ensureSourceReview } from "./source-review";
@@ -552,12 +553,18 @@ export async function startOrResumeSession(
   // and later turns pick it up).
   // What the file already answers (on-file-evidence.ts) is usually built
   // already — the broker's Overview and the end of the last session start
-  // it; a build still running gets a wait of its own, since an opening that
-  // asks what the file answers is the first thing a returning seller reads.
+  // it. A build still running is waited for only when it is about to land
+  // (its expected finish within EVIDENCE_WAIT_MS); otherwise the opening
+  // uses what the deal already had and later turns pick the new build up —
+  // waiting out a long build only made the opening slower (round V: a 45s
+  // wait on a 135s build ended without it on most starts).
   const evidenceRun = ensureOnFileEvidenceFor(deal, documents, tasks, resolvedDiscrepancies, existingSessions, session.id, openDiscrepancies);
   const within = <T,>(p: Promise<T> | null, ms: number): Promise<T | null> =>
-    p ? Promise.race([p.catch(() => null), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]) : Promise.resolve(null);
-  const [review, evidence] = await Promise.all([within(sourceReviewRun, SOURCE_REVIEW_WAIT_MS), within(evidenceRun, EVIDENCE_WAIT_MS)]);
+    p && ms > 0 ? Promise.race([p.catch(() => null), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]) : Promise.resolve(null);
+  const [review, evidence] = await Promise.all([
+    within(sourceReviewRun, SOURCE_REVIEW_WAIT_MS),
+    within(evidenceRun, openingEvidenceWaitMs(evidenceBuildRemainingMs(dealId), !!storedEvidence(deal))),
+  ]);
   if (review) deal = { ...deal, interviewSourceReview: review } as typeof deal;
   if (evidence) deal = { ...deal, interviewEvidence: evidence } as typeof deal;
 
@@ -1108,15 +1115,25 @@ export async function processTurn(
     // valuation leak, the agent's machinery or a legal claim stated as fact
     // (see OUTPUT GUARDS), or a turn where the seller withdrew something.
     if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text) })) return true;
-    // The live claim check started with the turn (usually done by now).
-    reaskCtx.liveConflicts = await liveClaimsRun;
-    let found = findReasks(text, reaskCtx);
-    // After a rewrite only the strong findings count (a word-overlap
-    // candidate never forces a second rewrite); on the first draft every
-    // candidate goes to the supporting model, which decides. (The seller is
-    // waiting on this check: past STREAM_CHECK_TIMEOUT_MS only the strong
-    // mechanical matches stand.)
-    found = reaskAttempt > 0 ? sureFindings(found) : await confirmFindings(found, text, undefined, STREAM_CHECK_TIMEOUT_MS);
+    // The seller is waiting on this gate, so its two checks run side by
+    // side, not one after the other: the answer check on the re-ask
+    // candidates, and the live claim check started with the turn (usually
+    // done by now; one still running LIVE_GATE_WAIT_MS after the gate opens
+    // is left to the ledger — the next turn opens on its conflict). After a
+    // rewrite only the strong findings count (a word-overlap candidate never
+    // forces a second rewrite); on the first draft every candidate goes to
+    // the supporting model, which decides (past STREAM_CHECK_TIMEOUT_MS only
+    // the strong mechanical matches stand).
+    const candidates = findReasks(text, { ...reaskCtx, liveConflicts: reaskCtx.liveConflicts ?? [] });
+    const gateStart = Date.now();
+    const [checked, live] = await Promise.all([
+      reaskAttempt > 0 ? Promise.resolve(sureFindings(candidates)) : confirmFindings(candidates, text, undefined, STREAM_CHECK_TIMEOUT_MS),
+      reaskCtx.liveConflicts ? Promise.resolve(null) : liveClaimsWithin(liveClaimsRun, LIVE_GATE_WAIT_MS),
+    ]);
+    const claimsPending = !live && !reaskCtx.liveConflicts;
+    if (live) reaskCtx.liveConflicts = live;
+    let found = [...checked, ...liveConflictFindings(live ?? [], text, checked)];
+    console.log(`[session-manager] Stream gate: ${Date.now() - gateStart}ms (${candidates.filter((f) => f.verify).length} candidate(s)${claimsPending ? "; claim check still running — left to the ledger" : ""})`);
     // …plus a rewrite that parrots a quoted passage in the seller's or a
     // transcript's voice.
     const echoed = earlyFindings.find((f) => f.quote && echoesPassage(text, f.quote));
@@ -2659,13 +2676,36 @@ export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boo
 /**
  * How long a streamed question waits for the answer check before it goes out
  * on the mechanical verdict alone (strong matches still stop it). 4s timed
- * out on about a fifth of turns once several interviews ran at once.
+ * out on about a fifth of turns once several interviews ran at once; the
+ * check is now hedged (a second request after 3.5s, answer-check.ts), so its
+ * slow tail rarely reaches this.
  */
-const STREAM_CHECK_TIMEOUT_MS = 12_000;
+const STREAM_CHECK_TIMEOUT_MS = 9_000;
 /** The live claim check's budget (it runs alongside the interview call). */
-const LIVE_CLAIMS_TIMEOUT_MS = 20_000;
-/** How long a new session's opening waits for an on-file evidence build still running. */
-const EVIDENCE_WAIT_MS = 45_000;
+const LIVE_CLAIMS_TIMEOUT_MS = 14_000;
+/** How long the stream gate waits for a live claim check still running when the message is complete. */
+const LIVE_GATE_WAIT_MS = 4_000;
+
+/** The live claim check's result if it lands within `ms`, else null (it keeps running). */
+function liveClaimsWithin(run: Promise<ReaskFinding[]>, ms: number): Promise<ReaskFinding[] | null> {
+  return Promise.race([run.catch(() => [] as ReaskFinding[]), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]);
+}
+/** The longest a new session's opening waits for an on-file evidence build that is about to land. */
+const EVIDENCE_WAIT_MS = 30_000;
+
+/**
+ * How long the opening waits for a running evidence build: until its
+ * expected finish (+3s), when that is near — within EVIDENCE_WAIT_MS for a
+ * deal with no evidence yet, within 12s for one that has an earlier build
+ * (still valid for everything but the newest material) — otherwise not at
+ * all. Pure.
+ */
+export function openingEvidenceWaitMs(remainingMs: number | null, hasStored: boolean): number {
+  if (remainingMs === null) return 0;
+  const cap = hasStored ? 12_000 : EVIDENCE_WAIT_MS;
+  const wait = remainingMs + 3_000;
+  return wait <= cap ? wait : 0;
+}
 
 /** A returning seller's opening that shows the conversation continues (not a first-meeting welcome). */
 export function showsContinuity(message: string): boolean {

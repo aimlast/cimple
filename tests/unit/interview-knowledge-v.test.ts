@@ -206,8 +206,11 @@ ok("evidence inputs: seller-visible sources only; the fingerprint changes with s
   const onFile = [{ key: "scrapAndRegrindRate", label: "Scrap and regrind rate", answer: "Internal scrap 3.9% / 3.4% / 2.9%", source: "Quality summary" }];
   const scrap = findReasks("What's your overall scrap rate across the plant?", { sellerMessage: "ok", info: {}, documents: [], priorQA: [], onFile });
   assert.ok(scrap.some((f) => f.kind === "fact" && /scrapAndRegrindRate/.test(f.detail)));
-  // A delta question is not a re-ask candidate.
-  assert.equal(findReasks("Has the scrap rate changed since last year?", { sellerMessage: "ok", info: {}, documents: [], priorQA: [], onFile }).filter((f) => f.kind === "fact").length, 0);
+  // A delta question is never a SURE re-ask (round V r2: its candidates go to the check, which knows
+  // "what has changed since" isn't answered by the older item; no verdict → it goes out).
+  const deltaFound = findReasks("Has the scrap rate changed since last year?", { sellerMessage: "ok", info: {}, documents: [], priorQA: [], onFile });
+  assert.equal(sureFindings(deltaFound).filter((f) => f.kind === "fact").length, 0);
+  assert.equal((await confirmFindings(deltaFound, "Has the scrap rate changed since last year?", async () => null)).filter((f) => f.kind === "fact").length, 0);
 
   // What the interviewer itself told the seller.
   const own = ownStatementCandidates(

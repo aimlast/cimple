@@ -81,6 +81,8 @@ export interface OnFileEvidence {
   version: number;
   fingerprint: string;
   computedAt: string;
+  /** How long the build took (ms) — what the next build is expected to take. */
+  buildMs?: number;
   status: "ready" | "failed";
   /** Target ids this build looked at (answered or not). */
   checked: string[];
@@ -298,9 +300,13 @@ const EVIDENCE_SYSTEM = [
 let client: Anthropic | null = null;
 const anthropic = () => (client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, maxRetries: 2 }));
 
-/** The model's raw results for one batch of items (unvalidated). */
-async function modelBatch(materials: string, items: string): Promise<unknown[]> {
-  const response = await anthropic().messages.create(
+/**
+ * The model's raw results for one batch of items (unvalidated). Streamed:
+ * `onStarted` fires when the response begins — the moment the file's prompt
+ * cache is written and the other batches can read it.
+ */
+async function modelBatch(materials: string, items: string, onStarted?: () => void): Promise<unknown[]> {
+  const stream = anthropic().messages.stream(
     {
       model: agentConfig.models.supportingAgents,
       max_tokens: 5000,
@@ -321,6 +327,15 @@ async function modelBatch(materials: string, items: string): Promise<unknown[]> 
     },
     { timeout: 240_000 },
   );
+  if (onStarted) {
+    let started = false;
+    stream.on("streamEvent", () => {
+      if (started) return;
+      started = true;
+      onStarted();
+    });
+  }
+  const response = await stream.finalMessage();
   const block = response.content.find((b) => b.type === "tool_use");
   const results = ((block && block.type === "tool_use" ? block.input : {}) as { results?: unknown }).results;
   return Array.isArray(results) ? results : [];
@@ -449,37 +464,54 @@ export function spokenNumbers(text: string): number[] {
   return out;
 }
 
+/**
+ * A number as written: thousands groups only when they really are groups
+ * ("62,480", "1,150,000"). A spreadsheet row reads as cells — "Jan
+ * 2024,5311,8311" is 2024, 5311 and 8311, "TOTAL,62480,104300" is 62480 and
+ * 104300 (read as one run of digits, no figure in such a row could ever be
+ * found). Never starts inside another number.
+ */
+export const NUMBER_RE = /(?<![\d.])(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)?(?![a-z])/gi;
+const SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
+
 /** The figures a text states, as written and scaled ($3.1M ≈ 3,100,000), plus spelled ones. */
 function figures(text: string): number[] {
   const out: number[] = [];
-  const re = /(\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)?(?![a-z])/gi;
+  const re = new RegExp(NUMBER_RE.source, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const n = parseFloat(m[1].replace(/,/g, ""));
     if (Number.isNaN(n)) continue;
     out.push(n);
     const suf = (m[2] || "").toLowerCase();
-    const mult: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
-    if (suf && mult[suf]) out.push(n * mult[suf]);
+    if (suf && SCALE[suf]) out.push(n * SCALE[suf]);
   }
   return [...out, ...spokenNumbers(text)];
 }
 
 /**
- * Every figure in the answer appears in the source (as written, scaled or
- * spelled). A year is exempt — a call says "last year" where the answer
- * names 2024.
+ * Every figure in the answer appears in the file (as written, scaled or
+ * spelled), to the precision the answer writes it: "62,480" must be 62,480
+ * (a figure half a percent away somewhere else in a large file is not
+ * support), "$3.1M" covers 3.05–3.15M, "$73" covers $72.99. A year is exempt
+ * — a call says "last year" where the answer names 2024.
  */
 export function figuresSupported(answer: string, source: string | number[]): boolean {
   const have = typeof source === "string" ? figures(source) : source;
-  const nums = (answer.match(/(\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)?(?![a-z])/gi) ?? [])
-    .filter((raw) => !/^(?:19|20)\d{2}$/.test(raw.trim()));
-  return nums.every((raw) => {
-    const vals = figures(raw);
-    const n = vals[vals.length - 1];
-    if (n === undefined) return true;
-    return have.some((h) => Math.abs(h - n) <= Math.max(1e-9, Math.abs(n) * 0.005));
-  });
+  const re = new RegExp(NUMBER_RE.source, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(answer)) !== null) {
+    if (!m[2] && /^(?:19|20)\d{2}$/.test(m[1])) continue;
+    const n = parseFloat(m[1].replace(/,/g, ""));
+    if (Number.isNaN(n)) continue;
+    const scale = SCALE[(m[2] || "").toLowerCase()] ?? 1;
+    const decimals = (m[1].split(".")[1] ?? "").length;
+    // Half a unit of the last digit written, at the written scale.
+    const tolerance = (0.5 * 10 ** -decimals) * scale + 1e-9;
+    const want = n * scale;
+    if (!have.some((h) => Math.abs(h - want) <= tolerance)) return false;
+  }
+  return true;
 }
 
 /** A value reasoned to, not read ("suggests", "likely", "implied by"). */
@@ -561,6 +593,10 @@ export function validateEvidence(
 // =====================
 
 const inflight = new Map<string, Promise<OnFileEvidence | null>>();
+/** When each running build started, and how long it is expected to take. */
+const inflightTiming = new Map<string, { startedAt: number; expectedMs: number }>();
+/** A first build's expected duration (a large deal's file, batches in parallel). */
+const DEFAULT_BUILD_MS = 75_000;
 const lastStart = new Map<string, number>();
 /** A deal's build doesn't restart more often than this (new items between builds wait). */
 const MIN_REBUILD_MS = 90_000;
@@ -575,6 +611,7 @@ export async function computeOnFileEvidence(
 ): Promise<OnFileEvidence | null> {
   const fingerprint = evidenceFingerprint(args.documents, args.sessions, args.currentSessionId);
   const targets = args.targets.slice(0, MAX_TARGETS);
+  const t0 = Date.now();
   try {
     const blocks = evidenceSources(args.documents, args.sessions, args.currentSessionId);
     const sources = new Map(blocks.map((b) => [b.id, b]));
@@ -595,10 +632,20 @@ export async function computeOnFileEvidence(
     for (let i = 0; i < lines.length; i += BATCH_SIZE) batches.push(lines.slice(i, i + BATCH_SIZE));
     const raw: unknown[] = [];
     if (batches.length > 0) {
-      // The first batch writes the prompt cache; the rest read it, in parallel.
-      raw.push(...(await modelBatch(materials, batches[0].join("\n"))));
-      const rest = await Promise.all(batches.slice(1).map((b) => modelBatch(materials, b.join("\n")).catch(() => [] as unknown[])));
-      for (const r of rest) raw.push(...r);
+      // The first batch writes the prompt cache; the rest start the moment
+      // its response begins (the cache is readable from then on) and run
+      // alongside it — the build takes about one batch, not two in a row
+      // (it was ~135s on Great Lakes, while a new session's opening waited).
+      let startRest!: () => void;
+      const firstStarted = new Promise<void>((resolve) => { startRest = resolve; });
+      const first = modelBatch(materials, batches[0].join("\n"), startRest);
+      // (A first batch that fails before it starts still lets the rest try.)
+      first.catch(() => startRest());
+      const rest = firstStarted.then(() =>
+        Promise.all(batches.slice(1).map((b) => modelBatch(materials, b.join("\n")).catch(() => [] as unknown[]))),
+      );
+      raw.push(...(await first));
+      for (const r of await rest) raw.push(...r);
     }
     // (Keyed by the target's own id — "field:robotAutomationLevel".)
     const rejects: string[] = [];
@@ -608,13 +655,14 @@ export async function computeOnFileEvidence(
       version: EVIDENCE_VERSION,
       fingerprint,
       computedAt: new Date().toISOString(),
+      buildMs: Date.now() - t0,
       status: "ready",
       checked: targets.map((t) => t.id),
       entries,
     };
     await storage.updateDeal(deal.id, { interviewEvidence: evidence } as any);
     const full = Object.values(entries).filter((e) => !e.partial).length;
-    console.log(`[on-file-evidence] ${full} of ${targets.length} open item(s) answered on file (${Object.keys(entries).length - full} partly; ${raw.length - Object.keys(entries).length} proposed answer(s) failed the quote/figure check) for deal ${deal.id}`);
+    console.log(`[on-file-evidence] ${full} of ${targets.length} open item(s) answered on file (${Object.keys(entries).length - full} partly; ${raw.length - Object.keys(entries).length} proposed answer(s) failed the quote/figure check) for deal ${deal.id} in ${Math.round((Date.now() - t0) / 1000)}s`);
     return evidence;
   } catch (err: any) {
     console.warn(`[on-file-evidence] build failed for deal ${deal.id}:`, err?.message || err);
@@ -666,12 +714,28 @@ export function ensureOnFileEvidence(
   const stored = storedEvidence(deal);
   if (stored && stored.fingerprint === fingerprint && Date.now() - (lastStart.get(deal.id) ?? 0) < MIN_REBUILD_MS) return null;
   lastStart.set(deal.id, Date.now());
-  const task = computeOnFileEvidence(deal, args).finally(() => inflight.delete(deal.id));
+  const task = computeOnFileEvidence(deal, args).finally(() => {
+    inflight.delete(deal.id);
+    inflightTiming.delete(deal.id);
+  });
   inflight.set(deal.id, task);
+  const previous = (deal.interviewEvidence as OnFileEvidence | null | undefined)?.buildMs;
+  inflightTiming.set(deal.id, { startedAt: Date.now(), expectedMs: typeof previous === "number" && previous > 0 ? previous : DEFAULT_BUILD_MS });
   return task;
 }
 
 /** True while a build for this deal is running. */
 export function isEvidenceBuilding(dealId: string): boolean {
   return inflight.has(dealId);
+}
+
+/**
+ * How long the running build is still expected to take (ms; 0 when it is
+ * due now), or null when none is running. A session opening waits for a
+ * build only when it is about to land.
+ */
+export function evidenceBuildRemainingMs(dealId: string, now = Date.now()): number | null {
+  const t = inflightTiming.get(dealId);
+  if (!t || !inflight.has(dealId)) return null;
+  return Math.max(0, t.startedAt + t.expectedMs - now);
 }

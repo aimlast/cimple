@@ -13,7 +13,7 @@
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused npx tsx tests/unit/interview-knowledge.test.ts
 import assert from "node:assert/strict";
 import { assembleKnowledgeBase, renderKnowledgeBaseForPrompt } from "../../server/interview/knowledge-base";
-import { findReasks, applyReaskGuard, keyTokens } from "../../server/interview/reask-guard";
+import { findReasks, applyReaskGuard, keyTokens, sureFindings } from "../../server/interview/reask-guard";
 import { detectAlternateConflicts, valuesMateriallyDiffer, buildFlaggedRisks, searchSourcesFor, buildPriorExchanges, splitList, crossSourceFigureConflicts } from "../../server/interview/source-context";
 import { validateReviewConflicts } from "../../server/interview/source-review";
 import { completionBlockers } from "../../server/interview/completion-gaps";
@@ -57,8 +57,8 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
     const priorQA = [{ question: "How is the business split between EV and ICE programs?", answer: "About 70% EV platforms and 30% ICE now", where: "in session 1" }];
     const findings = findReasks("What's your EV vs ICE split?", { sellerMessage: "We run two shifts.", info, documents: [], priorQA });
     assert.ok(findings.some((f) => f.kind === "fact" && /evVsIceSplit/.test(f.detail)), "the on-file fact is named");
-    // A delta question is not a re-ask.
-    assert.equal(findReasks("Has the EV vs ICE split shifted this year?", { sellerMessage: "ok", info, documents: [], priorQA }).filter((f) => f.kind === "fact").length, 0);
+    // A delta question is never a sure re-ask (its candidates go to the answer check, round V r2).
+    assert.equal(sureFindings(findReasks("Has the EV vs ICE split shifted this year?", { sellerMessage: "ok", info, documents: [], priorQA })).filter((f) => f.kind === "fact").length, 0);
 
     const calls: any[] = [];
     const fake: any = { messages: { create: async (p: any) => { calls.push(p); return toolResponse(reply("Which resin grades are hardest to source right now?")); } } };

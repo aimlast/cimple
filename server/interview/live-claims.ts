@@ -23,11 +23,14 @@ import Anthropic from "@anthropic-ai/sdk";
 import type { Document } from "@shared/schema";
 import { agentConfig } from "./config/load-config";
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
-import { questionTokens, searchSourcesTop, sourceLabel } from "./source-context";
+import { QUESTION_STOP, searchWord, sourceLabel } from "./source-context";
 import type { OnFileFact, ReaskFinding } from "./reask-guard";
+import { NUMBER_RE } from "./on-file-evidence";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "updatedAt">>;
+
+const LEAD_KINDS = new Set(["crm", "website", "social"]);
 
 const FIGURE_RE = /\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|dozen|half|third|quarter)\b/i;
 
@@ -57,12 +60,139 @@ interface Material { id: string; label: string; text: string; key?: string }
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
-/** The parts of the file the claims touch: ranked facts and on-file items, source passages, settled values. */
+// =====================
+// What the claims touch in the file
+// =====================
+
+/** Words that say nothing about what a figure measures. */
+const CLAIM_STOP = new Set(
+  ("honestly about around roughly approximately approx maybe probably think guess call just really pretty much every day days week year years " +
+    "the and for with that this our ours we're we've we'd have has had got get gets run runs running all per into onto from over under " +
+    "there here they them their these those what which who when where would could should will been being also only some any most more less " +
+    "said says say told know like well yeah yes okay sure right now today currently current usually typically generally overall total totals " +
+    "one two three four five six seven eight nine ten eleven twelve twenty thirty forty fifty sixty seventy eighty ninety hundred thousand million billion half dozen quarter " +
+    "percent point plus minus least give take close nearly almost basically kind sort lot lots bit thing things stuff way ways side area part " +
+    "business company firm shop place").split(" "),
+);
+/** Nouns counted or measured the same way ("26 trucks" vs "24 service vans"; "molds" vs "tools"). */
+const WORD_FAMILY: Record<string, string> = {
+  truck: "vehicle", van: "vehicle", vehicle: "vehicle", tractor: "vehicle", fleet: "vehicle", car: "vehicle", unit: "vehicle",
+  employee: "staff", staff: "staff", people: "staff", headcount: "staff", worker: "staff", person: "staff", fte: "staff", team: "staff",
+  mold: "mold", mould: "mold", tool: "mold", tooling: "mold",
+  customer: "customer", client: "customer", account: "customer",
+  location: "location", clinic: "location", store: "location", branch: "location", site: "location",
+  technician: "technician", tech: "technician",
+  prescription: "prescription", rx: "prescription", script: "prescription",
+  revenue: "revenue", sale: "revenue", topline: "revenue", turnover: "revenue",
+  scrap: "scrap", regrind: "scrap", reject: "scrap", defect: "scrap",
+};
+/** A word as the claim retrieval compares it: singular, family-mapped. */
+function claimWord(raw: string): string {
+  const w = searchWord(raw);
+  return WORD_FAMILY[w] ?? w;
+}
+/** The content words of a text (hyphenated words split: "customer-owned" → customer, owned). */
+export function claimWords(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const raw of text.match(/[A-Za-z][A-Za-z'’]*/g) ?? []) {
+    const lower = raw.toLowerCase().replace(/['’]s$/, "");
+    if (lower.length < 3 && !/^rx$/i.test(lower)) continue;
+    if (CLAIM_STOP.has(lower) || QUESTION_STOP.has(lower)) continue;
+    out.add(claimWord(lower));
+  }
+  return out;
+}
+const HAS_FIGURE_RE = /\d|\b(one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|hundred|thousand|million|dozen|half)\b/i;
+
+interface ClaimChunk { docId: string; docName: string; text: string; words: Set<string> }
+
+/** Figure-bearing windows (one or two lines/sentences) of the seller-visible sources. */
+export function claimChunks(documents: DocLike[]): ClaimChunk[] {
+  const out: ClaimChunk[] = [];
+  for (const d of documents) {
+    if (d.visibility === "broker_only" || LEAD_KINDS.has(String(d.sourceKind))) continue;
+    const text = typeof d.extractedText === "string" ? d.extractedText : "";
+    if (!text.trim()) continue;
+    const parts = text
+      .replace(/\r/g, "")
+      .split(/\n+|(?<=[.!?])\s+/)
+      .map((x) => x.replace(/\s+/g, " ").trim())
+      .filter((x) => x.length > 3);
+    for (let i = 0; i < parts.length; i++) {
+      // A line and the one after it (a table's label row and its figures, a
+      // speaker's sentence and its follow-on).
+      const win = [parts[i], parts[i + 1]].filter(Boolean).join(" ").slice(0, 360);
+      if (!HAS_FIGURE_RE.test(win)) continue;
+      out.push({ docId: d.id, docName: d.name, text: win, words: claimWords(win) });
+    }
+  }
+  return out;
+}
+
+/**
+ * The source passages a claim is most likely about: figure-bearing windows
+ * ranked by the claim's words they share, rarer words counting more (a
+ * word few passages use — "scrap", "customer-owned", "trucks" — pins the
+ * topic; "business" doesn't). Two shared words, or one rare one. Pure.
+ */
+export function rankClaimPassages(claim: string, chunks: ClaimChunk[], limit = 3): ClaimChunk[] {
+  const want = claimWords(claim);
+  if (want.size === 0 || chunks.length === 0) return [];
+  const df = new Map<string, number>();
+  for (const c of chunks) c.words.forEach((w) => { if (want.has(w)) df.set(w, (df.get(w) ?? 0) + 1); });
+  const n = chunks.length;
+  const rare = Math.max(3, Math.ceil(n * 0.04));
+  const percent = /%|percent/i.test(claim);
+  const scored: { c: ClaimChunk; score: number }[] = [];
+  for (const c of chunks) {
+    let score = 0;
+    let shared = 0;
+    let rareHit = false;
+    want.forEach((w) => {
+      if (!c.words.has(w)) return;
+      shared++;
+      const f = df.get(w) ?? 1;
+      score += Math.log(1 + n / f);
+      if (f <= rare && w.length >= 4) rareHit = true;
+    });
+    if (!(rareHit || shared >= 2)) continue;
+    if (percent && /%|percent/i.test(c.text)) score += 1;
+    scored.push({ c, score });
+  }
+  scored.sort((a, b) => b.score - a.score);
+  // One passage per document first, then the next best.
+  const picked: ClaimChunk[] = [];
+  const docs = new Set<string>();
+  for (const x of scored) {
+    if (picked.length >= limit) break;
+    if (docs.has(x.c.docId)) continue;
+    docs.add(x.c.docId);
+    picked.push(x.c);
+  }
+  for (const x of scored) {
+    if (picked.length >= limit) break;
+    if (!picked.includes(x.c)) picked.push(x.c);
+  }
+  return picked;
+}
+
+/** Money facts a spoken money figure may be about. */
+const MONEY_FACT_RE = /revenue|sales|sde|discretionary|ebitda|netIncome|netProfit|profit|earnings|ownerComp|ownerSalary|ownerPay|ownerBenefit|cashFlow/i;
+/**
+ * The headline money facts, always offered for a money claim — what an owner
+ * means by "the business clears about a million and a half for me" shares no
+ * word with "sde: $1,312,000".
+ */
+const HEADLINE_MONEY_RE = /^(?:sde|sellerDiscretionaryEarnings|ownerBenefit|ownerCashFlow|adjustedEbitda|ebitda|netIncome|annualRevenue|revenue|totalRevenue|ownerCompensation)$/i;
+const MONEY_CLAIM_RE = /\$|\b\d[\d,.]*\s*(?:k|m|mm)\b|\b(?:thousand|million|grand|dollars?|bucks)\b/i;
+
+/** The parts of the file the claims touch: facts and on-file items, source passages, settled values. */
 export function claimMaterial(input: LiveClaimInput, claims: string[]): Material[] {
-  const words = questionTokens(`${claims.join(" ")} ${input.lastQuestion ?? ""}`).stems;
+  const words = claimWords(`${claims.join(" ")} ${input.lastQuestion ?? ""}`);
   const out: Material[] = [];
   const sources = getFieldSources(input.info);
   const docs = new Map(input.documents.map((d) => [d.id, d]));
+  const money = claims.some((c) => MONEY_CLAIM_RE.test(c));
   const facts: { score: number; m: Omit<Material, "id"> }[] = [];
   for (const [key, raw] of Object.entries(input.info)) {
     if (!isFactKey(key) || raw === null || raw === undefined || raw === "") continue;
@@ -74,28 +204,39 @@ export function claimMaterial(input: LiveClaimInput, claims: string[]): Material
     if (kind === "broker") continue;
     const v = repairCharIndexedValue(raw);
     const text = (typeof v === "string" ? v : JSON.stringify(v)).replace(/\s+/g, " ");
-    const kw = questionTokens(`${key.replace(/([a-z0-9])([A-Z])/g, "$1 $2")} ${text.slice(0, 300)}`).stems;
+    if (!HAS_FIGURE_RE.test(text)) continue;
+    const keyWords = claimWords(key.replace(/([a-z0-9])([A-Z])/g, "$1 $2"));
+    const valueWords = claimWords(text.slice(0, 300));
     let s = 0;
-    kw.forEach((w) => { if (words.has(w)) s++; });
+    keyWords.forEach((w) => { if (words.has(w)) s += 2; });
+    valueWords.forEach((w) => { if (words.has(w) && !keyWords.has(w)) s++; });
+    if (money && MONEY_FACT_RE.test(key)) s += 1.5;
+    if (money && HEADLINE_MONEY_RE.test(key)) s = Math.max(s, 2.5);
     if (s >= 2) facts.push({ score: s, m: { label: `fact ${key} [${sourceLabel(src, docs)}]`, text: clip(text, 260), key } });
   }
   facts.sort((a, b) => b.score - a.score).slice(0, 8).forEach((f) => out.push({ id: `M${out.length + 1}`, ...f.m }));
+  let onFileAdded = 0;
   for (const f of input.onFile ?? []) {
-    const kw = questionTokens(`${f.label} ${f.answer}`).stems;
+    if (onFileAdded >= 5) break;
+    if (!HAS_FIGURE_RE.test(f.answer)) continue;
+    const kw = claimWords(`${f.key.replace(/([a-z0-9])([A-Z])/g, "$1 $2")} ${f.label} ${f.answer}`);
     let s = 0;
     kw.forEach((w) => { if (words.has(w)) s++; });
-    if (s >= 2) out.push({ id: `M${out.length + 1}`, label: `on file [${f.source}]`, text: clip(`${f.label}: ${f.answer}`, 260), key: f.key });
-    if (out.length >= 12) break;
+    if (s >= 1 && Array.from(kw).some((w) => words.has(w) && w.length >= 5)) {
+      out.push({ id: `M${out.length + 1}`, label: `on file [${f.source}]`, text: clip(`${f.label}: ${f.answer}`, 260), key: f.key });
+      onFileAdded++;
+    }
   }
+  const chunks = claimChunks(input.documents);
   const seen = new Set<string>();
   for (const c of claims) {
-    for (const hit of searchSourcesTop(c, input.documents, 2)) {
-      const k = `${hit.docId}|${hit.snippet.slice(0, 60)}`;
+    for (const hit of rankClaimPassages(c, chunks, 3)) {
+      const k = `${hit.docId}|${hit.text.slice(0, 80)}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      out.push({ id: `M${out.length + 1}`, label: `passage from "${hit.docName}"`, text: hit.snippet });
+      out.push({ id: `M${out.length + 1}`, label: `passage from "${hit.docName}"`, text: hit.text });
     }
-    if (out.length >= 20) break;
+    if (out.length >= 24) break;
   }
   for (const s of (input.settled ?? []).slice(0, 6)) out.push({ id: `M${out.length + 1}`, label: "settled by the broker", text: clip(s, 200) });
   return out;
@@ -178,7 +319,7 @@ const SPELLED: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, fiv
 /** Numbers a text states, digits or spelled ("twenty-six" → 26, "a million and a half" → 1.5 million scaled). */
 export function statedNumbers(text: string): number[] {
   const out: number[] = [];
-  const re = /(\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)?(?![a-z])/gi;
+  const re = new RegExp(NUMBER_RE.source, "gi");
   let m: RegExpExecArray | null;
   while ((m = re.exec(text)) !== null) {
     const n = parseFloat(m[1].replace(/,/g, ""));
@@ -200,7 +341,7 @@ export function statedNumbers(text: string): number[] {
 function figuresIn(value: string, pool: number[]): boolean {
   const want = statedNumbers(value);
   if (want.length === 0) return true;
-  const raw = (value.match(/(\d[\d,]*(?:\.\d+)?)\s*(k|m|mm|million|thousand|b|billion)?(?![a-z])/gi) ?? []).filter((r) => !/^(?:19|20)\d{2}$/.test(r.trim()));
+  const raw = (value.match(new RegExp(NUMBER_RE.source, "gi")) ?? []).filter((r) => !/^(?:19|20)\d{2}$/.test(r.trim()));
   if (raw.length === 0 && want.every((n) => n >= 1900 && n <= 2099)) return true;
   const targets = raw.length > 0 ? raw.map((r) => statedNumbers(r).slice(-1)[0]).filter((n): n is number => n !== undefined) : want;
   return targets.every((n) => pool.some((h) => Math.abs(h - n) <= Math.max(1e-9, Math.abs(n) * 0.005)));
