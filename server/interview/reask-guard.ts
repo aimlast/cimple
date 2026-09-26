@@ -27,6 +27,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import type { InterviewResponse } from "./response-schema";
 import { callInterviewWithRecovery, type InterviewCallParams } from "./turn-guard";
+import { withRewrittenHead } from "./stream-head";
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
 import { questionPart, questionTokens, searchSourcesTop, valuesMateriallyDiffer, sourceLabel, QUESTION_STOP, spokenFigureConflicts } from "./source-context";
 import { modelAnswerVerifier, type AnswerVerifier } from "./answer-check";
@@ -667,8 +668,13 @@ export async function applyReaskGuard(
       { role: "assistant" as const, content: current.message },
       { role: "user" as const, content: reaskCorrection(attempt === 0 ? toFix : all) },
     );
-    const { response, degraded } = await callInterviewWithRecovery(anthropic, { ...params, messages: conversation });
-    if (degraded || !response.message) break;
+    // A wording rewrite: only its head is used (the question, why we ask,
+    // chips) — the model is stopped there instead of writing a tail that
+    // would be thrown away (~15s of Opus output); the draft's extracted
+    // facts, reasoning and tasks stand (stream-head.ts).
+    const rewrite = await callInterviewWithRecovery(anthropic, { ...params, messages: conversation }, undefined, undefined, { headOnly: true });
+    if (rewrite.degraded || !rewrite.response.message) break;
+    const response = rewrite.headOnly ? withRewrittenHead(current, rewrite.response) : rewrite.response;
     // A rewrite that parrots a quoted source passage (a transcript line in
     // the seller's voice) is worse than what it replaces — stop there.
     if (all.some((f) => f.quote && echoesPassage(response.message, f.quote))) break;

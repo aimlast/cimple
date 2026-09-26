@@ -20,6 +20,10 @@ export interface ScriptedReply {
   nextIntent?: string;
   currentTopic?: string;
   suggestedAnswers?: string[];
+  /** Streamed only: the connection breaks after this share (0–1) of the tool input. */
+  streamBreaksAt?: number;
+  /** Streamed only: the response ends with this stop reason (e.g. "max_tokens"). */
+  stopReason?: string;
 }
 
 export function toolInput(r: ScriptedReply) {
@@ -64,6 +68,8 @@ export interface Harness {
   intents: Record<string, unknown>[];
   intentCalls: number;
   logs: string[];
+  /** Streamed interview calls: each delta delivered (call index, characters so far, of total). */
+  streamed: Array<{ call: number; upTo: number; of: number }>;
 }
 
 export function installHarness(deal: any, opts: { messages?: ConversationMessage[]; sessionMeta?: Record<string, unknown>; documents?: any[] } = {}): Harness {
@@ -77,6 +83,7 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
     intents: [],
     intentCalls: 0,
     logs: [],
+    streamed: [],
   };
   if (opts.messages) {
     h.sessions.push({
@@ -107,19 +114,49 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
       return { content: [{ type: "tool_use", id: "i", name: "seller_intent", input: { stop: "none", continueRequest: false, sellerQuestion: "", retractions: [], corrections: [], privacyRequests: [], ...next } }], stop_reason: "tool_use" };
     }
     if (tool !== "interview_response") throw new Error(`unexpected model call (${tool ?? "no tool"})`);
+    return { content: [{ type: "tool_use", id: "t", name: "interview_response", input: scripted(params) }], stop_reason: "tool_use" };
+  };
+  /** The next scripted interview reply (the call is recorded). */
+  const scripted = (params: any) => {
     const last = params.messages[params.messages.length - 1];
     h.calls.push(typeof last?.content === "string" ? last.content : JSON.stringify(last?.content));
     h.systems.push(Array.isArray(params.system) ? params.system.map((b: any) => b.text).join("\n") : String(params.system ?? ""));
     const next = h.script.shift();
     if (!next) throw new Error("harness: no scripted reply left");
-    return { content: [{ type: "tool_use", id: "t", name: "interview_response", input: toolInput(next) }], stop_reason: "tool_use" };
+    lastScripted = next;
+    return toolInput(next);
   };
+  let lastScripted: ScriptedReply | null = null;
+  // A streamed interview call plays its scripted reply as the API streams a
+  // tool call: the input JSON in small deltas (a caller may stop it early —
+  // the stream gate, a head-only rewrite). Every delta is logged in
+  // h.streamed with the call's index, so tests can see how far it ran.
   // Streamed supporting calls (the on-file evidence build, started in the
   // background when a session ends) fail the way an unavailable API does:
   // their finalMessage rejects and the caller's own error handling runs.
-  const realStream = proto.stream;
-  proto.stream = function (params: any, options?: any) {
-    if (params?.tools?.[0]?.name === "interview_response") return realStream.call(this, params, options);
+  proto.stream = function (params: any) {
+    if (params?.tools?.[0]?.name === "interview_response") {
+      const input = scripted(params);
+      const { streamBreaksAt, stopReason } = lastScripted ?? {};
+      const json = JSON.stringify(input);
+      const call = h.calls.length - 1;
+      let aborted = false;
+      const stream: any = {
+        async *[Symbol.asyncIterator]() {
+          for (let i = 0; i < json.length; i += 24) {
+            if (aborted) return;
+            await new Promise((r) => setImmediate(r));
+            if (streamBreaksAt !== undefined && i >= json.length * streamBreaksAt) throw new Error("harness: socket hang up");
+            h.streamed.push({ call, upTo: Math.min(json.length, i + 24), of: json.length });
+            yield { type: "content_block_delta", index: 0, delta: { type: "input_json_delta", partial_json: json.slice(i, i + 24) } };
+          }
+        },
+        on: () => stream,
+        abort: () => { aborted = true; },
+        finalMessage: async () => ({ content: [{ type: "tool_use", id: "t", name: "interview_response", input }], stop_reason: stopReason ?? "tool_use" }),
+      };
+      return stream;
+    }
     const result: Promise<any> = Promise.resolve().then(() => proto.create.call(this, params));
     result.catch(() => {});
     const fake: any = { on: () => fake, finalMessage: () => result, abort: () => {} };
@@ -140,34 +177,48 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
   // ── db (interview_sessions only; everything else reads as empty) ──
   const d = db as any;
   const chain = (rows: () => any[]) => {
+    let ordered = false;
     const c: any = {
       where: () => c,
-      orderBy: () => c,
+      // (Every orderBy in the interview code is "most recent activity first".)
+      orderBy: () => { ordered = true; return c; },
       limit: () => c,
-      then: (res: any, rej: any) => Promise.resolve(rows()).then(res, rej),
+      then: (res: any, rej: any) =>
+        Promise.resolve(ordered ? [...rows()].sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()) : rows()).then(res, rej),
     };
     return c;
+  };
+  // The session a where(eq(interviewSessions.id, …)) names, if the condition
+  // carries one of the known ids; else the newest.
+  const targetOf = (cond: any) => {
+    const ids = new Set(h.sessions.map((s) => s.id));
+    const found = (cond?.queryChunks ?? []).find((q: any) => q && typeof q.value === "string" && ids.has(q.value));
+    return found ? h.sessions.find((s) => s.id === found.value) : h.sessions[h.sessions.length - 1];
   };
   d.select = () => ({ from: (table: any) => chain(() => (table === interviewSessions ? h.sessions : [])) });
   d.update = (table: any) => ({
     set: (values: any) => ({
-      where: async () => {
+      where: async (cond: any) => {
         if (table !== interviewSessions) return;
-        // One session in play at a time in these tests: update the newest.
-        const target = h.sessions[h.sessions.length - 1];
+        const target = targetOf(cond);
         if (target) Object.assign(target, values);
       },
     }),
   });
   d.insert = (table: any) => ({
-    values: (values: any) => ({
-      returning: async () => {
+    values: (values: any) => {
+      let row: any = null;
+      const add = () => {
         if (table !== interviewSessions) return [];
-        const row = { id: `sess-${h.sessions.length + 1}`, lastActivityAt: new Date(), completedAt: null, ...values };
-        h.sessions.push(row);
+        row ??= { id: `sess-${h.sessions.length + 1}`, lastActivityAt: new Date(), completedAt: null, ...values };
+        if (!h.sessions.includes(row)) h.sessions.push(row);
         return [row];
-      },
-    }),
+      };
+      return {
+        returning: async () => add(),
+        then: (res: any, rej: any) => Promise.resolve().then(() => { add(); }).then(res, rej),
+      };
+    },
   });
 
   // ── logs ──

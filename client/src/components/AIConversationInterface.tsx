@@ -132,6 +132,8 @@ async function startInterviewStream(
   url: string,
   init: RequestInit,
   onStage: (stage: keyof typeof START_STAGE_TEXT) => void,
+  /** The opening question, as soon as it is final (the session saves after). */
+  onOpening?: (text: string) => void,
 ): Promise<TurnResult> {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -155,6 +157,7 @@ async function startInterviewStream(
       if (!line) continue;
       const evt = JSON.parse(line.slice(6));
       if (evt.type === "status" && evt.stage in START_STAGE_TEXT) onStage(evt.stage);
+      else if (evt.type === "opening" && typeof evt.text === "string") onOpening?.(evt.text);
       else if (evt.type === "done") return evt.result as TurnResult;
       else if (evt.type === "error") throw new Error(evt.error || "Failed to start conversation");
     }
@@ -262,11 +265,18 @@ export function AIConversationInterface({
   // answer and saves — 15–40s on long turns), and an answer sent meanwhile
   // is queued and goes out the moment the turn is saved.
   const [isStreaming, setIsStreaming] = useState(false);
+  // True once the server says the question is final and sends its chips
+  // and "why we ask this" (the "ready" event) — they show while the turn
+  // finishes saving, so a seller can pick a chip right away.
+  const [turnReady, setTurnReady] = useState(false);
   const queuedSendRef = useRef<QueuedSend | null>(null);
   const [queuedSend, setQueuedSend] = useState(false);
   // Where a new session's opening is (streamed by /start) — shown while it loads.
   const [startStage, setStartStage] = useState<"reading" | "checking_sources" | "writing" | null>(null);
   const [startSlow, setStartSlow] = useState(false);
+  // The opening question, shown as soon as the server has it (the session is
+  // saved a moment later).
+  const [openingPreview, setOpeningPreview] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -289,6 +299,7 @@ export function AIConversationInterface({
       setStartError(null);
       setStartStage(null);
       setStartSlow(false);
+      setOpeningPreview(null);
       const slowTimer = setTimeout(() => { if (!cancelled) setStartSlow(true); }, 15000);
       try {
         // A broker-led session is always an explicit start; otherwise a
@@ -307,6 +318,7 @@ export function AIConversationInterface({
             }),
           },
           (stage) => { if (!cancelled) setStartStage(stage); },
+          (text) => { if (!cancelled) setOpeningPreview(text); },
         ).finally(() => clearTimeout(slowTimer));
         if (cancelled) return;
         if (!result.sessionId) {
@@ -630,6 +642,7 @@ export function AIConversationInterface({
     }
     setSuggestedAnswers([]); // Clear chips while waiting for AI response
     setSelectedAnswer(null);
+    setTurnReady(false);
     setIsLoading(true);
 
     const controller = new AbortController();
@@ -694,6 +707,25 @@ export function AIConversationInterface({
           if (evt.type === "delta") {
             setIsStreaming(true); // swaps the "thinking" dots for live text
             appendToBubble(evt.text);
+          } else if (evt.type === "ready") {
+            // The question is final: its "why we ask this" and chips now,
+            // while the server finishes saving the turn.
+            setIsStreaming(true);
+            ensureBubble();
+            setMessages((prev) =>
+              prev.map((m) =>
+                m.timestamp === aiTs && m.role === "ai"
+                  ? {
+                      ...m,
+                      ...(evt.whyItMatters ? { whyItMatters: evt.whyItMatters } : {}),
+                      ...(evt.importance ? { importance: evt.importance } : {}),
+                      ...(evt.targetSection ? { targetSection: evt.targetSection } : {}),
+                    }
+                  : m,
+              ),
+            );
+            if (!queuedSendRef.current) setSuggestedAnswers(Array.isArray(evt.suggestedAnswers) ? evt.suggestedAnswers : []);
+            setTurnReady(true);
           } else if (evt.type === "done") {
             result = evt.result as TurnResult;
           } else if (evt.type === "error") {
@@ -768,6 +800,8 @@ export function AIConversationInterface({
       const waiting = queuedSendRef.current;
       queuedSendRef.current = null;
       setQueuedSend(false);
+      // (Chips a ready event showed belong to the reply that failed.)
+      setSuggestedAnswers([]);
       if (waiting) setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === waiting.userMessage.timestamp)));
       const restored = [cleanedInput, waiting?.text, inputRef.current.trim()].filter(Boolean).join("\n\n");
       setInput(restored);
@@ -777,6 +811,7 @@ export function AIConversationInterface({
       setAbortController(null);
       setIsLoading(false);
       setIsStreaming(false);
+      setTurnReady(false);
     }
   }, [input, editing, isFinished, isLoading, isStreaming, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
 
@@ -806,6 +841,7 @@ export function AIConversationInterface({
       setAbortController(null);
       setIsLoading(false);
       setIsStreaming(false);
+      setTurnReady(false);
     }
     // An answer waiting behind the cancelled turn is not sent either.
     const waiting = queuedSendRef.current;
@@ -1233,7 +1269,7 @@ export function AIConversationInterface({
             <span>{currentQuestion.whyItMatters}</span>
           </p>
         )}
-        {suggestedAnswers.length > 0 && !isLoading && (
+        {suggestedAnswers.length > 0 && (!isLoading || turnReady) && (
           <div className="mt-3">
             <p className="text-[10px] uppercase tracking-wider text-muted-foreground/70 mb-1">Listen for</p>
             <ul className="flex flex-wrap gap-1.5">
@@ -1290,7 +1326,27 @@ export function AIConversationInterface({
     messages.flatMap((m) => (m.correctionOf?.timestamp ? [m.correctionOf.timestamp] : [])),
   );
 
-  // Starting state
+  // Starting state — the opening question shows as soon as it is written
+  // (final: it is the text the session saves a moment later).
+  if (isStarting && openingPreview) {
+    return (
+      <div className="flex flex-col h-full">
+        <div className="flex-1 overflow-y-auto px-6 py-5" data-testid="status-opening-preview">
+          <ChatMessage role="ai" content={openingPreview} timestamp={new Date().toISOString()} />
+        </div>
+        <div className="border-t border-border px-4 py-3 bg-card">
+          <div className="max-w-3xl mx-auto flex items-center gap-2 text-xs text-muted-foreground">
+            <span className="flex gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" />
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
+              <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
+            </span>
+            Getting your answer box ready…
+          </div>
+        </div>
+      </div>
+    );
+  }
   if (isStarting) {
     return (
       <div className="flex flex-col h-full items-center justify-center gap-3 text-muted-foreground">
@@ -1477,7 +1533,7 @@ export function AIConversationInterface({
                 Multi-select produced nonsense like "One. Three." Hidden while
                 editing: the chips answer the current question, not the one
                 being corrected. */}
-            {!together && suggestedAnswers.length > 0 && !isLoading && !editing && (
+            {!together && suggestedAnswers.length > 0 && (!isLoading || (turnReady && !queuedSend)) && !editing && (
               <div className="max-w-3xl mx-auto mb-2.5 flex flex-wrap gap-1.5">
                 {suggestedAnswers.map((answer, idx) => {
                   const isSelected = selectedAnswer === idx;

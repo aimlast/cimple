@@ -2,6 +2,7 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type ExtractedField } from "./response-schema";
 import type { SystemBlock } from "./system-prompt";
 import { guardNormalisationFields } from "./reply-guards";
+import { headSoFar, type StreamHead } from "./stream-head";
 
 /**
  * turn-guard
@@ -273,7 +274,16 @@ function extractMessageSoFar(buf: string): { text: string; complete: boolean } |
       i += 2;
       continue;
     }
-    if (c === '"') return { text: out, complete: true };
+    if (c === '"') {
+      // The closed string, decoded exactly as the final parse decodes it
+      // (\uXXXX escapes included) — the text the seller is shown is the
+      // text that is saved.
+      try {
+        return { text: JSON.parse(buf.slice(m.index + m[0].length - 1, i + 1)), complete: true };
+      } catch {
+        return { text: out, complete: true };
+      }
+    }
     out += c;
     i++;
   }
@@ -295,7 +305,19 @@ export async function callInterviewWithRecovery(
    * a question that re-asks something on file is never shown to the seller.
    */
   onMessageComplete?: (message: string) => boolean | Promise<boolean>,
-): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean }> {
+  /**
+   * Streaming only — either option makes the call stream, even with no
+   * display channel (see stream-head.ts):
+   *  - onHead: called once the seller-facing head (message, why we ask,
+   *    importance, section, chips) is complete and the message approved, so
+   *    the turn can open the seller's answer while the tail (extracted
+   *    facts, reasoning, tasks) is still being generated;
+   *  - headOnly: the caller uses only the head (a wording rewrite) — the
+   *    call stops there and the result is marked `headOnly`: its tail is
+   *    defaults, never to be used (the caller keeps the draft's).
+   */
+  hooks: { onHead?: (head: StreamHead) => void; headOnly?: boolean } = {},
+): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean; headOnly?: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean }> => {
@@ -328,7 +350,7 @@ export async function callInterviewWithRecovery(
   // validation to the non-streaming path.
   const streamAttempt = async (
     messages: InterviewCallParams["messages"],
-  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean }> => {
+  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean; headOnly?: boolean }> => {
     const stream = anthropic.messages.stream({
       model: params.model,
       max_tokens: params.maxTokens,
@@ -342,6 +364,7 @@ export async function callInterviewWithRecovery(
     let jsonBuf = "";
     let emitted = 0;
     let checked = false;
+    let headDone = !hooks.onHead && !hooks.headOnly;
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
@@ -350,7 +373,7 @@ export async function callInterviewWithRecovery(
         jsonBuf += event.delta.partial_json;
         const msg = extractMessageSoFar(jsonBuf);
         if (msg && msg.text.length > emitted) {
-          onDelta!(msg.text.slice(emitted));
+          onDelta?.(msg.text.slice(emitted));
           emitted = msg.text.length;
         }
         if (msg?.complete && !checked && onMessageComplete) {
@@ -370,6 +393,23 @@ export async function callInterviewWithRecovery(
             return { response, valid: false, rejected: true };
           }
         }
+        // The head, once the message is out (and approved, when checked).
+        if (!headDone && msg?.complete && (checked || !onMessageComplete)) {
+          const { head, complete } = headSoFar(jsonBuf);
+          if (complete) {
+            headDone = true;
+            try {
+              hooks.onHead?.(head);
+            } catch (err) {
+              console.warn("[turn-guard] head hook failed — continuing:", err);
+            }
+            if (hooks.headOnly) {
+              stream.on("abort", () => {});
+              stream.abort();
+              return { response: normalizeInterviewResponse(head).response, valid: true, headOnly: true };
+            }
+          }
+        }
       }
     }
 
@@ -387,10 +427,14 @@ export async function callInterviewWithRecovery(
   };
 
   try {
-    const first = onDelta
+    // (A client without streaming — a test double — gets the plain call; a
+    // head-only caller then simply receives the whole response.)
+    const canStream = typeof (anthropic.messages as { stream?: unknown }).stream === "function";
+    const first = canStream && (onDelta || hooks.onHead || hooks.headOnly)
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
     if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };
+    if ((first as { headOnly?: boolean }).headOnly) return { response: backfillSuggestedAnswers(first.response), degraded: false, headOnly: true };
     if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");

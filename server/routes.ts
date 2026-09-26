@@ -1374,7 +1374,13 @@ Return JSON only.`,
         res.flushHeaders?.();
         const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
         try {
-          const result = await startOrResumeSession(dealId, { ...startOpts, onProgress: (stage) => send({ type: "status", stage }) });
+          const result = await startOrResumeSession(dealId, {
+            ...startOpts,
+            onProgress: (stage) => send({ type: "status", stage }),
+            // The opening's text as soon as it is final (its label and the
+            // session save follow): the seller starts reading meanwhile.
+            onOpeningText: (text) => send({ type: "opening", text }),
+          });
           send({ type: "done", result: await interviewResultFor(req, dealId, result) });
         } catch (err: any) {
           console.error("Interview start error:", err);
@@ -1717,6 +1723,9 @@ Return JSON only.`,
             correctionOf: parseCorrectionOf(req.body.correctionOf),
             conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
             conductedVia: parseConductedVia(req.body?.conductedVia),
+            // The question on screen is final and its chips are ready: the
+            // seller can answer while the turn finishes saving.
+            onReady: (ready) => send({ type: "ready", ...ready }),
           },
         );
         send({ type: "done", result: await interviewResultFor(req, dealId, result) });
