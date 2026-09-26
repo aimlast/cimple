@@ -19,6 +19,7 @@
  * shortlist, confidential", "don't put this in writing") — see
  * holdConfidentialFacts below.
  */
+import { SELLER_KEEP_OUT_REASON_RE, carriesPrivateDetail, getSellerKeepOut, type SellerKeepOutEntry } from "../interview/seller-keep-out";
 
 const PERSON = String.raw`(?:his|her|my|their|the owner'?s|owner'?s|founder'?s|seller'?s|vendor'?s|wife'?s|husband'?s|spouse'?s|partner'?s|son'?s|daughter'?s|father'?s|mother'?s)`;
 
@@ -476,11 +477,63 @@ export function privateNoteTexts(info: Record<string, unknown> | null | undefine
     }
     if (!n || typeof n !== "object") continue;
     const e = n as { note?: unknown; wording?: unknown; alsoFrom?: unknown };
-    add(e.note);
-    add(e.wording);
-    if (Array.isArray(e.alsoFrom)) for (const s of e.alsoFrom) if (s && typeof s === "object") add((s as { wording?: unknown }).wording);
+    // A note the seller's privacy request wrote carries the request itself
+    // (PRIV-V-2: its reason was dropped here, and the detail alone — "Shortlisted
+    // for the Kestrel Systems RFP" — reads as no instruction to anyone).
+    // Personal matters are left to the health screen (their names are family).
+    const instruct = (t: unknown) =>
+      isSellerKeepOutNote(n) && typeof t === "string" && !hasSensitiveDetail(t) ? `${t.trim().replace(/[.\s]+$/, "")} — the seller asked to keep this out of the CIM` : t;
+    add(instruct(e.note));
+    add(instruct(e.wording));
+    if (Array.isArray(e.alsoFrom)) for (const s of e.alsoFrom) if (s && typeof s === "object") add(instruct((s as { wording?: unknown }).wording));
   }
   return out;
+}
+
+/** A private note written for the seller's request to keep something out of the sale document. */
+function isSellerKeepOutNote(n: unknown): boolean {
+  if (!n || typeof n !== "object") return false;
+  const e = n as { reason?: unknown; alsoFrom?: unknown };
+  const says = (r: unknown) => typeof r === "string" && SELLER_KEEP_OUT_REASON_RE.test(r);
+  return says(e.reason) || (Array.isArray(e.alsoFrom) && e.alsoFrom.some((s) => !!s && typeof s === "object" && says((s as { reason?: unknown }).reason)));
+}
+
+/**
+ * The seller's keep-out requests as explicit holds (PRIV-V-2): every fact
+ * clause that carries a requested detail — whichever source states it — is
+ * held out of every CIM input, and the party a business item is about (its
+ * first name: "Kestrel Systems") is held everywhere with it.
+ */
+function sellerKeepOutHolds(info: Record<string, unknown>, facts: string): KeepOut {
+  const out: KeepOut = { clauses: [], names: [], pairs: [] };
+  const requests: SellerKeepOutEntry[] = [...getSellerKeepOut(info)];
+  const notes = Array.isArray(info._brokerPrivateNotes) ? (info._brokerPrivateNotes as unknown[]) : [];
+  for (const n of notes) {
+    if (!isSellerKeepOutNote(n)) continue;
+    const text = (n as { note?: unknown }).note;
+    if (typeof text === "string" && text.trim() && !requests.some((r) => r.detail.trim().toLowerCase() === text.trim().toLowerCase())) requests.push({ detail: text, terms: [] });
+  }
+  for (const req of requests) {
+    if (!hasSensitiveDetail(req.detail)) {
+      for (const name of namesIn(req.detail).slice(0, 1)) {
+        if (mentionsHeldName(facts, [name]) && holdableParty(info, name)) out.names.push(name);
+      }
+    }
+    for (const [key, value] of Object.entries(info)) {
+      if (key.startsWith("_")) continue;
+      for (const c of clausesOf(plainTextDeep(value))) if (carriesPrivateDetail(c, req)) out.clauses.push({ key, text: c });
+    }
+  }
+  return out;
+}
+
+/** Every string in a value, one per line (lists and maps too). */
+function plainTextDeep(v: unknown): string {
+  if (v === null || v === undefined) return "";
+  if (typeof v === "string") return v;
+  if (Array.isArray(v)) return v.map(plainTextDeep).join("\n");
+  if (typeof v === "object") return Object.values(v as Record<string, unknown>).map(plainTextDeep).join("\n");
+  return String(v);
 }
 
 /**
@@ -509,7 +562,9 @@ export function keepOutFromNotes(info: Record<string, unknown> | null | undefine
       else out.names.push(name);
     }
   }
-  out.names = Array.from(new Set(out.names));
+  const seller = sellerKeepOutHolds(info ?? {}, facts);
+  out.clauses.push(...seller.clauses);
+  out.names = Array.from(new Set([...out.names, ...seller.names]));
   return out;
 }
 

@@ -585,20 +585,60 @@ const SHORT_ONLY_STOP_PHRASES: string[] = [
 // A seller who wants the questions to stop NOW — "please stop asking me
 // questions", "no more questions". Not a pause-and-resume: the first one is
 // the end (a goodbye, no closing question).
-// Addressed to the interviewer: it opens its sentence (or follows "please",
-// "can you"…) — "customers stop asking for discounts" and "the bank had no
-// more questions" describe the business.
-const TO_INTERVIEWER = String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:please|just|ok|okay|so|now|honestly|seriously|can you|could you|would you|will you)[,]?\s{1,3})`;
-const FIRM_STOP_PHRASES: string[] = [
-  String.raw`${TO_INTERVIEWER}(?:please )?stop (?:asking(?: me)?(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?|with (?:the|all the|these|all these) questions|the questions)(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
-  String.raw`${TO_INTERVIEWER}(?:no|enough|not any) more questions(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`,
-  String.raw`${TO_INTERVIEWER}enough (?:with the )?questions${CLAUSE_END}`,
-  String.raw`i(?:'m| am) (?:done|finished) (?:answering(?: questions)?|with (?:the|these|your) questions)`,
-  String.raw`i (?:don'?t|do not) want to answer any (?:more|further) questions`,
+//
+// Two tiers (review RV-INT-1: "Once the inspector signs off, that's it, no
+// more questions." and "they just stop asking" force-ended interviews,
+// because a lead-in of "just", "now", "so" or any comma let the phrase stand
+// mid-answer, and a pattern firm stop overruled the classifier):
+// - STANDING — said to the interviewer beyond doubt: the whole message
+//   ("Stop."), the phrase opening its sentence after nothing but filler
+//   ("Please stop with the questions", "Seriously, stop asking me things",
+//   "No more questions."), an explicit addressee after a clause break
+//   ("…, stop asking me", "…, no more questions for today"), or the seller
+//   about themselves ("I'm done answering questions"). Nothing else reads
+//   that way: it stands even when the classifier reads the turn otherwise.
+// - PATTERN — the bare phrase closing a very short clause after a comma
+//   ("I'm tired, no more questions."). A stop more often than not, but the
+//   classifier's reading decides when there is one (seller-intent.ts
+//   combineIntent). A longer clause in front ("Once the inspector signs off,
+//   that's it, no more questions.") describes the business: no stop at all.
+// "customers stop asking for discounts", "the bank had no more questions"
+// and "the reps just stop asking" match neither.
+const STOP_PHRASE_CORE = String.raw`(?:please )?stop (?:asking(?: me)?(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?|with (?:the|all the|these|all these) questions|the questions)(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`;
+const NO_MORE_CORE = String.raw`(?:no|enough|not any) more questions(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`;
+const ENOUGH_CORE = String.raw`enough (?:with the )?questions${CLAUSE_END}`;
+// Filler that may open the sentence before the phrase ("Ok, look, please …").
+const IMPERATIVE_FILLER = String.raw`(?:(?:please|just|ok|okay|look|honestly|seriously|sorry|alright|can you|could you|would you|will you)[,!]?\s+)*`;
+// The start of a sentence or of a transcript line ("Seller: …").
+const SENTENCE_START = String.raw`(?:^|[.!?]\s+|\n\s*)(?:[a-z]{2,12}:\s*)?`;
+const STANDING_FIRM_PHRASES: string[] = [
+  String.raw`${SENTENCE_START}${IMPERATIVE_FILLER}(?:${STOP_PHRASE_CORE}|${NO_MORE_CORE}|${ENOUGH_CORE})`,
+  // An explicit addressee after a clause break.
+  String.raw`(?:^|[.!?,;:—–]\s*)${IMPERATIVE_FILLER}stop asking me(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
+  String.raw`(?:^|[.!?,;:—–]\s*)${IMPERATIVE_FILLER}(?:no|enough|not any) more questions (?:for (?:me|now|today|tonight)|from you|today|please)${CLAUSE_END}`,
+  // The seller about themselves.
+  String.raw`\bi(?:'m| am) (?:done|finished) (?:answering(?: questions)?|with (?:the|these|your) questions)`,
+  String.raw`\bi (?:don'?t|do not) want to answer any (?:more|further) questions`,
 ];
-const FIRM_STOP_RE = new RegExp(`\\b(?:${FIRM_STOP_PHRASES.join("|")})`, "i");
+const STANDING_FIRM_RE = new RegExp(`(?:${STANDING_FIRM_PHRASES.join("|")})`, "i");
+// The bare phrase after a clause break — a PATTERN firm stop only when the
+// clause before it is a few words ("I'm tired, no more questions.").
+const CLAUSE_FIRM_RE = new RegExp(String.raw`[,;:—–]\s*(?:(?:please|just|ok|okay|look|honestly|seriously)[,!]?\s+)*(?:${STOP_PHRASE_CORE}|${NO_MORE_CORE}|${ENOUGH_CORE})`, "i");
+const CLAUSE_FIRM_MAX_LEAD_WORDS = 4;
 // The whole message is "Stop." / "Stop now please."
 const BARE_STOP_RE = /^\s*(?:(?:ok(?:ay)?|please|just)[,\s]+)?stop(?:[,\s]+(?:please|now|it|there))*\s*[.!]*\s*$/i;
+
+/** "stands": said to the interviewer beyond doubt; "pattern": probably a firm stop; null: none. */
+export type FirmStopTier = "stands" | "pattern" | null;
+
+function firmStopTier(text: string): FirmStopTier {
+  if (BARE_STOP_RE.test(text) || STANDING_FIRM_RE.test(text)) return "stands";
+  for (const s of text.split(/(?<=[.!?])\s+|\n+/)) {
+    const m = CLAUSE_FIRM_RE.exec(s);
+    if (m && wordCount(s.slice(0, m.index).replace(/^\s*[a-z]{2,12}:\s*/i, "")) <= CLAUSE_FIRM_MAX_LEAD_WORDS) return "pattern";
+  }
+  return null;
+}
 
 const ADDRESSED_STOP_RE = new RegExp(`\\b(?:${ADDRESSED_STOP_PHRASES.join("|")})`, "i");
 const SHORT_ONLY_STOP_RE = new RegExp(`\\b(?:${SHORT_ONLY_STOP_PHRASES.join("|")})`, "i");
@@ -613,7 +653,7 @@ const wordCount = (s: string) => (s.trim().match(/\S+/g) ?? []).length;
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 
 function isFirmStop(text: string): boolean {
-  return BARE_STOP_RE.test(text) || FIRM_STOP_RE.test(text);
+  return firmStopTier(text) !== null;
 }
 
 /**
@@ -623,6 +663,15 @@ function isFirmStop(text: string): boolean {
  */
 export function detectFirmStop(sellerMessage: string): boolean {
   return isFirmStop(sellerMessage.replace(/[’‘]/g, "'").trim());
+}
+
+/**
+ * How sure the instant patterns are of a firm stop: "stands" (bare or
+ * addressed to the interviewer — it overrules the classifier), "pattern"
+ * (the classifier's reading decides when there is one), or null.
+ */
+export function firmStopLevel(sellerMessage: string): FirmStopTier {
+  return firmStopTier(sellerMessage.replace(/[’‘]/g, "'").trim());
 }
 
 /** True when the seller's message asks to stop the interview (see STOP phrases above). */

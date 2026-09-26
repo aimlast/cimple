@@ -62,6 +62,13 @@ import {
   type StopLevel,
 } from "./seller-intent";
 import {
+  SELLER_KEEP_OUT_REASON,
+  addSellerKeepOut,
+  carriesPrivateDetail,
+  getSellerKeepOut,
+  isDistinctiveTerm,
+} from "./seller-keep-out";
+import {
   applySellerRetractions,
   restatesWithdrawnValue,
   whoHoldsTheAnswer,
@@ -948,8 +955,10 @@ export async function processTurn(
     : [];
   // Words of details the seller asked kept out of the book this session
   // (seller-intent.ts privacy requests) — never written into a fact later.
+  // Only specific ones: an everyday word stored by an earlier build
+  // ("health", "diagnosis") would drop ordinary answers (RV-INT-3).
   const priorPrivateTerms: string[] = Array.isArray(sessionMeta._keptPrivateTerms)
-    ? (sessionMeta._keptPrivateTerms as unknown[]).filter((t): t is string => typeof t === "string" && !!termRegex(t))
+    ? (sessionMeta._keptPrivateTerms as unknown[]).filter((t): t is string => typeof t === "string" && isDistinctiveTerm(t))
     : [];
 
   // Render the agent's own outstanding deferrals into the dynamic prompt block
@@ -1108,6 +1117,10 @@ export async function processTurn(
     systemBlocks.push({ type: "text", text: buildClosingAnswerNudge() });
     stopNudgeLevel = "firm";
   }
+  // What the first prompt was written for — closingAnswerTurn itself changes
+  // once the classifier's reading is in (review RV-INT-5: the "seller chose
+  // to continue" re-call read the already-cleared flag and never fired).
+  const closingInPrompt = closingAnswerTurn;
 
   // Financial-core checkpoint: by mid-session the interview must have secured
   // (or explicitly deferred) revenue and asking-price expectations. Rapport
@@ -1301,9 +1314,13 @@ export async function processTurn(
   // …or the patterns saw a stop the classifier reads as carrying on ("Yes,
   // I'll do that tomorrow" to "could you upload the lease?") — unless the
   // turn ends anyway, as the answer to a closing turn.
+  // …or the patterns' firm stop went into the prompt (a goodbye, nothing
+  // asked) and the classifier reads a soft one: the seller gets their one
+  // closing question (a second stop in a row ends anyway).
   const promptMisfits = (i: SellerIntent): boolean =>
     (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
-    (closingAnswerTurn && i.stop === "none" && i.continueRequest) ||
+    (patternStopInPrompt && stopNudgeLevel === "firm" && i.stop === "soft" && priorStopCount === 0) ||
+    (closingInPrompt && i.stop === "none" && i.continueRequest) ||
     (patternStopInPrompt && i.via === "model" && i.stop === "none" && !(priorStopCount > 0 && !i.continueRequest));
   // Only the patterns' reading of a withdrawal can bring the retraction
   // re-call below (which rewrites the reply) — hold such a draft.
@@ -1403,12 +1420,15 @@ export async function processTurn(
   // since before the interview call), else the patterns'.
   const intent = await intentWithin(INTENT_TIMEOUT_MS);
   if (intent.via === "model" && (intent.stop !== "none" || intent.retractions.length || intent.corrections.length || intent.privacyRequests.length || intent.continueRequest)) {
+    const keyOnly = (k?: string) => (k ?? "").replace(/[^\w.]/g, "").slice(0, 60) || "?";
+    // Kinds, counts and keys only — the seller's words (a diagnosis, an
+    // unannounced deal, a withdrawn figure) never go to the server log (PRIV-V-3).
     console.log(
       `[session-manager] Seller intent on session ${sessionId}: stop=${intent.stop}` +
         (intent.continueRequest ? " continue" : "") +
-        (intent.retractions.length ? `; withdrew ${intent.retractions.map((r) => `"${r.what}"${r.fieldHint ? ` (${r.fieldHint})` : ""}`).join(", ")}` : "") +
-        (intent.corrections.length ? `; corrected ${intent.corrections.map((c) => `${c.fieldHint || "?"}: ${c.old} → ${c.new}`).join(", ")}` : "") +
-        (intent.privacyRequests.length ? `; keep private ${intent.privacyRequests.map((p) => `"${p.what}"`).join(", ")}` : ""),
+        (intent.retractions.length ? `; ${intent.retractions.length} withdrawal(s)${intent.retractions.some((r) => r.fieldHint) ? ` (${intent.retractions.map((r) => keyOnly(r.fieldHint)).join(", ")})` : ""}` : "") +
+        (intent.corrections.length ? `; ${intent.corrections.length} correction(s) (${intent.corrections.map((c) => keyOnly(c.fieldHint)).join(", ")})` : "") +
+        (intent.privacyRequests.length ? `; ${intent.privacyRequests.length} privacy request(s)` : ""),
     );
   } else if (intent.via === "patterns") {
     console.warn(`[session-manager] Seller intent on session ${sessionId}: classifier unavailable — patterns only (stop=${intent.stop})`);
@@ -1426,7 +1446,10 @@ export async function processTurn(
     closingAnswerTurn = priorStopCount > 0 && !intent.continueRequest;
     console.log(`[session-manager] Pattern stop not confirmed by the classifier on session ${sessionId} — the interview carries on${closingAnswerTurn ? " (answer to the closing turn)" : ""}`);
   }
-  if (stopNow) stopLevel = intent.stop === "firm" || stopLevel === "firm" ? "firm" : "soft";
+  // The final reading decides the level: combineIntent already keeps a firm
+  // stop said to the interviewer beyond doubt; a firm stop only the patterns
+  // saw gives way to the classifier's soft one.
+  if (stopNow) stopLevel = intent.stop === "none" ? stopLevel : intent.stop;
   if (stopNow || (closingAnswerTurn && intent.continueRequest)) closingAnswerTurn = false;
 
   // INTENT RE-CALL: the draft was written for the wrong intent (a stop the
@@ -2086,16 +2109,24 @@ export async function processTurn(
     }
   }
 
-  // Details the seller asked kept out of the book earlier this session stay
-  // out: a later turn writing them into a fact from the transcript is dropped.
-  if (priorPrivateTerms.length > 0) {
-    const leaking = changes.filter((c) => priorPrivateTerms.some((t) => termRegex(t)!.test(c.newValue)));
+  // Details the seller asked kept out of the book stay out: a later turn
+  // writing one into a fact from the transcript is held back — this
+  // session's specific terms, and every request kept on the deal
+  // (seller-keep-out.ts, any session). Never silently: a held-back value
+  // that says more than the detail goes to the broker's private notes.
+  const keptOnDeal = getSellerKeepOut(existingExtracted);
+  const heldBackNotes: Array<{ note: string; reason: string }> = [];
+  if (priorPrivateTerms.length > 0 || keptOnDeal.length > 0) {
+    const leaking = changes.filter(
+      (c) => priorPrivateTerms.some((t) => termRegex(t)!.test(c.newValue)) || keptOnDeal.some((e) => carriesPrivateDetail(c.newValue, e)),
+    );
     if (leaking.length > 0) {
-      console.warn(`[session-manager] Privacy guard: dropped a value carrying a detail the seller asked kept private: ${leaking.map((c) => c.fieldName).join(", ")}`);
+      console.warn(`[session-manager] Privacy guard: held back ${leaking.length} value(s) carrying a detail the seller asked kept private: ${leaking.map((c) => c.fieldName).join(", ")}`);
       changes = changes.filter((c) => !leaking.includes(c));
       for (const c of leaking) {
         if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
         else delete updatedConfidence[c.fieldName];
+        if ((c.newValue.match(/\S+/g) ?? []).length > 8) heldBackNotes.push({ note: `${c.fieldName}: ${c.newValue}`, reason: SELLER_KEEP_OUT_REASON });
       }
     }
   }
@@ -2117,7 +2148,9 @@ export async function processTurn(
     sessionId,
     turn: userTurnCount,
     confidenceLevels,
+    prevSellerMessage: [...existingMessages].reverse().find((m) => m.role === "user")?.content,
   });
+  // (Keys, counts and kinds only — never what the seller said: PRIV-V-3.)
   for (const line of intentPlan.log) console.log(`[session-manager] Seller intent: ${line}`);
   {
     const kept = new Set(intentPlan.changes);
@@ -2131,8 +2164,10 @@ export async function processTurn(
   }
   const retractions = intentPlan.retractions;
   const partialEdits = intentPlan.partialEdits;
-  if (intentPlan.privateNotes.length > 0) aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...intentPlan.privateNotes];
-  const newPrivateTerms = intent.privacyRequests.flatMap((p) => p.sensitiveTerms);
+  if (intentPlan.privateNotes.length + heldBackNotes.length > 0) {
+    aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...intentPlan.privateNotes, ...heldBackNotes];
+  }
+  const newPrivateTerms = intentPlan.keptPrivateTerms;
   const withdrawnKeys = [...retractions.map((r) => r.field), ...partialEdits.filter((p) => p.kind === "withdrawn").map((p) => p.key)];
   if (withdrawnKeys.length > 0 || intentPlan.unrecordedWithdrawals.length > 0) {
     const keys = new Set(withdrawnKeys);
@@ -2334,8 +2369,15 @@ export async function processTurn(
         withdrawnNow.push({ key: e.key, value: e.removed, turn: userTurnCount });
       }
       console.log(
-        `[session-manager] Seller intent on deal ${dealId}: ${partialEdits.map((e) => `${e.key} ${done.has(e.key) ? (e.kind === "private" ? "— private detail moved to the broker's notes" : `— withdrew "${e.removed.slice(0, 60)}"`) : "— changed meanwhile, left alone"}`).join("; ")}`,
+        `[session-manager] Seller intent on deal ${dealId}: ${partialEdits.map((e) => `${e.key} ${done.has(e.key) ? (e.kind === "private" ? "— private detail moved to the broker's notes" : "— part withdrawn") : "— changed meanwhile, left alone"}`).join("; ")}`,
       );
+    }
+    // The seller's keep-out requests last beyond this session: screened in
+    // every later turn, re-applied after a reprocess, and held out of every
+    // CIM (server/cim/sensitive-facts.ts keepOutFromNotes).
+    if (intentPlan.keepOut.length > 0) {
+      const at = new Date().toISOString();
+      addSellerKeepOut(toSave, intentPlan.keepOut.map((e) => ({ ...e, at })));
     }
     await storage.updateDeal(dealId, { extractedInfo: toSave });
   });
