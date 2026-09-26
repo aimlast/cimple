@@ -36,6 +36,8 @@ import {
   getSuppressedKeys,
   isLiveSellerKind,
   typedNumericValues,
+  resolvedYearSources,
+  summariseMapSource,
   BROKER_SUPPRESSED_KEY,
   FIELD_ALTERNATES_KEY,
   FIELD_CORROBORATIONS_KEY,
@@ -161,6 +163,121 @@ export function detectPrivacyRequest(sellerMessage: string): boolean {
 export interface Retraction {
   field: string;
   reason: string;
+  /**
+   * A by-year map fact (revenueByYear): the years withdrawn. Without it,
+   * every year the seller stated is withdrawn — never a document's year.
+   */
+  years?: string[];
+}
+
+/** A per-year suppression: that source row's figure for that year stays out ("revenueByYear.2024@<documentId>"). */
+export function yearSuppressionKey(mapKey: string, year: string, documentId: string): string {
+  return `${mapKey}.${year}@${documentId}`;
+}
+
+const isPlainMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * The years of a by-year map a withdrawn claim is about: the years it names
+ * ("the 2022 revenue"), else the years whose figure is the claim's ("the
+ * $2.1M was a guess"). [] when it can't be placed.
+ */
+export function claimYearsInMap(claim: string, map: Record<string, unknown>): string[] {
+  const keys = Object.keys(map);
+  const named = keys.filter((y) => {
+    const digits = y.match(/\d{4}/)?.[0];
+    return !!digits && new RegExp(String.raw`(?<!\d)(?:fy\s?)?${digits}(?!\d)`, "i").test(claim);
+  });
+  if (named.length > 0) return named;
+  const nums = numbersIn(claim).filter((n) => !(Number.isInteger(n) && n >= 1900 && n <= 2100));
+  if (nums.length === 0) return [];
+  return keys.filter((y) => {
+    const have = numbersIn(typeof map[y] === "string" ? (map[y] as string) : JSON.stringify(map[y] ?? ""));
+    return nums.some((c) => have.some((n) => Math.abs(n - c) <= Math.max(1e-9, Math.abs(c) * 0.01)));
+  });
+}
+
+/**
+ * Withdraws years of a by-year map fact (review R2: withdrawing one year's
+ * guess deleted the whole map, statement years included). Only a year whose
+ * OWN source is the seller's live words goes; a document's year is never
+ * touched, and a document figure the guess displaced comes back. A year
+ * that came from a call transcript is suppressed for that transcript only,
+ * so a reprocess can't bring the guess back while a later statement can
+ * still fill the year. Mutates `info`; false when no year was the seller's.
+ */
+function withdrawMapYears(
+  info: Info,
+  key: string,
+  r: Retraction,
+  src: FieldSource,
+  result: RetractionResult,
+  ctx: { turn: number; at: string },
+): boolean {
+  const map = { ...(info[key] as Record<string, unknown>) };
+  const years = resolvedYearSources(src, map);
+  const wanted = r.years?.length ? r.years.filter((y) => y in map) : Object.keys(map);
+  const sellerYears = wanted.filter((y) => isLiveSellerKind(years[y]?.source));
+  if (sellerYears.length === 0) return false;
+  const alts = { ...getFieldAlternates(info) };
+  const suppressed = [...getSuppressedKeys(info)];
+  const withdrawn: Record<string, unknown> = {};
+  let restored = false;
+  // Per-year suppression is read by the by-year merge only (mergeYearMapInto).
+  // A map keyed by something else ("employeesByRole") is re-read whole, so a
+  // withdrawn transcript value suppresses the key, as before (review round 2).
+  const byYear = Object.keys(map).every((y) => /\d{4}/.test(y));
+  for (const y of sellerYears) {
+    withdrawn[y] = map[y];
+    const ys = years[y];
+    if (ys.documentId) {
+      const k = byYear ? yearSuppressionKey(key, y, ys.documentId) : key;
+      if (!suppressed.includes(k)) suppressed.push(k);
+    }
+    const altKey = `${key}.${y}`;
+    const list = Array.isArray(alts[altKey]) ? [...alts[altKey]] : [];
+    const docIdx = list
+      .map((a, i) => ({ a, i }))
+      .filter(({ a }) => a.source === "document" && a.value)
+      .sort((x, z) => String(z.a.at ?? "").localeCompare(String(x.a.at ?? "")))[0]?.i;
+    if (docIdx !== undefined) {
+      const { value: altValue, ...altSrc } = list[docIdx] as FieldAlternate;
+      list.splice(docIdx, 1);
+      if (list.length > 0) alts[altKey] = list;
+      else delete alts[altKey];
+      map[y] = parseAlternateValue(altValue);
+      years[y] = altSrc as FieldSource;
+      restored = true;
+      continue;
+    }
+    delete map[y];
+    delete years[y];
+  }
+  info[FIELD_ALTERNATES_KEY] = alts;
+  if (suppressed.length > 0) info[BROKER_SUPPRESSED_KEY] = suppressed;
+  const deleted = { ...((info[BROKER_DELETED_KEY] as Record<string, unknown> | undefined) ?? {}) };
+  const prior = deleted[key] as { value?: unknown } | undefined;
+  deleted[key] = {
+    value: isPlainMap(prior?.value) ? { ...prior!.value, ...withdrawn } : withdrawn,
+    source: src,
+    at: ctx.at,
+    note: `Withdrawn by the seller in the interview (turn ${ctx.turn}) — ${Object.keys(withdrawn).join(", ")} only${r.reason ? ` — ${r.reason}` : ""}`,
+  };
+  info[BROKER_DELETED_KEY] = deleted;
+  result.withdrawn.push({ key, value: JSON.stringify(withdrawn), turn: ctx.turn });
+  const sources = { ...getFieldSources(info) };
+  if (Object.keys(map).length === 0) {
+    delete info[key];
+    delete sources[key];
+    result.removed.push(key);
+  } else {
+    info[key] = map;
+    sources[key] = summariseMapSource(years) ?? src;
+    for (const y of sellerYears) if (!(y in map)) result.removed.push(`${key}.${y}`);
+  }
+  info["_fieldSources"] = sources;
+  if (restored) result.restoredFromDocument.push(key);
+  return true;
 }
 
 /** A retraction the session remembers, so a later turn can't record the guess again. */
@@ -212,6 +329,11 @@ export function applySellerRetractions(
     if (current === undefined || current === null || current === "") continue;
     const sources = { ...getFieldSources(info) };
     const src = sources[key];
+    // A by-year map: year by year, each by its own source.
+    if (src && isPlainMap(current)) {
+      if (!withdrawMapYears(info, key, r, src, result, { turn: ctx.turn, at })) result.skipped.push(key);
+      continue;
+    }
     if (!src || !isLiveSellerKind(src.source)) {
       result.skipped.push(key);
       continue;
@@ -349,13 +471,14 @@ export function removeClaim(value: string, claim: string, proposed?: string | nu
 /**
  * A word or phrase that must not appear, as a pattern: whole words, case
  * ignored — except a short acronym ("MS"), which must match its case so
- * "ms" and "terms" don't.
+ * "ms" and "terms" don't, and never as part of a product name ("MS
+ * Dynamics", "MS Office" — review RV-INT-3).
  */
 export function termRegex(term: string): RegExp | null {
   const t = term.trim();
   if (t.length < 2 || (t.length < 3 && !/^[A-Z]{2}$/.test(t))) return null;
   const body = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
-  return /^[A-Z]{2,4}$/.test(t) ? new RegExp(`\\b${body}\\b`) : new RegExp(`\\b${body}`, "i");
+  return /^[A-Z]{2,4}$/.test(t) ? new RegExp(`\\b${body}\\b(?!\\s+[A-Z][a-z])`) : new RegExp(`\\b${body}`, "i");
 }
 
 const numbersIn = (text: string): number[] => {

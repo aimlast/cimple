@@ -90,6 +90,7 @@ import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts"
 import { reviewPrivateNotes } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
 import { setBrokerFact } from "../information/facts";
+import { applySellerKeepOutToFacts } from "../interview/seller-keep-out";
 
 /** Where a running reprocess is (for the broker's progress display). */
 export interface ReprocessProgress {
@@ -253,6 +254,13 @@ export async function reprocessDealDocuments(
   // (refreshSourceNotes, under the lock below).
   reconcileHeadlines(rebuilt, ctx);
   rebuilt = stampSourceDetails(rebuilt, documents);
+  // What the seller asked to keep out of the sale document stays out: a
+  // call transcript's re-read brings its facts back with the detail
+  // (PRIV-V-2), so the seller's keep-out requests are applied again.
+  {
+    const cut = applySellerKeepOutToFacts(rebuilt);
+    if (cut.length > 0) console.log(`[reprocess] ${dealId}: kept ${cut.length} detail(s) the seller asked kept private out of ${cut.join(", ")}`);
+  }
   const existingAlts = (existing[FIELD_ALTERNATES_KEY] as Record<string, unknown[]> | undefined) || {};
 
   // Re-extraction can take minutes. Re-read the deal and carry over anything

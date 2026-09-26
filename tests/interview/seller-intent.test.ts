@@ -534,7 +534,9 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     assert.equal(info.reasonForSale, "Retirement after 30 years", "the reason on file stays");
     assert.equal(info._brokerDeleted?.reasonForSale, undefined);
     assert.ok((info._brokerPrivateNotes as any[]).some((n) => /cancer/.test(n.note)), "the detail is with the broker");
-    assert.deepEqual((h.sessions[0].extractedInfo as any)._keptPrivateTerms, ["cancer", "diagnosis"]);
+    // Only the specific term: "diagnosis" is an everyday word at a health business (RV-INT-3).
+    assert.deepEqual((h.sessions[0].extractedInfo as any)._keptPrivateTerms, ["cancer"]);
+    assert.deepEqual((info._sellerKeepOut as any[]).map((e) => [e.detail, e.terms]), [["The real reason for sale is his wife's cancer diagnosis", ["cancer"]]], "the request is kept on the deal");
     // A later turn can't write it into a fact.
     h.intents.push({});
     h.script.push({ message: "What's the rent?", extractedFields: { ownerCircumstances: { value: "Owner's wife is undergoing cancer treatment", confidence: "confirmed" } } });

@@ -143,6 +143,24 @@ export const BUSINESS: string[] = [
   "That's enough about the trucks — they're all in the fleet list.",
   "We wind down the landscaping side in November and switch to snow.",
   "I have to be honest, the margins dropped when the resin price spiked.",
+  // Review RV-INT-1: each of these used to be a firm stop that force-ended the interview.
+  "Rarely now. Once they see the warranty they just stop asking.",
+  "After a while the reps just stop asking, it's all online now.",
+  "The bank asked a lot at first, now no more questions.",
+  "Once the inspector signs off, that's it, no more questions.",
+  "Nothing major. Once he signs off, that's it, no more questions.",
+  "The auditor came in, checked the books, no more questions.",
+  "Honestly the landlord signed the renewal, no more questions.",
+  "We sent the lender the statements and that was it: no more questions.",
+  "Our regulars know the menu, so they just stop asking after the first visit.",
+  "Customers call a few times, then they stop asking.",
+  "Customers just stop asking me for discounts once they see the warranty.",
+  // …and these stood against the classifier until round 2.
+  "We filed everything with the city, no more questions for now.",
+  "I'm done with the questions from the lender, they approved the refinancing in May.",
+  "I'm done answering the CRA's questions, they closed the audit last month.",
+  "The inspector left happy. No more questions after that.",
+  "No more questions from the bank since we refinanced.",
 ];
 
 /** Ordinary answers with no intent at all. */

@@ -43,6 +43,7 @@ import {
   repairCharIndexedValue,
   isUntrackedSource,
   isSuppressed,
+  getSuppressedKeys,
   resolvedYearSources,
   summariseMapSource,
   sourceRowLookup,
@@ -965,8 +966,12 @@ export function mergeYearMapInto(info: Info, key: string, incoming: Record<strin
       ? resolvedYearSources(recorded, map, ctx.lookup)
       : Object.fromEntries(Object.keys(map).map((y) => [y, LEGACY])); // an untracked map stays untracked
   const { years: _drop, ...base } = src;
+  const suppressedRows = getSuppressedKeys(info);
   for (const [y, v] of Object.entries(incoming)) {
     if (v === undefined || v === null || v === "") continue;
+    // A year the seller withdrew from this very source (a call transcript's
+    // guess) stays out — other sources may still state the year.
+    if (src.documentId && suppressedRows.includes(`${key}.${y}@${src.documentId}`)) continue;
     const ySrc: FieldSource = { ...base, period: periodForYear(y, src.period) };
     const cur = map[y];
     if (cur === undefined || cur === null || cur === "") {

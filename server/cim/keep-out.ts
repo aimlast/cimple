@@ -135,7 +135,10 @@ export async function keepOutFor(dealId: string, info: Record<string, unknown> |
   if (candidates.length === 0) return { ...rules, by: "rules" };
   const fp = `${dealId}:${fingerprint(candidates)}`;
   const hit = cache.get(fp);
-  if (hit) return hit;
+  // The rules are re-read every time: a keep-out request the seller made
+  // since (the deal's _sellerKeepOut) is no review candidate, so it doesn't
+  // change the cache key — it must still hold.
+  if (hit) return { ...hit, ...mergeKeepOut(rules, hit) };
   let result: KeepOutResult;
   try {
     const ai = await review(candidates, info);
