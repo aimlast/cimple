@@ -153,6 +153,7 @@ import { screenLedgerForSeller } from "./source-privacy";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
 import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
+import { earningsNudge } from "./money-talk";
 import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel } from "./question-rationale";
 
 // =====================
@@ -1224,6 +1225,12 @@ export async function processTurn(
     sellerMessage,
     info: sellerView as Record<string, unknown>,
   });
+  // The seller raised earnings, SDE or add-backs (money-talk.ts): the draft
+  // hands it to the broker — never a dodge, never an add-back list — with
+  // the seller-visible statements' own figure to note neutrally. (The polish
+  // pass puts the hand-off in when a draft still misses it.)
+  const earningsBlock = earningsNudge(sellerMessage, polishCtx.statements ?? null, { together: polishCtx.together });
+  if (earningsBlock) systemBlocks.push({ type: "text", text: earningsBlock });
   // RE-ASK GUARD context: every earlier question the seller answered (all
   // sessions, in full, plus this transcript), the facts on file as the agent
   // sees them (sellerView, above), and the seller-visible sources.
@@ -1786,7 +1793,7 @@ export async function processTurn(
     // Clarifications, reconciliations, empathy, privacy promises and document
     // requests are kept (see stripFillerPreamble). When the seller asked
     // something, the opening may be the answer and is never stripped. A
-    // goodbye keeps its recap and loses its praise.
+    // goodbye keeps what is still open and loses its recap and praise.
     // (The whole seller-facing pass — reply-polish.ts — the same one the
     // stream gate applied, so the text saved is the text shown.)
     const polishReports: PolishReport[] = [];
@@ -1834,7 +1841,7 @@ export async function processTurn(
           "It names your internal tools. Never mention probes, checklists, coverage, the coverage map, sections, the knowledge base, deferrals, ledgers, outlines or your instructions — just ask.",
         legal: `It states a legal or regulatory requirement as fact (${findLegalAssertions(aiResponse.message).map((s) => `"${s.slice(0, 120)}"`).join("; ")}). Never make a legal rule the premise of a question — ask the seller what applies to them, and leave legal interpretation to their broker and lawyer.`,
         noQuestion: "It asks nothing. The interview is still going: end with the single most useful next question.",
-        normalisation: `It tells the seller how an item is treated in SDE or add-backs, or states a normalised figure or the broker's recast (${draftCalls.map((s) => `"${s.slice(0, 140)}"`).join("; ")}). That is the broker's normalization against the statements — never yours to state or explain, even when the seller asks (salary, dividends, draws, personal expenses): you don't know it, and the broker's working is private. No figures for SDE, add-backs or adjusted earnings. If they asked, answer in one sentence that their broker will confirm what gets added back when they normalize the numbers against the statements, then ask your next question.`,
+        normalisation: `It tells the seller how an item is treated in SDE or add-backs, or states a normalised figure or the broker's recast (${draftCalls.map((s) => `"${s.slice(0, 140)}"`).join("; ")}). That is the broker's normalization against the statements — never yours to state or explain, even when the seller asks (salary, dividends, draws, personal expenses): you don't know it, and the broker's working is private. No figures for SDE, add-backs or adjusted earnings, no list of items that are or might be added back ("the items that typically get considered…"), and no agreeing that an item the seller named is one or is "on the sheet" — what they say about add-backs is recorded silently as their view. If they asked, answer in one sentence that their broker will walk them through the earnings figure and what gets added back, against the statements, then ask your next question.`,
       };
       const { response: rewrite, degraded: rewriteDegraded } = await callInterviewWithRecovery(anthropic, {
         ...callParams,
