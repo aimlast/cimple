@@ -111,6 +111,8 @@ export interface InterviewPlan {
   computedAt: string;
   status: "ready" | "failed";
   items: InterviewPlanItem[];
+  /** The last time the checklist changed without a broker edit (new checklist rules) — shown on the outline. */
+  revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] };
 }
 
 /** The notetaker bot on an external call (Recall.ai). */
@@ -359,6 +361,13 @@ export const deals = pgTable("deals", {
   // (server/interview/source-review.ts): { fingerprint, computedAt, status,
   // conflicts[] }. Rebuilt when the sources change.
   interviewSourceReview: jsonb("interview_source_review"),
+  // Which of the interview's open items (checklist fields, flagged risks,
+  // source conflicts, seller-only topics) the deal's seller-visible file
+  // already answers — with the source and a checked quote
+  // (server/interview/on-file-evidence.ts): { version, fingerprint,
+  // computedAt, status, checked[], entries{} }. Rebuilt when the sources or
+  // earlier sessions change.
+  interviewEvidence: jsonb("interview_evidence"),
   // @anchor:deals-cols:h-cim
   // @anchor:deals-cols:h-misc
   // @anchor:deals-cols:seed

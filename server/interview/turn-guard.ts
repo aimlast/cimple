@@ -1352,9 +1352,12 @@ const PURPOSE_RE =
  * filler mid-interview but a greeting on first contact (QA harvest: openings
  * arrived with the welcome stripped, straight into a mid-priority question).
  * Anything else in front of the question is held to the usual rule. An
- * opening that still has no greeting gets a short one.
+ * opening that still has no greeting gets a short one — for a RETURNING
+ * seller a welcome-back, never the first-meeting "Welcome, and thanks for
+ * making time" (QA round V: Clearwater's second session opened like a first
+ * meeting), and a sentence that picks up from last time is kept.
  */
-export function finalizeOpeningMessage(message: string): string {
+export function finalizeOpeningMessage(message: string, opts: { returning?: boolean } = {}): string {
   const text = message.trim();
   const spans = splitSentences(text);
   const q = spans.findIndex((sp) => sp.text.includes("?"));
@@ -1363,8 +1366,14 @@ export function finalizeOpeningMessage(message: string): string {
   for (let i = 0; i < end; i++) {
     const sentence = spans[i].text;
     if (GREETING_RE.test(sentence) || MATERIALS_READ_RE.test(sentence) || PURPOSE_RE.test(sentence)) continue;
+    if (opts.returning && CONTINUITY_RE.test(sentence)) continue;
     if (isFillerSentence(sentence)) cut.add(i);
   }
   const out = cut.size > 0 ? rebuild(spans, cut) : text;
+  if (opts.returning) return hasWelcome(out) || CONTINUITY_RE.test(splitSentences(out)[0]?.text ?? "") ? out : `Welcome back. ${out}`;
   return hasWelcome(out) ? out : `Welcome, and thanks for making time for this. ${out}`;
 }
+
+/** Words that pick up an earlier conversation ("welcome back", "where we left off", "last time"). */
+export const CONTINUITY_RE =
+  /\b(welcome back|good to (?:see|have) you back|nice to (?:see|have) you back|glad you'?re back|picking (?:up|back up|things up)|pick (?:up|things up|back up) where|where we left off|last time|when we (?:last )?(?:spoke|talked)|our (?:last|previous|earlier) (?:session|conversation|chat)|since we (?:last )?(?:spoke|talked)|back again|continu(?:e|ing) (?:from|where)|following up on|to follow up on)\b/i;

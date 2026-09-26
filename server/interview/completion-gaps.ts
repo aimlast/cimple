@@ -209,6 +209,19 @@ export interface CompletionGapInput {
    * turn's exchange was about them.
    */
   now?: SameTurnContext;
+  /** Seller-only topics the seller already gave their account of in a call, an email or an earlier session (on-file-evidence.ts). */
+  onFileTopics?: readonly string[];
+}
+
+/** Seller-only topics with no seller-sourced fact and no answered exchange (the ledger aside). Pure. */
+export function openSellerOnlyTopics(info: Record<string, unknown>, exchanges: Exchange[]): string[] {
+  const sources = getFieldSources(info);
+  return SELLER_ONLY_TOPICS.filter((t) => {
+    const sellerFact = Object.keys(info).some(
+      (k) => t.keys.test(k) && substantive(info[k]) && SELLER_KINDS.has(String(sources[k]?.source ?? "")),
+    );
+    return !sellerFact && !discussed(exchanges, t.talk);
+  }).map((t) => t.label);
 }
 
 /**
@@ -245,7 +258,12 @@ export function completionBlockers(input: CompletionGapInput): string[] {
       if (!f.critical || (f.value !== null && !f.unverified)) continue;
       if (addressedInLedger(input.ledger, input.now, f.fieldName, f.label ?? "")) continue;
       if (itemDiscussed(input.exchanges, f.label ?? "", f.fieldName)) continue;
-      out.push(`${s.title}: ${f.label ?? f.fieldName} (record under ${f.fieldName})`);
+      // Part of it is on file: only the rest is asked.
+      const part = f.partlyOnFile;
+      out.push(
+        `${s.title}: ${f.label ?? f.fieldName} (record under ${f.fieldName})` +
+          (part ? ` — on file (${part.source}): ${part.answer}; ask ONLY for what is missing: ${part.missing}` : ""),
+      );
     }
     for (const item of BASE_CRITICAL_ITEMS[s.key] ?? []) {
       if (item.keys.some(verified)) continue;
@@ -261,6 +279,7 @@ export function completionBlockers(input: CompletionGapInput): string[] {
     );
     if (sellerFact) continue;
     if (discussed(input.exchanges, t.talk)) continue;
+    if ((input.onFileTopics ?? []).includes(t.label)) continue;
     if (input.ledger.some((e) => entryCounts(e, input.now) && (t.talk.test(e.topic) || topicsMatch(e.topic, t.label)))) continue;
     out.push(`seller-only topic: ${t.label}`);
   }

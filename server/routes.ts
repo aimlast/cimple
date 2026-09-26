@@ -15,6 +15,8 @@ import { getSectionImportance, computeSectionImportance } from "./interview/sect
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel, planSubIndustry } from "./interview/interview-plan.js";
 import { ensureSourceReview } from "./interview/source-review.js";
+import { storedEvidence } from "./interview/on-file-evidence.js";
+import { refreshOnFileEvidence } from "./interview/on-file-refresh.js";
 import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } from "./interview/knowledge-base.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
@@ -6362,7 +6364,13 @@ Return JSON only.`,
     // Data points per section with on-file status — the same coverage the
     // interview and the quality score use (excluded sections kept here so a
     // removed section still shows what it would have covered).
-    const adjustments = coverageAdjustmentsForDeal(deal);
+    // (Items a source or an earlier session already answers show as on file,
+    // with where — the interview won't ask them.)
+    const onFile: Record<string, { answer: string; source: string; partial?: boolean; missing?: string }> = {};
+    for (const [id, e] of Object.entries(storedEvidence(deal)?.entries ?? {})) {
+      if (id.startsWith("field:")) onFile[id.slice(6)] = { answer: e.answer, source: e.source, ...(e.partial ? { partial: true, missing: e.missing } : {}) };
+    }
+    const adjustments = { ...coverageAdjustmentsForDeal(deal), onFile };
     const coverage = buildCoverageForOutline((deal.extractedInfo || {}) as any, undefined, importance, [], adjustments);
     const byKey = new Map(coverage.map((c) => [c.key, c]));
     // Every key that belongs to a section (generic + industry + broker-added),
@@ -6378,6 +6386,8 @@ Return JSON only.`,
         // The playbook it came from ("Landscaping and snow…" rather than "Home Services").
         industry: plan ? (plan.subIndustry || plan.industry) : deal.industry ?? null,
         itemCount: plan?.items.length ?? 0,
+        // A change to the checklist no broker made (new checklist rules).
+        revision: plan?.revision ?? null,
       },
       sections: CIM_SECTIONS.map((s) => ({
         key: s.key,
@@ -6392,6 +6402,7 @@ Return JSON only.`,
           label: f.label ?? fieldLabel(f.fieldName),
           onFile: f.value !== null,
           value: f.value ? String(f.value).slice(0, 140) : null,
+          onFileIn: f.onFile ?? null,
           industrySpecific: !!f.industrySpecific,
           critical: !!f.critical,
           addedByBroker: (outline.addedItems ?? []).some((a) => a.key === f.fieldName),
@@ -6412,6 +6423,10 @@ Return JSON only.`,
       // the current sources; a source added since gets reviewed now, before
       // the seller's next session.
       storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
+      // …and what the file already answers among the interview's open items,
+      // so the seller's next session never asks it (background; a no-op
+      // while current).
+      refreshOnFileEvidence(deal.id).catch(() => {});
       res.json(outlineView(deal));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load interview outline" });

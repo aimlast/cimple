@@ -53,6 +53,16 @@ function similarity(a: string, b: string): number {
   return n / Math.min(x.size, y.size);
 }
 
+/**
+ * The agent named this very request (its title, as the prompt's "Open
+ * follow-ups" list shows it) — not a topic that shares its words.
+ */
+export function sameRequest(resolved: string, title: string): boolean {
+  const norm = (s: string) => s.toLowerCase().replace(/^\s*\[[^\]]*\]\s*/, "").replace(/[^a-z0-9]+/g, " ").trim();
+  const a = norm(resolved);
+  return a.length > 0 && a === norm(title);
+}
+
 /** Words a request title adds that say nothing about which document it is. */
 const REQUEST_NOISE = /\b(get|obtain|request|upload|send|provide|copy|copies|of|the|a|an|latest|current|full|seller'?s?|please|document|documents|file|files|over|from|for|to|signed|complete|updated|recent|most|your|our|his|her|their|any|all|again|too|also|anyway|if|you|need|it|as|well|me|us)\b/gi;
 /** Kinds of document — "report", "statements", "list": which document it is lies in the other words. */
@@ -145,7 +155,15 @@ export function planTaskWrites(args: {
   for (const t of pending) {
     if (!byInterview(t) || counselCheck(t)) continue;
     const answered = t.type !== "document_request" && !!t.relatedField && args.answeredKeys.has(t.relatedField);
-    const resolved = args.resolvedTopics.some((r) => r && (topicsMatch(r, t.title) || similarity(r, t.title) >= 0.8));
+    // A follow-up resolves when the agent names it; a DOCUMENT request only
+    // when the agent names that very request (it turned out not to apply —
+    // "there's no equipment list"). A topic that merely shares a word ("lease"
+    // resolved in conversation vs "Upload the lease agreement") never closes
+    // an upload the seller still owes: it stays open until the document is
+    // on file (QA round V review).
+    const resolved = t.type === "document_request"
+      ? args.resolvedTopics.some((r) => r && sameRequest(r, t.title))
+      : args.resolvedTopics.some((r) => r && (topicsMatch(r, t.title) || similarity(r, t.title) >= 0.8));
     const delivered = t.type === "document_request" && !!documentOnFileFor(t.title, args.documents);
     if (answered || resolved || delivered) plan.close.push(t.id);
   }

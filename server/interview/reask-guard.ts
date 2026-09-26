@@ -36,18 +36,31 @@ type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "updatedAt">>;
 
 export interface ReaskFinding {
-  /** echo: a rewrite repeated a quoted passage word for word (streaming path). */
-  kind: "fact" | "prior_question" | "source_text" | "conflict" | "echo";
+  /**
+   * echo: a rewrite repeated a quoted passage word for word (streaming path).
+   * own_statement: the interviewer itself told the seller this earlier in the session.
+   */
+  kind: "fact" | "prior_question" | "source_text" | "conflict" | "echo" | "own_statement";
   /** What is on file / what was asked before / what the source says. */
   detail: string;
   /** source_text: the passage quoted (the rewrite must not parrot it). */
   quote?: string;
   /**
-   * A candidate found by word overlap only (a source passage, an earlier
-   * answer that mentions the subject): it stops the question only once the
-   * supporting model confirms it answers it (confirmFindings).
+   * Checked by the supporting model (confirmFindings): it stops the question
+   * only once the model confirms the item answers what the question mainly
+   * asks. Conflicts and echoes are never verified.
    */
   verify?: boolean;
+  /** conflict (live claim check): the fact key it is about, and the file's own figure/wording. */
+  key?: string;
+  onFileValue?: string;
+  /**
+   * A strong mechanical match (the fact's own words, the same question
+   * reworded) that still stands when the model can't give a verdict in time.
+   * Never set for the exchange the seller is answering right now — a
+   * follow-up on the unanswered half of a compound question is not a re-ask.
+   */
+  fallback?: boolean;
 }
 
 export interface PriorQA {
@@ -55,6 +68,16 @@ export interface PriorQA {
   answer: string;
   /** "session 1", "earlier in this session" … */
   where: string;
+  /** The exchange the seller's current message answers (their answer may be partial). */
+  current?: boolean;
+}
+
+/** An item the file answers beyond the facts (on-file-evidence.ts). */
+export interface OnFileFact {
+  key: string;
+  label: string;
+  answer: string;
+  source: string;
 }
 
 const KEY_STOP = new Set(["of", "per", "by", "and", "vs", "the", "to", "in", "on", "for", "or", "a", "an", "with", "is"]);
@@ -172,6 +195,136 @@ export interface ReaskContext {
   conflictKeys?: string[];
   /** The fields the model extracted this turn (for the live conflict check). */
   extractedFields?: InterviewResponse["extractedFields"];
+  /** Items the sources or earlier sessions answer beyond the facts (on-file-evidence.ts). */
+  onFile?: OnFileFact[];
+  /** The interviewer's own earlier messages in this session (newest last) — what it already told the seller. */
+  agentStatements?: string[];
+  /** Figures the seller just gave that the file states differently (live-claims.ts), not yet raised. */
+  liveConflicts?: ReaskFinding[];
+}
+
+/** How many model-checked candidates one draft may carry (strongest first). */
+const MAX_CANDIDATES = 10;
+
+/** Stems of a text as questionTokens makes them (5 characters, stop words out, acronyms kept). */
+const stemsOfText = (t: string) => questionTokens(t).stems;
+
+/**
+ * Facts (and on-file items) that may answer the question, ranked by the
+ * words they share with it — the key's own words count double, a name or an
+ * acronym (PPM, IATF, Megan) counts triple. Candidates only: the answer
+ * check decides. Catches what the strict rule can't: "how many presses have
+ * robots" vs robotCount "21 robots", "your PPM with automotive customers" vs
+ * qualityMetrics "18 PPM".
+ */
+export function rankedFactCandidates(
+  question: string,
+  info: Record<string, unknown>,
+  onFile: OnFileFact[],
+  exclude: ReadonlySet<string>,
+  docs: Map<string, DocLike> = new Map(),
+  limit = 5,
+): ReaskFinding[] {
+  const q = stemsOfText(question);
+  const qDistinct = distinctiveTokens(question);
+  if (q.size < 2) return [];
+  const sources = getFieldSources(info);
+  const scored: { score: number; finding: ReaskFinding }[] = [];
+  const score = (keyStems: string[], textStems: Set<string>) => {
+    const k = keyStems.filter((t) => q.has(t)).length;
+    let v = 0;
+    let d = 0;
+    textStems.forEach((t) => { if (q.has(t) && !keyStems.includes(t)) v++; if (qDistinct.has(t)) d++; });
+    keyStems.forEach((t) => { if (qDistinct.has(t) && !textStems.has(t)) d++; });
+    return { k, total: k * 2 + v + d * 3, d };
+  };
+  for (const [key, raw] of Object.entries(info)) {
+    if (!isFactKey(key) || raw === null || raw === undefined || raw === "" || exclude.has(key.toLowerCase())) continue;
+    const kind = String(sources[key]?.source ?? "");
+    if (["crm", "website", "social"].includes(kind) && !sources[key]?.acceptedByBroker) continue;
+    const kt = keyTokens(key.replace(/\d+/g, " "));
+    if (kt.length === 0) continue;
+    const value = valueText(raw);
+    const s = score(kt, stemsOfText(value.slice(0, 400)));
+    // Two of the key's words, or half of a short key's (robotCount for "how
+    // many presses have robots") — not one broad word alone — or a name /
+    // acronym in the value (PPM).
+    const broadOnly = s.k === 1 && kt.filter((t) => q.has(t)).every((t) => BROAD_SINGLE.has(t));
+    if (!(s.k >= 2 || (s.k >= 1 && s.k / kt.length >= 0.5 && !broadOnly) || (s.d >= 1 && s.total >= 4))) continue;
+    scored.push({ score: s.total, finding: { kind: "fact", detail: `${key}: ${value.replace(/\s+/g, " ").slice(0, 200)} [${sourceLabel(sources[key], docs)}]`, verify: true } });
+  }
+  for (const f of onFile) {
+    if (exclude.has(f.key.toLowerCase())) continue;
+    const kt = keyTokens(f.key);
+    const s = score(kt, stemsOfText(`${f.label} ${f.answer}`));
+    if (!(s.k >= 2 || (s.k >= 1 && s.total >= 3) || (s.d >= 1 && s.total >= 4) || s.total >= 4)) continue;
+    scored.push({ score: s.total + 1, finding: { kind: "fact", detail: `${f.key} (${f.label}): ${f.answer.slice(0, 200)} [${f.source}]`, verify: true } });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.finding);
+}
+
+/**
+ * Earlier exchanges that may already answer the question though worded
+ * differently ("how much resin cost is passed through" after "are you on
+ * index-based pricing that passes resin volatility through?"), ranked by the
+ * words the question shares with the earlier question and with the answer.
+ * Candidates only.
+ */
+export function rankedPriorCandidates(question: string, priorQA: PriorQA[], skip: ReadonlySet<PriorQA>, limit = 3): ReaskFinding[] {
+  const q = stemsOfText(question);
+  const qDistinct = distinctiveTokens(question);
+  if (q.size < 2) return [];
+  const scored: { score: number; finding: ReaskFinding }[] = [];
+  for (const p of priorQA) {
+    if (skip.has(p) || !p.answer || p.answer.trim().split(/\s+/).length < 4) continue;
+    const pq = stemsOfText(p.question);
+    const pa = stemsOfText(p.answer.slice(0, 1200));
+    let sq = 0;
+    let sa = 0;
+    let d = 0;
+    q.forEach((t) => {
+      if (pq.has(t)) sq++;
+      if (pa.has(t)) sa++;
+      if (qDistinct.has(t) && (pq.has(t) || pa.has(t))) d++;
+    });
+    const total = sq * 2 + sa + d * 2;
+    if (sq + sa < 3 || total < 6) continue;
+    scored.push({
+      score: total,
+      finding: {
+        kind: "prior_question",
+        detail: p.current
+          ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`
+          : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`,
+        verify: true,
+      },
+    });
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.finding);
+}
+
+/**
+ * What the interviewer itself already told the seller this session ("the
+ * 2024 agreement has a 12-month non-solicit and a 12-month / 5 km
+ * non-compete") that the question now asks the seller for. Candidates only.
+ */
+export function ownStatementCandidates(question: string, statements: string[], limit = 2): ReaskFinding[] {
+  const q = stemsOfText(question);
+  const qDistinct = distinctiveTokens(question);
+  if (q.size < 2) return [];
+  const scored: { score: number; finding: ReaskFinding }[] = [];
+  for (const msg of statements.slice(-4)) {
+    for (const sentence of sentencesOf(msg)) {
+      if (sentence.includes("?") || sentence.split(/\s+/).length < 6) continue;
+      const s = stemsOfText(sentence);
+      let shared = 0;
+      let d = 0;
+      q.forEach((t) => { if (s.has(t)) { shared++; if (qDistinct.has(t)) d++; } });
+      if (shared < 3 && !(shared >= 2 && d >= 1)) continue;
+      scored.push({ score: shared + d, finding: { kind: "own_statement", detail: `you told the seller yourself earlier in this session: «${sentence.slice(0, 260)}»`, verify: true } });
+    }
+  }
+  return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.finding);
 }
 
 /** Everything the draft reply re-asks (or states as settled against a document). */
@@ -224,7 +377,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
         const citedBefore = nums.length > 0 && ctx.priorQA.some((p) => nums.some((n) => numberTokens(p.question).includes(n)));
         if (citedNow && !citedBefore) continue;
       }
-      findings.push({ kind: "fact", detail: `${key}: ${value.replace(/\s+/g, " ").slice(0, 160)} [${sourceLabel(src, docs)}]` });
+      findings.push({ kind: "fact", detail: `${key}: ${value.replace(/\s+/g, " ").slice(0, 160)} [${sourceLabel(src, docs)}]`, verify: true, fallback: true });
     }
 
     // 2. A question asked (and answered) before — reworded or not. The
@@ -234,7 +387,18 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
     // BBB question). Or the subject asked about ("cleanroom HVAC") already
     // sits in a seller answer with a figure or date: cite it, ask the delta.
     const qDistinct = distinctiveTokens(question);
-    const answered = (p: PriorQA) => !!p.answer && p.answer.trim().split(/\s+/).length >= 3 && !NON_ANSWER_RE.test(p.answer.slice(0, 160));
+    const words = (p: PriorQA) => (p.answer ? p.answer.trim().split(/\s+/).length : 0);
+    // A hedge at the start of a long answer ("I'd have to check with Dana,
+    // but my understanding is…") is still an answer — the model decides; a
+    // short "not sure, I'll check" is a deferral that may be followed up.
+    const hedged = (p: PriorQA) => NON_ANSWER_RE.test(p.answer.slice(0, 160));
+    const answered = (p: PriorQA) => !!p.answer && words(p) >= 3 && (!hedged(p) || words(p) >= 20);
+    // Sure enough to stand without the model: a clear answer to an EARLIER
+    // exchange. The exchange the seller is answering right now may have
+    // left half a compound question open — only the model may call a
+    // follow-up on it a re-ask.
+    const sureAnswer = (p: PriorQA) => !p.current && words(p) >= 3 && !hedged(p);
+    const matchedPrior = new Set<PriorQA>();
     if (!delta && !Array.from(q).every((t) => seller.has(t))) {
       for (const p of ctx.priorQA) {
         if (!answered(p)) continue;
@@ -256,7 +420,15 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
         // shares no topic word with that question, the model decides.
         const answerStems = questionTokens(p.answer).stems;
         const onTopic = Array.from(pt).some((t) => answerStems.has(t));
-        findings.push({ kind: "prior_question", detail: `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 200)}"`, ...(onTopic ? {} : { verify: true }) });
+        matchedPrior.add(p);
+        findings.push({
+          kind: "prior_question",
+          detail: p.current
+            ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`
+            : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`,
+          verify: true,
+          ...(onTopic && sureAnswer(p) ? { fallback: true } : {}),
+        });
         break;
       }
       if (!findings.some((f) => f.kind === "prior_question")) {
@@ -273,12 +445,24 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
               if (!qDistinct.has(words[i])) continue;
               const near = words.slice(Math.max(0, i - 3), i + 4).some((w, j) => j !== Math.min(3, i) && w !== words[i] && topical.has(w));
               if (!near) continue;
+              matchedPrior.add(p);
               findings.push({ kind: "prior_question", detail: `the seller already said ${p.where} (answering "${p.question.slice(0, 100)}"): "${sentence.slice(0, 220)}"`, verify: true });
               break outer;
             }
           }
         }
       }
+    }
+
+    // 2b. Ranked candidates the strict rules above can't see — reworded
+    // questions, a fact under another key, an on-file item, what the
+    // interviewer itself told the seller. The answer check decides each.
+    if (!delta) {
+      const factKeys = new Set(findings.filter((f) => f.kind === "fact").map((f) => f.detail.split(":")[0].toLowerCase()));
+      const exclude = new Set([...Array.from(conflictKeys), ...Array.from(factKeys)]);
+      findings.push(...rankedFactCandidates(questionWithLeadIn(draft), ctx.info, ctx.onFile ?? [], exclude, docs));
+      if (!Array.from(q).every((t) => seller.has(t))) findings.push(...rankedPriorCandidates(question, ctx.priorQA, matchedPrior));
+      findings.push(...ownStatementCandidates(question, ctx.agentStatements ?? []));
     }
 
     // 3. A source that already answers it (skip when the reply cites one).
@@ -323,13 +507,35 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
     }
   }
 
-  return findings;
+  // 4c. …or one the live claim check found (live-claims.ts: a percentage,
+  // a count, a claim — checked against the file by the supporting model),
+  // unless the draft already raises it.
+  for (const c of ctx.liveConflicts ?? []) {
+    if (liveConflictAddressed(c, draft)) continue;
+    if (findings.some((f) => f.kind === "conflict" && f.detail === c.detail)) continue;
+    findings.push(c);
+  }
+
+  // Strongest candidates first, at most MAX_CANDIDATES for the answer check.
+  const order = (f: ReaskFinding) => (!f.verify ? 0 : f.fallback ? 1 : f.kind === "fact" ? 2 : f.kind === "prior_question" ? 3 : f.kind === "source_text" ? 4 : 5);
+  const sorted = [...findings].sort((a, b) => order(a) - order(b));
+  let verifyCount = 0;
+  return sorted.filter((f) => !f.verify || ++verifyCount <= MAX_CANDIDATES);
+}
+
+/** The draft already raises a live conflict: names the file's figure, or asks which is right. */
+export function liveConflictAddressed(c: ReaskFinding, draft: string): boolean {
+  const onFile = c.onFileValue ?? "";
+  const nums = numberTokens(onFile).filter((n) => n.length >= 2 || /\./.test(n));
+  return nums.some((n) => numberTokens(draft).includes(n)) ||
+    /\b(differ|different|two figures|square|reconcile|versus|vs\.?|which is right|which (?:one|figure) is)\b/i.test(draft);
 }
 
 /**
- * Keeps the findings that stand: the sure ones as they are, the candidates
- * (verify) only when the verifier confirms they answer the question. A
- * verifier that can't decide confirms nothing.
+ * Keeps the findings that stand: conflicts and echoes as they are; every
+ * other finding only when the verifier confirms it answers what the
+ * question mainly asks. When the verifier can't decide in time, the strong
+ * mechanical matches (fallback) stand and the weaker candidates don't.
  */
 export async function confirmFindings(
   findings: ReaskFinding[],
@@ -342,9 +548,20 @@ export async function confirmFindings(
   if (candidates.length === 0) return findings;
   const question = draftQuestions(draft) || draft;
   const confirmed = await verifier(question, candidates.map((f, i) => ({ id: String(i + 1), text: f.detail })), timeoutMs);
-  console.log(`[reask-guard] answer check: ${confirmed === null ? "no verdict" : `${confirmed.size} of ${candidates.length}`} candidate(s) confirmed`);
-  return findings.filter((f) => !f.verify || (confirmed?.has(String(candidates.indexOf(f) + 1)) ?? false));
+  console.log(
+    confirmed === null
+      ? `[reask-guard] answer check: no verdict — ${candidates.filter((f) => f.fallback).length} of ${candidates.length} candidate(s) stand on the strong match alone`
+      : `[reask-guard] answer check: ${confirmed.size} of ${candidates.length} candidate(s) confirmed`,
+  );
+  return findings.filter((f) => {
+    if (!f.verify) return true;
+    if (confirmed === null) return !!f.fallback;
+    return confirmed.has(String(candidates.indexOf(f) + 1));
+  });
 }
+
+/** Findings that stand without a model verdict (after a rewrite, the second check is mechanical). */
+export const sureFindings = (findings: ReaskFinding[]) => findings.filter((f) => !f.verify || f.fallback);
 
 /** True when `text` repeats six or more consecutive words of `passage`. */
 export function echoesPassage(text: string, passage: string): boolean {
@@ -361,6 +578,7 @@ export function echoesPassage(text: string, passage: string): boolean {
 export function reaskCorrection(findings: ReaskFinding[]): string {
   const facts = findings.filter((f) => f.kind === "fact").map((f) => `- ${f.detail}`);
   const prior = findings.filter((f) => f.kind === "prior_question").map((f) => `- ${f.detail}`);
+  const own = findings.filter((f) => f.kind === "own_statement").map((f) => `- ${f.detail}`);
   const text = findings.filter((f) => f.kind === "source_text").map((f) => `- ${f.detail}`);
   const conflicts = findings.filter((f) => f.kind === "conflict").map((f) => `- ${f.detail}`);
   const parts: string[] = ["[SYSTEM CORRECTION:"];
@@ -368,11 +586,12 @@ export function reaskCorrection(findings: ReaskFinding[]): string {
   if (conflicts.length) parts.push(`FIRST — the seller's figure conflicts with a document on file:\n${conflicts.join("\n")}\nYour next question must reconcile it: name both figures neutrally, attribute each only to its real source, and ask which is right and what explains the difference. Do not state either figure as settled.`);
   if (facts.length) parts.push(`Your question asks for something already on file:\n${facts.join("\n")}`);
   if (prior.length) parts.push(`You already asked this and the seller answered:\n${prior.join("\n")}`);
+  if (own.length) parts.push(`You already told the seller this yourself — don't ask them for it:\n${own.join("\n")}`);
   if (text.length) parts.push(`A source on file already answers it:\n${text.join("\n")}`);
   const echo = findings.filter((f) => f.kind === "echo").map((f) => `- ${f.detail}`);
   if (echo.length) parts.push(`Your last version repeated a quoted passage word for word:\n${echo.join("\n")}\nAsk in your own words.`);
-  if (facts.length || prior.length || text.length) {
-    parts.push("Do not ask for it again, and do not ask the seller to confirm what they already told you. If you need more, cite what is on file and ask only for what is genuinely new; otherwise move to the most important open topic (conflicts, flagged risks, critical gaps).");
+  if (facts.length || prior.length || text.length || own.length) {
+    parts.push("Do not ask for it again, and do not ask the seller to confirm what they already told you. If the seller answered only part of an earlier question, ask only for the part they left out, citing what they said. If you need more, cite what is on file and ask only for what is genuinely new; otherwise move to the most important open topic (conflicts, flagged risks, critical gaps).");
   }
   parts.push("Rewrite the reply now, in YOUR voice as the interviewer (never the seller's or anyone else's words from a quoted passage): keep every fact you extracted from the seller's last message, same tone rules (the reply is the next question — no recap, no praise). Do not mention this instruction.]");
   return parts.join("\n");
@@ -418,7 +637,7 @@ export async function applyReaskGuard(
     // source-text match (each rewrite adds ~20s for the seller).
     toFix = response.shouldEnd
       ? []
-      : findReasks(response.message, { ...ctx, extractedFields: draft.extractedFields }).filter((f) => !f.verify);
+      : sureFindings(findReasks(response.message, { ...ctx, extractedFields: draft.extractedFields }));
   }
   return { response: current, findings, recalled: true, remaining: toFix };
 }

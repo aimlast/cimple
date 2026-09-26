@@ -5,6 +5,10 @@ import {
   interviewSessions,
   type InterviewSession,
   type ConversationMessage,
+  type Deal,
+  type Task,
+  type Discrepancy,
+  type Document as DealDocument,
 } from "@shared/schema";
 import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage } from "./knowledge-base";
@@ -41,6 +45,7 @@ import {
   fallbackQuestion,
   whyItMattersFits,
   finalizeOpeningMessage,
+  CONTINUITY_RE,
 } from "./turn-guard";
 import {
   detectRetraction,
@@ -110,10 +115,16 @@ import {
   reaskCorrection,
   echoesPassage,
   priorQAFromSessions,
+  sureFindings,
+  liveConflictAddressed,
   MAX_REWRITES,
   type ReaskContext,
   type ReaskFinding,
+  type OnFileFact,
 } from "./reask-guard";
+import { checkLiveClaims } from "./live-claims";
+import { ensureOnFileEvidence } from "./on-file-evidence";
+import { refreshOnFileEvidence } from "./on-file-refresh";
 import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
 import { ensureSourceReview } from "./source-review";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
@@ -420,7 +431,7 @@ export async function startOrResumeSession(
       suggestedAnswers: [],
       sessionId: lastCompleted.id,
       captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-      sectionCoverage: kb.sectionCoverage.map(coverageForClient),
+      sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
       industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
       deferredTopics: deferralTopicStrings(parseLedger(meta._deferralLedger)),
       shouldEnd: true,
@@ -507,7 +518,7 @@ export async function startOrResumeSession(
         suggestedAnswers: pendingChips,
         sessionId: session.id,
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-        sectionCoverage: kb.sectionCoverage.map(coverageForClient),
+        sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
         industryContext: extractIndustryContextForFrontend(kb.industryContext),
         deferredTopics: resumeDeferred,
         shouldEnd: false,
@@ -539,13 +550,16 @@ export async function startOrResumeSession(
   // The source review still running: give it up to SOURCE_REVIEW_WAIT_MS so
   // the opening can raise a conflict it finds (it keeps running either way,
   // and later turns pick it up).
-  if (sourceReviewRun) {
-    const review = await Promise.race([
-      sourceReviewRun.catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), SOURCE_REVIEW_WAIT_MS)),
-    ]);
-    if (review) deal = { ...deal, interviewSourceReview: review } as typeof deal;
-  }
+  // What the file already answers (on-file-evidence.ts) is usually built
+  // already — the broker's Overview and the end of the last session start
+  // it; a build still running gets a wait of its own, since an opening that
+  // asks what the file answers is the first thing a returning seller reads.
+  const evidenceRun = ensureOnFileEvidenceFor(deal, documents, tasks, resolvedDiscrepancies, existingSessions, session.id, openDiscrepancies);
+  const within = <T,>(p: Promise<T> | null, ms: number): Promise<T | null> =>
+    p ? Promise.race([p.catch(() => null), new Promise<null>((resolve) => setTimeout(() => resolve(null), ms))]) : Promise.resolve(null);
+  const [review, evidence] = await Promise.all([within(sourceReviewRun, SOURCE_REVIEW_WAIT_MS), within(evidenceRun, EVIDENCE_WAIT_MS)]);
+  if (review) deal = { ...deal, interviewSourceReview: review } as typeof deal;
+  if (evidence) deal = { ...deal, interviewEvidence: evidence } as typeof deal;
 
   // Assemble knowledge base for the opening message — with every earlier
   // session's questions and answers, so a returning seller is never asked
@@ -574,6 +588,7 @@ export async function startOrResumeSession(
     exchanges: (kb.priorExchanges ?? []).map((x) => ({ question: x.question, answer: x.answer })),
     conflicts: kb.sourceConflicts,
     risks: kb.flaggedRisks,
+    onFileTopics: kb.onFileTopics,
   });
 
   // Generate the opening message
@@ -584,6 +599,7 @@ export async function startOrResumeSession(
     priorQA: priorQAFromSessions(existingSessions, session.id),
     openDeferralTopics: [],
     conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
+    onFile: onFileFacts(kb),
   });
 
   // Save the opening message to the session
@@ -700,7 +716,7 @@ export async function startOrResumeSession(
     turnMessages: { ai: aiMessage },
     sessionId: session.id,
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
-    sectionCoverage: kb.sectionCoverage.map(coverageForClient),
+    sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
     deferredTopics: deferralTopicStrings(seededLedger),
     shouldEnd: false,
@@ -839,7 +855,19 @@ export async function processTurn(
     exchanges: allExchanges,
     conflicts: kb.sourceConflicts,
     risks: kb.flaggedRisks,
+    onFileTopics: kb.onFileTopics,
   });
+
+  // What the file already answers: rebuilt in the background when the
+  // sources or earlier sessions changed, or new open items appeared (a
+  // no-op otherwise); later turns pick it up.
+  ensureOnFileEvidence(deal, {
+    documents,
+    sessions: dealSessions,
+    currentSessionId: sessionId,
+    view: kb.extractedInfo as Record<string, unknown>,
+    targets: kb.evidenceTargets ?? [],
+  })?.catch(() => {});
 
   // Build the system prompt with current knowledge base
   const systemBlocks = await buildInterviewSystemBlocks(kb);
@@ -986,17 +1014,44 @@ export async function processTurn(
   // sees them, and the seller-visible sources.
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
   const sellerView = sellerInterviewView(existingExtracted, documents);
+  // (The last exchange is the one the seller is answering right now — their
+  // answer may cover only half of a compound question.)
+  const answeringNow = existingMessages[existingMessages.length - 1]?.role === "ai";
   const reaskCtx: ReaskContext = {
     sellerMessage,
     info: sellerView as Record<string, unknown>,
     documents,
     priorQA: [
       ...priorQAFromSessions(dealSessions, sessionId),
-      ...thisSessionQA.map((x) => ({ ...x, where: "earlier in this session" })),
+      ...thisSessionQA.map((x, i, all) => ({
+        ...x,
+        where: "earlier in this session",
+        ...(answeringNow && i === all.length - 1 ? { current: true } : {}),
+      })),
     ],
     openDeferralTopics: agentDeferrals(priorLedger).map((d) => d.topic),
     conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
+    onFile: onFileFacts(kb),
+    // What the interviewer itself already told the seller this session.
+    agentStatements: existingMessages.filter((m) => m.role === "ai").map((m) => m.content).slice(-4),
   };
+
+  // LIVE CLAIM CHECK: a figure or claim the seller volunteers this turn,
+  // checked against the file while the reply is drafted (live-claims.ts);
+  // the re-ask gate below raises what the draft doesn't. Never on a stop.
+  const liveClaimsRun: Promise<ReaskFinding[]> = stopNow
+    ? Promise.resolve([])
+    : checkLiveClaims(
+        {
+          sellerMessage,
+          lastQuestion: prevAiMessage ? questionPart(prevAiMessage) : undefined,
+          info: kb.extractedInfo as Record<string, unknown>,
+          onFile: reaskCtx.onFile,
+          documents,
+          settled: (kb.resolvedValues ?? []).filter((n) => !n.resolvedPrivately && n.resolvedValue).map((n) => `${n.factKey ?? n.field}${n.year ? ` (${n.year})` : ""}: ${n.resolvedValue}`),
+        },
+        { timeoutMs: LIVE_CLAIMS_TIMEOUT_MS },
+      ).catch(() => []);
 
   // VALUATION-FIGURE GUARD: on fishing turns ("what's it worth", "what
   // multiple", "how much tax-free"), scan the outgoing reply — if it leaked a
@@ -1053,13 +1108,15 @@ export async function processTurn(
     // valuation leak, the agent's machinery or a legal claim stated as fact
     // (see OUTPUT GUARDS), or a turn where the seller withdrew something.
     if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text) })) return true;
+    // The live claim check started with the turn (usually done by now).
+    reaskCtx.liveConflicts = await liveClaimsRun;
     let found = findReasks(text, reaskCtx);
-    // After a rewrite only the sure findings count (a word-overlap candidate
-    // never forces a second rewrite); on the first draft a candidate stops
-    // the question only once the supporting model confirms it is answered.
-    // (The seller is waiting on this check: past STREAM_CHECK_TIMEOUT_MS the
-    // question goes out — the prompt's own rules still apply.)
-    found = reaskAttempt > 0 ? found.filter((f) => !f.verify) : await confirmFindings(found, text, undefined, STREAM_CHECK_TIMEOUT_MS);
+    // After a rewrite only the strong findings count (a word-overlap
+    // candidate never forces a second rewrite); on the first draft every
+    // candidate goes to the supporting model, which decides. (The seller is
+    // waiting on this check: past STREAM_CHECK_TIMEOUT_MS only the strong
+    // mechanical matches stand.)
+    found = reaskAttempt > 0 ? sureFindings(found) : await confirmFindings(found, text, undefined, STREAM_CHECK_TIMEOUT_MS);
     // …plus a rewrite that parrots a quoted passage in the seller's or a
     // transcript's voice.
     const echoed = earlyFindings.find((f) => f.quote && echoesPassage(text, f.quote));
@@ -1182,6 +1239,7 @@ export async function processTurn(
   // reply that will actually go out; the OUTPUT GUARDS below (filler,
   // machinery, legal, no question) then apply to whatever it produced.
   if (!degraded && !stopNow && !aiResponse.shouldEnd && !shown.released) {
+    reaskCtx.liveConflicts = await liveClaimsRun;
     const guarded = await applyReaskGuard(anthropic, { ...callParams, messages: conversation }, aiResponse, reaskCtx);
     if (guarded.recalled) {
       console.warn(
@@ -1312,6 +1370,7 @@ export async function processTurn(
             exchanges: allExchanges,
             conflicts: kb.sourceConflicts,
             risks: kb.flaggedRisks,
+            onFileTopics: prospectiveKb.onFileTopics,
             // A deferral or "resolved" the agent records in this very turn
             // counts only if this turn's exchange was about it — parking
             // every open item in the goodbye message is not covering it.
@@ -1538,6 +1597,24 @@ export async function processTurn(
         conflictDeferrals.map((d) => d.topic).join(", "),
     );
     ledger = updateDeferralLedger(ledger, conflictDeferrals, [], userTurnCount);
+  }
+  // …and a figure the live claim check found that the reply that goes out
+  // doesn't raise (the check came back late, or a goodbye): on the ledger,
+  // so the next turn opens on it (RECONCILE NOW) and the broker sees it.
+  const liveLeft = (await liveClaimsRun).filter(
+    (c) =>
+      !liveConflictAddressed(c, aiResponse.message) &&
+      !reconcileSettledTopics.some((t) => topicsMatch(t, `reconcile ${c.key}`)) &&
+      !conflictDeferrals.some((d) => topicsMatch(d.topic, `reconcile ${c.key}`)),
+  );
+  if (liveLeft.length > 0) {
+    console.warn(`[session-manager] Live claim check: ${liveLeft.length} conflict(s) not raised this turn — on the ledger: ${liveLeft.map((c) => c.key).join(", ")}`);
+    ledger = updateDeferralLedger(
+      ledger,
+      liveLeft.map((c) => ({ topic: `reconcile ${c.key}`, reason: c.detail.replace(/^[^:]+:\s*/, ""), whereInfoLives: "" })),
+      [],
+      userTurnCount,
+    );
   }
 
   // NUMERIC-FIDELITY GUARD: a "confirmed" value must not contain numbers the
@@ -2001,6 +2078,10 @@ export async function processTurn(
       console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
     });
 
+    // What this session answered counts as on file for the next one — built
+    // now, in the background, so a returning seller's opening already has it.
+    refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
+
     // Fire-and-forget: analyze the completed interview for learning insights
     runInterviewLearningLoop(dealId, sessionId).catch((err) => {
       console.error(`[session-manager] Learning loop failed for session ${sessionId}:`, err);
@@ -2030,7 +2111,7 @@ export async function processTurn(
       updatedFields: changes.filter((c) => c.previousValue !== null).map((c) => c.fieldName),
       changes,
     },
-    sectionCoverage: updatedKb.sectionCoverage.map(coverageForClient),
+    sectionCoverage: (updatedKb.recordedCoverage ?? updatedKb.sectionCoverage).map(coverageForClient),
     industryContext: extractIndustryContextForFrontend(updatedIndustryContext),
     // Derived from the durable ledger — stable and append-only until
     // resolved, so the broker-facing panel no longer flickers or loses items.
@@ -2119,14 +2200,21 @@ async function generateOpeningMessage(
     `. Set importance and targetSection for it.`;
   const noFiller = ` No inventory of what the materials contain, no praise, no explanation of the process.`;
 
+  // Calls and emails with the broker on file: the seller has already talked
+  // this through once — say so, and never make them repeat it.
+  const conversations = (kb.sourceDigests ?? []).filter((d) => /call|email/i.test(d.kind)).map((d) => d.name);
+  const conversationsNote = conversations.length > 0
+    ? ` You have also gone through their calls and emails with the broker (${conversations.slice(0, 3).map((n) => `"${n}"`).join(", ")}) — say so in a few words, so they know they won't be asked to repeat themselves.`
+    : "";
+
   if (hasPriorSession) {
-    openingInstruction = `The seller is returning to an ongoing conversation. One short welcome-back sentence, then go straight to the most important open gap or deferral as a question. Do not list what you already have. Do not repeat any question already answered. Three sentences maximum.`;
+    openingInstruction = `The seller is RETURNING — they have done at least one session with you already (see PREVIOUS SESSIONS). Open with one short welcome-back sentence that shows continuity: that you're picking up where you left off, naming in a few words one thing you covered last time${conversations.length > 0 ? " or that you've been through their calls with the broker" : ""} — never a recap list, never "welcome" as if you were meeting for the first time. Then go straight to the most important item that is still genuinely open as a question — never anything the ALREADY ANSWERED or ALSO ALREADY ON FILE lists, the PREVIOUS SESSIONS or their calls already answer. Do not list what you already have. Three sentences maximum.`;
   } else if (hasQuestionnaireData && hasDocuments) {
-    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read their questionnaire and documents. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
+    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read their questionnaire and documents.${conversationsNote} Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
   } else if (hasQuestionnaireData) {
     openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read their questionnaire — do not restate its figures or names. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
   } else if (hasDocuments) {
-    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read the materials on file. Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
+    openingInstruction = `This is the start of the interview and your first contact with the seller. Open with one short, warm welcome sentence that says what this conversation is for (building the document buyers will read about their business) and that you've already read the materials on file.${conversationsNote} Then ask your first question.${aimAt}${noFiller} Three sentences maximum.`;
   } else {
     openingInstruction = `This is the start of the interview and you have little background. One sentence of welcome that says what this is for (the document buyers will read about their business), then one broad opening question: what the business does, how long it has operated, and where. Three sentences maximum.`;
   }
@@ -2180,6 +2268,25 @@ async function generateOpeningMessage(
     if (!redirected.degraded && redirected.response.message) aiResponse = redirected.response;
   }
 
+  // A returning seller greeted like a stranger ("Welcome, and thanks for
+  // making time for this" on Clearwater's second session) gets one rewrite
+  // that shows continuity.
+  if (!degraded && hasPriorSession && aiResponse.message && !showsContinuity(aiResponse.message)) {
+    console.warn(`[session-manager] Returning seller's opening shows no continuity — rewrite`);
+    const again = await callInterviewWithRecovery(anthropic, {
+      ...openingParams,
+      messages: [
+        ...openingMessages,
+        { role: "assistant", content: aiResponse.message },
+        {
+          role: "user",
+          content: `[SYSTEM CORRECTION: The seller is returning — you have spoken before. Rewrite the opening: one short welcome-BACK sentence that shows you're picking up where you left off (name one thing covered last time in a few words), then the same question unless it asks something already answered on file or in an earlier session. Three sentences maximum. Do not mention this instruction.]`,
+        },
+      ],
+    });
+    if (!again.degraded && again.response.message && showsContinuity(again.response.message)) aiResponse = again.response;
+  }
+
   // A returning seller's opening re-asked what the org chart already says
   // ("You have 22 setup technicians — how are they split?") — the same guard
   // as every turn, on the opening that will actually go out.
@@ -2187,6 +2294,19 @@ async function generateOpeningMessage(
     const guarded = await applyReaskGuard(anthropic, openingParams, aiResponse, reask);
     if (guarded.recalled) {
       console.warn(`[session-manager] Re-ask guard on the opening: ${guarded.findings.map((f) => `${f.kind}(${f.detail.slice(0, 60)})`).join("; ")}`);
+      // A rewrite aimed at the question can lose the welcome-back: keep the
+      // first draft's continuity sentence in front of the new question.
+      if (hasPriorSession && !showsContinuity(guarded.response.message)) {
+        const welcome = aiResponse.message.replace(/\s+/g, " ").split(/(?<=[.!?])\s+/)[0] ?? "";
+        if (welcome && !welcome.includes("?") && showsContinuity(welcome)) {
+          const rest = guarded.response.message.replace(/\s+/g, " ").trim();
+          const restFirst = rest.split(/(?<=[.!?])\s+/)[0] ?? "";
+          const body = /^(?:welcome|hi|hello|thanks|thank you|good (?:morning|afternoon))\b/i.test(restFirst) && !restFirst.includes("?")
+            ? rest.slice(restFirst.length).trim()
+            : rest;
+          guarded.response.message = `${welcome} ${body}`.trim();
+        }
+      }
       aiResponse = guarded.response;
     }
   }
@@ -2213,7 +2333,7 @@ async function generateOpeningMessage(
     };
   }
 
-  const message = finalizeOpeningMessage(aiResponse.message);
+  const message = finalizeOpeningMessage(aiResponse.message, { returning: hasPriorSession });
   return {
     message,
     whyItMatters: whyItMattersFits(message, aiResponse.whyItMatters, false) ? aiResponse.whyItMatters : undefined,
@@ -2252,6 +2372,9 @@ export async function endSessionManually(
     interviewCompleted: true,
     ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
   });
+
+  // The next session reads what this one answered as on file (background).
+  refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
 
   // Fire-and-forget: learn from the transcript like an AI-driven ending does
   runInterviewLearningLoop(dealId, sessionId).catch((err) => {
@@ -2533,8 +2656,48 @@ export function createMessageRelease(onDelta?: (chunk: string) => void) {
 export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boolean; valuationLeak: boolean }): boolean {
   return ctx.retractionInMessage || ctx.valuationLeak || leaksInternalMachinery(text) || findLegalAssertions(text).length > 0;
 }
-/** How long a streamed question waits for the answer check before it is shown anyway. */
-const STREAM_CHECK_TIMEOUT_MS = 4_000;
+/**
+ * How long a streamed question waits for the answer check before it goes out
+ * on the mechanical verdict alone (strong matches still stop it). 4s timed
+ * out on about a fifth of turns once several interviews ran at once.
+ */
+const STREAM_CHECK_TIMEOUT_MS = 12_000;
+/** The live claim check's budget (it runs alongside the interview call). */
+const LIVE_CLAIMS_TIMEOUT_MS = 20_000;
+/** How long a new session's opening waits for an on-file evidence build still running. */
+const EVIDENCE_WAIT_MS = 45_000;
+
+/** A returning seller's opening that shows the conversation continues (not a first-meeting welcome). */
+export function showsContinuity(message: string): boolean {
+  return CONTINUITY_RE.test(message);
+}
+
+/** The file's answers beyond the facts, as the re-ask guard reads them (full answers only). */
+function onFileFacts(kb: Pick<KnowledgeBase, "onFile">): OnFileFact[] {
+  return (kb.onFile ?? [])
+    .filter((i) => !i.partial)
+    .map((i) => ({ key: i.kind === "field" ? i.key : `${i.kind}: ${i.key}`, label: i.label, answer: i.answer, source: i.source }));
+}
+
+/** Starts (or joins) the on-file evidence build with what a session start already loaded. */
+function ensureOnFileEvidenceFor(
+  deal: Deal,
+  documents: DealDocument[],
+  tasks: Task[],
+  resolved: Discrepancy[],
+  sessions: InterviewSession[],
+  currentSessionId: string,
+  openDiscrepancies: Discrepancy[],
+) {
+  const kb = assembleKnowledgeBase(deal, documents, tasks, null, resolved, { sessions, currentSessionId, openDiscrepancies });
+  return ensureOnFileEvidence(deal, {
+    documents,
+    sessions,
+    currentSessionId,
+    view: kb.extractedInfo as Record<string, unknown>,
+    targets: kb.evidenceTargets ?? [],
+  });
+}
 /** Pause between released chunks of ~3 words (a 40-word question types out in ~0.4s). */
 const RELEASE_CHUNK_MS = 30;
 

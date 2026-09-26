@@ -181,7 +181,9 @@ const disc = (o: Record<string, unknown>): any => ({
       revenue2024: "$31,020,000", insurance: "$1,140,000 total premiums (fleet & cargo)",
       _fieldSources: { evVsIceSplit: { source: "interview" }, revenue2024: { source: "document" }, insurance: { source: "document" } },
     };
-    const facts = (draft: string) => findReasks(draft, { sellerMessage: "ok", info, documents: [], priorQA: [] }).filter((f) => f.kind === "fact").length;
+    // (Strong matches — the ones that stand without the answer check; since
+    // round V weaker fact matches are candidates the check decides.)
+    const facts = (draft: string) => findReasks(draft, { sellerMessage: "ok", info, documents: [], priorQA: [] }).filter((f) => f.kind === "fact" && (!f.verify || f.fallback)).length;
     assert.equal(facts("Roughly what percentage of your automotive revenue is tied to EV platforms versus traditional ICE drivetrains?"), 1);
     assert.equal(facts("What was your revenue in 2025 so far?"), 0, "another year");
     assert.equal(facts("What's the deductible on your cargo insurance?"), 0, "a facet of a one-word key");

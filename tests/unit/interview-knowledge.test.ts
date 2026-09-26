@@ -367,7 +367,15 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
       existing: [{ id: "a", type: "follow_up", title: "Confirm lease expiry", relatedField: "leaseExpiry", description: "", status: "pending", createdBy: "ai_interview" }, ...existing.map((e) => ({ ...e, createdBy: "ai_interview" }))],
       resolvedTopics: ["Larkspur MSA change-of-control clause"],
     });
-    assert.deepEqual(closing.close.sort(), ["a", "t1"]);
+    // (A document request stays open when a topic resolves — the document
+    // hasn't arrived; only the agent naming that very request closes it.)
+    assert.deepEqual(closing.close.sort(), ["a"]);
+    const named = planTaskWrites({
+      newTasks: [], documents: [], sellerMessage: "x", answeredKeys: new Set(),
+      existing: existing.map((e) => ({ ...e, createdBy: "ai_interview" })),
+      resolvedTopics: ["Get Larkspur MSA change-of-control clause language"],
+    });
+    assert.deepEqual(named.close, ["t1"]);
     // Duplicates earlier turns created are removed (the oldest stays); a
     // request closes when its document arrives, not when the field has a value.
     const dupes: any[] = [0, 1, 2].map((i) => ({ id: `d${i}`, type: "document_request", title: "Get complete tooling list from Rob Kline", description: "", relatedField: "toolingOwnership", status: "pending", createdBy: "ai_interview", createdAt: new Date(2026, 8, 1 + i) }));
