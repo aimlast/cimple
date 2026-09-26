@@ -158,6 +158,20 @@ for (const s of [
 ]) assert.deepEqual(earningsMentions(s), [], s);
 assert.deepEqual(earningsMentions("EBITDA (as reported): $3,619,200 (FY2024)").map((m) => [m.basis, m.value, m.year]), [["reported", 3619200, "2024"]]);
 assert.deepEqual(earningsMentions("EBITDA, as reported, was $3,547,200 in 2024").map((m) => m.basis), ["reported"]);
+{
+  // The as-reported row is held to the statements — the adjusted figure is not accepted there.
+  const withPnl = earningsCanon(buildCimFinancials({
+    id: "r", version: 1, status: "completed", brokerReviewedAt: null,
+    reclassifiedPnl: { years: ["2024"], rows: [{ id: "r", name: "Revenue", category: "Revenue", values: { "2024": 31020000 } }, { id: "o", name: "Opex", category: "Operating Expenses", values: { "2024": 27472800 } }] },
+    normalization: { metric: "ebitda", years: ["2024"], netIncome: { "2024": 972960 }, addbacks: [{ id: "1", label: "ITDA", category: "other", type: "ebitda", approved: true, amounts: { "2024": 2623240 } }] },
+  } as any), "$18,000,000")!;
+  assert.equal(withPnl.reportedEbitda["2024"], 3547200);
+  assert.equal(offCanon("EBITDA (as reported): $3,596,200 (FY2024)", withPnl)[0]?.expected, "$3,547,200 (EBITDA as reported, FY2024)");
+  assert.deepEqual(offCanon("EBITDA (as reported): $3,547,200 (FY2024)", withPnl), []);
+  // A past offer's multiple is not the asking multiple.
+  assert.deepEqual(offCanon("Previous private equity buyer offered around 4x EBITDA in 2023 with an earn-out (rejected)", withPnl), []);
+  assert.equal(offCanon("The asking price of $18,000,000 represents 4.6× FY2024 adjusted EBITDA", withPnl).length, 1, "the asking multiple is checked");
+}
 assert.deepEqual(earningsMentions("Adjusted EBITDA (broker-normalized): $3.9M").map((m) => m.value), [3900000], "a parenthetical between the measure and its figure is fine");
 assert.deepEqual(earningsMentions("adjusted EBITDA has strengthened from $3.04 million in 2023 to $3.60 million in 2024").map((m) => m.value), [3040000, 3600000]);
 
