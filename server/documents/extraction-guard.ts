@@ -460,6 +460,29 @@ function plainWords(text: string): string[] {
     .filter(Boolean);
 }
 
+const MONTH_NAMES = ["january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december"];
+/** Weekday names: a reader adds them to a date ("Aug 12, 2025 (Tuesday)"); they say nothing the date doesn't. */
+const WEEKDAYS = new Set(["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday", "mon", "tue", "tues", "wed", "thu", "thur", "thurs", "fri", "sat", "sun"]);
+
+/**
+ * A word's comparable form: months written out ("aug" → "august"), a light
+ * stem so a summary's "opened" / "impacted" / "stores" meets the speaker's
+ * "opening" / "impact" / "store".
+ */
+function stemWord(w: string): string {
+  const month = w.length >= 3 ? MONTH_NAMES.find((m) => m.startsWith(w)) : undefined;
+  if (month) return month;
+  if (w.length < 4) return w;
+  return w.replace(/(?:ies|ied)$/, "y").replace(/(?:ing|ed|es|s|ly|ment|ments)$/, "").replace(/e$/, "");
+}
+
+/** Content stems of a text: no stop words, no weekday names, no numbers. */
+function contentStems(text: string): string[] {
+  return plainWords(text)
+    .filter((w) => !/^\d/.test(w) && w.length >= 3 && !GROUNDING_STOP.has(w) && !WEEKDAYS.has(w))
+    .map(stemWord);
+}
+
 /** Every number the source states — printed digits, and (spoken sources) numbers said in words. */
 function sourceNumbers(text: string, spoken: boolean): number[] {
   const out = typedNumericValues(text).map((t) => t.value);
@@ -468,7 +491,42 @@ function sourceNumbers(text: string, spoken: boolean): number[] {
     const n = parseFloat(m.replace(/,/g, ""));
     if (Number.isFinite(n)) out.push(n);
   }
-  if (spoken) out.push(...spelledNumbers(text), ...spokenDecimals(text));
+  if (spoken) out.push(...spelledNumbers(text), ...spokenDecimals(text), ...spokenHundreds(text), ...spokenHalves(text));
+  return out;
+}
+
+/** "sixty-one and a half million" → 61,500,000; "two and a half thousand" → 2,500. */
+function spokenHalves(text: string): number[] {
+  const out: number[] = [];
+  const re = /((?:[a-z0-9]+[ -]){0,2}[a-z0-9]+)\s+and a half\s+(thousand|million|billion)\b/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const lead = m[1].trim();
+    const digits = lead.match(/(\d+(?:\.\d+)?)$/);
+    const spelled = spelledNumbers(lead.replace(/-/g, " "));
+    const n = digits ? parseFloat(digits[1]) : spelled[spelled.length - 1];
+    if (n === undefined || !Number.isFinite(n)) continue;
+    const scale = { thousand: 1_000, million: 1_000_000, billion: 1_000_000_000 }[m[2].toLowerCase() as "thousand" | "million" | "billion"];
+    out.push(Math.round((n + 0.5) * scale));
+  }
+  return out;
+}
+
+const UNIT_WORDS = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine"];
+const TENS_WORDS: Record<string, number> = {
+  ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
+};
+/** How people say hundreds in money talk: "one-eighty" → 180, "two fifty" → 250, "three-twenty-five" → 325. */
+function spokenHundreds(text: string): number[] {
+  const out: number[] = [];
+  const re = new RegExp(`\\b(${UNIT_WORDS.join("|")})[- ](${Object.keys(TENS_WORDS).join("|")})(?:[- ](${UNIT_WORDS.join("|")}))?\\b`, "gi");
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const tens = TENS_WORDS[m[2].toLowerCase()];
+    const units = m[3] && tens >= 20 ? UNIT_WORDS.indexOf(m[3].toLowerCase()) + 1 : 0;
+    out.push((UNIT_WORDS.indexOf(m[1].toLowerCase()) + 1) * 100 + tens + units);
+  }
   return out;
 }
 
@@ -512,30 +570,92 @@ function valueNumbers(value: string): number[] {
  *  - every figure in it is stated in the text (printed; on a call or video
  *    call, also said in words) — a computed ratio, growth rate or total
  *    ("= 0.62", "13.2% year-over-year", "= 51 total") is not;
- *  - its words are the source's: prose without figures must appear in the
- *    text word for word; a figure with a few words around it needs most of
- *    them in the text.
+ *  - its words are the source's: word for word, or a faithful summary — at
+ *    least half of its content words (months written out, light stems:
+ *    "opened" meets "opening", "Aug" meets "August"; weekday names a reader
+ *    adds to a date don't count) are in the text, and a metric term sits
+ *    where the source puts it. An earlier read of the same text by the same
+ *    kind of reader is not held to a stricter standard than today's read —
+ *    what goes is what an older prompt worked out, mislabelled or garbled.
  */
-export function groundedInSource(key: string, value: unknown, sourceText: string | null | undefined, opts: { spoken?: boolean } = {}): boolean {
-  if (!sourceText || (typeof value !== "string" && typeof value !== "number")) return false;
+export function groundedInSource(key: string, value: unknown, sourceText: string | null | undefined, opts: GroundingOptions = {}): boolean {
+  return (typeof value === "string" || typeof value === "number") && groundedValue(key, value, sourceText, opts) === String(value).trim();
+}
+
+export interface GroundingOptions {
+  /** The source is speech (a call, video call, interview): figures may be said in words. */
+  spoken?: boolean;
+  /** Close to the source's own wording (nearly all its words), not only a faithful summary. */
+  close?: boolean;
+  /** Only the whole value — never a part of a list of figures. */
+  whole?: boolean;
+}
+
+/**
+ * The part of a value its source still states (see groundedInSource): the
+ * whole value; or, for a value that lists several figures ("Total WIP
+ * contracts: $5,243,000 | … | Weighted average margin: 24.4% | …"), the
+ * clauses the source states, without the one the reader worked out; else
+ * null. A derived metric (SDE, EBITDA, margin…) is all or nothing.
+ */
+export function groundedValue(key: string, value: unknown, sourceText: string | null | undefined, opts: GroundingOptions = {}): string | null {
+  if (!sourceText || (typeof value !== "string" && typeof value !== "number")) return null;
   const v = String(value).trim();
-  if (!v) return false;
+  if (!v) return null;
+  if (clauseGrounded(key, v, sourceText, opts)) return v;
+  if (opts.whole || isDerivedMetricKey(key)) return null;
+  const piped = /\s\|\s/.test(v);
+  const sep = piped ? " | " : /;\s/.test(v) ? "; " : " ";
+  const parts = (piped ? v.split(/\s+\|\s+/) : sep === "; " ? v.split(/;\s+/) : v.split(/(?<=[.!?])\s+(?=[A-Z])/))
+    .map((p) => p.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  const kept = parts.filter((p) => clauseGrounded(key, p, sourceText, opts));
+  if (kept.length === 0 || kept.length === parts.length) return null;
+  // Only a worked-out figure is left out — a clause the source doesn't say in
+  // words means the whole summary is not the source's.
+  if (parts.some((p) => !kept.includes(p) && !hasUnstatedFigure(p, sourceText, !!opts.spoken))) return null;
+  const joined = kept.join(sep);
+  return clauseGrounded(key, joined, sourceText, opts) ? joined : null;
+}
+
+/** True when a figure in `v` is not stated in the source (printed; on a call, also said in words). */
+function hasUnstatedFigure(v: string, sourceText: string, spoken: boolean): boolean {
+  const nums = valueNumbers(v);
+  if (nums.length === 0) return false;
+  const inSource = sourceNumbers(sourceText, spoken);
+  // PDF text often glues a statement's columns together ("Cash431,720164,630"):
+  // a figure with thousands separators is also found as written.
+  const printedAsWritten = (n: number) => Number.isInteger(n) && n >= 1000 && sourceText.includes(n.toLocaleString("en-US"));
+  // A spreadsheet's share ("0.028") is the value's "2.8%".
+  const asShare = (n: number) => n > 0 && n <= 100 && inSource.some((s) => s > 0 && s < 1 && Math.abs(s * 100 - n) <= 0.05);
+  // A round figure ("$1.35M") may be the printed 1,348,200; an exact one
+  // ("$617,819") must be printed exactly — glued PDF columns
+  // ("336,616197,819") are full of near misses.
+  const exact = (n: number) => Number.isInteger(n) && Math.abs(n) >= 1000 && n % 1000 !== 0;
+  // Said on a call in thousands ("replace it in a year or two, maybe
+  // one-eighty") — the "$180k" a note-taker writes down.
+  const saidInThousands = (n: number) => spoken && n >= 10_000 && n % 1000 === 0 && inSource.includes(n / 1000);
+  const stated = (n: number) =>
+    inSource.some((s) => s === n || (!exact(n) && n !== 0 && Math.abs(s - n) / Math.abs(n) <= 0.005)) ||
+    printedAsWritten(n) || asShare(n) || saidInThousands(n);
+  if (nums.every(stated)) return false;
+  // A table row whose columns PDF text glued together ("20225893615.5%8,420,000"):
+  // the value's figures, in order, run together exactly as printed.
+  const run = (v.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((d) => d.replace(/,/g, ""));
+  if (run.length >= 2 && run.join("").replace(/\D/g, "").length >= 6) {
+    const glued = sourceText.replace(/(\d),(?=\d)/g, "$1");
+    if (glued.includes(run.join(""))) return false;
+  }
+  return true;
+}
+
+function clauseGrounded(key: string, v: string, sourceText: string, opts: GroundingOptions): boolean {
   const guarded = guardExtraction({ [key]: v }, sourceText, { spoken: opts.spoken });
   if (guarded.data[key] !== v) return false;
   const nums = valueNumbers(v);
-  if (nums.length > 0) {
-    const inSource = sourceNumbers(sourceText, !!opts.spoken);
-    // PDF text often glues a statement's columns together ("Cash431,720164,630"):
-    // a figure with thousands separators is also found as written.
-    const printedAsWritten = (n: number) => Number.isInteger(n) && n >= 1000 && sourceText.includes(n.toLocaleString("en-US"));
-    // A spreadsheet's share ("0.028") is the value's "2.8%".
-    const asShare = (n: number) => n > 0 && n <= 100 && inSource.some((s) => s > 0 && s < 1 && Math.abs(s * 100 - n) <= 0.05);
-    const stated = (n: number) =>
-      inSource.some((s) => s === n || (n !== 0 && Math.abs(s - n) / Math.abs(n) <= 0.005)) || printedAsWritten(n) || asShare(n);
-    if (!nums.every(stated)) return false;
-  }
+  if (hasUnstatedFigure(v, sourceText, !!opts.spoken)) return false;
   const words = plainWords(v).filter((w) => !/^\d/.test(w));
-  const content = words.filter((w) => w.length >= 3 && !GROUNDING_STOP.has(w));
+  const content = contentStems(v);
   if (content.length === 0) return nums.length > 0;
   const textWords = plainWords(sourceText);
   // Word for word (punctuation aside) is always grounded.
@@ -549,12 +669,40 @@ export function groundedInSource(key: string, value: unknown, sourceText: string
     const after = i < words.length - 1 ? `${words[i]} ${words[i + 1]}` : null;
     if (!(before && bigrams.has(before)) && !(after && bigrams.has(after))) return false;
   }
-  // Otherwise the source's own words: nearly all of them for prose (the
-  // model's summary of what was said, not something it added), most of them
-  // around a stated figure.
-  const vocab = new Set(textWords);
+  // Otherwise a faithful summary: at least half of its content words are the
+  // source's (a claim the source never makes shares next to none) — or,
+  // `close`, nearly all of them (most of them around a stated figure).
+  const vocab = new Set(textWords.map(stemWord));
   const present = content.filter((w) => vocab.has(w)).length;
-  return present / content.length >= (nums.length === 0 ? 0.85 : 0.6);
+  // (A stated figure's label — "Net over-billed position: $40,400" — is the
+  // reader's own wording around the source's figure: a third will do.)
+  const needed = opts.close ? (nums.length === 0 ? 0.85 : 0.6) : nums.length === 0 ? 0.5 : 1 / 3;
+  return present > 0 && present / content.length >= needed - 1e-9;
+}
+
+/**
+ * True when `other` (another value the same source gives today) already says
+ * what `value` said: every figure of `value` is in it and most of its
+ * content words — the fresh read filed the same fact under another key.
+ * A bare figure ("$540,000") says what it is only through its key: the two
+ * keys must name the same thing (longTermDebt ~ totalDebt, not cash ~
+ * inventory).
+ */
+export function restates(value: string, other: string, keys?: { key: string; otherKey: string }): boolean {
+  const content = contentStems(value);
+  const nums = valueNumbers(value);
+  if (content.length === 0 && nums.length === 0) return false;
+  const otherNums = valueNumbers(other);
+  if (!nums.every((n) => otherNums.some((o) => o === n || (n !== 0 && Math.abs(o - n) / Math.abs(n) <= 0.005)))) return false;
+  if (content.length === 0) {
+    if (!keys) return false;
+    const GENERIC = new Set(["total", "annual", "amount", "value", "number", "count", "by", "year", "current", "net", "gross", "of"]);
+    const kw = (k: string) => new Set(keyWords(k).filter((w) => w.length >= 3 && !GENERIC.has(w) && !/^\d/.test(w)).map(stemWord));
+    const a = kw(keys.key);
+    return Array.from(kw(keys.otherKey)).some((w) => a.has(w));
+  }
+  const vocab = new Set(plainWords(other).map(stemWord));
+  return content.filter((w) => vocab.has(w)).length / content.length >= 0.7;
 }
 
 /** The derived-metric keys an extraction recorded as printed in its source. */

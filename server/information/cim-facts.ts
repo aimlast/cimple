@@ -24,7 +24,9 @@ import {
   type SourceKind,
   type SourceRowLookup,
 } from "../interview/info-merger";
-import { isBrokerProcessKey, isPartYearFigure, isUnreviewedFigure, normaliseYearKey } from "../documents/merge-policy";
+import {
+  isBrokerProcessKey, isPartYearFigure, isPeriodFigure, isUnreviewedFigure, lastStatementsYear, normaliseYearKey, periodYear,
+} from "../documents/merge-policy";
 
 /** Note the website "Accept into facts" action writes on the source. */
 export const WEBSITE_ACCEPTED_NOTE = WEBSITE_ACCEPTED_SOURCE_NOTE;
@@ -114,6 +116,47 @@ function fiscalYearsOnly(key: string, value: unknown): unknown {
   return out;
 }
 
+/** "Not recorded as yearly figures — revenue: 2025: about $31.8M (management numbers, not reviewed); …" (older reads). */
+const YEAR_NOTE_LINE = /^Not recorded as yearly figures\s*[—-]\s*/;
+const FORECAST_WORDS = /\b(?:budget(?:ed)?|projected|projections?|forecast|target|expected|plan(?:ned)?|pro ?forma)\b/i;
+
+/**
+ * Older reads filed a year's forecast or unreviewed management number in a
+ * note ("Not recorded as yearly figures — revenue: 2025: about $31.8 million
+ * (management numbers, not reviewed)"): such an entry is never CIM input.
+ */
+function withoutUnreviewedYearNotes(value: unknown): unknown {
+  if (typeof value !== "string" || !/Not recorded as yearly figures/.test(value)) return value;
+  const lines = value.split("\n").flatMap((line) => {
+    if (!YEAR_NOTE_LINE.test(line)) return [line];
+    const entries = line.replace(YEAR_NOTE_LINE, "").split(/;\s+/)
+      .filter((e) => !(isUnreviewedFigure(e) || FORECAST_WORDS.test(e) || isPartYearFigure(e)));
+    const unique = Array.from(new Set(entries));
+    return unique.length > 0 ? [`Not recorded as yearly figures — ${unique.join("; ")}`] : [];
+  });
+  return Array.from(new Set(lines)).join("\n").trim();
+}
+
+/** Figures for a period by name, beyond the statement lines (donations, salaries, fees…). */
+const FLOW_FIGURE = /donation|salar|compensation|wages?|fees?$|amorti[sz]ation|dividend|bonus|commission|contribution|purchases|charges?$|insurance|rental|interest(?:Expense|Paid|Income)/i;
+
+/** A money figure (not prose that mentions one). */
+const ONE_FIGURE = /^[^;:.]{0,40}\$\s?\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand|b|billion)?\b[^;:]{0,60}$/i;
+
+/**
+ * A stand-alone figure a document gives for an OLDER fiscal year than the
+ * last one the statements cover ("Total operating expenses $7,797,500" from
+ * the 2023 tax return, FY2024 statements on file) says which year it is —
+ * "$7,797,500 (FY2023)" — so the writer never states it as current.
+ */
+function datedIfOlder(key: string, value: unknown, src: FieldSource | undefined, statementsYear: string | undefined): unknown {
+  if (!statementsYear || typeof value !== "string" || !src || src.source !== "document") return value;
+  // (A value that names its own year or years says which period it is.)
+  if (!(isPeriodFigure(key) || FLOW_FIGURE.test(key)) || !ONE_FIGURE.test(value.trim()) || /\b(?:19|20)\d{2}\b/.test(value)) return value;
+  const year = periodYear(src.period);
+  return year && year < statementsYear ? `${value.trim()} (FY${year})` : value;
+}
+
 /**
  * The deal's facts as CIM input:
  * - broker process data (referral source, fees, prior approaches) is never CIM input;
@@ -128,9 +171,10 @@ export function splitFactsForCim(info: Record<string, unknown> | null | undefine
   const out: CimFactSplit = { confirmed: [], leads: [] };
   if (!info) return out;
   const sources = getFieldSources(info);
+  const statementsYear = lastStatementsYear(info, { lookup: opts.lookup });
   for (const [key, raw] of Object.entries(info)) {
     if (!isFactKey(key) || isBrokerProcessKey(key)) continue;
-    const value = fiscalYearsOnly(key, repairCharIndexedValue(raw));
+    const value = datedIfOlder(key, withoutUnreviewedYearNotes(fiscalYearsOnly(key, repairCharIndexedValue(raw))), sources[key], statementsYear);
     if (!hasValue(value)) continue;
     const src = sources[key];
     if (src?.years && value && typeof value === "object" && !Array.isArray(value)) {

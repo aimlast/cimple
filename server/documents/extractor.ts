@@ -30,6 +30,8 @@ import {
   cleanExtractedValue,
   cleanYearMap,
   headlineKeyFor,
+  interimKeyFor,
+  mergeMapEntryInto,
   isBrokerProcessKey,
   isSpecialistSource,
   isYearMapKey,
@@ -48,6 +50,7 @@ import {
   yearSuffixedKey,
   HEADLINE_MAPS,
   type MergeContext,
+  type SetAsideYear,
 } from "./merge-policy";
 import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
@@ -157,10 +160,12 @@ export interface ExtractedDocumentData {
   _keyPeriods?: Record<string, string>;
   /** Comma-separated keys whose value the reader worked out or that were vague (lowest priority). */
   _inferredKeys?: string;
+  /** Figures of a by-year metric that aren't a fiscal year's reported one (interim / forecast / unreviewed), by map key. */
+  _yearsSetAside?: Record<string, SetAsideYear[]>;
 
   // Open-ended extraction is still allowed — ad-hoc keys are merged too and
   // canonicalised where an alias exists (see mergeExtractedData).
-  [key: string]: string | Record<string, string> | undefined;
+  [key: string]: string | Record<string, string> | Record<string, SetAsideYear[]> | undefined;
 }
 
 const SYSTEM_PROMPT = `You are a skilled M&A analyst extracting structured information about a business that is being sold, from one source (a document, an email, a call transcript, a broker's CRM note, or public web content).
@@ -442,9 +447,23 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     : {};
   const periodEnd = normalisePeriod(raw.periodEnd ?? raw._periodEnd);
 
+  // A metric's own figures that aren't a fiscal year's reported one (a
+  // quarter, a run-rate, a forecast, an unreviewed management number): set
+  // aside for the merge to keep as what they are — never a CIM note.
+  const setAside: Record<string, SetAsideYear[]> = {};
+  const keepAside = (mapKey: string, entries: SetAsideYear[]) => {
+    const list = (setAside[mapKey] ??= []);
+    for (const e of entries) if (!list.some((x) => x.period === e.period && x.value === e.value)) list.push(e);
+  };
+  if (isPlainObject(raw._yearsSetAside)) {
+    for (const [mapKey, list] of Object.entries(raw._yearsSetAside)) {
+      if (Array.isArray(list)) keepAside(mapKey, list.filter((e): e is SetAsideYear => !!e && typeof e.period === "string" && typeof e.value === "string"));
+    }
+  }
   const addYears = (mapKey: string, metric: string, source: Record<string, unknown>) => {
-    const { map, rejected: bad } = cleanYearMap(metric, source);
+    const { map, rejected: bad, setAside: aside } = cleanYearMap(metric, source);
     for (const r of bad) rejected.push(`${metric}: ${r}`);
+    if (aside.length > 0) keepAside(mapKey, aside);
     for (const [y, v] of Object.entries(map)) {
       // "adj EBITDA $6.1M" under EBITDA is adjusted EBITDA; "income before
       // taxes" under net income is pre-tax income.
@@ -460,7 +479,7 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
   const renamed: Record<string, string> = {};
   for (let [k, v] of Object.entries(raw)) {
     if (v === null || v === undefined || v === "") continue;
-    if (k === "periodEnd" || k === "_periodEnd" || k === "_keyPeriods" || k === "_inferredKeys") continue;
+    if (k === "periodEnd" || k === "_periodEnd" || k === "_keyPeriods" || k === "_inferredKeys" || k === "_yearsSetAside") continue;
     if (k === "_speakers") {
       // Call / video-call transcripts: field → who said it (fact-guards.ts recordFactSpeakers).
       if (isPlainObject(v)) {
@@ -600,6 +619,7 @@ function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentDat
     const who = out._speakers as Record<string, string>;
     for (const [from, to] of Object.entries(renamed)) if (who[from] && !who[to]) who[to] = who[from];
   }
+  if (Object.keys(setAside).length > 0) out._yearsSetAside = setAside;
   if (privateNotes.length > 0) out._privateNotes = Array.from(new Set(privateNotes)).join("\n");
   if (periodEnd) out._periodEnd = periodEnd;
   if (Object.keys(keyPeriods).length > 0) out._keyPeriods = keyPeriods;
@@ -788,6 +808,17 @@ export function mergeExtractedData(
   for (const [key, value] of Object.entries(data)) {
     if (!value || key.startsWith("_")) continue;
     mergeValue(key, canonicalFieldName(key), value);
+  }
+  // A quarter / run-rate goes on the metric's interim fact ("Q1 2025" of
+  // interimRevenue); a forecast or unreviewed year is that year's other value.
+  if (isPlainObject(data._yearsSetAside)) {
+    for (const [mapKey, list] of Object.entries(data._yearsSetAside as unknown as Record<string, SetAsideYear[]>)) {
+      for (const e of Array.isArray(list) ? list : []) {
+        const src = srcFor(mapKey, mapKey);
+        if (e.note) recordAlternate(merged, `${mapKey}.${e.period}`, e.value, { ...src, period: periodForYear(e.period, src.period), note: e.note });
+        else mergeMapEntryInto(merged, interimKeyFor(mapKey), e.period, e.value, src, ctx);
+      }
+    }
   }
 
   // A derived figure (SDE, EBITDA…) survives extraction only when the source

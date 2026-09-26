@@ -28,7 +28,7 @@ import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
-import { groundedInSource, SPOKEN_KINDS } from "./extraction-guard";
+import { groundedInSource, groundedValue, restates, SPOKEN_KINDS } from "./extraction-guard";
 import { recordFactSpeakers } from "../interview/fact-guards";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
@@ -66,6 +66,7 @@ import {
   cleanYearMap,
   effectiveRank,
   interimYears,
+  interimKeyFor,
   isBrokerProcessKey,
   isSpecialistSource,
   isYearMapKey,
@@ -82,6 +83,7 @@ import {
   yearSuffixedKey,
   type MergeConflict,
   type MergeContext,
+  type SetAsideYear,
 } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
 import { recordMergeConflicts } from "./merge-conflicts";
@@ -326,6 +328,8 @@ export async function reprocessDealDocuments(
 }
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+/** A source's own notes (summary, red flags, "… notes"): what it says in passing, not a fact filed under a name. */
+const NOTE_LIKE_KEY = /Notes$|^(?:summary|keyFacts|redFlags)$/;
 
 /**
  * Pure: the corroborations map after a rebuild, carrying over what changed on
@@ -405,10 +409,14 @@ export interface OverlayOptions {
  *   ("cash2021") next to the new by-year maps, a ratio or growth rate an
  *   older prompt worked out, NAICS text as the industry, a garbled line —
  *   goes, UNLESS the row's own text still states it (groundedInSource): a
- *   figure the source printed is never lost to model variance. Such a value
- *   is merged back as the row's (a suffixed key onto its by-year map) and
- *   the usual authority decides. A row whose re-read failed keeps
- *   everything it had.
+ *   figure the source printed, or a faithful summary of what a seller said,
+ *   is never lost to model variance. A summary in the reader's own words
+ *   comes back only when the fresh read didn't file the same fact under
+ *   another name; a list of figures comes back without the one the reader
+ *   worked out; a budget, an unreviewed or a part-year year comes back as
+ *   what it is. Such a value is merged back as the row's (a suffixed key onto
+ *   its by-year map) and the usual authority decides. A row whose re-read
+ *   failed keeps everything it had.
  * - Everything else — broker edits and choices, the seller's interview and
  *   intake answers, untracked legacy values — is kept as it was, whatever
  *   documentId an older merge bug stamped on its source; a differing fresh
@@ -460,6 +468,43 @@ export function overlayExistingFacts(
     const row = opts.rows?.get(src.documentId);
     return !!row && groundedInSource(key, value, row.text, { spoken: SPOKEN_KINDS.has(row.kind) });
   };
+  /** What of the value the row's own text still states (a worked-out clause of a list goes), or null. */
+  const groundedPart = (key: string, value: unknown, src: FieldSource, how: { close: boolean; whole: boolean }): string | null => {
+    if (src.valueInferred || !src.documentId) return null;
+    const row = opts.rows?.get(src.documentId);
+    return row ? groundedValue(key, value, row.text, { spoken: SPOKEN_KINDS.has(row.kind), ...how }) : null;
+  };
+  /**
+   * Everything each row's fresh read gives as a fact, another value or a
+   * confirmation, under any key other than its source notes — to tell a fact
+   * the fresh read filed under another name from one it no longer gives.
+   */
+  const freshByRow = new Map<string, Array<{ key: string; value: string }>>();
+  {
+    const add = (docId: string | undefined, key: string, v: unknown) => {
+      if (!docId || typeof v !== "string" || !v.trim() || NOTE_LIKE_KEY.test(key)) return;
+      const list = freshByRow.get(docId) ?? [];
+      list.push({ key: key.split(".")[0], value: v });
+      freshByRow.set(docId, list);
+    };
+    for (const [k, v] of Object.entries(docsMerged)) {
+      if (k.startsWith("_") || SOURCE_META_KEYS.has(k)) continue;
+      const s = freshSources[k];
+      if (isMap(v)) {
+        if (!s) continue;
+        for (const [y, yv] of Object.entries(resolvedYearSources(s, v, ctx.lookup))) add(yv?.documentId, k, v[y]);
+      } else add(s?.documentId, k, v);
+    }
+    for (const list of [freshAlts, freshCorr]) {
+      for (const [k, entries] of Object.entries(list)) {
+        for (const a of Array.isArray(entries) ? entries : []) add(a?.documentId, k, a?.value);
+      }
+    }
+  }
+  /** The row's fresh read gives the same fact under another key (it re-filed it). */
+  const refiled = (docId: string, key: string, value: unknown): boolean =>
+    typeof value === "string" &&
+    (freshByRow.get(docId) ?? []).some((f) => f.key !== key && restates(value, f.value, { key, otherKey: f.key }));
 
   /**
    * The source a value merged back from its row records: the row as it is
@@ -478,6 +523,12 @@ export function overlayExistingFacts(
       ...(row?.title && isSpecialistSource(key, row.title) ? { specialist: true } : {}),
     };
   };
+  /** A row's year figure that is a budget / unreviewed number (that year's other value) or a part-year one (the interim fact). */
+  const keepSetAside = (mapKey: string, e: SetAsideYear, src: FieldSource): boolean => {
+    if (e.note) recordAlternate(rebuilt, `${mapKey}.${e.period}`, e.value, { ...replaySource(src, mapKey, /^\d{4}$/.test(e.period) ? e.period : undefined), note: e.note });
+    else mergeMapEntryInto(rebuilt, interimKeyFor(mapKey), e.period, e.value, replaySource(src, mapKey), replayCtx);
+    return true;
+  };
   // A value merged back is one the fresh read no longer asserts: it keeps
   // its place by authority, but opens no discrepancy of its own (the
   // conflicts the fresh read sees are raised by the fresh merge).
@@ -490,9 +541,11 @@ export function overlayExistingFacts(
     const suffixed = yearSuffixedKey(key);
     if (suffixed) {
       const mapKey = yearMapKeyFor(suffixed.metric);
-      const { map: valid } = cleanYearMap(suffixed.metric, { [suffixed.year]: typeof value === "string" ? value : String(value) });
+      const { map: valid, setAside } = cleanYearMap(suffixed.metric, { [suffixed.year]: typeof value === "string" ? value : String(value) });
       const [y, v] = Object.entries(valid)[0] ?? [];
       if (y && yielded(docId, mapKey, y)) return; // the row's fresh figure for that year replaces it
+      if (!y && setAside.length > 0 && !yielded(docId, mapKey, setAside[0].period) && grounded(mapKey, setAside[0].value, src) &&
+          keepSetAside(mapKey, setAside[0], src)) return note("kept", `${mapKey}.${setAside[0].period}`, setAside[0].value, docId);
       if (!y || !grounded(mapKey, v, src)) return note("dropped", key, value, docId);
       mergeYearMapInto(rebuilt, mapKey, { [y]: v }, replaySource(src, mapKey, y), replayCtx);
       return note("kept", `${mapKey}.${y}`, v, docId);
@@ -500,9 +553,21 @@ export function overlayExistingFacts(
     // Today's name for the fact ("backlogValue" is "backlog"), and its measure.
     const target = receivablesMeasureKey(canonicalFieldName(key), value, opts.rows?.get(docId)?.title);
     if (target !== key && yielded(docId, target)) return; // replaced under today's name for it
-    if (!grounded(target, value, src)) return note("dropped", key, value, docId);
-    mergeScalarInto(rebuilt, target, value, replaySource(src, target), replayCtx);
-    note("kept", target, value, docId);
+    // In (nearly) the source's own words: back. A looser summary of what the
+    // source says: back too — unless the fresh read gives the same fact under
+    // another name (it re-filed it; one copy is enough). The whole value
+    // first; else the part of a list of figures the source states.
+    let part: string | null = null;
+    for (const whole of [true, false]) {
+      part = groundedPart(target, value, src, { close: true, whole });
+      if (part !== null) break;
+      part = groundedPart(target, value, src, { close: false, whole });
+      if (part !== null && refiled(docId, target, part)) return;
+      if (part !== null) break;
+    }
+    if (part === null) return note("dropped", key, value, docId);
+    mergeScalarInto(rebuilt, target, part, replaySource(src, target), replayCtx);
+    note("kept", target, part, docId);
   };
 
   for (const [key, rawValue] of Object.entries(existing)) {
@@ -588,9 +653,14 @@ export function overlayExistingFacts(
       for (const [y, v, ys] of replays) {
         if (!grounded(key, v, ys)) { note("dropped", `${key}.${y}`, v, ys.documentId); continue; }
         if (isYearMapKey(key)) {
-          const { map: valid } = cleanYearMap(key.replace(/ByYear$/, "") || key, { [y]: typeof v === "string" ? v : String(v) });
+          const { map: valid, setAside } = cleanYearMap(key.replace(/ByYear$/, "") || key, { [y]: typeof v === "string" ? v : String(v) });
           const [vy, vv] = Object.entries(valid)[0] ?? [];
-          if (!vy) { note("dropped", `${key}.${y}`, v, ys.documentId); continue; }
+          if (!vy) {
+            // A budget, an unreviewed number, a quarter: kept as what it is.
+            if (setAside.length > 0 && keepSetAside(key, setAside[0], ys)) { note("kept", `${key}.${y}`, v, ys.documentId); continue; }
+            note("dropped", `${key}.${y}`, v, ys.documentId);
+            continue;
+          }
           mergeYearMapInto(rebuilt, key, { [vy]: vv }, replaySource(ys, key, vy), replayCtx);
         } else {
           mergeMapEntryInto(rebuilt, key, y, String(v), replaySource(ys, key), replayCtx);

@@ -79,6 +79,7 @@ const rowsOf = (entries: Array<[string, RereadRow]>) => new Map(entries);
     assert.match(String((b.sdeByYear as Record<string, string>)["2024"]), /^\$1,720,000 \(reported EBITDA/, "the broker's words are the year's value");
     const droppedKeys = report.dropped.map((d) => d.key).sort();
     assert.deepEqual(droppedKeys, ["badDebts2021", "businessDescription", "debtToEquityRatio", "industry", "revenueGrowthRate"].sort(), "replaced values aren't reported as removed");
+    assert.equal(rebuilt.naicsCode, "456110 — Pharmacies and drug stores (NAICS)", "the fresh read files the NAICS text as naicsCode");
     assert.ok(report.kept.some((k) => k.key === "cashByYear.2021"));
     // A printed sentence the fresh read didn't repeat stays (word for word).
     const said: Info = { businessDescription: "serves the oil & gas, agricultural and commercial construction sectors", _fieldSources: { businessDescription: doc("FS22") } };

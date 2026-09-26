@@ -47,9 +47,11 @@ function valueBucket(v: string | null | undefined): string {
   return n ? `#${n.kind}:${Number(n.value.toPrecision(2))}` : t;
 }
 
-/** The headline and its by-year map are one fact for dedupe (ebitda ≡ ebitdaByYear). */
+/** A figure and its by-year map are one fact for dedupe (ebitda ≡ ebitdaByYear, ownerSalary ≡ ownerSalaryByYear). */
 function factFamily(factKey: string): string {
-  return HEADLINE_MAPS.find((p) => p.head === factKey)?.map ?? factKey;
+  const headline = HEADLINE_MAPS.find((p) => p.head === factKey)?.map;
+  if (headline) return headline;
+  return /ByYear$/.test(factKey) ? factKey : `${factKey}ByYear`;
 }
 
 function pairKey(factKey: string, factYear: string | null | undefined, a: string | null | undefined, b: string | null | undefined): string {
@@ -139,22 +141,40 @@ export async function recordMergeConflicts(
 ): Promise<number> {
   const conflicts = finalInfo ? settleConflicts(finalInfo, collected) : collected;
   if (conflicts.length === 0) return 0;
-  const existing = await storage.getDiscrepanciesByDeal(dealId);
-  const seen = new Set(
-    existing
-      .filter((d) => d.factKey)
-      .map((d) => pairKey(d.factKey!, d.factYear, d.interviewValue, d.documentValue)),
-  );
+  const fresh = conflictsNotYetRaised(await storage.getDiscrepanciesByDeal(dealId), conflicts);
   const names = new Map(documents.map((d) => [d.id, d.name]));
-  let created = 0;
+  for (const c of fresh) {
+    await storage.createDiscrepancy({ dealId, ...discrepancyForConflict(c, (id) => names.get(id)) } as InsertDiscrepancy);
+  }
+  return fresh.length;
+}
+
+/** An existing discrepancy row, as far as deduplication reads it. */
+export type RaisedRow = { factKey?: string | null; factYear?: string | null; interviewValue?: string | null; documentValue?: string | null };
+
+/**
+ * Pure: the conflicts not raised yet (any status). A dispute is the same
+ * fact (family) and the same two values: for one year of a map, that year; a
+ * stand-alone figure's row is stored without a year, so it matches the same
+ * two values whatever year its sources were for — otherwise every reprocess
+ * raised it again. Duplicates within the batch collapse too.
+ */
+export function conflictsNotYetRaised(existingRows: RaisedRow[], conflicts: MergeConflict[]): MergeConflict[] {
+  const existing = existingRows.filter((d) => d.factKey);
+  const seenYear = new Set(existing.filter((d) => d.factYear).map((d) => pairKey(d.factKey!, d.factYear, d.interviewValue, d.documentValue)));
+  const seenUndated = new Set(existing.filter((d) => !d.factYear).map((d) => pairKey(d.factKey!, "*", d.interviewValue, d.documentValue)));
+  const seenAny = new Set(existing.map((d) => pairKey(d.factKey!, "*", d.interviewValue, d.documentValue)));
+  const out: MergeConflict[] = [];
   for (const c of conflicts) {
     // A headline conflict is about its period's year (ebitda ↔ ebitdaByYear.2024).
     const year = c.factYear ?? periodYear(c.winner.src.period) ?? periodYear(c.loser.src.period);
     const key = pairKey(c.factKey, year, c.winner.value, c.loser.value);
-    if (seen.has(key)) continue;
-    seen.add(key);
-    await storage.createDiscrepancy({ dealId, ...discrepancyForConflict(c, (id) => names.get(id)) } as InsertDiscrepancy);
-    created++;
+    const anyKey = pairKey(c.factKey, "*", c.winner.value, c.loser.value);
+    if (seenYear.has(key) || seenUndated.has(anyKey) || (!c.factYear && seenAny.has(anyKey))) continue;
+    seenYear.add(key);
+    seenAny.add(anyKey);
+    if (!c.factYear) seenUndated.add(anyKey);
+    out.push(c);
   }
-  return created;
+  return out;
 }
