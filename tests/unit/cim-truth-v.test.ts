@@ -149,11 +149,21 @@ const kb = assembleKnowledgeBase({
   cimContent: { growth: "Harvest Lane Markets could add $2.5M. The cooler expansion is budgeted at $1.1-1.2 million." },
   today,
 } as any);
-assert.ok(!/3,900,000|3\.9M|12\.6%/.test(kb.text), "no off-bridge earnings figure reaches the writer");
-assert.match(kb.text, /CANONICAL FIGURES[\s\S]*Adjusted EBITDA: \$3,596,200 \(FY2024/);
+// Round 2: the broker resolved FY2024 adjusted EBITDA to $3,900,000 (the true
+// figure) — the broker's decision outranks the analysis bridge ($3,596,200),
+// whose add-backs are then left out of the CIM rather than contradicting it.
+assert.ok(!/3,596,200|3,823,200|5\.0×/.test(kb.text), "no second adjusted EBITDA, SDE or multiple from the overruled bridge");
+assert.match(kb.text, /CANONICAL FIGURES[\s\S]*Adjusted EBITDA: \$3,900,000 \(FY2024 — the broker's figure — resolved discrepancy "2024 Adjusted EBITDA"\)/);
+assert.match(kb.text, /Adjusted EBITDA margin: 12\.6% \(FY2024\)/);
+assert.match(kb.text, /Asking price multiple: 4\.6× FY2024 Adjusted EBITDA/);
+assert.match(kb.text, /SDE: no confirmed figure — the CIM states no SDE at all/);
+assert.ok(!/ADJUSTED EBITDA BRIDGE|SDE BRIDGE \(/.test(kb.text), "the overruled bridge is not given to the writer");
+assert.match(kb.text, /EBITDA \/ SDE BRIDGE: No EBITDA\/SDE bridge is available: the broker's Adjusted EBITDA for FY2024 is \$3,900,000, which the financial analysis add-backs don't reach/);
 assert.ok(!/^EBITDA: /m.test(kb.text), "the fact's EBITDA is not a canonical figure");
+assert.match(kb.text, /Ebitda: \$3,900,000 adjusted EBITDA \(FY2024\)/, "a fact that agrees with the canon stays");
+assert.match(kb.text, /2024 Adjusted EBITDA: \$3,900,000/, "the resolved value stays");
 assert.match(kb.text, /Alderbrook revenue percentage: 22\.0% of FY2024 revenue/, "other resolved values stay");
-assert.match(kb.text, /Margin Trend: 2023 dip from full Campbell Ridge rent/, "the rest of a narrative fact stays");
+assert.match(kb.text, /Margin Trend: EBITDA margin 13\.2% \(2022\) → 11\.3% \(2023\) → 12\.6% \(2024\); 2023 dip/, "the margin trend agrees with the broker's figure and stays whole");
 assert.ok(!/Harvest Lane/i.test(kb.text), "the confidential RFP and every mention of it are held out (facts, notes and drafts)");
 assert.match(kb.text, /Growth Opportunities: Cooler expansion by up to 15,000 square feet/);
 assert.match(kb.text, /The cooler expansion is budgeted/, "the rest of an earlier draft stays");
@@ -163,25 +173,36 @@ assert.match(kb.text, /Average Driver Tenure: just over 6 years; 24 drivers over
 assert.match(kb.text, /Ideal Timeline: .*\[recorded Nov 2025\] \[date has arrived: fall 2026 is not in the future any more/, "relative wording dated; the passed target marked");
 assert.match(kb.text, /GROWTH \(computed/);
 const w = kb.warnings.join("\n");
-assert.match(w, /Earnings figures: the CIM uses Adjusted EBITDA \$3,596,200 and SDE \$3,823,200 for FY2024 .*"\$3,900,000 adjusted EBITDA \(FY2024\)" \(Ebitda\).*resolved discrepancy "2024 Adjusted EBITDA"/);
+assert.match(w, /Earnings: the CIM uses your figures — Adjusted EBITDA FY2024: \$3,900,000 \(resolved discrepancy "2024 Adjusted EBITDA"\) — the financial analysis add-backs give \$3,596,200 — so the analysis's EBITDA\/SDE bridge is left out of the CIM/);
+assert.match(w, /no SDE is confirmed now that the analysis bridge is left out/);
+assert.ok(!/Earnings figures: /.test(w), "nothing on file disagrees with the broker's figure, so nothing was held");
 assert.match(w, /Kept out of the CIM because the facts mark it confidential: "Growth Opportunities" \(potential new contract with Harvest Lane Markets/);
 assert.match(w, /Timeline to confirm with the seller: "Ideal Timeline" says "before next birthday fall 2026"/);
 assert.match(w, /Financial analysis, 2024: .*TMS migration consultants/);
 assert.ok(!/Figures disagree: EBITDA/.test(w), "the old two-number note is gone");
 
 // ── 4. The figure check over the real generation ──
-const known = knownFiguresFrom(kbText, knownBridges(fin), { earnings: canon, growth: cimGrowth(fin), today, heldNames: ["Harvest Lane Markets"] });
+// Against the knowledge base the writer now gets: the broker's $3,900,000 is
+// THE adjusted EBITDA, so the sections that printed the overruled bridge's
+// $3,596,200 are the ones flagged.
+const known = knownFiguresFrom(kbText, knownBridges(kb.financials), { earnings: kb.canon, growth: kb.growth, today, heldNames: ["Harvest Lane Markets"] });
 const check = (t: string) => checkSectionFigures(byTitle(t), known);
 
-has(check("Pacific Coast Logistics Ltd."), /\$3,900,000 is not the CIM's EBITDA — use \$3,596,200 \(Adjusted EBITDA, FY2024\)/, "cover");
+lacks(check("Pacific Coast Logistics Ltd."), /EBITDA|margin|multiple/, "the cover's $3,900,000 is the CIM's figure");
 const hi = check("Investment Highlights");
-has(hi, /\$3,900,000 is not the CIM's EBITDA/, "highlights EBITDA");
-has(hi, /12\.6% is not the CIM's earnings margin — use 11\.6%/, "highlights margin");
-has(check("Transaction Overview"), /4\.6× is not the CIM's multiple — use 5\.0×/, "multiple");
+lacks(hi, /not the CIM's/, "highlights: $3,900,000 and 12.6% are the CIM's figures");
+lacks(check("Transaction Overview"), /not the CIM's multiple/, "4.6× is the CIM's multiple");
+const reasonFig = check("Reason for Sale");
+has(reasonFig, /3\.60 million is not the CIM's EBITDA — use \$3,900,000 \(Adjusted EBITDA, FY2024\)/, "the bridge's figure in prose");
+lacks(reasonFig, /\$3\.04 million/, "a year the broker's figure doesn't cover stands");
+has(check("Revenue & EBITDA Growth"), /\$3596200 is not the CIM's EBITDA — use \$3,900,000/, "the bridge's figure in a chart series");
+const waterfall = check("Adjusted EBITDA Analysis");
+has(waterfall, /this EBITDA\/SDE bridge can't be shown/, "no bridge to draw");
 
 const table = check("Historical Financial Performance");
 has(table, /FY2022: EBITDA 3,409,800 and the rows below it come to 1,421,800, not Income before taxes 1,539,800 — is the other-income row missing\?/, "chain 2022");
 has(table, /FY2024: EBITDA 3,619,200 and the rows below it come to 980,960, not Net income 972,960/, "chain 2024");
+has(table, /\$3,619,200 is not the CIM's EBITDA — use \$3,547,200 \(EBITDA as reported, FY2024\)/, "the as-reported row is held to the statements, not the adjusted figure");
 
 const cust = check("Customer Concentration & Relationships");
 has(cust, /"Top 5" for "Dairy Co-op" — no such ranking/, "dairy rank");
@@ -205,7 +226,7 @@ const reason = check("Reason for Sale");
 has(reason, /"before his next birthday in fall 2026" is not in the future any more — today is September 2026/, "stale target");
 has(reason, /"before fall 2026" is not in the future any more/, "stale target in highlights");
 lacks(reason, /for Harjit/, "the file gives Harjit's gender (\"Harjit and wife\")");
-lacks(reason, /8\.3/, "revenue growth 'over the past two years' is correctly labelled");
+lacks(reason, /^8\.3|"8\.3|8\.3% is/, "revenue growth 'over the past two years' is correctly labelled");
 
 const transition = check("Transition & Continuity");
 has(transition, /"She" for Manpreet — no gender is on file; use the name or role/, "gender");
@@ -213,8 +234,8 @@ has(transition, /"She" for Manpreet — no gender is on file; use the name or ro
 has(check("Growth Initiatives"), /mentions "Harvest Lane Markets", which the facts mark confidential/, "confidential name");
 
 // Rewritten the right way, the same sections pass those checks.
-const fixedCover = { ...byTitle("Pacific Coast Logistics Ltd."), layoutData: { ...byTitle("Pacific Coast Logistics Ltd.").layoutData, ebitda: "$3,596,200" } };
-lacks(checkSectionFigures(fixedCover, known), /EBITDA/, "the bridge's figure on the cover");
+const fixedReason = { ...byTitle("Reason for Sale"), layoutData: JSON.parse(JSON.stringify(byTitle("Reason for Sale").layoutData).replace(/\$3\.60 million/g, "$3.9 million").replace(/\$3\.60M/g, "$3.9M")) };
+lacks(checkSectionFigures(fixedReason, known), /not the CIM's EBITDA/, "the broker's figure in prose");
 const fixedTable = {
   sectionTitle: "Historical Financial Performance",
   layoutType: "financial_table",
@@ -332,11 +353,12 @@ assert.equal(people.get("Kevin"), "m", "\"promoting him\"");
 assert.equal(people.get("Manpreet"), null, "no gender on file for Manpreet");
 assert.ok(!people.has("Alderbrook") && !people.has("Grewal"), "companies and surnames aren't first names");
 // Several people named before a pronoun: one the file gives that gender is its antecedent.
-const famKb = "Key Employees: Anthony (owner, president); Maria (office manager, his wife); Dave (service manager)\nOwner Notes: Anthony and wife Maria plan to retire.";
+const famKb = "Key Employees: Anthony (owner, president); Maria (office manager, his wife); Dave (service manager); Jordan (dispatch lead)\nOwner Notes: Anthony and wife Maria plan to retire.";
 const famKnown = knownFiguresFrom(famKb, [], { today });
 const fam = (body: string) => checkSectionFigures({ sectionTitle: "T", layoutType: "prose_highlight", layoutData: { body } }, famKnown);
 assert.deepEqual(fam("Anthony and Maria plan to retire. He will stay on for a year."), [], "Anthony is 'he' on file");
-has(fam("Dave runs service. His team is strong."), /"His" for Dave — no gender is on file/, "Dave");
+assert.deepEqual(fam("Dave runs service. His team is strong."), [], "Dave is a man's name: no guess to flag");
+has(fam("Jordan runs dispatch. Her team is strong."), /"Her" for Jordan — no gender is on file/, "a name used for both needs the file");
 has(fam("Maria keeps the books. He will stay on."), /"He" for Maria contradicts the file/, "Maria");
 assert.deepEqual(
   parseFigures("margin improvement from 11.9 percent in 2022 to 11.7 percent in 2024").map((f) => [f.value, f.kind]),

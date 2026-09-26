@@ -99,6 +99,11 @@ export interface CimFinancials {
     sdeOnly: CimBridgeLine[];
     sde: Record<string, number> | null;
   } | null;
+  /**
+   * Set when the broker's own earnings figure overrules (part of) the bridge
+   * (earnings-canon.ts withBridgeOverride): what the writer is told instead.
+   */
+  bridgeWithheld?: string | null;
   workingCapital: UiWorkingCapital | null;
 }
 
@@ -384,6 +389,7 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     }
   }
 
+  if (fin.bridgeWithheld) out.push(`\nEBITDA / SDE BRIDGE: ${fin.bridgeWithheld}`);
   const b = fin.bridge;
   if (b && Object.keys(b.netIncome).length > 0) {
     const years = b.years.filter((y) => typeof b.netIncome[y] === "number");
@@ -482,7 +488,10 @@ export interface CimGrowth {
  * metric. A writer reading "35% warehouse growth" in a fact can see it is
  * FY2022→FY2024 (Pacific 2026-09-26 printed it as "year-over-year in FY2024").
  */
-export function cimGrowth(fin: CimFinancials | null | undefined): CimGrowth[] {
+export function cimGrowth(
+  fin: CimFinancials | null | undefined,
+  canon?: { adjustedEbitda: Record<string, number>; sde: Record<string, number> } | null,
+): CimGrowth[] {
   if (!fin) return [];
   const out: CimGrowth[] = [];
   const series = (label: string, values: Record<string, number>) => {
@@ -495,6 +504,13 @@ export function cimGrowth(fin: CimFinancials | null | undefined): CimGrowth[] {
     series("Revenue", Object.fromEntries(Object.entries(fin.pnl).map(([y, p]) => [y, p.revenue])));
     const lines = fin.lines.filter((l) => l.category === "Revenue");
     if (lines.length > 1) for (const l of lines) series(l.name, l.values);
+  }
+  // Earnings growth from the CIM's own figures (earnings-canon) when given —
+  // a bridge the broker's figure overruled is no basis for a growth rate.
+  if (canon) {
+    series("Adjusted EBITDA", canon.adjustedEbitda);
+    series("SDE", canon.sde);
+    return out;
   }
   const b = fin.bridge;
   if (b) {

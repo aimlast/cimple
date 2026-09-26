@@ -148,8 +148,16 @@ export function namedPeriod(text: string): { start: Date; end: Date } | null {
 const PERIOD = String.raw`(?:(?:early|mid|late)[- ])?(?:spring|summer|fall|autumn|winter|q[1-4]|${REL_MONTHS})\.?\s+(?:of\s+)?(?:19|20)\d{2}|(?:(?:early|mid|late)[- ])?(?:19|20)\d{2}`;
 /** "before fall 2026", "by Q1 2027", "no later than March 2026", "targeting late 2026". */
 const DEADLINE = new RegExp(String.raw`\b(before|by|no later than|until|ahead of|in time for|targeting|target(?:ed)? for|planned for|scheduled for|expected (?:in|by)|to (?:close|complete|finish) (?:in|by))\s+(?:(?:his|her|their|the owner's|the seller's)\s+)?(?:next\s+birthday\s+)?\(?(?:in\s+)?(${PERIOD})\b`, "gi");
-/** A sentence that looks ahead (a wish, plan or target), not a report of the past. */
-const FORWARD = /\b(wants?|wanted|plans?|planned|planning|intends?|intended|aims?|targets?|targeting|expects?|expected|hopes?|would like|will|to (?:complete|close|sell|finish|exit|retire)|looking to|goal|timeline|timing|before|by|no later than|ahead of)\b/i;
+/**
+ * A sentence that looks ahead (a wish, plan or target), not a report of the
+ * past. The deadline words themselves ("by", "before") say nothing about
+ * that: "By 1998, Harjit had expanded to six trucks" is history (Pacific's
+ * stored CIM, flagged as a passed target until 2026-09-26).
+ */
+const FORWARD = /\b(wants?|wanted to|plans?|planned|planning|intends?|intended|aims?|targets?|targeting|targeted|expects?|expected|hopes?|hoping|would like|would prefer|prefers?|preferred|ideally|ideal|will|to (?:complete|close|sell|finish|exit|retire|transition|step back|hand over)|looking to|seeks?|seeking|goal|deadline|timeline|timing)\b/i;
+/** Past narration ("had expanded", "was completed"): a report, unless the sentence also states a plan. */
+const PAST_NARRATION = /\b(?:had|was|were)\s+(?:\w+ed|\w+en|built|grown|made|done|sold|bought|won|begun|become)\b/i;
+const PLAN_WORD = /\b(?:wants?|plans?|intends?|targets?|hopes?|will|timeline|goal|deadline)\b/i;
 
 export interface StaleTarget {
   /** The words as written ("before fall 2026"). */
@@ -166,7 +174,7 @@ export function staleTargets(text: string, today: Date): StaleTarget[] {
   const out: StaleTarget[] = [];
   if (!text) return out;
   for (const sentence of text.split(/(?<=[.!?;])\s+|\n+/)) {
-    if (!FORWARD.test(sentence)) continue;
+    if (!FORWARD.test(sentence) || (PAST_NARRATION.test(sentence) && !PLAN_WORD.test(sentence))) continue;
     DEADLINE.lastIndex = 0;
     for (const m of Array.from(sentence.matchAll(DEADLINE))) {
       const p = namedPeriod(m[2]);

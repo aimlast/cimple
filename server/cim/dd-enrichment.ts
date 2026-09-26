@@ -36,7 +36,9 @@ import { agentConfig } from "../interview/config/load-config";
 import { splitFactsForCim, factValueText } from "../information/cim-facts";
 import { buildCimFinancials, pickAnalysisForCim, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
 import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
-import { screenFactsForCim } from "./sensitive-facts";
+import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./sensitive-facts";
+import { keepOutFor } from "./keep-out";
+import type { ResolvedDiscrepancyNote } from "./resolved-block";
 import { earningsCanon, screenEarningsFacts } from "./earnings-canon";
 import { overlayResolvedFacts, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
@@ -129,12 +131,19 @@ export function buildDdContext(input: {
   financials?: CimFinancials | null;
   addbackVerification?: any;
   documents?: DdDocument[];
+  /** The broker's resolved discrepancies (their earnings decisions outrank the analysis bridge). */
+  resolved?: ResolvedDiscrepancyNote[];
+  /** Items that must not reach buyers (keep-out.ts); the private-note rules when absent. */
+  keepOut?: KeepOut | null;
 }): DdInputs {
   const parts: string[] = [];
   const { confirmed } = splitFactsForCim(input.extractedInfo ?? {});
-  // Confidential clauses held out (screenFactsForCim), and with an approved
-  // bridge no second adjusted EBITDA / SDE (earnings-canon.ts).
-  const safe = screenEarningsFacts(screenFactsForCim(confirmed).safe, earningsCanon(input.financials), (k) => k).safe;
+  // Confidential clauses held out (screenFactsForCim), and no second adjusted
+  // EBITDA / SDE: the broker's figure, else the bridge's (earnings-canon.ts).
+  const canon = earningsCanon(input.financials, null, { extractedInfo: input.extractedInfo, resolved: input.resolved });
+  const financials = canon ? canon.financials : input.financials ?? null;
+  const keepOut = input.keepOut ?? keepOutFromNotes(input.extractedInfo);
+  const safe = screenEarningsFacts(screenFactsForCim(confirmed, keepOut).safe, canon, (k) => k).safe;
 
   const customerFacts = safe.filter(([k]) => CUSTOMER_KEY.test(k));
   if (customerFacts.length > 0) {
@@ -151,7 +160,7 @@ export function buildDdContext(input: {
     }
   }
 
-  const fin = renderCimFinancialsBlock(input.financials);
+  const fin = renderCimFinancialsBlock(financials);
   if (fin) parts.push(`## Verified financials (from the financial statements)\n${fin}`);
 
   const financialDocs = (input.documents ?? []).filter((d) =>
@@ -187,6 +196,8 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
     financials: buildCimFinancials(pickAnalysisForCim(analyses)),
     addbackVerification,
     documents: docs.map((d) => ({ name: d.name, category: d.category || "other", visibility: (d as { visibility?: string | null }).visibility ?? null })),
+    resolved: resolvedNotes(resolved),
+    keepOut: await keepOutFor(deal.id, extractedInfo),
   });
 }
 

@@ -17,15 +17,17 @@ import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-bl
 import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, restatementWarnings, type CimFinancials, type CimGrowth } from "./cim-financials";
 import { checkSectionFigures, figureWarningText, knownFiguresFrom, parseFigures, type KnownFigures } from "./figure-check";
 import {
+  keepOutFromNotes,
   mentionsHeldName,
   screenConfidentialText,
   screenFactsForCim,
   screenText,
   type ConfidentialHold,
   type HeldFact,
+  type KeepOut,
 } from "./sensitive-facts";
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
-import { canonLines, earningsCanon, earningsWarning, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
+import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
 
 const anthropic = new Anthropic({
@@ -164,6 +166,12 @@ export interface CimLayoutParams {
    * said is taken out before the writer sees it (fact-dates.ts).
    */
   factSourceWords?: Record<string, { words: string; at: string }> | null;
+  /**
+   * What must stay out of buyer-facing text beyond the facts' own notes: the
+   * broker's private notes and the AI review (keep-out.ts keepOutFor). When
+   * absent, the private-note rules alone are applied.
+   */
+  keepOut?: (KeepOut & { warning?: string }) | null;
 }
 
 /**
@@ -178,13 +186,15 @@ interface SharedSystem extends SystemBlock {
   today: Date;
   /** Names the facts mark confidential: never in a buyer-facing section (scrubHeldNames). */
   heldNames: string[];
+  /** The broker's earnings figure overrules the analysis add-backs: no EBITDA/SDE bridge may be planned. */
+  noBridge: boolean;
 }
 
 /** The figure check's reference for an assembled knowledge base. */
 function knownFor(kb: AssembledKb, params: CimLayoutParams): KnownFigures {
   // Figures are checked against the source blocks only — never against
   // leads, earlier AI drafts or the unverified scrape.
-  return knownFiguresFrom(kb.sourceText, knownBridges(params.financials), {
+  return knownFiguresFrom(kb.sourceText, knownBridges(kb.financials), {
     earnings: kb.canon,
     growth: kb.growth,
     today: params.today ?? new Date(),
@@ -202,6 +212,7 @@ function buildSharedSystem(params: CimLayoutParams): SharedSystem {
     kbWarnings: kb.warnings,
     today: params.today ?? new Date(),
     heldNames: kb.heldNames,
+    noBridge: kb.canon?.override?.withheld === "bridge",
   };
 }
 
@@ -858,12 +869,31 @@ async function generateManifest(sharedSystem: SystemBlock, outline: CimSectionOu
     );
   };
 
+  const noBridge = (sharedSystem as Partial<SharedSystem>).noBridge === true;
   const first = await attempt(false);
-  if (first && first.length > 0) return first;
+  if (first && first.length > 0) return withoutWithheldBridge(first, noBridge);
   console.warn("[layout-engine] Manifest generation failed — retrying once, terser");
   const second = await attempt(true);
-  if (second && second.length > 0) return second;
+  if (second && second.length > 0) return withoutWithheldBridge(second, noBridge);
   throw new Error("CIM generation failed while planning the document. Please try again.");
+}
+
+/**
+ * With the analysis bridge withheld (the broker's earnings figure overrules
+ * its add-backs) a planned EBITDA/SDE waterfall has nothing true to draw: it
+ * becomes a key-figure callout of the canonical earnings instead.
+ */
+function withoutWithheldBridge(manifest: ManifestEntry[], noBridge: boolean): ManifestEntry[] {
+  if (!noBridge) return manifest;
+  return manifest.map((m) =>
+    m.layoutType === "waterfall_chart"
+      ? {
+          ...m,
+          layoutType: "stat_callout",
+          contentBrief: `${m.contentBrief} There is no add-back bridge: state adjusted EBITDA / SDE, their margin and the asking-price multiple exactly as CANONICAL FIGURES give them, with no add-back amounts.`,
+        }
+      : m,
+  );
 }
 
 // ── Phase 2: per-section content ───────────────────────────────────────────
@@ -1061,14 +1091,14 @@ DOCUMENT STRUCTURE RULES:
 
 CONTENT STYLE RULES (every string in layoutData and aiDraftContent):
 12. PLAIN TEXT ONLY. No markdown of any kind: no **bold**, no # headings, no inline "•" bullet runs, no "- " list markers inside a prose string. Emphasis comes from the layout (highlight flags, pull quotes, callout titles), and lists come from the list-shaped layouts (callout_list, numbered_list, two_column "list" columns, highlights[]). Paragraphs are separated by a blank line.
-13. ONE SET OF NUMBERS. Revenue, SDE, EBITDA, asking price and headcount must be identical in every section where they appear — copy the figures from CANONICAL FIGURES in the knowledge base verbatim (same rounding, same currency). Never derive a second value for the same metric in another section. Adjusted EBITDA, SDE, their margins and the asking-price multiple come ONLY from CANONICAL FIGURES / the bridge — the cover, key numbers, highlights, prose and the transaction summary all show the same figure.
+13. ONE SET OF NUMBERS. Revenue, SDE, EBITDA, asking price and headcount must be identical in every section where they appear — copy the figures from CANONICAL FIGURES in the knowledge base verbatim (same rounding, same currency). Never derive a second value for the same metric in another section. Adjusted EBITDA, SDE, their margins and the asking-price multiple come ONLY from CANONICAL FIGURES (the broker's figure where the broker gave one, else the analysis bridge) — the cover, key numbers, highlights, prose and the transaction summary all show the same figure.
 14. SDE IS NOT EBITDA. Label every earnings figure with what it is. If the knowledge base gives SDE, say SDE everywhere (cover earningsLabel, metric labels, table row labels, chart titles). Only say EBITDA when the figure is EBITDA.
 15. JURISDICTION. Regulators, licences, permits, taxes and compliance bodies must belong to the business's actual jurisdiction in the knowledge base (country → province/state → municipality). Use the real body's name (e.g. an Ontario dental practice answers to the RCDSO, not a "State Dental Board"). If the jurisdiction is unknown, describe the requirement generically ("provincial/state dental regulator") rather than guessing a country.
 16. icon_stat_row and metric_grid values carry their unit: put "%" / "yrs" / currency in the value string or the unit field — a bare "94" for a retention rate is wrong.
 
 TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the deal):
 17. NEVER INVENT, ESTIMATE OR COMPUTE. Every figure, percentage, count, name, date and year you write must be in the knowledge base. Never work out a new number (no subtotals, averages, shares, growth rates or conversions of your own; never turn a percentage into a dollar amount or back). If a figure is missing, leave that table cell "" or drop the row, year column or chart item; if a chart would be mostly empty, use prose_highlight instead (rule 6). Never add a fiscal year the knowledge base has no figures for.
-18. STATEMENTS AND BRIDGES COME FROM "AUTHORITATIVE FINANCIALS". When that block exists, every financial_table (income statement, historical performance, working capital) and every waterfall_chart / EBITDA or SDE bridge copies its line names, amounts and totals exactly. A bridge starts at the net income shown, uses exactly the add-back lines listed (same amounts, deductions stay deductions) and ends at the total shown — never plug a line or force the total to a different headline figure. Label each total with exactly what it is (Adjusted EBITDA, SDE, reported EBITDA).
+18. STATEMENTS AND BRIDGES COME FROM "AUTHORITATIVE FINANCIALS". When that block exists, every financial_table (income statement, historical performance, working capital) and every waterfall_chart / EBITDA or SDE bridge copies its line names, amounts and totals exactly. A bridge starts at the net income shown, uses exactly the add-back lines listed (same amounts, deductions stay deductions) and ends at the total shown — never plug a line or force the total to a different headline figure. Label each total with exactly what it is (Adjusted EBITDA, SDE, reported EBITDA). When the block says no bridge is available, draw no bridge or waterfall and list no add-back amounts anywhere.
 19. NAMES. Customers, suppliers, employees, advisors and partners are named only exactly as the knowledge base names them. A chart or list of customers uses the names on file (or the facts' own description, such as "dairy co-op", where no name is given) — never an invented or guessed company name, and never a share that isn't on file. A customer's rank or badge ("Top 5", "#2", "second-largest"), its region, what it buys and its contract terms come only from the facts about THAT customer: an aggregate ("top 5 = 47%") says nothing about which customers are in the top five.
 20. DATES AND TENSE. TODAY is given at the top of the knowledge base. A relative date in a fact ("in May", "last year", "next spring", "within one year", "before his next birthday") is resolved only against the date the fact was recorded (shown as [recorded Mon YYYY]) — if it can't be pinned down, keep it relative ("recently", "planned for May") and never guess a year. A target TODAY has reached or passed (a fact marked [date has arrived]) is never presented as a future target: restate it from the recorded date ("the owner planned to sell within a year of late 2025") or leave the date out. Keep tense: what the seller plans or intends stays a plan, never "completed".
 21. The cover's "Prepared by" and date are added by the system from the brokerage's settings — never fill them. Never name the seller's accountant, lawyer, banker or other advisors as the author of the CIM.
@@ -1122,8 +1152,10 @@ export interface AssembledKb {
   sourceText: string;
   warnings: string[];
   held: HeldFact[];
-  /** The one adjusted EBITDA / SDE (earnings-canon.ts), when the deal has a bridge. */
+  /** The one adjusted EBITDA / SDE (earnings-canon.ts): the broker's figure, else the bridge's. */
   canon: EarningsCanon | null;
+  /** The analysis as the writer got it (a bridge the broker's figure overrules left out). */
+  financials: CimFinancials | null;
   growth: CimGrowth[];
   /** Names the facts mark confidential. */
   heldNames: string[];
@@ -1147,8 +1179,14 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   };
   const warnings: string[] = [];
   const today = params.today ?? new Date();
-  // The approved bridge is THE adjusted EBITDA / SDE (earnings-canon.ts).
-  const canon = earningsCanon(params.financials, params.askingPrice);
+  // ONE adjusted EBITDA / SDE (earnings-canon.ts): the broker's resolved or
+  // own figure, else the analysis bridge's; a bridge part the broker's figure
+  // overrules is left out of what the writer gets.
+  const canon = earningsCanon(params.financials, params.askingPrice, {
+    extractedInfo: params.extractedInfo,
+    resolved: params.resolvedDiscrepancies,
+  });
+  const fin: CimFinancials | null = canon ? canon.financials : params.financials ?? null;
   const earningsHeld: EarningsHold[] = [];
 
   parts.push(`TODAY: ${today.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })} (resolve relative dates against the recorded date or today — rule 20)`);
@@ -1192,7 +1230,14 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     // facts); "c:" / "l:" keep a by-year map's confirmed and lead years apart.
     const tag = (p: string, pairs: Array<[string, unknown]>) => pairs.map(([k, v]) => [`${p}${k}`, v] as [string, unknown]);
     const untag = (k: string) => k.slice(2);
-    const screened = screenFactsForCim([...tag("c:", split.confirmed), ...tag("l:", split.leads)]);
+    const keepOut = params.keepOut ?? keepOutFromNotes(params.extractedInfo);
+    if (params.keepOut?.warning) warnings.push(params.keepOut.warning);
+    // Clause holds are by fact key: the review names untagged keys.
+    const tagged = (p: string): KeepOut => ({ ...keepOut, clauses: keepOut.clauses.map((c) => ({ ...c, key: `${p}${c.key}` })) });
+    const screened = screenFactsForCim([...tag("c:", split.confirmed), ...tag("l:", split.leads)], {
+      ...keepOut,
+      clauses: [...tagged("c:").clauses, ...tagged("l:").clauses],
+    });
     held.push(...screened.held.map((h) => ({ ...h, key: untag(h.key) })));
     confidential.push(...screened.confidential.map((h) => ({ ...h, key: untag(h.key) })));
     heldNames = screened.heldNames;
@@ -1218,7 +1263,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
         said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
         yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
       }
-      const when = !fix && hasRelativeTime(text) ? recordedMonth(sources[key]?.at) : null;
+      const when = !fix && hasRelativeTime(text) ? recordedMonth(sources[key]?.dated ?? sources[key]?.at) : null;
       // A target TODAY has reached ("before next birthday (fall 2026)" read
       // in September 2026) is marked, never repeated as a future date.
       const past = staleTargets(text, today);
@@ -1261,9 +1306,9 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const resolvedBlock = renderResolvedBlock(resolved);
   if (resolvedBlock) parts.push("\n" + screenText(resolvedBlock));
 
-  const financialsBlock = renderCimFinancialsBlock(params.financials);
+  const financialsBlock = renderCimFinancialsBlock(fin);
   if (financialsBlock) parts.push("\n" + financialsBlock);
-  warnings.push(...restatementWarnings(params.financials));
+  warnings.push(...restatementWarnings(fin));
 
   // Earlier drafts and the scrape are read by the writer too: no confidential
   // sentence and no off-bridge earnings figure survives in them.
@@ -1348,15 +1393,15 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const heldKeys = held.map((h) => h.key);
   if (confidential.length > 0) warnings.unshift(CONFIDENTIAL_WARNING(confidential));
   if (heldKeys.length > 0) warnings.unshift(PERSONAL_DETAIL_WARNING(heldKeys));
-  const earningsNote = canon ? earningsWarning(canon, earningsHeld) : null;
-  if (earningsNote) warnings.push(earningsNote);
+  if (canon) warnings.push(...earningsWarnings(canon, earningsHeld));
   return {
     text: parts.join("\n"),
     sourceText: parts.filter((_, i) => !nonSource.has(i)).join("\n"),
     warnings,
     held,
     canon,
-    growth: cimGrowth(params.financials),
+    financials: fin,
+    growth: cimGrowth(fin, canon),
     heldNames,
   };
 }

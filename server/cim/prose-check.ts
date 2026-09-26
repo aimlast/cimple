@@ -24,6 +24,7 @@ import { isKnownFigure, parseFiguresAt, type Figure, type KnownFigures } from ".
 import { spelledNumbers, CASUAL_FIGURE } from "./spoken-figures";
 import { staleTargets } from "./fact-dates";
 import { mentionsHeldName } from "./sensitive-facts";
+import { genderOfGivenName } from "./given-name-gender";
 
 /** What the prose checks need beyond the numbers: built once per knowledge base (proseKnowledge). */
 export interface ProseKnowledge {
@@ -109,7 +110,7 @@ export function peopleOnFile(kbText: string): Map<string, "m" | "f" | null> {
     // foreman …)": the first name only (a middle name or surname follows
     // another name), and never a company ("Alderbrook (grocery distributor",
     // "Kestrel Building Supply").
-    for (const n of Array.from(m[2].matchAll(/(?<![A-Z][a-z]+\s)\b([A-Z][a-z]{2,})(\s+[A-Z][a-z]+\b|\s*\(\s*[^)]{0,40})/g))) {
+    for (const n of Array.from(m[2].matchAll(/(?<![A-Z][a-z]+\s)\b([A-Z][a-z]{2,})(\s+[A-Z][A-Za-z'’-]*[a-z]\b|\s*\(\s*[^)]{0,40})/g))) {
       const next = n[2].trim();
       if (next.startsWith("(")) {
         if (ROLE_WORD.test(next.slice(1, 40))) add(n[1]);
@@ -117,6 +118,12 @@ export function peopleOnFile(kbText: string): Map<string, "m" | "f" | null> {
     }
   }
   const text = kbText;
+  // An ordinary word capitalised as a heading or a department ("Service
+  // (Dana, manager …)" made "Service" a person): a word the file also uses in
+  // lower case is not a first name.
+  for (const n of Array.from(people.keys())) {
+    if ((text.match(new RegExp(String.raw`(?<![\p{L}])${n.toLowerCase()}(?![\p{L}])`, "gu")) ?? []).length >= 2) people.delete(n);
+  }
   // A surname ("Harjit S. Grewal (President)" made "Grewal" look like a first
   // name): a name that follows another person's first name somewhere on file.
   for (const n of Array.from(people.keys())) {
@@ -330,8 +337,35 @@ function clip(s: string): string {
   return t.length > 110 ? `${t.slice(0, 107)}…` : t;
 }
 
-const UP = /\b(improv\w*|increas\w*|grow\w*|grew|rose|rise[sn]?|rising|expand\w*|strengthen\w*|climb\w*|gain\w*)\b/i;
-const DOWN = /\b(declin\w*|decreas\w*|fell|fall\w*|dropp?\w*|shr[ai]nk\w*|contract\w*|compress\w*|erod\w*|narrow\w*|weaken\w*)\b/i;
+/** Words that say which way the number moved. */
+const UP = /\b(increas\w*|grow\w*|grew|rose|rise[sn]?|rising|expand\w*|climb\w*|gain\w*|jump\w*)\b/i;
+const DOWN = /\b(declin\w*|decreas\w*|fell|fall\w*|dropp?\w*|shr[ai]nk\w*|contract\w*|compress\w*|erod\w*|narrow\w*)\b/i;
+/** Words that judge the move: which way the number went depends on the measure. */
+const BETTER = /\b(improv\w*|strengthen\w*|better)\b/i;
+const WORSE = /\b(worsen\w*|deteriorat\w*|weaken\w*|slipp?\w*)\b/i;
+/** Measures where lower is better ("the out-of-service rate improved from 15.5% to 9.4%"). */
+const LOWER_IS_BETTER = /\b(out[- ]of[- ]service|oos|turnover|churn|attrition|dso|days? sales|costs?|expenses?|claims?|incidents?|accidents?|injur\w*|defects?|errors?|complaints?|absentee\w*|vacanc\w*|downtime|delays?|loss(?:es)?|write-?offs?|bad debts?|leverage|wait(?:ing)? times?|lead times?|cycle times?|violations?|citations?|deficienc\w*|spoilage|shrinkage)\b/i;
+/** Measures where higher is better. */
+const HIGHER_IS_BETTER = /\b(margins?|revenues?|sales|ebitda|sde|profit\w*|earnings|income|retention|utili[sz]ation|occupancy|market share|renewals?|satisfaction|nps|productivity|throughput|on[- ]time|fill rate|win rate|conversion)\b/i;
+
+/** Which way a lead says the figure moved: numeric words first, else a judgement read with the measure's polarity. */
+function directionOf(lead: string): "up" | "down" | null {
+  const up = UP.test(lead), down = DOWN.test(lead);
+  if (up !== down) return up ? "up" : "down";
+  if (up && down) return null;
+  const better = BETTER.test(lead), worse = WORSE.test(lead);
+  if (better === worse) return null;
+  // The measure named nearest the figure decides ("costs rose, but the
+  // margin improved from …" is about the margin).
+  const last = (re: RegExp) => {
+    let at = -1;
+    for (const m of Array.from(lead.matchAll(new RegExp(re.source, "gi")))) at = m.index!;
+    return at;
+  };
+  const lower = last(LOWER_IS_BETTER), higher = last(HIGHER_IS_BETTER);
+  if (lower === higher) return null;
+  return better === (higher > lower) ? "up" : "down";
+}
 
 const isYear = (f: { value: number; text: string; kind: string }) => f.kind === "plain" && /^(?:FY\s?)?(?:19|20)\d{2}$/.test(f.text.trim());
 
@@ -349,10 +383,9 @@ function wrongDirection(text: string): string[] {
       const mid = s.slice(a.end, b.index);
       if (mid.length > 45 || !/\bto\s+(?:about\s+|roughly\s+)?$/i.test(mid)) continue;
       const lead = s.slice(Math.max(0, a.index - 80), a.index);
-      const up = UP.test(lead), down = DOWN.test(lead);
-      if (up === down) continue;
-      if (up && b.value < a.value) out.push(`says it rose from ${a.text} to ${b.text}, which is a fall (${clip(s)})`);
-      if (down && b.value > a.value) out.push(`says it fell from ${a.text} to ${b.text}, which is a rise (${clip(s)})`);
+      const dir = directionOf(lead);
+      if (dir === "up" && b.value < a.value) out.push(`says it rose from ${a.text} to ${b.text}, which is a fall (${clip(s)})`);
+      if (dir === "down" && b.value > a.value) out.push(`says it fell from ${a.text} to ${b.text}, which is a rise (${clip(s)})`);
     }
   }
   return out;
@@ -385,7 +418,14 @@ function wrongGrowthPeriod(text: string, growth: CimGrowth[]): string[] {
 
 const PRONOUN = /\b(she|her|hers|herself|he|him|his|himself)\b/gi;
 
-/** A gendered pronoun for someone the file gives no gender (or the other one). */
+/**
+ * A gendered pronoun for someone the file gives no gender (or the other one).
+ * The antecedent is looked for in the pronoun's own sentence and the one
+ * before it; a person the file — or a strongly gendered common first name
+ * (given-name-gender.ts) — gives that gender resolves it. What's left is a
+ * real guess: a name used for both genders ("Manpreet … she") or a pronoun
+ * the file contradicts.
+ */
 function guessedGender(text: string, pk: ProseKnowledge): string[] {
   if (pk.people.size === 0) return [];
   const out: string[] = [];
@@ -393,15 +433,29 @@ function guessedGender(text: string, pk: ProseKnowledge): string[] {
   const nameRe = new RegExp(String.raw`\b(${names.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})\b`, "g");
   const mentions = Array.from(text.matchAll(nameRe)).map((m) => ({ name: m[1], at: m.index! }));
   if (mentions.length === 0) return [];
+  // Anyone else named with a common, clearly gendered first name ("Tony and
+  // his wife Maria … he") is a candidate antecedent too.
+  for (const m of Array.from(text.matchAll(/\b[A-Z][a-z]{2,}\b/g))) {
+    if (!pk.people.has(m[0]) && genderOfGivenName(m[0]) && !mentions.some((x) => x.at === m.index)) mentions.push({ name: m[0], at: m.index! });
+  }
+  mentions.sort((a, b) => a.at - b.at);
+  // Sentence starts, so "the sentence before" can be found.
+  const starts = [0, ...Array.from(text.matchAll(/(?<=[.!?])\s+(?=[A-Z"“(])|\n+/g)).map((m) => m.index! + m[0].length)];
+  const sentenceOf = (at: number) => {
+    let i = 0;
+    while (i + 1 < starts.length && starts[i + 1] <= at) i++;
+    return i;
+  };
+  const genderOf = (name: string): "m" | "f" | null => pk.people.get(name) ?? genderOfGivenName(name);
   const seen = new Set<string>();
   for (const p of Array.from(text.matchAll(PRONOUN))) {
-    // People named shortly before the pronoun, nearest first.
-    const before = mentions.filter((m) => m.at < p.index! && p.index! - m.at <= 400).reverse();
+    const s = sentenceOf(p.index!);
+    // People named before the pronoun in its sentence or the one before, nearest first.
+    const before = mentions.filter((m) => m.at < p.index! && (sentenceOf(m.at) === s || sentenceOf(m.at) === s - 1)).reverse();
     if (before.length === 0) continue;
     const g = /^(she|her|hers|herself)$/i.test(p[1]) ? "f" : "m";
-    // "Tony and his wife Maria … he": a person the file gives that gender is
-    // the antecedent; otherwise the nearest one the file doesn't rule out.
-    if (before.some((m) => pk.people.get(m.name) === g)) continue;
+    // "Tony and his wife Maria … he": a person with that gender is the antecedent.
+    if (before.some((m) => genderOf(m.name) === g)) continue;
     const names = Array.from(new Set(before.map((m) => m.name)));
     const k = `${names.join(",")}:${g}`;
     if (seen.has(k)) continue;
@@ -411,7 +465,13 @@ function guessedGender(text: string, pk: ProseKnowledge): string[] {
       continue;
     }
     const onFile = pk.people.get(names[0]);
-    out.push(onFile ? `"${p[1]}" for ${names[0]} contradicts the file` : `"${p[1]}" for ${names[0]} — no gender is on file; use the name or role`);
+    out.push(
+      onFile
+        ? `"${p[1]}" for ${names[0]} contradicts the file`
+        : genderOfGivenName(names[0])
+          ? `"${p[1]}" for ${names[0]} — no gender is on file and the name suggests otherwise; use the name or role`
+          : `"${p[1]}" for ${names[0]} — no gender is on file; use the name or role`,
+    );
   }
   return out;
 }
@@ -504,9 +564,13 @@ function labelledFigures(layoutType: string, data: any, out: string[] = []): str
       }
       break;
     }
+    case "waterfall_chart":
+      for (const it of data.items ?? []) if (it?.type === "total") out.push(`${s(it?.label)}: ${money(s(it?.value))}`);
+      break;
     case "line_chart":
     case "bar_chart": {
-      const series = (data.series ?? []).map((x: any) => ({ key: s(x?.key), name: s(x?.name) || s(x?.key) }));
+      // A series' label ("Adjusted EBITDA"), else its key read as words ("adjustedEbitda" → "adjusted Ebitda").
+      const series = (data.series ?? []).map((x: any) => ({ key: s(x?.key), name: s(x?.name) || s(x?.label) || s(x?.key).replace(/([a-z])([A-Z])/g, "$1 $2") }));
       const unit = s(data.unit);
       const scale = (v: string) => (/\$?m\b|million/i.test(unit) && /^\d/.test(v) ? `$${v}M` : /000s|\$k|thousand/i.test(unit) && /^\d/.test(v) ? `$${v}K` : money(v));
       for (const pt of data.data ?? []) {
@@ -528,6 +592,14 @@ function labelledFigures(layoutType: string, data: any, out: string[] = []): str
 /** Earnings figures that aren't the bridge's (one adjusted EBITDA / SDE / margin / multiple). */
 function earningsIssues(section: { layoutType: string; layoutData: unknown }, texts: Str[], canon: EarningsCanon): string[] {
   const out: string[] = [];
+  // The broker's figure overruled the analysis add-backs: there is no bridge
+  // to draw, and a waterfall to EBITDA / SDE would carry the analysis's total.
+  if (canon.override?.withheld === "bridge" && section.layoutType === "waterfall_chart") {
+    const items = ((section.layoutData as { items?: Array<{ type?: string; label?: string }> } | null)?.items ?? []);
+    if (items.some((it) => it?.type === "total" && /ebitda|sde|discretionary|earnings/i.test(String(it?.label ?? "")))) {
+      out.push("this EBITDA/SDE bridge can't be shown — the broker's earnings figure overrules the financial analysis add-backs; use another layout that states the figure from CANONICAL FIGURES without add-back amounts");
+    }
+  }
   const read = [...labelledFigures(section.layoutType, section.layoutData), ...texts.filter((t) => t.covered === null).map((t) => t.text)];
   for (const t of read) {
     for (const { mention, expected } of offCanon(t, canon)) {
