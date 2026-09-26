@@ -19,6 +19,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
 import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { BlockTitle } from "./BlockTitle";
 
 interface BarDataPoint {
   name: string;
@@ -100,11 +101,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       {data.yLabel && (
         // Axis caption sits above the plot — a rotated label inside the axis
         // column collides with the tick numbers (worst on phones).
@@ -138,8 +135,11 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
             cursor={{ fill: theme.stripe, fillOpacity: 0.6 }}
           />
           {hasSecondary && (
+            // Above the plot: at the bottom it sat on the x-axis caption.
             <Legend
-              wrapperStyle={{ fontSize: 11, paddingTop: 8, color: theme.inkSoft }}
+              verticalAlign="top"
+              align="right"
+              wrapperStyle={{ fontSize: 11, paddingBottom: 8, color: theme.inkSoft }}
               iconType="circle"
               iconSize={8}
             />

@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface Location {
   label?: string;
@@ -92,11 +93,7 @@ export function LocationCardRenderer({ layoutData, content, branding, section }:
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className={cn("grid gap-4", gridClass)}>
         {locations.map((loc, i) => (
           <div key={i} className="bg-card border border-card-border rounded-lg p-4">

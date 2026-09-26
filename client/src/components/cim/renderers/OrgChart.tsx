@@ -11,6 +11,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { useElementWidth } from "./chartFormat";
+import { BlockTitle } from "./BlockTitle";
 
 interface OrgNode {
   id: string;
@@ -194,11 +195,7 @@ export function OrgChartRenderer({ layoutData, content, branding, section }: Ren
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-5">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} spacing="mb-5" />
 
       <div ref={ref} className="w-full cim-org-chart break-inside-avoid">
         <div className="flex flex-col items-center gap-6">

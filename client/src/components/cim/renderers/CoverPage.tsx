@@ -93,11 +93,14 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
 
   const businessName = data.businessName || (section as any).sectionTitle || "Business Overview";
   const confidentialLabel = data.confidentialLabel || "CONFIDENTIAL BUSINESS OVERVIEW";
-  // "Prepared by" is the brokerage, from its brand settings — never the AI's
-  // layoutData.preparedBy (it once credited the seller's accountant, even on
-  // the blind cover). No brokerage name → no "Prepared by" line.
+  // "Prepared by" is the brokerage and the deal's broker, from the brand and
+  // account settings — never the AI's layoutData.preparedBy (it once
+  // credited the seller's accountant, even on the blind cover). A brokerage
+  // with no firm name set still shows its broker (Pacific, 2026-09-26: the
+  // broker appeared only on the last page). Neither → no "Prepared by" line.
   const firmName = design.brokerage.firmName || branding.firmName || "";
   const firmLogo = design.brokerage.logoUrl;
+  const brokerName = design.brokerage.contactName || "";
   // Business branding is null in the Blind CIM (CimDesign never carries it there).
   const businessLogoId = design.business?.logoMediaId || null;
   const coverPhotoId = t.coverStyle === "photo" ? design.business?.coverPhotoMediaId || null : null;
@@ -233,12 +236,17 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
       {/* Footer — prepared by (brokerage logo + name) */}
       <div className="relative z-10 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between sm:gap-6 px-6 pb-8 sm:px-12 sm:pb-10">
         <div className="min-w-0 flex-1" style={light ? { borderTop: `1px solid ${t.line}`, paddingTop: "1.5rem" } : undefined}>
-          {(firmName || firmLogo) && (
-            <div className="flex flex-col gap-1.5">
+          {(firmName || firmLogo || brokerName) && (
+            <div className="flex flex-col gap-1.5" data-testid="cover-prepared-by">
               <span className="text-[9px] uppercase tracking-[0.22em]" style={{ color: light ? t.inkFaint : a("59") }}>Prepared by</span>
               <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5 min-w-0">
                 {firmLogo && <CoverLogo src={firmLogo} alt={firmName ? `${firmName} logo` : "Brokerage logo"} onDark={!light} size="sm" />}
-                {firmName && <p className="text-sm font-semibold min-w-0 break-words" style={{ color: light ? t.ink : a("B3") }}>{firmName}</p>}
+                {(firmName || brokerName) && (
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold min-w-0 break-words" style={{ color: light ? t.ink : a("B3") }}>{firmName || brokerName}</p>
+                    {firmName && brokerName && <p className="text-xs min-w-0 break-words mt-0.5" style={{ color: light ? t.inkSoft : a("80") }}>{brokerName}</p>}
+                  </div>
+                )}
               </div>
             </div>
           )}

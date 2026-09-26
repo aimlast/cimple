@@ -11,6 +11,7 @@ import {
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface CalloutItem {
   title: string;
@@ -114,11 +115,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
   if (style === "icon-row") {
     return (
       <div>
-        {data.title && (
-          <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-            {data.title}
-          </h3>
-        )}
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
         <div className={cn("grid gap-4", gridClass)}>
           {items.map((item, i) => (
             <div key={i} className="flex flex-col items-center text-center gap-2 p-4 bg-card rounded-lg border border-card-border">
@@ -151,11 +148,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
   if (style === "card") {
     return (
       <div>
-        {data.title && (
-          <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-            {data.title}
-          </h3>
-        )}
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
         <div className={cn("grid gap-3", gridClass)}>
           {items.map((item, i) => (
             <div
@@ -205,11 +198,7 @@ export function CalloutListRenderer({ layoutData, content, branding, section }: 
   // ── LIST style (default) ────────────────────────────────────────────────────
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="space-y-2">
         {items.map((item, i) => (
           <div
