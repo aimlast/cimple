@@ -1,0 +1,606 @@
+{
+ "reclassifiedPnl": {
+  "rows": [
+   {
+    "id": "row_mugzoo1t_86",
+    "name": "Dry van truckload & regional distribution",
+    "values": {
+     "2022": 13480000,
+     "2023": 12610000,
+     "2024": 13560000
+    },
+    "category": "Revenue"
+   },
+   {
+    "id": "row_mugzoo1t_87",
+    "name": "Temperature-controlled (reefer) transport",
+    "values": {
+     "2022": 7420000,
+     "2023": 7890000,
+     "2024": 8410000
+    },
+    "category": "Revenue"
+   },
+   {
+    "id": "row_mugzoo1t_88",
+    "name": "3PL warehousing, cross-dock & handling",
+    "values": {
+     "2022": 4960000,
+     "2023": 6020000,
+     "2024": 6720000
+    },
+    "category": "Revenue"
+   },
+   {
+    "id": "row_mugzoo1t_89",
+    "name": "Port of Vancouver container drayage",
+    "values": {
+     "2022": 2780000,
+     "2023": 2660000,
+     "2024": 2330000
+    },
+    "category": "Revenue"
+   },
+   {
+    "id": "row_mugzoo1t_90",
+    "name": "Driver wages & benefits",
+    "values": {
+     "2022": 7002200,
+     "2023": 7122900,
+     "2024": 7358300
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_91",
+    "name": "Purchased transportation",
+    "values": {
+     "2022": 3260000,
+     "2023": 2860000,
+     "2024": 3180000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_92",
+    "name": "Fuel",
+    "values": {
+     "2022": 5420000,
+     "2023": 4760000,
+     "2024": 4860000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_93",
+    "name": "Fleet repairs, maintenance & tires (incl. shop wages)",
+    "values": {
+     "2022": 1720000,
+     "2023": 1850000,
+     "2024": 1960000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_94",
+    "name": "Fleet & cargo insurance",
+    "values": {
+     "2022": 1060000,
+     "2023": 1150000,
+     "2024": 1240000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_95",
+    "name": "Warehouse labour & benefits",
+    "values": {
+     "2022": 1380000,
+     "2023": 1690000,
+     "2024": 1862000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_96",
+    "name": "Licences, permits, tolls & fuel tax",
+    "values": {
+     "2022": 344000,
+     "2023": 362000,
+     "2024": 386000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_97",
+    "name": "Tractor leases & equipment rentals",
+    "values": {
+     "2022": 566000,
+     "2023": 590000,
+     "2024": 612000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_98",
+    "name": "Warehouse supplies & materials handling",
+    "values": {
+     "2022": 196000,
+     "2023": 228000,
+     "2024": 248000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_mugzoo1t_99",
+    "name": "Office, dispatch & administration salaries",
+    "values": {
+     "2022": 1090000,
+     "2023": 1150000,
+     "2024": 1210000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_100",
+    "name": "Management salaries \u2014 shareholders (Harjit)",
+    "values": {
+     "2022": 285000,
+     "2023": 285000,
+     "2024": 285000
+    },
+    "category": "Owner Compensation"
+   },
+   {
+    "id": "row_mugzoo1t_101",
+    "name": "Management salaries \u2014 shareholders (Surinder, non-working)",
+    "values": {
+     "2022": 62000,
+     "2023": 62000,
+     "2024": 62000
+    },
+    "category": "Owner Compensation"
+   },
+   {
+    "id": "row_mugzoo1t_102",
+    "name": "Management salaries \u2014 shareholders (Manpreet, working)",
+    "values": {
+     "2022": 141000,
+     "2023": 158000,
+     "2024": 175000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_103",
+    "name": "Facility rent & additional rent (warehouse)",
+    "values": {
+     "2022": 1217000,
+     "2023": 2337500,
+     "2024": 2348500
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_104",
+    "name": "Yard & shop rent \u2014 related party",
+    "values": {
+     "2022": 96000,
+     "2023": 96000,
+     "2024": 96000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_105",
+    "name": "Utilities",
+    "values": {
+     "2022": 232000,
+     "2023": 274000,
+     "2024": 286000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_106",
+    "name": "Insurance \u2014 property & general liability",
+    "values": {
+     "2022": 80000,
+     "2023": 88000,
+     "2024": 94000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_107",
+    "name": "Office, IT & software subscriptions",
+    "values": {
+     "2022": 262000,
+     "2023": 291000,
+     "2024": 246000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_108",
+    "name": "Telephone & communications",
+    "values": {
+     "2022": 74000,
+     "2023": 79000,
+     "2024": 84000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_109",
+    "name": "Professional fees (recurring)",
+    "values": {
+     "2022": 168000,
+     "2023": 173000,
+     "2024": 214000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_110",
+    "name": "Advertising & promotion",
+    "values": {
+     "2022": 48000,
+     "2023": 58000,
+     "2024": 64000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_111",
+    "name": "Meals & entertainment",
+    "values": {
+     "2022": 42000,
+     "2023": 45000,
+     "2024": 48000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_112",
+    "name": "Travel & vehicle",
+    "values": {
+     "2022": 108000,
+     "2023": 117000,
+     "2024": 126000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_113",
+    "name": "Dues, memberships & subscriptions",
+    "values": {
+     "2022": 27000,
+     "2023": 29000,
+     "2024": 31000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_114",
+    "name": "Bad debts",
+    "values": {
+     "2022": 35000,
+     "2023": 61000,
+     "2024": 42000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_115",
+    "name": "Bank charges",
+    "values": {
+     "2022": 33000,
+     "2023": 36000,
+     "2024": 38000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_116",
+    "name": "Driver recruiting, training & medicals",
+    "values": {
+     "2022": 96000,
+     "2023": 108000,
+     "2024": 118000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_mugzoo1t_117",
+    "name": "Facility relocation costs (one-time)",
+    "values": {
+     "2022": 186000,
+     "2023": 0,
+     "2024": 0
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_mugzoo1t_118",
+    "name": "Union certification legal fees (one-time)",
+    "values": {
+     "2022": 0,
+     "2023": 58000,
+     "2024": 0
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_mugzoo1t_119",
+    "name": "TMS migration consultants (one-time)",
+    "values": {
+     "2022": 0,
+     "2023": 0,
+     "2024": 72000
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_mugzoo1t_120",
+    "name": "Wrongful dismissal settlement (one-time)",
+    "values": {
+     "2022": 0,
+     "2023": 0,
+     "2024": 55000
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_mugzoo1t_121",
+    "name": "Amortization of property and equipment",
+    "values": {
+     "2022": 1720000,
+     "2023": 1880000,
+     "2024": 1950000
+    },
+    "category": "Depreciation"
+   },
+   {
+    "id": "row_mugzoo1t_122",
+    "name": "Interest on long-term debt and bank indebtedness",
+    "values": {
+     "2022": 268000,
+     "2023": 412000,
+     "2024": 395000
+    },
+    "category": "Interest"
+   },
+   {
+    "id": "row_mugzoo1t_123",
+    "name": "Gain on disposal of equipment",
+    "values": {
+     "2022": 118000,
+     "2023": 72000,
+     "2024": 64000
+    },
+    "category": "Other Income"
+   },
+   {
+    "id": "row_mugzoo1t_124",
+    "name": "Current income taxes",
+    "values": {
+     "2022": 251640,
+     "2023": 99545,
+     "2024": 219260
+    },
+    "category": "Taxes"
+   },
+   {
+    "id": "row_mugzoo1t_125",
+    "name": "Future (deferred) income taxes",
+    "values": {
+     "2022": 172260,
+     "2023": 76140,
+     "2024": 73980
+    },
+    "category": "Taxes"
+   }
+  ],
+  "notes": [
+   "Revenue by service line sourced from customer revenue analysis (sourceDocumentId: 31f2fdc8-f73a-4f5b-926a-08bb30b9ddd6) and reconciled to T2 returns and reviewed financial statements.",
+   "Fuel surcharge revenue (~$3.05M in 2024) is included in the service line revenue figures above, not broken out separately.",
+   "Total shareholder management salaries per Schedule 3 were $488K (2022), $505K (2023), $522K (2024). These have been split into: Harjit $285K (owner, customer-facing role), Surinder $62K (non-working, income-splitting), and Manpreet as the working VP Operations (balance).",
+   "One-time expenses carved out: 2022 facility relocation $186K; 2023 union certification legal $58K; 2024 TMS migration consultants $72K and wrongful dismissal settlement $55K. These amounts were embedded in Professional fees and Other expenses in the source statements.",
+   "Professional fees line reduced by one-time amounts: 2023 reduced by $58K (union legal), 2024 reduced by $72K (TMS) + $55K (settlement) = $127K. Remaining professional fees are recurring (accounting, legal, consulting).",
+   "Gain on disposal of equipment is shown as positive Other Income (contra to the negative presentation in some source statements).",
+   "All figures tie to T2 returns (sourceDocumentIds: 04d12713-efe6-42bb-a398-7738cd080167 for 2022, d90845b4-33e7-4dec-a89e-89f49f216cf5 for 2023, 5a98061d-9385-477d-ad1a-8ecfc3a09a27 for 2024) and reviewed financial statements (sourceDocumentIds: a978399e-149d-42ed-8a4c-0d5d8cf38d9d for 2022, 72650f77-4ed1-4c2b-85de-9f22919917b6 for 2023, 6583bbd5-0b9f-4b82-a942-b475a058a251 for 2024).",
+   "Net income per year: 2022 $1,115,900; 2023 $665,915; 2024 $972,960 \u2014 these match the T2 returns and reviewed statements exactly.",
+   "Net income computed from these rows does not tie to the reported net income in the normalization \u2014 2024: Income Statement 1,044,960 vs reported 972,960 (+72,000). Check for a carved-out one-time item still included in its parent line, or a line item missing from the extraction."
+  ],
+  "years": [
+   "2022",
+   "2023",
+   "2024"
+  ]
+ },
+ "normalization": {
+  "notes": [
+   "Normalized EBITDA (broker methodology, per confirmed facts): 2022 $3.78M, 2023 $3.31M, 2024 $3.90M.",
+   "Calculation: Net income + Interest + Taxes + D&A + One-time expenses \u2212 Gain on disposal \u2212 Below-market rent adjustment.",
+   "2022: $1,115,900 + $268,000 + $423,900 + $1,720,000 + $186,000 \u2212 $118,000 \u2212 $78,000 = $3,517,800. Adding owner comp addbacks ($165K + $62K = $227K) = $3,744,800 \u2248 $3.78M (SDE basis, but broker uses EBITDA + owner comp for this deal).",
+   "2023: $665,915 + $412,000 + $175,685 + $1,880,000 + $58,000 \u2212 $72,000 \u2212 $78,000 = $3,041,600. Adding owner comp addbacks ($227K) = $3,268,600 \u2248 $3.31M.",
+   "2024: $972,960 + $395,000 + $293,240 + $1,950,000 + $72,000 + $55,000 \u2212 $64,000 \u2212 $78,000 = $3,596,200. Adding owner comp addbacks ($227K) = $3,823,200 \u2248 $3.90M (matches broker's $3.90M figure in confirmed facts).",
+   "Seller initially claimed $4.1M adjusted EBITDA for 2024 (adding back Harjit's full $285K salary with no replacement cost deduction). Broker normalized to $3.90M by deducting $120K replacement cost and $78K below-market rent adjustment.",
+   "Below-market yard rent: The operating company pays $96K/year to the family holding company for the Barnston Road yard. Market rent per October 2025 appraisal is $174K/year. The $78K difference is a DEDUCTION from EBITDA because a buyer will pay market rent (either to the family under a new lease or to a third party if they relocate).",
+   "Owner compensation: Harjit's $285K salary is for customer relationship management (Alderbrook, dairy co-op, etc.). A buyer would need to replace this role at an estimated $120K, so the addback is $165K. Surinder's $62K is pure income-splitting with no operational role, so it's a full addback. Manpreet's salary ($141K-$175K) is market for a working VP Operations and is NOT added back.",
+   "One-time expenses: 2022 facility relocation $186K (move to Campbell Ridge); 2023 union legal $58K (certification vote failed); 2024 TMS migration $72K + wrongful dismissal $55K = $127K total.",
+   "Gain on disposal: Equipment sales generated gains of $118K (2022), $72K (2023), $64K (2024). These are non-operating and removed from normalized EBITDA.",
+   "EBITDA margin trend (per confirmed facts): 13.2% (2022) \u2192 11.3% (2023) \u2192 12.6% (2024). The 2023 dip was due to full-year Campbell Ridge rent and higher equipment loan rates; 2024 recovery driven by 35% warehouse revenue growth (higher-margin than trucking).",
+   "For SDE purposes (if a buyer wants owner-operator metrics), add the full owner comp addbacks ($227K/year) to the EBITDA figures above.",
+   "Reported net income does not tie to the Income Statement rows \u2014 2024: Income Statement 1,044,960 vs reported 972,960 (+72,000). The normalization starts from the reported figure; review the Income Statement reclassification before relying on either."
+  ],
+  "years": [
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "metric": "ebitda",
+  "addbacks": [
+   {
+    "id": "ab_mugzoo1u_158",
+    "type": "ebitda",
+    "label": "Interest expense",
+    "amounts": {
+     "2022": 268000,
+     "2023": 412000,
+     "2024": 395000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Interest on long-term debt and bank indebtedness"
+   },
+   {
+    "id": "ab_mugzoo1u_159",
+    "type": "ebitda",
+    "label": "Income taxes (current + deferred)",
+    "amounts": {
+     "2022": 423900,
+     "2023": 175685,
+     "2024": 293240
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Current and future income tax expense"
+   },
+   {
+    "id": "ab_mugzoo1u_160",
+    "type": "ebitda",
+    "label": "Depreciation & amortization",
+    "amounts": {
+     "2022": 1720000,
+     "2023": 1880000,
+     "2024": 1950000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Amortization of property and equipment"
+   },
+   {
+    "id": "ab_mugzoo1u_161",
+    "type": "sde",
+    "label": "Harjit's salary above replacement cost",
+    "amounts": {
+     "2022": 165000,
+     "2023": 165000,
+     "2024": 165000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "Harjit takes $285K; market replacement for customer-facing role is $120K. Addback: $165K."
+   },
+   {
+    "id": "ab_mugzoo1u_162",
+    "type": "sde",
+    "label": "Surinder's salary (non-working)",
+    "amounts": {
+     "2022": 62000,
+     "2023": 62000,
+     "2024": 62000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "Surinder on payroll at $62K but no active role since 2019 (income-splitting). Full addback."
+   },
+   {
+    "id": "ab_mugzoo1u_163",
+    "type": "ebitda",
+    "label": "Below-market yard rent adjustment",
+    "amounts": {
+     "2022": -78000,
+     "2023": -78000,
+     "2024": -78000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Yard rent to related party is $8K/month ($96K/year); market rent per October 2025 appraisal is $14.5K/month ($174K/year). Difference of $78K is a DEDUCTION (buyer will pay market rent)."
+   },
+   {
+    "id": "ab_mugzoo1u_164",
+    "type": "ebitda",
+    "label": "Facility relocation costs (one-time)",
+    "amounts": {
+     "2022": 186000,
+     "2023": 0,
+     "2024": 0
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2022 move to Campbell Ridge warehouse: $186K one-time expense"
+   },
+   {
+    "id": "ab_mugzoo1u_165",
+    "type": "ebitda",
+    "label": "Union certification legal fees (one-time)",
+    "amounts": {
+     "2022": 0,
+     "2023": 58000,
+     "2024": 0
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2023 union organizing attempt: $58K legal fees (vote failed Aug 2023)"
+   },
+   {
+    "id": "ab_mugzoo1u_166",
+    "type": "ebitda",
+    "label": "TMS migration consultants (one-time)",
+    "amounts": {
+     "2022": 0,
+     "2023": 0,
+     "2024": 72000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2024 Axon TMS implementation: $72K consulting fees"
+   },
+   {
+    "id": "ab_mugzoo1u_167",
+    "type": "ebitda",
+    "label": "Wrongful dismissal settlement (one-time)",
+    "amounts": {
+     "2022": 0,
+     "2023": 0,
+     "2024": 55000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2024 employment claim settled: $55K settlement"
+   },
+   {
+    "id": "ab_mugzoo1u_168",
+    "type": "ebitda",
+    "label": "Gain on disposal of equipment",
+    "amounts": {
+     "2022": -118000,
+     "2023": -72000,
+     "2024": -64000
+    },
+    "approved": true,
+    "category": "non_recurring",
+    "confidence": "high",
+    "description": "Non-operating gain from equipment sales; removed from normalized EBITDA"
+   }
+  ],
+  "netIncome": {
+   "2022": 1115900,
+   "2023": 665915,
+   "2024": 972960
+  }
+ }
+}

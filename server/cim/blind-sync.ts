@@ -332,9 +332,11 @@ export async function dealHasBlindVersion(dealId: string): Promise<boolean> {
 }
 
 /** Content changed: mark stale and queue the re-redaction in one call. */
-export async function invalidateBlind(dealId: string, sectionIds: string[]): Promise<void> {
-  await markSectionsBlindStale(sectionIds);
+/** Resolves with the stale stamp written (blind_stale_at = dd_stale_at), so callers can return the row as stored. */
+export async function invalidateBlind(dealId: string, sectionIds: string[]): Promise<Date> {
+  const at = await markSectionsBlindStale(sectionIds);
   scheduleBlindRefresh(dealId);
+  return at;
 }
 
 /**

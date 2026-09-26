@@ -69,6 +69,9 @@ assert.equal(pickAnalysisForCim([{ ...analysis, id: "c", status: "completed" }, 
 const fin = buildCimFinancials(analysis as any)!;
 assert.ok(fin, "financials built");
 assert.equal(fin.pnl!["2024"].grossProfit, 31020000 - 21706300);
+// This fixture's rows don't reach the reported net income ($972,960) and no one-time
+// item explains the gap: the rows are kept, the year is flagged untied (c-truth round V).
+assert.equal(fin.pnl!["2024"].restated, undefined);
 assert.equal(fin.pnl!["2024"].operatingExpenses, 5220500 + 347000);
 assert.equal(fin.bridge!.adjusted["2024"], 972960 + 395000 + 293240 + 1950000 - 78000, "EBITDA-mode total excludes the SDE-only and the unapproved add-backs");
 assert.equal(fin.bridge!.sde!["2024"], 972960 + 395000 + 293240 + 1950000 - 78000 + 165000);
@@ -98,7 +101,9 @@ assert.match(kb, /Working capital peg \(target\): \$2,400,000/);
 assert.match(kb, /^TODAY: September 25, 2026/m, "the writer knows today's date");
 // The headline fact and the analysis disagree → flagged for the broker, not plugged.
 const assembled = assembleKnowledgeBase(params);
-assert.ok(assembled.warnings.some((w) => /EBITDA on file is \$3,900,000.*\$3,533,200/.test(w)), "EBITDA conflict surfaced");
+// (c-truth round V: the approved bridge is THE adjusted EBITDA — the fact is held out, named in the warning.)
+assert.ok(assembled.warnings.some((w) => /the CIM uses Adjusted EBITDA \$3,533,200.*\$3,900,000/.test(w)), `EBITDA conflict surfaced: ${assembled.warnings.join(" | ")}`);
+assert.ok(!/3,900,000/.test(assembled.text), "the off-bridge EBITDA never reaches the writer");
 
 // Long canonical values: the first currency figure, never skipped.
 const longEbitda = buildKnowledgeBase({
@@ -181,8 +186,10 @@ assert.ok(!customers.some((m) => /Alderbrook|Kestrel/.test(m) && /not a name/.te
 assert.ok(customers.some((m) => /5\.2%/.test(m)), "invented share flagged");
 
 // An earlier AI draft is never a source: its invented EBITDA can't "trace".
-const withDrafts = assembleKnowledgeBase({ ...params, cimContent: { financials: "EBITDA reached $4,780,000 in FY2024." } });
-assert.match(withDrafts.text, /EARLIER DRAFTS[\s\S]*\$4,780,000/, "drafts still shown to the writer as wording");
+const withDrafts = assembleKnowledgeBase({ ...params, cimContent: { financials: "Revenue reached $4,780,000 in the new division. EBITDA reached $4,780,000 in FY2024." } });
+assert.match(withDrafts.text, /EARLIER DRAFTS[\s\S]*Revenue reached \$4,780,000/, "drafts still shown to the writer as wording");
+// c-truth round V: a draft's off-bridge EBITDA sentence is dropped before the writer sees it.
+assert.ok(!/EBITDA reached/.test(withDrafts.text), "an off-bridge earnings sentence in a draft is removed");
 assert.ok(!/4,780,000/.test(withDrafts.sourceText));
 assert.ok(
   checkSectionFigures(table([["EBITDA", ["", "$4,780,000"]]]), knownFiguresFrom(withDrafts.sourceText)).some((m) => /4,780,000/.test(m)),

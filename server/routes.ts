@@ -52,6 +52,8 @@ import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
+import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
+import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders } from "./reminders/decision-reminders.js";
@@ -134,6 +136,8 @@ async function generateSectionWithClaude(
     scrapedData?: Record<string, any> | null;
     description?: string | null;
     askingPrice?: string | null;
+    /** Items that must not reach buyers (keep-out.ts keepOutFor). */
+    keepOut?: KeepOut | null;
   }
 ): Promise<string> {
   const desc = CIM_SECTION_PROMPTS[sectionKey] || sectionKey;
@@ -148,7 +152,11 @@ async function generateSectionWithClaude(
   // Facts split by provenance: CRM notes / website / social claims are
   // leads, never presented as confirmed; per-source notes and "_" keys are
   // never CIM input.
-  const { confirmed, leads } = splitFactsForCim(data.extractedInfo);
+  const split = splitFactsForCim(data.extractedInfo);
+  // Personal details and clauses the facts mark confidential never reach CIM text.
+  const keepOut = data.keepOut ?? keepOutFromNotes(data.extractedInfo);
+  const confirmed = screenFactsForCim(split.confirmed, keepOut).safe;
+  const leads = screenFactsForCim(split.leads, keepOut).safe;
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
@@ -5461,6 +5469,7 @@ Return JSON only.`,
           scrapedData: (deal as any).scrapedData as Record<string, any> | null,
           description: deal.description,
           askingPrice: listedAskingPrice(deal),
+          keepOut: await keepOutFor(deal.id, (deal.extractedInfo as Record<string, unknown>) || {}),
         };
         if (!CIM_SECTION_PROMPTS[sectionKey]) {
           return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });

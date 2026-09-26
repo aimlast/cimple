@@ -14,10 +14,21 @@ import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "
 import { normalizeLocationMap, normText } from "@shared/cim-media";
 import type { CimSectionOutline } from "@shared/cim-theme";
 import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-block";
-import { analysisHeadlines, knownBridges, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
+import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, restatementWarnings, type CimFinancials, type CimGrowth } from "./cim-financials";
 import { checkSectionFigures, figureWarningText, knownFiguresFrom, parseFigures, type KnownFigures } from "./figure-check";
-import { screenFactsForCim, screenText, type HeldFact } from "./sensitive-facts";
-import { repairInferredYears } from "./fact-dates";
+import {
+  keepOutFromNotes,
+  mentionsHeldName,
+  screenConfidentialText,
+  screenFactsForCim,
+  screenText,
+  type ConfidentialHold,
+  type HeldFact,
+  type KeepOut,
+} from "./sensitive-facts";
+import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
+import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
+import { normalizeSpokenFigures } from "./spoken-figures";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -155,6 +166,12 @@ export interface CimLayoutParams {
    * said is taken out before the writer sees it (fact-dates.ts).
    */
   factSourceWords?: Record<string, { words: string; at: string }> | null;
+  /**
+   * What must stay out of buyer-facing text beyond the facts' own notes: the
+   * broker's private notes and the AI review (keep-out.ts keepOutFor). When
+   * absent, the private-note rules alone are applied.
+   */
+  keepOut?: (KeepOut & { warning?: string }) | null;
 }
 
 /**
@@ -167,6 +184,22 @@ interface SharedSystem extends SystemBlock {
   /** Warnings raised while assembling the knowledge base (held personal details, figure conflicts). */
   kbWarnings: string[];
   today: Date;
+  /** Names the facts mark confidential: never in a buyer-facing section (scrubHeldNames). */
+  heldNames: string[];
+  /** The broker's earnings figure overrules the analysis add-backs: no EBITDA/SDE bridge may be planned. */
+  noBridge: boolean;
+}
+
+/** The figure check's reference for an assembled knowledge base. */
+function knownFor(kb: AssembledKb, params: CimLayoutParams): KnownFigures {
+  // Figures are checked against the source blocks only — never against
+  // leads, earlier AI drafts or the unverified scrape.
+  return knownFiguresFrom(kb.sourceText, knownBridges(kb.financials), {
+    earnings: kb.canon,
+    growth: kb.growth,
+    today: params.today ?? new Date(),
+    heldNames: kb.heldNames,
+  });
 }
 
 function buildSharedSystem(params: CimLayoutParams): SharedSystem {
@@ -175,11 +208,11 @@ function buildSharedSystem(params: CimLayoutParams): SharedSystem {
     type: "text",
     text: `${DESIGN_AGENT_RULES}\n\n# DEAL KNOWLEDGE BASE\n\n${kb.text}`,
     cache_control: { type: "ephemeral" },
-    // Figures are checked against the source blocks only — never against
-    // leads, earlier AI drafts or the unverified scrape.
-    known: knownFiguresFrom(kb.sourceText, knownBridges(params.financials)),
+    known: knownFor(kb, params),
     kbWarnings: kb.warnings,
     today: params.today ?? new Date(),
+    heldNames: kb.heldNames,
+    noBridge: kb.canon?.override?.withheld === "bridge",
   };
 }
 
@@ -235,6 +268,22 @@ export async function generateCimLayout(
   // A section whose figures or names can't be traced is rewritten once with
   // the exact problems; whatever is still off is reported to the broker.
   await checkAndRepairFigures(sharedSystem, manifest, generated, warnings);
+  // Fail closed on anything the facts mark confidential: a mention that
+  // survived the rewrite is cut before it can reach a buyer.
+  for (let i = 0; i < generated.length; i++) {
+    const r = scrubHeldNames(generated[i], sharedSystem.heldNames);
+    if (!r) continue;
+    const title = generated[i].sectionTitle;
+    const scrubbed = { ...generated[i], layoutData: r.layoutData as CimLayoutSection["layoutData"], aiDraftContent: r.aiDraftContent };
+    // The section's figure warnings describe the version before the cut.
+    const left = checkSectionFigures(scrubbed, sharedSystem.known);
+    const stale = warnings.findIndex((w) => w.startsWith(`Check the figures in "${title}"`));
+    if (stale >= 0) warnings.splice(stale, 1);
+    if (left.length > 0) warnings.push(figureWarningText(title, left));
+    const { figureWarnings: _old, ...rest } = scrubbed;
+    generated[i] = left.length > 0 ? { ...rest, figureWarnings: left } : rest;
+    warnings.push(`Removed from "${title}": ${r.names.map((n) => `"${n}"`).join(", ")}, which the facts mark confidential.`);
+  }
 
   // Validate and normalise. A layout type outside the registry has no
   // renderer — it would reach buyers as a blank or raw-data block — so it
@@ -378,7 +427,7 @@ function repairFeedback(issues: string[]): string {
   return [
     "Your previous draft of this section failed the figure check:",
     ...issues.map((m) => `- ${m}`),
-    "Rewrite it. Every figure must be copied from the knowledge base (AUTHORITATIVE FINANCIALS for statement lines, totals and bridges; CANONICAL FIGURES and the facts otherwise). Where the knowledge base has no figure, leave the cell empty (\"\") or drop that row, year or chart item — never estimate, compute or round to a new number. Name only customers and suppliers exactly as the knowledge base names them; otherwise describe them without a name.",
+    "Rewrite it. Every figure must be copied from the knowledge base (AUTHORITATIVE FINANCIALS for statement lines, totals and bridges; CANONICAL FIGURES and the facts otherwise). Where the knowledge base has no figure, leave the cell empty (\"\") or drop that row, year or chart item — never estimate, compute or round to a new number. A sentence whose figure or claim isn't on file (general industry knowledge included) is removed, not reworded. Name only customers and suppliers exactly as the knowledge base names them; otherwise describe them without a name. Fix every other point listed the way it says (a past date, a pronoun, a ranking, a confidential name, the seller's casual wording).",
   ].join("\n");
 }
 
@@ -391,7 +440,7 @@ export function sectionFigureWarnings(
   section: { sectionTitle: string; layoutType: string; layoutData: unknown; tags?: unknown },
 ): string[] {
   const kb = assembleKnowledgeBase(params);
-  return checkSectionFigures(section, knownFiguresFrom(kb.sourceText, knownBridges(params.financials)));
+  return checkSectionFigures(section, knownFor(kb, params));
 }
 
 /** The subset of a stored section needed to rebuild one of its siblings. */
@@ -478,8 +527,44 @@ export async function writeOneSection(
   }
   const checked = [section];
   await checkAndRepairFigures(sharedSystem, manifest, checked, []);
-  const out = checked[0];
+  const scrubbed = scrubHeldNames(checked[0], sharedSystem.heldNames);
+  const out = scrubbed ? { ...checked[0], layoutData: scrubbed.layoutData as CimLayoutSection["layoutData"], aiDraftContent: scrubbed.aiDraftContent } : checked[0];
   return { ...out, layoutData: finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today) as any };
+}
+
+/**
+ * A section with every mention of a confidential name removed: the sentence
+ * in prose, the whole item in a list. Null when there was nothing to remove.
+ */
+export function scrubHeldNames(
+  section: { layoutData: unknown; aiDraftContent?: string },
+  heldNames: readonly string[],
+): { layoutData: Record<string, unknown>; aiDraftContent?: string; names: string[] } | null {
+  if (heldNames.length === 0) return null;
+  const names = new Set<string>();
+  const note = (s: string) => {
+    const n = mentionsHeldName(s, heldNames);
+    if (n) names.add(n);
+    return n;
+  };
+  const walk = (v: unknown): unknown => {
+    if (typeof v === "string") return note(v) ? screenConfidentialText(v, heldNames) : v;
+    if (Array.isArray(v)) {
+      return v
+        .filter((x) => !(x && typeof x === "object" && note(JSON.stringify(x))))
+        .map(walk)
+        .filter((x) => x !== "");
+    }
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+      return out;
+    }
+    return v;
+  };
+  const layoutData = walk(section.layoutData ?? {}) as Record<string, unknown>;
+  const aiDraftContent = typeof section.aiDraftContent === "string" && note(section.aiDraftContent) ? screenConfidentialText(section.aiDraftContent, heldNames) : section.aiDraftContent;
+  return names.size > 0 ? { layoutData, aiDraftContent, names: Array.from(names) } : null;
 }
 
 /**
@@ -647,7 +732,9 @@ ${def.aiSpec}
     callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\n${guide}\n\nWrite the rewritten section now.`),
   );
   if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
-  return { ...result, layoutData: finalizeLayoutData(layoutType, result.layoutData, sharedSystem.today) };
+  const scrubbed = scrubHeldNames(result, sharedSystem.heldNames);
+  const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
+  return { ...final, layoutData: finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today) };
 }
 
 /**
@@ -680,7 +767,9 @@ Rules:
     callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\nConvert this section to ${target} now.`),
   );
   if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
-  return { ...result, layoutData: finalizeLayoutData(target, result.layoutData, sharedSystem.today) };
+  const scrubbed = scrubHeldNames(result, sharedSystem.heldNames);
+  const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
+  return { ...final, layoutData: finalizeLayoutData(target, final.layoutData, sharedSystem.today) };
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────
@@ -780,12 +869,31 @@ async function generateManifest(sharedSystem: SystemBlock, outline: CimSectionOu
     );
   };
 
+  const noBridge = (sharedSystem as Partial<SharedSystem>).noBridge === true;
   const first = await attempt(false);
-  if (first && first.length > 0) return first;
+  if (first && first.length > 0) return withoutWithheldBridge(first, noBridge);
   console.warn("[layout-engine] Manifest generation failed — retrying once, terser");
   const second = await attempt(true);
-  if (second && second.length > 0) return second;
+  if (second && second.length > 0) return withoutWithheldBridge(second, noBridge);
   throw new Error("CIM generation failed while planning the document. Please try again.");
+}
+
+/**
+ * With the analysis bridge withheld (the broker's earnings figure overrules
+ * its add-backs) a planned EBITDA/SDE waterfall has nothing true to draw: it
+ * becomes a key-figure callout of the canonical earnings instead.
+ */
+function withoutWithheldBridge(manifest: ManifestEntry[], noBridge: boolean): ManifestEntry[] {
+  if (!noBridge) return manifest;
+  return manifest.map((m) =>
+    m.layoutType === "waterfall_chart"
+      ? {
+          ...m,
+          layoutType: "stat_callout",
+          contentBrief: `${m.contentBrief} There is no add-back bridge: state adjusted EBITDA / SDE, their margin and the asking-price multiple exactly as CANONICAL FIGURES give them, with no add-back amounts.`,
+        }
+      : m,
+  );
 }
 
 // ── Phase 2: per-section content ───────────────────────────────────────────
@@ -983,18 +1091,21 @@ DOCUMENT STRUCTURE RULES:
 
 CONTENT STYLE RULES (every string in layoutData and aiDraftContent):
 12. PLAIN TEXT ONLY. No markdown of any kind: no **bold**, no # headings, no inline "•" bullet runs, no "- " list markers inside a prose string. Emphasis comes from the layout (highlight flags, pull quotes, callout titles), and lists come from the list-shaped layouts (callout_list, numbered_list, two_column "list" columns, highlights[]). Paragraphs are separated by a blank line.
-13. ONE SET OF NUMBERS. Revenue, SDE, EBITDA, asking price and headcount must be identical in every section where they appear — copy the figures from CANONICAL FIGURES in the knowledge base verbatim (same rounding, same currency). Never derive a second value for the same metric in another section.
+13. ONE SET OF NUMBERS. Revenue, SDE, EBITDA, asking price and headcount must be identical in every section where they appear — copy the figures from CANONICAL FIGURES in the knowledge base verbatim (same rounding, same currency). Never derive a second value for the same metric in another section. Adjusted EBITDA, SDE, their margins and the asking-price multiple come ONLY from CANONICAL FIGURES (the broker's figure where the broker gave one, else the analysis bridge) — the cover, key numbers, highlights, prose and the transaction summary all show the same figure.
 14. SDE IS NOT EBITDA. Label every earnings figure with what it is. If the knowledge base gives SDE, say SDE everywhere (cover earningsLabel, metric labels, table row labels, chart titles). Only say EBITDA when the figure is EBITDA.
 15. JURISDICTION. Regulators, licences, permits, taxes and compliance bodies must belong to the business's actual jurisdiction in the knowledge base (country → province/state → municipality). Use the real body's name (e.g. an Ontario dental practice answers to the RCDSO, not a "State Dental Board"). If the jurisdiction is unknown, describe the requirement generically ("provincial/state dental regulator") rather than guessing a country.
 16. icon_stat_row and metric_grid values carry their unit: put "%" / "yrs" / currency in the value string or the unit field — a bare "94" for a retention rate is wrong.
 
 TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the deal):
 17. NEVER INVENT, ESTIMATE OR COMPUTE. Every figure, percentage, count, name, date and year you write must be in the knowledge base. Never work out a new number (no subtotals, averages, shares, growth rates or conversions of your own; never turn a percentage into a dollar amount or back). If a figure is missing, leave that table cell "" or drop the row, year column or chart item; if a chart would be mostly empty, use prose_highlight instead (rule 6). Never add a fiscal year the knowledge base has no figures for.
-18. STATEMENTS AND BRIDGES COME FROM "AUTHORITATIVE FINANCIALS". When that block exists, every financial_table (income statement, historical performance, working capital) and every waterfall_chart / EBITDA or SDE bridge copies its line names, amounts and totals exactly. A bridge starts at the net income shown, uses exactly the add-back lines listed (same amounts, deductions stay deductions) and ends at the total shown — never plug a line or force the total to a different headline figure. Label each total with exactly what it is (Adjusted EBITDA, SDE, reported EBITDA).
-19. NAMES. Customers, suppliers, employees, advisors and partners are named only exactly as the knowledge base names them. A chart or list of customers uses the names on file (or neutral descriptions such as "Regional grocery distributor" where no name is given) — never an invented or guessed company name, and never a share that isn't on file.
-20. DATES AND TENSE. TODAY is given at the top of the knowledge base. A relative date in a fact ("in May", "last year", "next spring") is resolved only against the date the fact was recorded (shown as [recorded Mon YYYY]) — if it can't be pinned down, keep it relative ("recently", "planned for May") and never guess a year. Keep tense: what the seller plans or intends stays a plan, never "completed".
+18. STATEMENTS AND BRIDGES COME FROM "AUTHORITATIVE FINANCIALS". When that block exists, every financial_table (income statement, historical performance, working capital) and every waterfall_chart / EBITDA or SDE bridge copies its line names, amounts and totals exactly. A bridge starts at the net income shown, uses exactly the add-back lines listed (same amounts, deductions stay deductions) and ends at the total shown — never plug a line or force the total to a different headline figure. Label each total with exactly what it is (Adjusted EBITDA, SDE, reported EBITDA). When the block says no bridge is available, draw no bridge or waterfall and list no add-back amounts anywhere.
+19. NAMES. Customers, suppliers, employees, advisors and partners are named only exactly as the knowledge base names them. A chart or list of customers uses the names on file (or the facts' own description, such as "dairy co-op", where no name is given) — never an invented or guessed company name, and never a share that isn't on file. A customer's rank or badge ("Top 5", "#2", "second-largest"), its region, what it buys and its contract terms come only from the facts about THAT customer: an aggregate ("top 5 = 47%") says nothing about which customers are in the top five.
+20. DATES AND TENSE. TODAY is given at the top of the knowledge base. A relative date in a fact ("in May", "last year", "next spring", "within one year", "before his next birthday") is resolved only against the date the fact was recorded (shown as [recorded Mon YYYY]) — if it can't be pinned down, keep it relative ("recently", "planned for May") and never guess a year. A target TODAY has reached or passed (a fact marked [date has arrived]) is never presented as a future target: restate it from the recorded date ("the owner planned to sell within a year of late 2025") or leave the date out. Keep tense: what the seller plans or intends stays a plan, never "completed".
 21. The cover's "Prepared by" and date are added by the system from the brokerage's settings — never fill them. Never name the seller's accountant, lawyer, banker or other advisors as the author of the CIM.
-22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead.`;
+22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead.
+23. FACTS ONLY — NO OUTSIDE KNOWLEDGE. Write only what the knowledge base says about this business. Never add market statistics, industry sizes, port or traffic volumes, equipment prices, typical costs, competitor counts, customer tenures or any other "general knowledge", even as background or as a round figure — a buyer reads every sentence as a claim about this deal. Describe the market and competition only through the facts on file.
+24. PEOPLE. Never assume anyone's gender. Use the person's name or role (or "they") unless the knowledge base itself says he or she for that person.
+25. THE SELLER'S WORDS. Facts are often recorded as the seller said them. Write them as clean, buyer-facing figures without changing the meaning ("six-point-something years" → "just over six years"; never quote casual phrasing). Give a growth rate only with the period the knowledge base states for it (GROWTH lists the exact periods) — a two-year change is never "year-over-year".`;
 
 /**
  * buildKnowledgeBase
@@ -1003,13 +1114,6 @@ TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the de
 export function buildKnowledgeBase(params: Parameters<typeof generateCimLayout>[0]): string {
   return assembleKnowledgeBase(params).text;
 }
-
-const MONTHS = "january|february|march|april|may|june|july|august|september|october|november|december|jan|feb|mar|apr|jun|jul|aug|sep|sept|oct|nov|dec";
-/** Wording whose meaning depends on when it was said ("in May", "last year", "next spring"). */
-const RELATIVE_TIME = new RegExp(
-  String.raw`\b(?:last|next|this|coming|past|previous)\s+(?:year|month|quarter|spring|summer|fall|autumn|winter|week)\b|\b(?:recently|ago|upcoming|later this year|earlier this year)\b|\b(?:in|by|since|until|from|around|early|late|mid|end of)\s+(?:${MONTHS})\b(?![\s,.-]*(?:\d{1,2}(?:st|nd|rd|th)?[\s,]*)?\d{4})`,
-  "i",
-);
 
 function recordedMonth(iso: string | undefined): string | null {
   if (!iso) return null;
@@ -1030,12 +1134,40 @@ const YEAR_FIX_WARNING = (items: string[]) =>
 const PERSONAL_DETAIL_WARNING = (keys: string[]) =>
   `Held back from the CIM for your review: ${keys.map((k) => `"${formatKey(k)}"`).join(", ")} ${keys.length === 1 ? "mentions" : "mention"} a personal health or family detail. The CIM was written without it. If a buyer may see it, move it into a fact yourself; otherwise record it as a private note.`;
 
+const CONFIDENTIAL_WARNING = (holds: ConfidentialHold[]) => {
+  const items = holds.slice(0, 4).map((h) => {
+    const c = h.clauses[0] ?? "";
+    return `"${formatKey(h.key)}" (${c.length > 100 ? `${c.slice(0, 97)}…` : c})`;
+  });
+  return `Kept out of the CIM because the facts mark it confidential: ${items.join("; ")}${holds.length > 4 ? `; and ${holds.length - 4} more` : ""}. If a buyer may see it, remove the confidential note from the fact on the Information tab and regenerate.`;
+};
+
+const STALE_TIMELINE_WARNING = (items: string[]) =>
+  `Timeline to confirm with the seller: ${items.join("; ")} — that date has arrived or passed, so the CIM doesn't present it as a future target. Update the fact on the Information tab.`;
+
+/** What assembling the knowledge base produced, beyond the text itself. */
+export interface AssembledKb {
+  text: string;
+  /** The blocks that are a source of figures (the figure check's reference). */
+  sourceText: string;
+  warnings: string[];
+  held: HeldFact[];
+  /** The one adjusted EBITDA / SDE (earnings-canon.ts): the broker's figure, else the bridge's. */
+  canon: EarningsCanon | null;
+  /** The analysis as the writer got it (a bridge the broker's figure overrules left out). */
+  financials: CimFinancials | null;
+  growth: CimGrowth[];
+  /** Names the facts mark confidential. */
+  heldNames: string[];
+}
+
 /**
  * The knowledge base plus what assembling it flagged for the broker:
- * personal details held back and headline figures that disagree with the
- * financial analysis.
+ * personal details and confidential items held back, earnings figures that
+ * aren't the bridge's, restated statement years and headline figures that
+ * disagree with the financial analysis.
  */
-export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; sourceText: string; warnings: string[]; held: HeldFact[] } {
+export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const parts: string[] = [];
   // Blocks the writer sees but that are no source of figures (CRM/website
   // leads, earlier AI drafts, the unverified scrape, house style, engagement
@@ -1047,6 +1179,15 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
   };
   const warnings: string[] = [];
   const today = params.today ?? new Date();
+  // ONE adjusted EBITDA / SDE (earnings-canon.ts): the broker's resolved or
+  // own figure, else the analysis bridge's; a bridge part the broker's figure
+  // overrules is left out of what the writer gets.
+  const canon = earningsCanon(params.financials, params.askingPrice, {
+    extractedInfo: params.extractedInfo,
+    resolved: params.resolvedDiscrepancies,
+  });
+  const fin: CimFinancials | null = canon ? canon.financials : params.financials ?? null;
+  const earningsHeld: EarningsHold[] = [];
 
   parts.push(`TODAY: ${today.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" })} (resolve relative dates against the recorded date or today — rule 20)`);
   parts.push(`BUSINESS: ${params.businessName}`);
@@ -1057,12 +1198,12 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
   // every section copies the same number and the right regulator (rules
   // 13–15). The scan is by key pattern because the interview agent's keys
   // are bespoke per deal.
-  const canonical = collectCanonicalFigures(params);
+  const canonical = collectCanonicalFigures(params, canon);
   if (canonical.length > 0) {
     parts.push("\nCANONICAL FIGURES (copy these exact values everywhere they appear):");
     for (const line of canonical) parts.push(line);
   }
-  const conflicts = figureConflicts(params);
+  const conflicts = figureConflicts(params, canon);
   if (conflicts.length > 0) {
     for (const c of conflicts) parts.push(`NOTE: ${c} — statement tables and the bridge use the financial analysis figures (rule 18); do not reconcile them yourself.`);
     warnings.push(...conflicts.map((c) => `Figures disagree: ${c}. The CIM's tables and bridge show the analysis figures — reconcile the fact or the analysis before publishing.`));
@@ -1074,20 +1215,43 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
   }
 
   const held: HeldFact[] = [];
+  const confidential: ConfidentialHold[] = [];
+  let heldNames: string[] = [];
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     // "_"-prefixed keys (broker-private notes, provenance) and per-source
     // notes (a source's summary / red flags / to-dos) never feed CIM
     // generation; facts only a CRM note, the website or social media
     // asserted are leads, listed apart so they're never written as fact.
-    // Personal health / family details are cut before the writer sees them.
+    // Personal health / family details and clauses marked confidential are
+    // cut before the writer sees them, and so is any earnings figure that
+    // isn't the bridge's.
     const split = splitFactsForCim(params.extractedInfo);
-    const confirmed = screenFactsForCim(split.confirmed);
-    const leads = screenFactsForCim(split.leads);
-    held.push(...confirmed.held, ...leads.held);
+    // Screened together (a confidential name in a lead also holds it in the
+    // facts); "c:" / "l:" keep a by-year map's confirmed and lead years apart.
+    const tag = (p: string, pairs: Array<[string, unknown]>) => pairs.map(([k, v]) => [`${p}${k}`, v] as [string, unknown]);
+    const untag = (k: string) => k.slice(2);
+    const keepOut = params.keepOut ?? keepOutFromNotes(params.extractedInfo);
+    if (params.keepOut?.warning) warnings.push(params.keepOut.warning);
+    // Clause holds are by fact key: the review names untagged keys.
+    const tagged = (p: string): KeepOut => ({ ...keepOut, clauses: keepOut.clauses.map((c) => ({ ...c, key: `${p}${c.key}` })) });
+    const screened = screenFactsForCim([...tag("c:", split.confirmed), ...tag("l:", split.leads)], {
+      ...keepOut,
+      clauses: [...tagged("c:").clauses, ...tagged("l:").clauses],
+    });
+    held.push(...screened.held.map((h) => ({ ...h, key: untag(h.key) })));
+    confidential.push(...screened.confidential.map((h) => ({ ...h, key: untag(h.key) })));
+    heldNames = screened.heldNames;
+    const earn = screenEarningsFacts(screened.safe, canon, (k) => formatKey(untag(k)));
+    earningsHeld.push(...earn.held);
+    const confirmedSafe = earn.safe.filter(([k]) => k.startsWith("c:")).map(([k, v]) => [untag(k), v] as [string, unknown]);
+    const leadsSafe = earn.safe.filter(([k]) => k.startsWith("l:")).map(([k, v]) => [untag(k), v] as [string, unknown]);
     const sources = getFieldSources(params.extractedInfo);
     const yearFixes: string[] = [];
+    const stale: string[] = [];
     const line = (key: string, value: unknown) => {
-      let text = factValueText(value);
+      // The seller's spoken figures as clean wording ("six-point-something
+      // years" → "just over 6 years"), meaning unchanged.
+      let text = normalizeSpokenFigures(factValueText(value));
       // A year the seller never said ("in May" → "May 2025") is taken out;
       // the writer gets their sentence for the tense and never adds a year.
       let said = "";
@@ -1099,40 +1263,79 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
         said = ` [the seller named the month but no year — never add one${quote ? `; keep their tense: "${quote}"` : ""}]`;
         yearFixes.push(`"${formatKey(key)}" (${fix.changes.join("; ")})`);
       }
-      const when = !fix && RELATIVE_TIME.test(text) ? recordedMonth(sources[key]?.at) : null;
-      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}${said}`;
+      const when = !fix && hasRelativeTime(text) ? recordedMonth(sources[key]?.dated ?? sources[key]?.at) : null;
+      // A target TODAY has reached ("before next birthday (fall 2026)" read
+      // in September 2026) is marked, never repeated as a future date.
+      const past = staleTargets(text, today);
+      if (past.length > 0) stale.push(`"${formatKey(key)}" says ${past.map((p) => `"${p.phrase}"`).join(", ")}`);
+      const arrived = past.length > 0 ? ` [date has arrived: ${past.map((p) => p.period).join(", ")} is not in the future any more — do not present it as a target]` : "";
+      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}${said}${arrived}`;
     };
     // A value that is an extractor's working-out ("$2,649,200 (calculated as …
     // wait, recalculating …)") is not a figure: its stray numbers would pass
     // the figure check. Held back until the broker fixes the fact.
-    const unfinished = confirmed.safe.filter(([, v]) => WORKING_OUT.test(factValueText(v))).map(([k]) => k);
+    const unfinished = confirmedSafe.filter(([, v]) => WORKING_OUT.test(factValueText(v))).map(([k]) => k);
     if (unfinished.length > 0) warnings.push(UNFINISHED_FACT_WARNING(unfinished));
-    const usable = confirmed.safe.filter(([k]) => !unfinished.includes(k));
+    const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k));
     if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
       for (const [key, value] of usable) parts.push(line(key, value));
     }
-    if (leads.safe.length > 0) {
+    if (leadsSafe.length > 0) {
       pushOther(`\n--- ${CIM_LEADS_HEADING} ---`);
-      for (const [key, value] of leads.safe) pushOther(line(key, value));
+      for (const [key, value] of leadsSafe) pushOther(line(key, value));
     }
     if (yearFixes.length > 0) warnings.push(YEAR_FIX_WARNING(yearFixes));
+    if (stale.length > 0) warnings.push(STALE_TIMELINE_WARNING(stale));
   }
 
-  const resolvedBlock = renderResolvedBlock(params.resolvedDiscrepancies ?? []);
+  // Resolved discrepancies: an earnings "final value" that isn't the
+  // bridge's would put a second adjusted EBITDA in the CIM (the bridge wins,
+  // and the broker is told), and a confidential one stays out.
+  const resolved = (params.resolvedDiscrepancies ?? []).filter((n) => {
+    const text = `${n.year ? `${n.year} ` : ""}${n.field}: ${n.resolvedValue}`;
+    if (mentionsHeldName(text, heldNames)) return false;
+    if (!canon) return true;
+    const read = /ebitda|sde|discretionary/i.test(text) ? text : "";
+    if (read && offCanon(read, canon).length > 0) {
+      earningsHeld.push({ where: `resolved discrepancy "${n.field}"`, text: n.resolvedValue });
+      return false;
+    }
+    return true;
+  });
+  const resolvedBlock = renderResolvedBlock(resolved);
   if (resolvedBlock) parts.push("\n" + screenText(resolvedBlock));
 
-  const financialsBlock = renderCimFinancialsBlock(params.financials);
+  const financialsBlock = renderCimFinancialsBlock(fin);
   if (financialsBlock) parts.push("\n" + financialsBlock);
+  warnings.push(...restatementWarnings(fin));
+
+  // Earlier drafts and the scrape are read by the writer too: no confidential
+  // sentence and no off-bridge earnings figure survives in them.
+  const cleanFreeText = (text: string) => {
+    let t = screenConfidentialText(screenText(text), heldNames);
+    if (canon) {
+      t = t
+        .split(/\n{2,}/)
+        .map((p) => p.split(/(?<=[.!?])\s+/).filter((s) => offCanon(s, canon).length === 0).join(" "))
+        .filter((p) => p.trim())
+        .join("\n\n");
+    }
+    return t;
+  };
 
   if (params.cimContent && Object.keys(params.cimContent).length > 0) {
-    pushOther("\n--- EARLIER DRAFTS (AI-written wording from the previous version — NOT a source: never copy a figure, name or date from here that the facts above don't have) ---");
     let trimmedDrafts = false;
+    const drafts: string[] = [];
     for (const [key, value] of Object.entries(params.cimContent)) {
       if (!value || !String(value).trim()) continue;
-      const safe = screenText(String(value));
-      if (safe !== String(value)) trimmedDrafts = true;
-      if (safe.trim()) pushOther(`[${formatKey(key)}]\n${safe}`);
+      const safe = cleanFreeText(String(value));
+      if (screenText(String(value)) !== String(value)) trimmedDrafts = true;
+      if (safe.trim()) drafts.push(`[${formatKey(key)}]\n${safe}`);
+    }
+    if (drafts.length > 0) {
+      pushOther("\n--- EARLIER DRAFTS (AI-written wording from the previous version — NOT a source: never copy a figure, name or date from here that the facts above don't have) ---");
+      for (const d of drafts) pushOther(d);
     }
     if (trimmedDrafts) held.push({ key: "earlier CIM drafts", action: "trimmed" });
   }
@@ -1143,7 +1346,8 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
     pushOther("\n--- UNVERIFIED PUBLIC DATA (website/search — never state as fact without a confirmed fact agreeing) ---");
     for (const [key, value] of Object.entries(params.scrapedData)) {
       if (value && String(value).trim()) {
-        pushOther(`${formatKey(key)}: ${screenText(String(value))}`);
+        const safe = cleanFreeText(String(value));
+        if (safe.trim()) pushOther(`${formatKey(key)}: ${safe}`);
       }
     }
   }
@@ -1187,12 +1391,18 @@ export function assembleKnowledgeBase(params: CimLayoutParams): { text: string; 
   }
 
   const heldKeys = held.map((h) => h.key);
+  if (confidential.length > 0) warnings.unshift(CONFIDENTIAL_WARNING(confidential));
   if (heldKeys.length > 0) warnings.unshift(PERSONAL_DETAIL_WARNING(heldKeys));
+  if (canon) warnings.push(...earningsWarnings(canon, earningsHeld));
   return {
     text: parts.join("\n"),
     sourceText: parts.filter((_, i) => !nonSource.has(i)).join("\n"),
     warnings,
     held,
+    canon,
+    financials: fin,
+    growth: cimGrowth(fin, canon),
+    heldNames,
   };
 }
 
@@ -1343,10 +1553,14 @@ function canonicalFacts(params: CimLayoutParams): Array<{ label: string; value: 
   return out;
 }
 
-function collectCanonicalFigures(params: CimLayoutParams): string[] {
-  const out = canonicalFacts(params).map(
-    ({ label, value }) => `${label}: ${value}${label === "SDE" ? "  (this is SDE — label it SDE, not EBITDA)" : ""}`,
+function collectCanonicalFigures(params: CimLayoutParams, canon: EarningsCanon | null = null): string[] {
+  // With an approved bridge, the adjusted EBITDA / SDE (and their margins and
+  // the asking-price multiple) are the bridge's — never a fact's.
+  const facts = canonicalFacts(params).filter((f) => !canon || (f.label !== "EBITDA" && f.label !== "SDE"));
+  const out = facts.map(
+    ({ label, value }) => `${label}: ${normalizeSpokenFigures(value)}${label === "SDE" ? "  (this is SDE — label it SDE, not EBITDA)" : ""}`,
   );
+  if (canon) out.push(...canonLines(canon));
   if (params.askingPrice) out.push(`Asking price: ${params.askingPrice}`);
   return out;
 }
@@ -1356,13 +1570,16 @@ function collectCanonicalFigures(params: CimLayoutParams): string[] {
  * than 1%) with the financial analysis for the same year — surfaced to the
  * broker, never "fixed" by the writer inventing a bridge line.
  */
-export function figureConflicts(params: CimLayoutParams): string[] {
+export function figureConflicts(params: CimLayoutParams, canon: EarningsCanon | null = null): string[] {
   const heads = analysisHeadlines(params.financials);
   if (heads.length === 0) return [];
   const pnl = params.financials?.pnl ?? null;
   const pnlYears = pnl ? Object.keys(pnl).sort() : [];
   const out: string[] = [];
   for (const fact of canonicalFacts(params)) {
+    // Earnings under an approved bridge: the bridge's figure is used and the
+    // fact's is held out with its own warning (earnings-canon.ts).
+    if (canon && (fact.label === "EBITDA" || fact.label === "SDE")) continue;
     const figs = parseFigures(fact.value).filter((f) => f.kind === "money" && f.value > 0);
     if (figs.length === 0) continue;
     const v = figs[0].value;

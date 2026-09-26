@@ -147,8 +147,7 @@ export async function duplicateSection(section: CimSection, opts: { hidden: bool
     },
     { afterSectionId: section.id },
   );
-  await invalidateBlind(section.dealId, [created.id]);
-  return created;
+  return withStaleStamps(created, await invalidateBlind(section.dealId, [created.id]));
 }
 
 // ── Undo stack ───────────────────────────────────────────────────────────
@@ -189,8 +188,17 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
     })
     .where(eq(cimSections.id, section.id))
     .returning();
-  await invalidateBlind(section.dealId, [section.id]);
-  return updated ?? null;
+  const at = await invalidateBlind(section.dealId, [section.id]);
+  return updated ? withStaleStamps(updated, at) : null;
+}
+
+/**
+ * The row as stored once invalidateBlind has run: its blind and DD versions
+ * are stale from `at`. The UPDATE's RETURNING row predates that stamp, so a
+ * PATCH reported ddStaleAt: null while the builder showed "DD stale".
+ */
+export function withStaleStamps<T extends { blindStaleAt?: Date | null; ddStaleAt?: Date | null }>(row: T, at: Date): T {
+  return { ...row, blindStaleAt: at, ddStaleAt: at };
 }
 
 /** The prose the renderer shows (broker edit → body → AI draft). */
@@ -290,8 +298,7 @@ export async function patchCimSection(req: Request, res: Response) {
       .set({ ...set, updatedAt: new Date() })
       .where(eq(cimSections.id, section.id))
       .returning();
-    if (contentChanged) await invalidateBlind(section.dealId, [section.id]);
-    res.json(updated);
+    res.json(contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated);
   } catch (err) {
     console.error("[cim-sections] update failed:", err);
     res.status(500).json({ error: "Failed to update section" });

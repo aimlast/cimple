@@ -31,7 +31,7 @@ import {
   type RewriteLength,
 } from "./layout-engine";
 import { invalidateBlind } from "./blind-sync";
-import { displayedProse, historyWith } from "./section-ops";
+import { displayedProse, historyWith, withStaleStamps } from "./section-ops";
 import { isMediaLayout } from "@shared/cim-media";
 import { cleanMediaLayoutForDeal } from "./media-store";
 
@@ -253,8 +253,8 @@ export async function applyRewrite(section: CimSection): Promise<CimSection | nu
     })
     .where(eq(cimSections.id, section.id))
     .returning();
-  await invalidateBlind(section.dealId, [section.id]);
-  return updated ?? null;
+  const at = await invalidateBlind(section.dealId, [section.id]);
+  return updated ? withStaleStamps(updated, at) : null;
 }
 
 /** Drop a proposal or a failed/finished task marker (never a running one). */

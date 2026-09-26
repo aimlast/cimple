@@ -23,6 +23,7 @@ import { brokerFactsView } from "../information/facts";
 import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
 import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
+import { keepOutFor } from "./keep-out";
 import { hasMonthYear } from "./fact-dates";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
 import { factValueText } from "../information/cim-facts";
@@ -163,6 +164,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // statement tables and bridges are copied from it, never rebuilt.
     financials: buildCimFinancials(pickAnalysisForCim(analyses)),
     factSourceWords,
+    // Items the broker's notes or the facts say must not reach buyers (AI
+    // review + rules, cached per content).
+    keepOut: await keepOutFor(deal.id, extractedInfo),
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({

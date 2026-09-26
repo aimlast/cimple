@@ -1,0 +1,1194 @@
+[
+ {
+  "order": 1,
+  "sectionKey": "cover_page",
+  "sectionTitle": "Pacific Coast Logistics Ltd.",
+  "layoutType": "cover_page",
+  "layoutData": {
+   "date": "September 2026",
+   "ebitda": "$3,900,000",
+   "revenue": "$31,020,000",
+   "tagline": "Regional Trucking & Temperature-Controlled Logistics Leader",
+   "industry": "Transportation & Logistics",
+   "location": "Surrey, BC",
+   "askingPrice": "$18,000,000",
+   "businessName": "Pacific Coast Logistics Ltd.",
+   "earningsLabel": "Adjusted EBITDA",
+   "confidentialLabel": "Confidential Information Memorandum"
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "cover",
+   "overview"
+  ]
+ },
+ {
+  "order": 2,
+  "sectionKey": "investment_highlights",
+  "sectionTitle": "Investment Highlights",
+  "layoutType": "metric_grid",
+  "layoutData": {
+   "columns": 3,
+   "metrics": [
+    {
+     "delta": "+6.3%",
+     "label": "Annual Revenue",
+     "trend": "up",
+     "value": "$31,020,000",
+     "footnote": "FY2024",
+     "highlight": true
+    },
+    {
+     "label": "Adjusted EBITDA",
+     "trend": "up",
+     "value": "$3,900,000",
+     "footnote": "FY2024",
+     "highlight": true
+    },
+    {
+     "label": "EBITDA Margin",
+     "trend": "up",
+     "value": "12.6%",
+     "footnote": "FY2024"
+    },
+    {
+     "label": "Fleet Size",
+     "value": "71 power units, 160 trailers",
+     "footnote": "52 owned, 19 leased tractors"
+    },
+    {
+     "label": "Total Employees",
+     "value": "148",
+     "footnote": "96 drivers, 52 staff as of December 31, 2024"
+    },
+    {
+     "label": "Years in Operation",
+     "value": "34 years",
+     "footnote": "Established 1991"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "overview",
+   "financials",
+   "metrics"
+  ]
+ },
+ {
+  "order": 3,
+  "sectionKey": "executive_summary",
+  "sectionTitle": "Executive Summary",
+  "layoutType": "prose_highlight",
+  "layoutData": {
+   "body": "Pacific Coast Logistics Ltd. is a well-established regional transportation and warehousing company serving British Columbia and the Pacific Northwest from its 110,000-square-foot facility in Surrey, BC. Founded in 1998 and built on a foundation that began with the purchase of the first truck in 1991, the company has grown into a diversified logistics provider with annual revenue of $31,020,000 and a fleet of 71 power units, 160 trailers, and a team of 148 employees.\n\nThe business operates across four complementary service lines. Dry van truckload and regional distribution generated $13,560,000 in FY2024, serving customers across BC and Washington State with reliable linehaul and local delivery. Temperature-controlled transport, the company's second-largest division at $8,410,000, provides reefer services to grocery distributors, produce shippers, and food processors with a fleet of 46 refrigerated trailers equipped with real-time temperature monitoring. The 3PL warehousing and cross-dock operation contributed $6,720,000, offering 12,400 pallet positions including 22,000 square feet of dedicated cooler space operating at 88 percent occupancy. Port of Vancouver container drayage, at $2,330,000, rounds out the service portfolio and is being strategically refined to focus on the most profitable lanes.\n\nPacific Coast Logistics has built a strong market position through long-term customer relationships that span two to three decades in many cases. The company serves over 300 active customers, with the largest account representing 22 percent of revenue under a master service agreement running through March 2027. The customer base is well diversified across food distribution and grocery, building supply, beverage, pet food, furniture, and dairy sectors, with food-related freight representing approximately 50 percent of total business. This diversification, combined with meaningful scale in anchor accounts, has provided revenue stability and consistent performance through economic cycles.\n\nThe company's competitive strengths are grounded in operational reliability and deep customer trust. During the November 2021 BC floods that severed major highway routes, Pacific Coast kept grocery store shelves stocked by running trucks through back roads and secondary routes while competitors stood down, cementing relationships that have lasted seventeen years and longer. The fleet is modern, with an average tractor age of approximately three years, and the warehouse facility\u2014secured under a lease running to September 2037 with two five-year renewal options\u2014provides both scale and flexibility for growth. The business holds a Satisfactory safety rating from the National Safety Code, achieved a 9.4 percent out-of-service rate in 2024 well below the national average, and operates as a non-union shop with an 18 percent driver turnover rate, significantly lower than industry norms.\n\nWith 34 years of operating history, established infrastructure, and a proven track record of adapting to market conditions, Pacific Coast Logistics represents a rare opportunity to acquire a profitable, diversified logistics platform with embedded customer relationships, modern assets, and clear pathways for organic growth and operational leverage.",
+   "pullQuote": "During the November 2021 BC floods, Pacific Coast kept grocery stores supplied by running trucks through back roads when competitors stood down\u2014seventeen years of trust, proven when it mattered most.",
+   "highlights": [
+    "$31,020,000 annual revenue across four complementary service lines",
+    "Over 300 customers with largest account at 22% under contract through March 2027",
+    "110,000 sq ft facility in Surrey, BC with lease secured to September 2037",
+    "Modern fleet: 71 power units, 160 trailers, average tractor age ~3 years",
+    "Satisfactory NSC safety rating, 9.4% out-of-service rate, 18% driver turnover",
+    "34-year operating history with proven crisis performance and customer loyalty"
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "overview",
+   "narrative"
+  ]
+ },
+ {
+  "order": 4,
+  "sectionKey": "revenue_breakdown",
+  "sectionTitle": "Revenue by Service Line",
+  "layoutType": "horizontal_bar_chart",
+  "layoutData": {
+   "data": [
+    {
+     "name": "Dry Van Truckload & Regional Distribution",
+     "value": "$13,560,000"
+    },
+    {
+     "name": "Temperature-Controlled (Reefer) Transport",
+     "value": "$8,410,000"
+    },
+    {
+     "name": "3PL Warehousing, Cross-Dock & Handling",
+     "value": "$6,720,000"
+    },
+    {
+     "name": "Port of Vancouver Container Drayage",
+     "value": "$2,330,000"
+    }
+   ],
+   "unit": "$",
+   "yLabel": "Service Line",
+   "relatedSections": [
+    "service_capabilities",
+    "warehousing_services"
+   ],
+   "showPercentages": true
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "financials",
+   "revenue"
+  ]
+ },
+ {
+  "order": 5,
+  "sectionKey": "financial_performance",
+  "sectionTitle": "Historical Financial Performance",
+  "layoutType": "financial_table",
+  "layoutData": {
+   "rows": [
+    {
+     "bold": true,
+     "label": "Revenue",
+     "values": [
+      "$28,640,000",
+      "$29,180,000",
+      "$31,020,000"
+     ]
+    },
+    {
+     "label": "Cost of sales",
+     "values": [
+      "$20,948,200",
+      "$20,612,900",
+      "$21,706,300"
+     ]
+    },
+    {
+     "label": "Gross profit",
+     "values": [
+      "$7,691,800",
+      "$8,567,100",
+      "$9,313,700"
+     ],
+     "isTotal": true
+    },
+    {
+     "label": "Gross margin",
+     "indent": true,
+     "values": [
+      "26.9%",
+      "29.4%",
+      "30.0%"
+     ]
+    },
+    {
+     "label": "Operating expenses",
+     "values": [
+      "$4,282,000",
+      "$5,505,500",
+      "$5,694,500"
+     ]
+    },
+    {
+     "label": "EBITDA (as reported)",
+     "values": [
+      "$3,409,800",
+      "$3,061,600",
+      "$3,619,200"
+     ],
+     "isTotal": true
+    },
+    {
+     "label": "EBITDA margin",
+     "indent": true,
+     "values": [
+      "11.9%",
+      "10.5%",
+      "11.7%"
+     ]
+    },
+    {
+     "label": "Depreciation & amortization",
+     "values": [
+      "$1,720,000",
+      "$1,880,000",
+      "$1,950,000"
+     ]
+    },
+    {
+     "label": "Interest expense",
+     "values": [
+      "$268,000",
+      "$412,000",
+      "$395,000"
+     ]
+    },
+    {
+     "label": "Income before taxes",
+     "values": [
+      "$1,539,800",
+      "$841,600",
+      "$1,266,200"
+     ]
+    },
+    {
+     "label": "Income taxes",
+     "values": [
+      "$423,900",
+      "$175,685",
+      "$293,240"
+     ]
+    },
+    {
+     "bold": true,
+     "label": "Net income",
+     "values": [
+      "$1,115,900",
+      "$665,915",
+      "$972,960"
+     ],
+     "isTotal": true
+    }
+   ],
+   "caption": "Fiscal years ended December 31",
+   "headers": [
+    "",
+    "FY2022",
+    "FY2023",
+    "FY2024"
+   ],
+   "currency": "CAD",
+   "footnotes": [
+    "Source: Review engagement financial statements prepared by Harmon Bains LLP (FY2022\u2013FY2024). Operating expenses include one-time items: facility relocation costs $186,000 (FY2022), union certification legal fees $58,000 (FY2023), TMS migration $72,000 and wrongful dismissal settlement $55,000 (FY2024)."
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "financials",
+   "performance"
+  ]
+ },
+ {
+  "order": 6,
+  "sectionKey": "ebitda_normalization",
+  "sectionTitle": "Adjusted EBITDA Analysis",
+  "layoutType": "waterfall_chart",
+  "layoutData": {
+   "unit": "$",
+   "items": [
+    {
+     "type": "start",
+     "label": "Net Income (FY2024)",
+     "value": 972960
+    },
+    {
+     "type": "add",
+     "label": "Interest Expense",
+     "value": 395000
+    },
+    {
+     "type": "add",
+     "label": "Income Taxes",
+     "value": 293240
+    },
+    {
+     "type": "add",
+     "label": "Depreciation & Amortization",
+     "value": 1950000
+    },
+    {
+     "type": "subtract",
+     "label": "Below-Market Yard Rent Adjustment",
+     "value": -78000
+    },
+    {
+     "type": "add",
+     "label": "TMS Migration Consultants (One-Time)",
+     "value": 72000
+    },
+    {
+     "type": "add",
+     "label": "Wrongful Dismissal Settlement (One-Time)",
+     "value": 55000
+    },
+    {
+     "type": "subtract",
+     "label": "Gain on Disposal of Equipment",
+     "value": -64000
+    },
+    {
+     "type": "total",
+     "label": "Adjusted EBITDA (FY2024)",
+     "value": 3596200
+    }
+   ],
+   "currency": "CAD"
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "financials",
+   "ebitda"
+  ]
+ },
+ {
+  "order": 7,
+  "sectionKey": "revenue_trend",
+  "sectionTitle": "Revenue & EBITDA Growth",
+  "layoutType": "line_chart",
+  "layoutData": {
+   "data": [
+    {
+     "name": "FY2022",
+     "revenue": 28640000,
+     "adjustedEbitda": 3517800
+    },
+    {
+     "name": "FY2023",
+     "revenue": 29180000,
+     "adjustedEbitda": 3041600
+    },
+    {
+     "name": "FY2024",
+     "revenue": 31020000,
+     "adjustedEbitda": 3596200
+    }
+   ],
+   "unit": "$",
+   "series": [
+    {
+     "key": "revenue",
+     "color": "#2563eb",
+     "label": "Revenue"
+    },
+    {
+     "key": "adjustedEbitda",
+     "color": "#10b981",
+     "label": "Adjusted EBITDA"
+    }
+   ],
+   "xLabel": "Fiscal Year",
+   "yLabel": "Amount (CAD)",
+   "relatedSections": [
+    "financial_performance",
+    "ebitda_bridge"
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "financials",
+   "growth"
+  ]
+ },
+ {
+  "order": 8,
+  "sectionKey": "customer_base",
+  "sectionTitle": "Customer Concentration & Relationships",
+  "layoutType": "two_column",
+  "layoutData": {
+   "left": {
+    "title": "Customer Diversification",
+    "content": "Pacific Coast Logistics serves a diversified base of over 300 active customers across British Columbia and the Pacific Northwest. The largest customer, Alderbrook Grocery Distributors, represents 22.0 percent of annual revenue under a master service agreement that runs through March 2027. The relationship with Alderbrook spans seventeen years, beginning in 2009, and was strengthened significantly during the 2021 BC floods when Pacific Coast maintained reliable store deliveries by routing trucks through back roads while drivers slept in their cabs to keep supply lines open.\n\nThe second-largest account, Kestrel Building Supply, contributes approximately 8 percent of revenue, and no other single customer exceeds 10 percent of total volume. The top five customers together account for 47 percent of annual revenue, the top ten represent 63.5 percent, and the remaining balance is distributed across 342 smaller accounts.\n\nThe customer mix spans food distribution and grocery, building supply, beverage, pet food, furniture, and dairy sectors. Food-related freight represents approximately 50 percent of the business, reflecting the company's strength in temperature-controlled logistics and its long-standing relationships with grocery and produce distributors. This diversification provides revenue stability while maintaining meaningful scale with anchor accounts that have been with the company for twenty to twenty-five years.",
+    "layoutType": "prose"
+   },
+   "right": {
+    "title": "Major Customer Accounts",
+    "content": {
+     "items": [
+      {
+       "badge": "22.0%",
+       "title": "Alderbrook Grocery Distributors Ltd.",
+       "highlight": true,
+       "description": "22.0% of FY2024 revenue. Customer since 2009. Three-year master service agreement renewed April 2024, expires March 2027. Store deliveries (reefer and dry) and produce cross-docking. Relationship held by President Harjit Grewal with VP Logistics Doug Fairweather."
+      },
+      {
+       "badge": "~8%",
+       "title": "Kestrel Building Supply",
+       "description": "~8% of FY2024 revenue. Building materials distribution. Rates reset January 2026."
+      },
+      {
+       "badge": "Top 5",
+       "title": "Tidewater Beverage Co.",
+       "description": "Warehousing agreement expires June 30, 2026. Currently in renewal discussions. 2,800 pallet positions dry storage plus regional delivery."
+      },
+      {
+       "badge": "Top 5",
+       "title": "Dairy Co-op",
+       "description": "Temperature-controlled transport. Multi-year relationship. Annual rate sheets."
+      },
+      {
+       "badge": "Top 10",
+       "title": "Fraser Valley Produce Importer",
+       "description": "Cross-dock and refrigerated transport. Seasonal volume fluctuations."
+      },
+      {
+       "badge": "Top 10",
+       "title": "Regional Pet Food Distributor",
+       "description": "Dry van regional distribution. Evergreen service agreement."
+      }
+     ],
+     "style": "card",
+     "columns": 1
+    },
+    "layoutType": "callout_list"
+   },
+   "title": null
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "customers"
+  ]
+ },
+ {
+  "order": 9,
+  "sectionKey": "competitive_advantages",
+  "sectionTitle": "Competitive Strengths",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "icon": "handshake",
+     "title": "Decades-Long Customer Relationships",
+     "highlight": true,
+     "description": "Pacific Coast has maintained customer relationships spanning twenty to twenty-five years, built on reliability and personal trust. The company's largest customer, Alderbrook Grocery Distributors, has been a partner for seventeen years since 2009, with the relationship held personally by the founder and reinforced through direct engagement with key decision-makers. These enduring partnerships provide revenue stability and insulate the business from price-only competition."
+    },
+    {
+     "icon": "shield-check",
+     "title": "Proven Crisis Performance",
+     "highlight": true,
+     "description": "During the November 2021 BC floods that severed major highway routes, Pacific Coast kept Alderbrook stores supplied by running trucks through back roads and drivers sleeping in cabs to maintain delivery schedules. This crisis performance demonstrated operational resilience and deepened customer loyalty, with the company's thirty-four-year track record showing it has never missed critical deliveries. Customers know they can rely on Pacific Coast when supply chains are under stress."
+    },
+    {
+     "icon": "grid",
+     "title": "Diversified Service Offering",
+     "description": "The company operates across four revenue streams\u2014dry van regional trucking, temperature-controlled transport, 3PL warehousing and cross-dock, and port drayage\u2014serving over 300 active customers in food distribution, building supply, beverage, pet food, furniture, and dairy sectors. This diversification reduces reliance on any single service line or customer segment, with the largest customer representing 22 percent of revenue and the top five totaling 47 percent. The mix of asset-based trucking and warehousing provides operational flexibility and higher-margin growth opportunities."
+    },
+    {
+     "icon": "truck",
+     "title": "Modern Fleet & Facility Infrastructure",
+     "description": "Pacific Coast operates a well-maintained fleet averaging approximately three years for power units, with 71 tractors and 160 trailers housed in a 110,000 square foot purpose-built warehouse facility that includes 22,000 square feet of temperature-controlled storage. The facility, under lease through September 2037 with two five-year renewal options, features 42 dock doors, 32-foot clear height, and modern racking for 12,400 pallet positions. This infrastructure supports both current operations and planned expansion, including landlord-approved capacity for an additional 15,000 square feet of cooler space."
+    },
+    {
+     "icon": "award",
+     "badge": "Satisfactory NSC",
+     "title": "Strong Safety & Compliance Record",
+     "description": "The company holds a Satisfactory rating from the National Safety Code with NSC BC certificate 20-487-316, and achieved a 9.4 percent out-of-service rate in FY2024, well below industry averages. Pacific Coast operates with Samsara AI dash cameras in every tractor since 2022, completed a clean compliance review in June 2023, and maintains WorkSafeBC COR certification since 2019. The safety program includes driver training, telematics monitoring, and regular audits, resulting in only three reportable collisions in 2024 with one preventable incident."
+    },
+    {
+     "icon": "users",
+     "title": "Non-Union Workforce with Low Turnover",
+     "description": "Pacific Coast operates with a non-union workforce of 96 company drivers and 52 staff, following a union organizing vote in 2023 in which drivers voted no. The company maintains an 18 percent driver turnover rate in FY2024, well below industry norms, with twenty-four drivers having over ten years of service and average driver tenure of six-point-something years. Competitive compensation including extended health, dental, and 3 percent RRSP match, combined with stable work and long-term customer relationships, support workforce retention and operational continuity."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "strengths"
+  ]
+ },
+ {
+  "order": 10,
+  "sectionKey": "fleet_equipment",
+  "sectionTitle": "Fleet & Equipment",
+  "layoutType": "icon_stat_row",
+  "layoutData": {
+   "stats": [
+    {
+     "label": "Power Units",
+     "value": "71",
+     "description": "52 owned, 19 on operating lease"
+    },
+    {
+     "label": "Trailers",
+     "value": "160",
+     "description": "94 dry vans, 46 reefers, 20 chassis"
+    },
+    {
+     "unit": "forklifts",
+     "label": "Warehouse Equipment",
+     "value": "22",
+     "description": "18 propane, 4 electric reach trucks"
+    },
+    {
+     "label": "Average Tractor Age",
+     "value": "~3 years",
+     "description": "Highway tractors ~2.8 years"
+    },
+    {
+     "label": "Owned Tractors",
+     "value": "52",
+     "description": "Plus 19 leased from Westline"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "assets"
+  ]
+ },
+ {
+  "order": 11,
+  "sectionKey": "fleet_detail",
+  "sectionTitle": "Fleet Composition",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "badge": "56 Units",
+     "title": "Highway Tractors",
+     "description": "56 Class 8 highway tractors for regional and long-haul operations. Fleet includes Volvo VNL 760, Kenworth T680, and Freightliner Cascadia 126 models. Average age approximately 2.8 years, with units on a five-to-six-year replacement cycle."
+    },
+    {
+     "badge": "15 Units",
+     "title": "Day Cabs & Straight Trucks",
+     "description": "15 units for local delivery and specialized applications: 11 day cab tractors (International LT625, Freightliner Cascadia 116) with average age 4\u20135 years, plus 4 Hino 338 straight trucks equipped with Thermo King T-880R refrigeration units for grocery delivery."
+    },
+    {
+     "badge": "160 Trailers",
+     "title": "Trailer Fleet",
+     "description": "160 trailers supporting diversified service lines. 94 dry van trailers from Manac, Utility, and Great Dane (2017\u20132023 vintage). 46 refrigerated trailers: Utility 3000R units with Carrier X4 7300 and Thermo King Precedent S-700 refrigeration (14 units from 2011\u20132014 require near-term replacement). 20 Stoughton container chassis for port drayage."
+    },
+    {
+     "badge": "22 Units + Racking",
+     "title": "Warehouse & Yard Equipment",
+     "description": "18 propane forklifts (Hyster H50FT, Toyota 8FGU30, Toyota 8FGCU25) for general warehouse work. 4 electric reach trucks (Crown RR 5700) for temperature-controlled cooler operations. 2 Kalmar Ottawa T2 yard tractors. Warehouse racking includes 6,800 ambient positions relocated from former premises in 2014, plus 5,600 new positions (3,100 in cooler) with pick modules, carton-flow racking, and pallet-flow lanes."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "assets"
+  ]
+ },
+ {
+  "order": 12,
+  "sectionKey": "facility_lease",
+  "sectionTitle": "Facility & Real Estate",
+  "layoutType": "location_card",
+  "layoutData": {
+   "locations": [
+    {
+     "sqft": "110,000 sq ft",
+     "label": "Primary Operations & Distribution Centre",
+     "notes": "Facility includes 22,000 sq ft temperature-controlled cooler, 8,500 sq ft two-storey office, 42 dock-level loading doors, 2 grade-level drive-in doors, 32-foot clear ceiling height, ESFR sprinklers, exclusive use of truck court and trailer parking on 7.2-acre site. Additional rent approximately $3.90 per sq ft for property taxes, insurance and common area costs. Landlord has pre-approved in principle up to 15,000 sq ft cooler expansion.",
+     "address": "19220 Campbell Ridge Drive, Surrey, BC V3Z 1K4",
+     "leaseType": "15-year lease",
+     "annualRent": "$1,897,500",
+     "leaseExpiry": "September 30, 2037",
+     "monthlyRent": "$158,125",
+     "renewalOptions": "Two 5-year renewal options at fair market rent (9\u201312 months prior written notice required)"
+    }
+   ],
+   "totalSqft": "110,000 sq ft"
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "real_estate"
+  ]
+ },
+ {
+  "order": 13,
+  "sectionKey": "warehouse_operations",
+  "sectionTitle": "Warehousing & 3PL Services",
+  "layoutType": "stat_callout",
+  "layoutData": {
+   "accentColor": "#2E7D32",
+   "description": "Pacific Coast operates a full-service 3PL facility offering refrigerated and ambient storage, cross-dock services, and order fulfillment from its 110,000 square foot warehouse in Surrey. The temperature-controlled cooler serves grocery distributors and produce importers with 3,100 dedicated pallet positions, while the ambient dry storage provides 6,800 positions for general freight. Revenue is generated through a blended model of per-pallet monthly storage fees, handling charges for inbound and outbound movements, and pick fees for fulfillment services. Warehousing has been the fastest-growing segment, expanding 35 percent year-over-year in FY2024 and contributing higher margins than the trucking operations. The facility operates at 88 percent occupancy with capacity for organic growth and landlord pre-approval for an additional 15,000 square feet of cooler expansion.",
+   "primaryLabel": "Warehousing & 3PL Revenue FY2024",
+   "primaryValue": "$6.72M",
+   "secondaryStats": [
+    {
+     "label": "Share of Total Revenue",
+     "value": "22%"
+    },
+    {
+     "label": "Total Pallet Positions",
+     "value": "12,400"
+    },
+    {
+     "label": "Current Occupancy",
+     "value": "88%"
+    },
+    {
+     "label": "Temperature-Controlled Space",
+     "value": "22,000 sq ft"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "warehousing"
+  ]
+ },
+ {
+  "order": 14,
+  "sectionKey": "operations_overview",
+  "sectionTitle": "Service Capabilities",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "badge": "$13.56M FY2024",
+     "title": "Dry Van Regional Transportation",
+     "highlight": true,
+     "description": "General freight and regional distribution throughout British Columbia and Washington State. Linehaul and regional highway operations supported by 38 drivers (34 full-time, 4 part-time) delivering to stores, distribution centers, and commercial accounts. Routes include Vancouver to Interior BC, Fraser Valley, and cross-border lanes to Seattle and Spokane. Fleet of 94 dry van trailers from premium manufacturers including Manac, Utility, and Great Dane. Rates of $2.40\u2013$2.65 per mile all-in."
+    },
+    {
+     "badge": "$8.41M FY2024",
+     "title": "Temperature-Controlled Transport",
+     "highlight": true,
+     "description": "Refrigerated and climate-controlled logistics serving grocery distributors, produce importers, dairy cooperatives, and food manufacturers. Fleet of 46 reefer trailers equipped with Carrier X4 7300 and Thermo King Precedent S-700 units, all monitored by real-time temperature telematics. Dedicated team of 18 drivers (16 full-time, 2 part-time) specializing in grocery store deliveries and produce cross-docking. Strong presence in BC food supply chain with established relationships spanning up to 17 years. Rates of $2.75\u2013$3.10 per mile."
+    },
+    {
+     "badge": "$6.72M FY2024",
+     "title": "3PL Warehousing & Cross-Dock",
+     "description": "Full-service warehousing and fulfillment from 110,000 square foot facility at 19220 Campbell Ridge Drive, Surrey. Capacity of 12,400 pallet positions including 22,000 square foot temperature-controlled cooler with 3,100 positions. Services include per-pallet storage (cooler $18\u201322/pallet/month, ambient $12\u201316), handling fees per pallet in/out, pick and pack fulfillment, cross-dock and transload operations. Magaya WMS with customer portal for real-time inventory visibility. 88% occupancy rate with warehouse team of 30 led by experienced manager. Revenue mix approximately 60% storage, 40% handling and accessorial."
+    },
+    {
+     "badge": "$2.33M FY2024",
+     "title": "Port of Vancouver Container Drayage",
+     "description": "Container transport from Port of Vancouver utilizing fleet of 20 Stoughton container chassis and 14 drivers (11 full-time, 3 part-time). Drayage services for 20-foot, 40-foot, and 45-foot containers at rates of $240\u2013$310 per container. Partners in Protection (CBSA) member since 2016 with 22 FAST-card holders for expedited cross-border clearance. Service line being strategically rationalized to focus on profitable lanes only, with volume declining from $2.78M in FY2022 to $2.33M in FY2024 as lower-margin spot work is eliminated."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "services"
+  ]
+ },
+ {
+  "order": 15,
+  "sectionKey": "management_team",
+  "sectionTitle": "Leadership & Key Personnel",
+  "layoutType": "org_chart",
+  "layoutData": {
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Harjit Grewal",
+     "role": "Founder & President",
+     "notes": "60% owner; manages key customer relationships",
+     "isOwner": true,
+     "isKeyPerson": true,
+     "yearsAtCompany": 34
+    },
+    {
+     "id": "n2",
+     "name": "Manpreet Grewal",
+     "role": "VP Operations",
+     "notes": "25% owner; willing to stay 2\u20133 years post-sale as GM or VP Ops",
+     "isOwner": true,
+     "reportsTo": "n1",
+     "isKeyPerson": true,
+     "yearsAtCompany": 13
+    },
+    {
+     "id": "n3",
+     "name": "Diane Tremblay",
+     "role": "Controller",
+     "notes": "CPA; manages financials and monthly reporting",
+     "isOwner": false,
+     "reportsTo": "n1",
+     "isKeyPerson": true,
+     "yearsAtCompany": 9
+    },
+    {
+     "id": "n4",
+     "name": "Rajvir Dhillon",
+     "role": "Dispatch Manager",
+     "notes": "Oversees 7-person dispatch and load planning team",
+     "isOwner": false,
+     "reportsTo": "n2",
+     "isKeyPerson": true,
+     "yearsAtCompany": 14
+    },
+    {
+     "id": "n5",
+     "name": "Carlos Mendes",
+     "role": "Warehouse Manager",
+     "notes": "Manages 30-person warehouse team",
+     "isOwner": false,
+     "reportsTo": "n2",
+     "isKeyPerson": true,
+     "yearsAtCompany": 6
+    },
+    {
+     "id": "n6",
+     "name": "Tanya Beaulieu",
+     "role": "Safety & Compliance Manager",
+     "notes": "Oversees 2-person safety department; maintains NSC Satisfactory rating",
+     "isOwner": false,
+     "reportsTo": "n2",
+     "isKeyPerson": false,
+     "yearsAtCompany": 8
+    },
+    {
+     "id": "n7",
+     "name": "Dale Kowalczyk",
+     "role": "Shop Foreman",
+     "notes": "Manages 6-person shop team; retiring 2027",
+     "isOwner": false,
+     "reportsTo": "n2",
+     "isKeyPerson": true,
+     "yearsAtCompany": 20
+    },
+    {
+     "id": "n8",
+     "name": "Jason Whitlock",
+     "role": "Business Development Manager",
+     "notes": "Sales and new customer acquisition",
+     "isOwner": false,
+     "reportsTo": "n1",
+     "isKeyPerson": false,
+     "yearsAtCompany": 4
+    },
+    {
+     "id": "n9",
+     "name": "Company Drivers",
+     "role": "96 Class 1 Drivers",
+     "notes": "82 full-time, 14 part-time/spare board; 18% turnover FY2024",
+     "isOwner": false,
+     "reportsTo": "n4",
+     "isKeyPerson": false,
+     "yearsAtCompany": null
+    }
+   ],
+   "title": null,
+   "totalHeadcount": 148,
+   "ownerDependency": "Harjit Grewal holds key customer relationships, particularly with Alderbrook (22% of revenue). Manpreet Grewal's willingness to stay 2\u20133 years post-sale provides significant operational continuity. Harjit committed to 6\u201312 month customer introduction period."
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "people",
+   "management"
+  ]
+ },
+ {
+  "order": 16,
+  "sectionKey": "workforce_overview",
+  "sectionTitle": "Workforce & Culture",
+  "layoutType": "metric_grid",
+  "layoutData": {
+   "columns": 3,
+   "metrics": [
+    {
+     "label": "Total Employees",
+     "value": "148",
+     "footnote": "96 drivers + 52 staff, as of December 31, 2024",
+     "highlight": true
+    },
+    {
+     "label": "Company Drivers",
+     "value": "96",
+     "footnote": "82 full-time, 14 part-time/spare board"
+    },
+    {
+     "delta": "-1.7%",
+     "label": "Driver Turnover Rate",
+     "trend": "down",
+     "value": "18.0%",
+     "footnote": "FY2024; down from 19.7% in FY2023 and 21.8% in FY2022"
+    },
+    {
+     "label": "Average Driver Tenure",
+     "value": "6+ yrs",
+     "footnote": "Six-point-something years across all drivers",
+     "highlight": true
+    },
+    {
+     "label": "Drivers with 10+ Years Service",
+     "value": "24"
+    },
+    {
+     "label": "FAST-Card Holders",
+     "value": "22",
+     "footnote": "Cross-border capable drivers for U.S. lanes"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "people",
+   "operations"
+  ]
+ },
+ {
+  "order": 17,
+  "sectionKey": "safety_compliance",
+  "sectionTitle": "Safety & Compliance",
+  "layoutType": "two_column",
+  "layoutData": {
+   "left": {
+    "title": "Regulatory Standing & Programs",
+    "content": "Pacific Coast Logistics holds a National Safety Code certificate (NSC BC 20-487-316) with a Satisfactory rating, the company's current status following a full compliance review completed in June 2023. The review produced a clean outcome after the company resolved a first-quarter 2023 warning letter related to hours-of-service logbook compliance during the transition to electronic logging devices.\n\nAll 71 power units have been equipped with Samsara electronic logging devices and AI-enabled dash cameras since 2022, providing real-time driver monitoring and compliance documentation. The camera system has contributed to improved coaching and a measurable reduction in preventable incidents.\n\nThe company maintains Certificate of Recognition (COR) status with WorkSafeBC, earned in 2019 and renewed annually, demonstrating a documented occupational health and safety management system. Pacific Coast has also held Partners in Protection membership with the Canada Border Services Agency since 2016, certifying secure supply chain practices for cross-border operations.\n\nAll 96 company drivers hold valid Class 1 licences with air brake endorsement and current Transportation of Dangerous Goods certification. Twenty-two drivers hold FAST cards enabling expedited cross-border clearance. Driver abstracts are reviewed annually; 89 drivers currently have clean records, and seven have one minor conviction on file.",
+    "layoutType": "prose"
+   },
+   "right": {
+    "title": "Safety Performance Trends",
+    "content": {
+     "rows": [
+      {
+       "left": "Total incidents",
+       "label": "Reportable collisions",
+       "right": "4 \u2192 5 \u2192 3"
+      },
+      {
+       "left": "Driver at fault",
+       "label": "Preventable collisions",
+       "right": "2 \u2192 2 \u2192 1"
+      },
+      {
+       "left": "Per million km",
+       "label": "Collision rate",
+       "right": "0.24 \u2192 0.23 \u2192 0.11"
+      },
+      {
+       "left": "Time-loss claims",
+       "label": "Injuries from collisions",
+       "right": "0 \u2192 1 minor \u2192 0"
+      },
+      {
+       "left": "Total inspections",
+       "label": "CVSE roadside inspections",
+       "right": "589 \u2192 711 \u2192 646"
+      },
+      {
+       "left": "Driver + vehicle OOS",
+       "label": "Out-of-service orders",
+       "right": "36 \u2192 32 \u2192 6"
+      },
+      {
+       "left": "Percent OOS",
+       "label": "Out-of-service rate",
+       "right": "15.5% \u2192 16.9% \u2192 9.4%",
+       "highlight": true
+      },
+      {
+       "left": "All causes",
+       "label": "WorkSafeBC time-loss claims",
+       "right": "6 \u2192 7 \u2192 4"
+      }
+     ],
+     "title": "Three-Year Safety Metrics",
+     "leftLabel": "Metric",
+     "rightLabel": "2022 \u2192 2023 \u2192 2024"
+    },
+    "layoutType": "comparison_table"
+   },
+   "title": null
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "compliance",
+   "industry_specific"
+  ]
+ },
+ {
+  "order": 18,
+  "sectionKey": "regulatory_permits",
+  "sectionTitle": "Permits & Regulatory Standing",
+  "layoutType": "icon_stat_row",
+  "layoutData": {
+   "stats": [
+    {
+     "label": "National Safety Code Certificate",
+     "value": "NSC BC 20-487-316",
+     "description": "Satisfactory rating"
+    },
+    {
+     "label": "U.S. DOT Number",
+     "value": "USDOT 9318842",
+     "description": "Cross-border operating authority"
+    },
+    {
+     "label": "Partners in Protection",
+     "value": "CBSA member since 2016",
+     "description": "Supply chain security certification"
+    },
+    {
+     "label": "Certificate of Recognition",
+     "value": "WorkSafeBC COR since 2019",
+     "description": "Workplace safety program certification"
+    },
+    {
+     "label": "Port of Vancouver",
+     "value": "Active truck licensing",
+     "description": "Container drayage authority"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "compliance",
+   "industry_specific"
+  ]
+ },
+ {
+  "order": 19,
+  "sectionKey": "technology_systems",
+  "sectionTitle": "Operational Technology",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "icon": "truck",
+     "badge": "2024",
+     "title": "Axon TMS",
+     "description": "Enterprise transportation management system handling dispatch, load planning, customer billing, IFTA reporting and fuel tax compliance. Implemented in 2024 to replace legacy systems, improving routing efficiency and billing accuracy across all service lines."
+    },
+    {
+     "icon": "camera",
+     "title": "Samsara Fleet Platform",
+     "highlight": true,
+     "description": "Integrated electronic logging device system with AI-powered dash cameras and real-time telematics in all 71 power units. Tracks driver hours of service, vehicle diagnostics, fuel consumption and safety events. Camera footage has reduced preventable collisions and supported driver coaching."
+    },
+    {
+     "icon": "warehouse",
+     "title": "Magaya WMS",
+     "description": "Warehouse management system with customer web portal for real-time inventory visibility. Manages 12,400 pallet positions across ambient and temperature-controlled zones, tracks inbound and outbound movements, and generates pick lists for fulfillment operations. Portal access provided to major 3PL customers."
+    },
+    {
+     "icon": "wrench",
+     "title": "Fleetio Maintenance",
+     "description": "Fleet maintenance tracking platform managing preventive maintenance schedules, repair history and parts inventory for 71 power units and 160 trailers. Shop team uses mobile app to log completed work orders and track vehicle downtime. System flags upcoming service intervals based on mileage and engine hours."
+    },
+    {
+     "icon": "thermometer",
+     "title": "Reefer Temperature Monitoring",
+     "description": "Real-time temperature telematics on all 46 refrigerated trailers. Continuous monitoring of set point, return air temperature and unit status with automated alerts for excursions. Data logging provides proof of temperature control for food safety audits and customer compliance requirements."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "operations",
+   "systems"
+  ]
+ },
+ {
+  "order": 20,
+  "sectionKey": "growth_opportunities",
+  "sectionTitle": "Growth Initiatives",
+  "layoutType": "numbered_list",
+  "layoutData": {
+   "items": [
+    {
+     "title": "Cooler Expansion \u2014 15,000 Square Feet",
+     "description": "The landlord has pre-approved in principle an expansion of the refrigerated warehouse by up to 15,000 square feet. The project is budgeted at $1.1 to $1.2 million and is expected to deliver a payback period of under three years. This expansion would increase cold-storage capacity to meet growing demand from grocery and produce customers, building on the proven success of the existing 22,000 square foot cooler that achieved 88 percent occupancy in its first full year of operation."
+    },
+    {
+     "title": "Calgary Cross-Dock Facility",
+     "description": "Establish a 25,000 to 30,000 square foot cross-dock operation in Calgary to support direct lanes into Alberta for existing customers shipping to the region. This facility would eliminate the need to broker freight to third-party carriers, improve service consistency, and capture margin currently paid to intermediaries. The Calgary market represents a natural extension of the company's regional footprint and would serve customers already shipping westbound from British Columbia."
+    },
+    {
+     "title": "Battery-Electric Day Cabs",
+     "description": "Two battery-electric day cab tractors are on order for delivery mid-2026, supported by a provincial incentive program. The vehicles will be deployed on port drayage and short-haul city routes, reducing fuel costs and emissions while positioning the company to meet customer sustainability requirements. The truck court at the Surrey facility has been assessed for the installation of up to six Level 3 chargers to support future electric fleet expansion."
+    },
+    {
+     "title": "Harvest Lane Markets Contract",
+     "description": "Pacific Coast Logistics is on the shortlist for a new contract with Harvest Lane Markets, an independent Fraser Valley grocery chain operating 26 stores. The contract, currently at the RFP stage, is valued at $2.0 to $2.5 million annually and is expected to commence in late 2026. The opportunity is confidential while the bidding process is underway. Winning this contract would diversify the grocery customer base and leverage the company's existing temperature-controlled capabilities and proven track record with Alderbrook."
+    }
+   ],
+   "ordered": true
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "growth",
+   "opportunities"
+  ]
+ },
+ {
+  "order": 21,
+  "sectionKey": "industry_market",
+  "sectionTitle": "Market Position & Industry Dynamics",
+  "layoutType": "prose_highlight",
+  "layoutData": {
+   "body": "Pacific Coast Logistics operates in the British Columbia regional trucking and third-party logistics market, serving customers across the Lower Mainland, Fraser Valley, Interior BC, and select corridors into Washington State. The company has built its position over 34 years by focusing on food distribution and temperature-sensitive freight, which together represent approximately 50 percent of total revenue and provide a stable foundation in an otherwise cyclical industry.\n\nGrocery and food distribution logistics benefit from consistent demand regardless of broader economic conditions. Consumers prioritize food spending, and retailers maintain steady replenishment cycles to manage perishable inventory. This structural stability has allowed Pacific Coast to retain anchor customers such as Alderbrook Grocery Distributors for 17 years and to weather supply chain disruptions\u2014most notably during the catastrophic November 2021 floods in BC, when the company kept stores supplied by running alternative routes through back roads while competitors stood down.\n\nThe Port of Vancouver remains the largest gateway on the West Coast of North America, handling over three million TEUs of containerized cargo annually. Pacific Coast participates in the port drayage market with 14 drivers and 20 container chassis, primarily moving food imports and refrigerated containers. Drayage revenue has declined from $2,780,000 in 2022 to $2,330,000 in 2024 as the company has deliberately wound down unprofitable spot lanes and focused capacity on higher-margin reefer and warehousing work. The port market is highly fragmented and rate-competitive, and the company's strategic pivot away from commodity drayage reflects disciplined margin management.\n\nThe regional trucking market in BC is similarly fragmented. Hundreds of small carriers operate fewer than 20 trucks, and a handful of large national fleets maintain terminal operations in the Lower Mainland. Pacific Coast occupies a middle position with 71 power units, large enough to serve multi-location customers with dedicated capacity but small enough to offer personalized service and flexibility. This scale has proven attractive to mid-sized grocery distributors, building supply chains, and food processors that value reliability and direct access to ownership.\n\nBarriers to entry in the refrigerated and food logistics segment are meaningful. Temperature-controlled warehouse space is scarce in the Lower Mainland due to high land costs and municipal zoning constraints. Pacific Coast's 110,000 square foot facility, including 22,000 square feet of cooler space, provides a defensible competitive advantage. The lease runs through September 2037 with two five-year renewal options, and the landlord has pre-approved an expansion of up to 15,000 additional square feet of cooler capacity. Few competitors have comparable combined trucking and cold storage infrastructure under one roof.\n\nCustomer relationships in food logistics are sticky. Onboarding a new carrier or 3PL provider requires food safety audits, insurance verification, temperature monitoring protocols, and integration with the customer's ordering and tracking systems. Once established, these relationships tend to endure. Pacific Coast has maintained accounts with several customers for over 20 years, and the average tenure of the top ten customers exceeds a decade. The personal relationships that founder Harjit Grewal has cultivated\u2014including a long-standing friendship with the VP of Logistics at Alderbrook\u2014reinforce contractual ties and provide early visibility into volume changes and rate negotiations.\n\nCapital intensity also limits new entrants. A modern highway tractor costs $180,000 to $200,000, and a refrigerated trailer with a Carrier or Thermo King unit runs $80,000 to $90,000. Building a fleet of 50 power units and 100 trailers requires $15 million to $18 million in equipment investment before accounting for working capital, facility lease deposits, insurance, and operating authority. Established carriers enjoy economies of scale in maintenance, fuel purchasing, and insurance that new entrants cannot replicate at smaller volumes.\n\nThe 3PL warehousing segment has grown rapidly for Pacific Coast, with revenue increasing from $4,960,000 in 2022 to $6,720,000 in 2024\u2014a 35 percent gain over two years. This growth reflects broader industry trends as food distributors and retailers outsource warehousing to manage seasonal volume swings and avoid fixed real estate commitments. The company's per-pallet storage and handling model aligns costs with customer usage and generates higher EBITDA margins than linehaul trucking, contributing to the overall margin improvement from 11.9 percent in 2022 to 11.7 percent in 2024 despite wage and insurance inflation.\n\nLooking forward, the company is well-positioned to benefit from continued growth in BC population and food consumption, the ongoing shift toward outsourced cold chain logistics, and potential new customer wins such as the Harvest Lane Markets opportunity currently in RFP. The combination of scarce cooler capacity, long-term customer relationships, a modern fleet, and a Satisfactory safety rating creates a sustainable competitive position in a fragmented and capital-intensive market.",
+   "pullQuote": "During the catastrophic November 2021 floods in BC, Pacific Coast kept stores supplied by running alternative routes through back roads while competitors stood down.",
+   "highlights": [
+    "Food distribution represents approximately 50 percent of revenue, providing stable demand independent of economic cycles",
+    "110,000 square foot facility including 22,000 square feet of temperature-controlled space, with landlord pre-approval for 15,000 square foot cooler expansion",
+    "3PL warehousing revenue grew 35 percent from 2022 to 2024, reflecting outsourcing trends and the company's combined trucking and cold storage capabilities",
+    "Average tenure of top ten customers exceeds a decade, supported by food safety certifications, integrated systems, and personal relationships with decision-makers"
+   ],
+   "subheading": "Competitive position in BC regional food logistics and cold chain warehousing"
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "industry",
+   "market"
+  ]
+ },
+ {
+  "order": 22,
+  "sectionKey": "reason_for_sale",
+  "sectionTitle": "Reason for Sale",
+  "layoutType": "prose_highlight",
+  "layoutData": {
+   "body": "After 34 years of building Pacific Coast Logistics from a single truck to a 71-unit fleet and 110,000 square foot regional powerhouse, founder and President Harjit Grewal is ready to transition to the next chapter. What began in 1991 has grown into a diversified transportation and warehousing business serving over 300 customers across British Columbia and the Pacific Northwest, with $31 million in revenue and a reputation for reliability that has been earned through decades of never missing a delivery\u2014even during the most challenging conditions.\n\nHarjit has spent more than three decades cultivating deep, personal relationships with the company's customer base, many of whom have been with Pacific Coast for 20 to 25 years. He plays golf with Alderbrook's VP of Logistics, has weathered crises alongside his accounts\u2014running trucks through back roads and drivers sleeping in cabs to keep stores supplied during the 2021 BC floods\u2014and has built a level of trust that extends far beyond contractual terms. That trust, and the business it represents, is now ready to be passed to a new owner who can build on this foundation.\n\nThe decision to sell is driven by a desire for retirement and succession planning. Harjit and his family are ready to transition ownership to a buyer who will respect what has been built while bringing the capital, systems, and ambition to take Pacific Coast to the next level. The timeline is clear: Harjit wants to complete the sale within roughly 12 months, before his next birthday in fall 2026.\n\nThis is not a distressed sale or a business in decline. Revenue has grown 8.3 percent over the past two years, adjusted EBITDA has strengthened from $3.04 million in 2023 to $3.60 million in 2024, and the company's safety record, customer retention, and operational capabilities are all strong. The warehouse is 88 percent occupied, the fleet is modern and well-maintained, and key personnel\u2014including VP of Operations Manpreet Grewal\u2014are committed to staying through the transition and beyond.\n\nHarjit is prepared to support the new owner through a structured handoff, introducing the buyer to all major customers over a six-month to one-year period and ensuring the relationships that define this business transfer smoothly. For the right buyer\u2014one who sees the opportunity in a well-run, relationship-driven logistics business with room to grow\u2014this is a rare chance to acquire a company that has been built to last.",
+   "pullQuote": "After 34 years of never missing a delivery, Harjit Grewal is ready to pass Pacific Coast Logistics to a new owner who will build on three decades of trust, relationships, and operational excellence.",
+   "highlights": [
+    "Founder retiring after 34 years; business started in 1991 with a single truck",
+    "Sale timeline: complete transaction within 12 months, before fall 2026",
+    "Not a distressed sale: revenue up 8.3% over two years, adjusted EBITDA $3.60M in 2024",
+    "Harjit will support 6\u201312 month customer introduction period to ensure smooth handoff",
+    "VP Operations Manpreet Grewal committed to staying 2\u20133 years post-sale"
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "transaction",
+   "narrative"
+  ]
+ },
+ {
+  "order": 23,
+  "sectionKey": "transition_support",
+  "sectionTitle": "Transition & Continuity",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "badge": "2\u20133 year commitment",
+     "title": "Manpreet Grewal \u2014 VP Operations",
+     "highlight": true,
+     "description": "Manpreet Grewal (VP Operations, 13 years with the company, 25 percent owner) is willing to stay two to three years minimum post-sale as General Manager or VP Operations. She is open to rolling ten to fifteen percent of her proceeds into the buyer's entity if the right partner emerges \u2014 a bigger carrier or PE-backed platform building out Western Canada. Her operational leadership continuity is critical for customer relationships, driver retention, and warehouse operations."
+    },
+    {
+     "badge": "6\u201312 month handoff",
+     "title": "Harjit Grewal \u2014 Customer Introductions",
+     "description": "Harjit Grewal (President and founder, 34 years) will introduce the new owner to all major customers over a six-month to one-year transition period. The Alderbrook handoff is particularly critical: the seventeen-year relationship with Alderbrook Grocery Distributors (22 percent of revenue, master agreement to 2027) is held personally by Harjit, with primary trust vested in his relationship with VP Logistics Doug Fairweather. An intentional, deliberate handoff beyond the contract transfer is essential to preserve this anchor account."
+    },
+    {
+     "badge": "Succession in progress",
+     "title": "Dale Kowalczyk \u2014 Shop Foreman Succession",
+     "description": "Dale Kowalczyk (shop foreman since 2005, 20 years with the company) is retiring in 2027. Kevin Tran (Red Seal technician, with the company since 2018) has been promoted to Assistant Shop Foreman in May to shadow Dale through the transition. This deliberate succession plan ensures continuity of fleet maintenance standards, shop operations, and vendor relationships with no disruption to service reliability."
+    }
+   ],
+   "style": "card",
+   "columns": 1
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "transaction",
+   "people"
+  ]
+ },
+ {
+  "order": 24,
+  "sectionKey": "deal_structure",
+  "sectionTitle": "Transaction Overview",
+  "layoutType": "icon_stat_row",
+  "layoutData": {
+   "stats": [
+    {
+     "label": "Asking Price",
+     "value": "$18,000,000",
+     "description": "4.6\u00d7 FY2024 adjusted EBITDA"
+    },
+    {
+     "label": "Transaction Structure",
+     "value": "Share sale",
+     "description": "Cash-free, debt-free basis with normal working capital target"
+    },
+    {
+     "label": "Working Capital Target",
+     "value": "$2,400,000",
+     "description": "Normalized working capital peg"
+    },
+    {
+     "label": "Vendor Financing",
+     "value": "Up to 10%",
+     "description": "Vendor take-back considered over a few years"
+    }
+   ]
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "transaction",
+   "financials"
+  ]
+ },
+ {
+  "order": 25,
+  "sectionKey": "ideal_buyer",
+  "sectionTitle": "Ideal Buyer Profile",
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "title": "Strategic Acquirer with Western Canada Focus",
+     "highlight": false,
+     "description": "Larger regional carrier or private-equity-backed platform seeking to build out presence in Western Canada. Buyer should have the infrastructure and capital to integrate a 71-unit fleet and 110,000 square foot warehouse operation while preserving customer relationships and service quality."
+    },
+    {
+     "title": "Growth-Oriented Operator",
+     "highlight": false,
+     "description": "Buyer committed to expanding the business through cooler expansion, fleet modernization, and geographic reach. Not a national consolidator seeking to convert the facility into a terminal or strip out the warehouse and customer relationships. Ideal buyer sees the platform value in the diversified service offering and 300-plus customer base."
+    },
+    {
+     "title": "Temperature-Controlled & Food Logistics Experience",
+     "highlight": false,
+     "description": "Preferred buyer has operational experience in refrigerated transportation or food distribution. Understanding of grocery sector dynamics, produce handling, food safety compliance, and the nuances of managing a 22,000 square foot cooler and 46-unit reefer fleet will accelerate integration and preserve the Alderbrook relationship and other food accounts that represent 50 percent of revenue."
+    },
+    {
+     "title": "Capital for Fleet Refresh & Facility Investment",
+     "highlight": false,
+     "description": "Buyer with capacity to fund immediate fleet requirements (14 aging reefer trailers from 2011-2014 needing replacement over next 12-18 months) and approved cooler expansion (15,000 square feet budgeted at $1,100,000-$1,200,000 with under-three-year payback). Normal maintenance capex runs $2,300,000-$2,600,000 annually; 24-month total capex budget estimated at $6,000,000-$7,000,000."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "transaction",
+   "buyer"
+  ]
+ },
+ {
+  "order": 26,
+  "sectionKey": "next_steps",
+  "sectionTitle": "Next Steps",
+  "layoutType": "numbered_list",
+  "layoutData": {
+   "items": [
+    {
+     "title": "Execute Non-Disclosure Agreement",
+     "description": "Sign the NDA to receive access to the complete data room, including detailed financial statements, customer contracts, equipment schedules, lease agreements, and operational reports."
+    },
+    {
+     "title": "Management Meeting",
+     "description": "Meet with Harjit Grewal (President) and Manpreet Grewal (VP Operations) to discuss the business strategy, customer relationships, growth initiatives, and transition planning."
+    },
+    {
+     "title": "Facility and Fleet Inspection",
+     "description": "Tour the 110,000 square foot warehouse facility at 19220 Campbell Ridge Drive in Surrey, inspect the cooler and cross-dock operations, review the fleet of 71 power units and 160 trailers, and meet key personnel including dispatch, warehouse, and shop teams."
+    },
+    {
+     "title": "Submit Indication of Interest",
+     "description": "Provide a non-binding indication of interest outlining proposed purchase price, transaction structure, financing approach, and timeline. Qualified buyers will proceed to confirmatory due diligence and exclusivity discussions."
+    }
+   ],
+   "ordered": true
+  },
+  "aiDraftContent": null,
+  "tags": [
+   "transaction",
+   "process"
+  ]
+ }
+]
