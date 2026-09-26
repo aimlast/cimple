@@ -1,0 +1,772 @@
+{
+ "_note": "Excerpts from the 2026-09-26 acceptance test (fictional demo businesses): source text, facts and sessions as they stood when the interview re-asked.",
+ "greatLakes": {
+  "documents": [
+   {
+    "id": "gl-org",
+    "name": "Organizational chart and key people (212 employees)",
+    "sourceKind": "document",
+    "visibility": "shared",
+    "extractedText": "Organizational Chart\nGreat Lakes Precision Plastics, Inc. · Headcount as of January 31, 2025: 212 employees (plus about 15 agency temporaries on the floor)\nBoard of Directors\nDiane Kline-Morrow (Chair, 40%) · Robert Kline (35%) · Karen Kline Adair (25%, Treasurer, \nnon-operating)\nPresident & CEO\nDiane Kline-Morrow · 34 yrs at GLPP\nVP Operations\nRobert Kline · 31 yrs\nController\nTom Brennan · 11 yrs\nFinance, HR, IT & admin (8)\nDirector, Sales & Program \nMgmt\nMegan Pryor · 5 yrs\nSales / program mgmt / CS (5)\nDirector of Quality\nSandra Okafor · 7 yrs\nQuality team (16)\nMedical Programs Eng. Lead\nKevin Walsh · 3 yrs\nEngineering (8)\nPlant Manager\nLuis Herrera · 16 yrs\nPlant mgr + 5 shift supervisors (6)\nTool Room Manager\nGreg Tomczak · 24 yrs\nTool room (9)\nMaintenance Supervisor\nJamal Whitfield · 9 yrs\nFacility maintenance (6)\nPress operators & packers\n112 · 3 shifts (24/5 + weekend OT)\nSetup & process technicians\n22\nMaterial handling, shipping & \nreceiving\n18\nHeadcount by function\nExecutive leadership (CEO, VP \nOperations)\n2\nPlant manager and shift supervisors6\nPress operators and packers112\nSetup and process technicians22\nMaterial handling, shipping and receiving18\nTool room (mold maintenance and repair)9\nFacility maintenance6\nQuality (inspectors, technicians, engineers)16\nEngineering (program and manufacturing)8\nSales, program management and \ncustomer service\n5\nFinance, HR, IT and administration8\nTotal employees212\nNon-union. Karen Kline Adair (Director and Treasurer) \nis on the officers' payroll but does not work in the \nbusiness, so she is not counted in the 212. Temps from \nQuillon Staffing are not counted.\nSample document — fictional business for demonstrationPage 1 of 2\nGreat Lakes Precision Plastics, Inc. — Organizational chart\n\nKey people\nNameRoleTenureNotes\nDiane Kline-MorrowPresident & CEO34 yrsJoined 1991 as customer-service lead and ran sales 1998–2016. CEO since 2016. Will \nstay 12 months after closing, then consult.\nRobert \"Rob\" KlineVP Operations31 yrsJoined 1994 as a process technician. Runs the plant, tool room and maintenance. Open \nto staying 2–3 years with an employment agreement.\nTom BrennanController11 yrsCPA. Owns the monthly close, the lender covenants and the 2024 ERP migration.\nLuis HerreraPlant Manager16 yrsCame up from shift supervisor. Leads the 3 shifts and the scheduling.\nGreg TomczakTool Room Manager24 yrsAge 61. Leads the 9-person tool room (mold maintenance and repair; no new mold \nbuilds). Trained most of the current toolmakers.\nSandra OkaforDirector of Quality7 yrsISO 13485 management representative. Rebuilt the medical quality system in 2018–19 \nand led the 2023 cleanroom expansion validation.\nMegan PryorDirector, Sales & Program Mgmt5 yrsOwns quoting, customer programs and the Veridian relationship day to day.\nKevin WalshMedical Programs Engineering Lead3 yrsLeads engineering (8), including new-program launches and scientific molding.\nJamal WhitfieldMaintenance Supervisor9 yrsFacility, utilities, chillers, cleanroom HVAC.\nSample document — fictional business for demonstrationPage 2 of 2\nGreat Lakes Precision Plastics, Inc. — Organizational chart"
+   }
+  ],
+  "info": {
+   "employees": "212 employees plus 12-15 temporary workers depending on week",
+   "ownership": "Diane Kline-Morrow 40% / Robert Kline 35% / Karen Kline Adair 25%",
+   "nonCompetePeriod": "2 years for Diane Kline-Morrow and Robert Kline",
+   "maintenanceCapexRun": "Approximately $1.6 million annually for normalized maintenance capex (press replacements, screw/barrel rebuilds, chiller/dryer upgrades, roof repairs). Recent higher capex years ($2.9M in 2024, $3.4M in 2023) included growth investments: cleanroom expansion and new all-electric presses.",
+   "restrictiveCovenants": "Shareholders who work in the business (Diane and Robert) have 2-year non-compete and non-solicit after leaving employment. Karen is bound only by confidentiality.",
+   "dealStructurePreference": "Stock sale (F-reorg acceptable); cash-free / debt-free; normalized NWC peg"
+  },
+  "sessions": [
+   {
+    "id": "25c9211c-4577-4b44-8ce3-efad277902aa",
+    "status": "completed",
+    "startedAt": "2026-09-19T03:05:00.000Z",
+    "messages": [
+     {
+      "role": "ai",
+      "content": "One area I'd like to fill in: beyond the dual IATF/ISO certifications and the cleanroom, what would you say is the single biggest reason customers choose Great Lakes over other injection molders?"
+     },
+     {
+      "role": "user",
+      "content": "The tool room.\n\nWe've had our own tool room since 1994 — nine guys now, led by Greg Tomczak, who's been here 24 years. Most molders outsource all their mold maintenance or they've got maybe two toolmakers who can swap a slide or change a gate. We can build inserts, modify cavities, run mold-flow on a repair, cut EDM work in-house, and turn around a breakdown in hours instead of days.\n\nMaumee Valley told us flat-out in 2017 that's why they consolidated three programs with us — their previous molder shipped molds to a third party in Michigan every time something broke, and it killed their launch schedule. Our tool room keeps the presses running, and when a customer needs a dimension tweaked or a gate relocated after first article, we do it here without the three-week turnaround.\n\nThat and the fact that my father taught every one of our people that the customer's production schedule is sacred."
+     },
+     {
+      "role": "ai",
+      "content": "How much of your current tooling do you own outright versus customer-owned molds that you store and maintain?"
+     },
+     {
+      "role": "user",
+      "content": "We own maybe 15–18 molds outright — mostly older low-runner parts where the customer went away or we bought the tool out at end-of-life. Everything else is customer-owned; we store it, maintain it, and run it under the supply agreements.\n\nThe customer-owned molds probably number around 240–250 active tools, though Rob keeps the exact list. Some are single-cavity prototype molds, some are 16-cavity production families. We've got racking for about 300 molds in the tool room and overflow in the back warehouse.\n\nWe charge the customer for major repairs — anything over routine PM — and that's in the supply agreements. Routine maintenance like cleaning, minor gate work, ejector pins, that's on us and it's baked into the piece price."
+     },
+     {
+      "role": "ai",
+      "content": "How concentrated is the customer-owned tooling — do any of the top five customers own 40% or more of those 240–250 molds?"
+     },
+     {
+      "role": "user",
+      "content": "Let me take those mold numbers back — I was guessing, and I don't want a guess ending up in the book. Rob keeps the tooling list with owner and customer for every mold; he can send it over. What I do know is nearly all of it is customer-owned, which is normal for us."
+     },
+     {
+      "role": "ai",
+      "content": "On a related note: when a customer's program ends or they decide to move production, do the supply agreements require you to return the mold within a set timeframe, or do you have any leverage to hold it until outstanding invoices are settled?"
+     },
+     {
+      "role": "user",
+      "content": "The supply agreements say we return the mold \"within a reasonable time\" after the customer requests it — usually 30 days. We've got a lien right under Ohio law for unpaid invoices or tooling work, so we can hold a mold if there's an outstanding balance, but we've only done that twice in 30 years and one of them turned into the lawsuit we settled last June.\n\nMost of the time when a program ends the customer either asks us to scrap the mold or they leave it here on the rack indefinitely because moving it and re-validating somewhere else costs more than the program's worth. We've got probably 40 or 50 inactive molds sitting in the back that nobody's touched in five years."
+     },
+     {
+      "role": "ai",
+      "content": "Switching to your press fleet — your asset list shows 38 presses ranging from 55 to 720 tons. What's your current overall utilization rate across the fleet?"
+     },
+     {
+      "role": "user",
+      "content": "About 72% in 2024. The cleanroom presses run closer to 85–90% because those medical programs are sticky and validated. The main floor has more variability — automotive schedules, model changeovers, that July shutdown.\n\nWe've got capacity to add maybe $10 million in revenue without buying another press, which is one reason a buyer should like this business."
+     },
+     {
+      "role": "ai",
+      "content": "What's the age breakdown on the 38 presses — roughly how many are under 10 years old, 10–20 years, and over 20?"
+     },
+     {
+      "role": "user",
+      "content": "Rob's got the exact list with serial numbers and install dates, but roughly: the 14 all-electrics are all newer — the oldest is maybe 2015, most are 2019 or later. The 8 hybrids are mid-range, call it 10–15 years. The hydraulics are the mix — maybe half are under 15 years, but we've got about 10 hydraulics that are over 20 years old and those are the ones we're replacing two or three at a time as budget allows.\n\nThe old hydraulics still run fine for non-critical parts, but they're maintenance hogs and the power consumption is terrible compared to the electrics."
+     },
+     {
+      "role": "ai",
+      "content": "On resin — you mentioned two main distributors plus a direct medical-grade supplier. How do your pricing arrangements work: are you on fixed annual contracts, index-based pricing that passes resin volatility to customers, or somewhere in between?"
+     },
+     {
+      "role": "user",
+      "content": "Automotive is mostly pass-through but it lags about a quarter, which can hurt us when resin spikes fast. The Tier-1 supply agreements have a resin-adjustment clause — we submit invoices showing the resin cost change and they true it up on the next quarter's PO, but there's always that 60–90 day gap where we're eating the difference.\n\nMedical is cleaner: resin-index pricing tied to a published benchmark, adjusted quarterly. If the index goes up 8%, the piece price goes up 8% on the resin portion. Veridian, Clearwater, Halvorsen — they all have that in the supply agreements.\n\nTom can walk you through the exact mechanics of the index formula; I just know it works and we don't get squeezed the way we do on automotive."
+     },
+     {
+      "role": "ai",
+      "content": "When resin spiked in 2021–22, how much margin compression did you see on the automotive side during those lag periods — rough percentage points or dollar impact?"
+     },
+     {
+      "role": "user",
+      "content": "That's a Tom question — I don't remember the exact margin hit by quarter. What I do remember is we had to draw on the revolver for the first time in years just to cover working capital because we were buying resin at spot prices that were 30–40% higher than what we were billing the customers for three months prior.\n\nIt smoothed out by mid-2022 once prices stabilized, but it was tight for about nine months."
+     },
+     {
+      "role": "ai",
+      "content": "I'll flag that as something Tom can quantify for the financial package.\n\nShifting to your workforce: with the 30% annual turnover on operators, what's your current approach to recruiting and training — are you relying on temp agencies, direct hiring, in-house training programs, or a mix?"
+     },
+     {
+      "role": "user",
+      "content": "It's 29%, and yeah, it's all of the above. We run about 15 temps through Quillon Staffing at any given time — they're a screen, and if somebody shows up on time for 90 days and can follow a setup sheet we offer them direct. Maybe one in three converts.\n\nDirect hires come from Indeed, referral bonuses ($500 if your buddy stays six months), and we've got a partnership with the Penta Career Center where their plastics students do a co-op here senior year. Luis runs a two-week in-house training program — safety, quality, how to read a work order, basic troubleshooting — and then they shadow a lead operator for another two weeks before they're on their own.\n\nThe turnover's mostly in the first six months; once they make it past a year they tend to stay."
+     },
+     {
+      "role": "ai",
+      "content": "What about your skilled trades — setup technicians and toolmakers? What does turnover look like there, and how deep is your bench if Greg decides to retire?"
+     },
+     {
+      "role": "user",
+      "content": "Setup techs and toolmakers almost never leave — maybe one every two or three years. Greg's the issue: he's 61, wants to retire in 2027, and we don't have a ready replacement yet.\n\nThe leading candidate is Nate Szymanski, 34, been a toolmaker here for eight years, but he's not at Greg's level — Greg can diagnose a mold problem by listening to the press cycle, and he's the one who trains everybody. We've talked about bringing in a senior toolmaker from outside before Greg leaves, but we haven't pulled the trigger yet, and honestly that's something a buyer with a bigger tool-room network could solve faster than we can."
+     },
+     {
+      "role": "ai",
+      "content": "That's a candid assessment — and buyers will want to understand the succession plan for the tool room, so flagging it proactively is the right move.\n\nStepping back to quality: your 18 PPM and Gold supplier status with Maumee Valley are strong, but IATF 16949 recertification is coming up fall 2026. Have you started the pre-audit prep, and are there any findings from the last surveillance audit that you're still working through?"
+     },
+     {
+      "role": "user",
+      "content": "The October 2024 surveillance had zero majors and three minors — two were documentation gaps in APQP on a new program, one was a calibration record that wasn't signed off on time. All three closed by December.\n\nSandra's already building the timeline for the October 2026 recertification audit — we'll do an internal audit in May or June 2026 and a pre-assessment with Northstar probably in August. We've never failed an IATF audit and we're not going to start now, but yeah, a buyer needs to know that recert is sitting right there six months after closing if we close in Q1 2026.\n\nThat's one reason I want to close before summer — I don't want a new owner walking into a recertification audit three months after they take the keys."
+     },
+     {
+      "role": "ai",
+      "content": "On the ISO 13485 side for medical: when was your last surveillance audit, and are there any open CAPAs or observations from that one?"
+     },
+     {
+      "role": "user",
+      "content": "February 2025 — about three months ago. Zero majors, two minors: one was a training record for a new cleanroom operator that wasn't complete before she started running production (we caught it in our internal audit first), and the other was a customer complaint log where we didn't document the root cause analysis within the timeframe in our own procedure.\n\nBoth closed in March. No open CAPAs from the registrar; we've got maybe a dozen internal CAPAs in the system at any given time but that's normal — most are from our own internal audits or process improvements, not customer complaints."
+     },
+     {
+      "role": "ai",
+      "content": "On your medical device business specifically: beyond Veridian, Clearwater, and Halvorsen, are there any new programs currently in the quoting stage or early NPI that could add meaningful revenue in the next 12–18 months?"
+     },
+     {
+      "role": "user",
+      "content": "The Veridian catheter hub is the big one — nominated in February, tooling PO just came in, start of production Q1 2026, about $1.8 million a year at full rate.\n\nBeyond that we've got three or four other medical RFQs out — an IVD cartridge housing, a respiratory nebulizer component, something for a dental device company — but nothing awarded yet. Medical sales cycles are long; you quote, they validate your process, they audit you, then maybe 18 months later you get a PO.\n\nThe medical pipeline is healthy but it's not like automotive where you can win a program and be in production in six months."
+     },
+     {
+      "role": "ai",
+      "content": "That $1.8 million Veridian catheter hub program is meaningful — close to 3% of current revenue once it's at full rate.\n\nOn the automotive side, what does your current platform exposure look like? Specifically, how much of your automotive revenue is tied to EV programs versus traditional ICE vehicles?"
+     },
+     {
+      "role": "user",
+      "content": "EV is still small for us — maybe 10–12% of automotive revenue, mostly the high-voltage connector housings we do for Northgate. That piece grew about 10% in 2024 but it's off a small base.\n\nThe rest is a mix: about 40% of the Lakeshore volume is ICE under-hood parts like fluid connectors and clips, but the other 60% is powertrain-agnostic — brake reservoir caps, coolant fittings, that kind of thing. Maumee Valley is all interior trim, so that's platform-agnostic. Kestrel is lighting brackets, Arbor is seating — none of that cares whether it's gas or electric.\n\nWe're not heavily exposed to ICE drivetrains, but we're also not riding the EV wave the way some molders are."
+     },
+     {
+      "role": "ai",
+      "content": "That powertrain-agnostic mix is actually a strength — reduces the risk of a rapid ICE decline hitting you hard.\n\nOne more on the automotive contracts: when a program ends — say a model changeover or a Tier-1 consolidates suppliers — what does the exit look like? Do your supply agreements have termination-for-convenience clauses with a notice period, or are you generally protected through the model year?"
+     },
+     {
+      "role": "user",
+      "content": "Most of the long-term supply agreements have termination-for-convenience with 90 to 180 days' notice, but in practice the Tier-1s give us a rolling 12-month forecast and we know when a platform is sunsetting.\n\nWhen a program ends it's usually end-of-production for that vehicle model — the customer doesn't yank it mid-cycle unless we screw up quality, which we don't. They'll give us six months' notice, we run out the service parts for another year or two at lower volumes, and then it's done.\n\nThe risk is always that they don't award us the replacement program on the next platform, and that's where the 1.5% annual price-downs hurt — if we've been grinding margin for five years and then they re-source it to someone cheaper, we just lost the revenue with nothing behind it."
+     },
+     {
+      "role": "ai",
+      "content": "Has that happened recently — a program where you weren't awarded the replacement after the model sunsetted?"
+     },
+     {
+      "role": "user",
+      "content": "Yeah. Maumee Valley program MV-417, a door-trim bezel — it ends production in December 2026, about $2.1 million a year. We quoted two replacement programs for the next platform and we're still waiting to hear, probably this summer.\n\nIt's not that we lost the customer — Maumee Valley's still our biggest account and the relationship's fine — it's just how the automotive cycle works. Programs end, you quote the new ones, sometimes you win, sometimes you don't."
+     },
+     {
+      "role": "ai",
+      "content": "That's a helpful reality check on automotive program lifecycle — and the fact that you're still in the running for replacement programs shows the relationship is intact.\n\nOn your medical contracts: what are the typical terms and minimum volume commitments? Do they look more like the automotive supply agreements with termination-for-convenience, or are they structured differently given the validation requirements?"
+     },
+     {
+      "role": "user",
+      "content": "Medical contracts are stickier because of the validation — if Veridian wants to move that catheter hub to another molder, they have to revalidate the whole process at the new supplier, which can take six months and cost them a couple hundred thousand dollars. So the supply agreements are usually three years with auto-renewal, and there's no termination-for-convenience without cause.\n\nThe flip side is there's no minimum volume commitment either — it's a supply agreement, not a take-or-pay contract. If their product sales tank, our volumes drop, but as long as they're selling the device they're buying from us.\n\nWe've never had a medical customer pull a program for price or quality; the only time we've lost medical revenue is when a customer's product failed in the market or they got acquired and the new parent moved everything in-house."
+     },
+     {
+      "role": "ai",
+      "content": "One thing I want to make sure we capture: if you were to sell via a stock deal versus an asset deal, do any of your key customer agreements require formal consent for assignment, or just notice of a change in control?"
+     },
+     {
+      "role": "user",
+      "content": "Tom and our attorney went through this when we engaged Morgan. Most of the automotive supply agreements have a change-of-control clause that requires notice but not consent — we tell them we were acquired, introduce the new owner, keep running.\n\nA couple of the medical contracts — Veridian and I think Clearwater — have a consent-to-assign clause, but the attorney said that's usually a formality as long as the buyer is qualified (same certifications, same facility, same key people for a transition period). We've never tested it because we've never sold before, but the expectation is they're not going to say no if the buyer's a credible medical molder.\n\nThe one we'd have to watch is if a buyer wanted to move the medical work offshore or shut down the cleanroom — that would probably trigger a fight."
+     },
+     {
+      "role": "ai",
+      "content": "On that Veridian consent requirement specifically — if this were structured as a stock sale or an F-reorganization rather than an asset sale, would the consent-to-assign clause still trigger, or does it only apply to asset deals?"
+     },
+     {
+      "role": "user",
+      "content": "I'd have to ask the attorney — I don't know the legal difference there. My understanding is a stock sale means the same corporation owns the contracts so maybe it doesn't trigger, but I'm not sure.\n\nTom or Morgan would know."
+     },
+     {
+      "role": "ai",
+      "content": "That's the kind of detail the attorney can confirm — in most cases stock deals avoid triggering assignment clauses, but it depends on the exact contract language. I'll note it for the broker to verify.\n\nShifting to FDA requirements: is Great Lakes registered as a medical device establishment with the FDA, and are any of the parts you mold listed under your customers' 510(k) filings, or do you operate purely as a contract manufacturer under their registrations?"
+     },
+     {
+      "role": "user",
+      "content": "We're not registered with the FDA — we're a component supplier, not a device manufacturer. The customers hold the 510(k)s and the registrations; we're listed as a contract manufacturer in their design history files and their supplier audits, but the regulatory burden is on them.\n\nVeridian, Clearwater, Halvorsen — they all audit us annually under their quality agreements, and we have to notify them if we change a process or move a mold to a different press, but we're not the manufacturer of record.\n\nThat's pretty standard for injection molders in the medical space unless you're making the finished device and putting it in a box with your name on it."
+     },
+     {
+      "role": "ai",
+      "content": "That clarifies the regulatory picture — component suppliers typically stay off FDA's direct radar while still meeting the quality system requirements through customer audits.\n\nOne last area I want to touch: are there any environmental permits for the facility — air quality, wastewater discharge, or hazardous waste handling — that a buyer would need to transfer or reapply for?"
+     },
+     {
+      "role": "user",
+      "content": "We've got an air registration with the Toledo Division of Environmental Services for the resin dryers and the regrind system — it's a minor source permit, not a Title V. No wastewater discharge permit because we're on city sewer and we don't do any washing or plating. Hazardous waste is just used oil and empty resin containers, and we've got a small-quantity generator EPA ID number — our waste hauler picks up quarterly.\n\nThe Phase I environmental site assessment from 2019 came back clean. We've never done painting, plating, or anything that would leave contamination, and the site was vacant land before we built in 1994.\n\nJamal Whitfield, our maintenance supervisor, handles all the permit renewals and the waste manifests — it's pretty straightforward."
+     },
+     {
+      "role": "ai",
+      "content": "We've covered a lot of ground today. Before we wrap, is there anything about the business — a strength, a risk, a nuance in how things work — that you think a buyer needs to understand that we haven't touched on?"
+     },
+     {
+      "role": "user",
+      "content": "The people. My father started this company with four beat-up presses and a handshake, and the reason we're still here 38 years later is that our people show up every day and give a damn about the customer's parts. Luis has been here 16 years, Greg 24, Sandra 7 — we've got shift leads who've been running the same presses for a decade.\n\nA buyer who comes in here and treats this like a balance sheet is going to lose that, and once you lose it in manufacturing you don't get it back. The buyer who understands that this is a people business with machines, not the other way around — that's the buyer who's going to make this work and grow it.\n\nAnd yeah, we need capital for the second cleanroom and automation, but we also need an owner who's going to be here, not run it from a spreadsheet in New York."
+     },
+     {
+      "role": "ai",
+      "content": "I'll make sure that comes through.\n\nWe've covered a lot of ground: the tool room as a competitive moat, press fleet and utilization, resin pass-through mechanics, workforce structure and the Greg succession question, quality certifications and the 2026 recert timeline, automotive versus medical contract dynamics, the Veridian consent question, FDA positioning, and environmental permits.\n\nA few items I'll flag for follow-up: Tom can quantify the 2021–22 resin margin compression, Rob has the exact tooling list, and your attorney can confirm the stock-versus-asset consent trigger on Veridian and Clearwater. Otherwise, I think we're in good shape.\n\nAnything else you want to add, or are we good to close out for today?"
+     },
+     {
+      "role": "user",
+      "content": "We're good. Thanks for taking the time to understand the business — most people just want the financials and the customer list. I appreciate that you dug into the tool room and the people side.\n\nLet me know if Morgan needs anything else from me or if Tom needs to pull together more numbers. I want this done right."
+     },
+     {
+      "role": "ai",
+      "content": "Thank you, Diane. This conversation gave me a much clearer picture of what makes Great Lakes tick — the tool room capability, the culture your father built, and the operational discipline that shows up in your quality numbers and customer retention. That's the story buyers need to hear alongside the financials.\n\nI'll get this to Morgan with the follow-up items flagged: Tom on the resin margin data, Rob on the tooling list, and your attorney on the Veridian/Clearwater consent language. If anything else comes up, we know where to find you.\n\nGood luck with the process — and I hope you find that buyer who understands it's a people business."
+     }
+    ]
+   },
+   {
+    "id": "861c5b8a-14dd-4449-acff-6c624d3cc0c1",
+    "status": "completed",
+    "startedAt": "2026-09-22T03:10:00.000Z",
+    "messages": [
+     {
+      "role": "ai",
+      "content": "Welcome back, Diane. On the employee side, how is your quality department structured — how many people report to Sandra Okafor, and do any of them hold specific certifications like CQE or CQA?"
+     },
+     {
+      "role": "user",
+      "content": "Sandra has 16 people total: probably 10 or 11 inspectors on the floor across the three shifts doing first-piece, in-process and final inspection, then 3 quality engineers who handle CAPAs and customer audits and process validation, and a couple lab techs who run the CMMs and do dimensional reports.\n\nAs far as certifications, Sandra's got her ASQ CQA — Certified Quality Auditor — and I think one of the engineers has a CQE but I'm not positive. The inspectors don't need formal certs; we train them in-house on GD&T, how to read a print, how to use calipers and micrometers, and then they get qualified on each part family.\n\nSandra's the ISO 13485 management rep, so she owns the whole quality system and she reports directly to me."
+     },
+     {
+      "role": "ai",
+      "content": "What's Sandra's tenure with the company, and has she indicated any plans to stay or leave after a sale?"
+     },
+     {
+      "role": "user",
+      "content": "Seven years — she came from a Tier-1 supplier in 2018. I haven't told her about the sale yet; only Tom, Rob, Karen and Morgan know.\n\nMy plan is to tell Sandra and Luis and Megan once we have an LOI, maybe a month before we announce it to the whole company. Sandra's solid and I think she'll stay if the buyer treats her right and keeps investing in quality, but I can't promise that until I know who the buyer is."
+     },
+     {
+      "role": "ai",
+      "content": "Who is Megan, and what's her role?"
+     },
+     {
+      "role": "user",
+      "content": "Megan Pryor — Director of Sales and Program Management. She's been here five years, came from a big Tier-1. She owns quoting, customer program launches, and the customer-facing side of new business.\n\nShe works with the engineers to cost out RFQs, negotiates piece prices with the customers, and then hands off to the program managers once we win. She's also the one who rebuilt our quoting process in 2021 so we're not leaving margin on the table the way we used to.\n\nI haven't told her about the sale either, but she'll need to know before closing because she's the face of the company to a lot of these customers."
+     },
+     {
+      "role": "ai",
+      "content": "How many program managers report to Megan, and is she involved in the day-to-day customer relationships or primarily on the front-end quoting and launch side?"
+     },
+     {
+      "role": "user",
+      "content": "Two program managers report to her — one handles automotive accounts, the other handles medical and industrial. They own the ongoing customer relationship, the forecasts, schedule changes, that stuff. Megan's mostly front-end: quoting, contract negotiation, PPAP launches, and she steps in if there's an escalation or a big customer audit.\n\nShe also still carries a couple of the smaller accounts herself where we don't have enough volume to justify a dedicated program manager."
+     },
+     {
+      "role": "ai",
+      "content": "Shifting to the operations side — your documents show about $2.9 million in capital expenditure last year. What would you estimate as the normalized annual maintenance capex to keep the presses and facility in good shape, separate from growth investments like the cleanroom expansion?"
+     },
+     {
+      "role": "user",
+      "content": "About $1.6 million a year just to keep the lights on — replace a couple of old hydraulics, rebuild a screw and barrel here and there, upgrade a chiller or a dryer, fix the roof when it leaks. That's maintenance capex.\n\nThe $2.9 million in 2024 included two new all-electric cleanroom presses, which were growth, not maintenance. Same thing in 2023 — the cleanroom expansion and the four electrics pushed that year up to $3.4 million, but the baseline is closer to $1.6 million if you're not adding capacity."
+     },
+     {
+      "role": "ai",
+      "content": "On the real estate side — your financials show the building appraised at $8.6 million in 2023, and I've seen the leaseback option sketched at around $6.50 per square foot. What's the age and condition of the roof, and has there been any significant deferred maintenance on the building itself?"
+     },
+     {
+      "role": "user",
+      "content": "The west roof section is original to 1994 — it's a 30-year roof and it's at the end of its life. We've got a quote for about $380,000 to replace it; we were planning to do it in 2025 or '26.\n\nThe east roof got repaired in 2023 after a hailstorm — that's the $96,800 add-back in the 2023 financials, net of insurance. The chillers were replaced in 2021, the cleanroom HVAC in 2023. Otherwise the building's in good shape — it's a steel frame with block walls, nothing fancy, but it's solid.\n\nIf a buyer takes the building they need to budget for that west roof pretty soon."
+     },
+     {
+      "role": "ai",
+      "content": "What's the electrical capacity at the facility — are you close to maxed out, or is there headroom for additional presses or a second cleanroom without a major utility upgrade?"
+     },
+     {
+      "role": "user",
+      "content": "We've got a 2,000-amp service and we're using maybe 70–75% of it. Jamal says we've got room for another 8 to 10 presses before we'd need to upgrade the service, and the second cleanroom wouldn't push us over — the HVAC for a cleanroom pulls a lot but it's not like adding a 500-ton press.\n\nThe bigger constraint for a second cleanroom is the chilled water capacity — we'd probably need to add another chiller or upsize the cooling tower, but that's a $200–250,000 problem, not a million-dollar utility upgrade."
+     },
+     {
+      "role": "ai",
+      "content": "Who supplies your resin, and do you have any concentration risk there — is it one distributor, or are you spread across multiple sources?"
+     },
+     {
+      "role": "user",
+      "content": "I already answered that — Midwest Polymer is about 38%, Keystone about 27%, Aurelian direct for the medical-grade resins maybe 15%, and the rest is smaller suppliers and colorant. No single supplier over 40%.\n\nWe've got good relationships with all three and we play them off each other a little bit on price, but resin's a commodity so there's only so much leverage."
+     },
+     {
+      "role": "ai",
+      "content": "You're right — I had that from earlier. On the automotive side, a couple of your programs run ICE-specific components and some are EV. Roughly what percentage of your automotive revenue is tied to EV platforms versus traditional ICE drivetrains versus parts that are platform-agnostic?"
+     },
+     {
+      "role": "user",
+      "content": "I think that covers it — let's wrap up here. Tom can send anything else you need."
+     },
+     {
+      "role": "ai",
+      "content": "Understood — we've covered a lot of ground today. You've given me a clear picture of the quality organization, the sales and program management structure, maintenance capex versus growth investments, the facility condition and utility headroom, and the key people who'll need to be part of the transition.\n\nI'll follow up with Tom on the 2021–22 resin margin data and with Rob on the complete tooling list. Everything else is saved, and you can pick this up anytime if there's more to add. Thank you, Diane."
+     }
+    ]
+   }
+  ]
+ },
+ "lakeshore": {
+  "documents": [
+   {
+    "id": "lk-lic",
+    "name": "Licensing, registration & insurance summary (TSSA, WSIB, insurance)",
+    "sourceKind": "document",
+    "visibility": "shared",
+    "extractedText": "C. Individual trade certificates - field technicians and managers\nCertificates  of  Qualification  (C  of  Q)  are  issued  by  Skilled  Trades  Ontario:  313A  Refrigeration  &  Air  Conditioning  Systems  \nMechanic; 313D Residential (Low Rise) Air Conditioning Systems Mechanic; 306A Plumber. Gas technician certificates (G1/G2/ \nG3) are issued by TSSA. Apprentices work under the supervision of a licensed technician.\nNameRoleTrade certificateC of Q #TSSA gas \ncert.\nGas cert. expiryODP\nDave KowalczykService Manager313A423459G12025-06-30Yes\nKevin O'BrienInstallation Manager313D703456G22026-06-30Yes\nLuis FernandesSenior HVAC Technician313A916138G12027-11-30Yes\nPaulo FernandesSenior HVAC Technician313A819837G12025-09-30Yes\nRyan McAllisterHVAC Technician313A598604G22026-09-30Yes\nJason LiuHVAC Technician313D905812G22027-02-28Yes\nMark PetrovicSenior HVAC Technician313A878618G12025-12-31Yes\nChris DoyleHVAC Technician313D745294G22026-12-31Yes\nAmir HaddadHVAC Technician313D331771G22027-05-31Yes\nBrandon KerrHVAC Technician313D903569G22025-08-31Yes\nNick SantoroHVAC Technician313A270273G22026-03-31Yes\nTyler OuelletteHVAC Technician313D197018G22027-08-31Yes\nSanjay PatelHVAC Technician313D484103G22025-11-30Yes\nMatt BrennanHVAC Technician313D632515G22026-06-30Yes\nDerek WhitfieldSenior HVAC Technician313A818893G12027-11-30Yes\nKyle MoreauHVAC Technician313D382840G22025-07-31Yes\nOwen GallagherHVAC Technician313D782339G22026-09-30Yes\nEvan LindqvistHVAC Technician313D920406G22027-02-28Yes\nMarcus BellHVAC Technician313D960648G22025-10-31Yes\nSal FerraroLead Plumber306A415502G22026-12-31-\nTom HendricksPlumber306A988501None--\nAndre JosephPlumber306A587730G22025-06-30-\nPete NovakPlumber306A459232None--\nGraham StewartPlumber306A423846None--\nAhmed KarimiHVAC Apprentice (final \nyear)\nApprentice 313D - C of Q \nexam booked June 2025\n-G22025-09-30Yes\nJosh TremblayHVAC Apprentice (final \nyear)\nApprentice 313D - C of Q \nexam booked June 2025\n-G32026-06-30Yes\nLiam O'ConnorPlumbing Apprentice (year \n3)\nApprentice 306A (level 3)-None--\nCody WalshInstaller / HelperNone-G3 (in \nprogress)\n-Yes\nSummary: 22 licensed field technicians (6 x 313A, 11 x 313D, 5 x 306A); 2 licensed managers (D. Kowalczyk 313A, K. O'Brien \n313D); 3 registered apprentices (2 x 313D writing C of Q exams June 2025; 1 x 306A level 3); 1 installer/helper. The owner, A. \nMoretti, holds a TSSA G1 certificate (no C of Q).\nLakeshore Home Comfort Ltd. - Licensing, Registration & Insurance Summary - as at March 31, 2025Page 2 of 4\nSample document — fictional business for demonstration\n"
+   },
+   {
+    "id": "lk-roster",
+    "name": "Staff roster with technician licences",
+    "sourceKind": "document",
+    "visibility": "shared",
+    "extractedText": "--- Sheet: Summary ---\n\"Lakeshore Home Comfort Ltd. - Staff & Licence Summary as at March 31, 2025\",\nPrepared by Denise Tran. Owner (Tony Moretti) is not on hourly/salary roster. Non-union workforce. Sample document - fictional business for demonstration,\nHeadcount,Count\nLicensed field technicians - total,22\n  HVAC - 313A Refrigeration & A/C Systems Mechanic,6\n  HVAC - 313D Residential A/C Systems Mechanic,11\n  Plumbing - 306A Plumber,5\nApprentices (registered),3\nInstaller / helper (unlicensed),1\n\"Managers (service, installation) - both hold C of Q\",2\nSales (comfort advisors),2\nDispatch / customer service,3\nOffice manager / bookkeeper,1\nWarehouse & purchasing,1\n\"Administration (part-time, related party)\",1\nTOTAL EMPLOYEES,36\nTSSA gas certificates - G1 (field + managers),5\nTSSA gas certificates - G2 (field + managers),17\n\"Average tenure, all employees (yrs)\",7.7\n\"Average tenure, licensed field technicians (yrs)\",8.1\n\"Field staff annualized base wages (excl. overtime, on-call, benefits, payroll burden)\",1676480\nOffice & management annual base salaries (excl. commissions; incl. related-party salary),669000\nPay practices,\nLicensed technician hourly range,$26 - $41\nOn-call stipend,\"$150 per night on the after-hours rotation, plus overtime for call-outs\"\nBenefits,Group health & dental after 3 months; 3% RRSP match after 1 year; $600/yr tool allowance\nEmployment agreements,Standard offer letters only. No non-competes or non-solicits in place for any employee.\n--- Sheet: Field Technicians ---\nEmp ID,Name,Role,Division,Hire date,Tenure (yrs),Trade certificate (C of Q),TSSA gas certificate,Licensed technician?,Hourly rate,\"Annualized base (2,080 hrs)\",Van,Notes\nE-104,Luis Fernandes,Senior HVAC Technician,HVAC,2009-08-17,15.6,313A,G1,Yes,41,85280,V-03,Lead on commercial RTU work; brother of Paulo\nE-112,Paulo Fernandes,Senior HVAC Technician,HVAC,2011-04-04,14,313A,G1,Yes,40,83200,V-04,\nE-121,Ryan McAllister,HVAC Technician,HVAC,2014-06-09,10.8,313A,G2,Yes,36,74880,V-05,\nE-133,Jason Liu,HVAC Technician,HVAC,2016-09-12,8.5,313D,G2,Yes,33,68640,V-06,\nE-115,Mark Petrovic,Senior HVAC Technician,HVAC,2012-03-19,13,313A,G1,Yes,39,81120,V-07,Field trainer for apprentices\nE-137,Chris Doyle,HVAC Technician,HVAC,2017-05-01,7.9,313D,G2,Yes,32,66560,V-08,\nE-141,Amir Haddad,HVAC Technician,HVAC,2018-02-26,7.1,313D,G2,Yes,31,64480,V-09,Heat pump specialist\nE-146,Brandon Kerr,HVAC Technician,HVAC,2019-01-14,6.2,313D,G2,Yes,30,62400,V-10,\nE-124,Nick Santoro,HVAC Technician,HVAC,2015-07-20,9.7,313A,G2,Yes,35,72800,V-11,\nE-152,Tyler Ouellette,HVAC Technician,HVAC,2020-03-02,5.1,313D,G2,Yes,29,60320,V-12,\nE-148,Sanjay Patel,HVAC Technician,HVAC,2019-06-17,5.8,313D,G2,Yes,30,62400,V-13,Heat pump specialist\nE-156,Matt Brennan,HVAC Technician,HVAC,2021-04-12,4,313D,G2,Yes,28,58240,V-14,\nE-107,Derek Whitfield,Senior HVAC Technician,HVAC,2010-10-04,14.5,313A,G1,Yes,40,83200,V-15,On-call rotation lead\nE-158,Kyle Moreau,HVAC Technician,HVAC,2021-09-07,3.6,313D,G2,Yes,28,58240,V-16,\nE-162,Owen Gallagher,HVAC Technician,HVAC,2022-05-16,2.9,313D,G2,Yes,27,56160,V-17,\nE-163,Evan Lindqvist,HVAC Technician,HVAC,2022-08-22,2.6,313D,G2,Yes,27,56160,V-18,\nE-167,Marcus Bell,HVAC Technician,HVAC,2023-03-06,2.1,313D,G2,Yes,26,54080,V-19,\nE-102,Sal Ferraro,Lead Plumber,Plumbing,2009-02-16,16.1,306A,G2,Yes,40,83200,V-20,Started the plumbing division with Tony in 2009\nE-119,Tom Hendricks,Plumber,Plumbing,2013-11-04,11.4,306A,None,Yes,36,74880,V-21,\nE-135,Andre Joseph,Plumber,Plumbing,2016-10-17,8.5,306A,G2,Yes,34,70720,V-22,Drain & camera specialist\nE-150,Pete Novak,Plumber,Plumbing,2019-08-12,5.6,306A,None,Yes,31,64480,V-23,\nE-164,Graham Stewart,Plumber,Plumbing,2022-10-03,2.5,306A,None,Yes,28,58240,V-24,\nE-165,Ahmed Karimi,HVAC Apprentice (final year),HVAC,2022-11-14,2.4,Apprentice 313D - C of Q exam booked June 2025,G2,No,23,47840,V-02,Licence pending\nE-168,Josh Tremblay,HVAC Apprentice (final year),HVAC,2023-04-24,1.9,Apprentice 313D - C of Q exam booked June 2025,G3,No,22,45760,V-02,Licence pending\nE-170,Liam O'Connor,Plumbing Apprentice (year 3),Plumbing,2023-09-11,1.6,Apprentice 306A (level 3),None,No,21,43680,V-24,Rides with Graham Stewart\nE-172,Cody Walsh,Installer / Helper,HVAC,2024-05-06,0.9,None,G3 (in progress),No,19,39520,V-02,Install crew\n--- Sheet: Office & Management ---\nEmp ID,Name,Role,Hire date,Tenure (yrs),Annual base salary,Licences held,Notes\nE-101,Dave Kowalczyk,Service Manager,2009-05-04,15.9,102000,313A; TSSA G1,\"Runs dispatch board, tech scheduling and quality; no written employment agreement or non-compete\"\nE-131,Kevin O'Brien,Installation Manager,2016-03-07,9.1,94000,313D; TSSA G2,\"Schedules install crews, permits, equipment orders\"\nE-140,Steve Marchetti,Comfort Advisor (sales),2018-01-15,7.2,52000,,\"Base + commission (commission 2024: $38,400)\"\nE-157,Laura Kim,Comfort Advisor (sales),2021-06-01,3.8,48000,,\"Base + commission (commission 2024: $31,900)\"\nE-128,Brittany Wallace,Dispatch Lead / CSR,2015-09-08,9.6,56000,,\nE-154,Jess Ahmed,Customer Service Rep,2020-11-02,4.4,47000,,\nE-166,Nadia Russo,Customer Service Rep,2023-01-09,2.2,46000,,Handles Comfort Club renewals & declined cards\nE-118,Denise Tran,Office Manager / Bookkeeper,2014-01-13,11.2,82000,,\"Payroll, AP/AR, month-end; works with external accountant\"\nE-143,Frank Dimitriou,Warehouse & Purchasing,2018-07-23,6.7,57000,,\"Inventory counts, supplier orders, van restocking\"\nE-109,Maria Moretti,Administration (part-time),2004-03-15,21,85000,,Spouse of shareholder; approx. 10-15 hrs/week"
+   },
+   {
+    "id": "lk-fleet",
+    "name": "Fleet list (24 service vans + 2 owner vehicles)",
+    "sourceKind": "document",
+    "visibility": "shared",
+    "extractedText": "--- Sheet: Fleet List ---\n\"Lakeshore Home Comfort Ltd. - Fleet List as at March 31, 2025\",,,,,,,,,,,,\nPrepared by Denise Tran (Office Manager). Sample document - fictional business for demonstration,,,,,,,,,,,,\nSERVICE FLEET (24 vans),,,,,,,,,,,,\nUnit #,Year,Make,Model,Assigned to,Odometer (km),Ownership,Lender / Lessor,\"Loan balance Dec 31, 2024\",\"Loan balance Mar 31, 2025\",Monthly payment,Est. fair market value,Notes\nV-01,2024,Ford,Transit 250 HR (upfit),Dave Kowalczyk,18400,Financed,Harlowe Auto Finance,62500,58914,1390,66000,Service manager van\nV-02,2024,Ford,Transit 350 HR (install upfit),Install crew (Karimi / Tremblay / Walsh),22100,Financed,Harlowe Auto Finance,62500,58914,1390,68000,\"Install crew van, towing package\"\nV-03,2023,Ford,Transit 250 HR (upfit),Luis Fernandes,51200,Financed,Harlowe Auto Finance,49800,46343,1340,55000,\nV-04,2023,Ford,Transit 250 HR (upfit),Paulo Fernandes,47900,Financed,Harlowe Auto Finance,49800,46343,1340,55000,\nV-05,2023,RAM,ProMaster 2500 (upfit),Ryan McAllister,55600,Financed,Quayline Commercial Credit,49800,46343,1340,52000,\nV-06,2022,Ford,Transit 250 (upfit),Jason Liu,88300,Financed,Quayline Commercial Credit,36500,33120,1310,44000,\nV-07,2022,Ford,Transit 250 (upfit),Mark Petrovic,91700,Financed,Quayline Commercial Credit,36500,33120,1310,44000,\nV-08,2022,RAM,ProMaster 2500 (upfit),Chris Doyle,84200,Financed,Quayline Commercial Credit,36500,33120,1310,41000,\nV-09,2021,Ford,Transit 250 (upfit),Amir Haddad,121500,Financed,Quayline Commercial Credit,23700,20398,1280,36000,\nV-10,2021,Ford,Transit 250 (upfit),Brandon Kerr,118900,Financed,Quayline Commercial Credit,23700,20398,1280,36000,\nV-11,2021,Chevrolet,Express 2500 (upfit),Nick Santoro,131400,Financed,Quayline Commercial Credit,23700,20398,1280,32000,\nV-12,2020,Ford,Transit 250 (upfit),Tyler Ouellette,152300,Owned,,0,0,0,29000,\nV-13,2020,Ford,Transit 250 (upfit),Sanjay Patel,148800,Owned,,0,0,0,29000,\nV-14,2020,Chevrolet,Express 2500 (upfit),Matt Brennan,160200,Owned,,0,0,0,26000,\nV-15,2019,Ford,Transit 250 (upfit),Derek Whitfield,181600,Owned,,0,0,0,23000,\nV-16,2019,Ford,Transit 250 (upfit),Kyle Moreau,176300,Owned,,0,0,0,23000,\nV-17,2019,Chevrolet,Express 2500 (upfit),Owen Gallagher,189900,Owned,,0,0,0,20000,\nV-18,2018,Ford,Transit 250 (upfit),Evan Lindqvist,211400,Owned,,0,0,0,17000,\nV-19,2018,Ford,Transit 250 (upfit),Marcus Bell,204700,Owned,,0,0,0,17000,\nV-20,2018,Chevrolet,Express 3500 (plumbing upfit),Sal Ferraro,219800,Owned,,0,0,0,16000,\nV-21,2017,Chevrolet,Express 2500 (plumbing upfit),Tom Hendricks,243100,Owned,,0,0,0,12000,\nV-22,2017,Chevrolet,Express 2500 (plumbing upfit),Andre Joseph,238600,Owned,,0,0,0,12000,Carries drain camera & jetter\nV-23,2016,Chevrolet,Express 2500 (plumbing upfit),Pete Novak,268400,Owned,,0,0,0,8000,Scheduled for replacement 2025\nV-24,2016,Chevrolet,Express 2500 (plumbing upfit),Graham Stewart / Liam O'Connor,274900,Owned,,0,0,0,8000,Scheduled for replacement 2025\nSubtotal - service fleet,,,,,,,,455000,417411,14570,769000,\n\"OWNER VEHICLES (company-registered, personal use)\",,,,,,,,,,,,\nUnit #,Year,Make,Model,Assigned to,Odometer (km),Ownership,Lender / Lessor,\"Loan balance Dec 31, 2024\",\"Loan balance Mar 31, 2025\",Monthly payment,Est. fair market value,Notes\nO-01,2023,RAM,1500 Limited Crew Cab,Tony Moretti (owner),38200,Financed,Harlowe Auto Finance,76000,71640,1690,64000,Owner vehicle - personal use; excluded from sale unless buyer wants it\nO-02,2022,Lexus,RX 350,Maria Moretti,29400,Operating lease,Harlowe Auto Finance (lease),0,0,1150,0,Leased in company name; lease ends Oct 2025; not on balance sheet\nSubtotal - owner vehicles,,,,,,,,76000,71640,2840,64000,\nTOTAL - all company vehicles (26),,,,,,,,531000,489051,17410,833000,\"Dec 31, 2024 loan total agrees to long-term debt per financial statements ($531,000)\"\n--- Sheet: Summary ---\n\"Fleet summary as at March 31, 2025\",\nSample document - fictional business for demonstration,\nService vans,24\nFinanced service vans,11\nOwned outright,13\nOwner vehicles (not part of service fleet),2\n\"Average service-van age (years, 2025 basis)\",4.9\nEst. FMV - service fleet,769000\n\"Loan balance Dec 31, 2024 - all vehicles\",531000\nPlanned replacements 2025,\"2 x 2016 Chevrolet Express (V-23, V-24); budget approx. $68,000 each upfitted\"\nModel year,Count\n2016,2\n2017,2\n2018,3\n2019,3\n2020,3\n2021,3\n2022,3\n2023,3\n2024,2"
+   }
+  ]
+ },
+ "clearwater": {
+  "documents": [
+   {
+    "id": "cw-roster",
+    "name": "Staff roster (22 people) with tenure and compensation model",
+    "sourceKind": "document",
+    "visibility": "shared",
+    "extractedText": "--- Sheet: Roster ---\n\"Clearwater Physiotherapy & Wellness Inc. - Staff roster (current as at January 20, 2026)\",,,,,,,,,,,,,\n\"Prepared by Dana Whitfield, Office Manager. Source: ClinicNest provider reports + PayCircle payroll. Contractors invoice semi-monthly.\",,,,,,,,,,,,,\nName,Role,Location,Start date,\"Tenure (yrs, at 20-Jan-2026)\",Status,Compensation model,Split % to practitioner (FY2024),Split % now (Jan 2026),Schedule,FY2024 billings ($),FY2024 compensation ($),Credentials,Notes\nPHYSIOTHERAPISTS (11),,,,,,,,,,,,,\nDr. Amrit Sandhu,\"Owner / Clinical Director, Physiotherapist\",Hillhurst,2009-03-16,16.8,Owner-employee (T4),Shareholder salary,,,2 clinical days (Tue/Thu) + admin,146200,180000,\"PT, PhD (Rehabilitation Science); FCAMPT-level manual therapy\",Treats at Hillhurst only. Billings flow to the clinic; paid by salary.\nLeah Kowalczyk,Lead Physiotherapist - Hillhurst,Hillhurst,2014-05-05,11.7,Employee (T4),\"Salary $118,000 + bonus $9,000 (FY2024); employer burden/benefits $11,200\",,,4 clinical + 1 admin day,301400,127000,PT; vestibular & concussion certification; runs the concussion program,\"Key clinician. Mentors new grads. Base raised to $124,000 effective October 2025. Not told about the sale.\"\nMarcus Oduya,Lead Physiotherapist - Seton,Seton,2021-08-16,4.4,Employee (T4),\"Salary $106,000 + bonus $7,500 (FY2024); employer burden/benefits $10,700\",,,4.5 clinical days,248600,113500,PT; dry needling; sport physiotherapy,Opened Seton. Bonus tied to Seton visit targets.\nPriya Raman,Senior Associate Physiotherapist; Pilates lead,Hillhurst,2016-09-12,9.4,Contractor,Fee split,70,70,4.5 days,318400,222880,PT; clinical Pilates instructor,Highest-billing associate. Also teaches reformer classes (paid per class).\nJordan Beaulieu,Associate Physiotherapist,Hillhurst,2018-02-05,8,Contractor,Fee split,65,65,4.5 days,296200,192530,PT; dry needling,\nKelsey Tran,Associate Physiotherapist (pelvic health),Hillhurst,2018-10-01,7.3,Contractor,Fee split,65,65,4 days,281700,183105,PT; pelvic health (internal exam) rostered,Only pelvic health provider; 3-4 week wait list.\nDaniel Okafor,Associate Physiotherapist,Hillhurst,2020-01-13,6,Contractor,Fee split,65,65,4 days,262900,170885,PT; manual therapy,\nSophie Lindqvist,Associate Physiotherapist,Hillhurst,2023-07-04,2.5,Contractor,Fee split,60,65,4 days,209700,125820,PT (2023 graduate),New-grad split stepped to 65% after 2 years (Jul 2025).\nRavi Mehta,Associate Physiotherapist,Seton,2023-06-19,2.6,Contractor,Fee split,60,65,4 days,104300,62580,PT (2023 graduate),Caseload still building. New-grad split stepped to 65% in Jun 2025.\nHannah Brodeur,Associate Physiotherapist,Seton,2022-03-07,3.9,Contractor,Fee split,65,65,3 days,76400,49660,PT; bilingual (EN/FR),\nLuis Carvalho,Associate Physiotherapist,Seton,2024-06-03,1.6,Contractor,Fee split,60,60,2 days in 2024; 4 days since Mar 2025,25000,15000,PT (2024 graduate),Recruited Jun 2024 when Ethan Marsh cut back to 3 days; took over the Seton patients who stayed after Nov 2024. New-grad split (60%) until Jun 2026.\nREGISTERED MASSAGE THERAPISTS (6),,,,,,,,,,,,,\nAimee Dubois,Registered Massage Therapist,Hillhurst,2011-04-18,14.8,Contractor,Fee split,62,62,4.5 days,151200,93744,\"RMT (2,200-hour program); association member for insurer direct billing\",Longest-tenured RMT.\nGrant Holloway,Registered Massage Therapist,Hillhurst,2015-09-08,10.4,Contractor,Fee split,60,62,4.5 days,142800,85680,\"RMT (2,200-hour program); association member for insurer direct billing\",Moved to the 62% (10+ year) split in Sep 2025.\nMei-Lin Chow,Registered Massage Therapist,Hillhurst,2019-01-14,7,Contractor,Fee split,60,60,4 days,128400,77040,\"RMT (2,200-hour program); association member for insurer direct billing\",\nTessa Rourke,Registered Massage Therapist,Hillhurst,2022-10-03,3.3,Contractor,Fee split,55,60,3.5 days,101300,55715,\"RMT (2,200-hour program); association member for insurer direct billing\",Split rose to 60% after 3 years (Oct 2025).\nNoor Haddad,Registered Massage Therapist,Seton,2021-09-07,4.4,Contractor,Fee split,60,60,3.5 days,78900,47340,\"RMT (2,200-hour program); association member for insurer direct billing\",\nBrandon Fisk,Registered Massage Therapist,Seton,2023-11-20,2.2,Contractor,Fee split,55,55,2.5 days,45700,25135,\"RMT (2,200-hour program); association member for insurer direct billing\",\nADMINISTRATION (5),,,,,,,,,,,,,\nDana Whitfield,Office Manager (both clinics),Both,2012-02-06,14,Employee (T4),Salary / hourly,,,Full-time,,66000,,\"Runs scheduling, billing, payer reporting. Age 58; has mentioned retiring in ~3 years.\"\nHarjit Sandhu,Bookkeeper / HR (part-time),Both,2009-03-16,16.8,Employee (T4),Salary / hourly,,,3 days/week,,58000,,Owner's spouse. Will leave at closing.\nChloe Martens,Patient Care Coordinator (front desk),Hillhurst,2019-05-21,6.7,Employee (T4),Salary / hourly,,,Full-time,,40300,,Direct-billing lead.\nEvan Price,Patient Care Coordinator (front desk),Hillhurst,2022-08-29,3.4,Employee (T4),Salary / hourly,,,Full-time,,37900,,\nJasmine Lee,Patient Care Coordinator (front desk),Seton,2021-08-23,4.4,Employee (T4),Salary / hourly,,,Full-time,,36400,,Casual cover from HH staff on Saturdays.\n\"Headcount: 11 physiotherapists (owner + 2 employed leads + 8 associates), 6 RMTs (all contractors), 5 administration (employees). 8 people on payroll (T4); 14 contractors. No union. No pension plan; group health & dental for payroll employees.\",,,,,,,,,,,,,\nSample document — fictional business for demonstration,,,,,,,,,,,,,"
+   },
+   {
+    "id": "cw-zoom",
+    "name": "Zoom working session - Morgan Ellis & Dr. Amrit Sandhu (40 min)",
+    "sourceKind": "video_call",
+    "visibility": "shared",
+    "extractedText": "[Sample document — fictional business for demonstration]\n\nZOOM MEETING TRANSCRIPT (auto-generated, lightly cleaned)\nMeeting: Clearwater Physiotherapy - working session (Brassline Advisory Partners)\nDate: Tuesday, February 10, 2026, 10:00 AM MST / 12:00 PM EST\nDuration: 40:12\nPlatform: Zoom\nParticipants:\n  Morgan Ellis - Senior Advisor, Brassline Advisory Partners (Toronto)\n  Dr. Amrit Sandhu - Owner & Clinical Director, Clearwater Physiotherapy & Wellness Inc. (Calgary, Hillhurst clinic back office)\n\n-------------------------------------------------------------------------------\n\n[00:00:04] Morgan Ellis: Morning, Amrit. Can you hear me okay?\n\n[00:00:07] Amrit Sandhu: I can. Give me a second, the camera's pointing at the ceiling. There we go. Sorry, I'm in the back office at Hillhurst. It's the only room without a plinth in it.\n\n[00:00:15] Morgan Ellis: That works. How's the weather out there?\n\n[00:00:18] Amrit Sandhu: We've got a chinook, so it's plus nine today and it'll be minus twenty on Thursday. Good for business, honestly. Everybody slips on the ice once the melt freezes again. That's a bit dark, but it's true. January and February are always busy for us.\n\n[00:00:31] Morgan Ellis: (laughs) We'll put it in the seasonality section more politely. So the plan today: I've got your statements, the T2s, the leases and Dana's two spreadsheets. They're clean and they tie together, which is rare. Today I want the story, the things that aren't on paper. Then we'll get you into the Cimple interview, and that'll capture the rest in more detail. Sound okay?\n\n[00:00:52] Amrit Sandhu: Sounds good. Dana will be thrilled you said her spreadsheets are clean.\n\n[00:00:56] Morgan Ellis: Let's start at the beginning. How did Clearwater start?\n\n[00:01:02] Amrit Sandhu: Okay. I qualified as a physio in 1999, so that's, wow, twenty-six years ago. I did hospital outpatient work for years and then worked at a couple of private clinics. I did my PhD part-time, in rehab science, and finished in 2008. By then I'd worked for other people long enough to have strong opinions about how a clinic should run. So in March 2009 my wife Harjit and I incorporated. We opened in a little 1,900-square-foot space in Hillhurst, a few blocks from where we are now. It was me, two other physios and one massage therapist, Aimee, who is still with us. She's been here since 2011, actually. I'm getting the order mixed up.\n\n[00:01:48] Morgan Ellis: That's fine. What was the idea behind it? What did you want to do differently?\n\n[00:01:54] Amrit Sandhu: The honest version is that I was tired of clinics that were like factories. You know the kind, three patients an hour and the physio hooks you up to a machine and leaves. I wanted one-on-one time, real assessments, and a lot of exercise-based care. It's a bit of a cliché now because everybody says it, but in 2009 in Calgary it really set us apart. And I wanted a place where young physios would actually learn something.\n\n[00:02:17] Morgan Ellis: And the move to the current Hillhurst space?\n\n[00:02:20] Amrit Sandhu: June 2017. We'd completely outgrown the first place. We were booking treatment rooms in fifteen-minute slots and still turning people away. The Wexford Avenue space is 3,800 square feet. We have ten treatment spaces, six private rooms plus an open gym with four plinths, three massage rooms, and a Pilates studio with two reformers. It was a big step up.\n\n[00:02:43] Morgan Ellis: And Seton came in 2021.\n\n[00:02:46] Amrit Sandhu: September 2021, yes. It was a bit crazy to open during COVID, but the lease terms were good because landlords were nervous. We got a tenant allowance, three months of free fixturing and an exclusive, so they can't put another physio clinic in the development. The southeast was booming, it still is, and a lot of our Hillhurst patients were driving forty minutes from Auburn Bay and Mahogany. So we followed them.\n\n[00:03:10] Morgan Ellis: Let's come back to Seton in a minute. Give me the business in one breath. What are you, today?\n\n[00:03:17] Amrit Sandhu: Two clinics, Hillhurst in the northwest and Seton in the southeast. Eleven physios including me, six massage therapists, and five people in admin, counting Dana and Harjit. We do physiotherapy, registered massage, clinical Pilates and exercise classes, and we sell some braces and orthotics. About three point three million in revenue in 2024. And 2025 was better. I think we'll land around three forty-five or three forty-six once Ridgeline finishes.\n\n[00:03:43] Morgan Ellis: Is that from your internal books?\n\n[00:03:45] Amrit Sandhu: Yes, from ClinicNest and Harjit's ledger. Dana could give you it by month. I'd say Hillhurst was up again and Seton was back over eight hundred thousand. I'll let her give you the exact numbers. I'd hate to be off by fifty grand on a recorded call.\n\n[00:04:00] Morgan Ellis: Wise. On earnings, when we first spoke in December you said around seven hundred of seller's discretionary earnings. For 2024 I get six ninety from the statements: EBITDA of about four twenty-six, plus your salary, plus the normal add-backs. Does that match how you see it?\n\n[00:04:18] Amrit Sandhu: That's about right. Ridgeline showed me something very close. I'd guess 2025 comes in around seven twenty. But again, I'm guessing.\n\n[00:04:28] Morgan Ellis: Good. Let's go through the add-backs so there are no surprises. Your salary is one-eighty. Harjit's wages, your vehicle, some personal travel, the legal fees for rewriting the agreements, and the Seton flood.\n\n[00:04:42] Amrit Sandhu: Right. The flood was March 2024. A pipe burst in the unit above and took out the flooring in two treatment rooms. Insurance covered most of it, but we paid the deductible and some flooring they wouldn't cover. So yes, that's one-time. The legal fees were Chinook redoing all the contractor agreements in the spring of 2024. The old 2019 form was thin, and, well, we found out exactly how thin.\n\n[00:05:02] Morgan Ellis: You mean Ethan Marsh?\n\n[00:05:05] Amrit Sandhu: (pause) Yes. Ethan was an associate at Seton. Good physio. When we rolled out the new agreement in March he kept putting off signing it, and in hindsight I know why. He cut back to three days that spring, left at the end of October 2024 and opened his own place in Auburn Bay, about three kilometres from Seton. He was still on the old 2019 agreement, which had a non-solicit but no radius clause. So legally he could do it.\n\n[00:05:24] Morgan Ellis: Did patients follow him?\n\n[00:05:27] Amrit Sandhu: Some. A handful. It's hard to know exactly, because patients finish their care anyway and you don't always know why someone doesn't rebook. It happens in every clinic. Associates leave, it's part of the model. We'd brought Luis on in June, part-time, when Ethan cut back, and he took over the patients who stayed. He's building up.\n\n[00:05:44] Morgan Ellis: Would Dana be able to pull the number of patients who transferred their files?\n\n[00:05:48] Amrit Sandhu: Probably, yes, if they asked for records to be sent. I don't have it in my head. I'd rather not guess.\n\n[00:05:55] Morgan Ellis: Fair. That's something the interview will ask you about too, so it's worth getting the number. A buyer would much rather hear \"we lost forty patients and here's how we replaced them\" than find out on their own.\n\n[00:06:06] Amrit Sandhu: Understood.\n\n[00:06:08] Morgan Ellis: So, Seton. Dana's location P&L shows Seton at about a twenty-three, twenty-four thousand dollar loss for 2024 after it takes thirty percent of shared overhead. How do you look at it?\n\n[00:06:20] Amrit Sandhu: Seton breaks even. It pays its own way. It covers its rent, its front desk, its practitioners and its marketing, and it throws off about a hundred and twenty thousand toward the shared costs. Dana's report gives it thirty percent of everything shared, including my salary, Harjit, the software and the insurance. That spending doesn't go away if you close Seton. I don't practise there, so it's odd to charge it for my salary. So on its own, it breaks even. Actually a bit better than even.\n\n[00:06:52] Morgan Ellis: Fair point on the fixed costs. A buyer will look at it both ways, though. What's holding it back?\n\n[00:06:58] Amrit Sandhu: Utilization. Hillhurst runs about eighty-four percent of booked hours. Seton is around sixty, give or take. Dana has the number. It's a newer community, the brand isn't as well known yet, and Ethan leaving hurt, I'll admit that. Marcus, our lead there, is excellent. We just need one or two more full-time associates and the rooms fill up. The weekday mornings are empty.\n\n[00:07:20] Morgan Ellis: What did Seton do in 2025?\n\n[00:07:23] Amrit Sandhu: Better. Like I said, back over eight hundred. The Seton rent goes up in September, though. We step from twenty-six a foot to twenty-eight fifty. It's only about sixty-five hundred a year, but it's there.\n\n[00:07:36] Morgan Ellis: Noted. And the Seton indemnity, the one you signed personally. That's capped at two years of rent?\n\n[00:07:42] Amrit Sandhu: Right, and it goes away after August of this year if we're not in default. Hillhurst is the one I'm worried about. That indemnity is unlimited.\n\n[00:07:51] Morgan Ellis: Let's talk Hillhurst. Renewal window is August 31 to November 30 this year. You mentioned Greg Tallis.\n\n[00:07:58] Amrit Sandhu: Greg's the property manager. We've got a good relationship. When we had the roof leak in 2019 he had someone there the same afternoon. I saw him before Christmas and asked, casually, what he'd be thinking for a renewal. He said \"probably twenty-seven, twenty-eight a foot, you're a great tenant.\" We're at twenty-four now. So that's roughly eleven to fifteen thousand a year more in base rent. It's not nothing, but it's market for that strip.\n\n[00:08:24] Morgan Ellis: And the change-of-control clause. They have to consent to a share sale.\n\n[00:08:29] Amrit Sandhu: Yes. What would you recommend? Should I exercise the renewal early, before the sale? I can't exercise it until the end of August anyway.\n\n[00:08:38] Morgan Ellis: We'll plan that together. The usual approach is to get a buyer into exclusivity, then approach the landlord with the buyer's financials and ask for consent and a renewal or extension together. I don't want you to tip off Greg too early. Let's leave that for later.\n\n[00:08:53] Amrit Sandhu: Okay. Good.\n\n[00:08:55] Morgan Ellis: People. You've got a very stable team on paper. Aimee since 2011, Dana since 2012, Leah since 2014, Priya since 2016.\n\n[00:09:04] Amrit Sandhu: I'm proud of that. Physio is an industry where associates move every two or three years. We've kept people for a decade. We pay fair splits, we don't overbook them, and I mentor. Honestly, I spend more of my time on the new grads than anything else. Sophie and Ravi both came to us straight out of school in 2023.\n\n[00:09:22] Morgan Ellis: Who does a buyer absolutely need to keep?\n\n[00:09:25] Amrit Sandhu: Leah. And Dana. Leah Kowalczyk runs Hillhurst clinically. She built our concussion and vestibular program in 2015, and that program is a big deal. It's about eleven percent of Hillhurst physio visits now. We get referrals from sports medicine doctors and a couple of the junior hockey programs. We're the concussion clinic for the Glenmore Ironhawks, the junior A team, and for a few high-school athletic departments.\n\n[00:09:49] Morgan Ellis: Is that written down anywhere? The eleven percent?\n\n[00:09:52] Amrit Sandhu: No, that's from memory of a report Leah ran last year. I can get her to run it again.\n\n[00:09:57] Morgan Ellis: Please. That's a great CIM point. Does Leah know about the sale?\n\n[00:10:01] Amrit Sandhu: No. Nobody except Dana and Harjit. And there's something you should know. Last fall Leah got an offer from Bowmont, the big sport-and-spine chain. They have nine clinics now. She told me about it, which I appreciated, and I gave her a raise to one twenty-four base, effective October. She stayed. But she's valuable and people know it.\n\n[00:10:22] Morgan Ellis: That's helpful and honest. We'll likely suggest a retention arrangement for Leah and Dana at closing. Sometimes the seller funds it from proceeds, sometimes the buyer does. Would you be open to that?\n\n[00:10:33] Amrit Sandhu: For those two, yes. Absolutely. Dana especially. She's fifty-eight and she's said she wants to retire in about three years. A buyer needs her for the first couple of years. She knows every insurer rep by first name.\n\n[00:10:46] Morgan Ellis: And Marcus at Seton?\n\n[00:10:48] Amrit Sandhu: Marcus is solid. He opened Seton with me. He's on salary plus a bonus tied to Seton visits. He wants to grow. Honestly, a buyer who gives him more responsibility would get a lot out of him.\n\n[00:11:00] Morgan Ellis: The associates. Walk me through the split model for someone who isn't a physio.\n\n[00:11:05] Amrit Sandhu: Sure. The associates are independent contractors. They bill through the clinic and keep a percentage. It's sixty-five percent for most, sixty for new grads in their first two years, and Priya, our most senior associate, gets seventy. The clinic keeps the rest and pays for the space, the front desk, direct billing, marketing and supplies. Massage therapists are similar, around sixty/forty. Leah and Marcus are the only employed physios, on salary.\n\n[00:11:30] Morgan Ellis: Buyers will ask about contractor classification. That's a CRA question.\n\n[00:11:35] Amrit Sandhu: I know. Chinook looked at it when they rewrote the agreements. Associates set their own schedules, carry their own professional liability insurance and can work elsewhere. Several teach or do sports coverage on the side. That's standard across the industry in Alberta.\n\n[00:11:50] Morgan Ellis: Good. What does your week look like right now?\n\n[00:11:54] Amrit Sandhu: Tuesdays and Thursdays I'm treating at Hillhurst, full days, mostly complex spine and persistent pain cases. Other physios send me their difficult ones. Mondays, Wednesdays and Fridays are admin: meetings with Dana, the leases, marketing, recruiting, mentoring. That admin part is what I want to stop doing.\n\n[00:12:11] Morgan Ellis: That's a good lead-in. Why sell, and why now?\n\n[00:12:14] Amrit Sandhu: (sighs) Seventeen years. I'm fifty-one. I love treating, and I love teaching. I've been asked to do sessional teaching at the university's physio program and I keep saying no because I don't have time. What I don't love anymore is being the landlord's contact, the IT guy, the HR department and the person who approves the toilet paper order. Harjit wants to be done too. And our son finishes high school next year. If I'm going to do this, I want to do it while the business is growing, not after.\n\n[00:12:43] Morgan Ellis: And after closing, what do you want your role to be?\n\n[00:12:46] Amrit Sandhu: I'd happily stay on clinically, two days a week, as an associate, for up to three years if the buyer wants that. For the first six months I'd do whatever is needed on the management side to hand things over properly. I'd sign a non-compete. I'm not going to open a clinic across the street. I just want to treat patients and teach.\n\n[00:13:04] Morgan Ellis: That helps a lot. Buyers worry about referral relationships leaving with the owner. How much of the referral base is tied to you personally?\n\n[00:13:12] Amrit Sandhu: Some. Two family practice groups near Hillhurst send a lot to me by name. There's a spine surgeon's office that sends post-op patients. But most new patients now come from online search and reviews. We're at about four point eight stars on roughly nine hundred reviews across both clinics. Word of mouth does the rest, plus direct billing. People want a clinic that bills their insurer directly.\n\n[00:13:33] Morgan Ellis: Do you track new-patient sources?\n\n[00:13:36] Amrit Sandhu: ClinicNest asks at intake. Dana would know the breakdown. My sense is about forty percent from search and reviews, thirty from word of mouth and returning patients, and the rest from physicians, WCB and the MVA insurers. Don't quote me on that. It's a feeling.\n\n[00:13:52] Morgan Ellis: The interview will ask again, so ask Dana before then. Speaking of payers, your mix is about sixty-two percent direct billing, fourteen WCB, eleven MVA, thirteen private. Is that stable?\n\n[00:14:05] Amrit Sandhu: Pretty stable. WCB has come down a little as a share. MVA is a pain. It's slow, lots of paperwork, and there's always talk of the province changing the auto insurance system. We have about eighteen thousand in MVA claims from 2024 still being fought over. But it's steady volume, and the patients often become private or insurance patients later.\n\n[00:14:26] Morgan Ellis: What's the largest single insurer?\n\n[00:14:29] Amrit Sandhu: Prairie Shield, by a mile. I think about a third of direct billing. The big employer plans in town are mostly with them.\n\n[00:14:36] Morgan Ellis: Dana's sheet has them at thirty-one percent of direct billing, so about nineteen percent of total revenue.\n\n[00:14:42] Amrit Sandhu: There you go. She's always more precise than me.\n\n[00:14:45] Morgan Ellis: Is there any risk of being delisted, or of fee cuts?\n\n[00:14:49] Amrit Sandhu: Delisting, no. We've never had an audit problem. Fee pressure, a little. Prairie Shield lowered their reasonable-and-customary cap on massage in 2024. It's the patient who absorbs that, not us, but some patients book fewer visits. It's not dramatic.\n\n[00:15:04] Morgan Ellis: Any audits at all, or College complaints?\n\n[00:15:08] Amrit Sandhu: Insurer audits, the routine ones. We pass because Dana's charting checks are fierce. College, there was one complaint in 2023 against an associate. A patient didn't like how an exam was explained. It was dismissed, no finding. That's it in seventeen years.\n\n[00:15:24] Morgan Ellis: Good. Competition. Who do you run into?\n\n[00:15:28] Amrit Sandhu: In the northwest, Bowmont Sport & Spine, the chain. They have nine locations, and one is about two kilometres from us. They're more volume-driven, with lots of new grads. Then there are the independents. Every strip mall has a clinic now. In the southeast there's Peakline Physio, which has two clinics in that area, and now Ethan's place, Marsh Performance Physio.\n\n[00:15:48] Morgan Ellis: And why do patients pick you over them?\n\n[00:15:51] Amrit Sandhu: Three things. First, time. Our follow-ups are forty-five minutes, one-on-one. Second, specialty programs: concussion and vestibular with Leah, pelvic health with Kelsey, who has a three-to-four-week wait list, and clinical Pilates with Priya. Third, reputation in Hillhurst. We've been there since 2009, and people bring their kids now. Oh, and the shockwave machine. We bought a radial shockwave unit in 2024 for about twenty-two thousand and it's paid for itself. It's great for tendons and plantar fasciitis. Patients ask for it by name.\n\n[00:16:24] Morgan Ellis: Is that private pay?\n\n[00:16:26] Amrit Sandhu: Mostly billed as part of the physio treatment, so insurers cover it within the visit. We charge a small add-on for private patients.\n\n[00:16:33] Morgan Ellis: Pricing. Dana mentioned the January increase.\n\n[00:16:37] Amrit Sandhu: About four percent on January 5. Initial assessment went from one thirty-five to one forty, a forty-five-minute treatment from one eighteen to one twenty-two, and a sixty-minute massage to one twenty-five. We'd held prices for two years before the 2024 increase, so we're catching up. Nobody's complained. Maybe two people.\n\n[00:16:55] Morgan Ellis: Let's talk growth. If you were buying this, what would you do in the first two years?\n\n[00:17:01] Amrit Sandhu: (laughs) Fill Seton. That's the obvious one. Two more associates, move Kelsey's pelvic health program there one day a week, and do more with the Seton community league and the schools. Second, corporate wellness. We've had inquiries from a couple of trucking and logistics companies about on-site ergonomics and injury-prevention work, and I've never had time to follow up. Third, a third location. I looked at a site in Mahogany in 2023. I had a letter of intent drafted and then I pulled back. I didn't have the energy for another build-out.\n\n[00:17:34] Morgan Ellis: Why Mahogany?\n\n[00:17:36] Amrit Sandhu: Young families, active people, lots of new housing, and it's close enough to Seton that the clinics could share staff. Honestly, somebody with capital and energy could have three or four clinics in the south end in five years. I'm just not that person anymore.\n\n[00:17:50] Morgan Ellis: Anything else? Extended hours, new services?\n\n[00:17:53] Amrit Sandhu: Kinesiology. We don't have a kinesiologist, and for WCB return-to-work programs that's a real gap. Also, Hillhurst Saturdays could run a full day instead of until two. And online booking for classes is clunky. Small things.\n\n[00:18:06] Morgan Ellis: On systems, it's ClinicNest for booking, charting and billing?\n\n[00:18:10] Amrit Sandhu: ClinicNest for everything clinical: booking, charting, direct billing to insurers and the patient portal. Harjit does the books in LedgerLine Online, and payroll runs through PayCircle. The contractor invoices come out of ClinicNest reports twice a month. Everything's in the cloud. I got rid of our last server in 2020.\n\n[00:18:28] Morgan Ellis: And equipment? Is anything leased?\n\n[00:18:31] Amrit Sandhu: Nothing leased. We own it all. There's the shockwave unit, two Pilates reformers, about eight ultrasound and IFC units, treadmills and bikes at both clinics, and the plinths. A lot of the Hillhurst plinths are from the 2017 move. Some will need replacing in a few years. That's maybe fifteen, twenty thousand total. The Hillhurst HVAC is the landlord's problem, thank goodness.\n\n[00:18:50] Morgan Ellis: Good. Now the balance sheet. The bank loan?\n\n[00:18:54] Amrit Sandhu: That's the Seton build-out loan with Prairie Commerce. Three-ten originally, five years, done at the end of this year. There's about fifty-seven thousand left, I think. And we've never touched the line of credit.\n\n[00:19:06] Morgan Ellis: Buyers will generally expect it to be paid out at closing, so the sale is cash-free and debt-free. We'll talk working capital later. The shareholder loan is eighteen and a half at the end of 2024?\n\n[00:19:16] Amrit Sandhu: That's money I put in back in the COVID year. Harjit's been paying it back to me a bit at a time. It'll be gone by closing.\n\n[00:19:22] Morgan Ellis: Okay. Deal structure. You told me in December you'd want a share sale.\n\n[00:19:27] Amrit Sandhu: Yes. Paul Hollis at Ridgeline says the lifetime capital gains exemption makes a big difference for me on a share sale. And it's a clean company. It's always been just me, with no holding company and no trust. I know buyers usually prefer assets. I'd consider moving on price a bit for a share deal. Paul says there's room to share some of the tax benefit.\n\n[00:19:47] Morgan Ellis: That's the right attitude. We'll model it. On price, we talked about positioning at two-four. How do you feel about that today?\n\n[00:19:55] Amrit Sandhu: I'd have liked two-five, you know that. But I trust your numbers. Two point four for a business growing like this seems fair. What I don't want is some complicated earnout where Seton has to hit a number or I don't get paid. I've seen friends get burned by that.\n\n[00:20:10] Morgan Ellis: What about a vendor take-back?\n\n[00:20:13] Amrit Sandhu: Some of that, yes. Ten, maybe fifteen percent, over two or three years, if the buyer is a physio group or someone credible. I'd rather that than an earnout.\n\n[00:20:22] Morgan Ellis: Timeline?\n\n[00:20:24] Amrit Sandhu: Ideally close by the end of the summer or early fall, so the Hillhurst renewal is dealt with in the window by whoever owns it. But I'm not desperate. If it takes until year-end, it takes until year-end.\n\n[00:20:36] Morgan Ellis: Good. What's included? Both clinics, all equipment, the name, phone numbers, website, patient records?\n\n[00:20:42] Amrit Sandhu: All of it. The name Clearwater, the website, the phone numbers, the reviews, the social accounts. Patient records stay with the clinic, and Dana knows the privacy rules for transferring custody. The only thing not included is my car. The company pays for it but it's mine, and that's in the add-backs.\n\n[00:20:58] Morgan Ellis: Right. Okay, let me change gears for a few minutes to things buyers dig into. Seasonality. You mentioned winter.\n\n[00:21:05] Amrit Sandhu: January to March is strong. Everyone's benefits reset in January, so the people who ran out in November come back, plus winter injuries and ski season. July and August are soft because everyone's at the lake, and so are my physios. September picks up with back-to-school sports. November is very busy because people rush to use their benefits before the end of the year. Then the last two weeks of December are dead.\n\n[00:21:28] Morgan Ellis: How big is the swing?\n\n[00:21:30] Amrit Sandhu: Maybe fifteen, twenty percent between a July and a January. Dana's monthly tab shows it.\n\n[00:21:36] Morgan Ellis: It does. Staffing in summer?\n\n[00:21:39] Amrit Sandhu: We manage it. Associates take their holidays then, which suits everyone because they're on splits. The fixed costs don't change, though. Rent is rent.\n\n[00:21:48] Morgan Ellis: Licences and regulation. Every physio is registered with the College, and you have the clinic business licences from the City?\n\n[00:21:54] Amrit Sandhu: Yes. Every physio holds an Alberta practice permit, and we check at renewal every year. Dana keeps a spreadsheet. Two of us are rostered for dry needling, and Kelsey is rostered for pelvic health internal exams. The RMTs belong to a recognized association, which the insurers require for direct billing. City business licences for both addresses. We're a WCB-approved provider and set up for the MVA protocols. We're GST-registered too, because massage and retail are taxable. Physio is exempt.\n\n[00:22:22] Morgan Ellis: That's thorough. Now some softer things. Culture. What would your team say about working here?\n\n[00:22:28] Amrit Sandhu: I hope they'd say it's the best-run clinic they've worked at. We do monthly in-services. Every new grad gets a mentor for their first year. We pay continuing-education support, about twelve to thirteen thousand a year across the team. And we close the clinics for a team day every June. Last year we did a hike in Kananaskis and a barbecue.\n\n[00:22:48] Morgan Ellis: Nice. What keeps you up at night about the business?\n\n[00:22:52] Amrit Sandhu: (pause) Associates leaving. Honestly. The model depends on good associates. When one leaves, it's six months to rebuild that caseload. The new agreements help, but you can't stop a good physio who wants to go out on their own. Then Hillhurst's lease, which we've covered. And me, I suppose. I know buyers will worry about the owner leaving. That's why I'd stay on part-time.\n\n[00:23:16] Morgan Ellis: That's a clear answer. Let me get two things from the files confirmed. Hillhurst is 3,800 square feet and Seton is 2,600?\n\n[00:23:24] Amrit Sandhu: Right.\n\n[00:23:25] Morgan Ellis: Hours?\n\n[00:23:27] Amrit Sandhu: Hillhurst is seven to eight Monday to Thursday, seven to six Friday and eight to two Saturday. Seton is eight to eight Monday to Thursday, eight to five Friday and nine to one Saturday.\n\n[00:23:38] Morgan Ellis: And about how many patients do you see a year?\n\n[00:23:41] Amrit Sandhu: Visits, around thirty thousand across both. Unique patients, I'd guess four thousand-ish. Dana would know. A couple of thousand of those are new each year.\n\n[00:23:52] Morgan Ellis: Dana's report says about thirty-nine hundred unique and twenty-one fifty new in 2024. So your guess is close.\n\n[00:23:58] Amrit Sandhu: I'll take close.\n\n[00:24:00] Morgan Ellis: Let's go back to one thing. The Seton P&L, for the CIM. Buyers will see Dana's allocation in the data room. I'd like us to present Seton honestly. Positive contribution before shared overhead, a small loss after a full allocation, and the upside from filling the rooms. Are you comfortable with that?\n\n[00:24:18] Amrit Sandhu: (pause) I understand why you'd show both. I just don't want it called a money-losing clinic. That's not how I run it and it isn't what's happening. It breaks even. Put the contribution number in front.\n\n[00:24:30] Morgan Ellis: We'll lead with contribution and explain the allocation. That's the credible way to do it. The Cimple interview will probably come back to this, so have Dana's 2025 location numbers handy.\n\n[00:24:40] Amrit Sandhu: Fine. Okay.\n\n[00:24:42] Morgan Ellis: Associates at Seton. There are three now: Ravi, Hannah and Luis. Hannah is still on the 2019 agreement?\n\n[00:24:49] Amrit Sandhu: Yes. She's been meaning to sign the new one. I'll get it done. She's three days a week and bilingual, which the French-speaking families in the southeast really like.\n\n[00:24:58] Morgan Ellis: Good. Harjit. What exactly does she do, so a buyer knows what to replace?\n\n[00:25:04] Amrit Sandhu: Three days a week. Bookkeeping in LedgerLine, payroll through PayCircle, paying contractor invoices, month-end and working with Ridgeline at year-end. She also does some HR paperwork, like onboarding documents and benefits enrolment. Dana could absorb the HR bits. For the books, an outside bookkeeper at twenty to twenty-five a year would do it.\n\n[00:25:24] Morgan Ellis: Our add-back uses twenty-two as the replacement cost. That fits. Now, you mentioned marketing. It's about forty-eight thousand in 2024. Where does it go?\n\n[00:25:33] Amrit Sandhu: Mostly search ads, and much more of it at Seton. Seton gets roughly two-thirds of the budget even though it's the smaller clinic. We also sponsor a couple of community leagues, run a newsletter, and advertise the concussion program with the hockey teams. I don't really know the return on each channel. Dana tries to track it but people don't always answer the \"how did you hear about us\" question truthfully.\n\n[00:25:54] Morgan Ellis: (laughs) Universal problem. Last thing on operations. Any lawsuits, disputes or claims pending?\n\n[00:26:01] Amrit Sandhu: Only the MVA receivables argument I mentioned. No lawsuits. Nothing with staff. We had a slip-and-fall claim in the Hillhurst parking lot years ago, but that was the landlord's insurance and it was settled.\n\n[00:26:13] Morgan Ellis: When was that?\n\n[00:26:15] Amrit Sandhu: 2018? Maybe 2019. I'd have to check. It never touched us financially.\n\n[00:26:21] Morgan Ellis: Okay. A few questions about you, for the \"owner\" section. Your training and credentials, briefly?\n\n[00:26:27] Amrit Sandhu: Master's in physiotherapy in 1999, and the PhD in rehabilitation science in 2008. I'm certified in advanced orthopaedic manual therapy, the fellowship-level stuff. I've taught continuing-education courses for other physios on spine management for about ten years. I've also published a few papers, but nobody buying a clinic cares about that. (laughs)\n\n[00:26:47] Morgan Ellis: Some might. A physio-owned group buyer might care a lot. What are you proudest of?\n\n[00:26:53] Amrit Sandhu: Honestly? The people who trained here. At least six physios who started with us as new grads now run clinics or programs of their own. Well, Ethan's one of them, so maybe I'm less proud of that one. (laughs) And that people in Hillhurst think of us as their clinic. I've treated three generations of one family.\n\n[00:27:12] Morgan Ellis: That's lovely, and it'll go in. Let me check my list. We've covered history, services, team, payers, Seton, the leases, growth, structure and transition. What haven't I asked that a buyer should know?\n\n[00:27:25] Amrit Sandhu: Hmm. Maybe this. The Hillhurst space has room to grow. There's an empty storage room at the back, about four hundred square feet, that we could turn into two more treatment rooms. The landlord already agreed to that in principle years ago. We never did it because we couldn't staff it. Oh, and the phone system. We switched to a cloud phone system last year, so calls go to whichever front desk is free. That helps Seton on the days Jasmine is alone.\n\n[00:27:52] Morgan Ellis: Good ones. Is the storage room in writing?\n\n[00:27:55] Amrit Sandhu: An email from Greg in 2021, I think. I'll look for it.\n\n[00:27:59] Morgan Ellis: Please do. That's worth something to a buyer. Okay, let's talk process, and then I'll let you go before your 11:30.\n\n[00:28:06] Amrit Sandhu: Thanks.\n\n[00:28:08] Morgan Ellis: Next step is the Cimple interview. You'll get an email with a link. It's a conversation, not a form. It already knows what's in your documents, so it won't ask you to repeat what's on paper. It'll ask what's missing and explain why buyers care. You can do it in pieces. Most people do three or four sittings of thirty to forty minutes.\n\n[00:28:27] Amrit Sandhu: Is it going to quiz me on numbers I don't know?\n\n[00:28:30] Morgan Ellis: It'll ask. If you don't know, say so, and it'll tell you where to find the number or ask Dana. Don't guess. It's better to say you'll check than to give a number that turns out wrong later.\n\n[00:28:40] Amrit Sandhu: That's my rule with patients too. Okay.\n\n[00:28:43] Morgan Ellis: After that, I'll draft the CIM. You and I review it together. We make a blind teaser version with no names, so we can market it without anyone knowing it's Clearwater. Interested buyers sign an NDA before they see the full version.\n\n[00:28:57] Amrit Sandhu: How will it be described without the name? \"Calgary physio clinic, two locations\" narrows it down pretty quickly.\n\n[00:29:03] Morgan Ellis: It'll be more general than that, something like \"multi-location physiotherapy and wellness practice in a major Western Canadian city.\" We're careful with it. The staff, the landlord and the insurers won't see anything until we're ready.\n\n[00:29:14] Amrit Sandhu: Good, because if the associates hear about it through the grapevine, that's my nightmare.\n\n[00:29:19] Morgan Ellis: Understood. Who do you see as the likely buyers?\n\n[00:29:22] Amrit Sandhu: Probably one of the consolidators. There are a few physio roll-ups buying across Western Canada. Or a physio who wants to own. Maybe Marcus, with a partner, but I doubt he has the capital. Bowmont would love Hillhurst, but I'd rather not sell to them. That's emotional, I know.\n\n[00:29:40] Morgan Ellis: Noted. It's your decision, and we can exclude anyone you want from the outreach list. We'll talk about who to approach separately.\n\n[00:29:46] Amrit Sandhu: Okay.\n\n[00:29:48] Morgan Ellis: Documents I still need. The associate and RMT agreements, both signed and template versions. The Greg email about the storage room. Leah's concussion-program report. Dana's 2025 monthly revenue and location numbers once they're ready. The equipment list. And the number of patients who transferred to Ethan.\n\n[00:30:06] Amrit Sandhu: Let me write that down. Agreements, Greg's email, Leah's report, Dana's 2025, the equipment list, the Ethan number. Got it.\n\n[00:30:15] Morgan Ellis: And the marketing sources from ClinicNest if Dana can pull them.\n\n[00:30:19] Amrit Sandhu: Yes. Sorry, while I have you, one more thing about Seton. The rent step in September. Does that change the Seton picture for buyers?\n\n[00:30:28] Morgan Ellis: A bit. About sixty-five hundred a year, like you said. Buyers will model it. The bigger lever is utilization. At Hillhurst's utilization, Seton would add a few hundred thousand of revenue, which is why I'd frame Seton as the upside.\n\n[00:30:42] Amrit Sandhu: That's how I see it. It's the upside.\n\n[00:30:45] Morgan Ellis: Good. Can I ask a personal question? How does Harjit feel about all this?\n\n[00:30:50] Amrit Sandhu: Relieved, I think. She's done the books since the first day. She took on payroll in 2009 because we couldn't afford anyone else and just never stopped. She'd like to travel. Her sister is in Vancouver, and our daughter is at school out there.\n\n[00:31:05] Morgan Ellis: That's nice. Okay, let's go through the timeline quickly so we're aligned. Interview through the end of February. Draft CIM in March, once the 2025 statements come in, because we want 2025 in there. Buyer outreach in April. Management meetings in May. LOI by early summer. Closing late summer or early fall, which fits your Hillhurst window.\n\n[00:31:26] Amrit Sandhu: That's quicker than I expected.\n\n[00:31:28] Morgan Ellis: It's a plan, not a promise. If the 2025 compilation slips, everything moves.\n\n[00:31:33] Amrit Sandhu: I'll push Paul.\n\n[00:31:35] Morgan Ellis: (laughs) Please. One more thing on the numbers. The 2025 internal figures, three forty-six and around seven twenty of SDE. I'll call those unaudited management estimates until Ridgeline finishes. I won't put a firm 2025 number in the CIM until the compilation is done.\n\n[00:31:50] Amrit Sandhu: That's fair. I'd rather under-promise.\n\n[00:31:53] Morgan Ellis: Good. Anything else from your side?\n\n[00:31:56] Amrit Sandhu: Just a question. Will buyers talk to the staff before closing?\n\n[00:32:00] Morgan Ellis: Only at the very end, and only the key people, usually Leah, Dana and Marcus, and only with your agreement. It usually happens after the LOI, in the last few weeks of due diligence.\n\n[00:32:10] Amrit Sandhu: Okay. That makes me feel better.\n\n[00:32:13] Amrit Sandhu: Actually, since I have a few more minutes, can I ask how buyers will value this? Harjit keeps asking me what \"three and a half times\" means.\n\n[00:32:21] Morgan Ellis: Sure. Most buyers for a clinic your size start from seller's discretionary earnings, the six ninety, or from an adjusted EBITDA where they take out a market salary for someone to replace your management role. For you that's probably a clinic director at around one-fifty with benefits, which gets you to about five-forty of adjusted EBITDA. Two point four is about three and a half times SDE, or about four and a half times adjusted EBITDA. That's a reasonable range for a two-location clinic with your history.\n\n[00:32:52] Amrit Sandhu: And the consolidators look at EBITDA?\n\n[00:32:55] Morgan Ellis: Almost always. They'll also look at your clinical billings. You personally bill about one forty-six a year. When you step back, that revenue either goes away or an associate takes it on at a sixty-five percent split. So they'll adjust for that as well.\n\n[00:33:10] Amrit Sandhu: That's why staying two days a week matters.\n\n[00:33:13] Morgan Ellis: Exactly. It protects that revenue while your patients move to other physios. The other thing buyers look at is working capital. You run lean. Receivables are about two-fifteen, mostly insurers and the MVA claims, and on the other side are the practitioner fees payable and normal payables. Net working capital is only about fifty-five thousand. We'll agree on a normal level that stays with the business, and you keep the cash above that.\n\n[00:33:40] Amrit Sandhu: So the cash in the bank is mine?\n\n[00:33:42] Morgan Ellis: In a cash-free, debt-free deal, generally yes, after the bank loan is paid out. On a share sale, Paul will want to plan the timing around dividends too. That's for him and your lawyer.\n\n[00:33:54] Amrit Sandhu: Right. Paul has opinions. (laughs)\n\n[00:33:57] Morgan Ellis: Good accountants do. Then there's the data room. After the NDA, serious buyers get access to a secure folder with the statements, the leases, the roster and so on. Cimple tracks who looks at what, so we know who's serious before we spend time with them.\n\n[00:34:12] Amrit Sandhu: Can they download everything?\n\n[00:34:14] Morgan Ellis: We control that. Early on it's view-only and watermarked. Patient information never goes in, obviously. Anything about staff pay is summarized until late in the process.\n\n[00:34:24] Amrit Sandhu: Good. The associates would be upset if a buyer saw their splits before they knew there was a buyer.\n\n[00:34:30] Morgan Ellis: Agreed. Let me ask about the MVA claims one more time, since buyers will ask. The eighteen thousand in dispute. Is it one insurer?\n\n[00:34:38] Amrit Sandhu: One insurer, two patients. Both were rear-end collisions. The insurer says the treatment went past the protocol limits without pre-approval, and Dana says we had the approvals. It'll probably settle at part of that. I wouldn't count on all of it.\n\n[00:34:52] Morgan Ellis: We'll show it as a possible reserve rather than hide it. Okay. Last one from me, the equipment. Are the ultrasound units old?\n\n[00:35:00] Amrit Sandhu: Some are from 2017, some newer. They're simple machines. Honestly, the modern approach is more hands-on and exercise, so we use them less every year. The reformers are 2023, and the shockwave is 2024. The computers were refreshed in 2024.\n\n[00:35:14] Morgan Ellis: So a buyer isn't walking into a big capital bill.\n\n[00:35:17] Amrit Sandhu: No. The biggest one would be finishing that Hillhurst storage room, maybe forty to fifty thousand for two treatment rooms. Plinths over the next few years. And if someone wants a third clinic, that's a real build-out. Seton cost about three-forty all in, build-out and equipment, before the landlord's allowance.\n\n[00:35:34] Morgan Ellis: Three-forty for Seton, before the allowance?\n\n[00:35:37] Amrit Sandhu: Around there before the seventy-eight thousand allowance. The bank loan covered the rest, plus the opening costs while it ramped up. I'd have to check the exact number with Harjit.\n\n[00:35:45] Morgan Ellis: That's useful context for anyone thinking about a third location. Okay, I think that's plenty for today. It was very helpful. I'll send a summary and the interview link this week.\n\n[00:35:55] Amrit Sandhu: Thanks, Morgan. Sorry for the rambling.\n\n[00:35:58] Morgan Ellis: Not at all. That's what I needed. The stories are what make the CIM.\n\n[00:36:03] Amrit Sandhu: Oh, before you go. The team day in June. If the sale is happening around then, I'd like to keep it. It matters to people.\n\n[00:36:11] Morgan Ellis: I don't see why not. Any buyer would be foolish to cancel it.\n\n[00:36:15] Amrit Sandhu: (laughs) Put that in the CIM. \"Buyer must attend team barbecue.\"\n\n[00:36:20] Morgan Ellis: I'll leave that for the closing agreement. (laughs) Have a good clinic day, Amrit.\n\n[00:36:24] Amrit Sandhu: You too. Bye.\n\n[00:36:26] -- Amrit Sandhu left the meeting --\n\n[00:36:40] Morgan Ellis: (voice memo while recording, for file) Clearwater follow-ups. One: Seton framing. Present contribution first, then the allocated view. He says it \"breaks even\" and he's firm on that, but Dana's report shows about minus twenty-four after overhead. Ask the interview to probe it and get Dana's 2025 location P&L. Two: how many patients followed Ethan Marsh. He was vague and said \"a handful.\" Three: retention for Leah and Dana. Leah turned down Bowmont last fall and got a raise to one twenty-four. Four: the Greg Tallis email about the storage room expansion. Five: the Hillhurst landlord strategy waits until after the LOI, and the renewal window is August 31 to November 30. Six: 2025 goes in as a management estimate only, three forty-six revenue and about seven twenty SDE, until the compilation is done. Seven: MVA dispute of eighteen thousand, show a reserve. Eight: Hannah needs to sign the 2024 agreement. That's it.\n\n[00:40:12] -- Recording ended --"
+   },
+   {
+    "id": "cw-crm",
+    "name": "CRM note - Zoom debrief (Seton, Leah retention, lease)",
+    "sourceKind": "crm",
+    "visibility": "broker_only",
+    "extractedText": "[Sample document — fictional business for demonstration]\n\nCRM NOTE (Brassline Advisory Partners - internal, broker only)\nDeal: Clearwater Physiotherapy & Wellness Inc.\nLogged by: Morgan Ellis\nDate: 2026-02-11 (Wed)\nType: Debrief - Zoom working session 2026-02-10 (40 min)\n\n- Docs in: FS FY23/FY24 (compiled), T2 23/24, both leases, roster, payer/location report. Minute book received from Chinook Legal 2026-01-27. All tie. FY24: rev $3,318,600 / EBITDA $426,100 / SDE $690,000 (my calc, 7 add-backs).\n- SETON: AS says it \"breaks even\" / \"pays its own way\". Dana's location P&L shows ($23,751) EBITDA after 30% shared-overhead allocation. Contribution before overhead +$119,949. AS resists the \"loses money\" framing. Have the interview probe it and get Dana's FY25 location numbers.\n- Seton rev DOWN FY23->FY24 ($812.9k -> $781.4k). Utilization ~58% vs Hillhurst ~84%. Rent steps $26 -> $28.50/sf Sep-26 (+$6.5k/yr).\n- Ethan Marsh (Seton associate) left Oct-24, opened a clinic ~3 km away (Auburn Bay). He never signed the Mar-24 agreement (5 km radius) and stayed on the 2019 form (no radius), so he was free to compete. AS vague on patients lost (\"a handful\"). Get the number.\n- Leah Kowalczyk (lead PT, Hillhurst, concussion program) turned down Bowmont last fall; raised to $124k base (eff. Oct-25, was $118k). Key retention risk. Dana (58) plans to retire in ~3 yrs. AS open to retention bonuses for both.\n- Hillhurst renewal: landlord PM Greg Tallis verbally said ~$27-28/sf (now $24). Nothing in writing. Window Aug 31-Nov 30, 2026. Change of control needs consent. Approach the landlord after the LOI.\n- FY25 mgmt estimate (unaudited): rev ~$3.46M, SDE ~$720k. Compilation due end of March. Do NOT put it in the CIM as firm.\n- Deal: share sale pref; $2.4M ask agreed; VTB 10-15% over 2-3 yrs OK; NO earnout. Target close late summer / early fall 2026.\n- Misc: MVA AR dispute ~$18k (one insurer), show a reserve. Hannah Brodeur still on the 2019 agreement. Unused ~400 sf storage room at Hillhurst could become 2 treatment rooms (landlord email 2021?). New-patient sources: AS guess ~40% search/reviews.\n- Next: send the Cimple seller interview invite tomorrow (2/12). Request the agreements, Leah's concussion volume report, the Ethan transfer count and the equipment list."
+   }
+  ],
+  "info": {
+   "idealBuyer": "Likely physiotherapy consolidator/roll-up buying across Western Canada, or individual physio with capital who wants to own. Marcus (Seton lead) possible but likely lacks capital. Owner prefers not to sell to Bowmont (9-location competitor chain) for emotional reasons. Buyer must be willing to retain key staff and maintain quality care model.",
+   "keyEmployees": "Leah Kowalczyk (clinical lead Hillhurst, concussion/vestibular specialist, $124k salary, received competing offer from Bowmont in fall 2024), Dana (office manager since 2012, age 58, critical for insurer relationships and operations), Marcus (Seton clinical lead, on salary plus Seton visit bonus), Harjit Sandhu (owner's spouse, bookkeeping/payroll 3 days/week), Priya (senior associate, 70% split, runs clinical Pilates), Kelsey (pelvic health specialist, 3-4 week waitlist), Aimee (RMT since 2011)",
+   "fullTimeCount": "8 employees on T4 payroll (Owner + 2 lead PTs + 5 admin)",
+   "partTimeCount": "14 contractors (8 associate PTs + 6 RMTs)",
+   "transitionPlan": "Owner stays 6 months full management transition, then up to 3 years part-time clinical (2 days/week) as associate to transition his personal patients ($146k annual billing). Retention arrangements recommended for Leah and Dana. Dana plans to retire in ~3 years, critical for first 2 years of transition. Owner will sign non-compete.",
+   "permitsLicenses": "All 11 physios hold Alberta College practice permits (verified annually by Dana). Two physios rostered for dry needling. Kelsey rostered for pelvic health internal exams. All RMTs belong to recognized association (required for direct billing). City of Calgary business licences for both locations. WCB-approved provider. MVA protocol approved. GST-registered (massage and retail are taxable, physio is exempt)."
+  },
+  "sessions": [
+   {
+    "id": "b23a15e6-b630-471e-923e-2eb703a8c021",
+    "status": "completed",
+    "startedAt": "2026-09-04T17:08:13.687Z",
+    "messages": [
+     {
+      "role": "ai",
+      "content": "One area I'd like to fill in: how would you describe Clearwater's reputation in the Calgary physio market, and what do you think sets it apart from competitors like Bowmont or other multi-location chains?"
+     },
+     {
+      "role": "user",
+      "content": "You know, honestly I think we've built something pretty different from the Bowmont model. They're volume-driven – 15-minute follow-ups, a lot of turnover, very corporate. We're the opposite. Every follow-up is 45 minutes, one-on-one. People notice that. I had a patient last year tell me her daughter saw someone at a Bowmont clinic and felt like she was on a conveyor belt. That's not us.\n\nOur reputation in Hillhurst especially is rock-solid – we've been in the community since 2009, and I've treated three generations of one family. The Bhatias: grandmother came in 2011 with a frozen shoulder, her son tore his ACL playing soccer in 2016, and now the grandson's in our concussion program after a hockey hit. That's the kind of trust you can't buy.\n\nThe reviews speak for themselves – 4.8 stars on about 900 reviews. People mention the time we take, the fact that they see the same clinician, and the range of what we offer under one roof. Concussion and vestibular work, pelvic health with Kelsey, clinical Pilates, shockwave – most independent clinics don't have all of that. The chains have scale, but we have depth and continuity. And our team has stayed. Leah's been with me since 2014, Aimee the RMT since 2011, Dana since 2012. That stability shows.\n\nSeton's newer, so we're still building that same depth there, but the exclusive-use clause in that development helps."
+     },
+     {
+      "role": "ai",
+      "content": "What's the typical path a new patient takes to find Clearwater — is it mainly word of mouth and physician referrals, or does online search and marketing play a meaningful role?"
+     },
+     {
+      "role": "user",
+      "content": "Honestly, it's shifted a lot over the years. When I opened in 2009, it was almost all physician referrals and word of mouth. Now I'd say online search is probably the biggest single channel – maybe 40% of new patients find us that way. They Google \"physio near me\" or \"concussion clinic Calgary,\" they see the reviews, they book through the website. We're on the first page for a bunch of local searches, and the 4.8-star rating does the heavy lifting.\n\nWord of mouth and returning patients are still strong – maybe 30%. People tell their friends, or they come back themselves for something new. I've had patients I first saw for a back issue in 2012 come back for pelvic health or send their kids to us for sports injuries.\n\nThe other 30% is a mix. We get referrals from two family-practice groups near Hillhurst – they know us, they trust the quality. There's a spine surgeon's office that sends post-op patients our way. And Leah built the concussion program, so we get referrals from the Glenmore Ironhawks junior A team and a few high-school athletic departments. WCB and the MVA insurers send people directly sometimes, too.\n\nWe don't do a ton of paid marketing anymore – maybe $4,000 a month across both clinics, mostly Google Ads and a bit of Facebook. The reputation does a lot of the work now. Seton's still building that organic referral base, so we skew a bit heavier on ads there."
+     },
+     {
+      "role": "ai",
+      "content": "Are those physician referral relationships — the two family-practice groups near Hillhurst and the spine surgeon — with the clinic formally, or are they more personal relationships you've built that would need to be handed off to a new owner?"
+     },
+     {
+      "role": "user",
+      "content": "That's a good question, and honestly... it's more the latter. They're personal relationships I've built over the years. The two family docs — one of them, Dr. Patel, I met through a mutual patient back in 2011, and we just started referring back and forth. The other group, I can't even remember how it started, but I've been getting their referrals for probably a decade. The spine surgeon, Dr. Kowalski, I know from some continuing-ed courses we both taught at. He trusts me with his post-op cases because he knows how I work.\n\nSo yeah, they're tied to me personally, not formally to the clinic. There's no contract or anything like that. A new owner would need to build their own relationships, or I'd need to make introductions during the transition. I think if I stay on for a while and we do a proper handoff — \"this is the new clinical director, they're excellent, I'm staying involved\" — most of that would transfer. But I'm not going to pretend it's automatic.\n\nThat said, the online piece and the word-of-mouth piece aren't tied to me. And even the physician referrals — a lot of them now come to Leah or Priya directly, not me. Leah especially with the concussion work. So it's not like I'm the only referral magnet. But I'd be lying if I said my name doesn't open some doors, you know?"
+     },
+     {
+      "role": "ai",
+      "content": "That's a realistic read — and the fact that Leah and Priya already receive direct referrals helps. On the topic of your team's forward plans: have any of your physiotherapists or RMTs indicated they're thinking about leaving, retiring, or cutting back their hours in the next year or two?"
+     },
+     {
+      "role": "user",
+      "content": "No, knock on wood. The PT and RMT group is pretty stable right now. Nobody's told me they're planning to leave or cut back. Leah just got the raise in October after Bowmont tried to poach her, so she's locked in. Marcus at Seton wants *more* responsibility, not less. Priya's been with me since 2016 and she's at her peak earning years. The associates all seem happy with their caseloads.\n\nThe RMTs are all independent contractors, so they come and go as they please, but the longest-tenured ones — Aimee, Grant, Mei-Lin — have been around for years and I haven't heard any rumblings.\n\nThe one person I *do* worry about medium-term is Dana. She's 58, and she's mentioned a few times that she's thinking about retiring in maybe three years. Not imminent, but it's on her radar. She's the institutional knowledge — scheduling, billing, payer protocols, all of it. Replacing her is going to take some real planning. I'd want to overlap someone with her for at least six months, maybe a year, to transfer everything.\n\nHarjit's leaving at closing, obviously, but that's by design. The bookkeeping piece is straightforward to replace — Dana says we can get someone for $20-25k a year to do what Harjit does.\n\nSo short answer: the clinical team is solid. Dana's the succession risk, but we've got a bit of runway there."
+     },
+     {
+      "role": "ai",
+      "content": "On the patient acquisition side — roughly what does it cost you to acquire a new patient through paid channels like Google Ads, and do you track that?"
+     },
+     {
+      "role": "user",
+      "content": "Honestly, I don't track it as closely as I probably should. Dana pulls some reports from Google Ads every quarter, but we've never really nailed down a true cost-per-acquisition number. It's one of those things where I know we spend about $4,000 a month on marketing — call it $50k a year — and we brought in roughly 2,150 new patients in FY2024, so back-of-the-envelope that's maybe $23 per new patient across all channels. But that includes the organic search, word of mouth, all of it, not just the paid ads.\n\nIf I had to guess on *just* the paid piece... maybe we're getting 30-40% of new patients from Google Ads? So call it 650-850 new patients from ads, which would put the cost somewhere in the $60-75 range per new patient from paid search. But that's a rough guess, you know? Dana would have better numbers from the ad account, and honestly a new owner with better analytics could probably get that cost down. We're not optimizing it the way a marketing person would.\n\nWhat I *do* know is that the lifetime value is strong. A new patient who comes in for physio usually stays for 6-8 visits on average, sometimes way more if it's a chronic issue, and a lot of them come back later or refer someone. So even at $75 to acquire them, it pencils out pretty well."
+     },
+     {
+      "role": "ai",
+      "content": "Amrit, we've covered a lot of ground — your market position, referral channels, team stability, and customer acquisition. We have strong documentation on the financials, leases, and operations already. Is there anything you feel buyers should know that we haven't touched on, or shall we wrap up for today?"
+     },
+     {
+      "role": "user",
+      "content": "You know, I think we've covered the mechanics pretty well. If I had to add one thing buyers should understand... it's that this business runs on trust and continuity, not flash. We're not the biggest, we're not the cheapest, we don't have the fanciest equipment. What we have is a team that shows up, patients who feel cared for, and a reputation we've earned one appointment at a time over 16 years.\n\nThe numbers are solid — you've got all of that — but the *reason* the numbers are solid is because people come back and they tell their friends. That doesn't happen by accident. It happens because Leah spends an extra ten minutes explaining a vestibular exercise, or because Dana remembers a patient's name and asks how their kid's doing, or because we don't rush people out the door.\n\nSo whoever buys this... I hope they get that. The model works *because* it's relationship-driven. You can't strip-mine it. If someone comes in thinking they're going to cut follow-ups to 30 minutes and double-book to squeeze more revenue, they'll kill the thing that makes it valuable.\n\nI want to sell to someone who's going to keep building what we've started — fill Seton, maybe add that third location, bring Dana's replacement up to speed, keep Leah happy. I'll help with all of that. I'm not trying to dump this and disappear. I want to stay involved clinically and see it thrive.\n\nThat's probably the most important thing I haven't said yet. Does that make sense?"
+     },
+     {
+      "role": "ai",
+      "content": "That makes complete sense, and it's exactly the kind of insight that helps the right buyer understand what they're stepping into. The relationship-driven model is the asset — and your willingness to stay involved clinically gives a buyer real continuity to build on.\n\nWe've covered the core ground today. There are a few operational items your broker will follow up on separately — things like confirming there are no College complaints on file, WCB audit history, and how the direct billing credentials transfer in a share sale. Dana would know most of that.\n\nThanks for your time, Amrit. This gives us a strong foundation for the CIM."
+     }
+    ]
+   },
+   {
+    "id": "ccd7f7a9-78d0-4668-8841-1eccf43914ec",
+    "status": "completed",
+    "startedAt": "2026-09-21T17:09:08.463Z",
+    "messages": [
+     {
+      "role": "ai",
+      "content": "Welcome back, Amrit. One question that came up as I was reviewing: has the clinic ever had any complaints filed with the Alberta College of Physiotherapists or CRMTA against any of the practitioners — resolved or otherwise?"
+     },
+     {
+      "role": "user",
+      "content": "Good question. There was one College complaint back in 2023 — it was against one of the associates, not me. A patient felt they weren't progressing fast enough and filed a complaint alleging the PT wasn't adjusting the treatment plan appropriately. The College investigated, reviewed the chart notes, and dismissed it with no finding. No disciplinary action, nothing on the public register. The associate handled it well, stayed professional throughout.\n\nThat's the only one I'm aware of in the entire history of the clinic. No complaints against me, none against the RMTs with CRMTA. We've been pretty fortunate that way, honestly. I think part of it is the time we spend with patients — when people feel heard and they understand what's happening, they're less likely to escalate frustrations into formal complaints.\n\nDana keeps a file on it — the College's closure letter and the associate's response documentation — so that's available if a buyer wants to see it. But yeah, one complaint in 16 years, dismissed. That's the full story there.\n\nAnything else on compliance you want to dig into?"
+     },
+     {
+      "role": "ai",
+      "content": "Has the clinic ever been audited by WCB-Alberta on its billing practices?"
+     },
+     {
+      "role": "user",
+      "content": "Yeah, we had one audit — it was back in 2019, I think. Maybe early 2020, right before COVID. It was a routine random audit, not triggered by anything specific. They pulled a sample of maybe 30 or 40 WCB claims from the previous year, reviewed the chart notes, checked that the billing codes matched the documentation and the treatment provided.\n\nThey found a couple of minor discrepancies — I think one was a billing code that should have been stepped down because the session ran short, and maybe one or two notes that could have been more detailed on the functional outcomes. Nothing fraudulent, just documentation tightening. They asked us to refund maybe $400 or $500, which we did immediately, and Dana put in some extra chart-review checks after that to make sure we were dotting every i.\n\nNo penalties, no further follow-up, and we haven't been audited since. WCB payments have been smooth ever since — they pay pretty reliably, usually within 30-40 days.\n\nDana would have the audit letter and our response if you need it, but honestly it was about as clean as those things get. I know some clinics that have had way messier WCB audits. We were lucky, and Dana's diligent about the documentation rules."
+     },
+     {
+      "role": "ai",
+      "content": "When was the last IPAC inspection at either location, and were there any findings?"
+     },
+     {
+      "role": "user",
+      "content": "Honestly, I'd have to check with Dana on the exact dates. IPAC — Infection Prevention and Control — those inspections happen through AHS, and they're not on a super regular schedule for outpatient clinics like ours. I think the last one at Hillhurst was maybe 2022 or early 2023? And Seton might have had one right after we opened in 2021 as part of the initial approval process.\n\nFrom what I remember, both were clean. They check things like hand hygiene, how we're storing and disinfecting equipment, laundry handling for linens, sharps disposal for the dry needling. We've always been pretty tight on that stuff — Dana makes sure the protocols are posted and the staff are trained. I don't recall any findings or corrective actions from the last inspections.\n\nBut Dana keeps all the IPAC documentation and inspection reports in the compliance binder, so she can pull the actual dates and any letters if you need them. I just don't have that level of detail off the top of my head. Is that something the broker's checklist is asking for specifically?"
+     },
+     {
+      "role": "ai",
+      "content": "One more compliance question: does the clinic sell any prepaid treatment packages or memberships where patients pay upfront for multiple visits?"
+     },
+     {
+      "role": "user",
+      "content": "No, we don't. We bill per visit. Some clinics do those packages — you know, \"buy 10 sessions, get a discount\" — but we've never gone that route. Partly it's because most of our patients are using insurance or WCB or MVA, so they're not paying out of pocket anyway. And for the private-pay patients, I've never loved the optics of locking someone into a package when we don't know how many sessions they'll actually need. It feels a bit... I don't know, salesy? That's not our style.\n\nThe one exception is the Pilates classes. We sell class packs — like a 10-class pass for reformer Pilates at a slight discount versus drop-in. But those are handled as deferred revenue on the books. When someone buys a 10-class pack, the revenue gets recognized as they use the classes, not all upfront. The accountant makes sure that's done properly. I think at any given time we might have $8,000 to $12,000 in unused class-pack credits on the books, but Dana tracks that in ClinicNest and it's reflected in the financials.\n\nSo short answer: no prepaid physio or massage packages, just the Pilates class packs, and those are accounted for correctly as deferred revenue. Does that answer what you're after?"
+     },
+     {
+      "role": "ai",
+      "content": "On the direct billing side — you're enrolled with five major insurers. In a share sale, do those direct billing credentials transfer automatically to the new owner, or is there a re-enrollment process?"
+     },
+     {
+      "role": "user",
+      "content": "That's a really good question, and honestly I'm not 100% certain on the mechanics. My understanding is that in a share sale, because the corporation stays the same — same name, same business number — the billing agreements *should* transfer automatically. The company is still Clearwater Physiotherapy & Wellness Inc., just with a different shareholder. But I don't know if the insurers have notification requirements or if they need to re-credential the new owner as the clinical director.\n\nDana would know this better than me — she set up all the direct billing agreements and deals with the insurers constantly. My gut says Prairie Shield, Northgate, Maplecrest, all of them... they're billing the *company*, not me personally. But if the new owner isn't a licensed PT, that might be an issue. I don't know if they require the owner to be a practicing clinician or if they just care that the practitioners treating patients are licensed.\n\nThis is definitely something the buyer's lawyer and Dana should confirm with each insurer before closing. The last thing you want is a gap in direct billing capability while you're waiting for re-enrollment. That would be a mess.\n\nI can ask Dana to pull the agreements and flag any change-of-control clauses, if that helps? Or the broker can reach out to her directly on this one. It's a detail I should have nailed down already, to be honest."
+     },
+     {
+      "role": "ai",
+      "content": "That's exactly right — your broker will want Dana to pull those insurer agreements and check for any change-of-control language before marketing. The mechanics vary by insurer, and buyers will want certainty that direct billing continues without interruption.\n\nOn patient records: in a share sale, the records stay with the corporation. But does ClinicNest have a standard process for ownership transfers, or would there be any data migration involved?"
+     },
+     {
+      "role": "user",
+      "content": "ClinicNest is cloud-based, so the records themselves don't physically move anywhere — they're already in the system. In a share sale, yeah, the corporation owns the account and all the data, so technically it just continues as-is. The new owner would get admin access, we'd remove my login and Harjit's, add theirs, and it keeps running.\n\nThat said, I think ClinicNest has a formal ownership-transfer process we'd need to follow. They probably want documentation — share purchase agreement, proof of new ownership, maybe a privacy impact assessment because we're dealing with personal health information under Alberta's HIA. I've never done it, so I don't know exactly what they require, but I know other clinics that have sold, and the practice management system transfer is usually pretty straightforward as long as you give them notice and the right paperwork.\n\nDana's our ClinicNest admin, so she'd coordinate that with their support team. I think we'd want to do it *after* closing but have it teed up in advance so there's no downtime. Patients book online through ClinicNest, so if the system went dark for even a day, that would be a problem.\n\nThe good news is there's no data migration — we're not moving from one system to another. It's just a change of ownership within the same ClinicNest account. But yeah, we should confirm the process with them ahead of time. I can have Dana reach out to ClinicNest and ask what they need for an ownership transfer, if that's helpful?"
+     },
+     {
+      "role": "ai",
+      "content": "One more on this front: who actually owns the patient records — the clinic corporation, or do individual practitioners retain any ownership of charts for patients they treat?"
+     },
+     {
+      "role": "user",
+      "content": "The corporation owns all the patient records — that's explicit in our associate agreements and it's been that way since we incorporated. When a practitioner joins, they acknowledge that any clinical notes they create in ClinicNest belong to Clearwater Physiotherapy & Wellness Inc. We're the custodian under Alberta's HIA, and honestly it has to be that way for continuity of care and our direct-billing obligations. If someone leaves, they don't take charts with them, though we'll forward records to another clinic if a patient requests it in writing. Right now we've got about 3,900 active patient charts in the system."
+     },
+     {
+      "role": "ai",
+      "content": "Shifting to the team structure: of your 11 physiotherapists, how many are T4 employees versus independent contractors?"
+     },
+     {
+      "role": "user",
+      "content": "Sorry, I misspoke a second ago: it's about 4,300 active patient charts, not 3,900. On the PTs, honestly I think you already have that from the roster: three of us are on T4, me, Leah and Marcus, and the other eight are associates on contractor agreements."
+     },
+     {
+      "role": "ai",
+      "content": "And the six RMTs — are they all on signed contractor agreements, or are any on the older 2019 form like Hannah?"
+     },
+     {
+      "role": "user",
+      "content": "All six RMTs are on the same 2022 contractor agreement, all signed, none on the old form. And just so you understand why I want to drop to two days a week after the sale: my dad was diagnosed with Parkinson's last year and I'm helping my mom with his care, but keep that out of the book please."
+     },
+     {
+      "role": "ai",
+      "content": "That goes to your broker only, never the sale document.\n\nBeyond Ethan Marsh leaving last October, have any other PTs or RMTs left in the past three years?"
+     },
+     {
+      "role": "user",
+      "content": "Just Ethan, really, plus one RMT who moved to Edmonton in 2023 for family reasons. Sorry, I have to run, I've got a patient in five minutes. Can we pick this up tomorrow?"
+     },
+     {
+      "role": "ai",
+      "content": "Of course — we've covered a lot of ground. Before you go, the one thing I'd most like to confirm is whether both clinic premises are zoned for healthcare or therapy use. A quick yes now, or shall we start there next time?"
+     },
+     {
+      "role": "user",
+      "content": "Let's start there next time, I really have to go now."
+     },
+     {
+      "role": "ai",
+      "content": "Absolutely — we'll pick up with the zoning question next time. Everything's saved, and your broker will follow up with Dana on the insurer agreements and IPAC documentation. Talk soon."
+     }
+    ]
+   }
+  ]
+ },
+ "transcripts": {
+  "greatLakes": [
+   {
+    "role": "ai",
+    "text": "Good to pick up where we left off, Diane — last time we got into the tool room, press fleet, and your medical pipeline. You mentioned replacing the older hydraulics two or three at a time — what's the annual budget you're planning for that press replacement program, and how many years until the fleet is where you want it?",
+    "opener": true
+   },
+   {
+    "role": "seller",
+    "text": "We've been running about $3 million total capex the last couple years, and figure $1.6 million of that is just maintenance — keeping the lights on. The rest goes to growth equipment or these press swaps. If we replace two or three of the old hydraulics a year, that's probably $600,000 to $900,000 depending on tonnage, so call it three to four more years to get the ten oldest machines out. Rob's got the list by age, but honestly a buyer with better access to capital could accelerate that — we're doing it as cash flow allows, and the personal guarantees make me cautious about adding more term debt."
+   },
+   {
+    "role": "ai",
+    "text": "How is your workforce structured across the three shifts — roughly how many people on each, and are any shifts harder to staff than others?"
+   },
+   {
+    "role": "seller",
+    "text": "First shift runs about 85 people, second around 75, third maybe 50 plus the temps scattered across all three. Third is always the hardest — that $2-an-hour premium helps, but turnover on nights is closer to 40% versus maybe 25% on days. Luis, our plant manager, has been juggling it for years; we've had better luck since we started hiring through Quillon for temp-to-perm on third, gives people a trial run before they commit to midnights. Skilled positions — setup techs, toolmakers — those are all first shift, which is another reason third is lean."
+   },
+   {
+    "role": "ai",
+    "text": "Quick clarification before we move on: the org chart shows 112 setup and process technicians across the three shifts, but you mentioned the skilled positions are concentrated on first shift. Are those 112 the operators themselves, or is that a separate count of your setup techs?"
+   },
+   {
+    "role": "seller",
+    "text": "No, you're reading it wrong — the 112 is press operators and packers, the people running the machines and boxing parts. The setup and process technicians are a separate line, 22 of them. Most of those 22 are on first shift, maybe four or five on second, one or two floaters on third who can handle basic adjustments. The operators don't change molds or dial in a new program; the techs do that. Sorry if the chart wasn't clear — Tom put it together and sometimes the labels run together."
+   },
+   {
+    "role": "ai",
+    "text": "The org chart Tom put together didn't specify a count for that line. Is 22 the current headcount, or is that an approximation?"
+   },
+   {
+    "role": "seller",
+    "text": "That's the current headcount — 22 setup and process techs. I just pulled it from the payroll summary Tom gave me last week when we were getting ready for this round of calls. If you need the exact breakdown by shift I can get that from Luis, but 22 is the right number as of end of May."
+   },
+   {
+    "role": "ai",
+    "text": "On the equipment liens — I see the term loans are secured by equipment and get paid off at closing. Are those liens on specific presses, or is it a blanket lien across the whole fleet?"
+   },
+   {
+    "role": "seller",
+    "text": "Blanket lien on all the equipment with First Maumee — they financed the 2023 and 2024 press buys plus some ancillary stuff, and they just took a general security interest in machinery and equipment. It's not press-by-press. The payoff's about $5.1 million as of the end of March, and yeah, that all gets cleared at closing so the buyer gets everything free and clear. Tom has the exact payoff letter if you need it, but it's straightforward — no carve-outs, no weird subordination."
+   },
+   {
+    "role": "ai",
+    "text": "On the company-owned molds — the 15 to 18 you mentioned last time — are those included in the sale, or would they stay with the family?"
+   },
+   {
+    "role": "seller",
+    "text": "They're included. Those are production molds we built for parts we sell to smaller customers or for samples and prototypes. They're assets of the business, not personal property, so they transfer with everything else. The customer-owned tooling obviously stays with the customers — we're just the custodian — but our molds go with the sale."
+   },
+   {
+    "role": "ai",
+    "text": "When Diane and Rob's non-compete period ends after the sale — two years, per the shareholders' agreement — are there any geographic or industry restrictions built into that, or is it a blanket prohibition on injection molding work?"
+   },
+   {
+    "role": "seller",
+    "text": "You're mixing things up. The shareholders' agreement has a non-compete that runs while you're a shareholder and for two years after you leave — that's to keep one of us from jumping ship and opening a shop across town while we still own the company together. At closing we're all out, so that agreement terminates. The buyer will want a new non-compete as part of the purchase agreement — I'll sign whatever's standard, probably three to five years, and I'd expect it to cover the Great Lakes region and our end markets, automotive and medical molding. Rob will do the same if he's staying on under an employment deal. But the old shareholders' agreement covenant isn't what governs after the sale."
+   },
+   {
+    "role": "ai",
+    "text": "On a related item: Diane and Rob have personally guaranteed the bank debt with First Maumee. What's your expectation for how those guarantees get handled at closing — full release, or would the bank require anything from the buyer?"
+   },
+   {
+    "role": "seller",
+    "text": "Full release at closing — the debt gets paid off, the guarantees die with it. That's one of the big reasons I want to sell, frankly; I'm tired of having the house on the line every time we finance a press. The buyer will put their own capital structure in place, and First Maumee is out of the picture. If the buyer wants to keep banking with them that's their business, but our guarantees are gone the day the wire hits."
+   },
+   {
+    "role": "ai",
+    "text": "Has First Maumee confirmed in writing that payoff at closing fully releases the personal guarantees, or is that still a conversation your attorney needs to button up?"
+   },
+   {
+    "role": "seller",
+    "text": "Tom got a payoff-and-release letter from them back in March when we told them we were exploring a sale — it says payment in full releases all guarantees and liens. Our attorney, Julie Hendricks, reviewed it and said it's standard. So yes, it's in writing and buttoned up."
+   },
+   {
+    "role": "ai",
+    "text": "Shifting to the working capital side: I see year-end working capital running around $6.5 to $6.8 million. Does that stay relatively flat through the year, or does it swing meaningfully with the automotive production schedule?"
+   },
+   {
+    "role": "seller",
+    "text": "It swings — spring is the peak, March through May, when the Tier-1s are building for summer and we're carrying more AR and inventory. We might be up to $7.2 or $7.5 million in April. Then it comes down over the summer, especially during the July shutdown, and sits around $6 million in the fall. The peg will probably land somewhere in the middle, $6.5 to $6.8 million trailing-twelve average, but Tom will give you the month-by-month if you want to see the curve."
+   },
+   {
+    "role": "ai",
+    "text": "How does your working capital peg get calculated in a typical deal — are you expecting it to be based on a trailing-twelve-month average, or a point-in-time snapshot at closing?"
+   },
+   {
+    "role": "seller",
+    "text": "Trailing-twelve average is what I've been told is normal for a company our size with seasonality, and that's what I just said — $6.5 to $6.8 million. You set the peg in the LOI based on that average, then at closing you true it up to what's actually on the books that day. If we deliver more working capital than the peg, the buyer pays us the difference; if we're under, we write them a check. Tom's done it before on a smaller deal years ago, so he knows the drill. Does that match what you're expecting?"
+   },
+   {
+    "role": "ai",
+    "text": "One last detail: on the working capital swings you mentioned — $7.2 to $7.5 million in spring, down to around $6 million in fall — is that driven more by receivables timing from the Tier-1s, or by raw material and finished goods inventory builds?"
+   },
+   {
+    "role": "seller",
+    "text": "Both, but inventory is the bigger driver. We build ahead in March and April because the Tier-1s give us firm releases and they hate line-downs, so we're carrying an extra two or three weeks of safety stock. Receivables stretch a little — Maumee Valley and Lakeshore pay in 45 to 50 days — but that's pretty steady year-round. The real swing is resin and finished goods. Then in July everything ships out before the shutdown and we run inventory down, and AR collects while we're dark, so cash peaks and working capital drops. It's a nice little cycle once you get used to it."
+   },
+   {
+    "role": "ai",
+    "text": "We've covered a lot of ground today — shift structure, equipment liens, the guarantees, non-compete terms, and how working capital moves through the year. The one area still open from earlier is the exact tooling list Rob keeps — if he can send that over to Morgan, it would fill in the last piece on mold ownership."
+   }
+  ],
+  "lakeshore": [
+   {
+    "role": "ai",
+    "text": "Good to pick up where we left off — we covered a lot of ground on the licensing, Comfort Club, and your key people last time. One thing I wanted to ask about: your financials show $378,000 in vehicle expenses in 2024, which is on the higher side relative to revenue — is that driven by the fleet age, fuel costs, or something else a buyer should understand?",
+    "opener": true
+   },
+   {
+    "role": "seller",
+    "text": "Yeah, listen, it's a combination. Fuel's a big part — we put serious kilometres on those trucks, you know what I mean? Twenty-four vans running all over Hamilton, Burlington, out to Oakville sometimes, that adds up fast. Plus insurance went up again last year, maintenance on some of the older units — we've got seven vans that are 2018 or older, a couple of the plumbing vans are 2016, so they need more love. We budget three, four vans a year for replacement at around sixty-eight grand upfitted, but honestly the older ones, you're into brakes, transmissions, that kind of thing. It's not out of line for a fleet this size, but yeah, a buyer's gonna want to keep cycling those older ones out.\n\nNow, before we keep going — I want to know what Morgan's actually using for the add-backs and what SDE number did she come up with for 2024? Because I've got my own ideas, but I want to see what you guys are working with. What's the actual number?"
+   },
+   {
+    "role": "ai",
+    "text": "The SDE calculation is something Morgan finalizes directly with the financials — I don't have her working number to share, and honestly that's the right conversation to have with her since she's the one who'll defend it to buyers. What I can help with is making sure we've captured the items that typically get considered. From what's on file: your $240K management salary, Maria's $85K, the $38K in vehicle loan interest, and the $214K in amortization. Are there other expenses in 2024 that were one-time or discretionary — things that wouldn't recur for a new owner?"
+   },
+   {
+    "role": "seller",
+    "text": "Okay, fair enough — yeah, I'll nail that down with Morgan. But listen, you're missing stuff. The twenty-eight thousand in owner vehicles — my RAM and Maria's Lexus lease, that's personal, that comes out. The health and life insurance premiums for me and Maria, that's another nine grand. Meals and entertainment, honestly half of that is me taking suppliers out or the Tiger-Cats box, call it eleven thousand discretionary. \n\nAnd here's a big one you didn't mention — we had a former employee, wrongful dismissal thing, settled it in July, cost us twenty-two thousand in legal fees that's buried in professional fees. That's one-time, that's gone, that should absolutely be an add-back.\n\nSo you've got the salaries, the vehicles, the insurance, the meals, the legal — that's way more than just amortization and interest. Denise has all this broken out, she gave it to Morgan. Are you guys not working off the same sheet here?"
+   },
+   {
+    "role": "ai",
+    "text": "You're right — those items are in the documents Denise sent, I should have had them in front of me. I'll make sure the owner vehicles ($28K), health and life insurance ($9K), discretionary meals ($11K).\n\nOne quick item while we're on housekeeping: the financials show a $60,000 due to shareholder that's been sitting there with no fixed repayment terms. Your broker will confirm what gets added back when they normalize the numbers against your statements. Is that something you'd expect to settle at closing, or would it stay on the books for the buyer to assume?"
+   },
+   {
+    "role": "seller",
+    "text": "Whoa, hold on — that sixty thousand, that's mine, that's money I lent the company years ago when we moved into the new building, you know what I mean? That gets paid out to me at closing, no question. The buyer's not assuming that, that's not their debt, that's owed to me personally.\n\nListen, the deal is cash-free, debt-free — we pay out the vehicle loans or the buyer assumes them at a credit to the price, and I take my sixty grand. Clean balance sheet. That's how Morgan explained it to me and that's what I agreed to.\n\nHonestly, I don't want any of this nickel-and-dime stuff scaring off a buyer — the business clears about a million and a half when you add everything back, we've got twenty-six trucks on the road, twenty-nine hundred members paying every month, and I'm here for six months full-time to make sure it goes smooth. At the end of the day, that's what matters, right?"
+   },
+   {
+    "role": "ai",
+    "text": "One quick clarification: you mentioned twenty-six trucks on the road, but the fleet list Denise sent shows 24 service vans plus your two personal vehicles that are excluded from the sale. Which number is right — are there 24 or 26 service vans actually running routes?"
+   },
+   {
+    "role": "seller",
+    "text": "Twenty-four, you're right — twenty-four service vans. I round up in my head sometimes, you know what I mean? We've got the two plumbing vans, twenty-two HVAC, that's twenty-four on the road every day. My RAM and Maria's Lexus don't count, those are ours. \n\nListen, Denise's list is the gospel on that stuff — if she says twenty-four, it's twenty-four. I'm out there running the business, not counting trucks in the yard every morning."
+   },
+   {
+    "role": "ai",
+    "text": "Switching gears — the staff roster lists your technicians' licences, but I want to make sure we capture the 313A refrigeration certifications specifically. How many of your techs hold the 313A?"
+   },
+   {
+    "role": "seller",
+    "text": "We've got six guys with the 313A — that's your refrigeration, your A/C work. Denise has it all broken down on the licensing summary she sent you, but yeah, six 313A, eleven with the 313D gas, five plumbers with the 306A. Some of the guys have multiples — like Dave and Kevin and Luis all have both the A and the D.\n\nHonestly we could use one or two more 313A guys — heat pump installs, you need the refrigeration ticket for the line sets and the charging, you know what I mean? Hard to find good people with that ticket right now."
+   },
+   {
+    "role": "ai",
+    "text": "You mentioned it's hard to find 313A techs right now — have any of your licensed guys given you any indication they might leave, or is there anyone beyond Dave and Sal you'd flag as a flight risk if the ownership changes?"
+   },
+   {
+    "role": "seller",
+    "text": "Nobody's said a word about leaving. Dave's the one I'd watch, honestly, he's hinted he wants a piece of it. Sal's been with me sixteen years, he's not going anywhere. But listen, at the end of the day this business clears about a million and a half a year, you know what I mean? Is that the number going in the book?"
+   },
+   {
+    "role": "ai",
+    "text": "Quick clarification: the staff roster shows Sal starting in 2009, which would be about sixteen years — so that tracks. On the retention question for the other licensed techs beyond Dave and Sal: is there anything you'd put in place to keep them through a transition — any retention bonuses or commitments you'd expect a buyer to offer?"
+   },
+   {
+    "role": "seller",
+    "text": "Listen, I already answered the retention thing — nobody's said they're leaving, Dave wants in, Sal's solid, the Fernandes brothers have been here forever. You give them a heads-up, you treat them right, they'll stay. Maybe a buyer throws Dave a little equity or a bump, but I'm not gonna start handing out retention bonuses for guys who aren't going anywhere.\n\nNow seriously — you keep dodging my question. The business clears about a million and a half when you add everything back. Is that the SDE number Morgan's putting in the book or not? Because if we're gonna list this thing at four-eight, I need to know what multiple she's using and what she's telling buyers the cash flow is. You're the one building the book, right? So what's the number?"
+   },
+   {
+    "role": "ai",
+    "text": "Let me ask about something else on the licensing side: besides you and Dave as the G1 certificate holders on the TSSA registration, who are the other master licence holders across the business — anyone else whose name appears on a company registration or who holds a licence the business operates under?"
+   },
+   {
+    "role": "seller",
+    "text": "It's just me and Dave on the TSSA contractor registration — that's the G1 gas. That's the one that matters for the company to operate. Kevin's got his G2, Sal's got his G2, but they're not certificate holders on the company registration, you know what I mean? They work under our umbrella.\n\nWe don't have an electrical contractor licence — that's why we sub out the panel work to Voltmere. And the plumbing, there's no master plumber registration in Ontario like some provinces, it's all individual tickets. Sal's the lead guy, he's got his 306A, but there's no company plumbing licence with his name on it.\n\nSo bottom line: me and Dave on the TSSA, that's it. And Dave stays, so the buyer just needs to get their own G1 or bring someone in, and we update the certificate holders with TSSA. It's straightforward.\n\nNow are you gonna tell me what SDE Morgan's using or do I need to call her after this?"
+   },
+   {
+    "role": "ai",
+    "text": "One thing that would help round out the employee section: the staff roster shows certifications, but for the CIM I'd like to list out which specific technicians hold which licences. Could Denise send over a breakdown showing each tech's name alongside their certifications — the 313A, 313D, and 306A holders individually?"
+   }
+  ],
+  "clearwater": [
+   {
+    "role": "ai",
+    "text": "One more on this front: who actually owns the patient records — the clinic corporation, or do individual practitioners retain any ownership of charts for patients they treat?",
+    "opener": true
+   },
+   {
+    "role": "seller",
+    "text": "The corporation owns all the patient records — that's explicit in our associate agreements and it's been that way since we incorporated. When a practitioner joins, they acknowledge that any clinical notes they create in ClinicNest belong to Clearwater Physiotherapy & Wellness Inc. We're the custodian under Alberta's HIA, and honestly it has to be that way for continuity of care and our direct-billing obligations. If someone leaves, they don't take charts with them, though we'll forward records to another clinic if a patient requests it in writing. Right now we've got about 3,900 active patient charts in the system."
+   },
+   {
+    "role": "ai",
+    "text": "Shifting to the team structure: of your 11 physiotherapists, how many are T4 employees versus independent contractors?"
+   },
+   {
+    "role": "seller",
+    "text": "Sorry, I misspoke a second ago: it's about 4,300 active patient charts, not 3,900. On the PTs, honestly I think you already have that from the roster: three of us are on T4, me, Leah and Marcus, and the other eight are associates on contractor agreements."
+   },
+   {
+    "role": "ai",
+    "text": "And the six RMTs — are they all on signed contractor agreements, or are any on the older 2019 form like Hannah?"
+   },
+   {
+    "role": "seller",
+    "text": "All six RMTs are on the same 2022 contractor agreement, all signed, none on the old form. And just so you understand why I want to drop to two days a week after the sale: my dad was diagnosed with Parkinson's last year and I'm helping my mom with his care, but keep that out of the book please."
+   },
+   {
+    "role": "ai",
+    "text": "That goes to your broker only, never the sale document.\n\nBeyond Ethan Marsh leaving last October, have any other PTs or RMTs left in the past three years?"
+   },
+   {
+    "role": "seller",
+    "text": "Just Ethan, really, plus one RMT who moved to Edmonton in 2023 for family reasons. Sorry, I have to run, I've got a patient in five minutes. Can we pick this up tomorrow?"
+   },
+   {
+    "role": "ai",
+    "text": "Of course — we've covered a lot of ground. Before you go, the one thing I'd most like to confirm is whether both clinic premises are zoned for healthcare or therapy use. A quick yes now, or shall we start there next time?"
+   },
+   {
+    "role": "seller",
+    "text": "Let's start there next time, I really have to go now."
+   },
+   {
+    "role": "ai",
+    "text": "Absolutely — we'll pick up with the zoning question next time. Everything's saved, and your broker will follow up with Dana on the insurer agreements and IPAC documentation. Talk soon."
+   },
+   {
+    "role": "ai",
+    "text": "Good to pick up where we left off — last time we got through the team's forward plans and some of the compliance history. One thing that came up in your broker notes: the call notes show a preference not to sell to Bowmont — can you tell me a bit more about what's behind that?",
+    "opener": true
+   },
+   {
+    "role": "seller",
+    "text": "Yeah, honestly they're the one buyer I'd really rather avoid. They tried to poach Leah last fall — offered her more money and equity in a new clinic they were opening near Hillhurst — and the whole approach felt pretty aggressive. We matched the comp to keep her, but the bigger thing is Bowmont runs a volume model: fifteen-minute follow-ups, double-booking, treat-and-street. That's the opposite of what we've built here. If they bought us they'd gut the culture in six months, and I think we'd lose half the team. I'd much rather see this go to an independent buyer or a smaller group that actually values the forty-five-minute model and wants to keep the people who made this place work."
+   },
+   {
+    "role": "ai",
+    "text": "On Leah specifically — given the Bowmont situation last fall and her importance to the concussion program, is there any retention arrangement being discussed for her as part of the sale, or would that be left to the buyer to negotiate?"
+   },
+   {
+    "role": "seller",
+    "text": "That's really up to the buyer, you know? I can't bind her to anything beyond what's already in her employment contract, and honestly I haven't told her about the sale yet. What I can do is introduce the new owner properly, explain the transition, and make it clear that keeping Leah is critical. She's got a two-year rolling non-compete in her contract — five kilometers, which covers most of the northwest — so she can't just walk across the street. But retention bonuses, equity, whatever the buyer wants to offer, that's their call. I'll stay involved long enough to help with that conversation if it helps."
+   },
+   {
+    "role": "ai",
+    "text": "Does Alberta require that a buyer of the clinic be a licensed physiotherapist, or can a non-PT — like a corporate consolidator or investor group — own the shares?"
+   },
+   {
+    "role": "seller",
+    "text": "No, Alberta doesn't require the owner to be a PT. The College of Physiotherapists of Alberta regulates practitioners, not ownership. You just need a designated clinical director who is a licensed physio — right now that's me, but it could be Leah or Marcus or whoever the buyer brings in. So a corporate buyer or an investor group can absolutely own the shares, they just need someone with an Alberta PT license to be accountable for clinical standards and college compliance. That's actually part of why I think this is attractive to a range of buyers, not just other clinicians."
+   },
+   {
+    "role": "ai",
+    "text": "Are both clinic locations confirmed to be zoned for healthcare or therapy use, or is there any risk the zoning wouldn't transfer cleanly to a new owner?"
+   }
+  ]
+ }
+}
