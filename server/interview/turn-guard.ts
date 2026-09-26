@@ -511,22 +511,34 @@ const HABIT_RE =
 const SOON_RE = /\b(?:right now|shortly|in (?:a (?:few|couple(?: of)?) |\d+ |five |ten |fifteen |twenty )?min(?:ute)?s?|in a (?:sec|second|bit|minute))\b/i;
 const APOLOGY_START_RE = /^(?:sorry|so sorry|apologies|oh|oops|ah|actually|unfortunately|hey|listen|ok(?:ay)?|shoot|darn|argh)\b/i;
 // What "later" may resume in a resume-later request: the conversation itself
-// ("this", "it", "the rest") — never a job. "If the unit arrives late we can
-// finish the install next week" is scheduling, not a stop (review-caught:
-// the business "we can" + any four words + "next week" ended an interview).
-const RESUME_OBJECT = String.raw`(?: (?:this|it|that|things|the rest(?: of (?:this|it|the questions))?|this conversation|the interview|the questions|where we left off|up|off|over))?`;
+// ("this", "the rest", "where we left off") — never a job, and never "it" /
+// "that", which are usually a task: "Yes, I'll do that tomorrow" answering
+// "could you upload the lease?", "I'll finish it tomorrow and send it over"
+// (review-caught: those ended interviews). A task commitment or a deferral
+// of ONE question ("Can I come back to this after I check with my
+// accountant?") is the classifier's to read (seller-intent.ts), not a
+// pattern's — only requests that can't be anything but ending this
+// conversation are instant.
+const RESUME_OBJECT = String.raw`(?: (?:this|things|the rest(?: of (?:this|it|the questions))?|this conversation|the interview|the questions|where we left off))`;
 const ADDRESSED_STOP_PHRASES: string[] = [
   // "Let's stop here", "can we end it here", "I'd like to wrap this up now".
   // Never "we can …" — that is the business ("we can stop the line").
   String.raw`(?:let'?s|can we|could we|we should|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we|time to|i think we (?:should|can)|${I_MUST})\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break|leave it (?:there|at that)|cut (?:this|it|things) short)(?: (?:it|this|things|(?:the|this|our) (?:session|call|chat|interview|conversation|meeting)))?(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
-  // "Can we do this another time?", "I'll finish this tomorrow", "let's
-  // continue later" — the conversation, resumed later.
-  String.raw`(?:let'?s|can we|could we|we could|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we|i'?ll|i will|i can)\s+(?:just\s+)?(?:finish|continue|resume|do|carry on|keep going|pick (?:this|it|things) (?:back )?up|come back to|get back to|chat|talk|speak)${RESUME_OBJECT}(?: (?:again|maybe|then|with you))? ${LATER}${CLAUSE_END}`,
+  // "Can we do this another time?", "let's continue later", "could we pick
+  // this up tomorrow" — the seller asking the interviewer to resume later.
+  // Subjects that address the interviewer only: never "I'll …" (a task: "I'll
+  // do that tomorrow") and never the business "we could / we can". ("Can we
+  // come back to this later?" is usually one question set aside — the
+  // classifier's call.)
+  String.raw`(?:let'?s|can we|could we|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we)\s+(?:just\s+)?(?:(?:finish|continue|resume|do|carry on|keep going|pick (?:this|things) (?:back )?up)${RESUME_OBJECT}|(?:continue|resume|carry on|keep going|pick (?:this|things) (?:back )?up|chat|talk|speak))(?: (?:again|maybe|then|with you))? ${LATER}${CLAUSE_END}`,
   // "Can we pick this up?" — resuming later, said as a question. (Not "can
-  // we continue with the lease next?" — that's a seller who wants to go on.)
-  String.raw`(?:can|could) (?:we|i) pick (?:this|it|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
-  // "Can I come back to this after the weekend?", "Could we do the rest on Monday?"
-  String.raw`(?:can|could|may) (?:we|i) (?:come back to|return to|continue|do|pick up|finish) (?:this|the rest)\b[^.?!]{0,40}\?`,
+  // we continue with the lease next?" — that's a seller who wants to go on;
+  // not "can I pick it up tomorrow?" — that's a document.)
+  String.raw`(?:can|could) we pick (?:this|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
+  // "Could we do the rest on Monday?" (Not "can I come back to this after I
+  // check with my accountant?" — one question set aside, and the interview
+  // goes on.)
+  String.raw`(?:can|could|may) (?:we|i) (?:continue|do|pick up|finish) (?:the rest|this conversation|the interview|the questions)\b[^.?!]{0,40}\?`,
   String.raw`(?<=^|[.!?,]\s{0,3}|\b(?:ok|okay|please|so|sorry|alright|right)\s{1,3})stop (?:here|now|there)${CLAUSE_END}`,
   // "I'll stop here", "I'm going to stop now", "I think I'll leave it there".
   String.raw`(?:i'?ll|i will|i'?m (?:going to|gonna)|i think i'?ll|i'?d better|i better)\s+(?:have to\s+)?(?:stop|leave it|call it)(?: (?:there|here|now|at that|a day|for (?:now|today|tonight|the day))){1,2}${CLAUSE_END}`,
@@ -871,10 +883,13 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
   // model's own endReason corroborates: it counts when the classifier gave no
   // verdict (failed / timed out) — so a gap in the patterns can never trap a
   // seller who asked to stop — but never against the classifier's "none"
-  // ("seller wants to stop" written on an ordinary answer, QA harvest).
+  // ("seller wants to stop" written on an ordinary answer, QA harvest). The
+  // patterns alone count only without a classifier verdict — its "none"
+  // withdraws a soft pattern stop (combineIntent; a firm one never reaches
+  // "none").
   const sellerAskedToStop =
     input.sellerStopDetected === true ||
-    matchesStopRequest(input.sellerMessage) ||
+    (input.intentStop !== "none" && matchesStopRequest(input.sellerMessage)) ||
     (input.intentStop === "unavailable" && endReasonSaysSellerStop(input.endReason));
   if (sellerAskedToStop) return { allowEnd: true };
 

@@ -942,11 +942,14 @@ export async function processTurn(
       (sellerQuestion ? `\nThe seller asked you: "${sellerQuestion.slice(0, 300)}" — answer it first.` : ""),
   });
   let stopNudgeLevel: StopLevel = "none";
+  // The first prompt was written for a stop the patterns saw — the
+  // classifier may still read the turn as carrying on (combineIntent).
+  const patternStopInPrompt = stopNow;
   if (stopNow) {
     console.log(
       `[session-manager] Seller stop signal #${stopSignalCount} (${stopLevel}, patterns) detected on session ${sessionId}`,
     );
-    systemBlocks.push(stopNudge(stopLevel, stopSignalCount));
+    systemBlocks.push(stopNudge(stopLevel, stopSignalCount, quick.sellerQuestion));
     stopNudgeLevel = stopLevel;
   } else if (closingAnswerTurn) {
     // (A goodbye that asks nothing — it already fits a second stop too.)
@@ -1095,9 +1098,13 @@ export async function processTurn(
   // closing turn's goodbye counts as a firm stop's instruction.) The
   // draft is then held and redone once with the right instruction (see
   // INTENT RE-CALL below).
+  // …or the patterns saw a stop the classifier reads as carrying on ("Yes,
+  // I'll do that tomorrow" to "could you upload the lease?") — unless the
+  // turn ends anyway, as the answer to a closing turn.
   const promptMisfits = (i: SellerIntent): boolean =>
     (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
-    (closingAnswerTurn && i.stop === "none" && i.continueRequest);
+    (closingAnswerTurn && i.stop === "none" && i.continueRequest) ||
+    (patternStopInPrompt && i.via === "model" && i.stop === "none" && !(priorStopCount > 0 && !i.continueRequest));
   // Only the patterns' reading of a withdrawal can bring the retraction
   // re-call below (which rewrites the reply) — hold such a draft.
   const retractionRecallPossible = (i: SellerIntent): boolean => i.via === "patterns" && i.retractions.length > 0;
@@ -1184,14 +1191,23 @@ export async function processTurn(
     stopNow = true;
     stopSignalCount = priorStopCount + 1;
     console.log(`[session-manager] Seller stop signal #${stopSignalCount} (${intent.stop}, classifier) detected on session ${sessionId}`);
+  } else if (intent.stop === "none" && stopNow) {
+    // The classifier read the patterns' stop as an ordinary answer (a task
+    // promised for tomorrow, one question set aside): no stop. After a
+    // closing turn it is still the answer to that turn.
+    stopNow = false;
+    stopSignalCount = 0;
+    closingAnswerTurn = priorStopCount > 0 && !intent.continueRequest;
+    console.log(`[session-manager] Pattern stop not confirmed by the classifier on session ${sessionId} — the interview carries on${closingAnswerTurn ? " (answer to the closing turn)" : ""}`);
   }
   if (stopNow) stopLevel = intent.stop === "firm" || stopLevel === "firm" ? "firm" : "soft";
   if (stopNow || (closingAnswerTurn && intent.continueRequest)) closingAnswerTurn = false;
 
   // INTENT RE-CALL: the draft was written for the wrong intent (a stop the
   // patterns missed — "Please stop asking me questions.", "I'm exhausted,
-  // can we do this another time?" — or a seller who chose to carry on).
-  // It is redone once with the right instruction before anything is shown.
+  // can we do this another time?" — a pattern stop the classifier read as
+  // an ordinary answer, or a seller who chose to carry on). It is redone
+  // once with the right instruction before anything is shown.
   if ((intentRecallPending || promptMisfits(intent)) && !shown.released) {
     const blocks = systemBlocks.filter(
       (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),

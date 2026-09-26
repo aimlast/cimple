@@ -300,6 +300,7 @@ export function removeClaim(value: string, claim: string, proposed?: string | nu
   const v = value.trim();
   if (!v || !claim.trim()) return null;
   const claimNums = numbersIn(claim);
+  const claimUnits = new Set(Array.from(stems(claim)).filter((w) => !WITHDRAWAL_VOCAB.has(w) && !CLAIM_FILLER.has(w)));
   const termRes = terms.map(termRegex).filter((re): re is RegExp => !!re);
   const hasClaim = (text: string): boolean => {
     if (termRes.some((re) => re.test(text))) return true;
@@ -307,7 +308,13 @@ export function removeClaim(value: string, claim: string, proposed?: string | nu
     // shared with a reason-for-sale is not the diagnosis (QA round V).
     if (opts.termsOnly) return false;
     const nums = numbersIn(text);
-    if (claimNums.length > 0) return claimNums.some((c) => nums.some((n) => Math.abs(n - c) <= Math.max(1e-9, Math.abs(c) * 0.01)));
+    if (claimNums.length > 0) {
+      // The figure, and what it counts: "about 40 trucks" is not the 40 in
+      // "each crew works about 40 hours a week" or in "third shift 35-40"
+      // (round-2 review: both were cut on a withdrawal of 40 trucks).
+      const figure = claimNums.some((c) => nums.some((n) => Math.abs(n - c) <= Math.max(1e-9, Math.abs(c) * 0.01)));
+      return figure && (claimUnits.size === 0 || overlap(stems(text), claimUnits) > 0);
+    }
     const distinctive = new Set(Array.from(stems(claim)).filter((w) => !WITHDRAWAL_VOCAB.has(w)));
     return distinctive.size > 0 && overlap(stems(text), distinctive) >= Math.min(2, distinctive.size);
   };
@@ -410,6 +417,11 @@ export function guessRetractedFields(info: Info, sellerMessage: string, ctx: { s
   const words = (sellerMessage.trim().match(/\S+/g) ?? []).length;
   return lastTurn.length === 1 && words <= 20 ? lastTurn : [];
 }
+
+// Hedges around a figure — not what it counts ("approximately 40 trucks").
+const CLAIM_FILLER = new Set(
+  "approximately approx around roughly about nearly almost close under over least most plus total thereabouts give take".split(" ").map((w) => w.slice(0, 5)),
+);
 
 const WITHDRAWAL_VOCAB = new Set(
   "sorry take back guess guessing guessed guesses scratch ignore misspoke misspeak wrong number numbers figure figures book said told earlier before meant mean real really actual actually right correct honest honestly wait part answer estimate estimates rough ballpark".split(" ").map((w) => w.slice(0, 5)),
@@ -604,6 +616,11 @@ export interface DateFlag {
   /** Opens a "verify <field> date" deferral. */
   needsVerification?: boolean;
 }
+
+// Fiscal-year wording: "FY2026", "fiscal 2025", "year-end", "the year that
+// ended in March", "revenueFY2026".
+const FISCAL_YEAR_RE =
+  /\bfiscal\b|fy\s?'?\d{2}|\byear[- ]?end(?:ed|ing|s)?\b|\byear (?:that )?(?:ended|ends|ending|closed|closes)\b|\b(?:ended|ending|closed) (?:on |in )?(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov)[a-z]*\b/i;
 
 const sentenceAround = (text: string, index: number): string => {
   const start = Math.max(text.lastIndexOf(".", index), text.lastIndexOf("?", index), text.lastIndexOf("!", index), text.lastIndexOf("\n", index)) + 1;
@@ -818,11 +835,20 @@ export function applyDateFidelityGuard(
     // they meant is the classic slip — verified, not silently kept.
     // (A year the question itself named is the seller answering about that
     // year — "your 2024 owner compensation?" → "…on last year's return".)
-    if (!corrected && said.some((p) => p.unit === "year")) {
+    // The year counts as named in "FY2026", "fiscal 2026" or "FY26" too —
+    // there's no word boundary before the digits (round-2 review: "FY2026
+    // sales — the year that ended in March?" had its key renamed to 2025).
+    // And on a fiscal year, "last year" / "this year" is a fiscal year whose
+    // label can't be read off the calendar (a March year-end's "last year"
+    // on 26 Sep 2026 is FY2026) — those checks stand down.
+    const namesYear = (y: number, t: string) =>
+      new RegExp(`(?<!\\d)${y}(?!\\d)|\\b(?:fy|fiscal(?: year)?)\\s?'?${String(y).slice(2)}(?!\\d)`, "i").test(t);
+    const fiscalContext = [seller, ctx.prevAiMessage ?? "", value, change.fieldName].some((t) => FISCAL_YEAR_RE.test(t));
+    if (!corrected && !fiscalContext && said.some((p) => p.unit === "year")) {
       const ys = Array.from(new Set(Array.from(value.matchAll(YEAR_RE)).map((m) => Number(m[1]))));
       const meant = said.filter((p) => p.unit === "year").map((p) => p.year);
-      const asked = new RegExp(`\\b${ys[0]}\\b`).test(ctx.prevAiMessage ?? "");
-      const saidIt = new RegExp(`\\b${ys[0]}\\b`).test(seller);
+      const asked = namesYear(ys[0], ctx.prevAiMessage ?? "");
+      const saidIt = namesYear(ys[0], seller);
       if (ys.length === 1 && !asked && !saidIt && !meant.includes(ys[0]) && meant.some((r) => Math.abs(r - ys[0]) === 1) && !priorYears.has(ys[0])) {
         verify = true;
         reasons.push(`the seller said "${said.find((p) => p.unit === "year")!.phrase}" (${meant.join("/")}); the value says ${ys[0]}`);
@@ -836,9 +862,10 @@ export function applyDateFidelityGuard(
     if (
       yearFixedFrom === null &&
       !Number.isNaN(keyYear) &&
+      !fiscalContext &&
       meantYears.length === 1 &&
       Math.abs(keyYear - meantYears[0].year) === 1 &&
-      ![seller, ctx.prevAiMessage ?? "", value].some((t) => new RegExp(`\\b${keyYear}\\b`).test(t))
+      ![seller, ctx.prevAiMessage ?? "", value].some((t) => namesYear(keyYear, t))
     ) {
       yearFixedFrom = keyYear;
       yearFixedTo = meantYears[0].year;

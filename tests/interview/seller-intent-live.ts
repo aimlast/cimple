@@ -3,7 +3,7 @@
 // suite (no .test.ts suffix).
 // Run: ANTHROPIC_API_KEY=… DATABASE_URL=postgres://unused/x npx tsx tests/interview/seller-intent-live.ts
 import { classifySellerIntent, combineIntent, quickIntent, planIntentEdits, type SellerIntent } from "../../server/interview/seller-intent";
-import { STOP_FIRM, STOP_SOFT, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT } from "./seller-intent-corpus.data";
+import { STOP_FIRM, STOP_SOFT, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT, DEFERRALS, DEFERRAL_PREV } from "./seller-intent-corpus.data";
 
 type Case = { kind: string; message: string; prevAi?: string; facts?: Array<{ key: string; value: string }>; check: (i: SellerIntent) => string | null };
 
@@ -56,6 +56,8 @@ const cases: Case[] = [
     },
   })),
   ...CONTEXT.map((c) => ({ kind: "context", message: c.message, prevAi: c.prevAi, check: (i: SellerIntent) => ((i.stop !== "none") === c.stop ? null : `stop=${i.stop}`) })),
+  // A task promised for later / one question set aside: the interview goes on.
+  ...DEFERRALS.map((m) => ({ kind: "deferral", message: m, prevAi: DEFERRAL_PREV, check: (i: SellerIntent) => (i.stop === "none" && !i.retractions.length ? null : `stop=${i.stop} r=${i.retractions.length}`) })),
 ];
 
 (async () => {

@@ -60,8 +60,36 @@ export const STOP_SOFT: string[] = [
   "I have a patient in five minutes so I'll need to leave it there.",
 ];
 
-/** Stops the instant patterns must catch (no waiting for the classifier). */
-export const STOP_PATTERN_MUST: string[] = [...STOP_FIRM, ...STOP_SOFT.filter((s) => !/wiped|patient in five|fried/.test(s))];
+/**
+ * Stops the instant patterns must catch (no waiting for the classifier).
+ * Left to the classifier: wording that is just as often a task or ONE
+ * question set aside ("I'll finish this tomorrow", "can I come back to
+ * this…?" — see DEFERRALS), and stops that lean on how the seller feels.
+ */
+export const STOP_PATTERN_MUST: string[] = [...STOP_FIRM, ...STOP_SOFT.filter((s) => !/wiped|patient in five|fried|finish this tomorrow|come back to this/.test(s))];
+
+/**
+ * Task commitments and single-question deferrals — the interview goes on
+ * (round-2 review: every one of these ended an interview through the
+ * widened resume-later patterns). Asked in reply to DEFERRAL_PREV.
+ */
+export const DEFERRAL_PREV = "Could you upload the lease when you get a chance? And while we're on it — who holds the lease, you personally or the corporation?";
+export const DEFERRALS: string[] = [
+  "Yes, I'll do that tomorrow.",
+  "Sure, I'll do it tomorrow.",
+  "I can do it next week.",
+  "Can I come back to this after I check with my accountant?",
+  "Could we come back to this once I have the lease in front of me?",
+  "Can I come back to this one later? I'd need Donna's numbers.",
+  "I'll get back to it tomorrow, Donna has the rate letters.",
+  "I'll finish it tomorrow and send it over.",
+  "I'll continue it next week — the reconciliation, I mean.",
+  "I'd have to check with Harjit on that… Can I come back to this after I talk to her?",
+  "Can we come back to this later? I need Donna's numbers.",
+  "I can get back to you on that Monday.",
+  "Could I pick it up tomorrow from the landlord?",
+  "Yes, I'll do that tomorrow. The corporation holds it.",
+];
 
 /** Business answers that borrow stop vocabulary — never a stop. */
 export const BUSINESS: string[] = [

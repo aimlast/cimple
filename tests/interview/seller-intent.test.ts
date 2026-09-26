@@ -38,7 +38,7 @@ import {
   resolveSeasonYear,
 } from "../../server/interview/fact-guards";
 import type { FieldChange } from "../../server/interview/info-merger";
-import { STOP_FIRM, STOP_SOFT, STOP_PATTERN_MUST, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT } from "./seller-intent-corpus.data";
+import { STOP_FIRM, STOP_SOFT, STOP_PATTERN_MUST, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT, DEFERRALS, DEFERRAL_PREV } from "./seller-intent-corpus.data";
 import { installHarness, baseDeal, ai, seller } from "./turn-harness";
 import { processTurn } from "../../server/interview/session-manager";
 
@@ -66,6 +66,12 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     assert.equal(detectFirmStop(s), false, s);
   }
   for (const c of CONTEXT) assert.equal(detectStopSignal(c.message, c.prevAi), c.stop, `${c.prevAi} → ${c.message}`);
+  // Round-2 review: a task promised for later, or ONE question set aside, is
+  // never a pattern stop (all of these fired and ended interviews).
+  for (const s of DEFERRALS) {
+    assert.equal(detectStopSignal(s, DEFERRAL_PREV), false, `not a stop: ${s}`);
+    assert.equal(quickIntent(s, DEFERRAL_PREV).stop, "none", `quick: not a stop: ${s}`);
+  }
   ok(`stop patterns: 0 of ${BUSINESS.length + NEUTRAL.length} business/neutral answers fire; all ${STOP_PATTERN_MUST.length} clear stops caught; ${STOP_FIRM.length} firm`);
 }
 
@@ -100,6 +106,18 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
   assert.equal(combineIntent(quickIntent("We stop at the bank on Fridays."), modelIntent({ stop: "none" })).stop, "none");
   assert.equal(combineIntent(quickIntent("My head's spinning. I need a coffee and a lie-down."), modelIntent({ stop: "soft" })).stop, "soft", "a stop the patterns missed");
   assert.equal(combineIntent(q, null).via, "patterns", "classifier down → the patterns decide");
+  // The classifier's "none" withdraws a SOFT pattern stop; a firm one stands.
+  assert.equal(combineIntent(quickIntent("I have to run."), modelIntent({ stop: "none" })).stop, "none", "a soft pattern stop needs the classifier to agree");
+  assert.equal(combineIntent(quickIntent("I have to run."), null).stop, "soft", "…and stands when the classifier is down");
+  assert.equal(combineIntent(q, modelIntent({ stop: "none" })).stop, "firm", "a firm stop always stands");
+  // The seller's own question, not the stop request.
+  const beacon = "Can we wrap this up here? I have a pharmacy to run. Before I go, is there one thing you most need from me?";
+  assert.equal(quickIntent(beacon).stop, "soft");
+  assert.equal(quickIntent(beacon).sellerQuestion, "Before I go, is there one thing you most need from me?");
+  assert.equal(quickIntent("Can we pick this up tomorrow? What else do you still need from me?").sellerQuestion, "What else do you still need from me?");
+  assert.equal(quickIntent("Revenue was maybe $1.3M? I'd have to check.").sellerQuestion, "", "a hedge is not a question");
+  assert.equal(quickIntent("Can we wrap up?").sellerQuestion, "");
+  assert.equal(combineIntent(quickIntent(beacon), modelIntent({ stop: "soft", sellerQuestion: "" })).sellerQuestion, "Before I go, is there one thing you most need from me?");
   const parsed = parseIntent({ stop: "soft", continueRequest: false, sellerQuestion: "  is there one thing you need? ", retractions: [{ what: "40 trucks", fieldHint: "outboundLogistics", remainingValue: "x" }, { what: "" }], corrections: [{ old: "10", new: "12", fieldHint: "", correctedValue: "" }], privacyRequests: [{ what: "health", detail: "wife's diagnosis", sensitiveTerms: ["cancer", "x"], fieldHint: "", remainingValue: "" }] });
   assert.equal(parsed!.sellerQuestion, "is there one thing you need?");
   assert.equal(parsed!.retractions.length, 1);
@@ -111,7 +129,7 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     _fieldSources: { a: { source: "interview", at: "2026-09-25T10:00:00Z" }, b: { source: "call", at: "2026-09-25T11:00:00Z" }, c: { source: "document" } },
   };
   assert.deepEqual(sellerSpokenFacts(view).map((f) => f.key), ["b", "a"], "only the seller's own words, newest first");
-  ok("combine: the classifier reads the turn, a pattern stop stands, the higher stop level wins; parse is defensive");
+  ok("combine: the classifier reads the turn; a soft pattern stop needs its agreement, a firm one always stands; the seller's own question is kept; parse is defensive");
 }
 
 // ── 4. What each intent does to the facts ──
@@ -266,6 +284,33 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     assert.deepEqual(plan4.retractions, []);
     assert.match(plan4.privateNotes[0].note, /cancer diagnosis/);
   }
+  // (g) Round-2 review: a withdrawn claim that was never recorded (the AI
+  // probed it against a document) finds no other fact by its figure alone —
+  // "40 trucks" is not "40 hours a week" or "third 35-40".
+  {
+    const msg = "Sorry, ignore what I said about the 40 trucks, I was guessing.";
+    const withdrawal = modelIntent({ retractions: [{ what: "about 40 trucks", fieldHint: "", remainingValue: "" }] });
+    const info = {
+      crewSchedule: "Four crews, each about 40 hours/week, April to November",
+      shiftStructure: "Three shifts: first 45 staff, second 40, third 35-40",
+      _fieldSources: { crewSchedule: src(1), shiftStructure: src(1) },
+    };
+    const plan = planIntentEdits({ intent: withdrawal, info, changes: [], modelRetracted: [], modelPrivateNotes: [], sellerMessage: msg, sessionId: "s1", turn: 2 });
+    assert.deepEqual(plan.partialEdits, [], plan.log.join("; "));
+    assert.deepEqual(plan.retractions, []);
+    assert.deepEqual(plan.unrecordedWithdrawals, ["about 40 trucks"]);
+    // A hint at a document's fact: nothing withdrawn, nothing else searched.
+    const docInfo = { ...info, fleetSize: "40 trucks", _fieldSources: { ...info._fieldSources, fleetSize: { source: "document", documentId: "d" } } };
+    const planDoc = planIntentEdits({ intent: modelIntent({ retractions: [{ what: "40 trucks", fieldHint: "fleetSize", remainingValue: "" }] }), info: docInfo, changes: [], modelRetracted: [], modelPrivateNotes: [], sellerMessage: msg, sessionId: "s1", turn: 2 });
+    assert.deepEqual([planDoc.partialEdits, planDoc.retractions], [[], []], planDoc.log.join("; "));
+    // …while a fact that does hold the trucks still loses exactly that part.
+    const mixed = { outboundLogistics: RETRACTIONS[1].facts[0].value, crewSchedule: info.crewSchedule, _fieldSources: { outboundLogistics: src(1), crewSchedule: src(1) } };
+    const planMixed = planIntentEdits({ intent: withdrawal, info: mixed, changes: [], modelRetracted: [], modelPrivateNotes: [], sellerMessage: msg, sessionId: "s1", turn: 2 });
+    assert.deepEqual(planMixed.partialEdits.map((e) => e.key), ["outboundLogistics"]);
+    assert.match(planMixed.partialEdits[0].to, /Buckeye Freight/);
+    assert.equal(removeClaim(info.crewSchedule, "40 trucks"), null);
+    assert.equal(removeClaim(info.shiftStructure, "~40 trucks"), null);
+  }
   ok("facts: a correction keeps the new value; a withdrawal takes out exactly the claim (also inside a mixed fact); a privacy request moves the detail to the broker and deletes nothing");
 }
 
@@ -364,6 +409,24 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
   const f8 = applyDateFidelityGuard([c8], {}, { sellerMessage: "The inspection happens in March, and the inspector is fine with us.", today: TODAY });
   assert.equal(f8[0]?.needsVerification, true);
   assert.equal(c8.newConfidence, "approximate");
+  // Round-2 review: a fiscal year that ends in March. "Last year" on 26 Sep
+  // 2026 is FY2026 there — the key, the value and the confidence stand.
+  const fyQ = "What were FY2026 sales — the year that ended in March?";
+  const c9 = change("revenueFY2026", "$3.4M (FY2026, year ended March 31)");
+  const conf9: Record<string, string> = { revenueFY2026: "confirmed" };
+  assert.deepEqual(applyDateFidelityGuard([c9], conf9, { sellerMessage: "Last year we did about 3.4 million.", prevAiMessage: fyQ, today: TODAY }), []);
+  assert.deepEqual([c9.fieldName, c9.newValue, c9.newConfidence], ["revenueFY2026", "$3.4M (FY2026, year ended March 31)", "confirmed"]);
+  const c10 = change("netIncomeFY2026", "$410K (FY2026)");
+  applyDateFidelityGuard([c10], {}, { sellerMessage: "Last year we netted about 410 grand.", prevAiMessage: "And net income for FY2026?", today: TODAY });
+  assert.equal(c10.fieldName, "netIncomeFY2026");
+  // A key year the question named as "FY2025" counts as named.
+  const c11 = change("revenue2025", "$3.1M");
+  applyDateFidelityGuard([c11], {}, { sellerMessage: "Last year? About 3.1 million.", prevAiMessage: "What were sales in FY2025?", today: TODAY });
+  assert.equal(c11.fieldName, "revenue2025");
+  // …while the calendar slip is still fixed.
+  const c12 = change("setonRevenue2025", "Back over $800,000");
+  applyDateFidelityGuard([c12], {}, { sellerMessage: "this year it's back over eight hundred thousand", today: TODAY });
+  assert.equal(c12.fieldName, "setonRevenue2026");
   ok("dates: the month's own clause sets the tense; later-turn values are checked against earlier messages; this/last year and seasons resolve from today; nothing is invented");
 }
 
@@ -496,6 +559,47 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     const r = await processTurn("deal-1", "sess-1", "Can we wrap up? I've got a crew waiting.");
     assert.match(r.message, /Your broker will follow up with Donna/);
   }
-  ok("turns: firm stop ends with no question; a classifier-only stop re-calls with the stop instruction and the next answer ends; a business 'we can finish next week' can't end; corrections stand; privacy goes to the broker and stays out");
+  // (h) Round-2 review: "Yes, I'll do that tomorrow" to an upload request is
+  // not a stop, and the next ordinary answer doesn't end the interview.
+  {
+    const h = installHarness(leaseDeal(), { messages: [...history.slice(0, 2), ai(DEFERRAL_PREV)] });
+    h.intents.push({ stop: "none" });
+    h.script.push({ message: "What's the monthly rent under the lease?" });
+    const r1 = await processTurn("deal-1", "sess-1", "Yes, I'll do that tomorrow. The corporation holds it.");
+    assert.equal(r1.shouldEnd, false);
+    assert.doesNotMatch(h.systems[0], /THE SELLER WANTS TO STOP/);
+    h.intents.push({ stop: "none" });
+    h.script.push({ message: "Does the lease have a renewal option?" });
+    const r2 = await processTurn("deal-1", "sess-1", "Yes — the corporation is the tenant, $6,200 a month.");
+    assert.equal(r2.shouldEnd, false);
+    assert.doesNotMatch(h.systems[1], /# CLOSING/);
+    assert.equal(h.deal.interviewCompleted, false);
+  }
+  // (i) A pattern stop the classifier reads as carrying on: the stop draft is
+  // redone without the stop instruction, and nothing ends.
+  {
+    const h = installHarness(leaseDeal(), { messages: [...history] });
+    const msg = "The corporation holds it. I have to go through the files to check the renewal, I have to run.";
+    assert.equal(detectStopSignal(msg), true);
+    h.intents.push({ stop: "none" });
+    h.script.push({ message: "Of course — before you go, a rough asking price now, or shall we start there next time?" });
+    h.script.push({ message: "What's the monthly rent under the lease?" });
+    const r = await processTurn("deal-1", "sess-1", msg);
+    assert.equal(h.systems.length, 2, "one re-call");
+    assert.match(h.systems[0], /THE SELLER WANTS TO STOP/);
+    assert.doesNotMatch(h.systems[1], /THE SELLER WANTS TO STOP/);
+    assert.equal(r.message, "What's the monthly rent under the lease?");
+    assert.equal((h.sessions[0].extractedInfo as any)._stopSignalCount, 0);
+  }
+  // (j) The seller's own question is in the FIRST prompt's stop instruction.
+  {
+    const h = installHarness(leaseDeal(), { messages: [...history] });
+    h.intents.push({ stop: "soft", sellerQuestion: "" });
+    h.script.push({ message: "The one thing I most need is your asking-price expectation — a rough number now, or shall we start there next time?" });
+    await processTurn("deal-1", "sess-1", "Can we wrap this up here? I have a pharmacy to run. Before I go, is there one thing you most need from me?");
+    assert.equal(h.systems.length, 1, "no re-call");
+    assert.match(h.systems[0], /The seller asked you: "Before I go, is there one thing you most need from me\?" — answer it first/);
+  }
+  ok("turns: firm stop ends with no question; a classifier-only stop re-calls with the stop instruction and the next answer ends; a business 'we can finish next week' or a task promised for tomorrow can't end; a pattern stop the classifier reads as an answer is redone; corrections stand; privacy goes to the broker and stays out");
   process.stdout.write(`\n${n} groups passed\n`);
 })().catch((err) => { process.stderr.write(`${err?.stack ?? err}\n`); process.exit(1); });

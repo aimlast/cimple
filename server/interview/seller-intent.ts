@@ -27,7 +27,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "./config/load-config";
-import { detectStopSignal, detectFirmStop, sellerDeclinedWrapUp } from "./turn-guard";
+import { detectStopSignal, detectFirmStop, sellerDeclinedWrapUp, sellerAskedQuestion } from "./turn-guard";
 import {
   detectRetraction,
   detectCorrection,
@@ -97,12 +97,31 @@ export function quickIntent(sellerMessage: string, prevAiMessage?: string): Sell
   return {
     stop,
     continueRequest: sellerDeclinedWrapUp(prevAiMessage, sellerMessage),
-    sellerQuestion: "",
+    sellerQuestion: sellerQuestionFromMessage(sellerMessage),
     retractions: detectRetraction(sellerMessage) && !correction && !privacy ? [{ what: sellerMessage.trim().slice(0, 300) }] : [],
     corrections: correction ? [{ old: "", new: "" }] : [],
     privacyRequests: privacy ? [{ what: "", detail: privateDetailFromMessage(sellerMessage), sensitiveTerms: [] }] : [],
     via: "patterns",
   };
+}
+
+/**
+ * The seller's own question to the interviewer, verbatim — not the stop
+ * request itself ("Can we wrap this up here? … Before I go, is there one
+ * thing you most need from me?" → the second). A hedge ("maybe $1.3M?") is
+ * not a question. The stop nudge in the FIRST prompt quotes it, so a stop
+ * the patterns catch still gets the seller's question answered (Beacon: it
+ * was brushed off with "we can cover that next time").
+ */
+export function sellerQuestionFromMessage(sellerMessage: string): string {
+  const segments = (sellerMessage.replace(/[’‘]/g, "'").match(/[^.!?\n]*\?/g) ?? []).map((q) => q.trim()).filter(Boolean);
+  const asked = segments.filter((q) => {
+    if (detectStopSignal(q) || detectFirmStop(q)) return false;
+    // "Before I go, is there one thing…?" — the question may follow a lead-in clause.
+    const tails = q.split(/,\s+|\s+[—–]\s+/).map((_, i, all) => all.slice(i).join(", "));
+    return tails.some((t) => sellerAskedQuestion(t));
+  });
+  return asked.join(" ").slice(0, 300);
 }
 
 /** The disclosure in a privacy request, without the request itself. */
@@ -120,16 +139,25 @@ export function privateDetailFromMessage(sellerMessage: string): string {
 
 /**
  * The turn's intent: the classifier's reading when there is one, the
- * patterns' otherwise. A stop the patterns caught stands either way (they
- * are high-precision, and the stop nudge may already be in the prompt).
+ * patterns' otherwise.
+ *
+ * On a stop, the classifier's reading decides — it reads the whole message
+ * in the light of the question asked, which no pattern can: a soft stop the
+ * patterns saw is withdrawn when the classifier reads the turn as carrying
+ * on (round-2 review: "Yes, I'll do that tomorrow" to "could you upload the
+ * lease?", and "Can I come back to this after I talk to her?", ended
+ * interviews because the stronger reading always won). A false stop then
+ * needs BOTH readers to be wrong. A firm stop the patterns caught ("Please
+ * stop asking me questions.", "Stop.") always stands — nothing else reads
+ * that way — and without a classifier verdict the patterns decide.
  */
 export function combineIntent(quick: SellerIntent, model: SellerIntent | null): SellerIntent {
   if (!model) return quick;
-  const rank: Record<StopLevel, number> = { none: 0, soft: 1, firm: 2 };
-  const stop = rank[quick.stop] > rank[model.stop] ? quick.stop : model.stop;
+  const stop: StopLevel = quick.stop === "firm" ? "firm" : model.stop;
   return {
     ...model,
     stop,
+    sellerQuestion: model.sellerQuestion || quick.sellerQuestion,
     continueRequest: stop === "none" ? model.continueRequest || quick.continueRequest : model.continueRequest,
     via: "model",
   };
@@ -197,8 +225,10 @@ const INTENT_SYSTEM = `You read one turn of an interview between an AI interview
 Descriptions of the business are never requests. When the seller talks about what the business, its staff or its customers do — "we stop taking orders at 9", "if the unit arrives late we can finish the install next week", "customers stop asking for discounts once they see the warranty", "I have to go to the supplier every Monday", "we take the old units back", "that's enough to cover payroll", "the bank had no more questions" — that is not a stop, not a withdrawal, not a privacy request.
 
 stop:
-- "none": carry on. Includes any business description that mentions stopping, finishing, leaving or later; a short or tired-sounding answer that still answers; "nothing else on the lease" answering a question about the lease.
-- "soft": the seller wants to wrap up now or continue another time — "can we wrap this up?", "I have to run", "sorry, have to go to a meeting", "can we pick this up tomorrow?", "I'm exhausted, can we do this another time?", "I think that's enough for one day", "I'll finish this tomorrow", "I can't do any more today" — or accepts the interviewer's offer to wrap up ("that covers it" after "anything else before we wrap up?").
+- "none": carry on. Includes any business description that mentions stopping, finishing, leaving or later; a short or tired-sounding answer that still answers; "nothing else on the lease" answering a question about the lease. Also "none":
+  - a promise to do a TASK later — usually answering a request for a document or a check: "Yes, I'll do that tomorrow" (asked to upload the lease), "I'll finish it tomorrow and send it over", "I'll get back to it tomorrow, Donna has the rate letters", "I can get back to you on that Monday";
+  - setting ONE question aside to check something, which leaves the rest of the interview going: "Can I come back to this after I check with my accountant?", "Could we come back to this once I have the lease in front of me?", "Can I come back to this one later? I'd need Donna's numbers".
+- "soft": the seller wants to end THIS SESSION now or continue the whole conversation another time — "can we wrap this up?", "I have to run", "sorry, have to go to a meeting", "can we pick this up tomorrow?", "I'm exhausted, can we do this another time?", "my head's spinning — can I come back to this after the weekend?", "I think that's enough for one day", "I'll finish this tomorrow" (said of the interview, with no task in play), "I can't do any more today" — or accepts the interviewer's offer to wrap up ("that covers it" after "anything else before we wrap up?"). If it is unclear whether "this" is one question or the whole session, and the seller gives no sign of wanting to leave (tired, busy, another commitment, "for today"), it is "none".
 - "firm": they want the questions to stop right now, with no closing question — "please stop asking me questions", "no more questions", "Stop.", "I'm done, I'm not answering anything else", or clear annoyance at being asked more.
 
 continueRequest: true only when the seller says they want to keep going now ("let's keep going", "I've got a few more minutes", "sure, what else do you need?").
@@ -467,16 +497,22 @@ export function planIntentEdits(input: IntentPlanInput): IntentPlan {
     for (const r of intent.retractions) {
       const candidates: string[] = [];
       const hinted = resolve(r.fieldHint);
-      if (hinted && live(hinted)) candidates.push(hinted);
-      else {
-        // The interview model's named key, or the seller's own facts that hold the claim.
+      // A withdrawal only ever touches the seller's own words. A hint at a
+      // document's fact is the document's: nothing is withdrawn, and no
+      // other fact is searched instead.
+      if (hinted) {
+        if (live(hinted)) candidates.push(hinted);
+      } else {
+        // The interview model's named key, else the seller's facts from this
+        // session that hold the claim — its figure AND what it counts
+        // (removeClaim), so a withdrawn "40 trucks" never finds "40 hours a
+        // week" (round-2 review). An empty hint usually means the claim was
+        // never recorded: the AI probed it against a document instead.
         const holding = (k: string) => removeClaim(valueText(info[k]), r.what) !== null;
         const named = modelKeys.filter(holding);
         if (named.length > 0) candidates.push(...named);
         else {
-          const spoken = keys.filter((k) => !k.startsWith("_") && live(k) && holding(k));
-          const thisSession = spoken.filter((k) => sources[k]?.sessionId === input.sessionId);
-          const pool = thisSession.length > 0 ? thisSession : spoken;
+          const pool = keys.filter((k) => !k.startsWith("_") && live(k) && sources[k]?.sessionId === input.sessionId && holding(k));
           const latest = Math.max(-1, ...pool.map((k) => sources[k]?.turn ?? 0));
           candidates.push(...pool.filter((k) => (sources[k]?.turn ?? 0) === latest));
         }
