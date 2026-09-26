@@ -18,11 +18,18 @@
  *   - broker-private notes that only a broker-only source states.
  *   - the broker's own normalisation work written as a fact (SDE, adjusted
  *     EBITDA, add-backs, a recast, valuation / multiple talk — see
- *     source-privacy.ts screenBrokerWork): a value the broker or the system
- *     wrote under such a key, or the clauses of a narrative fact that say
- *     it. The seller's own words are never screened.
+ *     source-privacy.ts screenBrokerWork): a value the broker wrote under
+ *     such a key, or the clauses (sub-clauses) of a narrative fact that say
+ *     it. The seller's own words are never screened; a value recorded before
+ *     sources were tracked loses only what cites the broker's material.
  *   - a fact the broker resolved to a private source's figure
  *     (FieldSource.hiddenFromSeller).
+ *
+ * A value the BROKER settled that can't be shown is never replaced by a
+ * value the broker superseded (that told the agent a contradicted deal
+ * structure was settled): the key is listed under HELD_BY_BROKER_KEY
+ * instead, and the interview treats it as settled by the broker — nothing
+ * to quote, nothing to ask (see withHeldFacts / knowledge-base.ts).
  *
  * Read-only: never save the result.
  */
@@ -49,7 +56,7 @@ import {
   type FieldSource,
   type PrivateNoteSource,
 } from "./info-merger";
-import { screenBrokerWork, isBrokerWorkText } from "./source-privacy";
+import { screenBrokerWork, isBrokerWorkText, isBrokerSettledSource } from "./source-privacy";
 
 type Info = Record<string, unknown>;
 type DocLike = Pick<Document, "id" | "visibility">;
@@ -142,6 +149,39 @@ function bestAlternate(list: FieldAlternate[] | undefined): FieldAlternate | und
     .sort((a, b) => sourceRank(b.source) - sourceRank(a.source) || String(b.at ?? "").localeCompare(String(a.at ?? "")))[0];
 }
 
+/**
+ * View-only key: facts (or "key (year)" entries of a map fact) the broker
+ * settled whose value the interview may not see. Never saved.
+ */
+export const HELD_BY_BROKER_KEY = "_heldByBroker";
+/** What a held fact reads as wherever "is it on file?" is asked (coverage, the re-ask guard). */
+export const HELD_BY_BROKER_VALUE = "(on file — settled by the broker)";
+
+/** The view's held entries ("saleType", "sdeByYear (2024)"). */
+export function heldByBroker(view: Record<string, unknown>): string[] {
+  const v = view[HELD_BY_BROKER_KEY];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+}
+
+/**
+ * The view with every fully held fact present as HELD_BY_BROKER_VALUE (the
+ * broker's source) — for the questions "is this on file?" (section
+ * coverage, the re-ask guard), so a fact the broker settled is never
+ * treated as a gap to ask about. Not for anything that quotes values.
+ */
+export function withHeldFacts<T extends Record<string, unknown>>(view: T): T {
+  const held = heldByBroker(view).filter((k) => !k.includes(" ("));
+  if (held.length === 0) return view;
+  const out: Record<string, unknown> = { ...view };
+  const sources: Record<string, FieldSource> = { ...getFieldSources(view) };
+  for (const k of held) {
+    if (out[k] === undefined) out[k] = HELD_BY_BROKER_VALUE;
+    if (!sources[k]) sources[k] = { source: "broker" } as FieldSource;
+  }
+  out[FIELD_SOURCES_KEY] = sources;
+  return out as T;
+}
+
 export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[]): T {
   const { isPrivateSource, isSellerSideNoteSource } = brokerPrivacy(documents);
   const lookup = sourceRowLookup(documents);
@@ -190,7 +230,19 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
   const sources: Record<string, FieldSource> = { ...getFieldSources(viewed) };
   const alts: Record<string, FieldAlternate[]> = { ...getFieldAlternates(viewed) };
 
-  // 4. Facts a broker-only source asserted → the best seller-side value, or gone.
+  // 4. Facts a broker-only source asserted → the best seller-side value, or
+  //    gone; facts the broker settled that can't be shown → held.
+  const held: string[] = [];
+  const hold = (key: string) => {
+    held.push(key);
+    // (Its other values are what the broker settled against — not shown.)
+    for (const k of Object.keys(alts)) if (k === key || k.startsWith(`${key}.`)) delete alts[k];
+    const corr = viewed[FIELD_CORROBORATIONS_KEY];
+    if (isMap(corr) && corr[key] !== undefined) {
+      const { [key]: _gone, ...restCorr } = corr as Record<string, unknown>;
+      viewed[FIELD_CORROBORATIONS_KEY] = restCorr;
+    }
+  };
   for (const key of Object.keys(viewed)) {
     if (key.startsWith("_")) continue;
     const src = sources[key];
@@ -202,10 +254,26 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
       // broker-only / CRM year inside a map of statement figures is private.
       const years = resolvedYearSources(src, map, lookup);
       let changed = false;
+      const heldYears: string[] = [];
       for (const y of Object.keys(map)) {
-        if (!isPrivateSource(years[y]) && screenBrokerWork(key, map[y], years[y]).kind === "keep") continue;
+        const ys = years[y];
+        const privateYear = isPrivateSource(ys);
+        const screened = privateYear ? null : screenBrokerWork(key, map[y], ys);
+        if (screened?.kind === "keep") continue;
         changed = true;
+        if (screened?.kind === "redacted") {
+          map[y] = screened.value;
+          continue;
+        }
         delete years[y];
+        // A year the broker settled stays settled — never a value the
+        // broker replaced (see HELD_BY_BROKER_KEY).
+        if (!privateYear || isBrokerSettledSource(ys)) {
+          heldYears.push(y);
+          delete map[y];
+          delete alts[`${key}.${y}`];
+          continue;
+        }
         const alt = bestAlternate(alts[`${key}.${y}`]);
         if (alt) {
           map[y] = parseAlternateValue(alt.value);
@@ -217,21 +285,35 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
       if (Object.keys(map).length === 0) {
         delete viewed[key];
         delete sources[key];
+        if (heldYears.length > 0) hold(key);
         continue;
       }
+      for (const y of heldYears) held.push(`${key} (${y})`);
       viewed[key] = map;
       sources[key] = summariseMapSource(years) ?? { ...src };
       continue;
     }
-    if (!isPrivateSource(src)) {
+    const privateSrc = isPrivateSource(src);
+    if (!privateSrc) {
       // The broker's normalisation work: a whole fact under an SDE /
-      // add-back / recast key, or only the clauses of a narrative that say it.
+      // add-back / recast key, or only the (sub-)clauses of a narrative
+      // that say it.
       const screened = screenBrokerWork(key, value, src);
       if (screened.kind === "keep") continue;
       if (screened.kind === "redacted") {
         viewed[key] = screened.value;
         continue;
       }
+    }
+    // A value the broker settled (typed, or resolved to a private side's
+    // figure) — or one wholly the broker's work — is held: never replaced by
+    // a value the broker superseded ("Asset sale implied" from an early call
+    // in place of the broker's "Share sale").
+    if (!privateSrc || isBrokerSettledSource(src)) {
+      delete viewed[key];
+      delete sources[key];
+      hold(key);
+      continue;
     }
     const alt = bestAlternate(alts[key]);
     if (alt) {
@@ -248,5 +330,7 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
   }
   viewed[FIELD_SOURCES_KEY] = sources;
   if (viewed[FIELD_ALTERNATES_KEY] !== undefined || Object.keys(alts).length > 0) viewed[FIELD_ALTERNATES_KEY] = alts;
+  if (held.length > 0) viewed[HELD_BY_BROKER_KEY] = held;
+  else delete viewed[HELD_BY_BROKER_KEY];
   return viewed as T;
 }

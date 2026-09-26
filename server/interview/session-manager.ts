@@ -102,7 +102,7 @@ import { ensureInterviewPlan } from "./interview-plan";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
 import { isDealRowFact } from "../information/deal-mirror";
-import { sellerInterviewView } from "./seller-view";
+import { sellerInterviewView, withHeldFacts } from "./seller-view";
 import { completionBlockers, type Exchange } from "./completion-gaps";
 import {
   applyReaskGuard,
@@ -1051,7 +1051,8 @@ export async function processTurn(
   const sellerView = sellerInterviewView(existingExtracted, documents);
   const reaskCtx: ReaskContext = {
     sellerMessage,
-    info: sellerView as Record<string, unknown>,
+    // (A fact the broker settled is on file even where its value is held.)
+    info: withHeldFacts(sellerView as Record<string, unknown>),
     documents,
     priorQA: [
       ...priorQAFromSessions(dealSessions, sessionId),

@@ -12,7 +12,7 @@
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused node_modules/.bin/tsx tests/unit/interview-privacy-ux.test.ts
 import assert from "node:assert/strict";
 import { assembleKnowledgeBase, renderKnowledgeBaseForPrompt } from "../../server/interview/knowledge-base";
-import { sellerInterviewView } from "../../server/interview/seller-view";
+import { sellerInterviewView, heldByBroker, withHeldFacts, HELD_BY_BROKER_VALUE } from "../../server/interview/seller-view";
 import {
   screenBrokerWork,
   redactBrokerWork,
@@ -118,21 +118,26 @@ const lakeshoreDocs = () => [
   {
     const deal = { ...baseDeal, extractedInfo: lakeshoreInfo() };
     const view = sellerInterviewView(deal.extractedInfo as Record<string, unknown>, lakeshoreDocs()) as Record<string, any>;
-    // SDE: the seller's own estimate from the call replaces the broker's figure.
-    assert.equal(view.sde, "Approximately $1,500,000 owner benefit estimated by seller");
-    assert.equal(getFieldSources(view).sde.source, "call");
+    // SDE / normalised working capital: the broker settled them — held, never
+    // replaced by a value the broker superseded (the call estimate, the raw
+    // statement figure).
+    assert.equal(view.sde, undefined);
+    assert.equal(view.workingCapital, undefined);
+    assert.deepEqual(heldByBroker(view).sort(), ["sde", "workingCapital"]);
     assert.equal(view.addbacks, undefined); // CRM (broker-only) — gone
     assert.ok(!/1,312|recast|4x/.test(view.keyFinancialNotes));
-    assert.equal(view.workingCapital, "$946,274 (current assets less current liabilities)");
     assert.equal(view.fleetSize, "24 service vans (plus 2 owner vehicles excluded from the sale)");
+    // "Is it on file?" (coverage, the re-ask guard) still says yes.
+    assert.equal(withHeldFacts(view).sde, HELD_BY_BROKER_VALUE);
     const text = JSON.stringify(view);
     assert.ok(!/1,312|395,000|\$395K|recast|Tony salary \$240K|suggested peg/i.test(text), text.slice(0, 400));
 
     const kb = assembleKnowledgeBase(deal, lakeshoreDocs(), [], null, []);
     const prompt = renderKnowledgeBaseForPrompt(kb);
     assert.ok(!/1,312|395,000|\$395K|recast|Maria salary \$85K|around 4x/i.test(prompt), "prompt carries the broker's recast");
-    assert.ok(/Approximately \$1,500,000 owner benefit/.test(prompt));
-    ok("Lakeshore: the interview prompt has no recast, no $1,312,000, no add-back list — the seller's own estimate shows instead");
+    assert.ok(!/Approximately \$1,500,000 owner benefit|946,274/.test(prompt), "a value the broker superseded is shown as the fact");
+    assert.ok(/- sde: settled by the broker/.test(prompt) && /- workingCapital: settled by the broker/.test(prompt));
+    ok("Lakeshore: the interview prompt has no recast, no $1,312,000, no add-back list — SDE shows as settled by the broker");
   }
 
   // ── 1c. Digests, risks and private notes framed as the broker's work ──
@@ -157,6 +162,92 @@ const lakeshoreDocs = () => [
     assert.ok(/Jennifer at Bellamy & Rao/.test(prompt) && /Lease expires in 2028/.test(prompt));
     assert.ok(/had surgery/.test(prompt)); // the seller's sensitive fact is still held (privately)
     ok("digests, flagged risks and private notes lose only the items framed as add-backs / a recast");
+  }
+
+  // ── 1d. Round 2 (live checker): screening never swaps a settled fact for a
+  //        stale one, never hides more than the part that says it, and
+  //        leaves facts recorded before sources were tracked alone ──
+  {
+    // Beacon: the broker's deal structure carries a normalised peg in its
+    // last sub-clause. At round 1 the whole value was hidden and a video
+    // call's "Asset sale implied" was promoted in its place.
+    const saleType =
+      "Share sale — 100% of the shares of Beacon Specialty Pharmacy Inc., cash-free / debt-free, with a normalized net working capital peg of about $550,000";
+    const s = screenBrokerWork("saleType", saleType, { source: "broker" });
+    assert.deepEqual(s, { kind: "redacted", value: "Share sale — 100% of the shares of Beacon Specialty Pharmacy Inc., cash-free / debt-free" });
+    const beacon: Record<string, unknown> = {
+      saleType,
+      _fieldSources: { saleType: { source: "broker", at: "2026-09-10T10:00:00Z" } },
+      _fieldAlternates: {
+        saleType: [{ value: "Asset sale implied (cash-free/debt-free structure mentioned)", source: "video_call", documentId: "vc1" }],
+      },
+    };
+    const vcDoc = doc({ id: "vc1", name: "Video call with the owner", sourceKind: "video_call" });
+    const bview = sellerInterviewView(beacon, [vcDoc]) as Record<string, unknown>;
+    assert.equal(bview.saleType, "Share sale — 100% of the shares of Beacon Specialty Pharmacy Inc., cash-free / debt-free");
+    assert.equal(getFieldSources(bview).saleType.source, "broker");
+    const bprompt = renderKnowledgeBaseForPrompt(assembleKnowledgeBase({ ...baseDeal, extractedInfo: beacon }, [vcDoc], [], null, []));
+    assert.ok(/- saleType: Share sale — 100% of the shares/.test(bprompt), bprompt.match(/- saleType:.{0,160}/)?.[0]);
+    assert.ok(!/- saleType: Asset sale/.test(bprompt) && !/550,000|normali[sz]ed net working capital peg/i.test(bprompt));
+
+    // A broker value that is wholly the broker's work → held, never the
+    // superseded alternate.
+    const wholly: Record<string, unknown> = {
+      saleType: "Normalized working-capital peg of $550,000 per the broker recast",
+      _fieldSources: { saleType: { source: "broker" } },
+      _fieldAlternates: { saleType: [{ value: "Asset sale implied", source: "video_call", documentId: "vc1" }] },
+    };
+    const wview = sellerInterviewView(wholly, [vcDoc]) as Record<string, unknown>;
+    assert.equal(wview.saleType, undefined);
+    assert.deepEqual(heldByBroker(wview), ["saleType"]);
+    assert.ok(!JSON.stringify(wview).includes("Asset sale implied"));
+
+    // Only the sub-clause that says it: a multiple aside, a trailing comma part.
+    assert.deepEqual(screenBrokerWork("askingPrice", "$1.35 million (~3.4x SDE), open to 10-15% vendor take-back", { source: "broker" }), {
+      kind: "redacted",
+      value: "$1.35 million, open to 10-15% vendor take-back",
+    });
+    // …never a fragment: a comma list that lost its head goes whole.
+    assert.equal(screenBrokerWork("workingCapitalNotes", "Normalized NWC $301,000 at Dec 31, 2024, up from $277,000", { source: "broker" }).kind, "private");
+    // An aside CITING the broker's material makes the figure it annotates the broker's.
+    assert.equal(redactBrokerWork("2024 adjusted EBITDA: $3.9M (normalized by broker)"), null);
+
+    // Facts recorded before sources were tracked (no source, or the legacy
+    // marker): mostly the seller's own interview answers. Not screened for
+    // normalisation keys or wording — hiding them made the interview re-ask.
+    const legacy = { source: "system", note: "Recorded before sources were tracked" } as never;
+    assert.equal(screenBrokerWork("askingPrice", "$1.35 million (~3.4x SDE), open to 10-15% vendor take-back", undefined).kind, "keep");
+    assert.equal(screenBrokerWork("sde", "$412,000 (FY2024)", undefined).kind, "keep");
+    assert.equal(screenBrokerWork("addbacksByYear", { "2023": "$88,000", "2024": "$95,000" }, legacy).kind, "keep");
+    assert.equal(screenBrokerWork("keyFinancialNotes", "Owner pays himself $120K plus add-backs for his truck", undefined).kind, "keep");
+    // …except the parts that cite the broker's own material.
+    assert.deepEqual(screenBrokerWork("keyFinancialNotes", "SDE $1.31M per the broker recast; Owner prefers cash at closing", undefined), {
+      kind: "redacted",
+      value: "Owner prefers cash at closing",
+    });
+    const pawfect: Record<string, unknown> = {
+      askingPrice: "$1.35 million (~3.4x SDE), open to 10-15% vendor take-back",
+      sde: "$397,000 (2024)",
+      addbacksByYear: { "2023": "$88,000", "2024": "$95,000" },
+    };
+    const pview = sellerInterviewView(pawfect, []) as Record<string, unknown>;
+    assert.equal(pview.askingPrice, pawfect.askingPrice);
+    assert.equal(pview.sde, pawfect.sde);
+    assert.deepEqual(pview.addbacksByYear, pawfect.addbacksByYear);
+    assert.deepEqual(heldByBroker(pview), []);
+
+    // Ordinary keys that merely contain a normalisation word are not the broker's work.
+    assert.equal(screenBrokerWork("multipleLocations", "Yes — 3 clinics", { source: "broker" }).kind, "keep");
+    assert.equal(screenBrokerWork("adjustedHours", "Summer hours 7-3", { source: "broker" }).kind, "keep");
+    assert.equal(screenBrokerWork("adjustedEbitda2024", "$917,000", { source: "broker" }).kind, "private");
+    assert.equal(screenBrokerWork("ebitdaMultiple", "4.2", { source: "broker" }).kind, "private");
+
+    // A held fact is on file for coverage: the section doesn't turn into a gap.
+    const heldKb = assembleKnowledgeBase({ ...baseDeal, extractedInfo: lakeshoreInfo() }, lakeshoreDocs(), [], null, []);
+    const sdeField = heldKb.sectionCoverage.flatMap((c) => c.fields).find((f) => f.fieldName === "sde");
+    if (sdeField) assert.equal(sdeField.value, HELD_BY_BROKER_VALUE);
+    assert.deepEqual([...(heldKb.heldByBroker ?? [])].sort(), ["sde", "workingCapital"]);
+    ok("round 2: a settled broker value is trimmed to what may be shown or held — never swapped for a superseded one; legacy facts are left alone");
   }
 
   // ── 2. Stored source review vs the CURRENT sources ──
@@ -256,8 +347,10 @@ const lakeshoreDocs = () => [
     // The CIM still uses it (it is the broker's call), the seller interview doesn't see it.
     assert.equal(isPrivateToBroker(src), false);
     const view = sellerInterviewView(info, [doc({ id: "pl", name: "2024 P&L.pdf" })]) as Record<string, unknown>;
-    assert.equal(view.annualRevenue, "$2,300,000"); // the seller's own value, now an alternate
-    assert.ok(!JSON.stringify(view).includes("1,940,000"));
+    // Settled by the broker: neither the private figure nor the value it replaced.
+    assert.equal(view.annualRevenue, undefined);
+    assert.deepEqual(heldByBroker(view), ["annualRevenue"]);
+    assert.ok(!JSON.stringify(view).includes("1,940,000") && !JSON.stringify(view).includes("2,300,000"));
 
     // Resolved to the seller-visible side: an ordinary broker-confirmed fact.
     const info2: Record<string, unknown> = { annualRevenue: "$1.94M", _fieldSources: { annualRevenue: { source: "crm", documentId: "crm1" } } };
@@ -283,8 +376,9 @@ const lakeshoreDocs = () => [
       interviewValue: "$7.9M", documentValue: "$7,412,000", resolvedValue: "$7.9M",
     }), { brokerChoseFact: true });
     const view3 = sellerInterviewView(info3, [doc({ id: "pl", name: "2024 P&L.pdf" })]) as Record<string, any>;
-    assert.equal(view3.revenueByYear["2024"], "$7,412,000");
+    assert.equal(view3.revenueByYear["2024"], undefined);
     assert.equal(view3.revenueByYear["2023"], "$6,840,000");
+    assert.deepEqual(heldByBroker(view3), ["revenueByYear (2024)"]);
 
     // "Use this value" on a CRM alternate.
     const info4: Record<string, unknown> = {
@@ -306,12 +400,16 @@ const lakeshoreDocs = () => [
     const kb5 = assembleKnowledgeBase({ ...baseDeal, extractedInfo: info5 }, [callDoc], [], null, [headcount]);
     const prompt5 = renderKnowledgeBaseForPrompt(kb5);
     assert.ok(!/41 incl/.test(prompt5), prompt5.match(/.{0,120}41 incl.{0,60}/)?.[0]);
-    assert.ok(/36 employees plus owner/.test(prompt5));
+    // The value the broker replaced isn't shown as the fact either; the item
+    // is settled (once — the discrepancy note covers it).
+    assert.ok(!/36 employees plus owner/.test(prompt5));
+    assert.equal((prompt5.match(/- employees: settled by the broker/g) ?? []).length, 1);
 
     useAlternate(info4, "employees", 0);
     assert.equal(getFieldSources(info4).employees.hiddenFromSeller, true);
     const view4 = sellerInterviewView(info4, [doc({ id: "c1", name: "call", sourceKind: "call" })]) as Record<string, unknown>;
-    assert.equal(view4.employees, "36");
+    assert.equal(view4.employees, undefined);
+    assert.deepEqual(heldByBroker(view4), ["employees"]);
     ok("a resolution (or a chosen value) from the broker's private material stays private to the seller interview, not to the CIM");
   }
 

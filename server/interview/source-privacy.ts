@@ -8,10 +8,14 @@
  *  1. The broker's own normalisation work typed (or confirmed) as a fact:
  *     "sde: $1,312,000 (adjusted EBITDA + owner add-backs)", "FY2024 SDE per
  *     the broker recast (add-backs: …)", "offered around 4x EBITDA". A fact
- *     the broker (or the system) wrote carries the broker's work, not the
- *     seller's words — the agent told a seller what "the broker's recast"
- *     adds back. Such a fact (or the clause of a narrative fact that says
- *     it) is left out of the interview unless the seller stated it.
+ *     the broker wrote carries the broker's work, not the seller's words —
+ *     the agent told a seller what "the broker's recast" adds back. Such a
+ *     fact (or only the clause / sub-clause of a narrative that says it) is
+ *     left out of the interview unless the seller stated it; a fact left out
+ *     whole reads as settled by the broker — never replaced by a value the
+ *     broker superseded. Facts recorded before sources were tracked lose
+ *     only what cites the broker's material (hiding more made the interview
+ *     re-ask what the seller had said).
  *  2. Snapshots taken while a source was shared: the stored source review's
  *     conflicts and the deferral-ledger items minted from them quote a
  *     document by name and figure. When the broker later makes that source
@@ -28,7 +32,7 @@ import type { Document } from "@shared/schema";
 import { privateSourceMatcher } from "./seller-view";
 import { sourceLabel, type SourceConflict } from "./source-context";
 import type { DeferralEntry } from "./deferral-ledger";
-import type { FieldSource } from "./info-merger";
+import { isUntrackedSource, type FieldSource } from "./info-merger";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt">>;
@@ -37,9 +41,13 @@ type DocLike = Pick<Document, "id" | "name" | "visibility"> &
 // 1. The broker's normalisation work
 // =====================
 
-/** Fact keys that hold the broker's normalisation work (SDE, adjusted EBITDA, add-backs, recast, valuation, multiples, the working-capital peg). */
+/**
+ * Fact keys that hold the broker's normalisation work (SDE, adjusted EBITDA,
+ * add-backs, recast, valuation, multiples, the working-capital peg). Narrow
+ * on purpose: "multipleLocations" or "adjustedHours" are ordinary facts.
+ */
 export const BROKER_WORK_KEY_RE =
-  /^(?:sde(?:\d{4}|ByYear|History)?|adjusted\w*|normali[sz]ed\w*|(?:owner)?add[_-]?backs?\w*|recast\w*|valuation\w*|\w*multiple\w*|opinionOfValue|workingCapitalPeg|\w*discretionary(?:Earnings|CashFlow)\w*)$/i;
+  /^(?:sde(?:\d{4}|ByYear|History)?|adjusted(?:Ebitda|Sde|Earnings|NetIncome|CashFlow|Profit|Ebit)\w*|normali[sz]ed\w*|(?:owner)?add[_-]?backs?\w*|recast\w*|valuation\w*|\w*(?:ebitda|sde|earnings|revenue|valuation|price|implied|asking|sale|deal|exit|purchase)Multiples?\w*|multiples?|opinionOfValue|workingCapitalPeg|\w*discretionary(?:Earnings|CashFlow)\w*)$/i;
 
 /**
  * Wording that carries the broker's normalisation work or the broker's own
@@ -52,16 +60,15 @@ export const BROKER_WORK_TEXT_RE =
 
 /** Source kinds that are the seller's own words (spoken, typed or written by them). */
 const SELLER_SAID_KINDS: ReadonlySet<string> = new Set(["interview", "call", "video_call", "questionnaire", "email"]);
-/** Source kinds whose value is the broker's (or the system's) own writing. */
-const BROKER_WRITTEN_KINDS: ReadonlySet<string> = new Set(["broker", "system"]);
 
 /**
  * Text that cites the broker's own material ("per the broker", "Morgan's
- * notes" aside — "broker's recast", "CRM notes", "site visit"). Narrower than
- * mentionsPrivateSource: a bare "CRM" is the seller's own software here.
+ * notes" aside — "broker's recast", "CRM notes", "site visit", "(per broker)").
+ * Narrower than mentionsPrivateSource: a bare "CRM" is the seller's own
+ * software here, and "Alex (Broker, Demo Brokerage)" names a person's role.
  */
 const BROKER_MATERIAL_RE =
-  /\b(?:broker(?:'s|’s|s')?\s+(?:note|notes|recast|estimate|estimates|valuation|meeting|call notes|memo|file|files|analysis|numbers?|figures?|view|opinion|model|calc\w*|adjust\w*|normali[sz]\w*)|per (?:the )?broker|site[- ]visit(?:\s+notes?)?|private notes?|broker[- ]only|crm (?:note|notes|record|entry|activity))\b|\(broker\b[^)]*\)/i;
+  /\b(?:broker(?:'s|’s|s')?\s+(?:note|notes|recast|estimate|estimates|valuation|meeting|call notes|memo|file|files|analysis|numbers?|figures?|view|opinion|model|calc\w*|adjust\w*|normali[sz]\w*)|per (?:the )?broker|(?:normali[sz]ed|adjusted|recast) by (?:the )?broker|site[- ]visit(?:\s+notes?)?|private notes?|broker[- ]only|crm (?:note|notes|record|entry|activity))\b|\((?:per |from |by )?(?:the )?broker\s*\)/i;
 
 export function citesBrokerMaterial(text: string | null | undefined): boolean {
   return !!text && BROKER_MATERIAL_RE.test(text);
@@ -103,48 +110,173 @@ function clauses(text: string): string[] {
 }
 
 /**
- * A narrative value with every clause that carries the broker's work left
- * out; null when nothing of substance is left. Returns the value unchanged
- * when no clause does.
+ * Splits text at a separator outside parentheses / brackets, keeping each
+ * separator with the part after it (so a rejoin is faithful).
  */
-export function redactBrokerWork(text: string): string | null {
+function splitTopLevel(text: string, sep: RegExp): { part: string; sep: string }[] {
+  const out: { part: string; sep: string }[] = [];
+  let depth = 0;
+  let start = 0;
+  let lead = "";
+  const g = new RegExp(sep.source, "y");
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "(" || c === "[") depth++;
+    else if ((c === ")" || c === "]") && depth > 0) depth--;
+    if (depth > 0) continue;
+    g.lastIndex = i;
+    const m = g.exec(text);
+    if (!m || m.index !== i || m[0].length === 0) continue;
+    out.push({ part: text.slice(start, i), sep: lead });
+    lead = m[0];
+    start = i + m[0].length;
+    i = start - 1;
+  }
+  out.push({ part: text.slice(start), sep: lead });
+  return out;
+}
+
+const hasSubstance = (t: string) => /[A-Za-z0-9]{3,}/.test(t);
+
+/**
+ * A spaced dash ("Share sale — 100% of the shares") and a comma followed by
+ * a space ("cash-free, with a peg of …" — never "1,350,000", nor the comma
+ * of a date "Dec 31, 2024") mark the sub-clauses of one clause, finest last.
+ * Parenthetical asides are last of all.
+ */
+const SUB_CLAUSE_SEPS: RegExp[] = [/\s+[—–]\s+|\s+-\s+/, /(?<!\d),\s+|,\s+(?!\d)/];
+/** Comma-separated parts qualify the first one: without it they are fragments. */
+const HEAD_REQUIRED = [false, true];
+
+/**
+ * One clause with only the sub-clauses that carry the broker's work left
+ * out: a dash-separated part, then a comma-separated part, then a
+ * parenthetical aside — never more than the part that says it. Null when
+ * nothing of substance is left, or when what's left would be a fragment
+ * (the comma list lost its head: "Normalized NWC $301K, up from $277K"
+ * never becomes "up from $277K").
+ */
+function redactClause(text: string, isWork: (t: string) => boolean, level = 0): string | null {
+  if (!isWork(text)) return text;
+  if (level < SUB_CLAUSE_SEPS.length) {
+    const parts = splitTopLevel(text, SUB_CLAUSE_SEPS[level]);
+    if (parts.length < 2) return redactClause(text, isWork, level + 1);
+    const kept: { part: string; sep: string }[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const p = parts[i];
+      const r = redactClause(p.part, isWork, level + 1);
+      if (r !== null && hasSubstance(r)) kept.push({ part: r, sep: p.sep });
+      else if (i === 0 && HEAD_REQUIRED[level]) return null;
+    }
+    if (kept.length === 0) return null;
+    // The first part kept loses the separator before it, and a dangling
+    // connective ("with a peg of …" → gone; "and the rest" keeps "the rest").
+    const joined = kept
+      .map((k, i) => (i === 0 ? k.part.replace(/^\s*(?:and|with|plus|but|or|incl(?:uding|\.)?)\s+/i, "") : k.sep + k.part))
+      .join("")
+      .trim();
+    return hasSubstance(joined) ? joined : null;
+  }
+  // Last: a parenthetical aside that says it ("$1.35M (~3.4x SDE)"). An
+  // aside that CITES the broker's material ("$3.9M (normalized by broker)")
+  // says the figure it annotates is the broker's — the whole part goes.
+  let changed = false;
+  let cites = false;
+  let out = "";
+  let depth = 0;
+  let group = "";
+  for (const c of text) {
+    if (c === "(") {
+      if (depth === 0) group = "";
+      depth++;
+    }
+    if (depth > 0) group += c;
+    else out += c;
+    if (c === ")" && depth > 0) {
+      depth--;
+      if (depth === 0) {
+        if (isWork(group)) {
+          changed = true;
+          if (citesBrokerMaterial(group)) cites = true;
+        } else out += group;
+      }
+    }
+  }
+  if (depth > 0) out += group;
+  if (!changed || cites) return null;
+  const rest = out.replace(/\s+([,.;:])/g, "$1").replace(/\s{2,}/g, " ").trim();
+  return !isWork(rest) && hasSubstance(rest) ? rest : null;
+}
+
+/**
+ * A narrative value with every clause (or, within a clause, every
+ * sub-clause) that carries the broker's work left out; null when nothing of
+ * substance is left. Returns the value unchanged when nothing does.
+ * `isWork` decides what counts (default: normalisation wording or a
+ * citation of the broker's material).
+ */
+export function redactBrokerWork(text: string, isWork: (t: string) => boolean = isBrokerWorkText): string | null {
+  if (!isWork(text)) return text;
   const parts = clauses(text);
-  const kept = parts.filter((p) => !isBrokerWorkText(p));
-  if (kept.length === parts.length) return text;
+  const kept: string[] = [];
+  for (const p of parts) {
+    const r = redactClause(p.trim(), isWork);
+    if (r !== null && hasSubstance(r)) kept.push(r);
+  }
+  if (kept.length === 0) return null;
   const joined = kept
-    .map((p) => p.trim())
     .join(" ")
     .replace(/\s*;\s*$/, "")
     .replace(/^[\s;,.]+/, "")
     .trim();
-  return /[A-Za-z0-9]{3,}/.test(joined) ? joined : null;
+  return hasSubstance(joined) ? joined : null;
 }
 
 export type BrokerWorkScreen = { kind: "keep" } | { kind: "private" } | { kind: "redacted"; value: string };
 
 /**
  * How the seller interview may show one fact (or one alternate) given who
- * wrote it. The seller's own words are always shown; a value the broker or
- * the system wrote (or one with no recorded source) is screened for the
- * broker's normalisation work: under a normalisation key (sde, addbacks,
- * adjustedEbitda…) it is private whole; elsewhere only the clauses that say
- * it are dropped. Documents the seller can see are the seller's material.
+ * wrote it.
+ *  - The seller's own words, and documents the seller can see, are always
+ *    shown.
+ *  - A value the BROKER wrote is screened for the broker's normalisation
+ *    work: under a normalisation key (sde, addbacks, adjustedEbitda…) it is
+ *    private whole; elsewhere only the clauses — or, within a clause, the
+ *    sub-clauses — that say it are dropped ("Share sale — 100% of shares,
+ *    cash-free / debt-free, with a normalized working-capital peg of $550K"
+ *    keeps "Share sale — 100% of shares, cash-free / debt-free").
+ *  - A value with no recorded source (written before sources were
+ *    tracked — mostly the seller's own interview answers) is NOT screened
+ *    for normalisation wording or keys: hiding it would make the interview
+ *    re-ask what the seller already said. Only the parts that cite the
+ *    broker's own material ("per the broker recast", "CRM notes") go.
  */
 export function screenBrokerWork(key: string, value: unknown, src: Partial<FieldSource> | null | undefined): BrokerWorkScreen {
   const kind = String(src?.source ?? "");
   if (SELLER_SAID_KINDS.has(kind)) return { kind: "keep" };
-  if (src && !BROKER_WRITTEN_KINDS.has(kind)) return { kind: "keep" };
+  const untracked = isUntrackedSource(src);
+  if (!untracked && kind !== "broker" && kind !== "system") return { kind: "keep" };
+  const isWork = untracked ? citesBrokerMaterial : isBrokerWorkText;
   const baseKey = key.split(".")[0];
-  if (BROKER_WORK_KEY_RE.test(baseKey)) return { kind: "private" };
+  if (!untracked && BROKER_WORK_KEY_RE.test(baseKey)) return { kind: "private" };
   if (typeof value === "string") {
-    const redacted = redactBrokerWork(value);
+    const redacted = redactBrokerWork(value, isWork);
     if (redacted === value) return { kind: "keep" };
     return redacted === null ? { kind: "private" } : { kind: "redacted", value: redacted };
   }
   if (value !== null && typeof value === "object") {
-    return isBrokerWorkText(JSON.stringify(value)) ? { kind: "private" } : { kind: "keep" };
+    return isWork(JSON.stringify(value)) ? { kind: "private" } : { kind: "keep" };
   }
   return { kind: "keep" };
+}
+
+/**
+ * True when a value the seller view cannot show is the BROKER's settled
+ * value (typed, or a discrepancy resolution) — the interview then treats the
+ * fact as settled by the broker, never showing a value the broker replaced.
+ */
+export function isBrokerSettledSource(src: Partial<FieldSource> | null | undefined): boolean {
+  return !!src && (src.source === "broker" || (src.source === "system" && !isUntrackedSource(src)));
 }
 
 /** A list of short items ("a; b; c") with every item that carries the broker's work left out. */
