@@ -34,6 +34,7 @@ import {
   containsValuationFigures,
   CHIP_FIGURE_RE,
   stripFillerPreamble,
+  backfillSuggestedAnswers,
   sellerDeclinedWrapUp,
   sellerAskedQuestion,
   leaksInternalMachinery,
@@ -118,9 +119,10 @@ import {
 import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
 import { ensureSourceReview } from "./source-review";
 import { screenLedgerForSeller } from "./source-privacy";
-import { assertsNormalisation, stripNormalisationAssertions, NORMALISATION_CORRECTION } from "./normalisation-guard";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
+import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
+import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel } from "./question-rationale";
 
 // =====================
 // Types
@@ -540,9 +542,63 @@ async function startOrResumeSessionOnce(
       // stored on the message itself.
       const pendingQuestion =
         messages[messages.length - 1]?.role === "ai" ? messages[messages.length - 1] : undefined;
-      const pendingChips =
+      let pendingChips =
         pendingQuestion?.suggestedAnswers ??
         (Array.isArray(sessionMeta._lastChips) ? (sessionMeta._lastChips as string[]) : []);
+
+      // The pending question was stored by an earlier build — it goes
+      // through today's seller-facing pass before it is shown again (a
+      // pre-fix "That's helpful — having Dana confirm…" came back verbatim on
+      // resume). The cleaned question replaces the stored one, so the
+      // transcript, the resume reply and the model's history agree.
+      if (pendingQuestion) {
+        const idx = messages.length - 1;
+        const prevSeller = [...messages.slice(0, idx)].reverse().find((m) => m.role === "user")?.content ?? null;
+        const ctx = buildPolishContext({
+          kb,
+          dealLocation: deal.location,
+          questionnaireData: deal.questionnaireData,
+          sessions: existingSessions,
+          sellerMessage: prevSeller,
+          info: kb.extractedInfo as Record<string, unknown>,
+        });
+        const polished = polishMessage(pendingQuestion.content, ctx, { opening: userMessageCount === 0 });
+        let why = polishRationale(pendingQuestion.whyItMatters, ctx);
+        let section = pendingQuestion.targetSection;
+        let importance = pendingQuestion.importance;
+        if (asksQuestion(polished.message) && (!why || polished.message !== pendingQuestion.content)) {
+          const label = await ensureQuestionRationale({
+            message: polished.message,
+            whyItMatters: why,
+            targetSection: section,
+            prevAiMessage: [...messages.slice(0, idx)].reverse().find((m) => m.role === "ai")?.content ?? null,
+            sections: rationaleSections(kb),
+            businessLine: businessLine(kb, ctx.location),
+            vocabulary: vocabularyNote(ctx),
+          }).catch(() => null);
+          if (label) {
+            if (label.targetSection !== section) importance = undefined;
+            why = polishRationale(label.whyItMatters, ctx);
+            section = label.targetSection;
+          }
+        }
+        const chips = polishChips(pendingChips, polished.message, polished.report, ctx);
+        if (polished.message !== pendingQuestion.content || why !== pendingQuestion.whyItMatters || section !== pendingQuestion.targetSection || chips.join("\n") !== pendingChips.join("\n")) {
+          const cleaned: ConversationMessage = {
+            ...pendingQuestion,
+            content: polished.message,
+            ...(why ? { whyItMatters: why } : {}),
+            ...questionLabels(kb, importance, section),
+            suggestedAnswers: chips,
+          };
+          if (!why) delete (cleaned as Partial<ConversationMessage>).whyItMatters;
+          messages[idx] = cleaned;
+          await db.update(interviewSessions).set({ messages }).where(eq(interviewSessions.id, session.id));
+          console.log(`[session-manager] Resume: the stored question on session ${session.id} was re-polished (${describeReport(polished.report) || "rationale/labels"})`);
+          pendingChips = chips;
+        }
+      }
+      const shownQuestion = pendingQuestion ? messages[messages.length - 1] : undefined;
 
       // Deferrals come from the durable ledger; _deferredTopics is the legacy
       // fallback for sessions persisted before the ledger existed.
@@ -552,10 +608,10 @@ async function startOrResumeSessionOnce(
         : (sessionMeta._deferredTopics as string[]) || [];
 
       return {
-        message: lastAiMessage?.content || "Welcome back. Let's pick up where we left off.",
-        whyItMatters: pendingQuestion?.whyItMatters,
-        importance: pendingQuestion?.importance,
-        targetSection: pendingQuestion?.targetSection,
+        message: (shownQuestion ?? lastAiMessage)?.content || "Welcome back. Let's pick up where we left off.",
+        whyItMatters: shownQuestion?.whyItMatters,
+        importance: shownQuestion?.importance,
+        targetSection: shownQuestion?.targetSection,
         suggestedAnswers: pendingChips,
         sessionId: session.id,
         captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
@@ -638,7 +694,8 @@ async function startOrResumeSessionOnce(
   // Generate the opening message
   const openingResult = await generateOpeningMessage(kb, deal.businessName, {
     sellerMessage: "",
-    info: kb.extractedInfo as Record<string, unknown>,
+    // (A fact the broker settled is on file even where its value is held — as in processTurn.)
+    info: withHeldFacts(kb.extractedInfo as Record<string, unknown>),
     documents,
     priorQA: priorQAFromSessions(existingSessions, sessionId),
     openDeferralTopics: [],
@@ -1049,6 +1106,17 @@ export async function processTurn(
   // sees them, and the seller-visible sources.
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
   const sellerView = sellerInterviewView(existingExtracted, documents);
+  // What the seller reads is polished the same way at the stream gate and
+  // when the turn is final (reply-polish.ts): filler, add-back calls, one
+  // question, options anchored to today, local vocabulary, attribution.
+  const polishCtx: PolishContext = buildPolishContext({
+    kb,
+    dealLocation: deal.location,
+    questionnaireData: deal.questionnaireData,
+    sessions: dealSessions,
+    sellerMessage,
+    info: sellerView as Record<string, unknown>,
+  });
   const reaskCtx: ReaskContext = {
     sellerMessage,
     // (A fact the broker settled is on file even where its value is held.)
@@ -1060,6 +1128,7 @@ export async function processTurn(
     ],
     openDeferralTopics: agentDeferrals(priorLedger).map((d) => d.topic),
     conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
+    ownStatements: existingMessages.filter((m) => m.role === "ai").map((m) => m.content),
   };
 
   // VALUATION-FIGURE GUARD: on fishing turns ("what's it worth", "what
@@ -1108,6 +1177,7 @@ export async function processTurn(
   // The parsed result stays authoritative (governance/merge/persist below).
   const shown = createMessageRelease(onDelta);
   let reaskAttempt = 0;
+  let labelPrefetch: PrefetchedLabel | null = null;
   let pendingFindings: ReaskFinding[] = [];
   const earlyFindings: ReaskFinding[] = [];
   const checkMessage = async (text: string): Promise<boolean> => {
@@ -1116,7 +1186,10 @@ export async function processTurn(
     // turn is final) — never released and then swapped on screen: a
     // valuation leak, the agent's machinery or a legal claim stated as fact
     // (see OUTPUT GUARDS), or a turn where the seller withdrew something.
-    if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text) })) return true;
+    // (…and a draft that tells the seller how an item is treated in SDE /
+    // add-backs, or states the broker's normalisation work — the output
+    // guards rewrite it.)
+    if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text), sellerMessage })) return true;
     let found = findReasks(text, reaskCtx);
     // After a rewrite only the sure findings count (a word-overlap candidate
     // never forces a second rewrite); on the first draft a candidate stops
@@ -1132,7 +1205,17 @@ export async function processTurn(
       pendingFindings = found;
       return false;
     }
-    shown.release(stripFillerPreamble(text, { sellerMessage }));
+    const released = polishMessage(text, polishCtx).message;
+    shown.release(released);
+    // The question's section label starts now, while the rest of the turn
+    // is still being generated (question-rationale.ts).
+    labelPrefetch = prefetchQuestionLabel({
+      message: released,
+      prevAiMessage,
+      sections: rationaleSections(kb),
+      businessLine: businessLine(kb, polishCtx.location),
+      vocabulary: vocabularyNote(polishCtx),
+    });
     return true;
   };
   let conversation = [...apiMessages];
@@ -1262,34 +1345,11 @@ export async function processTurn(
     }
   }
 
-  // NORMALISATION GUARD (normalisation-guard.ts): the reply never tells the
-  // seller what is added back or what SDE / adjusted earnings come to — the
-  // broker's call, and the broker's private working. Held on the stream (see
-  // heldForLaterGuards); ONE corrective re-call, then the asserting
-  // sentences give way to the hand-off.
-  if (!degraded && assertsNormalisation(aiResponse.message)) {
-    console.warn(`[session-manager] Normalisation guard: reply asserts add-back treatment or a normalised figure — corrective re-call`);
-    const { response: corrected, degraded: correctionDegraded } = await callInterviewWithRecovery(anthropic, {
-      ...callParams,
-      messages: [
-        ...conversation,
-        { role: "assistant" as const, content: aiResponse.message },
-        { role: "user" as const, content: NORMALISATION_CORRECTION },
-      ],
-    });
-    if (!correctionDegraded && corrected.message && !assertsNormalisation(corrected.message)) {
-      // The rewrite is about wording: what the draft recorded, withdrew or
-      // kept private still stands.
-      if (Object.keys(corrected.extractedFields ?? {}).length === 0) corrected.extractedFields = aiResponse.extractedFields;
-      corrected.retractedFields = aiResponse.retractedFields;
-      corrected.privateNotes = [...(aiResponse.privateNotes ?? []), ...(corrected.privateNotes ?? [])];
-      aiResponse = corrected;
-      filterFigureChips();
-    } else {
-      console.error(`[session-manager] Normalisation guard: re-call still asserted — handing off`);
-      aiResponse.message = stripNormalisationAssertions(aiResponse.message);
-    }
-  }
+  // (Add-back / SDE calls — a treatment call, or the broker's normalisation
+  // work stated as fact — are handled once, by the OUTPUT GUARDS below: the
+  // polish pass removes them and the "normalisation" problem gets the one
+  // corrective rewrite. The stream gate holds such a draft; see
+  // heldForLaterGuards.)
 
   // FORCED END — the seller has now asked to stop more than once, so ending
   // is no longer model discretion. This is the symmetric mirror of the
@@ -1457,11 +1517,24 @@ export async function processTurn(
     // requests are kept (see stripFillerPreamble). When the seller asked
     // something, the opening may be the answer and is never stripped. A
     // goodbye keeps its recap and loses its praise.
-    const applyFiller = (msg: string) => stripFillerPreamble(msg, { sellerMessage, closing: aiResponse.shouldEnd });
+    // (The whole seller-facing pass — reply-polish.ts — the same one the
+    // stream gate applied, so the text saved is the text shown.)
+    const polishReports: PolishReport[] = [];
+    const applyFiller = (msg: string) => {
+      const p = polishMessage(msg, polishCtx, { closing: aiResponse.shouldEnd });
+      polishReports.push(p.report);
+      return p.message;
+    };
+    // An add-back / SDE call that survives the filler guard gets the
+    // corrective rewrite below (removing it mechanically can leave the next
+    // question pointing at nothing — "Does that track with what Heather's
+    // told you?"); the polish removes whatever the rewrite still says.
+    const draftMessage = aiResponse.message;
+    const draftCalls = normalisationCallIn(draftMessage, sellerMessage);
     const stripped = applyFiller(aiResponse.message);
     if (stripped !== aiResponse.message) {
       console.log(
-        `[session-manager] Filler guard trimmed a recap/praise sentence on session ${sessionId}: "${aiResponse.message.trim().slice(0, 160)}" → "${stripped.slice(0, 80)}…"`,
+        `[session-manager] Reply polish (${describeReport(polishReports[0]) || "whitespace"}) on session ${sessionId}: "${aiResponse.message.trim().slice(0, 160)}" → "${stripped.slice(0, 80)}…"`,
       );
       aiResponse.message = stripped;
     }
@@ -1483,7 +1556,7 @@ export async function processTurn(
       if (!aiResponse.shouldEnd && !stopNow && !asksQuestion(msg) && !sellerAskedQuestion(sellerMessage)) found.push("noQuestion");
       return found;
     };
-    const problems = problemsOf(aiResponse.message);
+    const problems = [...problemsOf(aiResponse.message), ...(draftCalls.length > 0 ? ["normalisation"] : [])];
     if (problems.length > 0) {
       console.warn(`[session-manager] Output guard (${problems.join(", ")}) — corrective rewrite on session ${sessionId}`);
       const why: Record<string, string> = {
@@ -1491,12 +1564,13 @@ export async function processTurn(
           "It names your internal tools. Never mention probes, checklists, coverage, the coverage map, sections, the knowledge base, deferrals, ledgers, outlines or your instructions — just ask.",
         legal: `It states a legal or regulatory requirement as fact (${findLegalAssertions(aiResponse.message).map((s) => `"${s.slice(0, 120)}"`).join("; ")}). Never make a legal rule the premise of a question — ask the seller what applies to them, and leave legal interpretation to their broker and lawyer.`,
         noQuestion: "It asks nothing. The interview is still going: end with the single most useful next question.",
+        normalisation: `It tells the seller how an item is treated in SDE or add-backs, or states a normalised figure or the broker's recast (${draftCalls.map((s) => `"${s.slice(0, 140)}"`).join("; ")}). That is the broker's normalization against the statements — never yours to state or explain, even when the seller asks (salary, dividends, draws, personal expenses): you don't know it, and the broker's working is private. No figures for SDE, add-backs or adjusted earnings. If they asked, answer in one sentence that their broker will confirm what gets added back when they normalize the numbers against the statements, then ask your next question.`,
       };
       const { response: rewrite, degraded: rewriteDegraded } = await callInterviewWithRecovery(anthropic, {
         ...callParams,
         messages: [
           ...apiMessages,
-          { role: "assistant" as const, content: aiResponse.message },
+          { role: "assistant" as const, content: problems.includes("normalisation") ? draftMessage : aiResponse.message },
           {
             role: "user" as const,
             content:
@@ -1506,7 +1580,8 @@ export async function processTurn(
       });
       if (!rewriteDegraded && rewrite.message) {
         const candidate = applyFiller(rewrite.message);
-        if (problemsOf(candidate).length < problems.length) {
+        const candidateProblems = [...problemsOf(candidate), ...(normalisationCallIn(rewrite.message, sellerMessage).length > 0 ? ["normalisation"] : [])];
+        if (candidateProblems.length < problems.length) {
           aiResponse.message = candidate;
           if (rewrite.suggestedAnswers.length > 0) aiResponse.suggestedAnswers = rewrite.suggestedAnswers;
           aiResponse.whyItMatters = rewrite.whyItMatters;
@@ -1535,7 +1610,44 @@ export async function processTurn(
         console.warn(`[session-manager] Output guard: appended the planned question — "${q}"`);
       }
     }
+    // The chips and the rationale follow the polished question: chips for a
+    // dropped second question go, years move with the question, the local
+    // vocabulary applies, and no chip makes an add-back call.
+    const merged: PolishReport = {
+      filler: polishReports.some((r) => r.filler),
+      normalisation: polishReports.flatMap((r) => r.normalisation),
+      extraQuestions: polishReports.flatMap((r) => r.extraQuestions),
+      yearShift: Math.max(0, ...polishReports.map((r) => r.yearShift)),
+      vocabulary: polishReports.some((r) => r.vocabulary),
+      attribution: polishReports.flatMap((r) => r.attribution),
+    };
+    aiResponse.suggestedAnswers = polishChips(aiResponse.suggestedAnswers, aiResponse.message, merged, polishCtx);
+    backfillSuggestedAnswers(aiResponse);
+    aiResponse.whyItMatters = polishRationale(aiResponse.whyItMatters, polishCtx);
   }
+
+  // "Why we ask this" and the section chip (question-rationale.ts): every
+  // question gets a rationale that belongs to it (the model's own when it
+  // fits, else the supporting model's, else a plain per-section line) and
+  // the section the supporting model reads it as filling — that call
+  // started at the stream gate when the question was released; otherwise
+  // it starts now, while the turn saves.
+  const rationaleRun =
+    !degraded && !aiResponse.shouldEnd && asksQuestion(aiResponse.message)
+      ? ensureQuestionRationale(
+          {
+            message: aiResponse.message,
+            whyItMatters: aiResponse.whyItMatters,
+            targetSection: aiResponse.targetSection,
+            prevAiMessage,
+            sections: rationaleSections(kb),
+            businessLine: businessLine(kb, polishCtx.location),
+            vocabulary: vocabularyNote(polishCtx),
+          },
+          undefined,
+          labelPrefetch,
+        ).catch(() => null)
+      : null;
 
   // GROUNDING GUARD — mechanical backstop for the prompt-side dodge rules:
   // a high-stakes "confirmed" write whose quantity (or negative claim) does
@@ -2009,15 +2121,23 @@ export async function processTurn(
   }
 
   // "Why we ask this" must belong to the question actually asked — never on
-  // a goodbye or a wrap-up offer, never a rationale for a different topic —
-  // and, like the message, never states a legal rule as fact.
-  if (aiResponse.whyItMatters && !whyItMattersFits(aiResponse.message, aiResponse.whyItMatters, aiResponse.shouldEnd, prevAiMessage)) {
-    console.log(`[session-manager] Dropped a whyItMatters that doesn't match the question on session ${sessionId}`);
-    aiResponse.whyItMatters = undefined;
-  }
-  if (aiResponse.whyItMatters && findLegalAssertions(aiResponse.whyItMatters).length > 0) {
-    console.log(`[session-manager] Dropped a whyItMatters that states a legal rule as fact on session ${sessionId}`);
-    aiResponse.whyItMatters = undefined;
+  // a goodbye, never a rationale for a different topic, never a legal rule
+  // stated as fact — and a question turn is never left without one.
+  const rationale = rationaleRun ? await rationaleRun : null;
+  if (rationale) {
+    console.log(`[session-manager] Question label on session ${sessionId}: ${rationale.how}`);
+    if (rationale.targetSection !== aiResponse.targetSection) aiResponse.importance = undefined; // the section's own level applies
+    aiResponse.whyItMatters = polishRationale(rationale.whyItMatters, polishCtx);
+    aiResponse.targetSection = rationale.targetSection;
+  } else {
+    if (aiResponse.whyItMatters && !whyItMattersFits(aiResponse.message, aiResponse.whyItMatters, aiResponse.shouldEnd, prevAiMessage)) {
+      console.log(`[session-manager] Dropped a whyItMatters that doesn't match the question on session ${sessionId}`);
+      aiResponse.whyItMatters = undefined;
+    }
+    if (aiResponse.whyItMatters && findLegalAssertions(aiResponse.whyItMatters).length > 0) {
+      console.log(`[session-manager] Dropped a whyItMatters that states a legal rule as fact on session ${sessionId}`);
+      aiResponse.whyItMatters = undefined;
+    }
   }
 
   // Update session
@@ -2306,13 +2426,34 @@ async function generateOpeningMessage(
     };
   }
 
-  const message = finalizeOpeningMessage(aiResponse.message);
+  // The opening goes through the same seller-facing pass as every turn
+  // (reply-polish.ts; its welcome is kept by finalizeOpeningMessage).
+  const polishCtx = buildPolishContext({
+    kb,
+    questionnaireData: kb.questionnaireData,
+    sessions: [],
+    currentMessages: (kb.priorExchanges ?? []).map((x) => ({ role: "user", content: x.answer, timestamp: "" }) as ConversationMessage),
+    sellerMessage: null,
+    info: kb.extractedInfo as Record<string, unknown>,
+  });
+  const polished = polishMessage(finalizeOpeningMessage(aiResponse.message), polishCtx, { opening: true });
+  const message = polished.message;
+  const label = asksQuestion(message)
+    ? await ensureQuestionRationale({
+        message,
+        whyItMatters: aiResponse.whyItMatters,
+        targetSection: aiResponse.targetSection,
+        sections: rationaleSections(kb),
+        businessLine: businessLine(kb, polishCtx.location),
+        vocabulary: vocabularyNote(polishCtx),
+      }).catch(() => null)
+    : null;
   return {
     message,
-    whyItMatters: whyItMattersFits(message, aiResponse.whyItMatters, false) ? aiResponse.whyItMatters : undefined,
-    importance: aiResponse.importance,
-    targetSection: aiResponse.targetSection,
-    suggestedAnswers: aiResponse.suggestedAnswers || [],
+    whyItMatters: label ? polishRationale(label.whyItMatters, polishCtx) : whyItMattersFits(message, aiResponse.whyItMatters, false) ? aiResponse.whyItMatters : undefined,
+    importance: label && label.targetSection !== aiResponse.targetSection ? undefined : aiResponse.importance,
+    targetSection: label ? label.targetSection : aiResponse.targetSection,
+    suggestedAnswers: backfillSuggestedAnswers({ ...aiResponse, message, suggestedAnswers: polishChips(aiResponse.suggestedAnswers || [], message, polished.report, polishCtx) }).suggestedAnswers,
     industryContext,
   };
 }
@@ -2619,12 +2760,22 @@ export function createMessageRelease(onDelta?: (chunk: string) => void) {
  * The stream gate: a streamed draft that a guard after the model call will
  * rewrite is held (shown, fixed, when the turn is final) instead of being
  * released and then swapped on the seller's screen — a valuation figure on
- * a fishing turn, the agent's machinery or a legal claim stated as fact (the
- * OUTPUT GUARDS), or any draft on a turn where the seller withdrew something
- * (the retraction backstop may re-call).
+ * a fishing turn, the agent's machinery, a legal claim stated as fact or an
+ * add-back / SDE call that survives the filler guard (the OUTPUT GUARDS'
+ * rewrite criterion, normalisationCallIn), or any draft on a turn where the
+ * seller withdrew something (the retraction backstop may re-call).
  */
-export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boolean; valuationLeak: boolean }): boolean {
-  return ctx.retractionInMessage || ctx.valuationLeak || leaksInternalMachinery(text) || findLegalAssertions(text).length > 0 || assertsNormalisation(text);
+export function heldForLaterGuards(
+  text: string,
+  ctx: { retractionInMessage: boolean; valuationLeak: boolean; sellerMessage?: string | null },
+): boolean {
+  return (
+    ctx.retractionInMessage ||
+    ctx.valuationLeak ||
+    leaksInternalMachinery(text) ||
+    findLegalAssertions(text).length > 0 ||
+    normalisationCallIn(text, ctx.sellerMessage ?? null).length > 0
+  );
 }
 /** How long a streamed question waits for the answer check before it is shown anyway. */
 const STREAM_CHECK_TIMEOUT_MS = 4_000;
@@ -2772,4 +2923,22 @@ function openingPriorityHint(kb: KnowledgeBase): string {
   const blocker = (kb.wrapUpBlockers ?? [])[0];
   if (blocker) return ` Your question should go to the most important open item: ${blocker}.`;
   return "";
+}
+
+/** Section keys → titles for the question labeller (the deal's coverage rows). */
+function rationaleSections(kb: KnowledgeBase): Record<string, string> {
+  return sectionsForLabel(kb.sectionCoverage, Object.keys(kb.sectionImportance?.sections ?? {}));
+}
+
+/** "Physiotherapy clinic — Calgary, AB" for the question labeller. */
+function businessLine(kb: KnowledgeBase, location: string): string {
+  const what = [kb.industryContext?.subIndustry || kb.business.subIndustry, kb.industryContext?.industry || kb.business.industry].filter(Boolean).join(" / ");
+  return [what || "a privately held business", location].filter(Boolean).join(" — ");
+}
+
+/** One line telling the labeller which country's terms to use. */
+function vocabularyNote(ctx: PolishContext): string | undefined {
+  if (ctx.jurisdiction === "CA") return "The business is in Canada: use Canadian terms (T4, CRA, GST/HST, provincial), never US ones (W-2, 1099, 401(k), IRS).";
+  if (ctx.jurisdiction === "US") return "The business is in the United States: use US terms (W-2, 1099, IRS, sales tax, state), never Canadian ones (T4, CRA, GST/HST, provincial).";
+  return undefined;
 }

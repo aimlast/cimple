@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type ExtractedField } from "./response-schema";
 import type { SystemBlock } from "./system-prompt";
+import { guardNormalisationFields } from "./reply-guards";
 
 /**
  * turn-guard
@@ -177,6 +178,12 @@ export function normalizeInterviewResponse(raw: unknown): {
         .filter((x): x is { field: string; reason: string } => !!x && x.field.trim().length > 0)
         .map((x) => ({ field: x.field.trim(), reason: x.reason.trim() }))
     : [];
+
+  // No normalisation conclusion is recorded as the seller's fact ("All $260K
+  // is add-back for new owner") — it goes to the broker's private notes
+  // (reply-guards.guardNormalisationFields).
+  const normalised = guardNormalisationFields(extractedFields, privateNotes);
+  if (normalised.length > 0) console.warn(`[turn-guard] Add-back call kept out of the facts: ${normalised.join(", ")}`);
 
   const response: InterviewResponse = {
     message,
@@ -894,13 +901,19 @@ const WORK_PATTERNS: RegExp[] = [
   // Clarifying (phrase-anchored)
   /\b(?:just to (?:clarify|confirm|check|be sure|make sure|be clear)|to (?:clarify|be clear)|let me (?:clarify|make sure|check)|quick clarification|double.?check(?:ing)?|(?:want|need) to make sure i (?:have|understood|got)|(?:i )?(?:want|need) to confirm (?:whether|that|which|if|what|the)|confirm(?:ing)? (?:whether|which|if)|clarify (?:whether|if|which|what))\b/i,
   // Asking for a document / naming the follow-up
-  /\b(?:if (?:you|\w+) (?:can|could) (?:send|upload|share|pull|forward|dig out|grab|have \w+ (?:send|upload|pull))|(?:please|could you|can you|would you) (?:upload|send|share|forward)|upload (?:it|that|them|the|those)|(?:after|once) we (?:finish|wrap|are done)|documents? area|i'?ll (?:note|flag|add|record|make a note of|pass|leave) (?:that|it|this|those|them)(?= (?:for|as|down|with|to)\b|\s*(?:[.,;:!\u2014\u2013]|$))|i'?ll follow up\b|(?:as|for) (?:a )?follow.?up)\b/i,
+  /\b(?:if (?:you|\w+) (?:can|could) (?:send|upload|share|pull|forward|dig out|grab|have (?:[\w'-]+ ){1,3}?(?:send|upload|pull|share|forward|email|dig out|grab))|(?:please|could you|can you|would you) (?:upload|send|share|forward)|upload (?:it|that|them|the|those)|(?:after|once) we (?:finish|wrap|are done)|documents? area|i'?ll (?:note|flag|add|record|make a note of|pass|leave) (?:that|it|this|those|them)(?= (?:for|as|down|with|to)\b|\s*(?:[.,;:!\u2014\u2013]|$))|i'?ll follow up\b|(?:as|for) (?:a )?follow.?up)\b/i,
+  // "Have Donna pull the WCB rate letters", "get Devin to send the bid log"
+  /^(?:(?:and|so|just)\s+)?(?:have|get|ask) [A-Z][\w'-]+(?: [A-Z][\w'-]+)? (?:to )?(?:send|pull|upload|forward|share|email|dig out|grab|put together|export|print)\b/,
   // Handing the seller a choice
   /\b(?:your call|whenever you'?re ready|we can (?:skip|leave|come back|move on|circle back)|happy to (?:skip|come back|move on)|if you'?d rather)\b/i,
 ];
 
 const ACK_START_RE =
-  /^(?:good|great|perfect|excellent|wonderful|fantastic|awesome|nice|lovely|brilliant|exactly|absolutely|right|okay|ok|got it|understood|noted|makes sense|(?:that|it|this|all of that|all that) (?:(?:really|totally|completely) )?makes (?:(?:complete|total|perfect|a lot of|good) )?sense|fair enough|thanks?(?: you)?|thank you|(?:i )?(?:really )?appreciate|helpful|interesting|cool|all right|alright|glad|love that|congrat\w*)\b/i;
+  /^(?:good|great|perfect|excellent|wonderful|fantastic|awesome|nice|lovely|brilliant|exactly|absolutely|right|okay|ok|got it|understood|noted|makes sense|(?:that|it|this|all of that|all that) (?:(?:really|totally|completely) )?makes (?:(?:complete|total|perfect|a lot of|good) )?sense|fair enough|thanks?(?: you)?|thank you|(?:i )?(?:really )?appreciate|helpful|interesting|cool|all right|alright|glad|love that|congrat\w*|(?:that|this|it) (?:really |definitely )?(?:clarifies|squares|helps|tracks|works|adds up|checks out)(?: (?:it|that|things|everything|the (?:numbers|picture|gap|mix|question)|a lot|up))?(?=\s*(?:[—–,.;:!]|-\s|$))|(?:that|this|it)(?:'d| would)(?: really| definitely)? (?:be )?(?:useful|helpful|great|good|ideal|perfect|handy|a (?:big |great )?help)|i hear you|i get (?:it|that)|(?:that'?s|that is|how) reassuring|reassuring|good to (?:know|hear|have|see)|sounds (?:good|great|right|fair)|that(?:'s| is) (?:fair|fine|clear|understandable)(?=\s*(?:[—–,.;:!]|-\s|$)))\b/i;
+// A courtesy beat that stays in front of a privacy promise or a document
+// request ("Understood — that stays with your broker only", "No problem —
+// if Donna can send…") and goes anywhere else.
+const COURTESY_RE = /^(?:understood|no problem|not a problem|no worries|of course|sure|absolutely|totally fair|fair enough|that'?s (?:ok|okay|fine|no problem))[.!]?$/i;
 // "That…", "This…", "It…", "Those…", "Both of those…" + a verdict verb: the
 // sentence is a comment on what the seller just said.
 const BACKREF_VERDICT_RE =
@@ -924,52 +937,210 @@ const GRADING_PATTERNS: RegExp[] = [
   /\byou(?:'ve| have) already (?:flagged|covered|mentioned|noted|said|addressed|identified|thought)\b|\bi (?:now )?have a (?:clear|good|full|solid|great|much (?:clearer|better)) (?:picture|sense|read|understanding)\b|\bmade (?:(?:really|very|some|such) )?(?:good|great|real|solid|excellent|terrific|tremendous|fantastic|wonderful|strong|amazing|significant|substantial|a lot of|lots of|huge) progress\b|\b(?:all |are all |is all )?(?:well|nicely|thoroughly|fully) (?:captured|covered|documented|understood)\b|\bwe (?:have|now have|'ve got) (?:strong|good|solid|great|comprehensive|thorough|detailed) (?:documentation|coverage|detail|information|data)\b|\bwhich is why\b|\b(?:will|would) likely be part of\b|\bdirectly (?:impacts?|affects?)\b/i,
   // Buyer cheerleading and valuation commentary
   /\b(?:buyers?|acquirers?|lenders?|insurers?|investors?|purchasers?|a buyer|the buyer|the right buyer)\b[^.?!]{0,60}\b(?:love|like|appreciate|value|reward|want to (?:see|hear)|need to hear|will (?:love|like|appreciate|value|notice|want to see)|pay (?:more|a premium)|look for|are looking for|tend to look for|feel confident|(?:will |would )?(?:want|need|expect) (?:certainty|comfort|confidence|assurance|clarity|to (?:know|understand|see))|prioriti[sz]e)\b/i,
+  // "Forty trucks is a significant operation", "is a much simpler picture
+  // for buyers", "keeps everything clean for a buyer's accountant", "is
+  // clearly a big part of what makes this business attractive"
+  /\b(?:is|are|'s|was|were|makes? (?:for|it|this)|keeps? (?:it|this|that))\s+(?:(?:a|an|the)\s+)?(?:(?:much|far|really|very|pretty|quite|fairly|genuinely|actually|clearly|definitely|also)\s+)*(?:significant|sizable|sizeable|substantial|serious|major|big|simple|simpler|clean|cleaner|clearer|tidy|tidier|nice|solid|strong|healthy|stable|good|great|better|manageable|straightforward|compelling|attractive|appealing|impressive|meaningful|valuable|sticky|durable|resilient|rare|enviable|remarkable|reasonable|sensible|realistic)(?:\s+[\w-]+)?\s+(?:operation|picture|story|business|setup|set-up|structure|position|profile|fleet|base|footprint|book|foundation|platform|asset|arrangement|outcome|result|sign|signal|number|figure|margin|mix|situation|spot|place|shape|trajectory|track record|record|team|relationship|moat|advantage)s?\b/i,
+  /\bkeeps? (?:everything|things|it|this|that|the (?:books|numbers|picture|story|file|deal))\s+(?:\w+\s+)?(?:clean|simple|tidy|clear|straightforward|neat)\b|\bsimplif(?:y|ies) (?:things|matters|the (?:picture|story|deal|diligence))\b|\bwhat makes (?:this|the|your|a) (?:business|company|practice|shop|clinic|pharmacy|operation|firm) (?:attractive|valuable|special|work|stand out|compelling|appealing)\b|\b(?:a )?(?:big|huge|key|major|core) part of (?:what|the (?:value|appeal|story))\b|\bmakes? (?:complete |total |perfect |good |a lot of )?sense\s*[.!]?$/i,
   /\b(?:gives?|give|giving|provides?) (?:a |the )?(?:buyers?|them|a buyer|the buyer|buyers and their \w+)\b[^.?!]{0,30}\b(?:confidence|comfort|a clear picture|certainty|peace of mind|a sense of|real|a (?:clear |real )?path|runway|a head start)\b|\b(?:will|would|should) (?:land|play|read|sit|go over) well\b|\bland well\b|\bmatters? (?:to|for|in) (?:buyers|valuation|a buyer|the deal)\b|\bwill matter to\b|\bthe distinction that matters\b|\bwhat (?:buyers|they|a buyer) (?:want|need|like|love|expect) to (?:see|hear)\b|\bexactly (?:what|the kind)\b|\bthe kind of (?:detail|thing|answer|number|signal|stuff|insight|story)\b|\bremoves? (?:a |the |most of the |one )?(?:major |big |key |common |real )?(?:\w+ )?(?:risk|concern|obstacle|question mark)\b|\bde-?risks?\b|\b(?:a )?(?:real|genuine|clear|big|major) (?:asset|strength|differentiator|plus|advantage)\b|\bspeaks for itself\b|\b(?:will|would|should|could|is going to|are going to) (?:really |definitely |certainly )?resonate\b|\bresonates? (?:with|well)\b|\btells a (?:good|great|strong) story\b|\bcomes? through clearly\b|\bwell below (?:the )?industry\b|\bincreasingly rare\b|\bsmart (?:planning|move|approach|buyer)\b|\bgood (?:to (?:know|hear|have|see|get)|detail|news|sign)\b|\blines up with what i'?d expect\b|\bin (?:a )?(?:good|great|strong) (?:place|position|shape)\b|\bwell[- ]positioned\b|\bbuyers? (?:and their \w+ )?(?:will|would) (?:definitely |certainly )?(?:want|need) (?:that |this |it )?nailed down\b|\byou(?:'ve| have) built\b|\bsomething (?:solid|special|great|real)\b|\b(?:cleaner|stronger|better) [\w ]{0,30}(?:i'?ve seen|out there)\b/i,
 ];
 // Session recaps in front of a question ("We've covered a lot of ground —
 // your market position, referral channels…").
 const RECAP_START_RE =
-  /^(?:(?:\w+,\s+)?we(?:'ve| have) (?:now |really )?(?:covered|gone through|been through|talked through|walked through)|you(?:'ve| have) (?:given|shared|walked|painted|told)|that (?:covers|gives me|rounds out)|i (?:now )?have a (?:clear|good|full|solid) (?:picture|sense|read))/i;
+  /^(?:(?:\w+,\s+)?we(?:'ve| have) (?:now |really )?(?:covered|gone through|been through|talked through|walked through)|you(?:'ve| have) (?:given|shared|walked|painted|told)|that (?:covers|gives me|rounds out)|i (?:now )?have a (?:clear|good|full|solid) (?:picture|sense|read)|(?:\w+,\s+)?(?:we|i)(?:'ve| have) (?:now |already )?(?:noted|captured|logged|recorded|got(?:ten)? down)(?! (?:that|it|this|those) (?:for|as)\b))/i;
 
 const isWork = (s: string) => WORK_PATTERNS.some((re) => re.test(s)) && !RECAP_RECORDED_RE.test(s.trim());
 
 /**
  * True when a sentence placed in front of the question only acknowledges,
- * grades, praises or recaps. `sellerMessage` enables the played-back check.
+ * grades, praises or recaps — nothing in it survives trimLeadSentence.
+ * `sellerMessage` enables the played-back check.
  */
 export function isFillerSentence(sentence: string, sellerMessage?: string | null): boolean {
-  const s = sentence.trim().replace(/^["'(\s]+/, "").replace(/[’‘]/g, "'");
+  const s = sentence.trim();
   if (!s || s.includes("?")) return false;
-  if (RECAP_RECORDED_RE.test(s)) return true;
-  if (isWork(s)) return false;
+  return trimLeadSentence(s, { sellerMessage: sellerMessage ?? null, question: null }).trim() === "";
+}
+
+// ── Clause-level trimming ──────────────────────────────────────────────
+// A verdict word used to cost the whole sentence it sat in, taking the
+// document figure the question stood on with it: "Your 2024 T2 shows $180K
+// in shareholder loans outstanding, which is significant. How much of that
+// do you plan to repay?" reached the seller as "How much of that do you plan
+// to repay?" (round-V review; Great Lakes turn 10 lost its IATF
+// recertification date the same way). So a lead sentence is read clause by
+// clause: the acknowledgement, the grade and the buyer commentary go; the
+// fact stays. "…, which is significant." → "."; "Got it — have Donna pull
+// the WCB letters" → "Have Donna pull the WCB letters"; "your 18 PPM … are
+// strong, but IATF 16949 recertification is coming up fall 2026" → "IATF
+// 16949 recertification is coming up fall 2026".
+
+type ClauseVerdict = "work" | "courtesy" | "filler" | "content";
+interface Clause { sep: string; text: string }
+
+// Where a sentence divides into clauses: a spaced dash, a semicolon, a colon
+// after a lead-in, or a comma before "which / but / so / though …".
+const CLAUSE_SEP_RE =
+  /(\s[—–]\s|\s-\s|;\s+|:\s+|,\s+(?=(?:which|but|though|although|whereas|so|and (?:that|this|it|which)(?:'s| is| was| will| would))\b))/i;
+const LEADING_CONJ_RE = /^(?:and|but|so|though|although|whereas|yet|also)\s+/i;
+const WHICH_CLAUSE_RE = /^(?:which|and (?:that|this|it|which))\b/i;
+// A clause that restates ("so the $260K is your total…", "so that's…").
+const SO_RECAP_RE = /^so\s+(?:the|that|this|it|you|your|all|both|those|these|basically|essentially)\b/i;
+// Contrast that turns from a grade to the new point: "…are strong, but IATF …".
+const CONTRAST_RE = /^(?:but|though|although|whereas|yet)\b/i;
+// A clause that points at the file: "your 2024 T2 shows", "the lease you
+// uploaded", "the call notes mention", "on file".
+const CITES_FILE_RE =
+  /\b(?:your|the|their)\s(?:[\w&'’.-]+\s){0,4}?(?:t2s?|t4s?|p&l|pnl|statements?|financials?|documents?|docs|reports?|lease|leases|contracts?|agreements?|msa|schedules?|registers?|roster|returns?|filings?|notes|transcripts?|call|calls|emails?|questionnaire|files?|books|ledger|polic(?:y|ies)|certificates?|budget|forecast|invoices?|records|summary|sheets?|deck|website|appraisal|audit|letters?|log|add-?back list)\b(?:\s[\w&'’.,$%-]+){0,5}?\s(?:shows?|says?|lists?|mentions?|notes?|states?|indicates?|puts?|records?|has|had|runs?|ran|expires?|ends?|renews?|covers?|includes?|reports?|gives?)\b|\b(?:you|they) (?:uploaded|sent|shared|provided)\b|\baccording to\b|\bon file\b|\bin (?:your|the) (?:documents?|files?|statements?|p&l|t2|report|lease|contract|agreement|questionnaire)\b/i;
+// Something specific: a number, a month, or a mid-sentence proper name / acronym.
+const SPECIFIC_FACT_RE = /\d|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b|(?<=\s)(?:[A-Z]{2,}|[A-Z][a-z]+)\b/;
+
+function clausesOf(body: string): Clause[] {
+  const parts = body.split(CLAUSE_SEP_RE);
+  const out: Clause[] = [{ sep: "", text: parts[0] ?? "" }];
+  for (let i = 1; i < parts.length; i += 2) out.push({ sep: parts[i], text: parts[i + 1] ?? "" });
+  // A colon only divides after a short lead-in ("On the lease side:",
+  // "Stepping back to quality:"); after a longer clause it stays inside it.
+  const merged: Clause[] = [];
+  for (const c of out) {
+    const prev = merged[merged.length - 1];
+    if (prev && /^:\s+$/.test(c.sep) && wordCount(prev.text) > 8) prev.text += c.sep + c.text;
+    else merged.push({ ...c });
+  }
+  return merged;
+}
+
+/** Content stems plus figures, for the played-back check. */
+function echoTokens(text: string): string[] {
+  const figures = (text.match(/\d[\d,.]*/g) ?? []).map((n) => n.replace(/[,.]+$/, "").replace(/,/g, "")).filter(Boolean);
+  return [...Array.from(contentStems(text)), ...figures];
+}
+function echoesSeller(text: string, sellerMessage: string | null): boolean {
+  if (!sellerMessage) return false;
+  const own = echoTokens(text);
+  if (own.length < 4) return false;
+  const said = new Set(echoTokens(sellerMessage));
+  return own.filter((w) => said.has(w)).length / own.length >= 0.7;
+}
+
+function clauseVerdict(raw: string, sellerMessage: string | null): ClauseVerdict {
+  const s = raw.trim().replace(/^["'(\s]+/, "").replace(/[’‘]/g, "'").replace(/[.!]+$/, "");
+  if (!s) return "filler";
+  const bare = s.replace(LEADING_CONJ_RE, "");
+  if (RECAP_RECORDED_RE.test(`${bare}.`)) return "filler";
+  if (isWork(s)) return "work";
+  if (COURTESY_RE.test(bare)) return "courtesy";
   // An aside between dashes hides the verdict from the back-reference
   // check: "That differentiation — the 45-minute follow-ups, continuity of
-  // care — will resonate with buyers" is "That differentiation will
-  // resonate with buyers" (seen live after round 1).
-  const flat = s.replace(/\s[\u2014\u2013]\s[^\u2014\u2013.?!]{1,220}?\s[\u2014\u2013]\s/g, " ");
-  const any = (re: RegExp) => re.test(s) || (flat !== s && re.test(flat));
-  if (QUESTION_PRAISE_SENTENCE_RE.test(s)) return true;
-  if (ACK_START_RE.test(s)) return true;
-  if (any(RECAP_START_RE)) return true;
-  if (GRADING_PATTERNS.some(any)) return true;
+  // care — will resonate with buyers" (seen live after round 1).
+  const flat = bare.replace(/\s[—–]\s[^—–.?!]{1,220}?\s[—–]\s/g, " ");
+  const any = (re: RegExp) => re.test(bare) || (flat !== bare && re.test(flat));
+  if (QUESTION_PRAISE_SENTENCE_RE.test(`${bare}.`)) return "filler";
+  if (ACK_START_RE.test(bare)) return "filler";
+  if (any(RECAP_START_RE)) return "filler";
+  // "I'll note that the referrals are personal to you" — the recap in note
+  // form (a real follow-up note, "I'll note that for Carol", is work above).
+  if (/^i'?ll (?:note|flag|record|make a note(?: of)?) (?:that|how|the|your)\b/i.test(bare)) return "filler";
+  if (GRADING_PATTERNS.some(any)) return "filler";
+  // "…, which directly affects next year's revenue", "…, which is standard"
+  // are caught as grades above; "…, which includes the Westlock terminal"
+  // adds a fact and stays.
   // Mostly the seller's own words played back ("A range of six to seven
   // thousand active patients, with Carol pulling the exact count.").
-  if (sellerMessage) {
-    const own = Array.from(contentStems(s));
-    if (own.length >= 5) {
-      const said = contentStems(sellerMessage);
-      const echoed = own.filter((w) => said.has(w)).length;
-      if (echoed / own.length >= 0.7) return true;
-    }
-  }
+  if (echoesSeller(bare, sellerMessage)) return "filler";
   // A figure, a comparison or an implication the question stands on is
   // context, not a comment — even when it opens with "That's": "That's
-  // about $400K more than the T2 shows.", "That's net of the $180K owner
-  // salary.", "That would make Leah your only senior physio." (It got here
-  // without a grade, so there's nothing evaluative in it.)
-  if (FACT_CONTEXT_RE.test(s)) return false;
-  if (any(BACKREF_VERDICT_RE)) return true;
-  return false;
+  // about $400K more than the T2 shows.", "That would make Leah your only
+  // senior physio." (It got here without a grade.)
+  if (FACT_CONTEXT_RE.test(bare)) return "content";
+  if (any(BACKREF_VERDICT_RE)) return "filler";
+  return "content";
+}
+
+/**
+ * The part of a lead sentence worth keeping — "" when nothing is. Clauses
+ * that acknowledge, grade, praise, recap or cheer for buyers are dropped;
+ * work (a clarification, a reconciliation, a privacy promise, a document
+ * request, a human beat) stays. In a sentence that carries a grade, the
+ * rest stays only when it is context the question stands on:
+ *  - before the grade: it cites the file or carries something specific ("Your
+ *    2024 T2 shows $180K in shareholder loans outstanding[, which is
+ *    significant]"); an opinion with no fact in it ("Keeping them engaged is
+ *    the real retention play[, which you've already flagged]") goes with it;
+ *  - after a dropped acknowledgement or grade — usually the seller's answer
+ *    played back ("That clarifies it — Maplecrest at 41% …"): only when it
+ *    cites the file, or turns ("…, but IATF 16949 recertification is coming
+ *    up fall 2026") to something specific. Word overlap with the question
+ *    proved no guide: a recap shares the question's topic by nature (QA
+ *    corpus: "That's a clear picture — Comfort Club as the base, heat pumps
+ *    as a growth engine…" before a heat-pump question).
+ * `question` is kept for callers; the rules above don't need it.
+ */
+export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string | null; question: string | null }): string {
+  const lead = sentence.match(/^\s*/)?.[0] ?? "";
+  const trail = sentence.match(/\s*$/)?.[0] ?? "";
+  const core = sentence.trim();
+  if (!core || core.includes("?")) return sentence;
+  const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
+  const body = core.slice(0, core.length - end.length);
+  // An aside between dashes is part of the clause around it: "That
+  // differentiation — the 45-minute follow-ups, continuity of care — will
+  // resonate with buyers" is "That differentiation will resonate with
+  // buyers", all of it a grade (seen live after round 1).
+  const flat = body.replace(/\s[—–]\s[^—–.?!]{1,220}?\s[—–]\s/g, " ");
+  if (flat !== body && trimLeadSentence(`${flat}.`, ctx).trim() === "") return "";
+  const clauses = clausesOf(body);
+  // "We've covered a lot of ground: <the topics>" — everything after the
+  // session-recap lead-in is the recap itself.
+  if (clauses.length > 1 && RECAP_START_RE.test(clauses[0].text.trim()) && /^(?::\s+|\s[—–]\s|\s-\s)$/.test(clauses[1].sep)) return "";
+  const verdicts = clauses.map((c) => clauseVerdict(c.text, ctx.sellerMessage));
+  if (!verdicts.some((v) => v === "filler" || v === "courtesy")) return sentence;
+
+  const isLabel = (i: number) => /^:\s+$/.test(clauses[i + 1]?.sep ?? "") && wordCount(clauses[i].text) <= 8;
+  const keep: boolean[] = clauses.map(() => false);
+  let afterFiller = false;
+  for (let i = 0; i < clauses.length; i++) {
+    const v = verdicts[i];
+    const text = clauses[i].text.trim();
+    if (v === "filler") { afterFiller = true; continue; }
+    if (v === "courtesy") {
+      if (verdicts.slice(i + 1).find((x) => x !== "filler") === "work") keep[i] = true;
+      else afterFiller = true;
+      continue;
+    }
+    if (v === "work" || isLabel(i)) { keep[i] = true; continue; }
+    const bare = text.replace(LEADING_CONJ_RE, "");
+    if (!afterFiller) {
+      // Before the grade: a fact the question stands on, not an opinion.
+      if (CITES_FILE_RE.test(text) || FACT_CONTEXT_RE.test(bare) || SPECIFIC_FACT_RE.test(bare)) keep[i] = true;
+      continue;
+    }
+    // After a dropped acknowledgement or grade.
+    if (SO_RECAP_RE.test(text)) continue;
+    const turns = CONTRAST_RE.test(text) || /^,?\s*(?:but|though|although|whereas|yet)\b/i.test(clauses[i].sep.trim());
+    if (CITES_FILE_RE.test(text) || (turns && SPECIFIC_FACT_RE.test(bare))) keep[i] = true;
+  }
+  const kept = keep.map((k, i) => (k ? i : -1)).filter((i) => i >= 0);
+  if (kept.length === 0) return "";
+  // A lead-in label ("On the lease side:") on its own is nothing.
+  if (kept.every(isLabel)) return "";
+  let out = "";
+  kept.forEach((idx, n) => {
+    let text = clauses[idx].text.trim();
+    const prev = n > 0 ? kept[n - 1] : -1;
+    const startsSentence = n === 0 || (prev >= 0 && isLabel(prev) && prev !== idx - 1);
+    if (startsSentence && idx > 0 && prev !== idx - 1) {
+      text = text.replace(LEADING_CONJ_RE, "");
+      // A which-clause can't open a sentence.
+      if (WHICH_CLAUSE_RE.test(text)) return;
+    }
+    if (n === 0) { out = capitalise(text); return; }
+    const sep = prev === idx - 1 ? clauses[idx].sep : isLabel(prev) ? ": " : /,/.test(clauses[idx].sep) ? ", " : clauses[idx].sep;
+    out += sep + text;
+  });
+  out = out.trim().replace(/[,;:\s—–-]+$/, "");
+  if (!out || kept.every((i) => isLabel(i)) || /:$/.test(out)) return "";
+  return `${lead}${out}${end || "."}${trail}`;
 }
 
 /** A lead sentence carrying a figure, a comparison or an implication. */
@@ -984,7 +1155,7 @@ const CLOSING_PRAISE_PATTERNS: RegExp[] = [
   /\b(?:strong|solid|great|impressive|clean|healthy) (?:foundation|business|operation|position|story|picture|team|track record)\b/i,
 ];
 
-interface Span { text: string }
+export interface Span { text: string }
 
 /**
  * Splits text into sentences, each carrying the whitespace that follows it,
@@ -993,7 +1164,7 @@ interface Span { text: string }
  * followed by whitespace, or at a blank line.
  */
 const ABBREVIATION_RE = /\b(Dr|Mr|Mrs|Ms|Jr|Sr|St|No|vs|Inc|Ltd|Co|Corp|approx|est|e\.g|i\.e|U\.S|Mt|Ft|Ave|Blvd|Rd)\.$/i;
-function splitSentences(text: string): Span[] {
+export function splitSentences(text: string): Span[] {
   const spans: Span[] = [];
   let start = 0;
   const re = /[.!?]["')\]\u201d]*\s+(?=\S)|\n\s*\n\s*(?=\S)/g;
@@ -1080,28 +1251,26 @@ function stripOpeners(message: string, sellerMessage: string | null): string {
   let edited = false;
   for (let i = 0; i < q; i++) {
     const s = spans[i].text;
-    if (isFillerSentence(s, sellerMessage)) cut.add(i);
-    else if (cut.has(i - 1) && DANGLING_BACKREF_RE.test(s.trim()) && !isWork(s)) cut.add(i);
-    else {
-      // A sentence kept for its work can still open with a grade: "That
-      // $12-15 range is useful for now — if Kyle can send that spreadsheet…"
-      // → "If Kyle can send that spreadsheet…".
-      const trimmed = dropGradePrefix(s);
-      if (trimmed !== s) { spans[i] = { text: trimmed }; edited = true; }
-    }
+    const trimmed = trimLeadSentence(s, { sellerMessage, question: spans[q].text.trim() });
+    if (trimmed.trim() === "") cut.add(i);
+    else if (cut.has(i - 1) && DANGLING_BACKREF_RE.test(trimmed.trim()) && !isWork(trimmed)) cut.add(i);
+    else if (trimmed !== s) { spans[i] = { text: trimmed }; edited = true; }
   }
   // Buyer-rationale tacked on after the last question belongs in
   // whyItMatters ("Buyers will want to see whether the growth is a one-year
-  // spike or part of a trend.").
+  // spike or part of a trend."); what does work there stays, trimmed.
   const lastQ = spans.reduce((acc, s, i) => (s.text.includes("?") ? i : acc), q);
   for (let i = lastQ + 1; i < spans.length; i++) {
-    if (isFillerSentence(spans[i].text, sellerMessage)) cut.add(i);
+    const trimmed = trimLeadSentence(spans[i].text, { sellerMessage, question: null });
+    if (trimmed.trim() === "") cut.add(i);
+    else if (trimmed !== spans[i].text) { spans[i] = { text: trimmed }; edited = true; }
   }
-  // The question sentence itself: drop an acknowledgement prefix.
-  const qTrim = spans[q].text.replace(/^\s+/, "");
-  const prefix = qTrim.match(ACK_PREFIX_RE);
-  if (prefix && !isWork(qTrim.slice(prefix[0].length))) {
-    spans[q] = { text: capitalise(qTrim.slice(prefix[0].length)) };
+  // The question sentence itself: drop an acknowledgement or a grade in
+  // front of it ("Good — what's the lease term?", "Forty trucks is a
+  // significant operation — is that a dedicated fleet?").
+  const qHead = trimQuestionHead(spans[q].text.replace(/^\s+/, ""));
+  if (qHead !== spans[q].text.replace(/^\s+/, "")) {
+    spans[q] = { text: qHead };
     edited = true;
   }
   // …and a conjunction left leading the question once everything before it
@@ -1116,20 +1285,25 @@ function stripOpeners(message: string, sellerMessage: string | null): string {
 }
 
 /**
- * "<grade> — <work>" → "<work>". Only a real grade goes (a verdict or
- * praise); a plain acknowledgement in front of a privacy promise or a
- * document request ("Understood — that stays with your broker only", "No
- * problem — if Donna can send…") is a human beat and stays.
+ * The question sentence's own lead-in: "<ack or grade> — <question>" →
+ * "<question>". A head that carries context or does work stays ("The 2008
+ * press is due for replacement at around $380K — where does that stand?").
  */
-function dropGradePrefix(sentence: string): string {
-  const m = sentence.match(/^(\s*)([^\u2014\u2013?]{3,200}?)\s[\u2014\u2013]\s([\s\S]+)$/);
+function trimQuestionHead(sentence: string): string {
+  const prefix = sentence.match(ACK_PREFIX_RE);
+  if (prefix && !isWork(sentence.slice(prefix[0].length))) return capitalise(sentence.slice(prefix[0].length));
+  const m = sentence.match(/^([^?]{3,240}?)(\s[—–]\s|:\s+|,\s+)(?=\S)([\s\S]*\?[\s\S]*)$/);
   if (!m) return sentence;
-  const head = m[2].trim().replace(/[\u2019\u2018]/g, "'");
-  const rest = m[3];
-  if (ACK_START_RE.test(head) || isWork(head) || !isWork(rest) || wordCount(rest) < 4) return sentence;
-  const graded = GRADING_PATTERNS.some((re) => re.test(head)) || (!FACT_CONTEXT_RE.test(head) && BACKREF_VERDICT_RE.test(head));
-  if (!graded) return sentence;
-  return m[1] + capitalise(rest);
+  const [, head, sep, rest] = m;
+  // A comma splits only an acknowledgement ("Got it, and how many…?").
+  if (/^,/.test(sep) && !ACK_START_RE.test(head.trim())) return sentence;
+  // (No played-back check here: a topic lead-in names what the seller just
+  // talked about by nature — "On Tidewater's June 2026 renewal — …?")
+  const v = clauseVerdict(head, null);
+  if (v !== "filler" && !(v === "courtesy" && !isWork(rest))) return sentence;
+  // "…is strong, but is the recert on track?" — keep the turn's topic.
+  const body = rest.replace(/^(?:but|and|so|also)\s+(?=[a-z])/i, "");
+  return /[A-Za-z]/.test(body) && body.includes("?") && wordCount(body) >= 3 ? capitalise(body) : sentence;
 }
 
 // Praise strong enough that it is never the answer to a seller's question,

@@ -12,6 +12,11 @@
 //  3. Private notes consolidated from several sources (f-conflicts-notes) are
 //     judged for broker-work wording on the words the interview reads (the
 //     seller-side source's own), not the merged text.
+//  4. ONE add-back guard: i-privacy-ux's normalisation-guard (its own re-call
+//     and hand-off) and i-output's reply-guards (polish removal, one rewrite,
+//     its own hand-off) each flagged the OTHER's hand-off line as a call. The
+//     patterns are unified in reply-guards.assertsNormalisation; the output
+//     guards' single rewrite and the polish pass handle every call.
 // Offline: no database, no AI.
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused node_modules/.bin/tsx tests/unit/v-integ-step4.test.ts
 import assert from "node:assert/strict";
@@ -20,6 +25,9 @@ import { sellerInterviewView, heldByBroker } from "../../server/interview/seller
 import { applyResolutionToInfo, markHiddenFromSeller } from "../../server/information/facts";
 import { getFieldSources } from "../../server/interview/info-merger";
 import { isPrivateToBroker } from "../../server/information/cim-facts";
+import { assertsNormalisation, findNormalisationAssertions, removeNormalisationAssertions, NORMALISATION_HANDOFF } from "../../server/interview/reply-guards";
+import { normalisationCallIn } from "../../server/interview/reply-polish";
+import { heldForLaterGuards } from "../../server/interview/session-manager";
 
 let n = 0;
 const ok = (name: string) => { n++; console.log("✓", name); };
@@ -152,6 +160,40 @@ const disc = (o: Record<string, unknown>): any => ({
   // The seller-side wording carries the broker's work → dropped.
   assert.ok(!notes.some((x) => /add-back|recast/i.test(x.note)), JSON.stringify(notes));
   ok("private notes are screened on the words the interview reads");
+}
+
+// ── 4. ONE add-back guard (i-output's reply-guards, with i-privacy-ux's patterns folded in) ──
+{
+  const Q = " What's your current general liability coverage?";
+  // i-privacy-ux's broker-work statements that i-output's patterns alone missed.
+  for (const s of [
+    "Maria's salary is on our list as an add-back item your broker will confirm in the final recast — I don't have the exact SDE figure in front of me.",
+    "Switching gears to add-backs — the broker's working from items like your salary, Maria's salary, and vehicle expenses.",
+    "That would lift SDE to about $1.8 million.",
+  ]) assert.ok(assertsNormalisation(s) && findNormalisationAssertions(s + Q).length > 0, s);
+  // Each stream's hand-off line (each guard used to flag the other's), the
+  // prompt's verbatim hand-off, and a broker hand-off in the model's own words.
+  for (const s of [
+    NORMALISATION_HANDOFF,
+    "Your broker will go through what's added back with you against your statements.",
+    "Anything beyond that — dividends, one-time items — your broker will confirm in the normalization against your actual statements.",
+    "That's a question for Morgan — he goes through what's added back with you against the actual statements.",
+    "We covered that earlier — your broker will confirm the full add-back treatment when they normalize against your statements.",
+  ]) assert.deepEqual(findNormalisationAssertions(s + Q), [], s);
+  // The one safe general statement the rules allow — but a call tacked onto it is still a call.
+  assert.deepEqual(findNormalisationAssertions("A market-rate owner salary on the P&L is the classic add-back; anything beyond that your broker confirms." + Q), []);
+  assert.equal(findNormalisationAssertions("A market-rate owner salary on the P&L is the classic add-back, and your dividends get added back too." + Q).length, 1);
+  // A hand-off followed by the call anyway is a call.
+  assert.equal(findNormalisationAssertions("Your broker will confirm what gets added back, but the short answer is your truck gets added back too." + Q).length, 1);
+  // The polish pass removes a broker-work statement and, when the seller raised it, puts the hand-off in its place.
+  const seller = "What did Morgan's recast come out to for my SDE?";
+  const r = removeNormalisationAssertions("Morgan's recast landed at $1,312,000 SDE for FY2024." + Q, seller);
+  assert.equal(r.message, `${NORMALISATION_HANDOFF}${Q}`);
+  // The stream gate holds exactly what the output guards will rewrite.
+  assert.ok(heldForLaterGuards("Morgan's recast landed at $1,312,000 SDE." + Q, { retractionInMessage: false, valuationLeak: false, sellerMessage: seller }));
+  assert.ok(!heldForLaterGuards(NORMALISATION_HANDOFF + Q, { retractionInMessage: false, valuationLeak: false, sellerMessage: seller }));
+  assert.equal(normalisationCallIn(NORMALISATION_HANDOFF + Q, seller).length, 0);
+  ok("one add-back guard: both streams' patterns, neither stream's hand-off flagged, one hold criterion");
 }
 
 console.log(`\n${n} integration-step-4 checks passed`);

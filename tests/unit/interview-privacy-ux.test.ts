@@ -23,7 +23,10 @@ import {
 } from "../../server/interview/source-privacy";
 import { reviewConflictsForDeal, ensureSourceReview } from "../../server/interview/source-review";
 import { mintSourceItems, applyLedgerToKb, heldForLaterGuards } from "../../server/interview/session-manager";
-import { assertsNormalisation, stripNormalisationAssertions, NORMALISATION_HANDOFF } from "../../server/interview/normalisation-guard";
+// (Integration step 4: the privacy-ux patterns are folded into i-output's one
+// add-back guard — reply-guards.ts — with its removal and hand-off line.)
+import { findNormalisationAssertions, removeNormalisationAssertions, NORMALISATION_HANDOFF } from "../../server/interview/reply-guards";
+const assertsNormalisation = (text: string) => findNormalisationAssertions(text).length > 0;
 import { applyResolutionToInfo, useAlternate, resolvedToPrivateSide } from "../../server/information/facts";
 import { getFieldSources } from "../../server/interview/info-merger";
 import { isPrivateToBroker } from "../../server/information/cim-facts";
@@ -437,10 +440,14 @@ const lakeshoreDocs = () => [
       "What does your fleet cost you in a typical year, roughly — fuel, insurance and payments?",
     ];
     for (const s of fine) assert.ok(!assertsNormalisation(s), s);
-    const stripped = stripNormalisationAssertions(
+    const stripped = removeNormalisationAssertions(
       "Yes, Maria's salary is included in the broker's add-backs. It comes to about $395,000 in add-backs overall. What's your current general liability coverage?",
-    );
+      "Is Maria's salary one of the add-backs?",
+    ).message;
     assert.equal(stripped, `${NORMALISATION_HANDOFF} What's your current general liability coverage?`);
+    // Neither stream's hand-off line counts as a call (each guard used to flag the other's).
+    assert.ok(!assertsNormalisation(`${NORMALISATION_HANDOFF} What's your current general liability coverage?`));
+    assert.ok(!assertsNormalisation("Your broker will go through what's added back with you against your statements. What's next?"));
     assert.ok(heldForLaterGuards("Morgan's recast landed at $1,312,000 SDE. What's next?", { retractionInMessage: false, valuationLeak: false }));
     assert.ok(!heldForLaterGuards("What's your current general liability coverage?", { retractionInMessage: false, valuationLeak: false }));
     ok("normalisation guard: add-back / SDE / recast assertions are caught (and held on the stream); questions and the hand-off pass");
