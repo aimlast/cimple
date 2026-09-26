@@ -74,6 +74,8 @@ export interface OnFileEntry {
   /** Document id or session id (none for a fact). */
   sourceId?: string;
   factKey?: string;
+  /** FACTS: the source row the fact's value came from when it was read (it must stay seller-visible). */
+  factSourceId?: string;
   quote?: string;
 }
 
@@ -97,8 +99,12 @@ export interface OnFileItem extends OnFileEntry {
   label: string;
 }
 
-/** 1: first version. */
-export const EVIDENCE_VERSION = 1;
+/**
+ * 1: first version. 2: FACTS entries carry the source row their value came
+ * from (factSourceId). A version-1 build is rebuilt; until then its fact
+ * entries are "legacy" (see makeStands).
+ */
+export const EVIDENCE_VERSION = 2;
 
 const LEAD_KINDS = new Set(["crm", "website", "social"]);
 /** The seller (or their staff) speaking or writing. */
@@ -146,33 +152,81 @@ export function storedEvidence(deal: { interviewEvidence?: unknown }): OnFileEvi
   return e;
 }
 
+type StandCtx = {
+  documents?: DocLike[];
+  view?: Record<string, unknown>;
+  sessionIds?: string[];
+  /** The entries come from a version-1 build (no factSourceId recorded). */
+  legacy?: boolean;
+};
+
+/** Content words (4+ letters) of a text, lower-cased, with a plain plural "s" dropped. */
+function contentWords(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? []) out.add(w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+  return out;
+}
+
+/** At least half of the answer's content words are in the value — it still says this. */
+function wordsSupported(answer: string, value: string): boolean {
+  const mine = Array.from(contentWords(answer));
+  if (mine.length === 0) return true;
+  const theirs = contentWords(value);
+  return mine.filter((w) => theirs.has(w)).length * 2 >= mine.length;
+}
+
 /**
- * The stored entries that still stand for the interview: a document entry
- * whose source is gone or now broker-only is dropped, a fact entry whose
- * fact is no longer in the interview's view is dropped, a session entry
- * whose session is gone is dropped. Pure.
+ * Does a stored entry still stand? A document entry whose source is gone or
+ * now broker-only does not; a session entry whose session is gone does not;
+ * a fact entry stands only while the interview's view still holds that fact,
+ * the value still states the entry's figures, and the source row the value
+ * came from is still seller-visible — so a fact whose source was made
+ * broker-only stops being quoted at once (the view falls back to another
+ * value), not after a background rebuild. Pure.
  */
+function makeStands(ctx: StandCtx): (e: OnFileEntry) => boolean {
+  const docs = ctx.documents ? new Map(ctx.documents.map((d) => [d.id, d])) : null;
+  const sessions = ctx.sessionIds ? new Set(ctx.sessionIds) : null;
+  const visible = (id: string) => {
+    const d = docs?.get(id);
+    return !!d && d.visibility !== "broker_only" && !LEAD_KINDS.has(String(d.sourceKind));
+  };
+  return (e) => {
+    if (!e || typeof e.answer !== "string" || !e.answer.trim()) return false;
+    if (e.sourceKind === "fact") {
+      if (docs && e.factSourceId && !visible(e.factSourceId)) return false;
+      if (ctx.view) {
+        const v = e.factKey ? ctx.view[e.factKey] : undefined;
+        if (!e.factKey || !isSubstantive(v)) return false;
+        const text = typeof v === "string" ? v : JSON.stringify(repairCharIndexedValue(v));
+        if (!figuresSupported(e.answer, text)) return false;
+        // A version-1 entry doesn't say which source it was read from, so a
+        // figureless one ("Westline Foods is the anchor customer") would
+        // stand on any value — even one another source now supplies because
+        // its own went broker-only. It stands only while the value still says
+        // it (until the rebuild the version bump brings replaces it).
+        if (ctx.legacy && !e.factSourceId && !wordsSupported(e.answer, text)) return false;
+      }
+      return true;
+    }
+    if (e.sourceKind === "session") return !(sessions && e.sourceId && !sessions.has(e.sourceId));
+    return !(docs && e.sourceId && !visible(e.sourceId));
+  };
+}
+
+/** The stored entries that still stand for the interview (see makeStands). Pure. */
 export function onFileItems(
   deal: { interviewEvidence?: unknown },
   targets: EvidenceTarget[],
-  ctx: { documents?: DocLike[]; view?: Record<string, unknown>; sessionIds?: string[] } = {},
+  ctx: StandCtx = {},
 ): OnFileItem[] {
   const stored = storedEvidence(deal);
   if (!stored) return [];
-  const docs = ctx.documents ? new Map(ctx.documents.map((d) => [d.id, d])) : null;
-  const sessions = ctx.sessionIds ? new Set(ctx.sessionIds) : null;
+  const stands = makeStands({ ...ctx, legacy: (stored.version ?? 1) < 2 });
   const out: OnFileItem[] = [];
   for (const t of targets) {
     const e = stored.entries[t.id];
-    if (!e || typeof e.answer !== "string" || !e.answer.trim()) continue;
-    if (e.sourceKind === "fact") {
-      if (ctx.view && (!e.factKey || !isSubstantive(ctx.view[e.factKey]))) continue;
-    } else if (e.sourceKind === "session") {
-      if (sessions && e.sourceId && !sessions.has(e.sourceId)) continue;
-    } else if (docs && e.sourceId) {
-      const d = docs.get(e.sourceId);
-      if (!d || d.visibility === "broker_only" || LEAD_KINDS.has(String(d.sourceKind))) continue;
-    }
+    if (!e || !stands(e)) continue;
     if (t.sellerAccount && !SAID_KINDS.has(e.sourceKind) && e.sourceKind !== "fact") continue;
     out.push({ ...e, id: t.id, kind: t.kind, key: t.key, label: t.label });
   }
@@ -553,7 +607,8 @@ export function validateEvidence(
       if (!key || !isFactKey(key) || !isSubstantive(v)) { drop("no such fact", x); continue; }
       const text = typeof v === "string" ? v : JSON.stringify(repairCharIndexedValue(v));
       if (!figuresSupported(answer, text)) { drop("figure not in fact", x); continue; }
-      entry = { answer: clip(answer, 260), source: `on file as ${key}`, sourceKind: "fact", factKey: key };
+      const factSourceId = getFieldSources(facts)[key]?.documentId;
+      entry = { answer: clip(answer, 260), source: `on file as ${key}`, sourceKind: "fact", factKey: key, ...(factSourceId ? { factSourceId } : {}) };
     } else {
       const allowed = (b: SourceBlock) => (!t.sellerAccount || SAID_KINDS.has(b.kind)) && !(t.excludeSources ?? []).includes(b.label);
       let s = sources.get(sourceId);
@@ -666,10 +721,13 @@ export async function computeOnFileEvidence(
     return evidence;
   } catch (err: any) {
     console.warn(`[on-file-evidence] build failed for deal ${deal.id}:`, err?.message || err);
-    // A failed rebuild keeps what the deal already had.
+    // A failed rebuild keeps what the deal already had — only the entries
+    // that still stand (a source made broker-only since takes its entries,
+    // fact entries included, with it; they are not kept for the retry hour).
     const prior = storedEvidence(deal);
+    const stands = makeStands({ documents: args.documents, view: args.view, sessionIds: args.sessions.map((s) => s.id), legacy: !!prior && (prior.version ?? 1) < 2 });
     const failed: OnFileEvidence = prior
-      ? { ...prior, failedAt: new Date().toISOString() } as OnFileEvidence
+      ? { ...prior, entries: Object.fromEntries(Object.entries(prior.entries).filter(([, e]) => stands(e))), failedAt: new Date().toISOString() } as OnFileEvidence
       : { version: EVIDENCE_VERSION, fingerprint, computedAt: new Date().toISOString(), status: "failed", checked: [], entries: {} };
     await storage.updateDeal(deal.id, { interviewEvidence: failed } as any).catch(() => {});
     return null;

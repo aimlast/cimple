@@ -20,6 +20,11 @@
  *  2. the broker's own fact for that metric (source "broker": "ebitda",
  *     "sde2024", "adjustedEbitda" …);
  *  3. the financial analysis bridge.
+ * Latest wins: a broker figure (1 or 2) set before the bridge's add-backs
+ * last moved THAT figure — the same metric and year
+ * (CimFinancials.bridgeChangedAt) — was decided against a bridge figure that
+ * no longer exists, so it doesn't overrule the newer one — the broker is
+ * told, and can enter it again.
  * Where the broker's figure and the bridge disagree, the broker's figure is
  * used and the part of the bridge it contradicts is left out of the CIM (a
  * waterfall that doesn't end at the CIM's figure can't be shown): the whole
@@ -55,6 +60,8 @@ export interface BrokerFigure {
   from: string;
   /** 1 = a resolved discrepancy (the broker's decision), 2 = the broker's own fact. */
   rank: 1 | 2;
+  /** When the broker resolved / wrote it (ISO), when known. */
+  at?: string | null;
 }
 
 export interface EarningsOverride {
@@ -82,6 +89,11 @@ export interface EarningsCanon {
   unconfirmed: Metric[];
   /** Broker figures for one metric and year that disagree with each other (neither is used). */
   brokerConflicts: Array<{ metric: Metric; year: string; figures: BrokerFigure[] }>;
+  /**
+   * Broker figures set before the bridge's add-backs last changed and now
+   * disagreeing with it: the later add-back change wins (not used).
+   */
+  staleBrokerFigures?: Array<{ figure: BrokerFigure; bridge: number }>;
   /** The analysis as the CIM uses it: the overruled part of the bridge left out (null = no analysis). */
   financials: CimFinancials | null;
 }
@@ -115,13 +127,34 @@ export function earningsCanon(
   }
   const statementYears = Object.keys(reportedEbitda).sort();
   const fallbackYear = (b ? Object.keys(b.adjusted).sort().pop() : undefined) ?? statementYears[statementYears.length - 1] ?? null;
-  const { figures, conflicts } = brokerEarnings(opts, fallbackYear);
-  if (!b && figures.length === 0) return null;
-
   const bridgeSeries: Record<Metric, Record<string, number>> = {
     adjusted: b ? (b.metric === "ebitda" ? b.adjusted : b.adjustedEbitda ?? {}) : {},
     sde: b ? (b.metric === "sde" ? b.adjusted : b.sde ?? {}) : {},
   };
+  // Latest wins: a broker figure set before the add-backs last moved the
+  // bridge was decided against a bridge that no longer exists (the broker
+  // accepted the analysis's $674,752, then approved another add-back). It
+  // never overrules the newer bridge; it is named in a warning instead.
+  // Per figure: only a change to THIS metric and year dates the decision out
+  // (a 2023 add-back, or the SDE-only owner salary, leaves the broker's 2024
+  // adjusted EBITDA standing).
+  const changedAtOf = (f: BrokerFigure): number => {
+    const iso = b ? fin?.bridgeChangedAt?.[`${f.metric}|${f.year}`] : undefined;
+    return iso ? Date.parse(iso) : NaN;
+  };
+  const staleBrokerFigures: NonNullable<EarningsCanon["staleBrokerFigures"]> = [];
+  const isStale = (f: BrokerFigure): boolean => {
+    const bv = bridgeSeries[f.metric][f.year];
+    const at = f.at ? Date.parse(f.at) : NaN;
+    const changedAt = changedAtOf(f);
+    if (typeof bv !== "number" || Number.isNaN(changedAt) || Number.isNaN(at) || at >= changedAt) return false;
+    if (within(f.value, Math.max(f.tolerance, Math.abs(bv) * 0.005), bv)) return false;
+    staleBrokerFigures.push({ figure: f, bridge: bv });
+    return true;
+  };
+  const { figures, conflicts } = brokerEarnings(opts, fallbackYear, isStale);
+  if (!b && figures.length === 0) return null;
+
   const headlineMetric: Metric | null = b ? (b.metric === "ebitda" ? "adjusted" : "sde") : null;
   const items: EarningsOverride["items"] = [];
   for (const f of figures) {
@@ -185,6 +218,7 @@ export function earningsCanon(
     override,
     unconfirmed,
     brokerConflicts: conflicts,
+    ...(staleBrokerFigures.length > 0 ? { staleBrokerFigures } : {}),
     financials: fin ? withBridgeOverride(fin, override) : null,
   };
 }
@@ -254,6 +288,8 @@ function mentionsOfMetric(text: string, metric: Metric): EarningsMention[] {
 function brokerEarnings(
   opts: EarningsCanonOptions,
   fallbackYear: string | null,
+  /** A figure the bridge has since moved past (it is set aside before ranking). */
+  isStale: (f: BrokerFigure) => boolean = () => false,
 ): { figures: BrokerFigure[]; conflicts: EarningsCanon["brokerConflicts"] } {
   const all: BrokerFigure[] = [];
   for (const n of opts.resolved ?? []) {
@@ -262,7 +298,7 @@ function brokerEarnings(
     const text = `${n.year ? `${n.year} ` : ""}${n.field}: ${n.resolvedValue}`;
     for (const m of mentionsOfMetric(text, metric)) {
       const year = m.year ?? n.year ?? onlyYear(text) ?? fallbackYear;
-      if (year) all.push({ metric, year, value: m.value, tolerance: m.tolerance, text: m.text, from: `resolved discrepancy "${n.field}"`, rank: 1 });
+      if (year) all.push({ metric, year, value: m.value, tolerance: m.tolerance, text: m.text, from: `resolved discrepancy "${n.field}"`, rank: 1, at: n.resolvedAt ?? null });
     }
   }
   const info = opts.extractedInfo ?? {};
@@ -274,10 +310,14 @@ function brokerEarnings(
     const label = key.replace(/([a-z])([A-Z0-9])/g, "$1 $2");
     const keyYear = (key.match(/(?:19|20)\d{2}/) ?? [])[0] ?? null;
     const whole = valueText(value);
+    const src = sources[key];
     for (const { text, year: entryYear } of factTexts(value, label)) {
+      // A by-year entry was written on its own (years[y].at); else the fact's write.
+      const entry = entryYear ? src.years?.[entryYear] : undefined;
+      const at = (entry && typeof entry === "object" ? entry.at : undefined) ?? src.at ?? null;
       for (const m of mentionsOfMetric(text, metric)) {
         const year = m.year ?? entryYear ?? keyYear ?? onlyYear(whole) ?? fallbackYear;
-        if (year) all.push({ metric, year, value: m.value, tolerance: m.tolerance, text: m.text, from: `"${formatLabel(key)}" (your fact)`, rank: 2 });
+        if (year) all.push({ metric, year, value: m.value, tolerance: m.tolerance, text: m.text, from: `"${formatLabel(key)}" (your fact)`, rank: 2, at });
       }
     }
   }
@@ -286,7 +326,10 @@ function brokerEarnings(
   const figures: BrokerFigure[] = [];
   const conflicts: EarningsCanon["brokerConflicts"] = [];
   const groups = new Map<string, BrokerFigure[]>();
-  for (const f of all) groups.set(`${f.metric}|${f.year}`, [...(groups.get(`${f.metric}|${f.year}`) ?? []), f]);
+  for (const f of all) {
+    if (isStale(f)) continue;
+    groups.set(`${f.metric}|${f.year}`, [...(groups.get(`${f.metric}|${f.year}`) ?? []), f]);
+  }
   for (const list of Array.from(groups.values())) {
     const top = list.filter((f) => f.rank === Math.min(...list.map((x) => x.rank)));
     const agree = top.every((a) => top.every((c) => within(a.value, Math.max(a.tolerance, c.tolerance), c.value)));
@@ -709,6 +752,10 @@ export function earningsWarnings(c: EarningsCanon, held: EarningsHold[]): string
   }
   for (const u of c.unconfirmed) {
     out.push(`Earnings: no ${metricLabel(u)} is confirmed now that the analysis bridge is left out, so the CIM states none. Add the figure on the Information tab if buyers should see it.`);
+  }
+  for (const s of c.staleBrokerFigures ?? []) {
+    const f = s.figure;
+    out.push(`Earnings: ${f.text} for ${metricLabel(f.metric)} FY${f.year} (${f.from}) was set before the add-backs on the Financials tab last changed, so the CIM uses the analysis's ${money(s.bridge)}. If ${f.text} is still right, enter it again on the Information tab and regenerate.`);
   }
   for (const k of c.brokerConflicts) {
     out.push(`Earnings: your figures for ${metricLabel(k.metric)} FY${k.year} disagree (${k.figures.map((f) => `${f.text} in ${f.from}`).join("; ")}), so neither is used. Correct one on the Information tab.`);

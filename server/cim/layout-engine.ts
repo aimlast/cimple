@@ -536,9 +536,13 @@ export async function writeOneSection(
   return { ...out, layoutData: finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today) as any };
 }
 
+/** Arrays whose entries are columns (financial_table headers / row values): position is meaning. */
+const POSITIONAL_KEYS: ReadonlySet<string> = new Set(["headers", "values", "cells"]);
+
 /**
  * A section with every mention of a confidential name removed: the sentence
- * in prose, the whole item in a list. Null when there was nothing to remove.
+ * in prose, the whole item in a list, the text of a table cell (the cell
+ * stays, so the columns keep their years). Null when there was nothing to remove.
  */
 export function scrubHeldNames(
   section: { layoutData: unknown; aiDraftContent?: string },
@@ -551,17 +555,28 @@ export function scrubHeldNames(
     if (n) names.add(n);
     return n;
   };
-  const walk = (v: unknown): unknown => {
+  const walk = (v: unknown, key?: string): unknown => {
     if (typeof v === "string") return note(v) ? screenConfidentialText(v, heldNames) : v;
     if (Array.isArray(v)) {
-      return v
-        .filter((x) => !(x && typeof x === "object" && note(JSON.stringify(x))))
-        .map(walk)
-        .filter((x) => x !== "");
+      // A table's headers / values are columns: a cell is scrubbed in place
+      // ("" when nothing is left) and nothing moves — dropping a "" would
+      // shift every later figure under the wrong year. Any array that
+      // already holds a "" is read the same way.
+      if (POSITIONAL_KEYS.has(key ?? "") || v.some((x) => x === "")) return v.map((x) => walk(x));
+      // A list: an item naming the party goes whole; a text item the scrub
+      // emptied goes too.
+      const out: unknown[] = [];
+      for (const x of v) {
+        if (x && typeof x === "object" && note(JSON.stringify(x))) continue;
+        const w = walk(x);
+        if (w === "" && x !== "") continue;
+        out.push(w);
+      }
+      return out;
     }
     if (v && typeof v === "object") {
       const out: Record<string, unknown> = {};
-      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x);
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x, k);
       return out;
     }
     return v;

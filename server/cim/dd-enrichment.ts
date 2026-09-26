@@ -193,7 +193,7 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
   const extractedInfo = stampSourceDetails(settled.facts, docs);
   return buildDdContext({
     extractedInfo,
-    financials: buildCimFinancials(pickAnalysisForCim(analyses)),
+    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
     addbackVerification,
     documents: docs.map((d) => ({ name: d.name, category: d.category || "other", visibility: (d as { visibility?: string | null }).visibility ?? null })),
     resolved: currentResolvedNotes(settled.notes),

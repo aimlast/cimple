@@ -956,6 +956,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // hook fed into it): a draft naming the business, owner, staff, city,
       // street or contacts is discarded for the blind-safe template.
       const outreachTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
+      // …and the hook never draws on an item kept from buyers (an angle stored before this check included).
+      const { outreachAngleGuard, angleKeepsOut } = await import("./matching/angle-keep-out.js");
+      const { keepOutFor } = await import("./cim/keep-out.js");
+      const dealInfo = ((deal.extractedInfo as Record<string, unknown>) || {});
+      const angleGuard = outreachAngleGuard(dealInfo, await keepOutFor(deal.id, dealInfo));
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
@@ -978,7 +983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // The AI deep check's blind-safe hook for this buyer, when there is one.
         const deepResult = ((deal as any).buyerDeepCheck as BuyerDeepCheck | null)?.results?.[buyerUserId];
         const rawAngle = deepResult?.outreachAngle || null;
-        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 ? rawAngle : null;
+        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 && angleKeepsOut(rawAngle, angleGuard) ? rawAngle : null;
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable or the draft isn't blind-safe.
@@ -3358,7 +3363,10 @@ Return JSON only.`,
         // EBITDA / SDE are recomputed in code from the edited add-backs —
         // the stored canonical figures always match what the panel shows.
         const { withCanonicalEarnings } = await import("./financial/normalization-rules");
-        updates.normalization = withCanonicalEarnings(updates.normalization);
+        // Dated when those figures move: an earnings decision the broker made
+        // before no longer overrules the bridge (cim/earnings-canon.ts).
+        const { stampEarningsChange } = await import("./cim/cim-financials");
+        updates.normalization = stampEarningsChange(existing.normalization, withCanonicalEarnings(updates.normalization), new Date());
       }
 
       if (req.body.brokerReviewed) {

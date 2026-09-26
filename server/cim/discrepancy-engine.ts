@@ -44,6 +44,7 @@ import type { DiscrepancySideSources, DiscrepancySideSource } from "@shared/disc
 import { scrubPrivateText } from "./discrepancy-privacy";
 import { likeForLikeCountConflict, stripSourceRefs, sameConflictByFigures } from "./discrepancy-backstop";
 import { HEADLINE_MAPS } from "../documents/merge-policy";
+import { sameConflict } from "../documents/merge-conflicts";
 import type { SourceKind } from "@shared/schema";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
@@ -189,6 +190,60 @@ export function isSameDiscrepancy(
   if (shared === 0) return false;
   const jaccard = shared / (a.size + b.size - shared);
   return existingValues.some((v) => itemValues.has(v)) || jaccard >= 0.5;
+}
+
+/** A row the verification check raised (legacy rows have no source). */
+export const isCheckRow = (d: { source?: string | null }) => !d.source || d.source === "interview";
+
+const SEVERITY_RANK: Record<string, number> = { minor: 1, significant: 2, critical: 3 };
+export const severityRank = (s: string | null | undefined) => SEVERITY_RANK[s || ""] ?? 0;
+
+export type DisputeSides = { field: string } & Partial<
+  Record<"factKey" | "interviewValue" | "documentValue" | "resolvedValue" | "aiExplanation", string | null>
+>;
+
+/**
+ * `other` records the same dispute as the check's finding or row `own`: both
+ * of own's values are other's sides (sameConflict; a resolved row's chosen
+ * value counts as a side), or the same two figures under different names
+ * (sameConflictByFigures: Westlock vs "Signed backlog"). A shared fact key,
+ * year or field word alone is NOT the same dispute: the seller's "$2.3M"
+ * against the P&L's "$1,820,000" and the T2's "$1,790,000" against that P&L
+ * are two disputes about one figure. Pure.
+ */
+export function recordsSameDispute(own: DisputeSides, other: DisputeSides): boolean {
+  const a = (own.interviewValue ?? "").trim();
+  const b = (own.documentValue ?? "").trim();
+  if (!a || !b) return false;
+  const row = {
+    field: other.field,
+    factKey: other.factKey ?? null,
+    interviewValue: other.interviewValue ?? null,
+    documentValue: other.documentValue ?? null,
+    resolvedValue: other.resolvedValue ?? null,
+  };
+  if (sameConflict(own.factKey || other.factKey || own.field, a, b, row)) return true;
+  return sameConflictByFigures(
+    { field: own.field, interviewValue: a, documentValue: b, aiExplanation: own.aiExplanation },
+    { ...row, aiExplanation: other.aiExplanation },
+  );
+}
+
+/**
+ * A SETTLED row keeps the check's finding `item` from coming back. The
+ * check's own rows follow their finding (isSameDiscrepancy — the broker
+ * settled that very question). Another engine's row settles it only when it
+ * records the same dispute (recordsSameDispute — both values, never just the
+ * fact key or a shared word) AND the broker settled it at the finding's
+ * severity or above: a minor T2-vs-FS revenue row the broker resolved never
+ * silences the seller's critical "$2.3M" against the statements. Pure.
+ */
+export function settledRowSettles(
+  item: DisputeSides & { factYear?: string | null; severity?: string | null },
+  row: ExistingDiscrepancy,
+): boolean {
+  if (isCheckRow(row)) return isSameDiscrepancy(item, row);
+  return recordsSameDispute(item, row) && severityRank(row.severity) >= severityRank(item.severity);
 }
 
 // ── Input from provenance ──────────────────────────────────────────────
@@ -688,7 +743,7 @@ export async function runDiscrepancyCheck(
     ? ""
     : `
 ## Previously raised discrepancies
-${settled.length > 0 ? `RESOLVED by the broker — settled; never raise these again under this field name or any other wording:\n${settled.map(renderExisting).join("\n")}` : ""}
+${settled.length > 0 ? `RESOLVED by the broker — settled; never raise these again under this field name or any other wording. Each one settles only its own two values: a different figure for the same fact (e.g. the seller's own number against a statement, where the settled row was two documents against each other) is a new dispute — report it:\n${settled.map(renderExisting).join("\n")}` : ""}
 ${unsettled.length > 0 ? `STILL OPEN — re-evaluate each against the documents. If it still conflicts, include it with its "existingId"; if the sources now agree, put its id in "clearedIds". Do not silently omit any of them:\n${unsettled.map(renderExisting).join("\n")}` : ""}
 `;
 
@@ -950,8 +1005,10 @@ Report the real conflicts with the report_discrepancies tool.`;
   const { kept, dropped } = filterDiscrepancyItems(mapped, opts.today ?? new Date());
   // Backstop: a settled conflict never comes back, whatever the model called it.
   const items = kept.filter((item) => {
+    // (Another engine's row only when it is the same dispute at this
+    // severity or above — settledRowSettles.)
     const byId = item.existingId ? settled.find((d) => d.id === item.existingId) : undefined;
-    return !byId && !settled.some((d) => isSameDiscrepancy(item, d));
+    return !(byId && settledRowSettles(item, byId)) && !settled.some((d) => settledRowSettles(item, d));
   });
 
   // An open row the model re-raised but the filter dropped (equal values,

@@ -50,6 +50,7 @@ import {
   isSourceKind,
   isSuppressed,
   setFieldSource,
+  getFieldSources,
   type BrokerPrivateNote,
   type FieldSource,
   type PrivateNoteSource,
@@ -257,6 +258,32 @@ export function inventedDetails(text: string, members: string[], common: Set<str
   return out;
 }
 
+/** Words that carry no content of their own (a rewording may add or drop them). */
+const FILLER_WORDS = new Set("the and for with from that this was were are has have had its their them they which who whom whose also into onto upon per been being will would than then there these those".split(" "));
+function contentWords(text: string): string[] {
+  return (text.toLowerCase().match(/[a-z][a-z']*/g) ?? [])
+    .map((w) => w.replace(/'s$|'$/, ""))
+    .filter((w) => w.length >= 3 && !FILLER_WORDS.has(w))
+    .map((w) => (w.length > 4 ? w.replace(/(?:es|s)$/, "") : w));
+}
+
+/**
+ * The value a note moved into the facts is written as. The fact is credited
+ * to the note's SHARED source (seller-visible), so it may say nothing that
+ * shared wording doesn't: the model's value is used only when it keeps
+ * every figure and name, invents none, adds no content word or name (a
+ * clause taken from a broker-only note, a CRM detail, a health detail) and
+ * passes the promotable screens itself; else the note's own words. Pure.
+ */
+export function promotedValue(key: string, value: string | null | undefined, note: string, common: Set<string> = new Set()): string {
+  const v = (value ?? "").replace(/\s+/g, " ").trim();
+  if (!v || v === note.trim()) return note;
+  if (!keepsEveryDetail(v, [note], common) || inventedDetails(v, [note], common).length > 0) return note;
+  if (!isPromotableFact(key, v)) return note;
+  const have = new Set(contentWords(note));
+  return contentWords(v).every((w) => have.has(w)) ? v : note;
+}
+
 // ─── Items: one per wording ──────────────────────────────────────────────────
 
 export interface NoteItem {
@@ -389,8 +416,24 @@ function applyPromotion(info: Info, key: string, value: string, note: string, sr
   if (!src || !isPromotableFact(key, note) || isBrokerProcessKey(key)) return false;
   if (isSuppressed(info, key)) return false;
   const cur = info[key];
-  if (cur !== undefined && cur !== null && cur !== "") return factCoversNote(cur, note);
-  info[key] = value;
+  if (cur !== undefined && cur !== null && cur !== "") {
+    // A value this very promotion wrote before the check (credited to the
+    // same shared source, never since edited) is cleaned too: whatever it
+    // says beyond the shared wording goes.
+    const prior = getFieldSources(info)[key];
+    if (typeof cur === "string" && prior?.note === MOVED_FROM_NOTES && prior.documentId === src.documentId) {
+      const clean = promotedValue(key, cur, note);
+      if (clean !== cur) {
+        info[key] = clean;
+        setFieldSource(info, key, { ...prior, excerpt: note.slice(0, 300), at: new Date().toISOString() });
+      }
+      return true;
+    }
+    return factCoversNote(cur, note);
+  }
+  // Checked again here: a decision stored before the check (re-applied on
+  // every reprocess) never writes more than the shared note says.
+  info[key] = promotedValue(key, value, note);
   setFieldSource(info, key, {
     source: src.kind as FieldSource["source"],
     documentId: src.documentId,
@@ -484,11 +527,11 @@ export function applyNotesReview(info: Info, review: NotesReview, docs: Map<stri
     out.push(buildNote(it.text, [it]));
   }
   // A fact moved out of a note stays a fact while its source is on the deal
-  // (a reprocess that no longer re-reads it as a note never loses it).
+  // (a reprocess that no longer re-reads it as a note never loses it). A
+  // value it already wrote is re-checked there too (applyPromotion cleans
+  // its own earlier write, and leaves any other value alone).
   for (const dec of Object.values(review.items)) {
     if (dec.d !== "fact" || !dec.documentId || !dec.text) continue;
-    const cur = next[dec.key];
-    if (cur !== undefined && cur !== null && cur !== "") continue;
     applyPromotion(next, dec.key, dec.value, dec.text, promotionSource({ sources: [{ documentId: dec.documentId }] }, docs));
   }
   if (out.length > 0) next[BROKER_PRIVATE_NOTES_KEY] = out;
@@ -528,7 +571,7 @@ export function adoptFoldedWordings(info: Info, review: NotesReview, docs: Map<s
       }
       const src = fact ? promotionSource(it, docs) : null;
       if (fact && src && isPromotableFact(fact.key, it.text)) {
-        out.items[k] = { d: "fact", key: fact.key, value: fact.value, documentId: src.documentId, kind: src.kind, text: it.text };
+        out.items[k] = { d: "fact", key: fact.key, value: promotedValue(fact.key, fact.value, it.text), documentId: src.documentId, kind: src.kind, text: it.text };
       }
     }
   }
@@ -600,7 +643,7 @@ export function recordPlacements(
       const src = promotionSource(it, docs);
       const key = nn.factKey.replace(/[^A-Za-z0-9]/g, "").replace(/^[A-Z]/, (c) => c.toLowerCase());
       if (src && isPromotableFact(key, it.text) && !isBrokerProcessKey(key)) {
-        const value = nn.factValue && nn.factValue.trim() && keepsEveryDetail(nn.factValue, [it.text], common) ? nn.factValue.trim() : it.text;
+        const value = promotedValue(key, nn.factValue ?? "", it.text, common);
         out.items[it.key] = { d: "fact", key, value, documentId: src.documentId, kind: src.kind, text: it.text };
         placed.add(it.key);
         continue;
