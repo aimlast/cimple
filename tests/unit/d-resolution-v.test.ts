@@ -89,7 +89,9 @@ await (async () => {
   assert.equal(it.field, "licensed field technicians".replace(/^l/, "L"));
   assert.equal(it.interviewValue, "24 licensed field technicians");
   assert.equal(it.documentValue, "22 licensed field technicians");
-  assert.equal(it.factKey, "employees");
+  // A part of the staff description, not the employees fact: no key (the
+  // broker picks where it goes) — and never merged with another employees row.
+  assert.equal(it.factKey, null, "licensed technicians are a part of employees, not the fact");
   assert.equal(it.severity, "significant");
   assert.equal(it.documentId, "roster");
   assert.equal(it.sideSources.interview?.kind, "video_call");
@@ -124,15 +126,31 @@ await (async () => {
     severity: "significant",
     aiExplanation: "The seller stated the proposed new lease would be at $12.50/sq ft. The actual lease document shows the current lease runs at $12.00/sq ft for years 3-5 (2024-2026). The $12.50 rate is for a proposed future lease, not the current rate. Buyer needs to confirm whether the $12.50 rate has been agreed for the new 10-year term.",
   };
-  assert.equal(dropReason(ridgeline), "proposed_vs_current");
-  // Even with a neutral explanation, the values alone say it.
-  assert.equal(dropReason({ ...ridgeline, aiExplanation: "Different rates." }), "proposed_vs_current");
-  // The explanation alone says it too.
-  assert.equal(dropReason({ ...ridgeline, interviewValue: "$12.50/sq ft" }), "not_a_conflict");
+  // The verdict is the model's own field — the words "proposed", "new" or
+  // "renewal" in a value decide nothing (see the real conflicts below).
+  assert.equal(dropReason({ ...ridgeline, relation: "proposed_vs_current" }), "proposed_vs_current");
+  assert.equal(dropReason({ ...ridgeline, relation: "different_things" }), "not_a_conflict");
+  assert.equal(dropReason({ ...ridgeline, relation: "same_value" }), "not_a_conflict");
+  assert.equal(dropReason({ ...ridgeline, relation: "conflict", aiExplanation: "Different rates." }), null);
+  assert.equal(dropReason({ ...beacon, relation: "same_value", aiExplanation: "Opens in 2028 on both.", suggestedResolution: "Confirm." }), "not_a_conflict");
   // Real conflicts stay.
   assert.equal(dropReason({ field: "Lease expiry", interviewValue: "Expires: 2034", documentValue: "Lease expires June 30, 2029 with one five-year renewal option (to June 30, 2034)", severity: "critical", aiExplanation: "The seller says 2034; the lease expires in 2029 unless the option is exercised." }), null);
   assert.equal(dropReason({ field: "Lease expiry", interviewValue: "2034", documentValue: "June 30, 2029", severity: "significant", aiExplanation: "The document shows 2029, which is correct; the seller said 2034." }), null, "one side correct, the other wrong");
   assert.equal(dropReason({ field: "Maplecrest share", interviewValue: "No single operator represents more than approximately 25% of LTC revenue", documentValue: "Maplecrest Senior Living: 41.0% of LTC revenue", severity: "significant", aiExplanation: "The seller's statement is consistent with the contracts summary for most operators, but Maplecrest is 41%." }), null, "walked back");
+  // Real conflicts whose wording a phrase list would misread (round-2 checker's cases): all kept.
+  const keep: Array<[string, Record<string, unknown>]> = [
+    ["renewed lease vs the lease on file", { field: "Lease expiry", severity: "critical", interviewValue: "The new lease runs to 2032", documentValue: "Lease term ends August 31, 2027", aiExplanation: "The seller says the premises lease was renewed to 2032; the only lease on file ends August 31, 2027." }],
+    ["a new contract's value", { field: "Acme contract value", severity: "significant", interviewValue: "Won a new contract with Acme worth $1.2M a year", documentValue: "Acme master services agreement: $900,000 annual value", aiExplanation: "The seller says $1.2M a year; the MSA shows $900,000." }],
+    ["renewal rate vs retention", { field: "Customer retention", severity: "significant", interviewValue: "Contract renewal rate is 95%", documentValue: "Customer retention 88% (2024 KPI report)", aiExplanation: "95% vs 88%." }],
+    ["a renewal price", { field: "Service contract price", severity: "significant", interviewValue: "Renewal price $4,000/month", documentValue: "Monthly fee $3,200", aiExplanation: "The seller quotes $4,000 a month; the contract shows $3,200." }],
+    ["consistent with 2029, not 2034", { field: "Lease expiry", severity: "significant", interviewValue: "2034", documentValue: "5-year term commencing July 1, 2024", aiExplanation: "The lease shows a 5-year term from July 2024, which is consistent with a 2029 expiry, not the 2034 the seller stated." }],
+    ["agree on the total, split differs", { field: "Owner compensation", severity: "significant", interviewValue: "$240,000 salary", documentValue: "$180,000 salary + $60,000 dividend", aiExplanation: "Both sources agree on $240,000 in total; the seller calls all of it salary, the statements show $180,000 salary and a $60,000 dividend." }],
+    ["correct for 2023, 2024 differs", { field: "Licensed technicians", severity: "significant", interviewValue: "24 licensed technicians", documentValue: "22 licensed technicians (2024 roster)", aiExplanation: "The seller stated 24 technicians, which is correct for the 2023 roster; the current 2024 roster shows 22." }],
+    ["matches 2023 while 2024 differs", { field: "Revenue", severity: "significant", interviewValue: "$2.3M revenue last year", documentValue: "FY2024 revenue $1,820,000", aiExplanation: "The seller's figure matches the statements for 2023, while FY2024 revenue is $1,820,000 — last year means 2024." }],
+    ["aligns only if the option is exercised", { field: "Lease expiry", severity: "significant", interviewValue: "Lease goes to 2034", documentValue: "Term to June 30, 2029; one 5-year option to 2034 (not exercised)", aiExplanation: "The seller's statement aligns with the lease only if the option is exercised; the lease itself expires in 2029." }],
+    ["'This is consistent' walked back by 'not'", { field: "Lease expiry", severity: "minor", interviewValue: "2034", documentValue: "2029", aiExplanation: "This is consistent with the option, not with the base term the lease is on." }],
+  ];
+  for (const [name, item] of keep) assert.equal(dropReason(item as any), null, `kept: ${name}`);
 }
 
 // ── Fact key from the value on file / the label (Harborview "Lease expiry") ──

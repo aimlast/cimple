@@ -20,6 +20,6 @@ assert.ok(!Object.keys(facts).some((k) => /\s/.test(k)), "no label-named keys");
 const block = renderResolvedBlock(notes);
 assert.match(block, /Alderbrook revenue percentage: 22\.0% \(final — earlier, different figures for this are wrong\)/);
 assert.doesNotMatch(block, /about 18%/, "ruled-out values are never quoted to the writer");
-assert.match(block, /Revenue FY2023 \(2023\): \$1\.1M/);
+assert.match(block, /Revenue FY2023: \$1\.1M/); // the year once, not "Revenue FY2023 (2023)"
 assert.equal(renderResolvedBlock([]), "");
 console.log("resolved-block: ok");

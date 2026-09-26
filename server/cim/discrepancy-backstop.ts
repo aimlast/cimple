@@ -214,22 +214,38 @@ export function stripSourceRefs(text: string, labelFor: (ref: string) => string 
 
 // ── The same conflict across rows ────────────────────────────────────────
 
-/** Figures that identify a conflict: amounts of $1,000+, percentages, counts of something. */
+// Units of time say how long, not what — "2 years" and "18 months" appear in
+// half the rows on a deal (Harborview: Kyle's "2 years full-time" vs "18
+// months firm" was matched to an unrelated turnover row by "Tier 2" and a
+// "retention bonus at 18 months").
+const TIME_UNITS = new Set(["year", "yr", "month", "mo", "week", "wk", "day", "hour", "hr", "minute", "min", "quarter", "time", "fy"]);
+
+/** Figures that identify a conflict: amounts of $1,000+, percentages, counts of a named thing. */
 function distinctiveFigures(text: string | null | undefined): NumTok[] {
   if (!text) return [];
   return numberTokens(text, { keepSourceLabel: true }).filter((t) => {
-    if (t.year) return false;
+    if (t.year || t.durationYears) return false;
     if (t.pct) return true;
-    if (/\$|\d\s*(?:k|m|mm|million|thousand|b|billion)\b/i.test(t.raw)) return t.value >= 1000;
-    return !!t.unitWord && t.unitWord.length >= 3 && t.value >= 2;
+    if (isAmount(t)) return t.value >= 1000;
+    const unit = t.unitWord.replace(/s$/, "");
+    return unit.length >= 3 && !TIME_UNITS.has(unit) && t.value >= 2;
   });
+}
+const isAmount = (t: NumTok) => /\$|\d\s*(?:k|m|mm|million|thousand|b|billion)\b/i.test(t.raw);
+
+/** The same figure of the same kind: % with %, an amount with an amount, a count of the same thing. */
+function sameFigureKind(a: NumTok, b: NumTok): boolean {
+  if (a.pct !== b.pct || isAmount(a) !== isAmount(b)) return false;
+  if (!a.pct && !isAmount(a) && a.unitWord.replace(/s$/, "") !== b.unitWord.replace(/s$/, "")) return false;
+  return tokensMatch({ ...a, approx: false }, { ...b, approx: false });
 }
 
 const COMMON_WORDS = new Set([
   "seller", "sellers", "document", "documents", "shows", "stated", "states", "state", "total", "value", "values", "amount",
   "figure", "figures", "which", "their", "there", "about", "approximately", "report", "reported", "source", "sources",
   "discrepancy", "conflict", "difference", "claims", "claimed", "based", "these", "those", "while", "where", "other",
-  "financial", "statements", "statement", "interview", "includes", "including", "included", "number", "revenue",
+  "financial", "statements", "statement", "interview", "includes", "including", "included", "number", "revenue", "status",
+  "details", "current", "annual", "years", "months", "weeks", "email", "emails", "call", "calls", "confirm", "confirmed",
 ]);
 function distinctiveWords(text: string): Set<string> {
   return new Set(
@@ -237,8 +253,16 @@ function distinctiveWords(text: string): Set<string> {
   );
 }
 
+/**
+ * Two rows describe one conflict under different names and sources: the
+ * finding's figure on EACH side (two different figures) appears in the
+ * other row, as the same kind of figure, and a distinctive word from one
+ * row's NAME appears in the other row — the check's "westlockProjectStatus"
+ * ($4.2M backlog incl. the $1.1M Westlock award) and the analysis's
+ * "Signed backlog (May 2025)" ($4.2M vs $3.1M; "$1.1M … Westlock").
+ */
 export function sameConflictByFigures(
-  item: { field: string; interviewValue?: string | null; documentValue?: string | null },
+  item: { field: string; interviewValue?: string | null; documentValue?: string | null; aiExplanation?: string | null },
   other: { field: string; interviewValue?: string | null; documentValue?: string | null; resolvedValue?: string | null; aiExplanation?: string | null },
 ): boolean {
   const claim = distinctiveFigures(item.interviewValue);
@@ -246,13 +270,17 @@ export function sameConflictByFigures(
   if (claim.length === 0 || evidence.length === 0) return false;
   const otherText = [other.field, other.interviewValue, other.documentValue, other.resolvedValue, other.aiExplanation].filter(Boolean).join(" \n ");
   const theirs = distinctiveFigures(otherText);
-  const has = (t: NumTok) => theirs.some((o) => o.pct === t.pct && tokensMatch({ ...t, approx: false }, { ...o, approx: false }));
-  if (!claim.some(has) || !evidence.some(has)) return false;
+  const has = (t: NumTok) => theirs.some((o) => sameFigureKind(t, o));
+  const c = claim.find(has);
+  const e = evidence.find(has);
+  if (!c || !e) return false;
   // Two different figures (one per side) — the same number twice proves nothing.
-  const c = claim.find(has)!;
-  const e = evidence.find(has)!;
-  if (c.pct === e.pct && tokensMatch({ ...c, approx: false }, { ...e, approx: false })) return false;
-  const mine = distinctiveWords([item.field, item.interviewValue, item.documentValue].filter(Boolean).join(" "));
-  const words = distinctiveWords(otherText);
-  return Array.from(mine).some((w) => words.has(w));
+  if (sameFigureKind(c, e)) return false;
+  const itemText = [item.field, item.interviewValue, item.documentValue, item.aiExplanation].filter(Boolean).join(" ");
+  const theirWords = distinctiveWords(otherText);
+  const myWords = distinctiveWords(itemText);
+  return (
+    Array.from(distinctiveWords(item.field)).some((w) => theirWords.has(w)) ||
+    Array.from(distinctiveWords(other.field)).some((w) => myWords.has(w))
+  );
 }
