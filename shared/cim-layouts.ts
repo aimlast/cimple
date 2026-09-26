@@ -15,6 +15,7 @@
  * Adding a layout = add an entry here + a renderer (TypeScript then refuses
  * to compile until CimSectionRenderer has one). Pure — used by server and client.
  */
+import { comparisonAsFinancialTable, comparisonPacksSeries } from "./cim-chart-values";
 
 export const CIM_LAYOUT_CATEGORIES = [
   { key: "text", label: "Text" },
@@ -325,7 +326,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "comparison_table",
     planner: true,
-    aiSpec: "comparison_table: { leftLabel, rightLabel, rows: [{label, left, right, highlight?}], title? }",
+    aiSpec: "comparison_table: { leftLabel, rightLabel, rows: [{label, left, right, highlight?}], title? } — leftLabel/rightLabel name the two value columns (never \"Metric\": the label column already has that header); left and right are ONE short value each, never a series — a figure over several years (\"589 → 711 → 646\") belongs in a financial_table with one column per year",
     aiUse: "— Use for: business vs. industry benchmarks, current vs. prior year, pre-sale vs. post-sale",
     defaultData: () => ({
       leftLabel: "This business",
@@ -878,10 +879,18 @@ export function tidyGeneratedLayout(layoutType: string, data: unknown): { layout
     const { items: _i, maxScore: _m, ...rest } = layoutData;
     return { layoutType: "callout_list", layoutData: { ...rest, items, columns: 2, style: "card" } };
   }
+  // A series packed into a comparison table's cells ("589 → 711 → 646") is
+  // a financial table with one column per year — it overflowed its column.
+  if (layoutType === "comparison_table" && comparisonPacksSeries(layoutData)) {
+    return { layoutType: "financial_table", layoutData: comparisonAsFinancialTable(layoutData) };
+  }
   if (layoutType === "two_column") {
     for (const side of ["left", "right"] as const) {
       if (layoutData[side] === undefined) continue;
-      layoutData[side] = resolveTwoColumnColumn(layoutData[side]) ?? { content: "", layoutType: "prose" };
+      const col = resolveTwoColumnColumn(layoutData[side]) ?? { content: "", layoutType: "prose" };
+      layoutData[side] = col.layoutType === "comparison_table" && comparisonPacksSeries(col.content)
+        ? { ...col, layoutType: "financial_table", content: comparisonAsFinancialTable(col.content) }
+        : col;
     }
     return { layoutType, layoutData };
   }

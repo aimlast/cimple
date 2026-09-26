@@ -8,8 +8,10 @@
  * section that still does is never served, and a Q&A answer or an outreach
  * draft that does is never shared.
  *
- * Terms come from the deal's facts (extractedInfo) — never guessed from the
- * text being checked, so a clean blind text can't trip it. Two tiers:
+ * Terms come from the deal's facts (extractedInfo, employeeChart) — never
+ * guessed from the text being checked, so a clean blind text can't trip it.
+ * The one exception is a number a label calls a registration, licence or
+ * permit number: no blind text may carry one. Two tiers:
  *
  *   CERTAIN (fail-closed) — what the facts say outright:
  *     - every business-name variant (blindIdentifiers) and its distinctive
@@ -19,7 +21,17 @@
  *       manager, associates, contacts…) and dedicated name fields;
  *     - city, street, postal code from location facts, street lines and
  *       postal codes anywhere in the facts;
- *     - email addresses and phone numbers anywhere in the facts.
+ *     - email addresses and phone numbers anywhere in the facts;
+ *     - the staff list (deals.employeeChart);
+ *     - the organisations counterparty facts name — customers, landlord,
+ *       suppliers, lenders, advisers ("Alderbrook", "Silvergate",
+ *       "Westshore Commercial Bank") — never a national brand the business
+ *       uses or sells ("Lexus", "authorized Lennox dealer");
+ *     - registration, licence and permit numbers in the facts, matched on
+ *       their digits in any format, and ANY labelled public identifier in
+ *       the text checked ("USDOT 9318842", "MC-123456", "NSC BC 20-487-316").
+ *   People named in passing in any other fact are read as prose (a title
+ *   or a known given name: "VP Doug Fairweather").
  *   A person in a people fact is read from its structure, whatever follows
  *   the name: "Carlos Reyes (12)", "Hygienists: Priya (7), Thomas (3)",
  *   "Chris Jones: 6 yrs", "Maria Teller (bookkeeper)", "Anita Patel 51%".
@@ -53,10 +65,11 @@ import {
   isOccupationWord,
   isPluralRole,
   isRoleWord,
+  isNationalBrand,
   isSurnameOccupation,
 } from "./blind-vocabulary";
 
-export type BlindTermKind = "name" | "person" | "place" | "contact";
+export type BlindTermKind = "name" | "person" | "place" | "contact" | "registry";
 
 export interface BlindTerm {
   /** The identifying text as it appears in the facts. */
@@ -82,6 +95,25 @@ export interface BlindTerm {
    * Montana", "New York").
    */
   regionWord?: boolean;
+  /**
+   * A registration, licence or permit number from the facts ("NSC BC
+   * 20-487-316", "BC0571234"): its longest digit run, matched digit for
+   * digit wherever it is written ("20 487 316", "#20487316").
+   */
+  digits?: string;
+  /**
+   * The built-in check for ANY labelled public identifier in the text —
+   * "USDOT 9318842", "MC-123456", "Business Number 81234 5678 RC0001",
+   * "Licence No. 44721" — whether or not the facts hold it: a regulator's
+   * lookup names the company. A hit reports the identifier as written.
+   */
+  anyRegistryId?: boolean;
+  /**
+   * A term that is also a word of the deal's codename ("Kestrel" as a
+   * customer of "Project Kestrel"): the codename itself doesn't count, any
+   * other mention does. Folded.
+   */
+  codename?: string;
 }
 
 type AnyRecord = Record<string, unknown>;
@@ -221,6 +253,8 @@ interface Tok {
   cap: boolean;
   allCaps: boolean;
   initial: boolean;
+  /** Written with a possessive ("Maria's") — a name ends there. */
+  poss: boolean;
   start: number;
   end: number;
 }
@@ -239,6 +273,7 @@ function tokens(text: string): Tok[] {
       cap: startsUpper(t),
       allCaps: t.length > 1 && ALL_CAPS.test(t),
       initial: t.length === 1 && startsUpper(t),
+      poss: t !== raw,
       start: m.index ?? 0,
       end: (m.index ?? 0) + raw.length,
     });
@@ -272,7 +307,8 @@ function capitalRuns(text: string): Tok[][] {
   toks.forEach((t, i) => {
     const prev = run[run.length - 1];
     const gap = prev ? text.slice(prev.end, t.start) : "";
-    const joins = !!prev && (/^[ \t]+$/.test(gap) || (/^\.[ \t]*$/.test(gap) && (isHonorific(prev) || prev.initial)));
+    // "Maria's Lexus": a possessive ends the name before it.
+    const joins = !!prev && !prev.poss && (/^[ \t]+$/.test(gap) || (/^\.[ \t]*$/.test(gap) && (isHonorific(prev) || prev.initial)));
     // A particle joins when more particles and then a capitalised word follow ("de la Cruz").
     let k = i;
     while (k < toks.length && !toks[k].cap && PARTICLES.has(toks[k].key) && !!toks[k + 1] && /^[ \t]+$/.test(text.slice(toks[k].end, toks[k + 1].start))) k++;
@@ -374,6 +410,13 @@ function extendName(run: Tok[], i: number, afterGiven: boolean): number {
  */
 type ReadMode = "titles" | "prose" | "people";
 
+/** Landforms and place words after a given name make a place, not a person ("Fraser Valley"). */
+const GEO_WORDS = new Set([
+  "valley", "river", "lake", "lakes", "park", "heights", "hill", "hills", "bay", "falls", "island", "islands", "mountain",
+  "mountains", "creek", "point", "beach", "harbour", "harbor", "county", "township", "springs", "crossing", "landing",
+  "village", "junction", "corner", "corners", "square", "gardens", "estates", "district", "region", "coast", "shore",
+]);
+
 function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
   const runStart = run[0].start;
   const runEnd = run[run.length - 1].end;
@@ -408,6 +451,8 @@ function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
       const reachesEnd = !next && wholeEntryEnd;
       let ok: boolean;
       if (next && isPluralRole(next.text)) ok = false; // "Summer Students" — a group
+      // In prose, a given name before a landform is a place: "Fraser Valley", "Victoria Park".
+      else if (mode === "prose" && run.slice(i + 1, j + 1).some((x) => GEO_WORDS.has(x.key))) ok = false;
       else if (name.length === 1) {
         ok = ambiguous
           ? reachesEnd && startsEntry && !/^[ \t]*\d/.test(text.slice(runEnd, runEnd + 8)) // "Bill (driver)", not "May 2019"
@@ -639,6 +684,168 @@ function distinctiveCores(name: string): string[] {
   return Array.from(new Set(out));
 }
 
+// ── Public identifiers (registration, licence and permit numbers) ─────────
+
+/**
+ * A regulator's or registry's number for the business — a USDOT, MC, NSC or
+ * CVOR number, a CRA business number, an incorporation or licence number.
+ * Any of them names the company in one public lookup, so none may reach a
+ * Blind CIM (2026-09-26: Pacific's blind "Permits" section served
+ * "USDOT 9318842" and "NSC BC 20-487-316"). The credential itself ("holds
+ * a USDOT number", "NSC certificate, Satisfactory rating") is fine.
+ *
+ * Read only where a label says what the number is, so a revenue figure,
+ * a year or a phone number is never one: each pattern's group 1 is the
+ * identifier.
+ */
+const ID_BODY = String.raw`([A-Z]{0,3}[ \t-]?\d[\dA-Z]*(?:[ \t./-]+[\dA-Z]*\d[\dA-Z]*)*)`;
+const REGISTRY_PATTERNS: RegExp[] = [
+  // Acronym labels, case-sensitive ("USDOT 9318842", "US DOT # 1234567", "MC-123456", "NSC BC 20-487-316", "CVOR 123-456-789", "EIN 12-3456789").
+  new RegExp(String.raw`(?<![A-Za-z])(?:U\.?[ \t]?S\.?[ \t]?DOT|DOT|MC|MX|FF|NSC|CVOR|IFTA|IRP|SCAC|EIN|FEIN|TIN|BN|GST|HST|QST|PST|WSIB|WCB|DUNS|D-U-N-S|NPI|DEA|NABP|NCPDP|CLIA|CAGE|UEI|OCP|CPSO)(?:[ \t]*(?:#|No\.?|Number|number|Cert(?:ificate)?|certificate)\.?)?[ \t]*[:#]?[ \t]*(?:(?:BC|AB|SK|MB|ON|QC|NB|NS|PE|NL|YT|NT|NU)[ \t]+)?` + ID_BODY, "g"),
+  // Word labels + "number / no. / #" ("Business Number 81234 5678 RC0001", "Licence No. 44721", "Permit #P-2231").
+  new RegExp(String.raw`(?<![A-Za-z])(?:licen[cs]e|permit|registration|registry|certificate|cert|incorporation|corporation|corporate|company|business|entity|charter|accreditation|membership|member|dealer|vendor|carrier|operating authority|authority|tax|account|policy|file)[ \t]*(?:number|no\.?|num\.?|#|id)[ \t]*[:#.]?[ \t]*` + ID_BODY, "gi"),
+  // A certificate, licence, permit or registration followed straight by its number ("Safety Certificate BC 20-487-316").
+  new RegExp(String.raw`(?<![A-Za-z])(?:certificate|licen[cs]e|permit|registration)[ \t]+(?:(?:[A-Z]{2,3})[ \t]+)?#?[ \t]*(\d[\d-]{5,}\d)(?![\d])`, "gi"),
+  // A CRA business number on its own ("81234 5678 RC0001", "812345678RT0001").
+  /(?<![\dA-Za-z])(\d{5}[ \t]?\d{4}[ \t]?(?:RC|RT|RP|RR|RZ|RM)[ \t]?\d{4})(?![\dA-Za-z])/g,
+];
+/** A year or a year range ("2019", "2019-2024") — never an identifier. */
+const YEARISH = /^(?:19|20)\d{2}(?:[ \t]*[-–][ \t]*(?:19|20)?\d{2})?$/;
+
+/** The digits of an identifier, separators dropped; its longest run is what identifies it. */
+function longestDigitRun(id: string): string {
+  const runs = id.replace(/(\d)[ \t./-]+(?=\d)/g, "$1").match(/\d+/g) || [];
+  return runs.reduce((a, b) => (b.length > a.length ? b : a), "");
+}
+
+/**
+ * Every labelled public identifier in a text, as written ("USDOT 9318842",
+ * "NSC BC 20-487-316", "Business Number 81234 5678 RC0001"). Needs five or
+ * more digits; years and year ranges are never one.
+ */
+export function registryIdsIn(text: string): string[] {
+  const out: string[] = [];
+  for (const re of REGISTRY_PATTERNS) {
+    re.lastIndex = 0;
+    for (const m of Array.from(text.matchAll(re))) {
+      const id = (m[1] ?? "").trim().replace(/[ \t./-]+$/, "");
+      if (YEARISH.test(id)) continue;
+      const digits = id.replace(/\D/g, "");
+      if (digits.length < 5 || longestDigitRun(id).length < 4) continue;
+      out.push(m[0].trim().replace(/[ \t./-]+$/, ""));
+    }
+  }
+  return Array.from(new Set(out));
+}
+
+/** Fact keys that name an identifier ("businessNumber", "usdotNumber", "incorporationNo", "licenceId"). */
+const REGISTRY_KEY = /(?:usdot|dotnumber|mcnumber|nscnumber|cvor|businessnumber|bnnumber|craNumber|ein$|fein|taxid|gstnumber|hstnumber|duns|npinumber|deanumber|(?:licen[cs]e|permit|registration|registry|incorporation|corporation|corporate|company|entity|certificate|charter|accreditation|authority|filing|file|policy)(?:number|no|num|id)s?$)/i;
+/** A value that is only an identifier ("BC0571234", "81234 5678 RC0001", "#20-487-316"). */
+const ID_SHAPED = /^[#:\sA-Z.-]{0,12}\d[\dA-Z\s./#-]{3,}$/i;
+
+// ── Organisations the business deals with ──────────────────────────────
+
+/**
+ * Facts about the business's counterparties — customers, landlord,
+ * suppliers, lenders, advisers, contracts. The organisations they name
+ * identify the business as surely as its staff do ("Alderbrook's hauler
+ * since 2009", "the Silvergate lease").
+ */
+const COUNTERPARTY_KEY = /(customer|client|account(?!ing|s?receivable|s?payable)|payor|payer|landlord|lessor|lease(?!hold|sqft|sq|term|length|expir|start|end|rate|rent|cost)|tenant|supplier|vendor|lender|bank|creditor|financing|financier|loan|contract|agreement|partner|distributor|wholesaler|franchis|insur|accountant|auditor|lawyer|legal|counsel|notary|relationship|subcontract|affiliate|holding|parent|shareholder|sponsor|principal)/i;
+/**
+ * Facts about the sale itself — the broker, the brokerage, who referred the
+ * seller. The brokerage is named in every Blind CIM (its contact page), so
+ * nothing is read from these as an identifier of the business.
+ */
+const BROKER_KEY = /(broker|saleadvis|dealadvis|listing|intermediar|referr)/i;
+/** Words right before a capitalised word that make it a place, not an organisation ("customers in Calgary"). */
+const PLACE_PREPOSITION = /(?:^|[^A-Za-z])(?:in|near|from|to|across|around|throughout|within|outside|into|between|via|serving)[ \t]+$/i;
+/** Titles that end an organisation's name when a person follows ("Alderbrook VP Doug Fairweather"). */
+const ORG_CUT_WORDS = /^(?:vp|svp|evp|ceo|cfo|coo|cto|gm|president|owner|founder|manager|director|chair|chairman|principal|partner)$/;
+const MONTH_OR_DAY = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+]);
+/** Words that end an organisation's name ("Kestrel Building Supply Inc.", "Silvergate Industrial Properties"). */
+const ORG_SUFFIX = new Set([
+  ...Array.from(ORG_WORDS),
+  "co", "cooperative", "co operative", "coop", "industries", "properties", "supply", "supplies", "distributors", "distribution",
+  "leasing", "finance", "financial", "capital", "markets", "foods", "logistics", "transport", "brands", "products",
+  "manufacturing", "systems", "technologies", "labs", "realty", "investments", "ventures", "agency", "firm", "bancorp",
+]);
+
+/** A capitalised word that can carry an organisation's name on its own ("Alderbrook", "Silvergate", "Westline"). */
+function distinctiveWord(t: Tok, lowerWords?: Set<string>): boolean {
+  if (t.initial || t.key.replace(/ /g, "").length < 4) return false;
+  if (t.allCaps) return false; // acronyms: "MSA", "CVSA", "EBITDA"
+  // A word the facts also write in lowercase is a word ("Largest", "Interest").
+  if (lowerWords?.has(t.key)) return false;
+  if (everyday(t) || isStop(t) || isOccupationWord(t.text) || isRoleWord(t.text)) return false;
+  if (MONTH_OR_DAY.has(t.key) || isRegionLabel(t.text) || isRegionWord(t.text)) return false;
+  // "leased Lexus RX", "authorized Lennox dealer": a national brand names nothing.
+  if (isNationalBrand(t.key)) return false;
+  return !NOT_A_NAME_ENDING.test(t.key);
+}
+
+/** The start of a sentence or a list entry ("… payroll. Leasehold improvements", "; Suppliers want…"). */
+function sentenceStartsAt(text: string, at: number): boolean {
+  return entryStartsAt(text, at) || /[.!?]["'’”)\]]?[ \t]+$/.test(text.slice(Math.max(0, at - 6), at));
+}
+
+/**
+ * A product brand the business carries or installs, described as such
+ * ("Mitsubishi (cold-climate heat pumps, HVAC Elite dealer)", "Lennox
+ * (authorized dealer)"): what it sells, not who it deals with.
+ */
+const CARRIED_BRAND = /^[ \t]*(?:[(,:–—-][^;)\n]{0,80})?\b(?:dealer|dealers|dealership|authori[sz]ed|brands?|installs?|manufacturer|oem|franchise|licensed products)\b/i;
+
+/**
+ * The organisations a counterparty fact names: "Master agreement with
+ * Alderbrook" → Alderbrook; "Kestrel Building Supply rates reset" →
+ * "Kestrel Building Supply" (and "Kestrel"); "landlord Silvergate" →
+ * Silvergate. A capitalised phrase counts when it ends in a company word
+ * (Ltd., Bank, Properties…) or holds a word no dictionary list knows — never
+ * a phrase of everyday words ("Master Service Agreement"), a month, an
+ * acronym or a place after "in"/"from" ("customers in Calgary").
+ */
+export function organisationsIn(text: string, lowerWords?: Set<string>): string[] {
+  const out: string[] = [];
+  const masked = maskRegionNames(text);
+  for (const run of capitalRuns(masked)) {
+    let words = run;
+    // Sentence starters and titles in front ("The", "VP", "Key")…
+    while (words.length > 0 && (isStop(words[0]) || words[0].initial)) words = words.slice(1);
+    // …and the name ends at a title or role ("Alderbrook VP Doug Fairweather").
+    const cut = words.findIndex((t, i) => i > 0 && (isHonorific(t) || isRoleWord(t.text) || ORG_CUT_WORDS.test(t.key)));
+    const beforeTitle = cut > 0;
+    if (cut > 0) words = words.slice(0, cut);
+    if (words.length === 0) continue;
+    const start = words[0].start;
+    const end = words[words.length - 1].end;
+    if (PLACE_PREPOSITION.test(masked.slice(Math.max(0, start - 24), start))) continue;
+    if (CARRIED_BRAND.test(masked.slice(end, end + 100).split(/[;\n]/)[0])) continue;
+    const suffixed = words.length >= 2 && ORG_SUFFIX.has(words[words.length - 1].key);
+    const distinctive = words.filter((t) => distinctiveWord(t, lowerWords));
+    if (!suffixed && distinctive.length === 0) continue;
+    const phrase = masked.slice(start, end).replace(/\s+/g, " ").trim();
+    if (words.length >= 2) {
+      out.push(phrase);
+      for (const core of distinctiveCores(phrase)) out.push(core);
+      // "Alderbrook MSA", "Tidewater Beverage" — the distinctive lead word alone
+      // (not a person's first name: people are read as people).
+      if (distinctiveWord(words[0], lowerWords) && !isGiven(words[0])) out.push(words[0].text);
+    } else if (!sentenceStartsAt(masked, start) || /^[ \t]*\(/.test(masked.slice(end)) || beforeTitle) {
+      // One word at the start of a sentence or list entry is usually just a
+      // capitalised word ("Capex: …", "Linehaul drivers …"), unless a
+      // description or a title follows it ("Westline (operating lease …)",
+      // "Alderbrook VP Doug Fairweather").
+      out.push(words[0].text);
+    }
+  }
+  return Array.from(new Set(out));
+}
+
 // ── Terms ────────────────────────────────────────────────────────────────
 
 const PERSON_KEY = /(owner|founder|partner|shareholder|principal|employee|staff|team|manager|management|director|president|officer|supervisor|foreman|dentist|doctor|physician|hygienist|assistant|technician|contact|accountant|lawyer|attorney|people|personnel|successor|spouse|family|chef|associate|advisor|banker|landlord|seller|bookkeeper|receptionist|nurse|crew|worker|heir)/i;
@@ -680,30 +887,37 @@ function factStrings(v: unknown, depth = 0): { text: string; nameField: boolean 
 }
 
 /**
- * Everything that would identify this deal in a Blind CIM. `codename` is
- * never treated as identifying (nor is anything inside it).
+ * Everything that would identify this deal in a Blind CIM: from its facts
+ * (extractedInfo) and its staff list (employeeChart). The codename itself is
+ * never identifying; a word inside it still is everywhere else.
  */
 export function blindLeakTerms(
-  deal: { businessName?: string | null; extractedInfo?: unknown },
+  deal: { businessName?: string | null; extractedInfo?: unknown; employeeChart?: unknown; industry?: string | null; subIndustry?: string | null },
   opts: { codename?: string | null; extraPeople?: string[] } = {},
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
-  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean; regionWord?: boolean }> = [];
+  const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean; regionWord?: boolean; digits?: string }> = [];
   const add = (text: string, kind: BlindTermKind, common?: boolean) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
-    // A person's one-word surname that is also a place word ("Washington",
-    // "York", "Wales") still identifies them: kept, but not matched where
-    // the text means the place (see `regionWord`). A given name that is a
-    // place ("Georgia") counts everywhere, as before.
-    if (kind === "person" && !t.includes(" ") && (isRegionWord(t) || isRegionLabel(t)) && !GIVEN_NAMES.has(foldForMatch(t))) {
+    // A person's one-word name that is also a place ("Washington", "York",
+    // "Wales" as a surname; "Georgia", "Victoria" as a given name) still
+    // identifies them: kept, but not matched where the text means the
+    // place ("Washington State lanes", "customers in Georgia" — see
+    // `regionWord`). "Georgia runs the front office" is the person.
+    if (kind === "person" && !t.includes(" ") && (isRegionWord(t) || isRegionLabel(t))) {
       terms.push({ text: t, kind, common, regionWord: true });
       return;
     }
     // A province, state or country may stay in a Blind CIM (and the blind
-    // map shows exactly that) — it is never a person or a place term.
-    if ((kind === "person" || kind === "place") && isRegionLabel(t)) return;
+    // map shows exactly that) — it is never a person, place or company term.
+    if ((kind === "person" || kind === "place" || kind === "name") && isRegionLabel(t)) return;
     terms.push({ text: t, kind, common });
+  };
+  const addRegistry = (id: string) => {
+    const digits = longestDigitRun(id);
+    // Six digits at least for a bare match: shorter runs occur in ordinary figures.
+    if (digits.length >= 6) terms.push({ text: id.trim(), kind: "registry", digits });
   };
 
   // Business names — every variant, and each one's distinctive core.
@@ -715,17 +929,51 @@ export function blindLeakTerms(
     for (const core of distinctiveCores(id)) add(core, "name", !core.includes(" ") || undefined);
   }
 
+  const industryLabel = ` ${foldForMatch(`${deal.industry ?? ""} ${deal.subIndustry ?? ""}`)} `;
+  // Every word the facts write in lowercase: a capitalised copy of one of
+  // them is a word, not a company ("Largest customer", "Interest rate").
+  const lowerWords = new Set<string>();
+  for (const [key, value] of Object.entries(info)) {
+    if (key.startsWith("_")) continue;
+    for (const s of factStrings(value)) for (const m of s.text.match(/(?<![A-Za-z])[a-z][a-z'’-]+/g) || []) lowerWords.add(foldForMatch(m));
+  }
+
   for (const [key, value] of Object.entries(info)) {
     if (key.startsWith("_")) continue;
     const strings = factStrings(value);
     if (strings.length === 0) continue;
     const peopleFact = (PERSON_KEY.test(key) || hasExecutiveAcronym(key)) && !NOT_PEOPLE_KEY.test(key);
+    const aboutTheSale = BROKER_KEY.test(key);
     for (const s of strings) {
       if (peopleFact || s.nameField) {
         for (const p of s.nameField ? personField(s.text) : peopleInFact(s.text)) add(p, "person");
-      } else if (/involvement/i.test(key)) {
-        // Free prose about the owner or family — titled names and known given names only.
-        for (const p of peopleInFact(s.text, "prose")) add(p, "person");
+      } else {
+        // Any other fact: people it names in passing ("VP Doug Fairweather",
+        // "engagement partner Ranjit Bains retired") — titled names and
+        // known given names only. Never a brand ("Tim Hortons franchise",
+        // or one the deal's industry label names: "Wendy's franchise"), a
+        // place ("Alberta expansion", "Fraser Valley farms") or the broker
+        // ("sold through Morgan Ellis").
+        const found = peopleInFact(s.text, "prose").filter((p) => !industryLabel.includes(` ${foldForMatch(p)} `));
+        // The broker's surname alone ("Ellis") goes with the full name.
+        const brokers = found.filter((p) => viaBroker(s.text, p)).map((p) => ` ${foldForMatch(p)} `);
+        for (const p of found) {
+          if (brandInText(s.text, p) || brokers.some((b) => b.includes(` ${foldForMatch(p)} `))) continue;
+          if (!p.includes(" ") && (isRegionLabel(p) || isRegionWord(p))) continue;
+          add(p, "person");
+        }
+      }
+    }
+    // Customers, landlord, suppliers, lenders, advisers: the organisations named.
+    if (COUNTERPARTY_KEY.test(key) && !NOT_PEOPLE_KEY.test(key) && !aboutTheSale) {
+      for (const s of strings) for (const o of organisationsIn(s.text, lowerWords)) add(o, "name", !o.includes(" ") || undefined);
+    }
+    // Registration, licence and permit numbers.
+    for (const s of strings) for (const id of registryIdsIn(s.text)) addRegistry(id);
+    if (REGISTRY_KEY.test(key)) {
+      for (const s of strings) {
+        const v = s.text.trim();
+        if (v.length <= 40 && ID_SHAPED.test(v) && !/[$%]/.test(v)) addRegistry(v);
       }
     }
     if (PLACE_KEY.test(key) || PLACE_KEYS.has(key.toLowerCase())) {
@@ -777,10 +1025,16 @@ export function blindLeakTerms(
       }
     }
   }
+  // The staff list (deals.employeeChart): each name, and any person its roles mention.
+  for (const s of factStrings(deal.employeeChart)) {
+    for (const p of s.nameField ? personField(s.text) : peopleInFact(s.text, "prose")) add(p, "person");
+  }
   for (const p of opts.extraPeople ?? []) add(p, "person");
 
-  // De-duplicate on the folded form; drop anything inside the codename.
-  const code = opts.codename ? ` ${foldForMatch(opts.codename)} ` : "";
+  // De-duplicate on the folded form. A term that is part of the codename
+  // ("Kestrel", a customer, in "Project Kestrel") is kept: only the
+  // codename itself is exempt, never another mention of the word.
+  const code = opts.codename ? foldForMatch(opts.codename) : "";
   const byFold = new Map<string, BlindTerm>();
   for (const t of terms) {
     const folded = foldForMatch(t.text);
@@ -788,7 +1042,14 @@ export function blindLeakTerms(
     if (letters < 3) continue;
     // Business names and contacts need 4+ characters ("Inc" alone isn't a name).
     if ((t.kind === "name" || t.kind === "contact") && letters < 4) continue;
-    if (code && code.includes(` ${folded} `)) continue;
+    // The codename itself (or a phrase holding it) is what the Blind CIM is called.
+    if (code && ` ${folded} `.includes(` ${code} `)) continue;
+    const inCodename = !!code && ` ${code} `.includes(` ${folded} `);
+    if (t.kind === "registry") {
+      const key = `registry:${t.digits}`;
+      if (!byFold.has(key)) byFold.set(key, { text: t.text, kind: "registry", common: false, digits: t.digits });
+      continue;
+    }
     const titled = t.kind === "person" ? TITLED.exec(t.text) : null;
     if (titled) {
       // One titled term per surname, whichever title the facts used.
@@ -807,9 +1068,24 @@ export function blindLeakTerms(
       kind: t.kind,
       common: t.common ?? (t.kind !== "contact" && isEverydayWord(folded)),
       ...(t.regionWord ? { regionWord: true } : {}),
+      ...(inCodename ? { codename: code } : {}),
     });
   }
+  // Any labelled public identifier, whether the facts hold it or not.
+  byFold.set("registry:*", { text: "a registration, licence or permit number", kind: "registry", common: false, anyRegistryId: true });
   return Array.from(byFold.values());
+}
+
+/** "sold through Morgan Ellis", "broker Morgan Ellis": the person selling the business, not in it. */
+function viaBroker(text: string, name: string): boolean {
+  const i = text.indexOf(name);
+  return i >= 0 && /(?:through|via|broker|brokerage|advisor|adviser|agent|listed with)[ \t]+$/i.test(text.slice(Math.max(0, i - 30), i));
+}
+
+/** "Tim Hortons franchise", "Mr. Lube dealer": a brand that looks like a person. */
+function brandInText(text: string, name: string): boolean {
+  const i = text.indexOf(name);
+  return i >= 0 && /^(?:['’]s)?(?:[ \t]+[A-Z][A-Za-z'’-]*)?[ \t]+(?:franchis\w*|dealer\w*|distributor\w*|licensee\w*|brand|banner|outlet\w*)\b/i.test(text.slice(i + name.length));
 }
 
 // ── Matching ──────────────────────────────────────────────────────────────
@@ -825,6 +1101,25 @@ export function collectStrings(value: unknown, out: string[] = [], depth = 0): s
     for (const v of Object.values(value as AnyRecord)) collectStrings(v, out, depth + 1);
   }
   return out;
+}
+
+/**
+ * Every string inside a value rewritten (keys kept). Used instead of
+ * rewriting the value's JSON text: JSON writes a paragraph break as a
+ * backslash and the letter n, so a codename right after one ("…lanes.
+ * [break] Project Coastline has…") followed a letter and never matched —
+ * a codename rename left the old name in the blind CIM (2026-09-26).
+ */
+export function mapStrings<T>(value: T, fn: (s: string) => string, depth = 0): T {
+  if (depth > 20 || value == null) return value;
+  if (typeof value === "string") return fn(value) as unknown as T;
+  if (Array.isArray(value)) return value.map((v) => mapStrings(v, fn, depth + 1)) as unknown as T;
+  if (typeof value === "object") {
+    const out: Record<string, unknown> = {};
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) out[k] = mapStrings(v, fn, depth + 1);
+    return out as T;
+  }
+  return value;
 }
 
 /** Digit runs that could be a phone number ("(519) 555-0142", "+1 519.555.0142", "5195550142"). */
@@ -846,7 +1141,36 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
   const lower = cased.toLowerCase();
   let digitRuns: string[] | null = null;
   const hits: string[] = [];
+  /** The folded text with one codename's occurrences blanked (same length, so positions hold). */
+  const withoutCodename = new Map<string, { cased: string; lower: string }>();
+  const blanked = (code: string) => {
+    let v = withoutCodename.get(code);
+    if (!v) {
+      const needle = ` ${code} `;
+      let c = cased;
+      let l = lower;
+      for (let at = l.indexOf(needle); at >= 0; at = l.indexOf(needle, at + 1)) {
+        const fill = " " + "_".repeat(code.length) + " ";
+        c = c.slice(0, at) + fill + c.slice(at + fill.length);
+        l = l.slice(0, at) + fill + l.slice(at + fill.length);
+      }
+      v = { cased: c, lower: l };
+      withoutCodename.set(code, v);
+    }
+    return v;
+  };
   for (const t of terms) {
+    if (t.kind === "registry") {
+      if (t.anyRegistryId) {
+        hits.push(...registryIdsIn(all));
+        continue;
+      }
+      if (!t.digits) continue;
+      digitRuns ??= (all.match(DIGIT_RUN) || []).map((r) => r.replace(/\D/g, ""));
+      const bare = all.match(/\d+/g) || [];
+      if (digitRuns.some((r) => r.includes(t.digits!)) || bare.some((r) => r.includes(t.digits!))) hits.push(t.text);
+      continue;
+    }
     const f = foldForMatch(t.text);
     if (!f) continue;
     if (t.kind === "contact" && !/[a-z]/i.test(t.text)) {
@@ -864,12 +1188,13 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
       if (titledSurnameIn(lower, foldForMatch(TITLED.exec(t.text)?.[1] ?? t.text))) hits.push(t.text);
       continue;
     }
+    const text = t.codename ? blanked(t.codename) : { cased, lower };
     const needle = ` ${f} `;
-    let at = lower.indexOf(needle);
+    let at = text.lower.indexOf(needle);
     if (at < 0) continue;
     if (t.regionWord) {
-      for (; at >= 0; at = lower.indexOf(needle, at + 1)) {
-        if (!usedAsPlace(lower, at, f)) {
+      for (; at >= 0; at = text.lower.indexOf(needle, at + 1)) {
+        if (!usedAsPlace(text.lower, at, f)) {
           hits.push(t.text);
           break;
         }
@@ -880,14 +1205,14 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
       hits.push(t.text);
       continue;
     }
-    for (; at >= 0; at = lower.indexOf(needle, at + 1)) {
-      if (cased.slice(at + 1, at + 1 + f.length) !== f) {
+    for (; at >= 0; at = text.lower.indexOf(needle, at + 1)) {
+      if (text.cased.slice(at + 1, at + 1 + f.length) !== f) {
         hits.push(t.text);
         break;
       }
     }
   }
-  return hits;
+  return Array.from(new Set(hits));
 }
 
 /** Every multi-word province, state or country name, folded ("british columbia", "new york"). */

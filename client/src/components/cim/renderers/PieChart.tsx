@@ -21,6 +21,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
+import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
 const SIDE_BY_SIDE_MIN = 480;
@@ -111,7 +112,8 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
   const normalized = rawData.map((d, i) => ({
     ...d,
-    value: typeof d.value === "string" ? parseFloat(d.value) || 0 : d.value,
+    // Text values ("22%", "$1.2M") are read as numbers, never drawn as zero.
+    value: parseChartNumber(d.value, unitScale(data.unit)) ?? 0,
     color: palette[i % palette.length],
   }));
 

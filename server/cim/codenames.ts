@@ -13,7 +13,7 @@ import { and, eq, isNotNull } from "drizzle-orm";
 import { db } from "../db";
 import { cimSectionOverrides, cimSections, dealOutreach, deals } from "@shared/schema";
 import { storage } from "../storage";
-import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
+import { blindLeakTerms, findBlindLeaks, mapStrings } from "@shared/blind-guard";
 import { blindIdentifiers } from "@shared/blind-identifiers";
 
 const WORDS = [
@@ -41,9 +41,14 @@ const WORDS = [
 
 export const CODENAMES: readonly string[] = WORDS.map((w) => `Project ${w}`);
 
-/** A random codename not in `taken` (falls back to a numbered one when all are used). */
-export function pickCodename(taken: Set<string>): string {
-  const free = CODENAMES.filter((c) => !taken.has(c.toLowerCase()));
+/**
+ * A random codename not in `taken` (falls back to a numbered one when all
+ * are used). With the deal, never one that names something of it — a
+ * customer called Kestrel rules out "Project Kestrel".
+ */
+export function pickCodename(taken: Set<string>, deal?: CodenameDeal): string {
+  const terms = deal ? blindLeakTerms(deal as any) : [];
+  const free = CODENAMES.filter((c) => !taken.has(c.toLowerCase()) && (terms.length === 0 || findBlindLeaks(c, terms).length === 0));
   if (free.length > 0) return free[Math.floor(Math.random() * free.length)];
   for (let n = 2; ; n++) {
     const c = `${CODENAMES[Math.floor(Math.random() * CODENAMES.length)]} ${n}`;
@@ -62,6 +67,8 @@ async function brokerCodenames(brokerId: string, exceptDealId: string): Promise<
   );
 }
 
+type CodenameDeal = { businessName?: string | null; extractedInfo?: unknown; employeeChart?: unknown };
+
 /** A codename looks like a name: starts with a letter or digit; letters, digits, spaces, & ' . - after. */
 const CODENAME_SHAPE = new RegExp("^[\\p{L}\\p{N}][\\p{L}\\p{N} &'’.-]*$", "u");
 
@@ -74,7 +81,7 @@ const CODENAME_SHAPE = new RegExp("^[\\p{L}\\p{N}][\\p{L}\\p{N} &'’.-]*$", "u"
  * lower-cased).
  */
 export function validateCodename(
-  deal: { businessName?: string | null; extractedInfo?: unknown },
+  deal: CodenameDeal,
   raw: unknown,
   taken: Set<string>,
 ): { ok: true; codename: string } | { ok: false; error: string } {
@@ -86,7 +93,8 @@ export function validateCodename(
     return { ok: false, error: "Use letters, numbers and spaces only (e.g. “Project Coastline”)." };
   }
   // The guard's terms without a codename exemption: the candidate itself
-  // must not contain anything identifying.
+  // must not contain anything identifying — the business, its people (the
+  // staff list too), its customers, landlord and suppliers, its places.
   const leaks = findBlindLeaks(codename, blindLeakTerms(deal as any));
   const ids = blindIdentifiers(deal as any).filter((id) => id.length >= 4 && codename.toLowerCase().includes(id.toLowerCase()));
   if (leaks.length > 0 || ids.length > 0) {
@@ -138,7 +146,7 @@ export function carryCodename<R extends { sectionTitle?: string | null; layoutDa
   return {
     ...result,
     sectionTitle: result.sectionTitle == null ? result.sectionTitle : swap(result.sectionTitle),
-    layoutData: result.layoutData == null ? result.layoutData : JSON.parse(swap(JSON.stringify(result.layoutData))),
+    layoutData: result.layoutData == null ? result.layoutData : mapStrings(result.layoutData, swap),
     contentOverride: result.contentOverride == null ? result.contentOverride : swap(result.contentOverride),
   };
 }
@@ -152,14 +160,14 @@ export function carryCodename<R extends { sectionTitle?: string | null; layoutDa
  * changed.
  */
 export function renameDealCodename(
-  deal: { id: string; brokerId: string; blindCodename?: string | null; businessName?: string | null; extractedInfo?: unknown },
+  deal: { id: string; brokerId: string; blindCodename?: string | null } & CodenameDeal,
   raw: unknown,
 ): Promise<{ ok: true; codename: string; updated: number } | { ok: false; error: string; status: number }> {
   return withCodenameLock(deal.id, () => renameUnlocked(deal, raw));
 }
 
 async function renameUnlocked(
-  deal: { id: string; brokerId: string; blindCodename?: string | null; businessName?: string | null; extractedInfo?: unknown },
+  deal: { id: string; brokerId: string; blindCodename?: string | null } & CodenameDeal,
   raw: unknown,
 ): Promise<{ ok: true; codename: string; updated: number } | { ok: false; error: string; status: number }> {
   const taken = await brokerCodenames(deal.brokerId, deal.id);
@@ -175,7 +183,7 @@ async function renameUnlocked(
   let updated = 0;
   const overrides = await db.select().from(cimSectionOverrides).where(eq(cimSectionOverrides.dealId, deal.id));
   for (const o of overrides) {
-    const data = o.layoutData == null ? null : JSON.parse(swap(JSON.stringify(o.layoutData)));
+    const data = o.layoutData == null ? null : mapStrings(o.layoutData, swap);
     const text = o.contentOverride == null ? null : swap(o.contentOverride);
     if (JSON.stringify(data) === JSON.stringify(o.layoutData) && text === o.contentOverride) continue;
     await db.update(cimSectionOverrides).set({ layoutData: data, contentOverride: text }).where(eq(cimSectionOverrides.id, o.id));
@@ -215,7 +223,7 @@ export async function ensureDealCodename(deal: { id: string; brokerId: string; b
   return withCodenameLock(deal.id, async () => {
     const fresh = await storage.getDeal(deal.id);
     if (fresh?.blindCodename) return fresh.blindCodename;
-    const codename = pickCodename(await brokerCodenames(deal.brokerId, deal.id));
+    const codename = pickCodename(await brokerCodenames(deal.brokerId, deal.id), fresh ?? undefined);
     await storage.updateDeal(deal.id, { blindCodename: codename } as any);
     return codename;
   });

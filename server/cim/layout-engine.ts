@@ -8,6 +8,7 @@ import {
   plannerLayouts,
   tidyGeneratedLayout,
 } from "@shared/cim-layouts";
+import { normalizeChartValues } from "@shared/cim-chart-values";
 import { agentConfig } from "../interview/config/load-config";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
 import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "../information/cim-facts";
@@ -312,7 +313,10 @@ export function coverMonth(today: Date): string {
  * accountant (and named it on the blind cover). Its date is the month the
  * CIM was written, never one the AI made up.
  */
-export function finalizeLayoutData(layoutType: string, layoutData: Record<string, unknown>, today: Date): Record<string, unknown> {
+export function finalizeLayoutData(layoutType: string, rawLayoutData: Record<string, unknown>, today: Date): Record<string, unknown> {
+  // Chart values the writer returned as text ("$13,560,000") become numbers:
+  // a chart can't draw text, and drew every such bar at zero (2026-09-26).
+  const layoutData = normalizeChartValues(layoutType, rawLayoutData);
   if (layoutType !== "cover_page") return layoutData;
   const { preparedBy: _preparedBy, ...rest } = layoutData as Record<string, unknown> & { preparedBy?: unknown };
   return { ...rest, date: coverMonth(today) };
