@@ -236,7 +236,9 @@ await (async () => {
   assert.equal([kelowna[0], ...(kelowna[0].alsoFrom ?? [])].length, 2);
   assert.ok(!notes.some((x) => x.note === "Family in Kelowna."), "never the lossy draft");
   assert.ok(!notes.some((x) => /Document prepared/.test(x.note)), "housekeeping dropped");
-  assert.ok(notes.some((x) => /64 years old/.test(x.note)), "a personal note is never dropped");
+  // Never dropped as housekeeping: the owner's age said on its own is a fact
+  // now (the final pass moves it, credited to the call), else it stays a note.
+  assert.ok(notes.some((x) => /64 years old/.test(x.note)) || (applied.info.ownerAge === "64 years old" && (applied.info._fieldSources as any)?.ownerAge?.documentId === "CALL"), "a personal note is never dropped");
   assert.ok(!notes.some((x) => /Class D dividend/.test(x.note)), "the dividend left the notes…");
   assert.match(String(applied.info.dividendsDeclared), /\$60,000/, "…and is a fact");
   assert.equal(getFieldSources(applied.info).dividendsDeclared.documentId, "MB");
@@ -315,7 +317,11 @@ await (async () => {
   const items = collectNoteItems(info, docs);
   // First review: each its own note
   let review = recordPlacements(emptyReview(), { groups: items.map((_, i) => ({ text: items[i].text, notes: [`N${i + 1}`] })), notNotes: [] }, items, [], docs).review;
-  assert.equal(getPrivateNotes(applyNotesReview(info, review, docs).info).length, 3);
+  // (The deterministic final pass moves Luis's 15% stake, from a shared
+  // email, into the facts: two notes stay.)
+  const first = applyNotesReview(info, review, docs).info;
+  assert.equal(getPrivateNotes(first).length, 2);
+  assert.equal(first.ownershipStructure, "Luis confirmed 15% ownership stake");
   // A later review folds the two financing notes (existing) together; the first draft drops "Gord", the repair keeps it
   const current = currentGroups(items, review);
   const [g1, g2] = current;
@@ -323,7 +329,7 @@ await (async () => {
   assert.equal(placed.rejects.length, 1);
   review = settleRejects(placed.review, placed.rejects, ["Gord wants most of the price at closing; will carry 15-20% seller financing for 3 years, but 'not half' — he has seen others not get paid."]);
   const notes = getPrivateNotes(applyNotesReview(info, review, docs).info);
-  assert.equal(notes.length, 2, notes.map((x) => x.note).join(" | "));
+  assert.equal(notes.length, 1, notes.map((x) => x.note).join(" | "));
   assert.match(notes[0].note, /not half/);
   assert.ok(!isDroppableNote("surinder salary = non-working, confirmed add-back"), "an add-back is substance");
   assert.ok(!isDroppableNote("Financial statements are unaudited compilation only"), "audit status is substance");
@@ -410,9 +416,13 @@ await (async () => {
   const notes = getPrivateNotes(info);
   assert.ok(notes.some((x) => (x.alsoFrom ?? []).length > 0), "addPrivateNote folded a restatement");
   // No decision at all (the model unavailable): every note stays exactly as it is
+  // (the deterministic final pass may still fold the heart notes together —
+  // every source keeps its words on the note — but never pulls one apart)
   const none = applyNotesReview(info, emptyReview(), docs);
-  assert.equal(none.changed, false, "nothing is pulled apart");
-  assert.deepEqual(getPrivateNotes(none.info), notes);
+  const wordsOf = (ns: typeof notes) => ns.flatMap((n) => [n, ...(n.alsoFrom ?? [])].map((s: any) => (s.wording ?? n.note).trim()));
+  const kept0 = new Set(wordsOf(getPrivateNotes(none.info)));
+  assert.ok(wordsOf(notes).every((w) => kept0.has(w)), "nothing is pulled apart or lost");
+  assert.ok(getPrivateNotes(none.info).length <= notes.length);
   assert.equal(none.pending.length, collectNoteItems(info, docs).length);
   // Decided: the heart notes are one note (group); a reprocess then re-reads the call in new words
   const items = collectNoteItems(info, docs);

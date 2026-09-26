@@ -2076,6 +2076,8 @@ export interface DocumentSourceMeta {
   recordId?: string;
   /** End (yyyy-mm-dd) of the latest fiscal period the source reports — set from its extraction. */
   periodEnd?: string;
+  /** The last re-read of this source failed (it keeps what it had): when, and why in plain words. */
+  rereadFailed?: { at: string; reason: string };
 }
 
 // @anchor:schema-tail:crm

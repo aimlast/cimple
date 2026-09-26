@@ -51,6 +51,13 @@ export function metaLine(kind: SourceKind, meta: DocumentSourceMeta | null | und
   return [when, rest].filter(Boolean).join(" · ");
 }
 
+/** "Cimple couldn't re-read this source today: the connection to the AI service dropped. …" */
+function rereadFailedText(f: { at: string; reason: string }): string {
+  const when = formatShortDate(f.at);
+  const on = !when ? "" : /^(?:today|yesterday)$/i.test(when) ? ` ${when.toLowerCase()}` : ` on ${when}`;
+  return `Cimple couldn't re-read this source${on}: ${f.reason}. Its facts are the ones it gave before.`;
+}
+
 function StatusBit({ status }: { status?: string }) {
   if (status === "pending" || status === "parsing")
     return (
@@ -133,6 +140,15 @@ export function SourcesPanel({
                         <span className="inline-flex items-center gap-0.5 text-teal"><Lock className="h-2.5 w-2.5" /> Broker only</span>
                       )}
                       <StatusBit status={s.status} />
+                      {s.meta?.rereadFailed && (
+                        <span
+                          className="inline-flex items-center gap-1 text-amber-500"
+                          title={`The last re-read failed: ${s.meta.rereadFailed.reason}. It keeps what it had from before — open it to read it again.`}
+                          data-testid={`source-reread-failed-${s.id}`}
+                        >
+                          <AlertCircle className="h-2.5 w-2.5" /> Re-read failed
+                        </span>
+                      )}
                       {/* Read, but nothing came out of it (a scanned org chart, a photo of a list): the
                           broker should open it — the interview can only use what's legible in it. */}
                       {sourceFoundNothing(s, untrackedFacts) && (
@@ -242,6 +258,35 @@ export function SourceViewer({
     onError: (e: Error) => toast({ title: "Couldn't delete", description: e.message, variant: "destructive" }),
   });
 
+  // Read this one source again (its last re-read failed): a background job
+  // for the deal, polled until it finishes; every other source keeps what it had.
+  const [rereading, setRereading] = useState(false);
+  const readAgain = async () => {
+    if (!docId) return;
+    setRereading(true);
+    try {
+      const res = await fetch(`/api/deals/${dealId}/documents/${docId}/reprocess`, { method: "POST", credentials: "include" });
+      if (res.status === 409) {
+        toast({ title: "Already reading", description: "Cimple is re-reading this deal's sources right now. Try again when it's done." });
+        return;
+      }
+      if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Couldn't start reading it again");
+      let job: { status: string; message?: string; error?: string } = await res.json();
+      for (let i = 0; i < 200 && job.status === "running"; i++) {
+        await new Promise((r) => setTimeout(r, 3000));
+        job = await requestJson("GET", `/api/deals/${dealId}/documents/reprocess`);
+      }
+      queryClient.invalidateQueries({ queryKey: informationKey(dealId) });
+      if (job.status === "done") toast({ title: "Read again", description: "The facts from this source are up to date." });
+      else if (job.status === "partial") toast({ title: "Still couldn't read it", description: job.message ?? "It keeps what it had from before.", variant: "destructive" });
+      else toast({ title: "Couldn't read it again", description: job.error ?? "Try again in a few minutes.", variant: "destructive" });
+    } catch (e) {
+      toast({ title: "Couldn't read it again", description: (e as Error).message, variant: "destructive" });
+    } finally {
+      setRereading(false);
+    }
+  };
+
   if (!source) return null;
   const Icon = KIND_META[source.kind]?.icon ?? KIND_META.unknown.icon;
   const line = metaLine(source.kind, source.meta, source.date);
@@ -267,6 +312,18 @@ export function SourceViewer({
               {source.visibility === "broker_only" ? " · Broker only" : ""}
             </DialogDescription>
           </DialogHeader>
+
+          {source.meta?.rereadFailed && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs" data-testid="source-reread-failed">
+              <p className="min-w-0 flex-1 text-amber-500/90">
+                <AlertCircle className="inline h-3 w-3 mr-1 -mt-0.5" />
+                {rereadFailedText(source.meta.rereadFailed)}
+              </p>
+              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={rereading} onClick={readAgain} data-testid="button-reread-source">
+                {rereading ? <Loader2 className="h-3 w-3 animate-spin" /> : null} {rereading ? "Reading…" : "Read it again"}
+              </Button>
+            </div>
+          )}
 
           {h && (h.summary || h.keyFacts || h.redFlags || h.actionItems || h.sellerConcerns || h.followUpNeeded) && (
             <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-1.5 text-xs">
