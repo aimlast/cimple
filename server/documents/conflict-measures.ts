@@ -23,6 +23,10 @@
  * Pure — no storage, no model.
  */
 import { typedNumericValues } from "../interview/info-merger";
+import { periodAlignment, differentMoneyMeasures } from "../cim/discrepancy-filter";
+
+/** Facts whose years ARE the value (a lease expiry, a founding date) — never a period. */
+const DATE_VALUE_KEY = /lease|expir|term|renew|option|matur|deadline|date|founded|established|since|anniversary/i;
 
 /** One side of a possible conflict: its value and what is known of its source. */
 export interface ConflictSideInfo {
@@ -314,6 +318,16 @@ export function falseConflictReason(factKey: string, x: ConflictSideInfo, y: Con
   const ya = periodYear(x.period);
   const yb = periodYear(y.period);
   if (figures && ya && yb && ya !== yb && (x.kind === "document" || y.kind === "document")) return "figures for different fiscal years";
+  // Two periods in the values' own words: a claim about 2024 against
+  // another year's line of the same schedule ("41% of 2024 revenue" vs
+  // "FY2022: Top 3 customers 35.0%").
+  if (!DATE_VALUE_KEY.test(factKey)) {
+    const aligned = periodAlignment(a, b, factKey) ?? periodAlignment(b, a, factKey);
+    if (aligned === "same") return "the value for the same year agrees";
+    if (aligned === "different_periods") return "figures for different fiscal years";
+  }
+  // Two measures of value: a replacement cost against a book or market value.
+  if (differentMoneyMeasures(a, b)) return "different measures of value (replacement cost vs book or market value)";
   // An option's notice window against the option's own terms.
   if (/renew|option|extension|lease/i.test(factKey) && noticeWindowMatches(a, b)) return "when the notice window opens against the option's own terms";
   // Owner pay: one owner vs all shareholders, salary vs total compensation.

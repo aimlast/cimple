@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface TimelineEvent {
   date?: string;
@@ -39,11 +40,7 @@ export function TimelineRenderer({ layoutData, content, branding, section }: Ren
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-5">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} spacing="mb-5" />
       <div className="relative">
         {/* Connecting line */}
         <div className="absolute left-[88px] top-2 bottom-2 w-px bg-border" />

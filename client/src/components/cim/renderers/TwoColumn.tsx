@@ -38,6 +38,7 @@ import { NumberedListRenderer } from "./NumberedList";
 import { StatCalloutRenderer } from "./StatCallout";
 import { ScorecardRenderer } from "./Scorecard";
 import { TimelineRenderer } from "./Timeline";
+import { BlockTitle } from "./BlockTitle";
 
 interface TwoColumnLayoutData {
   left?: unknown;
@@ -194,11 +195,7 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       {editedAbove && (
         <div className="mb-6 max-w-prose text-foreground/80">
           {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}

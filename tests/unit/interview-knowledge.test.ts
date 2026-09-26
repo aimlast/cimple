@@ -104,7 +104,8 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
     // A compound question: one clause is answered by the org chart.
     const org = [doc({ id: "o", name: "Organizational chart", extractedText: "Headcount by function\nPlant manager and shift supervisors6\nPress operators and packers112\nSetup and process technicians22\nMaterial handling, shipping and receiving18" })];
     const compound = searchSourcesFor("Shifting to workforce structure: how is your headcount split across the three shifts, and roughly how many of those 212 are operators versus setup techs versus other roles?", org);
-    assert.ok(compound && /Setup and process technicians22/.test(compound.snippet), "the org chart answers the role split");
+    // (The glued table cell reads as its row: "Setup and process technicians: 22" — table-text.ts.)
+    assert.ok(compound && /Setup and process technicians:? ?22/.test(compound.snippet), "the org chart answers the role split");
     // A weaker match (a rare word next to a figure) is only a candidate: the answer check decides.
     assert.ok(findReasks("How many operators do you have on third shift?", { sellerMessage: "x", info: {}, documents: org, priorQA: [] }).every((f) => f.verify), "only a candidate for the answer check");
     assert.equal(searchSourcesFor("What would a market-rate CEO cost a buyer?", org), null);

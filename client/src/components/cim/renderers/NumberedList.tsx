@@ -6,6 +6,7 @@ import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface ListItem {
   title: string;
@@ -37,11 +38,7 @@ export function NumberedListRenderer({ layoutData, content, branding, section }:
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="space-y-4">
         {items.map((item, i) => (
           <div key={i} className="flex items-start gap-4">

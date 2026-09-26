@@ -22,6 +22,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, compactFigure, formatAxisTick, useElementWidth } from "./chartFormat";
 import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { BlockTitle } from "./BlockTitle";
 
 /** Below this container width the build-up is drawn as labelled horizontal rows. */
 const NARROW_WIDTH = 520;
@@ -257,11 +258,7 @@ export function WaterfallChartRenderer({ layoutData, content, branding, section 
 
   return (
     <div ref={widthRef}>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       {narrow ? (
         <WaterfallRows data={waterfallData} colorMap={colorMap} currency={data.currency} unit={data.unit} />
       ) : (

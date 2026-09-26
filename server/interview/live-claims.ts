@@ -26,6 +26,7 @@ import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merge
 import { QUESTION_STOP, searchWord, sourceLabel } from "./source-context";
 import type { OnFileFact, ReaskFinding } from "./reask-guard";
 import { NUMBER_RE } from "./on-file-evidence";
+import { normaliseTableText } from "./table-text";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "updatedAt">>;
@@ -111,9 +112,12 @@ export function claimChunks(documents: DocLike[]): ClaimChunk[] {
   const out: ClaimChunk[] = [];
   for (const d of documents) {
     if (d.visibility === "broker_only" || LEAD_KINDS.has(String(d.sourceKind))) continue;
-    const text = typeof d.extractedText === "string" ? d.extractedText : "";
-    if (!text.trim()) continue;
-    const parts = text
+    const raw = typeof d.extractedText === "string" ? d.extractedText : "";
+    if (!raw.trim()) continue;
+    // Each table figure on its own label's line (table-text.ts): the window
+    // "112 · 3 shifts / Setup & process technicians" read as "112 setup
+    // technicians" and a correct "22" was raised as a conflict.
+    const parts = normaliseTableText(raw)
       .replace(/\r/g, "")
       .split(/\n+|(?<=[.!?])\s+/)
       .map((x) => x.replace(/\s+/g, " ").trim())
@@ -271,6 +275,7 @@ const SYSTEM = [
   "A business owner just answered an interviewer. Check each figure in the owner's message against the MATERIAL from the deal's file.",
   "Report a conflict only when the material states a figure for the SAME measure — the same thing, the same scope, the same period — that is materially different (more than about 5% apart). Both sides must be figures.",
   "Do report a count that includes items the file lists separately or excludes (the owner's '26 trucks' vs the fleet list's 24 service vans plus 2 owner vehicles; '3,100 members' vs 2,900 active plus 214 suspended) — the document for buyers must state the right one.",
+  "In a table passage each figure belongs to the label right before it on its row ('Setup & process technicians: 22'), never to the next row's label.",
   "Do NOT report: different measures (a total vs a labelled subset, gross vs net, adjusted vs reported, a rate vs an amount, one segment vs the whole), different years or periods (an older year vs 'now' is a change, not a conflict), rounding or an approximate figure within about 5%, anything you would have to calculate or infer, or what the owner is only estimating about the future. When in doubt, leave it out. At most 2.",
 ].join(" ");
 
@@ -355,6 +360,48 @@ export function figureKind(text: string): "percent" | "money" | "count" {
 }
 
 /**
+ * True when `text` states `value` right beside one of `words` (claimWords
+ * forms): within six words before the figure or four after it, without
+ * crossing another figure (a year doesn't count as one). Pure.
+ */
+export function figureNear(text: string, value: number, words: ReadonlySet<string>): boolean {
+  if (words.size === 0) return false;
+  const tokens = text.replace(/[:·|]/g, " ").match(/\$?\d[\d,]*(?:\.\d+)?%?|[A-Za-z][A-Za-z'’-]*/g) ?? [];
+  const isFigure = (t: string) => /\d/.test(t) && !/^(?:19|20)\d{2}$/.test(t);
+  const num = (t: string) => parseFloat(t.replace(/[$,%]/g, ""));
+  const wordsOf = (t: string) => Array.from(claimWords(t));
+  for (let i = 0; i < tokens.length; i++) {
+    if (!isFigure(tokens[i]) || Math.abs(num(tokens[i]) - value) > Math.max(1e-9, Math.abs(value) * 0.005)) continue;
+    const near: string[] = [];
+    for (let j = i - 1; j >= Math.max(0, i - 6) && !isFigure(tokens[j]); j--) near.push(...wordsOf(tokens[j]));
+    for (let j = i + 1; j <= Math.min(tokens.length - 1, i + 4) && !isFigure(tokens[j]); j++) near.push(...wordsOf(tokens[j]));
+    if (near.some((w) => words.has(w))) return true;
+  }
+  return false;
+}
+
+/**
+ * The words naming what a counted figure counts: the seller's side of the
+ * conflict (`said`), else the check's topic, else the words of the seller's
+ * message within a few words of the figure. The model can phrase `said` as
+ * the bare figure ("22 of them"), and the table-row rule below was then
+ * skipped — 22 against the org chart's 112 operators was kept. Pure.
+ */
+export function countTopic(said: string, topic: string, message: string, figures: number[]): Set<string> {
+  const own = claimWords(said);
+  if (own.size > 0) return own;
+  const fromTopic = claimWords(topic);
+  if (fromTopic.size > 0) return fromTopic;
+  const tokens = message.match(/\$?\d[\d,]*(?:\.\d+)?%?|[A-Za-z][A-Za-z'’-]*/g) ?? [];
+  const out = new Set<string>();
+  tokens.forEach((t, i) => {
+    if (!/\d/.test(t) || !figures.some((n) => Math.abs(parseFloat(t.replace(/[$,%]/g, "")) - n) <= Math.max(1e-9, Math.abs(n) * 0.005))) return;
+    for (const w of tokens.slice(Math.max(0, i - 4), i + 5)) if (!/\d/.test(w)) claimWords(w).forEach((c) => out.add(c));
+  });
+  return out;
+}
+
+/**
  * Validates the model's conflicts: the material item exists, the file's
  * side quotes it (its figures are in that item), the owner's side is in the
  * message, and the two sides differ. Pure.
@@ -383,6 +430,20 @@ export function validateLiveClaims(raw: unknown[], message: string, material: Ma
     if (figureKind(said) !== figureKind(onFile)) continue;
     // A figure both sides share is agreement ("$5 million revolver" vs "$5,000,000 revolving line").
     if (a.some((n) => b.some((k) => Math.abs(n - k) <= Math.max(1e-9, Math.abs(n) * 0.04)))) continue;
+    // A count read off a table row: the file's figure must be the one beside
+    // the words the seller counted — "Press operators & packers: 112" is not
+    // a figure for "setup and process technicians" (acceptance test, Great
+    // Lakes org chart). And when the same source gives the seller's figure
+    // beside those words ("Setup & process technicians: 22"), it agrees.
+    // What was counted: the seller's words in `said`; when those are only a
+    // figure ("22 of them"), the check's own topic ("setup technicians"),
+    // then the words around the figure in the seller's message.
+    const topic = countTopic(said, String(x.topic ?? ""), message, a);
+    if (figureKind(said) === "count" && topic.size > 0) {
+      // (The same source only: the seller's own email agreeing with them is no answer to the fleet list.)
+      if (material.some((mm) => mm.label === m.label && a.some((n) => figureNear(mm.text, n, topic)))) continue;
+      if (/^passage from/.test(m.label) && !b.some((k) => figureNear(m.text, k, new Set([...Array.from(topic), ...Array.from(claimWords(String(x.topic ?? "")))])))) continue;
+    }
     const key = (typeof x.key === "string" && x.key.trim() ? x.key.trim() : m.key ?? String(x.topic ?? "figure"))
       .replace(/[^A-Za-z0-9]/g, "").replace(/^[A-Z]/, (c) => c.toLowerCase()).slice(0, 48) || "figure";
     out.push({

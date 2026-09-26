@@ -12,6 +12,7 @@ import type { CimSection } from "@shared/schema";
 import { REGION_ZOOM, clampZoom, mapEmbedUrl, mapLinkUrl, normalizeLocationMap, type MapLocation } from "@shared/cim-media";
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
+import { BlockTitle } from "./BlockTitle";
 
 interface RendererProps {
   layoutData: Record<string, unknown>;
@@ -49,9 +50,7 @@ export function LocationMapRenderer({ layoutData, brokerMode }: RendererProps) {
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">{data.title}</h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="grid gap-4 md:grid-cols-[minmax(0,1.5fr)_minmax(0,1fr)]">
         <div className="relative overflow-hidden rounded-lg border border-card-border bg-muted aspect-[4/3] md:aspect-auto md:min-h-[320px]">
           <iframe

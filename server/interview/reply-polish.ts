@@ -10,12 +10,15 @@
  *   → options anchored to today      (reply-guards.anchorYearOptions)
  *   → the business's own vocabulary  (reply-guards.localiseTerms)
  *   → "you mentioned" only for the seller's words (reply-guards.fixAttribution)
+ *   → sources the seller knows      (source-wording.fixSourceReferences)
+ *   → the seller as "you"           (seller-voice.revoiceSeller)
+ *   → the seller's earnings / SDE question answered with the hand-off (money-talk.ensureEarningsAcknowledged)
  *
  * The chips and the rationale are put through the matching checks.
  */
 import type { ConversationMessage } from "@shared/schema";
 import type { KnowledgeBase } from "./knowledge-base";
-import { stripFillerPreamble } from "./turn-guard";
+import { stripFillerPreamble, stripQuestionVerdicts } from "./turn-guard";
 import { getFieldSources, type FieldSource } from "./info-merger";
 import {
   removeNormalisationAssertions,
@@ -30,6 +33,9 @@ import {
   type Jurisdiction,
   type AttributionFact,
 } from "./reply-guards";
+import { fixSourceReferences } from "./source-wording";
+import { revoiceSeller } from "./seller-voice";
+import { ensureEarningsAcknowledged, statementEarnings, type StatementEarnings } from "./money-talk";
 
 export interface PolishContext {
   /** The seller's message this reply answers (null: the opening, or unknown). */
@@ -42,6 +48,19 @@ export interface PolishContext {
   sellerUtterances?: string[];
   facts: AttributionFact[];
   today: Date;
+  /** The names the seller goes by (knowledge-base seller identity) — for re-voicing to "you". */
+  sellerNames?: string[];
+  /** What the interviewer has said to the seller before this reply (all sessions). */
+  priorAiText?: string;
+  /** The seller-visible statements' reported earnings (money-talk.statementEarnings). */
+  statements?: StatementEarnings | null;
+  /**
+   * A broker-led session: the reply is the broker's question card and the
+   * seller's message is the room's labelled exchange. The broker is there to
+   * answer earnings and add-back questions, so no hand-off line is put in
+   * (add-back calls are still removed).
+   */
+  together?: boolean;
 }
 
 /** Where the business is, as one string ("Calgary, AB"). */
@@ -68,6 +87,8 @@ export function vocabularyPromptLines(kb: Pick<KnowledgeBase, "business" | "indu
 
 const sellerMessagesOf = (sessions: Array<{ messages?: unknown }>): string[] =>
   sessions.flatMap((s) => (Array.isArray(s.messages) ? (s.messages as ConversationMessage[]) : []).filter((m) => m?.role === "user").map((m) => String(m.content ?? "")));
+const aiMessagesOf = (sessions: Array<{ messages?: unknown }>): string[] =>
+  sessions.flatMap((s) => (Array.isArray(s.messages) ? (s.messages as ConversationMessage[]) : []).filter((m) => m?.role === "ai").map((m) => String(m.content ?? "")));
 
 /** Each answer of a questionnaire (nested objects and lists flattened). */
 function leafStrings(data: unknown, depth = 0): string[] {
@@ -109,6 +130,7 @@ export function buildPolishContext(args: {
     facts.push({ value: text, source: src?.source, speaker: src?.speaker });
   }
   for (const d of args.kb.sourceDigests ?? []) facts.push({ value: `${d.summary} ${d.keyFacts}`, source: d.kind });
+  const aiSaid = [...aiMessagesOf(args.sessions), ...(args.currentMessages ?? []).filter((m) => m.role === "ai").map((m) => m.content)];
   return {
     sellerMessage: args.sellerMessage,
     jurisdiction: jurisdictionOf(location),
@@ -117,6 +139,10 @@ export function buildPolishContext(args: {
     sellerUtterances: said,
     facts,
     today: args.today ?? new Date(),
+    sellerNames: args.kb.seller?.names ?? [],
+    priorAiText: aiSaid.filter((x, i) => aiSaid.indexOf(x) === i).join("\n"),
+    statements: statementEarnings(args.info, (k) => sources[k]?.source),
+    together: args.kb.conductedBy === "broker_with_seller",
   };
 }
 
@@ -127,6 +153,10 @@ export interface PolishReport {
   yearShift: number;
   vocabulary: boolean;
   attribution: string[];
+  /** Source references renamed and third-person mentions of the seller re-voiced. */
+  voice?: string[];
+  /** The earnings hand-off was put in (the draft didn't answer the seller's earnings question). */
+  earningsAck?: boolean;
 }
 
 /**
@@ -137,14 +167,19 @@ export interface PolishReport {
 export function polishMessage(message: string, ctx: PolishContext, opts: { closing?: boolean; opening?: boolean } = {}): { message: string; report: PolishReport } {
   const report: PolishReport = { filler: false, normalisation: [], extraQuestions: [], yearShift: 0, vocabulary: false, attribution: [] };
   let text = message;
-  const callBefore = findNormalisationAssertions(message).length > 0;
+  const callBefore = findNormalisationAssertions(message, ctx.sellerMessage).length > 0;
   if (!opts.opening) {
     const stripped = stripFillerPreamble(text, { sellerMessage: ctx.sellerMessage, closing: opts.closing });
     report.filler = stripped !== text;
     text = stripped;
   }
-  const norm = removeNormalisationAssertions(text, ctx.sellerMessage, { callAlreadyCut: callBefore });
-  report.normalisation = norm.removed.length > 0 ? norm.removed : callBefore ? findNormalisationAssertions(message) : [];
+  // A verdict inside the question's own lead-in ("…, which is on the higher
+  // side relative to revenue — is that…?"), openings included.
+  const unjudged = stripQuestionVerdicts(text);
+  if (unjudged !== text) report.filler = true;
+  text = unjudged;
+  const norm = removeNormalisationAssertions(text, ctx.sellerMessage, { callAlreadyCut: callBefore, noHandoff: ctx.together });
+  report.normalisation = norm.removed.length > 0 ? norm.removed : callBefore ? findNormalisationAssertions(message, ctx.sellerMessage) : [];
   text = norm.message;
   const single = enforceSingleQuestion(text);
   report.extraQuestions = single.dropped;
@@ -158,6 +193,18 @@ export function polishMessage(message: string, ctx: PolishContext, opts: { closi
   const attr = fixAttribution(text, { sellerText: ctx.sellerText, sellerUtterances: ctx.sellerUtterances, facts: ctx.facts });
   report.attribution = attr.fixes;
   text = attr.message;
+  const named = fixSourceReferences(text);
+  const voiced = revoiceSeller(named.message, ctx.sellerNames ?? []);
+  report.voice = [...named.fixes, ...voiced.fixes];
+  text = voiced.message;
+  // Last, on the finished text: a seller who asked about the earnings
+  // figure, SDE or add-backs (or first stated what the business "clears")
+  // is answered — never dodged (money-talk.ts).
+  if (!opts.opening && !ctx.together) {
+    const ack = ensureEarningsAcknowledged(text, { sellerMessage: ctx.sellerMessage, priorAiText: ctx.priorAiText, statements: ctx.statements });
+    if (ack.added) report.earningsAck = true;
+    text = ack.message;
+  }
   return { message: text, report };
 }
 
@@ -183,7 +230,7 @@ export function polishChips(chips: string[], polishedMessage: string, report: Po
 
 export function polishRationale(why: string | undefined, ctx: PolishContext): string | undefined {
   if (!why) return why;
-  return localiseTerms(why, ctx.jurisdiction, ctx.location, ctx.sellerText);
+  return revoiceSeller(localiseTerms(why, ctx.jurisdiction, ctx.location, ctx.sellerText), ctx.sellerNames ?? []).message;
 }
 
 /** One log line for what the pass changed ("" when nothing). */
@@ -195,10 +242,12 @@ export function describeReport(r: PolishReport): string {
   if (r.yearShift) parts.push(`past-year options moved forward ${r.yearShift}y`);
   if (r.vocabulary) parts.push("local vocabulary");
   if (r.attribution.length) parts.push(`attribution (${r.attribution.join("; ")})`);
+  if (r.voice?.length) parts.push(`voice (${r.voice.join("; ")})`);
+  if (r.earningsAck) parts.push("earnings question handed to the broker");
   return parts.join(", ");
 }
 
 /** The add-back / SDE calls a draft still makes once the filler guard has run (those need the corrective rewrite). */
 export function normalisationCallIn(message: string, sellerMessage: string | null): string[] {
-  return findNormalisationAssertions(stripFillerPreamble(message, { sellerMessage }));
+  return findNormalisationAssertions(stripFillerPreamble(message, { sellerMessage }), sellerMessage);
 }

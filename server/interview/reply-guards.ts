@@ -26,6 +26,7 @@
  */
 import { splitSentences } from "./turn-guard";
 import { brokerWorkAssertions, SAFE_GENERAL_RE } from "./normalisation-guard";
+import { candidateListStatements, sellerRaisesAddbacks, handsOffEarnings } from "./money-talk";
 
 // ═══════════════════════ Normalisation assertions ═══════════════════════
 
@@ -117,15 +118,65 @@ export function mentionsNormalisation(text: string): boolean {
   return NORM_TERM_RE.test(text) || OWNER_COST_CALL_RE.test(text) || NEGATIVE_OR_ITEM_CALL_RE.test(text);
 }
 
-/** The non-question sentences / clauses of a reply that assert treatment. */
-export function findNormalisationAssertions(message: string): string[] {
+/**
+ * The non-question sentences / clauses of a reply that assert treatment —
+ * and, read against the seller's message, the add-back lists the
+ * interviewer builds or agrees to without the vocabulary ("the items that
+ * typically get considered… your $240K management salary, Maria's $85K";
+ * "You're right — those items are in the documents"; see money-talk.ts).
+ */
+export function findNormalisationAssertions(message: string, sellerMessage?: string | null): string[] {
   const out: string[] = [];
+  const lists = candidateListStatements(message, sellerMessage);
   for (const sp of splitSentences(message)) {
     const s = sp.text.trim();
     const head = s.includes("?") ? leadClauseOfQuestion(s)?.head ?? "" : s;
-    if (head && assertsNormalisation(head)) out.push(head);
+    if (head && (assertsNormalisation(head) || isCandidateSentence(head, lists))) out.push(head);
   }
   return out;
+}
+
+/** Is this sentence one of the add-back-list statements money-talk found? */
+function isCandidateSentence(sentence: string, lists: string[]): boolean {
+  const norm = (x: string) => x.replace(/[’‘]/g, "'").replace(/\s+/g, " ").trim();
+  const s = norm(sentence);
+  return lists.some((l) => norm(l) === s);
+}
+
+// A clause that stands as a sentence of its own once the call beside it is
+// cut. A clause ended by a dangling word, or one that ends in a bare list
+// ("I'll make sure the owner vehicles ($28K), health and life insurance
+// ($9K), discretionary meals ($11K)" — live, round A: the cut took the list's
+// last item and its verb), is not one: the whole sentence goes instead.
+const HAS_VERB_RE =
+  /\b(?:is|are|was|were|be|been|being|am|has|have|had|do|does|did|will|would|can|could|should|may|might|must|shall|shows?|showed|lists?|listed|runs?|ran|includes?|included|pays?|paid|takes?|took|gets?|got|makes?|made|goes|went|says?|said|comes?|came|holds?|held|owns?|owned|keeps?|kept|sits?|sat|covers?|covered|carries|carried|reports?|reported|totals?|totall?ed|brings?|brought|needs?|needed|wants?|wanted|stays?|stayed|leaves?|left|uses?|used|hires?|hired|earns?|earned|spends?|spent|sells?|sold|buys?|bought|operates?|operated|employs?|employed|expires?|expired|ends?|ended|renews?|renewed|starts?|started|mentions?|mentioned|notes?|noted|states?|stated)\b|\b(?:i|we|you|he|she|they|it)(?:'s|'re|'ll|'ve|'d|'m)\b/i;
+/** A clause that continues the one before it ("another…", "the other…", "both…", "they…"). */
+const CONTINUATION_START_RE =
+  /^(?:another|the other|the second|the latter|the former|the rest|others?|both|either|neither|also|too|plus|then|they|them|those|these|he|she|its|their|his|her|each|one of (?:them|those))\b/i;
+const DANGLING_END_RE = /\b(?:the|a|an|and|or|of|to|for|with|that|as|like|including|such as|make sure|ensure|confirm|whether)\s*$/i;
+function standsAlone(kept: string, cutSep: string, cutClause: string): boolean {
+  const k = kept.trim().replace(/[,;:\s]+$/, "");
+  if (k.split(/\s+/).length < 4) return false;
+  if (/^(?:which|that|it|this)\b/i.test(k) || NORM_TERM_RE.test(k)) return false;
+  if (DANGLING_END_RE.test(k)) return false;
+  // No verb, no sentence: "— your personal vehicles, meals, insurance, and
+  // the one-time legal settlement" left behind by a cut (live, round V).
+  if (!HAS_VERB_RE.test(k.replace(/[’‘]/g, "'"))) return false;
+  // An unfinished list: two or more comma-separated items at the end and no "and"/"or" closing it.
+  if (/,[^,]+,[^,]+$/.test(k) && !/\b(?:and|or)\b[^,]*$/.test(k)) return false;
+  // A clause cut after ", and …" / ", but …" / ", so …" is only an
+  // independent clause when it has its own subject ("…, and we'll show it
+  // as an add-back"); "…, and the $22K legal settlement are all flagged…"
+  // finishes a list the kept part started.
+  if (/^,\s+$/.test(cutSep) && /^(?:and|but|so)\s/i.test(cutClause)) {
+    const c = cutClause.replace(/[’‘]/g, "'");
+    const ownSubject =
+      /^(?:and|but|so)\s+(?:i|i'll|i've|i'm|we|we'll|we've|you|you'll|he|she|they|it|it's|that's|there|this|that)\b/i.test(c) ||
+      // "…, and with the owner comp add-backs you're showing adjusted EBITDA…"
+      /\b(?:i|we|you|he|she|they)(?:'re|'ll|'ve|'d|'m|\s+(?:are|is|was|were|will|would|have|had|show|showed|get|got|see|saw|put|use|used))\b/i.test(c);
+    if (!ownSubject) return false;
+  }
+  return true;
 }
 
 /** "<assertion>, <question>?" → the assertion part (null when the sentence is all question). */
@@ -136,32 +187,46 @@ function leadClauseOfQuestion(sentence: string): { head: string; rest: string } 
 
 /**
  * Removes treatment calls from a reply: a sentence that asserts treatment
- * goes (a clause of it, when the rest of the sentence stands on its own);
- * a question led by one keeps just its question. When the seller raised
- * add-backs themselves, the hand-off line takes the removed sentence's place.
+ * goes (a clause of it, when the rest of the sentence stands on its own as a
+ * full sentence); a question led by one keeps just its question; an
+ * add-back list the interviewer built or agreed to (money-talk.ts) goes
+ * whole. When the seller raised add-backs themselves, the hand-off line
+ * takes the first removed sentence's place — as its own sentence, where
+ * the removed one stood, never spliced into another paragraph.
  */
 export function removeNormalisationAssertions(
   message: string,
   sellerMessage?: string | null,
   /** A call made in a sentence an earlier pass already cut (the filler guard): the seller who raised it still gets the hand-off. */
-  opts: { callAlreadyCut?: boolean } = {},
+  opts: { callAlreadyCut?: boolean; noHandoff?: boolean } = {},
 ): { message: string; removed: string[] } {
   const spans = splitSentences(message.trim());
+  const lists = candidateListStatements(message, sellerMessage);
   const removed: string[] = [];
-  let handoffAt = -1;
+  /** Where the hand-off goes: in place of span `at`, before it, or after it. */
+  type HandoffAt = { at: number; how: "replace" | "before" | "after" };
+  let handoff = null as HandoffAt | null;
   const out = spans.map((sp, i) => {
     const s = sp.text;
     const trail = s.match(/\s*$/)?.[0] ?? "";
     const core = s.trim();
     if (core.includes("?")) {
       const lc = leadClauseOfQuestion(core);
-      if (lc && assertsNormalisation(lc.head)) {
+      if (lc && (assertsNormalisation(lc.head) || isCandidateSentence(lc.head, lists))) {
         removed.push(lc.head.trim());
-        if (handoffAt < 0) handoffAt = i;
+        handoff ??= { at: i, how: "before" };
         const rest = lc.rest.replace(/^(?:but|and|so)\s+/i, "");
         return rest.charAt(0).toUpperCase() + rest.slice(1) + trail;
       }
       return s;
+    }
+    // An add-back list with no treatment wording goes whole; one that also
+    // makes the call is cut clause by clause below (its reported figure —
+    // "your 2024 EBITDA was around $1.2 million" — can stay).
+    if (isCandidateSentence(core, lists) && !assertsNormalisation(core)) {
+      removed.push(core);
+      handoff ??= { at: i, how: "replace" };
+      return trail.includes("\n") ? trail : "";
     }
     if (!assertsNormalisation(core)) return s;
     // Keep the part of the sentence that doesn't make the call, when it can
@@ -169,30 +234,84 @@ export function removeNormalisationAssertions(
     // add-back." → "Your T2 shows $180K in salary.").
     const parts = core.replace(/[.!]+$/, "").split(/(;\s+|\s[—–]\s|,\s+(?=(?:and|but|so|which)\s))/);
     const kept: string[] = [];
+    let alone = true;
+    let cutFirst = false;
     for (let k = 0; k < parts.length; k += 2) {
       const clause = parts[k];
-      if (!clause || assertsNormalisation(clause)) continue;
+      if (!clause) continue;
+      if (assertsNormalisation(clause)) {
+        // What is kept so far must stand without this clause.
+        if (kept.length > 0 && !standsAlone(kept.join(""), parts[k - 1] ?? "", clause)) alone = false;
+        if (kept.length === 0) cutFirst = true;
+        continue;
+      }
       if (kept.length === 0) kept.push(clause.replace(/^(?:and|but|so|which)\s+/i, ""));
       else kept.push((parts[k - 1] ?? " ") + clause);
     }
     const rest = kept.join("").trim();
     removed.push(core);
-    if (handoffAt < 0) handoffAt = i;
-    if (rest.split(/\s+/).length >= 4 && !/^(?:which|that|it|this)\b/i.test(rest) && !NORM_TERM_RE.test(rest)) {
+    // The cut clause came first: what's left must not continue it ("one
+    // shows Harjit's salary above a $120K replacement cost…, and another
+    // mentions Harjit's full $285K" → not "Another mentions…" — iknow
+    // pc-session #2).
+    if (cutFirst && CONTINUATION_START_RE.test(rest)) alone = false;
+    if (alone && rest && standsAlone(rest, "", "") && candidateListStatements(rest, sellerMessage).length === 0) {
+      handoff ??= { at: i, how: "after" };
       return rest.charAt(0).toUpperCase() + rest.slice(1) + "." + trail;
     }
-    return "";
+    handoff ??= { at: i, how: "replace" };
+    return trail.includes("\n") ? trail : "";
   });
   if (removed.length === 0 && !opts.callAlreadyCut) return { message, removed };
-  if (removed.length === 0) handoffAt = 0;
-  const sellerRaised = !!sellerMessage && NORM_TERM_RE.test(sellerMessage.replace(/\badd(?:s|ed|ing)? (?:it |that |them |this |those |all )?back\b/i, "add-back"));
-  if (sellerRaised && handoffAt >= 0 && !out.some((x) => /your broker will confirm/i.test(x))) {
+  // With the list gone, "Are there other expenses…?" points at nothing.
+  if (removed.some((r) => isCandidateSentence(r, lists))) {
     const q = out.findIndex((x) => x.includes("?"));
-    const at = q >= 0 ? q : out.length;
-    out.splice(at, 0, `${NORMALISATION_HANDOFF}${q >= 0 ? " " : ""}`);
+    if (q >= 0) out[q] = out[q].replace(/\b(Are|Were|Is|Was) there (?:any )?other\b/, "$1 there any").replace(/^(\s*)Any other\b/, "$1Any").replace(/^(\s*)What other\b/, "$1What");
   }
-  const text = out.join("").replace(/[ \t]{2,}/g, " ").replace(/\n{3,}/g, "\n\n").trim();
+  const h: HandoffAt = handoff ?? { at: 0, how: "before" };
+  // One hand-off per reply: none when the reply already hands it to the
+  // broker in its own words (i-privacy-ux run 3 #8 read "…he'll walk you
+  // through that number directly. Your broker will go through what's added
+  // back with you…"). In a broker-led session the broker is in the room.
+  if (!opts.noHandoff && sellerRaisedAddbacks(sellerMessage) && !handsOffAlready(out.join(""))) {
+    if (h.how === "replace") out[h.at] = `${NORMALISATION_HANDOFF}${/\n/.test(out[h.at]) ? out[h.at] : " "}`;
+    else if (h.how === "before") {
+      // Before the question's paragraph, not between the question and the
+      // statement it stands on ("The financials show a $60,000 due to
+      // shareholder. [hand-off] Is the loan something you'd settle…?").
+      let at = h.at;
+      while (at > 0 && out[at - 1] !== "" && !/\n\s*$/.test(out[at - 1]) && !out[at - 1].includes("?")) at--;
+      while (at > 0 && out[at - 1] === "") at--;
+      out.splice(at, 0, `${NORMALISATION_HANDOFF} `);
+    } else {
+      const t = out[h.at];
+      const tail = t.match(/\s*$/)?.[0] ?? "";
+      out[h.at] = `${t.slice(0, t.length - tail.length)} ${NORMALISATION_HANDOFF}${tail || " "}`;
+    }
+  }
+  const text = out.join("").replace(/[ \t]{2,}/g, " ").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
   return { message: text.charAt(0).toUpperCase() + text.slice(1), removed };
+}
+
+/**
+ * Did the seller raise add-backs / SDE themselves (so a removed call gets
+ * the hand-off)? Their own words only — in a broker-led exchange the
+ * broker's lines don't count (money-talk.sellerRaisesAddbacks).
+ */
+export function sellerRaisedAddbacks(sellerMessage: string | null | undefined): boolean {
+  return sellerRaisesAddbacks(sellerMessage);
+}
+
+/** A sentence that already hands the treatment or the figure to the broker ("Morgan will confirm the final list"). */
+const HANDOFF_WHO_RE =
+  /\b(?:[Yy]our broker|[Tt]he broker|[A-Z][a-z]{2,})(?:'ll|'s| will| is going to| can| is the one to)\s+(?:(?:be the one to|want to|need to)\s+)?(?:confirm|walk you through|go through|go over|take you through|review|work out|decide|finali[sz]e)\b/;
+const HANDOFF_TOPIC_RE = /\b(?:add[- ]?backs?|added back|list|sde|earnings|number|figure|normali[sz]\w*|recast|treatment)\b/i;
+function handsOffAlready(text: string): boolean {
+  if (handsOffEarnings(text)) return true;
+  return splitSentences(text).some((sp) => {
+    const s = sp.text.replace(/[’‘]/g, "'");
+    return !s.includes("?") && HANDOFF_WHO_RE.test(s) && HANDOFF_TOPIC_RE.test(s);
+  });
 }
 
 // ── The same rule for what the turn RECORDS ──
@@ -204,6 +323,55 @@ const DISTRIBUTION_NOTE =
   "Dividends and owner draws are distributions, not expenses, so they aren't added back — the normalization against the statements decides.";
 
 export interface GuardableField { value: string; confidence: string; source?: string; basis?: string }
+
+/** Words that already name the kind of cost ("legalSettlement", "healthLifeInsurance"). */
+const COST_WORD_END_RE = /(?:Expenses?|Costs?|Fees?|Premiums?|Insurance|Settlement|Salary|Salaries|Wages|Interest|Leases?|Payments?|Spend(?:ing)?|Meals|Vehicles?|Entertainment|Travel|Donations?|Bonus(?:es)?|Rent|Compensation|Comp)$/;
+/**
+ * An item key names ONE cost ("ownerVehicle", "legalSettlement",
+ * "mariaSalary", "personalTruck"). Anything else next to "addbacks" names the
+ * list itself — "additionalAddbacks", "addbacksByYear", "addbacks2024",
+ * "addbackSummary", "sellerClaimedAddbacks", "oneTimeAddbacks" (real keys on
+ * Beacon, Harborview and the vf-facts dumps) — and stays the seller's list
+ * under its own key, as before.
+ */
+const COST_NOUN_RE =
+  /(?:expense|cost|fee|premium|insurance|settlement|salar(?:y|ies)|wage|interest|lease|payment|spend|meal|vehicle|truck|car(?:s)?(?![a-z])|van(?:s)?(?![a-z])|boat|entertainment|travel|donation|charit|bonus|rent|compensation|comp(?![a-z])|legal|lawsuit|litigation|phone|club|membership|ticket|box(?![a-z])|perk|dues|tuition|gift|repair|renovation|relocation|severance|consult|audit|accounting|recruit|dividend|draw|pension|rrsp|401k|loan)/i;
+const LIST_WORD_RE = /(?:^|[_-]|(?<=[a-z0-9])(?=[A-Z]))(?:total|summary|list|schedule|by[_-]?year|details?|notes?|breakdown|overview|claimed|proposed|potential|possible|other|additional|all|items|candidates|claims|view|fy\d*|\d{4})(?=$|[_-]|[A-Z0-9])/i;
+
+/**
+ * The neutral key for an add-back ITEM key ("ownerVehicleAddback" →
+ * "ownerVehicle", "discretionaryMealsAddback" → "meals", "addbackLegalFees"
+ * → "legalFees"); null for anything else (a whole add-back list, SDE…).
+ */
+export function addbackItemKey(key: string): string | null {
+  // (Case-sensitive: "addbacks2024" and "addbackSummary" must not read as
+  // "s2024" / "ummary" — the round-A review's mangled keys.)
+  const m = key.match(/^(.+?)[Aa]dd[-_]?[Bb]acks?(?:Candidates?|Claims?|Items?)?$/) ?? key.match(/^[Aa]dd[-_]?[Bb]acks?(?:[-_]([A-Za-z][A-Za-z0-9]*)|([A-Z][A-Za-z0-9]*))$/);
+  if (!m) return null;
+  // snake / kebab → camel ("maria_salary_addback" → "mariaSalary").
+  let item = (m[1] ?? m[2] ?? "").replace(/^[-_]+|[-_]+$/g, "").replace(/[-_]+([A-Za-z0-9])/g, (_, c: string) => c.toUpperCase());
+  if (!item || !COST_NOUN_RE.test(item) || LIST_WORD_RE.test(item)) return null;
+  // No normalisation word may stay in the neutral key.
+  item = item.replace(/[Dd]iscretionary|[Nn]ormali[sz]ed?|[Aa]djusted/g, "");
+  if (item.length < 3) return null;
+  item = item.charAt(0).toLowerCase() + item.slice(1);
+  if (!COST_WORD_END_RE.test(item.charAt(0).toUpperCase() + item.slice(1))) item += "Expense";
+  return NORM_KEY_RE.test(item) ? null : item;
+}
+
+/** A value with its add-back label / treatment clause taken out ("$28K owner vehicles (add-back candidate)" → "$28K owner vehicles"). */
+export function withoutAddbackLabel(value: string): string {
+  const v = value.replace(/\s*[(\[][^()\[\]]*\b(?:add[- ]?backs?|added back|normali[sz]\w*|recast|sde)\b[^()\[\]]*[)\]]/gi, "");
+  // Pieces with the separator before each kept as written ("$28,000 — owner's RAM…").
+  const parts = v.split(/((?<=[.!;])\s+|\s[—–]\s|\n+|,\s+(?=(?:and|which|so|but)\s))/);
+  let out = "";
+  for (let i = 0; i < parts.length; i += 2) {
+    const p = parts[i];
+    if (!p || /\b(?:add[- ]?backs?|added back|adds? back|adding back|normali[sz]\w*|recast|sde)\b/i.test(p)) continue;
+    out += (out ? parts[i - 1] ?? " " : "") + p;
+  }
+  return out.replace(/\s{2,}/g, " ").replace(/[\s,;:—–-]+$/, "").trim();
+}
 
 /**
  * Keeps normalisation conclusions out of the facts:
@@ -224,6 +392,22 @@ export function guardNormalisationFields(
   const changed: string[] = [];
   for (const [key, f] of Object.entries(fields)) {
     const value = String(f.value ?? "");
+    // One item filed as an add-back ("ownerVehicleAddback: $28K … (add-back
+    // candidate)" — live, round A, four of them in one turn): the item is
+    // the seller's fact and is kept under its own name; that it is added
+    // back is the seller's view, for the broker.
+    const item = addbackItemKey(key);
+    if (item) {
+      const cleaned = withoutAddbackLabel(value);
+      notes.push({
+        note: `The seller counts this as an add-back (the treatment is not recorded as a fact): ${cleaned || value}${DISTRIBUTION_RE.test(`${key} ${value}`) ? ` ${DISTRIBUTION_NOTE}` : ""}`,
+        reason: "normalization is the broker's call, made against the statements",
+      });
+      delete fields[key];
+      if (cleaned.replace(/[^A-Za-z0-9]/g, "").length >= 8 && !fields[item]) fields[item] = { ...f, value: cleaned };
+      changed.push(key);
+      continue;
+    }
     if (NORM_KEY_RE.test(key)) {
       if (f.basis && f.basis !== "verbatim") {
         delete fields[key];

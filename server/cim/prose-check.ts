@@ -25,6 +25,7 @@ import { spelledNumbers, CASUAL_FIGURE } from "./spoken-figures";
 import { staleTargets } from "./fact-dates";
 import { mentionsHeldName } from "./sensitive-facts";
 import { genderOfGivenName } from "./given-name-gender";
+import { yearOfFigure } from "./consistency-check";
 
 /** What the prose checks need beyond the numbers: built once per knowledge base (proseKnowledge). */
 export interface ProseKnowledge {
@@ -476,6 +477,89 @@ function guessedGender(text: string, pk: ProseKnowledge): string[] {
   return out;
 }
 
+// ── Places, periods and contract terms: on file, but for something else ──
+
+const ROAD = /\b(?:(?:the\s+)?([A-Z][a-z]{2,}(?:\s[A-Z][a-z]{2,})?)\s(Highway|Freeway|Expressway|Parkway|Pass|Bridge|Tunnel|Corridor)|(Highway|Hwy|Route|Interstate)\s?(\d{1,3}[A-Z]?))\b/g;
+const ROAD_WORDS = new Set(["highw", "hwy", "freew", "expre", "parkw", "pass", "bridg", "tunne", "corri", "route", "inter", "cut", "closed", "closu"]);
+
+/** The clauses of the knowledge base (a fact's line split at ";", sentences and " · "). */
+const clauseCache = new WeakMap<ProseKnowledge, Array<{ raw: string; norm: string }>>();
+function clausesOf(pk: ProseKnowledge): Array<{ raw: string; norm: string }> {
+  const cached = clauseCache.get(pk);
+  if (cached) return cached;
+  const out: Array<{ raw: string; norm: string }> = [];
+  for (const l of pk.lines) for (const c of l.raw.split(/;|\.\s+(?=[A-Z])|\s·\s/)) if (c.trim()) out.push({ raw: c, norm: norm(c) });
+  clauseCache.set(pk, out);
+  return out;
+}
+
+/**
+ * A highway, pass or bridge named in a sentence must be on file for what
+ * the sentence says about it — another fact's mention doesn't do. (Pacific:
+ * "the 2021 floods, when the Coquihalla Highway was cut at Sumas" — the
+ * facts had the floods cutting the highway at Sumas, and the Coquihalla
+ * only in the winter-closures line.)
+ */
+function placesOutOfContext(text: string, pk: ProseKnowledge): string[] {
+  const out: string[] = [];
+  const clauses = clausesOf(pk);
+  for (const { s } of sentences(text)) {
+    for (const m of Array.from(s.matchAll(ROAD))) {
+      const name = m[0].replace(/^the\s+/i, "");
+      const tokens = m[1] ? [norm(m[1]).trim()] : [`${m[3].toLowerCase() === "hwy" ? "highway" : m[3].toLowerCase()} ${m[4].toLowerCase()}`, `hwy ${m[4].toLowerCase()}`];
+      const mentions = clauses.filter((c) => tokens.some((t) => c.norm.includes(` ${t} `)));
+      if (mentions.length === 0) {
+        out.push(`"${name}" is not named in the facts (${clip(s)})`);
+        continue;
+      }
+      // The sentence's other words — not this place, and not another place it
+      // names (a second highway in the same sentence ties nothing).
+      const places = Array.from(s.matchAll(ROAD)).map((x) => x[0]).join(" ");
+      const own = new Set(Array.from(stemsOf(places)).concat(tokens.flatMap((t) => t.split(" ")).map((w) => w.slice(0, 5))));
+      const mine = new Set(Array.from(stemsOf(s.replace(ROAD, " "))).filter((w) => !own.has(w) && !ROAD_WORDS.has(w)));
+      const years = s.match(/\b(?:19|20)\d{2}\b/g) ?? [];
+      const tied = mentions.some((c) => {
+        const theirs = stemsOf(c.raw);
+        return Array.from(mine).some((w) => theirs.has(w)) || years.some((y) => c.raw.includes(y));
+      });
+      if (!tied) out.push(`"${name}" is on file only for something else ("${clip(mentions[0].raw)}") — name places only as the facts tie them to this (${clip(s)})`);
+    }
+  }
+  return out;
+}
+
+const PER_YEAR = /^\s*(?:annually|per\s+year|a\s+year|each\s+year|every\s+year|per\s+annum|yearly)\b/i;
+
+/**
+ * "$347,000 annually" when the facts give that amount for one year only: a
+ * single year's figure is stated with its year, never as every year's.
+ */
+function annualFromOneYear(text: string, pk: ProseKnowledge): string[] {
+  const out: string[] = [];
+  for (const { s } of sentences(text)) {
+    if (/\b(?:FY\s?)?(?:19|20)\d{2}\b/.test(s)) continue;
+    for (const f of parseFiguresAt(s)) {
+      if (f.kind !== "money" || !PER_YEAR.test(s.slice(f.end, f.end + 25).replace(/^[^a-z]*?(?=[a-z])/i, " "))) continue;
+      const years = new Set<string>();
+      let undated = false;
+      for (const l of pk.lines) {
+        for (const k of l.figs) {
+          if (k.kind !== "money" || !within(f.value, f.tolerance, k.value)) continue;
+          const y = yearOfFigure(l.raw, k.index, k.end);
+          if (y) years.add(y);
+          else undated = true;
+        }
+      }
+      if (!undated && years.size === 1) out.push(`"${f.text}" is given as every year's, but on file it is the ${Array.from(years)[0]} figure only — state it with its year (${clip(s)})`);
+    }
+  }
+  return out;
+}
+
+/** Contract terms that describe one party's deal, never a group's. */
+const TERM = /\b(evergreen|exclusive|exclusivity|sole[- ]source|take[- ]or[- ]pay|auto[- ]?renew\w*|month[- ]to[- ]month|cost[- ]plus|master (?:service |services )?agreement|msa)\b/gi;
+const termKey = (t: string) => t.toLowerCase().replace(/[-\s]+/g, " ").replace(/^master (?:service |services )?agreement$/, "msa").replace(/^exclusivity$/, "exclusive").replace(/^auto ?renew\w*$/, "auto renew");
+
 const RANK = /\b(top\s*(?:\d+|three|five|ten|twenty)|#\s?\d+|no\.\s?\d+|number (?:one|two|three)|(?:second|third|fourth|fifth|2nd|3rd|4th|5th)[- ]largest|largest|biggest)\b/i;
 const PARTY = /\b(customer|client|account|supplier|vendor|payer|concentration)s?\b/i;
 const LEGAL = /\b(co-op|co-operative|cooperative|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co|the|and|of)\b\.?/gi;
@@ -484,6 +568,72 @@ const LEGAL_ENDING = /\b(inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company
 /** Words that make a list item a party (customer / supplier), not a topic. */
 const ORG_NOUN = /\b(distributors?|importers?|exporters?|manufacturers?|retailers?|wholesalers?|processors?|grocers?|grocery chain|chain|co-?op|cooperative|brand|suppliers?|vendors?|contractors?|builders?|developers?|hospital|clinic|school|municipality|agency|carriers?|producers?|farms?|stores?|dealers?|restaurants?|hotels?|operators?|partners?|customers?|clients?|accounts?)\b/i;
 
+/** Words that say what kind of business a party is, not which one ("Grocery Distributors", "Building Supply"). */
+const DESCRIPTOR = /^(grocery|groceries|distributors?|distribution|building|buildings|supply|supplies|materials?|beverages?|foods?|dairy|produce|pet|furniture|furnishings|home|logistics|transport|trucking|freight|manufacturing|manufacturers?|industries|industrial|services?|systems?|solutions?|products?|brands?|stores?|markets?|retail|wholesale|wholesalers?|importers?|exporters?|holdings|group|partners|international|national|canada|pacific|coast|west|east|north|south|packaging|plastics|metals?|steel|construction|contractors?|energy|health|healthcare|medical|dental|pharmacy|auto|motors?|equipment|chemicals?|paper|printing|media|technologies|technology|tech|software|consulting|properties|property|realty|farms?|co)$/;
+
+const ORDINAL: Record<string, number> = { first: 1, second: 2, third: 3, fourth: 4, fifth: 5, "1st": 1, "2nd": 2, "3rd": 3, "4th": 4, "5th": 5 };
+const COUNT_WORD: Record<string, number> = { one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, twenty: 20 };
+
+/** What a rank claims: an exact position (1 = largest) or membership of the top N. */
+function rankClaim(rank: string): { position?: number; top?: number } | null {
+  const r = rank.toLowerCase().replace(/[-\s]+/g, " ").trim();
+  const top = /^top\s*(\d+|[a-z]+)$/.exec(r);
+  if (top) {
+    const n = /^\d+$/.test(top[1]) ? Number(top[1]) : COUNT_WORD[top[1]];
+    return n ? { top: n } : null;
+  }
+  const ord = /\b(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th) (?:largest|biggest)\b/.exec(r);
+  if (ord) return { position: ORDINAL[ord[1]] };
+  const num = /(?:#|no\.?|number)\s?(\d+|one|two|three|four|five)\b/.exec(r);
+  if (num) return { position: /^\d+$/.test(num[1]) ? Number(num[1]) : COUNT_WORD[num[1]] };
+  if (/\b(largest|biggest)\b/.test(r)) return { position: 1 };
+  return null;
+}
+
+/** Positions a clause gives ("second largest is …" → 2; "largest customer (Alderbrook)" → 1; "top 5" → ≤5). */
+function clauseRanks(clauseNorm: string): Array<{ position?: number; top?: number }> {
+  const out: Array<{ position?: number; top?: number }> = [];
+  for (const m of Array.from(clauseNorm.matchAll(/ (?:(first|second|third|fourth|fifth|1st|2nd|3rd|4th|5th) )?(largest|biggest) /g))) out.push({ position: m[1] ? ORDINAL[m[1]] : 1 });
+  for (const m of Array.from(clauseNorm.matchAll(/ (?:number|no) (one|two|three|1|2|3) /g))) out.push({ position: /\d/.test(m[1]) ? Number(m[1]) : COUNT_WORD[m[1]] });
+  if (/ anchor (customer|client|account) /.test(clauseNorm)) out.push({ position: 1 });
+  for (const m of Array.from(clauseNorm.matchAll(/ top (\d+|three|five|ten|twenty) /g))) out.push({ top: /^\d+$/.test(m[1]) ? Number(m[1]) : COUNT_WORD[m[1]] });
+  return out;
+}
+
+const claimMet = (claim: { position?: number; top?: number }, on: { position?: number; top?: number }) =>
+  claim.position !== undefined
+    ? on.position === claim.position
+    : claim.top !== undefined && ((on.position !== undefined && on.position <= claim.top) || (on.top !== undefined && on.top <= claim.top));
+
+const NOT_A_NAME = /^(?:FY\d*|Q[1-4]|CAD|USD|January|February|March|April|May|June|July|August|September|October|November|December|Largest|Second|Third|Top|The|Our|Other|Customer|Customers|Client|Clients)$/;
+
+/** Capitalised words in a clause (after its first word) that aren't the party's own. */
+function otherProperNames(clause: string, own: string[]): string[] {
+  const words = clause.trim().split(/\s+/).slice(1).join(" ");
+  return (words.match(/\b[A-Z][A-Za-z]{2,}\b/g) ?? []).filter((w) => !NOT_A_NAME.test(w) && !own.includes(w.toLowerCase()));
+}
+
+/** Ordered lists in a fact ("Top 10 customers FY2024: 1. Alderbrook … 2. Kestrel …"): position by item. */
+function listPosition(raw: string, words: string[]): number | null {
+  const items = Array.from(raw.matchAll(/(?:^|[\s;:(])(\d{1,2})[.)]\s+([^;]{3,200}?)(?=\s+\d{1,2}[.)]\s|;|$)/g));
+  if (items.length < 2 || Number(items[0][1]) !== 1) return null;
+  for (const m of items) {
+    const text = norm(m[2]);
+    if (words.every((w) => text.includes(` ${w}`))) return Number(m[1]);
+  }
+  return null;
+}
+
+/**
+ * Is "largest" / "second-largest" / "top 5" for this party on file? Read
+ * from the facts' own words, clause by clause: the party named there (its
+ * distinctive name, or — where the fact describes rather than names it —
+ * all of its descriptive words: "second largest is building supply company"
+ * for Kestrel Building Supply), with a rank word in the same clause; or its
+ * position in an ordered list. (Pacific: the true "largest" for Alderbrook
+ * and "second-largest" for Kestrel were flagged because the whole name —
+ * "Grocery Distributors Ltd." included — had to sit on one line.)
+ */
 function rankSupported(entity: string, rank: string, pk: ProseKnowledge): boolean {
   const core = norm(entity.replace(LEGAL, " ")).trim().split(" ").filter((w) => w.length >= 3 && !GENERIC_PARTY.test(w));
   if (core.length === 0) return true;
@@ -491,7 +641,29 @@ function rankSupported(entity: string, rank: string, pk: ProseKnowledge): boolea
   const forms = /largest|biggest|number one|#\s?1\b|no\.\s?1\b/.test(r) && !/second|third|fourth|fifth|2nd|3rd|4th|5th/.test(r)
     ? [" largest ", " biggest ", " number one ", " anchor "]
     : [` ${r.replace(/[#.]/g, "").replace(/\s+/g, " ")} `, ` ${r.replace("2nd", "second").replace("3rd", "third")} `, ` ${r.replace(/\bfive\b/, "5").replace(/\bten\b/, "10").replace(/\bthree\b/, "3")} `];
-  return pk.lines.some((l) => core.every((w) => l.norm.includes(` ${w}`)) && forms.some((f) => l.norm.includes(norm(f))));
+  if (pk.lines.some((l) => core.every((w) => l.norm.includes(` ${w}`)) && forms.some((f) => l.norm.includes(norm(f))))) return true;
+
+  const claim = rankClaim(rank);
+  if (!claim) return false;
+  const stem = (w: string) => w.replace(/(ies|es|s)$/, "");
+  const distinctive = core.filter((w) => !DESCRIPTOR.test(w));
+  const descriptive = core.filter((w) => DESCRIPTOR.test(w)).map(stem);
+  const names = (text: string) => distinctive.length > 0 && distinctive.every((w) => text.includes(` ${w}`));
+  const describes = (text: string) => descriptive.length >= 2 && descriptive.every((w) => text.includes(` ${w}`));
+  for (const l of pk.lines) {
+    const pos = distinctive.length > 0 ? listPosition(l.raw, distinctive) : null;
+    if (pos !== null && claimMet(claim, { position: pos })) return true;
+    for (const clause of l.raw.split(/;|\.\s+(?=[A-Z])|\s·\s|\n/)) {
+      const c = norm(clause);
+      if (!names(c) && !describes(c)) continue;
+      // Found only by description, in a clause that names some other party
+      // ("largest is Alderbrook (grocery distributor)" is not a rank for
+      // another grocery distributor): not this one's rank.
+      if (!names(c) && otherProperNames(clause, core).length > 0) continue;
+      if (clauseRanks(c).some((on) => claimMet(claim, on))) return true;
+    }
+  }
+  return false;
 }
 
 function descriptionOnFile(title: string, pk: ProseKnowledge): boolean {
@@ -502,6 +674,26 @@ function descriptionOnFile(title: string, pk: ProseKnowledge): boolean {
   if (core.length === 0) return true;
   const stem = (w: string) => w.replace(/(ies|es|s)$/, "");
   return pk.lines.some((l) => core.every((w) => l.norm.includes(` ${stem(w)}`)));
+}
+
+/**
+ * Contract terms written for a party ("evergreen terms" for Kestrel) must be
+ * in a clause that names that party — "rest of top 10 on evergreen" is not
+ * about the customer named before it.
+ */
+function termsNotOnFile(entity: string, text: string, pk: ProseKnowledge): string[] {
+  const words = norm(entity.replace(LEGAL, " ")).trim().split(" ").filter((w) => w.length >= 3 && !GENERIC_PARTY.test(w));
+  const distinctive = words.filter((w) => !DESCRIPTOR.test(w));
+  const key = distinctive.length > 0 ? distinctive : words;
+  if (key.length === 0) return [];
+  const clauses = clausesOf(pk).filter((c) => key.every((w) => c.norm.includes(` ${w}`)));
+  const out: string[] = [];
+  for (const m of Array.from(text.matchAll(TERM))) {
+    const k = termKey(m[0]);
+    const onFile = clauses.some((c) => Array.from(c.raw.matchAll(TERM)).some((t) => termKey(t[0]) === k));
+    if (!onFile && !out.includes(m[0])) out.push(m[0]);
+  }
+  return out;
 }
 
 /** Customer/supplier items: ranks and descriptions must come from the facts about that party. */
@@ -524,6 +716,9 @@ function partyItems(section: { sectionTitle: string; layoutType: string; layoutD
       const badge = String(it?.badge ?? "");
       const rank = RANK.exec(badge) ?? RANK.exec(String(it?.description ?? "").split(/[.;]/)[0]);
       if (rank && !rankSupported(title, rank[0], pk)) out.push(`"${rank[0]}" for "${title}" — no such ranking for it is on file`);
+      for (const term of termsNotOnFile(title, `${badge} ${String(it?.description ?? "")}`, pk)) {
+        out.push(`"${term}" for "${title}" — no fact ties those terms to it`);
+      }
       // Only an item that names a party ("Regional Pet Food Distributor",
       // "Tidewater Beverage Co.") — not "Individual Technician Licensing".
       if ((ORG_NOUN.test(title) || LEGAL_ENDING.test(title) || rank) && !descriptionOnFile(title, pk)) {
@@ -632,6 +827,8 @@ export function proseProblems(
     if (held) issues.push(`mentions "${held}", which the facts mark confidential — leave it out`);
     const casual = CASUAL_FIGURE.exec(t.text);
     if (casual) issues.push(`"${casual[0]}" is the seller's spoken wording — write it as a clean figure without changing its meaning`);
+    issues.push(...placesOutOfContext(t.text, pk));
+    issues.push(...annualFromOneYear(t.text, pk));
   }
   issues.push(...partyItems(section, pk));
   if (pk.earnings) issues.push(...earningsIssues(section, texts, pk.earnings));

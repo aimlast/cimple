@@ -384,6 +384,22 @@ export async function recordMergeConflicts(
       // the broker routed to the seller, or settled, keeps what it showed.
       const draft = discrepancyForConflict(c, names);
       for (const r of matches) {
+        // Another engine's live row that stands for this dispute but names no
+        // fact (a row raised before rows carried keys — Ridgeline's "Signed
+        // backlog (May 2025)"): it is the one row for the dispute, so it takes
+        // the fact this conflict is about — a resolution then writes back and
+        // every engine recognises the dispute by key.
+        if (r.source !== "merge" && !r.factKey && LIVE_STATUSES.has(r.status) && !refreshed.has(r.id)) {
+          const patch: Partial<InsertDiscrepancy> = {
+            factKey: c.factKey,
+            factYear: c.factYear ?? null,
+            ...(r.sideSources ? {} : { sideSources: draft.sideSources }),
+          };
+          await storage.updateDiscrepancy(r.id, patch);
+          Object.assign(r, patch);
+          refreshed.add(r.id);
+          continue;
+        }
         if (r.source !== "merge" || r.status !== "open" || refreshed.has(r.id)) continue;
         const patch = rewordPatch(r, draft, finalInfo, docs);
         if (!patch) continue;

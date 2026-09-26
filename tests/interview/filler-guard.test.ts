@@ -149,19 +149,20 @@ const Q = "On the lease: is there a personal guarantee from you on it?";
   ok("clarifications, conflicts, privacy promises, empathy, document requests and context are kept");
 }
 
-// ── 4. Closings keep the recap, lose the praise ──
+// ── 4. Closings lose the praise — and the session recap (round A: the tone rule has no exception for the goodbye) ──
 {
   const lakeshore =
     "That comes through clearly — you've built a business that runs on strong management, recurring revenue, and a reputation earned over 27 years. That's exactly what buyers want to see.\n\nWe've covered the critical areas well. I'll flag a few items for your broker to follow up on with Denise — the EMR rating and the Comfort Club retention report.\n\nThanks for your time today, Tony.";
   const out = stripFillerPreamble(lakeshore, { closing: true });
   assert.doesNotMatch(out, /you've built|exactly what buyers want/);
-  assert.match(out, /We've covered the critical areas well/);
+  assert.doesNotMatch(out, /We've covered the critical areas well/);
+  assert.match(out, /^I'll flag a few items for your broker to follow up on with Denise/);
   assert.match(out, /Thanks for your time today, Tony\./);
   const ridgeline = "We've covered a lot of ground today. Everything is saved. It's clear you've built something solid. Thanks, Gord.";
-  assert.equal(stripFillerPreamble(ridgeline, { closing: true }), "We've covered a lot of ground today. Everything is saved. Thanks, Gord.");
+  assert.equal(stripFillerPreamble(ridgeline, { closing: true }), "Everything is saved. Thanks, Gord.");
   const harborview = "One of the cleaner operational pictures I've seen. Thanks for your time, Kyle — everything is saved.";
   assert.equal(stripFillerPreamble(harborview, { closing: true }), "Thanks for your time, Kyle — everything is saved.");
-  ok("goodbyes keep a factual recap and the thanks, and lose praise of the seller");
+  ok("goodbyes keep what is still open and the thanks, and lose the recap and praise of the seller");
 }
 
 // ── 5. Question mode still keeps the answer ──
@@ -236,16 +237,16 @@ const Q = "On the lease: is there a personal guarantee from you on it?";
   assert.equal(isFillerSentence("That $47K premium with a clean claims history is actually favorable given the market."), true);
   assert.equal(isFillerSentence("That's a strong 22% margin for the sector."), true);
 
-  // Closings: praise and machinery go, the facts and a thanks stay.
+  // Closings: praise, recaps and machinery go; what is still open and a thanks stay.
   const cw = "We've covered the leases thoroughly from the documents — Hillhurst through May 2027, Seton through 2031. Since the seller stop signal came through, I want to respect your time. We've made excellent progress — the financials, payer mix and team structure are all well captured. Everything we've covered is saved, and you can pick this up anytime.";
   const out = scrubInternalMachinery(stripFillerPreamble(cw, { closing: true }));
   assert.doesNotMatch(out, /stop signal|excellent progress|well captured/);
-  assert.match(out, /Hillhurst through May 2027/);
-  assert.match(out, /Everything we've covered is saved/);
+  assert.doesNotMatch(out, /We've covered the leases/);
+  assert.equal(out, "Everything we've covered is saved, and you can pick this up anytime.");
   const hv = "We've covered the critical ground. The outstanding items are Kyle's tooling spreadsheet and the template employment agreement. Thank you for being so thorough — this is one of the cleaner operational pictures I've seen.";
   assert.equal(
     stripFillerPreamble(hv, { closing: true }),
-    "We've covered the critical ground. The outstanding items are Kyle's tooling spreadsheet and the template employment agreement. Thank you.",
+    "The outstanding items are Kyle's tooling spreadsheet and the template employment agreement. Thank you.",
   );
   // Business vocabulary is not machinery.
   assert.equal(leaksInternalMachinery("Is the client documentation in your knowledge base current for every managed client?"), false);

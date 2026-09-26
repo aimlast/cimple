@@ -9,6 +9,7 @@ import { normalizeVideo, parseVideoUrl, type VideoItem } from "@shared/cim-media
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import { useCimMedia } from "../CimMediaContext";
+import { BlockTitle } from "./BlockTitle";
 
 interface RendererProps {
   layoutData: Record<string, unknown>;
@@ -37,9 +38,7 @@ export function VideoRenderer({ layoutData, brokerMode }: RendererProps) {
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">{data.title}</h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className={cn("grid gap-6", data.items.length > 1 && "sm:grid-cols-2")}>
         {data.items.map((it, i) => (
           <figure key={`${it.mediaId ?? it.url}-${i}`} className="min-w-0">

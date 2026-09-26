@@ -20,7 +20,9 @@ import {
   type UiNormalization,
   type UiReclassifiedTable,
   type UiWorkingCapital,
+  type UiWorkingCapitalItem,
 } from "../financial/shape";
+import { isExcludedWorkingCapitalAsset, isExcludedWorkingCapitalLiability, workingCapitalHistory } from "../financial/normalization-rules";
 
 type AnalysisLike = Pick<FinancialAnalysis, "id" | "version" | "status" | "brokerReviewedAt"> & {
   reclassifiedPnl?: unknown;
@@ -105,7 +107,10 @@ export interface CimFinancials {
    * (earnings-canon.ts withBridgeOverride): what the writer is told instead.
    */
   bridgeWithheld?: string | null;
-  workingCapital: UiWorkingCapital | null;
+  /** Always on the cash-free, debt-free basis the peg uses (cimWorkingCapital). */
+  workingCapital: CimWorkingCapital | null;
+  /** Year-end debt from the balance sheet (cimDebt), so a debt figure is always tied to its year. */
+  debt?: CimDebt | null;
   /**
    * When each of the bridge's figures last changed, per metric and year
    * ("adjusted|2024" / "sde|2023" → ISO; see bridgeFigures): a broker's
@@ -117,6 +122,172 @@ export interface CimFinancials {
 }
 
 const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+
+/**
+ * Working capital as a CIM may state it: cash-free and debt-free — the
+ * basis a peg is always set on.
+ *
+ * Pacific (2026-09-26): an analysis stored before the cash-free rule listed
+ * cash and the current portion of long-term debt as working-capital lines
+ * ($1,022,999 "net working capital"), the writer set that beside the $2.4M
+ * peg and told buyers of a seller-funded "shortfall" that doesn't exist (on
+ * the peg's own basis NWC was above $2.4M). The analysis's exclusions
+ * (normalization-rules.ts) are applied here to whatever is stored, so an
+ * old run and a new one read the same; the peg is the analysis's.
+ */
+export interface CimWorkingCapital {
+  asOfPeriod?: string;
+  currentAssets: UiWorkingCapitalItem[];
+  currentLiabilities: UiWorkingCapitalItem[];
+  /** Cash-free, debt-free: the lines above. */
+  netWorkingCapital: number;
+  /** Lines left out (cash, bank debt, current portion of debt, shareholder loans, income taxes). */
+  excluded: Array<UiWorkingCapitalItem & { side: "asset" | "liability" }>;
+  /** Total current assets − total current liabilities, cash and debt included: never NWC in a CIM. */
+  allInNetWorkingCapital: number | null;
+  /** Year-end NWC per fiscal year on the same basis (from the balance sheet). */
+  history?: Record<string, number>;
+  /**
+   * The same figures with income taxes payable counted as working capital.
+   * The analysis leaves them out (settled at closing); some purchase
+   * agreements keep them in, so a CIM stating that figure isn't wrong
+   * (Pacific's statements: $2,420,000 with them, $2,538,000 without).
+   */
+  withIncomeTaxes?: { incomeTaxesPayable: number; netWorkingCapital: number; history?: Record<string, number> };
+  pegAmount: number | null;
+  pegBasis?: string;
+  /**
+   * A stored peg that is net working capital counting cash and debt (an
+   * analysis from before the cash-free rule — Ridgeline's $1,555,000 peg was
+   * its all-in $1,555,130): never compared with the cash-free figure, so it
+   * isn't stated at all. `pegAmount` is null when this is set.
+   */
+  pegWithheld?: { amount: number; allIn: number; reason: string };
+}
+
+const itemSum = (xs: UiWorkingCapitalItem[]) => xs.reduce((s, i) => s + (Number(i.amount) || 0), 0);
+const INCOME_TAX_PAYABLE = /\b(?:income|corporate)\s+(?:income\s+)?tax(?:es)?\s+payable\b/i;
+const near = (a: number, b: number) => Math.abs(a - b) <= Math.max(1000, Math.abs(b) * 0.005);
+
+/** Total current assets − total current liabilities per year, cash and debt included (never NWC — only to recognise a figure on that basis). */
+function allInHistory(bs: UiReclassifiedTable | null | undefined): Record<string, number> {
+  if (!bs || !Array.isArray(bs.rows)) return {};
+  const years = bs.years?.length ? bs.years : Array.from(new Set(bs.rows.flatMap((r) => Object.keys(r.values ?? {}))));
+  const out: Record<string, number> = {};
+  for (const y of years) {
+    const total = (category: string) => bs.rows.filter((r) => r.category === category && Number.isFinite(r.values?.[y])).map((r) => r.values[y]);
+    const ca = total("Current Assets");
+    const cl = total("Current Liabilities");
+    if (ca.length === 0 || cl.length === 0) continue;
+    out[y] = Math.round(Math.abs(sum(ca)) - Math.abs(sum(cl)));
+  }
+  return out;
+}
+
+export function cimWorkingCapital(wc: UiWorkingCapital | null | undefined, balanceSheet?: UiReclassifiedTable | null): CimWorkingCapital | null {
+  if (!wc || (!Array.isArray(wc.currentAssets) && !Array.isArray(wc.currentLiabilities))) return null;
+  const assets = (wc.currentAssets ?? []).filter((i) => i && i.name);
+  const liabilities = (wc.currentLiabilities ?? []).filter((i) => i && i.name);
+  const excluded: CimWorkingCapital["excluded"] = [
+    ...assets.filter((i) => isExcludedWorkingCapitalAsset(i.name)).map((i) => ({ ...i, side: "asset" as const })),
+    ...liabilities.filter((i) => isExcludedWorkingCapitalLiability(i.name)).map((i) => ({ ...i, side: "liability" as const })),
+  ];
+  const currentAssets = assets.filter((i) => !isExcludedWorkingCapitalAsset(i.name));
+  const currentLiabilities = liabilities.filter((i) => !isExcludedWorkingCapitalLiability(i.name));
+  const hasLines = currentAssets.length + currentLiabilities.length > 0;
+  const allIn = assets.length + liabilities.length > 0 ? itemSum(assets) - itemSum(liabilities) : null;
+  // No lines at all: only the stored total, which can't be checked for cash — trust it only when nothing was listed.
+  const netWorkingCapital = hasLines || excluded.length > 0 ? itemSum(currentAssets) - itemSum(currentLiabilities) : wc.netWorkingCapital;
+  const fromSheet = workingCapitalHistory(balanceSheet);
+  const history = Object.keys(fromSheet).length > 0 ? fromSheet : wc.history;
+  let peg = typeof wc.pegAmount === "number" ? wc.pegAmount : typeof wc.targetNwc === "number" ? wc.targetNwc : null;
+
+  // Income taxes payable counted in, for a CIM that states that figure.
+  const taxLines = excluded.filter((i) => i.side === "liability" && INCOME_TAX_PAYABLE.test(i.name));
+  let withIncomeTaxes: CimWorkingCapital["withIncomeTaxes"];
+  if (taxLines.length > 0 && itemSum(taxLines) !== 0) {
+    const taxes = itemSum(taxLines);
+    const byYear: Record<string, number> = {};
+    if (Object.keys(fromSheet).length > 0 && balanceSheet) {
+      for (const [y, v] of Object.entries(fromSheet)) {
+        const t = balanceSheet.rows.filter((r) => r.category === "Current Liabilities" && INCOME_TAX_PAYABLE.test(r.name) && Number.isFinite(r.values?.[y])).map((r) => Math.abs(r.values[y]));
+        if (t.length > 0) byYear[y] = v - sum(t);
+      }
+    }
+    withIncomeTaxes = { incomeTaxesPayable: taxes, netWorkingCapital: netWorkingCapital - taxes, ...(Object.keys(byYear).length > 0 ? { history: byYear } : {}) };
+  }
+
+  // A peg on the all-in basis (cash and debt counted) is withheld: set beside
+  // the cash-free figure it would invent a shortfall or an excess.
+  let pegWithheld: CimWorkingCapital["pegWithheld"];
+  if (peg !== null) {
+    const allInYears = allInHistory(balanceSheet);
+    const allInValues = [...(excluded.length > 0 && allIn !== null ? [allIn] : []), ...Object.values(allInYears)];
+    const avg = (xs: number[]) => (xs.length > 1 ? [xs.reduce((s, x) => s + x, 0) / xs.length] : []);
+    const cashFree = [
+      netWorkingCapital,
+      ...Object.values(history ?? {}),
+      ...avg(Object.values(history ?? {})),
+      ...(withIncomeTaxes ? [withIncomeTaxes.netWorkingCapital, ...Object.values(withIncomeTaxes.history ?? {}), ...avg(Object.values(withIncomeTaxes.history ?? {}))] : []),
+    ];
+    const hit = [...allInValues, ...avg(Object.values(allInYears))].find((v) => near(peg!, v));
+    if (hit !== undefined && !cashFree.some((v) => near(peg!, v)) && !near(hit, netWorkingCapital)) {
+      pegWithheld = {
+        amount: peg,
+        allIn: Math.round(hit),
+        reason: `the peg on file (${money(peg)}) is net working capital counting cash and debt (${money(Math.round(hit))}), not the cash-free, debt-free basis a peg is set on`,
+      };
+      peg = null;
+    }
+  }
+  return {
+    ...(wc.asOfPeriod ? { asOfPeriod: wc.asOfPeriod } : {}),
+    currentAssets,
+    currentLiabilities,
+    netWorkingCapital,
+    excluded,
+    allInNetWorkingCapital: excluded.length > 0 ? allIn : null,
+    ...(history && Object.keys(history).length > 0 ? { history } : {}),
+    ...(withIncomeTaxes ? { withIncomeTaxes } : {}),
+    pegAmount: peg,
+    ...(wc.pegBasis && peg !== null ? { pegBasis: wc.pegBasis } : {}),
+    ...(pegWithheld ? { pegWithheld } : {}),
+  };
+}
+
+/** Year-end debt per fiscal year, from the balance sheet. */
+export interface CimDebt {
+  years: string[];
+  /** Term debt (loans, equipment loans, notes, finance leases), current portion included. */
+  termDebt: Record<string, number>;
+  currentPortion: Record<string, number>;
+  /** Drawn on the operating line / bank overdraft. */
+  bankIndebtedness: Record<string, number>;
+}
+
+const BANK_LINE = /\b(bank\s+indebtedness|overdraft|operating\s+(?:line|loan)|lines?\s+of\s+credit|revolv\w*|credit\s+facilit(?:y|ies))\b/i;
+const TERM_DEBT = /\b(long[- ]term\s+debt|term\s+loans?|equipment\s+loans?|vehicle\s+loans?|notes?\s+payable|(?:capital|finance)\s+lease\s+obligations?|bank\s+loans?|mortgages?(?:\s+payable)?|current\s+portion)\b/i;
+
+export function cimDebt(balanceSheet: UiReclassifiedTable | null | undefined): CimDebt | null {
+  if (!balanceSheet || !Array.isArray(balanceSheet.rows)) return null;
+  const rows = balanceSheet.rows.filter((r) => /liabilit/i.test(r.category ?? "") && !/deferred|future\s+income\s+tax|shareholder|due\s+to/i.test(r.name));
+  const years = (balanceSheet.years?.length ? balanceSheet.years : Array.from(new Set(rows.flatMap((r) => Object.keys(r.values ?? {}))))).slice().sort();
+  const termDebt: Record<string, number> = {};
+  const currentPortion: Record<string, number> = {};
+  const bankIndebtedness: Record<string, number> = {};
+  for (const y of years) {
+    const v = (r: (typeof rows)[number]) => (Number.isFinite(r.values?.[y]) ? Math.abs(r.values[y]) : null);
+    const bank = rows.filter((r) => BANK_LINE.test(r.name)).map(v).filter((x): x is number => x !== null);
+    const term = rows.filter((r) => !BANK_LINE.test(r.name) && TERM_DEBT.test(r.name)).map(v).filter((x): x is number => x !== null);
+    const current = rows.filter((r) => /current\s+portion/i.test(r.name)).map(v).filter((x): x is number => x !== null);
+    if (bank.length) bankIndebtedness[y] = sum(bank);
+    if (term.length) termDebt[y] = sum(term);
+    if (current.length) currentPortion[y] = sum(current);
+  }
+  const used = years.filter((y) => y in termDebt || y in bankIndebtedness);
+  if (used.length === 0) return null;
+  return { years: used, termDebt, currentPortion, bankIndebtedness };
+}
 
 function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>): Record<string, CimPnlYear> {
   const computedNi = computePnlNetIncome(table);
@@ -376,9 +547,10 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
   const norm = row.normalization as UiNormalization | null;
   const hasTable = !!table && Array.isArray(table.rows) && table.rows.length > 0 && Array.isArray(table.years);
   const hasNorm = !!norm && Array.isArray(norm.addbacks);
-  const wc = row.workingCapital as UiWorkingCapital | null;
-  const hasWc = !!wc && (Array.isArray(wc.currentAssets) || Array.isArray(wc.currentLiabilities));
-  if (!hasTable && !hasNorm && !hasWc) return null;
+  const balanceSheet = (row.reclassifiedBalanceSheet ?? null) as UiReclassifiedTable | null;
+  const wc = cimWorkingCapital(row.workingCapital as UiWorkingCapital | null, balanceSheet);
+  const debt = cimDebt(balanceSheet);
+  if (!hasTable && !hasNorm && !wc && !debt) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
   const years = Array.from(new Set([...(hasTable ? table!.years : []), ...(hasNorm ? norm!.years ?? [] : [])])).sort();
   const changedAt = hasNorm ? earningsChangedAt(analysis, history ?? []) : {};
@@ -394,7 +566,8 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
           .map((r) => ({ category: r.category, name: r.name, values: { ...r.values } }))
       : [],
     bridge: hasNorm ? bridgeOf(norm!) : null,
-    workingCapital: hasWc ? wc : null,
+    workingCapital: wc,
+    ...(debt ? { debt } : {}),
     ...(Object.keys(changedAt).length > 0 ? { bridgeChangedAt: changedAt } : {}),
   };
 }
@@ -551,17 +724,80 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     }
   }
 
-  const wc = fin.workingCapital;
-  if (wc) {
-    out.push(`\nWORKING CAPITAL${wc.asOfPeriod ? ` (as of ${wc.asOfPeriod})` : ""}:`);
-    for (const i of wc.currentAssets ?? []) out.push(`Current asset — ${i.name}: ${money(i.amount)}`);
-    for (const i of wc.currentLiabilities ?? []) out.push(`Current liability — ${i.name}: ${money(i.amount)}`);
-    if (typeof wc.netWorkingCapital === "number") out.push(`Net working capital: ${money(wc.netWorkingCapital)}`);
-    const history = Object.entries(wc.history ?? {});
-    if (history.length > 1) out.push(`Year-end net working capital: ${history.map(([y, v]) => `${y} ${money(v)}`).join(" · ")}`);
-    if (typeof wc.pegAmount === "number") out.push(`Working capital peg (target): ${money(wc.pegAmount)}${wc.pegBasis ? ` — ${wc.pegBasis}` : ""}`);
-  }
+  out.push(...workingCapitalLines(fin.workingCapital));
+  out.push(...debtLines(fin.debt));
   return out.filter((l) => l !== "").join("\n");
+}
+
+/** "2024-12-31" → "December 31, 2024"; anything else as written. */
+export function periodLabel(period: string | null | undefined): string {
+  const p = String(period ?? "").trim();
+  const m = /^((?:19|20)\d{2})-(\d{2})-(\d{2})$/.exec(p);
+  if (!m) return p;
+  const d = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3])));
+  return d.toLocaleDateString("en-US", { month: "long", day: "numeric", year: "numeric", timeZone: "UTC" });
+}
+
+/**
+ * The working-capital part of the block: cash-free, debt-free lines, what
+ * was left out and why, year-end history on the same basis, the peg, and
+ * the difference from the peg computed here (the writer never works out a
+ * "shortfall" itself).
+ */
+export function workingCapitalLines(wc: CimWorkingCapital | null | undefined): string[] {
+  if (!wc) return [];
+  const out: string[] = [];
+  const asOf = wc.asOfPeriod ? periodLabel(wc.asOfPeriod) : "";
+  out.push(`\nWORKING CAPITAL${asOf ? ` (as of ${asOf})` : ""} — cash-free, debt-free: the same basis as the peg:`);
+  for (const i of wc.currentAssets) out.push(`Current asset — ${i.name}: ${money(i.amount)}`);
+  for (const i of wc.currentLiabilities) out.push(`Current liability — ${i.name}: ${money(i.amount)}`);
+  out.push(`Net working capital (cash-free, debt-free): ${money(wc.netWorkingCapital)}`);
+  if (wc.excluded.length > 0) {
+    out.push(
+      `Not part of net working capital (settled at closing on a cash-free, debt-free basis — never list these as working-capital lines, never add them into net working capital, never compare them with the peg): ${wc.excluded.map((i) => `${i.name} ${money(i.amount)}`).join("; ")}`,
+    );
+  }
+  const history = Object.entries(wc.history ?? {}).sort(([a], [b]) => a.localeCompare(b));
+  if (history.length > 1) out.push(`Year-end net working capital (cash-free, debt-free): ${history.map(([y, v]) => `${y} ${money(v)}`).join(" · ")}`);
+  const tax = wc.withIncomeTaxes;
+  if (tax) {
+    const taxHistory = Object.entries(tax.history ?? {}).sort(([a], [b]) => a.localeCompare(b));
+    out.push(
+      `The figures above leave income taxes payable (${money(tax.incomeTaxesPayable)}) out, as settled at closing; counted as working capital, as some purchase agreements do, net working capital${asOf ? ` at ${asOf}` : ""} is ${money(tax.netWorkingCapital)}${taxHistory.length > 1 ? ` (year-end: ${taxHistory.map(([y, v]) => `${y} ${money(v)}`).join(" · ")})` : ""}. Use one treatment throughout and say which.`,
+    );
+  }
+  const where = asOf ? `at ${asOf}` : "at the date above";
+  if (typeof wc.pegAmount === "number") {
+    out.push(`Working capital peg (target): ${money(wc.pegAmount)}${wc.pegBasis ? ` — ${wc.pegBasis}` : ""}`);
+    const gap = (nwc: number) => {
+      const d = Math.round(nwc - wc.pegAmount!);
+      return Math.abs(d) < 1 ? "equal to the peg" : `${money(Math.abs(d))} ${d > 0 ? "above" : "below"} the peg`;
+    };
+    // Whether the peg counts income taxes is the purchase agreement's call:
+    // both differences are given when the treatments disagree.
+    const alt = tax && !/income\s+tax/i.test(wc.pegBasis ?? "") && gap(tax.netWorkingCapital) !== gap(wc.netWorkingCapital) ? ` (${gap(tax.netWorkingCapital)} with income taxes payable counted as working capital)` : "";
+    out.push(
+      `Net working capital ${where} was ${gap(wc.netWorkingCapital)}${alt}. The closing adjustment is measured on the balances at closing, not these — never promise buyers a shortfall or an excess.`,
+    );
+  } else if (wc.pegWithheld) {
+    out.push(
+      `No working capital peg can be stated: ${wc.pegWithheld.reason}. Never state a peg or a target working capital, and never compare net working capital with one — describe the closing adjustment only as a mechanism.`,
+    );
+  }
+  return out;
+}
+
+/** Year-end debt from the balance sheet: every debt figure is tied to its year. */
+export function debtLines(debt: CimDebt | null | undefined): string[] {
+  if (!debt) return [];
+  const out = ["\nDEBT AT YEAR END (balance sheet — a debt or credit-line balance is always stated with its year; an undated debt figure in the facts that matches another year's balance is that year's):"];
+  const term = yearRow("Term debt incl. current portion", debt.years, (y) => debt.termDebt[y]);
+  if (term) out.push(term);
+  const cur = yearRow("of which current portion", debt.years, (y) => debt.currentPortion[y]);
+  if (cur) out.push(cur);
+  const bank = yearRow("Drawn on the operating line / bank indebtedness", debt.years, (y) => debt.bankIndebtedness[y]);
+  if (bank) out.push(bank);
+  return out.length > 1 ? out : [];
 }
 
 /** The bridge year by year, for the figure check's waterfall test (figure-check KnownBridge). */

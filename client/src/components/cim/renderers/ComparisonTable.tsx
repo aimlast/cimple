@@ -14,6 +14,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { comparisonTableView } from "@shared/cim-chart-values";
 import { ProseFallback } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface ComparisonRow {
   label: string;
@@ -53,11 +54,7 @@ export function ComparisonTableRenderer({ layoutData, content }: RendererProps) 
 
   return (
     <div className="min-w-0">
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="max-w-full overflow-x-auto rounded-lg border border-card-border">
         <table className="w-full text-sm border-collapse">
           <thead>

@@ -25,6 +25,8 @@ import { extractFinancialData, type ExtractedStatement } from "./extractor";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
 import { filterDiscrepancyItems, dropReason } from "../cim/discrepancy-filter";
+import { analysisFactKey } from "./discrepancy-fact-key";
+import { correctBalanceSheetFigures } from "./note-figures";
 import { scrubPrivateText } from "../cim/discrepancy-privacy";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
@@ -534,6 +536,7 @@ export async function runFinancialAnalysis(
       existingDiscrepancies,
       sources.docMetaById,
       sources.figureIndex,
+      (deal.extractedInfo as Record<string, unknown> | null) || {},
     );
     // One conflict, one row: a verification-check row for a conflict this
     // analysis raised gives way to the analysis's row (discrepancy-check.ts).
@@ -584,13 +587,46 @@ export function markPrivateMaterial(result: AnalysisOutput, index: FigureIndex):
 }
 
 /** Canonical EBITDA/SDE from the final add-back list; text that disagrees is flagged. */
-export function finalizeEarnings(result: AnalysisOutput): AnalysisOutput {
+export function finalizeEarnings(input: AnalysisOutput): AnalysisOutput {
+  const result = withBalanceSheetFiguresChecked(input);
   const normalization = withCanonicalEarnings(flagEarningsNotes(result.normalization));
   const { insights, mismatches } = flagEarningsStatements(result.insights, normalization);
   const aiReasoning = mismatches.length > 0
     ? `${result.aiReasoning}${result.aiReasoning ? "\n\n" : ""}Figures checked in code: ${mismatches.map((m) => `${m.where} states ${m.year} ${m.label} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`).join("; ")}.`
     : result.aiReasoning;
   return { ...result, normalization, insights, aiReasoning };
+}
+
+/**
+ * Balance-sheet figures the notes and insights tie to a year are checked
+ * against the reclassified balance sheet (note-figures.ts): a figure that is
+ * another year's balance is corrected to the named year's.
+ */
+export function withBalanceSheetFiguresChecked(result: AnalysisOutput): AnalysisOutput {
+  const bs = result.reclassifiedBalanceSheet;
+  if (!bs?.rows?.length) return result;
+  const fix = (t: string) => correctBalanceSheetFigures(t, bs).text;
+  const fixNotes = (notes: string[] | undefined) => (notes ? notes.map(fix) : notes);
+  const fixInsights = (list: any[] | undefined) => (Array.isArray(list) ? list.map((i) => (i && typeof i === "object" ? { ...i, title: typeof i.title === "string" ? fix(i.title) : i.title, detail: typeof i.detail === "string" ? fix(i.detail) : i.detail } : i)) : list);
+  const insights = result.insights && typeof result.insights === "object"
+    ? {
+        ...result.insights,
+        positive: fixInsights(result.insights.positive),
+        negative: fixInsights(result.insights.negative),
+        ...(result.insights.neutral ? { neutral: fixInsights(result.insights.neutral) } : {}),
+      }
+    : result.insights;
+  const wc = result.workingCapital && typeof result.workingCapital === "object" && Array.isArray(result.workingCapital.notes)
+    ? { ...result.workingCapital, notes: fixNotes(result.workingCapital.notes) }
+    : result.workingCapital;
+  return {
+    ...result,
+    normalization: result.normalization ? { ...result.normalization, notes: fixNotes(result.normalization.notes) } : result.normalization,
+    reclassifiedPnl: result.reclassifiedPnl ? { ...result.reclassifiedPnl, notes: fixNotes(result.reclassifiedPnl.notes) } : result.reclassifiedPnl,
+    reclassifiedBalanceSheet: { ...bs, notes: fixNotes(bs.notes) },
+    workingCapital: wc,
+    insights,
+  };
 }
 
 // ── Derivations for comps ──
@@ -763,6 +799,29 @@ export function reconcileNetIncome(
     }
   }
 
+  // The other way round (Ridgeline 2024: rows 936,410 vs reported 896,410,
+  // +40,000): items the model took OUT of their parent lines and then filed
+  // under Excluded — personal expenses run through the company, a one-time
+  // cost — are deducted by nobody, so net income comes out high by exactly
+  // their total. When a set of Excluded expense rows accounts for every
+  // year's gap (and nothing in the years that tie), they are expenses again.
+  const excludedFix = excludedCarveOutRepair(pnl, mismatches);
+  if (excludedFix) {
+    const remaining = findNetIncomeMismatches(excludedFix.pnl, normalization);
+    if (remaining.length === 0) {
+      return {
+        pnl: excludedFix.pnl,
+        normalization: {
+          ...normalization,
+          notes: [
+            ...(normalization.notes ?? []),
+            `Income Statement net income now ties to the reported net income used here (${excludedFix.labels.join(", ")} counted as expenses again on the Income Statement).`,
+          ],
+        },
+      };
+    }
+  }
+
   // Unexplained delta — flag on both panels, change nothing.
   const detail = mismatches
     .map((m) => `${m.year}: Income Statement ${fmt(m.reclassified)} vs reported ${fmt(m.reported)} (${m.delta > 0 ? "+" : "−"}${fmt(Math.abs(m.delta))})`)
@@ -773,6 +832,44 @@ export function reconcileNetIncome(
     pnl: { ...pnl, notes: [...(pnl.notes ?? []), pnlNote] },
     normalization: { ...normalization, notes: [...(normalization.notes ?? []), normNote] },
   };
+}
+
+/** Rows that are a subtotal or a result, never an expense of their own. */
+const SUBTOTAL_ROW_RE = /\b(?:total|subtotal|gross (?:profit|margin)|net (?:income|earnings|loss|profit)|ebitda|ebit|income (?:before|from)|operating (?:income|profit)|margin|earnings before)\b/i;
+
+/**
+ * Pure: the Income Statement with Excluded expense rows counted as expenses
+ * again, when a set of them explains every mismatched year's gap exactly
+ * (rows high by their total) and holds nothing in the years that tie — else
+ * null. At most 8 candidate rows are weighed (every subset).
+ */
+export function excludedCarveOutRepair(
+  pnl: UiReclassifiedTable,
+  mismatches: Array<{ year: string; delta: number; reported: number }>,
+): { pnl: UiReclassifiedTable; labels: string[] } | null {
+  if (mismatches.length === 0 || mismatches.some((m) => m.delta <= 0)) return null;
+  const candidates = pnl.rows
+    .map((r, i) => ({ r, i }))
+    .filter(({ r }) => r.category === "Excluded" && !r.categoryOverride && !SUBTOTAL_ROW_RE.test(r.name ?? "") && Object.values(r.values ?? {}).some((v) => typeof v === "number" && v !== 0))
+    .slice(0, 8);
+  if (candidates.length === 0) return null;
+  const mismatched = new Set(mismatches.map((m) => m.year));
+  const otherYears = (pnl.years ?? []).filter((y) => !mismatched.has(y));
+  let best: number[] | null = null;
+  for (let mask = 1; mask < 1 << candidates.length; mask++) {
+    const pick = candidates.filter((_, k) => mask & (1 << k));
+    const sum = (y: string) => pick.reduce((s, { r }) => s + Math.abs(r.values?.[y] ?? 0), 0);
+    const explains = mismatches.every((m) => Math.abs(sum(m.year) - m.delta) <= Math.max(100, Math.abs(m.reported) * 0.005));
+    if (!explains || otherYears.some((y) => sum(y) > 0)) continue;
+    const ids = pick.map((p) => p.i);
+    if (!best || ids.length < best.length) best = ids;
+  }
+  if (!best) return null;
+  const chosen = new Set(best);
+  const rows = pnl.rows.map((r, i) => (chosen.has(i) ? { ...r, category: "Operating Expenses" } : r));
+  const labels = pnl.rows.filter((_, i) => chosen.has(i)).map((r) => r.name);
+  const note = `${labels.join(", ")} ${labels.length === 1 ? "was" : "were"} taken out of ${labels.length === 1 ? "its" : "their"} parent line${labels.length === 1 ? "" : "s"} and shown under Excluded, so nothing deducted ${labels.length === 1 ? "it" : "them"} and net income came out high by ${mismatches.map((m) => `${new Intl.NumberFormat("en-US", { maximumFractionDigits: 0 }).format(m.delta)} in ${m.year}`).join(", ")}. ${labels.length === 1 ? "It is" : "They are"} counted as operating expenses again; the normalization still adds back what it lists.`;
+  return { pnl: { ...pnl, rows, notes: [...(pnl.notes ?? []), note] }, labels };
 }
 
 // ── Carry-forward of broker edits across versions ──
@@ -1123,12 +1220,32 @@ async function persistFinancialDiscrepancies(
   existing: Discrepancy[],
   docMetaById: Record<string, { kind: string; brokerOnly: boolean }> = {},
   figureIndex?: FigureIndex,
+  /** The deal's facts: every finding (and every open row of ours) names the fact it is about. */
+  info?: Record<string, unknown>,
 ): Promise<void> {
   const live = existing.filter((d) => d.status !== "superseded");
   const byId = new Map(live.map((d) => [d.id, d]));
   const settled = live.filter((d) => d.status === "resolved" || d.status === "accepted");
   const unsettled = live.filter((d) => d.status !== "resolved" && d.status !== "accepted");
   const refreshed = new Set<string>();
+
+  // The fact each finding is about, when the model named none that is on file
+  // ("Owner compensation (2024)" → ownerSalary, "Signed backlog" → backlog).
+  if (info) {
+    rawItems = rawItems.map((item) => {
+      const hit = analysisFactKey(item, info);
+      return hit ? { ...item, factKey: hit.factKey, factYear: item.factYear ?? hit.factYear } : item;
+    });
+    // Rows of ours raised before (or by a run that named no key) get theirs too.
+    for (const row of unsettled) {
+      if (row.source !== "financial_analysis" || row.factKey) continue;
+      const hit = analysisFactKey({ field: row.field, factYear: row.factYear, sourceA: { value: row.interviewValue ?? "" }, sourceB: { value: row.documentValue ?? "" } }, info);
+      if (!hit) continue;
+      await storage.updateDiscrepancy(row.id, { factKey: hit.factKey, ...(row.factYear ? {} : { factYear: hit.factYear }) });
+      row.factKey = hit.factKey;
+      if (!row.factYear) row.factYear = hit.factYear;
+    }
+  }
 
   // Dividends are distributions, not owner compensation — in the conflict
   // the broker reads too, not only in the add-backs: a side that folds a
@@ -1225,6 +1342,9 @@ async function persistFinancialDiscrepancies(
     await storage.updateDiscrepancy(id, { status: "superseded" });
   }
 }
+
+/** For tests: the persistence step, with a fake store. */
+export const _persistFinancialDiscrepanciesForTests = persistFinancialDiscrepancies;
 
 // ── Comprehensive AI analysis ──
 

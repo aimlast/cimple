@@ -435,7 +435,56 @@ export function normaliseExtraction(raw: Record<string, unknown>, sourceText?: s
   return structureExtraction(guarded.data);
 }
 
-function structureExtraction(raw: Record<string, unknown>): ExtractedDocumentData {
+/** A statement's own expense listing ("operatingExpenseBreakdown", "operatingExpensesDetail"): its lines as printed. */
+const EXPENSE_LISTING_KEY = /^(?:operating)?expens\w*?(?:Breakdown|Detail|Details|Lines|Items|Schedule)$/i;
+/**
+ * The owner's pay as a printed line of that listing: "Management salary —
+ * shareholder: $180,000", "Management salary $180,000", "Officers'
+ * compensation $1,120,000 (2024)".
+ */
+const OWNER_PAY_LINE_RE =
+  /\b(?:management salar(?:y|ies)|shareholders?'? salar(?:y|ies)|owners?'?s? (?:salary|salaries|compensation|remuneration)|officers?'? (?:salary|salaries|compensation))\b(?:\s*[—–-]\s*(?:the\s+)?(?:majority\s+)?(?:shareholders?|owners?)\b)?(?:\s*\([^)$]{0,40}\))?\s*:?\s*(\$\s?\d+(?:,\d{3})*(?:\.\d+)?)(?:\s*\((?:fy\s?)?((?:19|20)\d{2})\))?/gi;
+
+/**
+ * The owner's salary a statement prints as a line of its expense listing,
+ * when the extraction filed that listing but no ownerSalary (Ridgeline's
+ * FY2024 statements: "Management salary $180,000" sat only in
+ * operatingExpenseBreakdown, so ownerSalaryByYear never got 2024). Each
+ * line's year is its own "(2024)" tag, the listing's "2023:" lead, or the
+ * statements' period end; a year printed with two different amounts is
+ * left alone. Copies printed figures — never calculates. Pure.
+ */
+export function liftPrintedOwnerPay(raw: Record<string, unknown>): Record<string, unknown> {
+  const byYear = isPlainObject(raw.byYear) ? raw.byYear as Record<string, unknown> : {};
+  if ([raw.ownerSalary, raw.ownerSalaryByYear, byYear.ownerSalary].some((v) => v !== undefined && v !== null && v !== "")) return raw;
+  const periodYearOf = periodYear(normalisePeriod(raw.periodEnd ?? raw._periodEnd));
+  const found = new Map<string, Set<string>>();
+  for (const [k, v] of Object.entries(raw)) {
+    if (!EXPENSE_LISTING_KEY.test(k) || typeof v !== "string") continue;
+    for (const part of v.split(/\n|(?=\b(?:FY\s?)?(?:19|20)\d{2}\s*:)/i)) {
+      const lead = part.match(/^\s*(?:FY\s?)?((?:19|20)\d{2})\s*:/i)?.[1];
+      for (const m of Array.from(part.matchAll(OWNER_PAY_LINE_RE))) {
+        const year = m[2] ?? lead ?? periodYearOf ?? "";
+        const amount = m[1].replace(/\s+/g, "");
+        found.set(year, (found.get(year) ?? new Set()).add(amount));
+      }
+    }
+  }
+  const years: Record<string, string> = {};
+  let scalar: string | undefined;
+  found.forEach((amounts, year) => {
+    if (amounts.size !== 1) return; // two figures for one year: not ours to pick
+    const amount = Array.from(amounts)[0];
+    if (year) years[year] = amount;
+    else scalar = amount;
+  });
+  if (Object.keys(years).length > 0) return { ...raw, ownerSalaryByYear: years };
+  if (scalar) return { ...raw, ownerSalary: scalar };
+  return raw;
+}
+
+function structureExtraction(input: Record<string, unknown>): ExtractedDocumentData {
+  const raw = liftPrintedOwnerPay(input);
   const out: ExtractedDocumentData = {};
   const maps: Record<string, Record<string, string>> = {};
   const rejected: string[] = [];
@@ -667,8 +716,34 @@ export async function extractDocumentData(
     return normaliseExtraction(block.input as Record<string, unknown>, text, kind);
   } catch (err) {
     console.error("[extractor] Claude extraction failed:", err);
-    return { _documentType: category, _confidence: "low", summary: "Extraction failed" };
+    const failure = classifyExtractionFailure(err);
+    return { _documentType: category, _confidence: "low", summary: "Extraction failed", _failure: failure.kind, _failureReason: failure.reason };
   }
+}
+
+/**
+ * Whether a failed extraction is worth trying again: a dropped or timed-out
+ * connection, a rate limit or an overloaded / erroring API ("transient"), or
+ * a request the API will refuse however often it is sent ("permanent" — a
+ * bad request, no credits, a bad key). `reason` is a short, broker-readable
+ * description (never the request or any key).
+ */
+export function classifyExtractionFailure(err: unknown): { kind: "transient" | "permanent"; reason: string } {
+  const e = err as { status?: number; name?: string; message?: string; code?: string; cause?: { code?: string; message?: string } } | null;
+  const status = typeof e?.status === "number" ? e.status : undefined;
+  const code = e?.code ?? e?.cause?.code;
+  const text = `${e?.name ?? ""} ${e?.message ?? ""} ${e?.cause?.message ?? ""}`;
+  if (status === 429) return { kind: "transient", reason: "the AI service was busy (rate limit)" };
+  if (status === 529 || /overloaded/i.test(text)) return { kind: "transient", reason: "the AI service was overloaded" };
+  if (status !== undefined && status >= 500) return { kind: "transient", reason: `the AI service had an error (${status})` };
+  if (status === 408 || status === 409) return { kind: "transient", reason: "the AI service timed out" };
+  if (/APIConnection|Connection error|timed? ?out|socket hang up|network/i.test(text) || /^(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR\w*)$/.test(code ?? "")) {
+    return { kind: "transient", reason: "the connection to the AI service dropped" };
+  }
+  if (status === 401 || status === 403) return { kind: "permanent", reason: "the AI service refused the key" };
+  if (status === 400 && /credit|billing|balance/i.test(text)) return { kind: "permanent", reason: "the AI account is out of credits" };
+  if (status !== undefined) return { kind: "permanent", reason: `the AI service refused the request (${status})` };
+  return { kind: "permanent", reason: "the extraction returned nothing usable" };
 }
 
 /**

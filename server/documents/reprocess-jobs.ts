@@ -10,16 +10,35 @@
  * running job back (409). Jobs live in memory: a server restart mid-run
  * loses the job (the deal's facts are untouched until the job's final save).
  */
-import { reprocessDealDocuments, type ReprocessProgress, type ReprocessResult } from "./reprocess";
+import { reprocessDealDocuments, type ReprocessOptions, type ReprocessProgress, type ReprocessResult } from "./reprocess";
 
 export interface ReprocessJob {
   dealId: string;
-  status: "running" | "done" | "failed";
+  /**
+   * "partial": the run finished but some sources couldn't be re-read (they
+   * keep what they had) — result.failedSources names each, and `message`
+   * says so in plain words. Never reported as "done".
+   */
+  status: "running" | "done" | "partial" | "failed";
   startedAt: string;
   finishedAt?: string;
   progress: ReprocessProgress;
   result?: ReprocessResult;
   error?: string;
+  /** Only these sources were re-read (a retry of one source). */
+  onlyDocumentIds?: string[];
+  /** For the broker, when a source failed. */
+  message?: string;
+}
+
+/** The job's plain-words summary of sources that couldn't be re-read, or undefined. */
+export function failedSourcesMessage(result: ReprocessResult | undefined): string | undefined {
+  const failed = result?.failedSources ?? [];
+  if (failed.length === 0) return undefined;
+  const names = failed.map((f) => `"${f.name}" (${f.reason})`).join(", ");
+  return failed.length === 1
+    ? `Cimple couldn't re-read ${names}, so it keeps what it had from before. Read it again on its own when the connection is back.`
+    : `Cimple couldn't re-read ${failed.length} sources — ${names} — so they keep what they had from before. Read each one again on its own.`;
 }
 
 const jobs = new Map<string, ReprocessJob>();
@@ -47,6 +66,7 @@ export function startReprocessJob(
   dealId: string,
   after?: (dealId: string) => Promise<void>,
   run: typeof reprocessDealDocuments = reprocessDealDocuments,
+  options: ReprocessOptions = {},
 ): { job: ReprocessJob; started: boolean } {
   const current = jobs.get(dealId);
   if (current?.status === "running") return { job: current, started: false };
@@ -55,13 +75,15 @@ export function startReprocessJob(
     status: "running",
     startedAt: new Date().toISOString(),
     progress: { phase: "reading", done: 0, total: 0 },
+    ...(options.onlyDocumentIds?.length ? { onlyDocumentIds: options.onlyDocumentIds } : {}),
   };
   jobs.set(dealId, job);
   void (async () => {
     try {
-      job.result = await run(dealId, (p) => { job.progress = p; });
+      job.result = await run(dealId, (p) => { job.progress = p; }, options);
       if (after) await after(dealId).catch((err) => console.warn(`[reprocess] follow-up failed for ${dealId}:`, err));
-      job.status = "done";
+      job.message = failedSourcesMessage(job.result);
+      job.status = job.message ? "partial" : "done";
     } catch (err) {
       job.status = "failed";
       job.error = err instanceof Error ? err.message : String(err);

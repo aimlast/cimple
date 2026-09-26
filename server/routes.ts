@@ -1374,7 +1374,13 @@ Return JSON only.`,
         res.flushHeaders?.();
         const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
         try {
-          const result = await startOrResumeSession(dealId, { ...startOpts, onProgress: (stage) => send({ type: "status", stage }) });
+          const result = await startOrResumeSession(dealId, {
+            ...startOpts,
+            onProgress: (stage) => send({ type: "status", stage }),
+            // The opening's text as soon as it is final (its label and the
+            // session save follow): the seller starts reading meanwhile.
+            onOpeningText: (text) => send({ type: "opening", text }),
+          });
           send({ type: "done", result: await interviewResultFor(req, dealId, result) });
         } catch (err: any) {
           console.error("Interview start error:", err);
@@ -1717,6 +1723,12 @@ Return JSON only.`,
             correctionOf: parseCorrectionOf(req.body.correctionOf),
             conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
             conductedVia: parseConductedVia(req.body?.conductedVia),
+            // The question on screen is final and its chips are ready: the
+            // seller can answer while the turn finishes saving.
+            onReady: (ready) => send({ type: "ready", ...ready }),
+            // The goodbye on screen ends the interview: the answer box closes
+            // while the turn saves.
+            onEnding: () => send({ type: "ending" }),
           },
         );
         send({ type: "done", result: await interviewResultFor(req, dealId, result) });
@@ -2494,6 +2506,24 @@ Return JSON only.`,
     } catch (error: any) {
       console.error("Reprocess error:", error);
       res.status(500).json({ error: error.message || "Failed to reprocess documents" });
+    }
+  });
+
+  // Re-read ONE source (a source whose re-read failed — the job's
+  // failedSources, or "Read again" on the Information tab): every other
+  // source keeps what it had. Same background job and polling as above.
+  app.post("/api/deals/:dealId/documents/:documentId/reprocess", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const doc = await storage.getDocument(req.params.documentId);
+      if (!doc || doc.dealId !== deal.id) return res.status(404).json({ error: "Source not found" });
+      const { startReprocessJob } = await import("./documents/reprocess-jobs");
+      const { job, started } = startReprocessJob(deal.id, undefined, undefined, { onlyDocumentIds: [doc.id] });
+      res.status(started ? 202 : 409).json(job);
+    } catch (error: any) {
+      console.error("Reprocess source error:", error);
+      res.status(500).json({ error: error.message || "Failed to re-read the source" });
     }
   });
 

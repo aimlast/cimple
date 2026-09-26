@@ -62,6 +62,7 @@ import {
   type SourceRowLookup,
 } from "../interview/info-merger";
 import { shareClaimsConflict } from "./conflict-measures";
+import { settleSelfContradictions } from "./self-contradiction";
 
 type Info = Record<string, unknown>;
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
@@ -1105,6 +1106,8 @@ export function headlineYearOnFile(
 export function reconcileHeadlines(info: Info, ctx: MergeContext = {}): void {
   // Part-year, run-rate and unreviewed entries are never a year of the map.
   relocateInterimYears(info, ctx);
+  // A row that gave two figures for one year: the other rows decide.
+  settleSelfContradictions(info, ctx.lookup);
   // The last fiscal year the business's own statements cover (any figure).
   const statementsYear = lastStatementsYear(info, ctx);
   for (const { head, map: mapKey, lineItem } of headlinePairs(info)) {
@@ -1159,7 +1162,17 @@ export function reconcileHeadlines(info: Info, ctx: MergeContext = {}): void {
       setFieldSource(info, head, bestSrc);
       continue;
     }
-    if (String(current) === value) continue;
+    if (String(current) === value) {
+      // The same figure, now also the latest year's (the owner's $180,000 in
+      // FY2022 and in FY2024): credited to the latest year's source — the
+      // older one stays as a confirmation — unless the one on file is stronger.
+      const onFileYear = periodYear(curSrc?.period);
+      if (curSrc && !isUntrackedSource(curSrc) && onFileYear && onFileYear < year && isClosedYearSource(head, bestSrc) &&
+          effectiveRank(head, bestSrc) >= effectiveRank(head, curSrc)) {
+        noteSameValue(info, head, bestSrc, { current, recorded: curSrc, outranks: () => true });
+      }
+      continue;
+    }
     const curYear = headlineYearOnFile(current, curSrc, map);
     if (curYear && year < curYear) {
       // Never step back to an older year — except that a spoken figure for

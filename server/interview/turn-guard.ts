@@ -2,6 +2,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type ExtractedField } from "./response-schema";
 import type { SystemBlock } from "./system-prompt";
 import { guardNormalisationFields } from "./reply-guards";
+import { stripCorrectionNotes } from "./value-hygiene";
+import { endSoFar, headSoFar, type StreamHead } from "./stream-head";
 
 /**
  * turn-guard
@@ -184,6 +186,11 @@ export function normalizeInterviewResponse(raw: unknown): {
   // (reply-guards.guardNormalisationFields).
   const normalised = guardNormalisationFields(extractedFields, privateNotes);
   if (normalised.length > 0) console.warn(`[turn-guard] Add-back call kept out of the facts: ${normalised.join(", ")}`);
+  // A correction's history stays out of the value ("4,300 charts (corrected
+  // from earlier 3,900 figure)") — value-hygiene.ts.
+  for (const f of Object.values(extractedFields)) {
+    if (typeof f.value === "string") f.value = stripCorrectionNotes(f.value);
+  }
 
   const response: InterviewResponse = {
     message,
@@ -273,7 +280,16 @@ function extractMessageSoFar(buf: string): { text: string; complete: boolean } |
       i += 2;
       continue;
     }
-    if (c === '"') return { text: out, complete: true };
+    if (c === '"') {
+      // The closed string, decoded exactly as the final parse decodes it
+      // (\uXXXX escapes included) — the text the seller is shown is the
+      // text that is saved.
+      try {
+        return { text: JSON.parse(buf.slice(m.index + m[0].length - 1, i + 1)), complete: true };
+      } catch {
+        return { text: out, complete: true };
+      }
+    }
     out += c;
     i++;
   }
@@ -295,7 +311,27 @@ export async function callInterviewWithRecovery(
    * a question that re-asks something on file is never shown to the seller.
    */
   onMessageComplete?: (message: string) => boolean | Promise<boolean>,
-): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean }> {
+  /**
+   * Streaming only — either option makes the call stream, even with no
+   * display channel (see stream-head.ts):
+   *  - onHead: called once the seller-facing head (message, why we ask,
+   *    importance, section, chips) is complete and the message approved, so
+   *    the turn can open the seller's answer while the tail (extracted
+   *    facts, reasoning, tasks) is still being generated;
+   *  - headOnly: the caller uses only the head (a wording rewrite) — the
+   *    call stops there and the result is marked `headOnly`: its tail is
+   *    defaults, never to be used (the caller keeps the draft's);
+   *  - onEnd: called once the model's end decision (shouldEnd, endReason)
+   *    is in the stream and the message approved — a goodbye can then be
+   *    shown while the tail is still being generated. The final parse
+   *    stays authoritative.
+   */
+  hooks: {
+    onHead?: (head: StreamHead) => void;
+    headOnly?: boolean;
+    onEnd?: (end: { shouldEnd: boolean; endReason?: string }) => void;
+  } = {},
+): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean; headOnly?: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean }> => {
@@ -328,7 +364,7 @@ export async function callInterviewWithRecovery(
   // validation to the non-streaming path.
   const streamAttempt = async (
     messages: InterviewCallParams["messages"],
-  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean }> => {
+  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean; headOnly?: boolean }> => {
     const stream = anthropic.messages.stream({
       model: params.model,
       max_tokens: params.maxTokens,
@@ -342,6 +378,8 @@ export async function callInterviewWithRecovery(
     let jsonBuf = "";
     let emitted = 0;
     let checked = false;
+    let headDone = !hooks.onHead && !hooks.headOnly;
+    let endDone = !hooks.onEnd;
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
@@ -350,7 +388,7 @@ export async function callInterviewWithRecovery(
         jsonBuf += event.delta.partial_json;
         const msg = extractMessageSoFar(jsonBuf);
         if (msg && msg.text.length > emitted) {
-          onDelta!(msg.text.slice(emitted));
+          onDelta?.(msg.text.slice(emitted));
           emitted = msg.text.length;
         }
         if (msg?.complete && !checked && onMessageComplete) {
@@ -370,6 +408,35 @@ export async function callInterviewWithRecovery(
             return { response, valid: false, rejected: true };
           }
         }
+        // The head, once the message is out (and approved, when checked).
+        if (!headDone && msg?.complete && (checked || !onMessageComplete)) {
+          const { head, complete } = headSoFar(jsonBuf);
+          if (complete) {
+            headDone = true;
+            try {
+              hooks.onHead?.(head);
+            } catch (err) {
+              console.warn("[turn-guard] head hook failed — continuing:", err);
+            }
+            if (hooks.headOnly) {
+              stream.on("abort", () => {});
+              stream.abort();
+              return { response: normalizeInterviewResponse(head).response, valid: true, headOnly: true };
+            }
+          }
+        }
+        // The end decision, once the message is out (and approved, when checked).
+        if (!endDone && msg?.complete && (checked || !onMessageComplete)) {
+          const end = endSoFar(jsonBuf);
+          if (end.known) {
+            endDone = true;
+            try {
+              hooks.onEnd?.({ shouldEnd: end.shouldEnd === true, endReason: end.endReason });
+            } catch (err) {
+              console.warn("[turn-guard] end hook failed — continuing:", err);
+            }
+          }
+        }
       }
     }
 
@@ -387,10 +454,14 @@ export async function callInterviewWithRecovery(
   };
 
   try {
-    const first = onDelta
+    // (A client without streaming — a test double — gets the plain call; a
+    // head-only caller then simply receives the whole response.)
+    const canStream = typeof (anthropic.messages as { stream?: unknown }).stream === "function";
+    const first = canStream && (onDelta || hooks.onHead || hooks.headOnly || hooks.onEnd)
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
     if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };
+    if ((first as { headOnly?: boolean }).headOnly) return { response: backfillSuggestedAnswers(first.response), degraded: false, headOnly: true };
     if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");
@@ -1131,6 +1202,8 @@ export function sellerAskedQuestion(sellerMessage: string | null | undefined): b
 //      a share sale, the records stay with the corporation.").
 
 /** Sentences that do a job for the seller — never cut. */
+// (Index of the "reconciling a conflict" pattern below.)
+const RECONCILE_PATTERN = 3;
 const WORK_PATTERNS: RegExp[] = [
   // Privacy promises
   /\b(?:stays?|goes|go|kept|keep (?:it|that|this)) (?:only )?(?:with|to|between) (?:you and )?(?:your broker|the broker)\b|\b(?:your|the) broker only\b|\bbroker[- ]only\b|\bprivately\b|\bin private\b|\b(?:kept|keep (?:it|that|this)|stays?|remains?) private\b|\bprivate (?:to|between|note)\b|\boff the record\b|\bwon'?t (?:go|be|appear|end up) in\b|\bnot (?:go )?in(?:to)? (?:the|any) (?:sale |marketing )?(?:document|cim|memorandum|materials)|\bnever (?:in )?the (?:sale )?document\b|\bthat'?s the whole story\b|\bfrom a document perspective\b/i,
@@ -1192,6 +1265,89 @@ const RECAP_START_RE =
   /^(?:(?:\w+,\s+)?we(?:'ve| have) (?:now |really )?(?:covered|gone through|been through|talked through|walked through)|you(?:'ve| have) (?:given|shared|walked|painted|told)|that (?:covers|gives me|rounds out)|i (?:now )?have a (?:clear|good|full|solid) (?:picture|sense|read)|(?:\w+,\s+)?(?:we|i)(?:'ve| have) (?:now |already )?(?:noted|captured|logged|recorded|got(?:ten)? down)(?! (?:that|it|this|those) (?:for|as)\b))/i;
 
 const isWork = (s: string) => WORK_PATTERNS.some((re) => re.test(s)) && !RECAP_RECORDED_RE.test(s.trim());
+
+// A sentence that ends by agreeing the seller's answer fits the file ("…,
+// so that tracks.", "…, which lines up with the T4s.") — a confirmation,
+// not a reconciliation ("…, which doesn't match…" is never this).
+const AGREEMENT_TAIL_RE =
+  /(?:^|[,;:—–]\s*|\s-\s|\s)(?:so\s+|and\s+)?(?:that|this|it|which)\s+(?:(?:all|really|definitely|certainly|also)\s+)?(?:tracks|checks out|lines up|adds up|matches(?: up)?|squares(?: up)?|is consistent|fits)(?:\s+with\s+[^.?!]{1,80})?\s*[.!]?$/i;
+
+/**
+ * A question with no subject of its own — it leans on the sentence before
+ * it ("How many are seasonal?", "Of those, …", "Is that driven by…?",
+ * "Are they all on salary?").
+ */
+const LEANS_ON_LEAD_RE =
+  /^(?:(?:and|so|but)\s+)?(?:how many (?:of (?:those|them|these)\s+)?(?:are|were|is|do|does|did|have|work|hold|of)\b|how much of (?:that|it|this|those)\b|what (?:share|portion|percentage|part|proportion|fraction|number) (?:of (?:those|them|these|that|it)|are|is)\b|(?:of|among) (?:those|them|these)\b|(?:are|were|do|did|have|will|would) (?:they|those|these|all of them)\b|(?:is|was|does|did|has|will|would) (?:that|it|this)\b|which (?:of (?:those|them|these)|ones?)\b|who (?:are|were) they\b|(?:where|when|why|how) (?:are|were|do|did|is|was|does) (?:they|those|these|that|it)\b)/i;
+
+/** A clause naming what is still open — never part of a recap. */
+const OPEN_ITEM_RE =
+  /\b(?:still (?:outstanding|open|missing|pending|to come|needed|needs?|waiting)|outstanding|open (?:items?|questions?|points?)|the (?:one|only|last|main) (?:thing|item|piece|question|gap)s? (?:still |left |we |i |that )|follow(?:s|ing)? up|circle back|pending|waiting (?:on|for)|(?:can|could|will|would|should) (?:send|upload|share|pull|forward|get us|get me|get your broker)|(?:send|upload|share|forward) (?:it|that|them|those|over)|next (?:step|time|session)|left to (?:cover|do|confirm|get))\b/i;
+
+/**
+ * A session recap inside a sentence ("Of course — we've covered a lot of
+ * ground.") — the clause and whatever lists after it go; what came before
+ * stays ("Of course."). "" when nothing is left. Unchanged when there is none.
+ */
+function dropSessionRecap(sentence: string): string {
+  const lead = sentence.match(/^\s*/)?.[0] ?? "";
+  const trail = sentence.match(/\s*$/)?.[0] ?? "";
+  const core = sentence.trim();
+  if (!core || core.includes("?")) return sentence;
+  const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
+  // (Split finer than clausesOf: ", and the one thing still outstanding
+  // is…" after a recap is its own clause here.)
+  const clauses = clausesOf(core.slice(0, core.length - end.length)).flatMap((c) => {
+    const parts = c.text.split(/(,\s+(?=(?:and|but|so|while)\s))/);
+    const res: Clause[] = [{ sep: c.sep, text: parts[0] ?? "" }];
+    for (let k = 1; k < parts.length; k += 2) res.push({ sep: parts[k], text: parts[k + 1] ?? "" });
+    return res;
+  });
+  const plain = (t: string) => t.replace(/[’‘]/g, "'");
+  // (A recap listing "capex versus growth investments" is not reconciling
+  // anything — the reconciliation pattern doesn't make it work here.)
+  const works = (t: string) => WORK_PATTERNS.some((re, i) => i !== RECONCILE_PATTERN && re.test(plain(t)));
+  const at = clauses.findIndex((c) => RECAP_START_RE.test(plain(c.text).trim().replace(LEADING_CONJ_RE, "")) && !works(c.text));
+  if (at < 0) return sentence;
+  // The recap and the topics listed after it go; a later clause that does
+  // work ("— if Rob can send the tooling list, …") or names what is still
+  // open ("…, and the one thing still outstanding is the zoning letter",
+  // "— your broker will follow up on the WSIB letters") stays.
+  const resume = clauses.findIndex((c, i) => i > at && (works(c.text) || OPEN_ITEM_RE.test(plain(c.text))));
+  const keptClauses = [...clauses.slice(0, at), ...(resume > 0 ? clauses.slice(resume) : [])];
+  const kept = keptClauses
+    .map((c, i) => (i === 0 ? c.text.replace(LEADING_CONJ_RE, "") : c.sep + c.text))
+    .join("")
+    .trim()
+    .replace(/[,;:\s—–-]+$/, "");
+  return kept ? `${lead}${capitalise(kept)}${end || "."}${trail}` : "";
+}
+
+/**
+ * A verdict tucked into a question's lead-in: "…$378,000 in vehicle
+ * expenses in 2024, which is on the higher side relative to revenue — is
+ * that driven by…?" (round A, the Lakeshore resume opener). The clause
+ * goes; the figure and the question stay.
+ */
+const QUESTION_VERDICT_CLAUSE_RE =
+  /,\s+which\s+(?:is|are|was|were|seems?|looks?|sounds?|feels?|'s)\s+(?:(?:a bit|a little|quite|very|pretty|fairly|rather|relatively|somewhat)\s+)?(?:on the (?:high|higher|low|lower|heavy|heavier|light|lighter|steep|rich|large|small|thin|tight)\s+side|(?:high|low|heavy|light|steep|significant|substantial|notable|sizable|sizeable|healthy|strong|solid|impressive|modest|reasonable|elevated|meaningful|unusual)(?=\s+(?:for|relative|given|compared|against|versus|vs)\b|\s*(?:[—–,]|\s-\s))|(?:above|below) (?:average|typical|normal|the norm|(?:industry|sector|market) (?:norms?|averages?|benchmarks?|standards?)))(?:\s+(?:for|relative to|given|compared (?:to|with)|against|versus|vs\.?)\s+[^—–,?]{0,59}[^\s—–,?])?(?=\s*(?:[—–,:]|\s-\s|\?))/gi;
+export function stripQuestionVerdicts(message: string): string {
+  const spans = splitSentences(message);
+  let changed = false;
+  const out = spans.map((sp) => {
+    if (!sp.text.includes("?")) return sp.text;
+    // A comparison that carries the other figure is the reconciliation the
+    // question asks about ("…$1.2M in revenue, which is low compared to the
+    // $1.5M you mentioned — which figure is right?"), not a verdict: it stays.
+    const t = sp.text.replace(QUESTION_VERDICT_CLAUSE_RE, (clause) =>
+      // (A year alone — "which is high for 2024" — is no second figure.)
+      /\$\s?\d|\d\s?%|\b(?!(?:19|20)\d{2}\b)\d[\d,.]*\b|\byou (?:mentioned|said|told|gave|quoted|estimated)\b/i.test(clause) ? clause : "",
+    );
+    if (t !== sp.text) changed = true;
+    return t;
+  });
+  return changed ? out.join("") : message;
+}
 
 /**
  * True when a sentence placed in front of the question only acknowledges,
@@ -1323,6 +1479,28 @@ export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string 
   const trail = sentence.match(/\s*$/)?.[0] ?? "";
   const core = sentence.trim();
   if (!core || core.includes("?")) return sentence;
+  // A "clarification" whose conclusion is that the seller's answer checks
+  // out ("Quick clarification: the staff roster shows Sal starting in 2009,
+  // which would be about sixteen years — so that tracks.") clarifies
+  // nothing: it is the answer played back with a verdict (round A, Lakeshore T6).
+  const agreed = core.replace(/[’‘]/g, "'").match(AGREEMENT_TAIL_RE);
+  if (agreed) {
+    // …unless the question stands on the sentence's fact ("Your T4 summary
+    // shows 42 employees, which lines up with the roster. How many are
+    // seasonal?" — cut whole, the question has no antecedent): then the
+    // fact stays and only the verdict goes.
+    const fact = core.slice(0, agreed.index).replace(/[,;:\s—–-]+$/, "").replace(/^(?:quick |one quick |just a )?clarification:\s*/i, "");
+    if (
+      ctx.question &&
+      LEANS_ON_LEAD_RE.test(ctx.question.trim().replace(/[’‘]/g, "'")) &&
+      fact &&
+      (CITES_FILE_RE.test(fact) || FACT_CONTEXT_RE.test(fact)) &&
+      !echoesSeller(fact, ctx.sellerMessage)
+    ) {
+      return `${lead}${capitalise(fact)}.${trail}`;
+    }
+    return "";
+  }
   const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
   const body = core.slice(0, core.length - end.length);
   // An aside between dashes is part of the clause around it: "That
@@ -1389,7 +1567,7 @@ export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string 
 const FACT_CONTEXT_RE =
   /\$\s?\d|\d[\d,.]*\s?(?:%|percent\b)|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand|people|employees|staff|techs?|trucks?|units?|clients?|customers?|patients?|locations?|sites?|years?|months?|weeks?|days?|hours?|sq\.? ?ft|square feet)\b|\b(?:more|less|higher|lower|bigger|smaller|larger|fewer|greater|older|newer|longer|shorter) than\b|\bnet of\b|\b(?:before|after|excluding|including|net|gross) (?:of )?(?:the |your |any )?(?:refunds?|returns?|tax(?:es)?|salary|salaries|owner|addbacks?|add-backs?|depreciation|interest|rent|fees|discounts?|cogs|expenses|chargebacks?|hst|gst|payroll|wages)\b|\bgross (?:figure|number|revenue|sales|amount|margin)\b|\b(?:up|down) from\b|\bcompared (?:to|with)\b|\binstead of\b|\brather than\b|\bthe first i'?ve heard\b|\bnew to me\b|^(?:that|this|which) (?:would|will|could|might) (?:mean|make|leave|put)\b/i;
 
-/** Praise of the seller or the business in a goodbye — the recap itself stays. */
+/** Praise of the seller or the business in a goodbye (a session recap goes too: dropSessionRecap). */
 const CLOSING_PRAISE_PATTERNS: RegExp[] = [
   ...GRADING_PATTERNS.slice(1),
   /^(?:that|this|it)(?:'s| is| makes)\s+(?:complete |total |perfect )?(?:sense|clear|great|exactly)\b/i,
@@ -1471,8 +1649,8 @@ const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
  *     keeps the answer and drops the grade).
  * Anything that looks like an answer, clarifies or empathises is kept.
  *
- * `closing` (the reply ends the interview and asks nothing): the goodbye and
- * a factual recap stay; sentences praising the seller or the business go.
+ * `closing` (the reply ends the interview and asks nothing): the goodbye,
+ * what is still open and the thanks stay; praise and a session recap go.
  */
 export function stripFillerPreamble(
   message: string,
@@ -1559,12 +1737,20 @@ function stripClosingPraise(message: string): string {
   const spans = splitSentences(text);
   const cut = new Set<number>();
   spans.forEach((sp, i) => {
-    const s = sp.text.trim().replace(/[’‘]/g, "'");
+    // A recap of the session goes from a goodbye too ("We've covered a lot
+    // of ground today — shift structure, equipment liens, …": round A, Great
+    // Lakes): the tone rule has no exception for the last turn. What is
+    // still open and the thanks stay.
+    const recap = dropSessionRecap(sp.text);
+    if (recap.trim() === "") { cut.add(i); return; }
+    if (recap !== sp.text) spans[i] = { text: recap };
+    const s = spans[i].text.trim().replace(/[’‘]/g, "'");
     if (isWork(s)) return;
     if (/^(?:thanks?|thank you)\b/i.test(s) && !CLOSING_PRAISE_PATTERNS.some((re) => re.test(s))) return;
     if (CLOSING_PRAISE_PATTERNS.some((re) => re.test(s))) cut.add(i);
   });
-  if (cut.size === 0 || cut.size === spans.length) return message;
+  if (cut.size === spans.length) return "Thanks for your time — everything you've shared is saved, and you can pick this up whenever suits you.";
+  if (cut.size === 0) return spans.map((s) => s.text).join("") === text ? message : rebuild(spans, cut);
   // "Thank you for being so thorough — this is one of the cleaner pictures
   // I've seen." goes as praise; the goodbye keeps a plain thanks.
   const thanksCut = Array.from(cut).find((i) => /^(?:thanks?|thank you)\b/i.test(spans[i].text.trim()));
@@ -1601,8 +1787,20 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
   const q = spans.findIndex((s) => s.text.includes("?"));
   if (q < 0) return text === original ? message : text;
   const cut = new Set<number>();
+  // A session recap tucked behind the answer ("Of course — we've covered a
+  // lot of ground." to "Can we pick this up tomorrow?": round A, Clearwater)
+  // goes; the answer stays.
+  let recapCut = false;
+  for (let i = 0; i < q; i++) {
+    const r = dropSessionRecap(spans[i].text);
+    if (r === spans[i].text) continue;
+    recapCut = true;
+    if (r.trim() === "") cut.add(i);
+    else spans[i] = { text: r };
+  }
   let first = true;
   for (let i = 0; i < q; i++) {
+    if (cut.has(i)) continue;
     const h = spans[i].text.trim();
     const praiseOfQuestion = QUESTION_PRAISE_SENTENCE_RE.test(h);
     const reportsRecord = first && askedAboutRecord && /\b(?:on file|down as|recorded|noted|confirmed|captured|i have)\b/i.test(h);
@@ -1627,7 +1825,7 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
     }
     if (filler) cut.add(i);
   }
-  if (cut.size === 0) return text === original ? message : text;
+  if (cut.size === 0 && !recapCut) return text === original ? message : text;
   return rebuild(spans, cut);
 }
 

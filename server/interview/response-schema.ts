@@ -174,6 +174,17 @@ export const INTERVIEW_RESPONSE_TOOL = {
         items: { type: "string" },
         description: "3–5 short, clickable answer options for the question you just asked. The seller can tap one to pre-fill their reply, then edit it before sending. Rules: (1) Keep each option brief — 2 to 8 words. (2) Base them on your industry knowledge and what you already know about this specific business. (3) All options must answer the SAME dimension of the question — if the question has two parts, suggest for the primary part only. (4) For yes/no questions include both options. (5) If the knowledge base already contains a value relevant to the question, options must be consistent with it — never guess at a number already on file. (6) For questions asking for an exact figure the seller would know precisely, never guess numbers — instead offer honest escape hatches ('Not sure, I'd have to check', 'My accountant would know'). (7) For predictably sensitive questions (reason for sale, health, family, litigation), one option must be a graceful deferral like 'I'd rather discuss that with my broker privately'. (8) Always make the options feel specific to this business and industry, not generic placeholders.",
       },
+      // (The end decision sits with the seller-facing fields, before the
+      // long bookkeeping tail: the message already embodies it, and a
+      // goodbye can then be shown seconds after its text — turn-release.ts.)
+      shouldEnd: {
+        type: "boolean",
+        description: "Whether the interview should end after this turn. Set to true when: (1) all critical sections are well covered, (2) the seller explicitly wants to stop, or (3) there is genuinely nothing productive left to ask.",
+      },
+      endReason: {
+        type: "string",
+        description: "If shouldEnd is true, explain why. E.g., 'All critical CIM sections are covered' or 'Seller requested to stop'.",
+      },
       extractedFields: {
         type: "object",
         description: "Key-value map of newly extracted or updated information from this turn. Keys should match the extractedInfo schema fields (e.g., 'employees', 'leaseDetails', 'keyProducts') — reuse an EXISTING key from the knowledge base whenever one covers the concept; only mint a new key for a genuinely new concept. Only include fields where the seller provided NEW or CHANGED information in this turn. GROUNDING (critical): a value may only assert what the seller actually stated. If the seller deflected, dodged, or answered a quantitative or yes/no question without the quantity or the yes/no, emit NO field for that topic — set reasoning.topicStatus to 'dodged' and add it to newDeferrals instead. Never write a claim the seller did not make.",
@@ -351,14 +362,6 @@ export const INTERVIEW_RESPONSE_TOOL = {
             },
           },
         },
-      },
-      shouldEnd: {
-        type: "boolean",
-        description: "Whether the interview should end after this turn. Set to true when: (1) all critical sections are well covered, (2) the seller explicitly wants to stop, or (3) there is genuinely nothing productive left to ask.",
-      },
-      endReason: {
-        type: "string",
-        description: "If shouldEnd is true, explain why. E.g., 'All critical CIM sections are covered' or 'Seller requested to stop'.",
       },
     },
   },

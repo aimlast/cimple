@@ -845,6 +845,44 @@ export function layoutDataProblems(layoutType: string, data: unknown): string[] 
 }
 
 /**
+ * A layoutData title (or financial-table caption) that is really body text —
+ * a sentence or a paragraph — not a short caption. Renderers draw captions
+ * as small tracked capitals; a paragraph drawn that way is unreadable
+ * (Pacific, 2026-09-26: a four-sentence working-capital explainer in
+ * all-caps above the table).
+ */
+export function isParagraphTitle(v: unknown): boolean {
+  if (typeof v !== "string") return false;
+  const t = v.trim();
+  if (!t) return false;
+  const words = t.split(/\s+/).length;
+  // An abbreviation's period ("Revenue vs. Adjusted EBITDA", "U.S. vs.
+  // Canadian Revenue", "Dr. Smith's Patient Mix") doesn't end a sentence.
+  const plain = t.replace(ABBREVIATION, (m) => m.replace(/\./g, ""));
+  return words > 12 || /[.!?]["”')]?\s+\S/.test(plain) || (words > 8 && /[.!?]$/.test(plain));
+}
+
+const ABBREVIATION = /\b(?:vs|v|e\.g|i\.e|etc|approx|est|incl|excl|avg|dept|no|nos|fig|yr|yrs|mo|mos|dr|mr|mrs|ms|prof|st|mt|ft|jr|sr|inc|ltd|co|corp|bros)\.|\b(?:[A-Z]\.){1,3}(?=\s|$|['’-])/gi;
+
+/** Layouts whose renderer draws `title` (or a financial table's `caption`) as a caption above the content, and `intro` under it. */
+export const INTRO_LAYOUTS: ReadonlySet<string> = new Set([
+  "metric_grid", "icon_stat_row", "scorecard", "bar_chart", "horizontal_bar_chart", "line_chart", "pie_chart", "donut_chart",
+  "waterfall_chart", "financial_table", "comparison_table", "two_column", "callout_list", "numbered_list", "timeline",
+  "org_chart", "location_card", "image_gallery", "video", "location_map",
+]);
+
+/** Body text written into a title moves to `intro` (shown as a sentence above the content). */
+function moveParagraphTitle(layoutType: string, layoutData: AnyRecord): AnyRecord {
+  if (!INTRO_LAYOUTS.has(layoutType)) return layoutData;
+  const field = layoutType === "financial_table" && isParagraphTitle(layoutData.caption) ? "caption" : isParagraphTitle(layoutData.title) ? "title" : null;
+  if (!field) return layoutData;
+  const moved = String(layoutData[field]).trim();
+  const intro = typeof layoutData.intro === "string" && layoutData.intro.trim() ? `${moved} ${layoutData.intro.trim()}` : moved;
+  const { [field]: _gone, ...rest } = layoutData;
+  return { ...rest, intro };
+}
+
+/**
  * Deterministic clean-up of a generated section before it is saved:
  * neutral org chart ids; financial-table "section header" rows that carry
  * figures become bold rows (their figures were hidden); a scorecard without
@@ -852,7 +890,7 @@ export function layoutDataProblems(layoutType: string, data: unknown): string[] 
  * two-column columns repaired or emptied (never a placeholder word).
  */
 export function tidyGeneratedLayout(layoutType: string, data: unknown): { layoutType: string; layoutData: AnyRecord } {
-  const layoutData: AnyRecord = isRecord(data) ? { ...data } : {};
+  const layoutData: AnyRecord = isRecord(data) ? moveParagraphTitle(layoutType, { ...data }) : {};
   if (layoutType === "org_chart") return { layoutType, layoutData: neutralOrgChartIds(layoutData) };
   if (layoutType === "financial_table") {
     const fix = (rows: unknown) => Array.isArray(rows)

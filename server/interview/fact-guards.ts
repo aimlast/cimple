@@ -797,6 +797,20 @@ export function applyDateFidelityGuard(
     ...relativeYears(`${seller} ${ctx.sessionSellerText ?? ""}`, today),
   ]);
   const lower = (s: string) => s.toLowerCase();
+  // Years the question the seller is answering named ("Are there other
+  // expenses in 2024 that were one-time…?").
+  const askedYears = new Set<number>(Array.from((ctx.prevAiMessage ?? "").matchAll(YEAR_RE)).map((m) => Number(m[1])));
+  /** "July 2024" in a text, as a month-year pair. */
+  const pairIn = (month: number, year: number | string, text: string) =>
+    new RegExp(String.raw`\b${MONTHS[month].slice(0, 3)}\w*\.?,?\s+(?:of\s+)?${year}\b`, "i").test(text);
+  /** The month-year has already happened (past or unknown tense) / is still ahead (future). */
+  const fitsTense = (month: number, year: number, tense: Tense) => {
+    const y0 = today.getFullYear();
+    const m0 = today.getMonth();
+    return tense === "future" ? year > y0 || (year === y0 && month >= m0) : year < y0 || (year === y0 && month <= m0);
+  };
+  /** Changes that end up restating exactly what is on file — dropped after the loop. */
+  const unchanged: FieldChange[] = [];
 
   for (const change of changes) {
     if (change.source !== "seller_statement") continue;
@@ -882,6 +896,20 @@ export function applyDateFidelityGuard(
       // in settles the year when the clause alone doesn't.
       const seasonYear = relativeYearPhrases(spokenIn, today).find((p) => p.unit !== "year" && seasonOfMonth(month) === p.unit)?.year ?? null;
       const resolved = tense === "unknown" && seasonYear !== null ? seasonYear : resolveMonthYear(month, tense, today);
+      // The year the model wrote is the one the question the seller is
+      // answering named ("Are there other expenses in 2024…?" → "settled it
+      // in July"): the seller answered about that year. "The most recent
+      // July" is only a guess — it turned a July 2024 settlement into July
+      // 2026 (round A, Lakeshore). Another fact on file dating the month
+      // is corroboration, never enough alone (a mis-extracted "Oct 2024"
+      // elsewhere on file is how the Clearwater raise was misdated). (A
+      // relative season the seller used — "last fall, effective October" —
+      // still decides; see seasonYear.)
+      if (seasonYear === null && !ambiguousEarlier && resolved !== year && fitsTense(month, year, tense) && askedYears.size === 1 && askedYears.has(year)) {
+        const elsewhere = prior ? (ctx.onFileText ?? "").split(prior).join(" ") : ctx.onFileText ?? "";
+        reasons.push(`year ${year} for "${spoken[0].trim()}" taken from the question, which asked about ${year}${pairIn(month, year, elsewhere) ? ` (another fact on file agrees: ${m[1]} ${year})` : ""}`);
+        continue;
+      }
       if (resolved === null || ambiguousEarlier) {
         verify = true;
         reasons.push(`the seller said "${spoken[0].trim()}" without a year; "${m[0]}" can't be confirmed`);
@@ -1042,12 +1070,23 @@ export function applyDateFidelityGuard(
       continue;
     }
     if (reasons.length === 0) continue;
+    // What the guard left is exactly what is on file: nothing changed this
+    // turn (it used to be re-saved, logged and reported as updated every turn).
+    if (change.previousValue !== null && value.trim() === String(change.previousValue).trim()) {
+      unchanged.push(change);
+      if (change.previousConfidence) updatedConfidence[change.fieldName] = change.previousConfidence;
+      continue;
+    }
     if (value !== change.newValue) change.newValue = value;
     const conf = lower(change.newConfidence);
     const capped = verify ? "approximate" : conf === "confirmed" ? "inferred" : change.newConfidence;
     change.newConfidence = capped;
     updatedConfidence[change.fieldName] = capped;
     flags.push({ fieldName: change.fieldName, reason: reasons.join("; "), corrected, needsVerification: verify });
+  }
+  for (const c of unchanged) {
+    const i = changes.indexOf(c);
+    if (i >= 0) changes.splice(i, 1);
   }
   return flags;
 }

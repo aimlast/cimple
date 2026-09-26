@@ -148,9 +148,14 @@ const change = (fieldName: string, newValue: string, newConfidence = "confirmed"
     previousValue: "Kevin Tran being promoted to Assistant Shop Foreman in May 2027 to shadow Dale before Dale retires in 2027",
     previousConfidence: "inferred",
   };
-  applyDateFidelityGuard([rewrite], {}, { sellerMessage: "We also have two battery-electric day cabs on order for mid-2026.", sessionSellerText: dale, today: TODAY });
-  assert.match(rewrite.newValue, /May 2027/);
-  assert.notEqual(rewrite.newConfidence, "confirmed");
+  const rewriteChanges = [rewrite];
+  const rewriteConf: Record<string, string> = { shopSuccessionPlan: "confirmed" };
+  applyDateFidelityGuard(rewriteChanges, rewriteConf, { sellerMessage: "We also have two battery-electric day cabs on order for mid-2026.", sessionSellerText: dale, today: TODAY });
+  // The date on file stands — and since that leaves the value exactly as it
+  // was, nothing is re-saved (round A: the kept value was re-touched and
+  // reported as updated on every turn).
+  assert.equal(rewriteChanges.length, 0, "a change that restates the file is dropped");
+  assert.equal(rewriteConf.shopSuccessionPlan, "inferred", "the confidence on file stands");
   // "planned for May" (no year) is left alone.
   const c3 = change("successionPlan", "Kevin Tran promotion planned for May; Dale retiring 2027");
   assert.equal(applyDateFidelityGuard([c3], {}, { sellerMessage: dale, today: TODAY }).length, 0);
