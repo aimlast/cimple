@@ -16,6 +16,13 @@
  *   - the broker's listed asking price from the deal row (see
  *     interviewFactView): the seller's own expectation is shown instead.
  *   - broker-private notes that only a broker-only source states.
+ *   - the broker's own normalisation work written as a fact (SDE, adjusted
+ *     EBITDA, add-backs, a recast, valuation / multiple talk — see
+ *     source-privacy.ts screenBrokerWork): a value the broker or the system
+ *     wrote under such a key, or the clauses of a narrative fact that say
+ *     it. The seller's own words are never screened.
+ *   - a fact the broker resolved to a private source's figure
+ *     (FieldSource.hiddenFromSeller).
  *
  * Read-only: never save the result.
  */
@@ -42,6 +49,7 @@ import {
   type FieldSource,
   type PrivateNoteSource,
 } from "./info-merger";
+import { screenBrokerWork, isBrokerWorkText } from "./source-privacy";
 
 type Info = Record<string, unknown>;
 type DocLike = Pick<Document, "id" | "visibility">;
@@ -53,6 +61,9 @@ export function brokerPrivacy(documents: DocLike[]) {
   const isPrivateSource = (src: Partial<FieldSource> | null | undefined): boolean => {
     if (!src) return false;
     if (src.brokerOnly === true) return true;
+    // The broker's figure taken from their private material (a resolution
+    // to a CRM note's value) — private like the source it came from.
+    if (src.hiddenFromSeller === true) return true;
     if (src.documentId && visibility.get(src.documentId) === "broker_only") return true;
     // CRM material is the broker's by default; one whose row is gone can't
     // be shown to have been shared.
@@ -142,7 +153,14 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
     const kept: Record<string, FieldAlternate[]> = {};
     if (!isMap(raw)) return kept;
     for (const [k, list] of Object.entries(raw)) {
-      const ok = (Array.isArray(list) ? list : []).filter((a) => a && !isPrivateSource(a as FieldAlternate)) as FieldAlternate[];
+      const ok = (Array.isArray(list) ? list : []).flatMap((a): FieldAlternate[] => {
+        if (!a || isPrivateSource(a as FieldAlternate)) return [];
+        // The broker's normalisation work as another value (an SDE the
+        // broker typed) goes too; a narrative keeps its other clauses.
+        const screened = screenBrokerWork(k, (a as FieldAlternate).value, a as FieldAlternate);
+        if (screened.kind === "private") return [];
+        return [screened.kind === "redacted" ? { ...(a as FieldAlternate), value: screened.value } : (a as FieldAlternate)];
+      });
       if (ok.length > 0) kept[k] = ok;
     }
     return kept;
@@ -156,6 +174,10 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
   // 2. Broker-private notes: only those a seller-side source states, credited to it.
   if (Array.isArray(info[BROKER_PRIVATE_NOTES_KEY])) {
     const safe = getPrivateNotes(info).flatMap((n) => {
+      // (A note about the broker's normalisation work — "Morgan plans a
+      // recast", "compensation add-back mentioned" — isn't the seller's
+      // sensitive fact; it only invites add-back talk.)
+      if (isBrokerWorkText(n.note)) return [];
       const src = privateNoteSources(n).find(isSellerSideNoteSource);
       return src ? [{ note: n.note, ...src }] : [];
     });
@@ -181,7 +203,7 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
       const years = resolvedYearSources(src, map, lookup);
       let changed = false;
       for (const y of Object.keys(map)) {
-        if (!isPrivateSource(years[y])) continue;
+        if (!isPrivateSource(years[y]) && screenBrokerWork(key, map[y], years[y]).kind === "keep") continue;
         changed = true;
         delete years[y];
         const alt = bestAlternate(alts[`${key}.${y}`]);
@@ -201,7 +223,16 @@ export function sellerInterviewView<T extends Info>(info: T, documents: DocLike[
       sources[key] = summariseMapSource(years) ?? { ...src };
       continue;
     }
-    if (!isPrivateSource(src)) continue;
+    if (!isPrivateSource(src)) {
+      // The broker's normalisation work: a whole fact under an SDE /
+      // add-back / recast key, or only the clauses of a narrative that say it.
+      const screened = screenBrokerWork(key, value, src);
+      if (screened.kind === "keep") continue;
+      if (screened.kind === "redacted") {
+        viewed[key] = screened.value;
+        continue;
+      }
+    }
     const alt = bestAlternate(alts[key]);
     if (alt) {
       const { value: altValue, ...altSrc } = alt;

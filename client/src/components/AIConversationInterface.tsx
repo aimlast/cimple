@@ -109,6 +109,59 @@ function openingMessageFrom(result: TurnResult): ConversationMessage {
   );
 }
 
+/** An answer the seller sent while the previous turn was still being saved. */
+interface QueuedSend {
+  text: string;
+  /** Already on screen as the seller's message. */
+  userMessage: ConversationMessage;
+  correction: { timestamp: string; content: string } | null;
+}
+
+/** What the seller sees while a new session's opening is prepared. */
+const START_STAGE_TEXT = {
+  reading: "Reading the questionnaire answers…",
+  checking_sources: "Going through the documents on file…",
+  writing: "Writing the first question…",
+} as const;
+
+/**
+ * POST /start as a stream: status events while a new session's opening is
+ * prepared, then the result. A server that answers with plain JSON works too.
+ */
+async function startInterviewStream(
+  url: string,
+  init: RequestInit,
+  onStage: (stage: keyof typeof START_STAGE_TEXT) => void,
+): Promise<TurnResult> {
+  const res = await fetch(url, init);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `Failed to start conversation (${res.status})`);
+  }
+  if (!(res.headers.get("content-type") || "").includes("text/event-stream") || !res.body) {
+    return (await res.json()) as TurnResult;
+  }
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const frames = buffer.split("\n\n");
+    buffer = frames.pop() || "";
+    for (const frame of frames) {
+      const line = frame.split("\n").find((l) => l.startsWith("data: "));
+      if (!line) continue;
+      const evt = JSON.parse(line.slice(6));
+      if (evt.type === "status" && evt.stage in START_STAGE_TEXT) onStage(evt.stage);
+      else if (evt.type === "done") return evt.result as TurnResult;
+      else if (evt.type === "error") throw new Error(evt.error || "Failed to start conversation");
+    }
+  }
+  throw new Error("The server did not return a session. Please try again.");
+}
+
 export function AIConversationInterface({
   dealId,
   businessName,
@@ -131,7 +184,7 @@ export function AIConversationInterface({
   const consumedResultsRef = useRef(0);
   const lastResultsLengthRef = useRef(0);
   const currentQuestionRef = useRef<string | undefined>(undefined);
-  const handleSendRef = useRef<(text?: string) => Promise<void>>(async () => {});
+  const handleSendRef = useRef<(text?: string, queued?: QueuedSend) => Promise<void>>(async () => {});
   const HANDS_FREE_PAUSE_MS = 3000;
   // Speaker-aware live transcription (Deepgram) — the room's conversation,
   // labelled by speaker, sent to the AI as an exchange after a pause.
@@ -204,8 +257,16 @@ export function AIConversationInterface({
   // Two-stage thinking indicator — after a few seconds the label reassures
   const [slowThinking, setSlowThinking] = useState(false);
   // True once the AI reply has started streaming in — swaps the thinking dots
-  // for the live text.
+  // for the live text. From then on the seller can type: the question on
+  // screen is final while the server finishes the turn (it records the
+  // answer and saves — 15–40s on long turns), and an answer sent meanwhile
+  // is queued and goes out the moment the turn is saved.
   const [isStreaming, setIsStreaming] = useState(false);
+  const queuedSendRef = useRef<QueuedSend | null>(null);
+  const [queuedSend, setQueuedSend] = useState(false);
+  // Where a new session's opening is (streamed by /start) — shown while it loads.
+  const [startStage, setStartStage] = useState<"reading" | "checking_sources" | "writing" | null>(null);
+  const [startSlow, setStartSlow] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -226,24 +287,27 @@ export function AIConversationInterface({
     async function initSession() {
       setIsStarting(true);
       setStartError(null);
+      setStartStage(null);
+      setStartSlow(false);
+      const slowTimer = setTimeout(() => { if (!cancelled) setStartSlow(true); }, 15000);
       try {
         // A broker-led session is always an explicit start; otherwise a
         // finished interview is continued only after "Continue interview".
-        const res = await fetch(`/api/interview/${dealId}/start`, {
-          method: "POST",
-          headers: authHeaders({ "Content-Type": "application/json" }),
-          body: JSON.stringify({
-            ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
-            ...(resumeRef.current || together ? { resume: true } : {}),
-          }),
-        });
-
-        if (!res.ok) {
-          const err = await res.json().catch(() => ({}));
-          throw new Error(err.error || `Failed to start conversation (${res.status})`);
-        }
-
-        const result: TurnResult = await res.json();
+        // Streamed: a new session's opening can take half a minute, so the
+        // page says what is happening meanwhile.
+        const result = await startInterviewStream(
+          `/api/interview/${dealId}/start`,
+          {
+            method: "POST",
+            headers: authHeaders({ "Content-Type": "application/json", Accept: "text/event-stream" }),
+            body: JSON.stringify({
+              stream: true,
+              ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
+              ...(resumeRef.current || together ? { resume: true } : {}),
+            }),
+          },
+          (stage) => { if (!cancelled) setStartStage(stage); },
+        ).finally(() => clearTimeout(slowTimer));
         if (cancelled) return;
         if (!result.sessionId) {
           throw new Error("The server did not return a session. Please try again.");
@@ -498,8 +562,33 @@ export function AIConversationInterface({
   }, []);
 
   // Send a message
-  const handleSend = useCallback(async (overrideText?: string) => {
-    if (isFinished || isLoading) return;
+  const handleSend = useCallback(async (overrideText?: string, queued?: QueuedSend) => {
+    if (isFinished) return;
+    if (isLoading) {
+      // The question is on screen and the server is finishing the turn:
+      // the answer shows at once and goes out the moment the turn is saved.
+      // (Nothing shown yet, or one answer already waiting: not accepted.)
+      if (!isStreaming || queued || queuedSendRef.current) return;
+      const text = (overrideText ?? input).replace(/​/g, "").trim();
+      if (!text) return;
+      if (!handsFreeRef.current) stopRecording();
+      const correction = editing;
+      const userMessage: ConversationMessage = {
+        role: "user",
+        content: text,
+        timestamp: new Date().toISOString(),
+        ...(correction ? { correctionOf: { timestamp: correction.timestamp, content: correction.content } } : {}),
+      };
+      queuedSendRef.current = { text, userMessage, correction };
+      setQueuedSend(true);
+      setMessages((prev) => [...prev, userMessage]);
+      setEditing(null);
+      preEditInputRef.current = "";
+      setInput("");
+      inputRef.current = "";
+      setSelectedAnswer(null);
+      return;
+    }
     if (!sessionId) {
       toast({
         title: "No active conversation",
@@ -512,18 +601,21 @@ export function AIConversationInterface({
     if (silenceTimerRef.current) { clearTimeout(silenceTimerRef.current); silenceTimerRef.current = null; }
 
     // overrideText: a message sent programmatically (e.g. the broker's Skip)
-    // without going through the composer's state.
-    const cleanedInput = (overrideText ?? input).replace(/\u200B/g, "").trim();
+    // without going through the composer's state. A queued answer is
+    // already on screen (and the composer may hold a new draft by now).
+    const cleanedInput = (queued?.text ?? overrideText ?? input).replace(/\u200B/g, "").trim();
     if (!cleanedInput) return;
 
     // A message sent from the editing banner is a correction of that earlier
     // answer \u2014 both the transcript and the agent treat it as an update.
-    const correction = editing;
-    setEditing(null);
-    preEditInputRef.current = "";
+    const correction = queued ? queued.correction : editing;
+    if (!queued) {
+      setEditing(null);
+      preEditInputRef.current = "";
+    }
 
     // Add user message to UI immediately
-    const userMessage: ConversationMessage = {
+    const userMessage: ConversationMessage = queued?.userMessage ?? {
       role: "user",
       content: cleanedInput,
       timestamp: new Date().toISOString(),
@@ -531,9 +623,11 @@ export function AIConversationInterface({
         ? { correctionOf: { timestamp: correction.timestamp, content: correction.content } }
         : {}),
     };
-    setMessages((prev) => [...prev, userMessage]);
-    setInput("");
-    inputRef.current = "";
+    if (!queued) {
+      setMessages((prev) => [...prev, userMessage]);
+      setInput("");
+      inputRef.current = "";
+    }
     setSuggestedAnswers([]); // Clear chips while waiting for AI response
     setSelectedAnswer(null);
     setIsLoading(true);
@@ -637,11 +731,22 @@ export function AIConversationInterface({
           return m;
         }),
       );
-      if (!result.shouldEnd) {
+      // (An answer queued while this turn was saving answers the question
+      // just shown — its chips would be for a question already answered.)
+      if (!result.shouldEnd && !queuedSendRef.current) {
         setSuggestedAnswers(result.suggestedAnswers || []);
       }
       onTurnResult?.(result);
       if (result.shouldEnd) {
+        // The interview ended with this reply: an answer queued meanwhile
+        // was never sent — take it back off the screen and say so.
+        const dropped = queuedSendRef.current;
+        if (dropped) {
+          queuedSendRef.current = null;
+          setQueuedSend(false);
+          setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === dropped.userMessage.timestamp)));
+          toast({ title: "Your last message wasn't sent", description: "The overview has ended. You can reopen it any time to add more." });
+        }
         setIsFinished(true);
         setTimeout(() => { void onComplete?.(); }, 2000);
       }
@@ -657,16 +762,23 @@ export function AIConversationInterface({
         setMessages((prev) => [...prev, { role: "ai", content: errText, timestamp: aiTs }]);
       }
       // Restore the seller's text so they don't have to retype it — and the
-      // editing state, so a re-send still lands as a correction.
-      setInput(cleanedInput);
-      inputRef.current = cleanedInput;
+      // editing state, so a re-send still lands as a correction. An answer
+      // queued behind this turn comes back to the box too (after it), and a
+      // draft typed meanwhile is kept.
+      const waiting = queuedSendRef.current;
+      queuedSendRef.current = null;
+      setQueuedSend(false);
+      if (waiting) setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === waiting.userMessage.timestamp)));
+      const restored = [cleanedInput, waiting?.text, inputRef.current.trim()].filter(Boolean).join("\n\n");
+      setInput(restored);
+      inputRef.current = restored;
       if (correction) setEditing(correction);
     } finally {
       setAbortController(null);
       setIsLoading(false);
       setIsStreaming(false);
     }
-  }, [input, editing, isFinished, isLoading, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
+  }, [input, editing, isFinished, isLoading, isStreaming, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
 
   // "Edit" on an earlier answer loads it into the composer; the banner above
   // the composer names what's being corrected and offers Cancel.
@@ -694,6 +806,13 @@ export function AIConversationInterface({
       setAbortController(null);
       setIsLoading(false);
       setIsStreaming(false);
+    }
+    // An answer waiting behind the cancelled turn is not sent either.
+    const waiting = queuedSendRef.current;
+    if (waiting) {
+      queuedSendRef.current = null;
+      setQueuedSend(false);
+      setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === waiting.userMessage.timestamp)));
     }
   }, [abortController]);
 
@@ -1053,6 +1172,16 @@ export function AIConversationInterface({
   const cleanInput = input.replace(/\u200B/g, "").trim();
   useEffect(() => { currentQuestionRef.current = currentQuestion?.content; }, [currentQuestion]);
   useEffect(() => { handleSendRef.current = handleSend; }, [handleSend]);
+  // The turn is saved: an answer the seller sent while it was finishing goes
+  // out now. (Declared after the ref update so it calls the fresh handleSend.)
+  useEffect(() => {
+    if (isLoading || isFinished) return;
+    const next = queuedSendRef.current;
+    if (!next) return;
+    queuedSendRef.current = null;
+    setQueuedSend(false);
+    void handleSendRef.current(undefined, next);
+  }, [isLoading, isFinished]);
   // Stop hands-free when the interview finishes or the component unmounts.
   useEffect(() => {
     if (isFinished && handsFreeRef.current) { handsFreeRef.current = false; setHandsFree(false); stopRecording(); }
@@ -1170,9 +1299,16 @@ export function AIConversationInterface({
           <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.15s" }} />
           <span className="h-1.5 w-1.5 rounded-full bg-muted-foreground/40 animate-bounce" style={{ animationDelay: "0.3s" }} />
         </div>
-        <span className="text-sm">
-          {businessName ? `Preparing overview for ${businessName}...` : "Starting overview..."}
+        <span className="text-sm" data-testid="status-start-stage">
+          {startStage
+            ? START_STAGE_TEXT[startStage]
+            : businessName ? `Preparing overview for ${businessName}...` : "Starting overview..."}
         </span>
+        {startSlow && (
+          <span className="text-xs text-muted-foreground/70 max-w-xs text-center">
+            With a lot already on file this can take about half a minute.
+          </span>
+        )}
       </div>
     );
   }
@@ -1381,7 +1517,9 @@ export function AIConversationInterface({
                     ? (isRecording ? "Listening… the seller can answer now" : isLoading ? "Waiting…" : "Seller's answer — press the mic while they talk, or type what they said")
                     : isRecording
                     ? "Listening... speak now"
-                    : isLoading
+                    : queuedSend
+                      ? "Your answer goes out in a moment..."
+                    : isLoading && !isStreaming
                       ? "Waiting..."
                       : editing
                         ? "Type your corrected answer..."
@@ -1390,7 +1528,9 @@ export function AIConversationInterface({
                           : "Your response..."
                 }
                 className="resize-none min-h-[56px] text-sm"
-                disabled={isLoading}
+                // Typing opens as soon as the question is on screen — the
+                // server finishing the turn doesn't hold the seller up.
+                disabled={isLoading && !isStreaming}
                 data-testid="input-message"
               />
               <div className="flex flex-col gap-1.5">
@@ -1398,13 +1538,13 @@ export function AIConversationInterface({
                   onClick={toggleRecording}
                   size="icon"
                   variant={isRecording ? "destructive" : "outline"}
-                  disabled={isFinished || isLoading}
+                  disabled={isFinished || (isLoading && !isStreaming)}
                   className="h-8 w-8"
                   data-testid="button-mic-toggle"
                 >
                   {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                 </Button>
-                {isLoading ? (
+                {isLoading && !isStreaming ? (
                   <Button
                     onClick={handleCancel}
                     size="icon"
@@ -1418,7 +1558,7 @@ export function AIConversationInterface({
                   <Button
                     onClick={() => void handleSend()}
                     size="icon"
-                    disabled={!input.replace(/\u200B/g, "").trim()}
+                    disabled={!input.replace(/​/g, "").trim() || queuedSend}
                     className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
                     data-testid="button-send"
                   >
@@ -1429,8 +1569,10 @@ export function AIConversationInterface({
             </div>
 
             <div className="max-w-3xl mx-auto mt-1.5 flex justify-between items-center">
-              <span className="text-[10px] text-muted-foreground/60">
-                {editing
+              <span className="text-[10px] text-muted-foreground/60" data-testid="status-composer-hint">
+                {queuedSend
+                  ? "Sending your answer as soon as the last reply is saved…"
+                  : editing
                   ? "Enter to send your correction · Esc to cancel"
                   : "Enter to send · Shift+Enter for a new line · Progress saves automatically"}
               </span>

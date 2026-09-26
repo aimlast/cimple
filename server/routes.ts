@@ -1318,15 +1318,36 @@ Return JSON only.`,
       if (!(await canAccessDeal(req, dealId))) {
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
-      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
+      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? ("broker_with_seller" as const) : undefined;
       // A finished interview is continued only on an explicit request
       // ("Continue interview" / "Add more detail") — loading the page alone
       // returns its finished state and starts nothing.
-      const result = await startOrResumeSession(dealId, {
+      const startOpts = {
         conductedBy,
         conductedVia: parseConductedVia(req.body?.conductedVia),
         resume: req.body?.resume === true,
-      });
+      };
+      // stream: true → Server-Sent Events: "status" events while a new
+      // session's opening is prepared (reading the file, checking the
+      // sources, writing the first question — it can take half a minute),
+      // then "done" with the same result as the JSON response.
+      if (req.body?.stream === true) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+        try {
+          const result = await startOrResumeSession(dealId, { ...startOpts, onProgress: (stage) => send({ type: "status", stage }) });
+          send({ type: "done", result: await interviewResultFor(req, dealId, result) });
+        } catch (err: any) {
+          console.error("Interview start error:", err);
+          send({ type: "error", error: err.message || "Failed to start interview" });
+        }
+        res.end();
+        return;
+      }
+      const result = await startOrResumeSession(dealId, startOpts);
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview start error:", error);

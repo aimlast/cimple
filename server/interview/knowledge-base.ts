@@ -24,6 +24,7 @@ import {
   type PriorExchange,
 } from "./source-context";
 import { reviewConflictsForDeal } from "./source-review";
+import { scrubBrokerWorkItems, isBrokerWorkText, BROKER_WORK_KEY_RE, sameResolvedValue } from "./source-privacy";
 import { claimConflicts } from "./claim-conflicts";
 
 // =====================
@@ -440,10 +441,13 @@ export function assembleKnowledgeBase(
     const p = privacy(d);
     const privateValues = [p.privateA ? d.interviewValue : null, p.privateB ? d.documentValue : null].filter((v): v is string => !!v);
     const publicValues = [p.privateA ? null : d.interviewValue, p.privateB ? null : d.documentValue].filter((v): v is string => !!v);
+    // (Same value: a shared significant figure, or the same text / headline
+    // figure — small counts like "41 incl. 5 seasonal" have no figure ≥ 100.)
+    const same = (a: string, b: string) => sameFigure(a, b) || sameResolvedValue(a, b);
     const fromPrivate =
       PRIVATE_MATERIAL_RE.test(note.resolvedValue) ||
       p.namesPrivateSource(note.resolvedValue) ||
-      (privateValues.some((v) => sameFigure(note.resolvedValue, v)) && !publicValues.some((v) => sameFigure(note.resolvedValue, v)));
+      (privateValues.some((v) => same(note.resolvedValue, v)) && !publicValues.some((v) => same(note.resolvedValue, v)));
     const field = PRIVATE_MATERIAL_RE.test(note.field) ? safeFieldLabel(note.field, note.factKey) : note.field;
     if (fromPrivate) {
       resolvedValues.push({ ...note, field, resolvedValue: "", supersededValues: [], resolvedPrivately: true });
@@ -496,6 +500,14 @@ export function assembleKnowledgeBase(
   const factSourceLabels = buildFactSourceLabels(baseExtractedInfo as Record<string, unknown>, documents, confidenceLevels);
   for (const n of resolvedValues) {
     if (n.factKey && !n.year && !n.resolvedPrivately) factSourceLabels[n.factKey] = "confirmed by the broker";
+  }
+  // An SDE / add-back fact still in view is what a seller-side source said
+  // (the broker's own working never is — see seller-view.ts): it stops a
+  // re-ask, it is not something to confirm back or build on.
+  for (const key of Object.keys(factSourceLabels)) {
+    if (BROKER_WORK_KEY_RE.test(key)) {
+      factSourceLabels[key] += " — on file so you don't re-ask; never tell the seller what is added back or what earnings come to after adjustments";
+    }
   }
 
   // Sources: digests, flagged risks, conflicts (seller-visible only — the
@@ -560,8 +572,16 @@ export function assembleKnowledgeBase(
     askSellerDiscrepancies,
     fieldConfidence: confidenceLevels,
     factSourceLabels,
-    sourceDigests: buildSourceDigests(documents),
-    flaggedRisks: buildFlaggedRisks(documents),
+    // The sources as the seller interview may read them: no item framed as
+    // the broker's normalisation work (add-backs, SDE, a recast, valuation
+    // multiples) — the agent never asserts those to the seller, and a
+    // digest line "owner add-backs $395K" invited it to (source-privacy.ts).
+    sourceDigests: buildSourceDigests(documents).map((d) => ({
+      ...d,
+      summary: scrubBrokerWorkItems(d.summary),
+      keyFacts: scrubBrokerWorkItems(d.keyFacts),
+    })),
+    flaggedRisks: buildFlaggedRisks(documents).filter((r) => !isBrokerWorkText(r.text)),
     sourceConflicts,
     priorExchanges: extras.sessions ? buildPriorExchanges(extras.sessions, currentSessionId) : [],
     resolvedValues,

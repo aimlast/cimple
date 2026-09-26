@@ -32,6 +32,7 @@ import {
   repairCharIndexedValue,
 } from "./info-merger";
 import { sourceLabel, CRITICAL_CONFLICT_RE, headlineNumber, valuesMateriallyDiffer, differentMeasure, dealAsOfYear, type SourceConflict } from "./source-context";
+import { visibleReviewConflicts, documentForLabel } from "./source-privacy";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "isProcessed" | "updatedAt">>;
@@ -63,11 +64,17 @@ export function sourcesFingerprint(documents: DocLike[]): string {
   return createHash("sha1").update(`${REVIEW_VERSION}|${parts.join("|")}`).digest("hex").slice(0, 16);
 }
 
-/** The stored review's conflicts (whatever its age — a stale one is rebuilt in the background). */
-export function reviewConflictsForDeal(deal: Pick<Deal, "id"> & { interviewSourceReview?: unknown }, _documents: DocLike[]): SourceConflict[] {
+/**
+ * The stored review's conflicts (whatever its age — a stale one is rebuilt
+ * in the background), each re-checked against the CURRENT sources: a
+ * conflict with a side from a source the broker has since made broker-only
+ * or deleted is dropped at once, never quoted to the seller while the
+ * rebuild runs (see source-privacy.ts visibleReviewConflicts).
+ */
+export function reviewConflictsForDeal(deal: Pick<Deal, "id"> & { interviewSourceReview?: unknown }, documents: DocLike[]): SourceConflict[] {
   const review = deal.interviewSourceReview as SourceReview | null | undefined;
   if (!review || review.status !== "ready" || !Array.isArray(review.conflicts)) return [];
-  return review.conflicts.map((c) => ({ ...c, origin: "review" as const }));
+  return visibleReviewConflicts(review.conflicts, documents).map((c) => ({ ...c, origin: "review" as const }));
 }
 
 const REVIEW_TOOL = {
@@ -350,7 +357,15 @@ export async function reviewModelConflicts(input: string): Promise<unknown> {
 async function computeSourceReview(deal: Deal, documents: DocLike[], fingerprint: string): Promise<SourceReview | null> {
   const input = buildReviewInput(deal, documents);
   try {
-    const conflicts = validateReviewConflicts(await reviewModelConflicts(input), input, dealAsOfYear(documents));
+    // Each side remembers the row it quotes, so a later switch to
+    // broker-only (or a delete) drops it by id, not only by label.
+    const conflicts = validateReviewConflicts(await reviewModelConflicts(input), input, dealAsOfYear(documents)).map((c) => ({
+      ...c,
+      values: c.values.map((v) => {
+        const documentId = documentForLabel(v.source, documents);
+        return documentId ? { ...v, documentId } : v;
+      }),
+    }));
     const review: SourceReview = { fingerprint, computedAt: new Date().toISOString(), status: "ready", conflicts };
     await storage.updateDeal(deal.id, { interviewSourceReview: review } as any);
     console.log(`[source-review] ${conflicts.length} source conflict(s) for deal ${deal.id}`);
@@ -369,7 +384,16 @@ async function computeSourceReview(deal: Deal, documents: DocLike[], fingerprint
  * promise (callers usually don't wait).
  */
 export function ensureSourceReview(deal: Deal, documents: DocLike[]): Promise<SourceReview | null> | null {
-  if (!documents.some(reviewable)) return null;
+  if (!documents.some(reviewable)) {
+    // Nothing left to review (every source made broker-only or deleted):
+    // the old review goes too — it quotes sources the seller can't see.
+    const old = (deal as Deal & { interviewSourceReview?: SourceReview | null }).interviewSourceReview;
+    if (old && Array.isArray(old.conflicts) && old.conflicts.length > 0) {
+      const cleared: SourceReview = { fingerprint: sourcesFingerprint(documents), computedAt: new Date().toISOString(), status: "ready", conflicts: [] };
+      storage.updateDeal(deal.id, { interviewSourceReview: cleared } as any).catch(() => {});
+    }
+    return null;
+  }
   const fingerprint = sourcesFingerprint(documents);
   const stored = (deal as Deal & { interviewSourceReview?: SourceReview | null }).interviewSourceReview;
   if (stored?.fingerprint === fingerprint) {

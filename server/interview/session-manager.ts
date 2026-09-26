@@ -1,4 +1,5 @@
 import Anthropic from "@anthropic-ai/sdk";
+import { randomUUID } from "crypto";
 import { db } from "../db";
 import { storage } from "../storage";
 import {
@@ -116,6 +117,8 @@ import {
 } from "./reask-guard";
 import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
 import { ensureSourceReview } from "./source-review";
+import { screenLedgerForSeller } from "./source-privacy";
+import { assertsNormalisation, stripNormalisationAssertions, NORMALISATION_CORRECTION } from "./normalisation-guard";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
 
@@ -356,33 +359,54 @@ export function buildTurnSave(args: {
   return toSave;
 }
 
-export async function startOrResumeSession(
+/** Where a new session's opening is while the seller waits (streamed to the page by POST /start with stream: true). */
+export type StartStage = "reading" | "checking_sources" | "writing";
+
+/**
+ * One start per deal at a time: a reload or retry while the opening is
+ * still being written waits for that same opening instead of starting a
+ * second session (and a second Opus call).
+ */
+const startsInFlight = new Map<string, Promise<TurnResult>>();
+
+export function startOrResumeSession(
   dealId: string,
   opts: {
     conductedBy?: ConductedBy;
     conductedVia?: ConductedVia;
     /** The caller explicitly asked to continue a finished interview ("Continue interview"). */
     resume?: boolean;
+    /** Progress while a new session's opening is prepared (display only). */
+    onProgress?: (stage: StartStage) => void;
   } = {},
 ): Promise<TurnResult> {
+  const key = `${dealId}|${opts.resume ? "resume" : "open"}`;
+  const running = startsInFlight.get(key);
+  if (running) return running;
+  const task = startOrResumeSessionOnce(dealId, opts).finally(() => startsInFlight.delete(key));
+  startsInFlight.set(key, task);
+  return task;
+}
+
+async function startOrResumeSessionOnce(
+  dealId: string,
+  opts: {
+    conductedBy?: ConductedBy;
+    conductedVia?: ConductedVia;
+    resume?: boolean;
+    onProgress?: (stage: StartStage) => void;
+  },
+): Promise<TurnResult> {
+  const progress = (stage: StartStage) => {
+    try {
+      opts.onProgress?.(stage);
+    } catch {
+      // display only
+    }
+  };
   // Load the deal and all related data
   let deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
-
-  // Seed extractedInfo from the intake questionnaire so answers the seller
-  // already typed count toward coverage and are NEVER re-asked. (Intake keys
-  // like "reasonForSelling" are canonicalised to schema keys like
-  // "reasonForSale" — previously they never matched, so coverage showed the
-  // section as missing and the agent asked again.)
-  // (Re-read + write under the deal's facts lock, then use the saved copy.)
-  // Answers still waiting for their privacy split are seeded (and split) too.
-  if (
-    seedExtractedInfoFromQuestionnaire(deal as Parameters<typeof seedExtractedInfoFromQuestionnaire>[0]) ||
-    unscreenedAnswers(deal as Parameters<typeof unscreenedAnswers>[0]).length > 0
-  ) {
-    await seedQuestionnaireFacts(dealId);
-    deal = (await storage.getDeal(dealId)) ?? deal;
-  }
 
   const documents = await storage.getDocumentsByDeal(dealId);
   const tasks = await storage.getTasksByDeal(dealId);
@@ -403,7 +427,9 @@ export async function startOrResumeSession(
   // broker's interview page used to create a fresh session (and an Opus
   // opening call that re-asked known facts) on every visit. Without an
   // explicit resume, report the finished state and create nothing.
-  // (An empty session a previous visit left behind is closed.)
+  // (An empty session a previous visit left behind is closed.) Checked
+  // before any model call — the finished page loads at once (it used to
+  // run the questionnaire's privacy split first: 10–12s on first load).
   const lastCompleted = existingSessions.find((s) => s.status === "completed");
   const liveWithAnswers = session && (session.messages as ConversationMessage[]).some((m) => m.role === "user");
   if (!opts.resume && deal.interviewCompleted && lastCompleted && !liveWithAnswers) {
@@ -422,11 +448,32 @@ export async function startOrResumeSession(
       captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
       sectionCoverage: kb.sectionCoverage.map(coverageForClient),
       industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
-      deferredTopics: deferralTopicStrings(parseLedger(meta._deferralLedger)),
+      deferredTopics: deferralTopicStrings(screenLedgerForSeller(parseLedger(meta._deferralLedger), documents)),
       shouldEnd: true,
       status: "completed",
     };
   }
+
+  // Seed extractedInfo from the intake questionnaire so answers the seller
+  // already typed count toward coverage and are NEVER re-asked. (Intake keys
+  // like "reasonForSelling" are canonicalised to schema keys like
+  // "reasonForSale" — previously they never matched, so coverage showed the
+  // section as missing and the agent asked again.)
+  // (Re-read + write under the deal's facts lock, then use the saved copy.)
+  // Answers still waiting for their privacy split are seeded (and split) too.
+  // It runs alongside the source-review wait below (a new session's opening
+  // needs both); resuming a session doesn't wait for it at all.
+  const seeding =
+    seedExtractedInfoFromQuestionnaire(deal as Parameters<typeof seedExtractedInfoFromQuestionnaire>[0]) ||
+    unscreenedAnswers(deal as Parameters<typeof unscreenedAnswers>[0]).length > 0
+      ? seedQuestionnaireFacts(dealId).then(
+          () => true,
+          (err) => {
+            console.error(`[session-manager] Seeding intake answers failed for deal ${dealId}:`, err);
+            return false;
+          },
+        )
+      : null;
 
   // Seller Communication Profile: generated when missing, and rebuilt when
   // it was built under older privacy rules or from a row the broker has
@@ -453,6 +500,9 @@ export async function startOrResumeSession(
   const sourceReviewRun = ensureSourceReview(deal, documents);
   const openDiscrepancies = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "open");
 
+  // An empty session (no opening saved — a start that never finished) is
+  // reused for the new opening instead of adding a second active session.
+  let reuseSessionId: string | null = null;
   if (session) {
     const messages = session.messages as ConversationMessage[];
     const userMessageCount = messages.filter((m) => m.role === "user").length;
@@ -461,13 +511,15 @@ export async function startOrResumeSession(
     // and the deal already had a prior completed conversation, discard it
     // and create a fresh session with returning-seller context.
     const hasCompletedSession = existingSessions.some((s) => s.status === "completed");
-    if (userMessageCount === 0 && hasCompletedSession) {
+    if (messages.length === 0) {
+      reuseSessionId = session.id;
+    } else if (userMessageCount === 0 && hasCompletedSession) {
       await db
         .update(interviewSessions)
         .set({ status: "completed", completedAt: new Date() })
         .where(eq(interviewSessions.id, session.id));
       session = undefined as any;
-    } else if (messages.length > 0) {
+    } else {
       // Resume existing session with real conversation history
       const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies, {
         sessions: existingSessions,
@@ -494,7 +546,7 @@ export async function startOrResumeSession(
 
       // Deferrals come from the durable ledger; _deferredTopics is the legacy
       // fallback for sessions persisted before the ledger existed.
-      const resumeLedger = parseLedger(sessionMeta._deferralLedger);
+      const resumeLedger = screenLedgerForSeller(parseLedger(sessionMeta._deferralLedger), documents);
       const resumeDeferred = resumeLedger.length > 0
         ? deferralTopicStrings(resumeLedger)
         : (sessionMeta._deferredTopics as string[]) || [];
@@ -515,22 +567,10 @@ export async function startOrResumeSession(
     }
   }
 
-  // Create a new session
-  const newSession = await db
-    .insert(interviewSessions)
-    .values({
-      dealId,
-      participantId: deal.sellerId || deal.brokerId,
-      messages: [],
-      extractedInfo: {},
-      status: "active",
-      questionsAsked: 0,
-      questionsAnswered: 0,
-      questionsSkipped: 0,
-    })
-    .returning();
-
-  session = newSession[0];
+  // A new session. Its row is written once the opening exists (below) —
+  // never left empty while the opening is prepared (a reload in that window
+  // used to find the empty row and start a second session).
+  const sessionId = reuseSessionId ?? randomUUID();
 
   // If there's a completed prior session, pass it so the AI knows this is
   // a returning seller and can welcome them back instead of starting fresh.
@@ -538,30 +578,49 @@ export async function startOrResumeSession(
 
   // The source review still running: give it up to SOURCE_REVIEW_WAIT_MS so
   // the opening can raise a conflict it finds (it keeps running either way,
-  // and later turns pick it up).
-  if (sourceReviewRun) {
-    const review = await Promise.race([
-      sourceReviewRun.catch(() => null),
-      new Promise<null>((resolve) => setTimeout(() => resolve(null), SOURCE_REVIEW_WAIT_MS)),
-    ]);
+  // and later turns pick it up). The intake answers are seeded meanwhile.
+  const reviewWait = sourceReviewRun
+    ? Promise.race([
+        sourceReviewRun.catch(() => null),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), SOURCE_REVIEW_WAIT_MS)),
+      ])
+    : null;
+  if (seeding) {
+    progress("reading");
+    if (await seeding) deal = (await storage.getDeal(dealId)) ?? deal;
+  }
+  if (reviewWait) {
+    progress("checking_sources");
+    const review = await reviewWait;
     if (review) deal = { ...deal, interviewSourceReview: review } as typeof deal;
   }
+  progress("writing");
 
   // Assemble knowledge base for the opening message — with every earlier
   // session's questions and answers, so a returning seller is never asked
   // them again.
   const kb = assembleKnowledgeBase(deal, documents, tasks, priorCompletedSession, resolvedDiscrepancies, {
     sessions: existingSessions,
-    currentSessionId: session.id,
+    currentSessionId: sessionId,
     openDiscrepancies,
   });
 
+  // Confidence map, ledger, conduct mode and industry from the most recent
+  // prior session (if any) — confirmed fields stay confirmed across sessions.
+  const priorMeta = existingSessions.find((s) => s.id !== sessionId)?.extractedInfo as
+    | Record<string, unknown>
+    | null
+    | undefined;
+  const priorConfidenceLevels =
+    (priorMeta?._confidenceLevels as Record<string, string> | undefined) ?? {};
+
   // The prior session's ledger (carried over — see below) and the items the
   // sources put on the agenda (conflicts, flagged risks), so the opening can
-  // go straight to the most important open item.
+  // go straight to the most important open item. (Re-checked against the
+  // current sources: nothing minted from a source since made broker-only.)
   const carriedMeta = (priorCompletedSession?.extractedInfo as Record<string, unknown> | null | undefined) ?? null;
   const openingLedger = mintSourceItems(
-    parseLedger(carriedMeta?._deferralLedger).map((e) => ({ ...e, earlierSession: true })),
+    screenLedgerForSeller(parseLedger(carriedMeta?._deferralLedger), documents).map((e) => ({ ...e, earlierSession: true })),
     kb,
     0,
   );
@@ -581,7 +640,7 @@ export async function startOrResumeSession(
     sellerMessage: "",
     info: kb.extractedInfo as Record<string, unknown>,
     documents,
-    priorQA: priorQAFromSessions(existingSessions, session.id),
+    priorQA: priorQAFromSessions(existingSessions, sessionId),
     openDeferralTopics: [],
     conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
   });
@@ -596,20 +655,6 @@ export async function startOrResumeSession(
     suggestedAnswers: openingResult.suggestedAnswers || [],
   };
 
-  // Confidence map from the most recent prior session (if any) — confirmed
-  // fields stay confirmed across sessions.
-  const priorSessions = await db
-    .select()
-    .from(interviewSessions)
-    .where(eq(interviewSessions.dealId, dealId))
-    .orderBy(desc(interviewSessions.lastActivityAt));
-  const priorMeta = priorSessions.find((s) => s.id !== session.id)?.extractedInfo as
-    | Record<string, unknown>
-    | null
-    | undefined;
-  const priorConfidenceLevels =
-    (priorMeta?._confidenceLevels as Record<string, string> | undefined) ?? {};
-
   // Carry the deferral ledger across sessions — a seller who does the
   // interview in two sittings must not lose their open deferrals (observed:
   // the ledger silently reset to [] on resume, so the broker's outstanding
@@ -617,7 +662,7 @@ export async function startOrResumeSession(
   // (Entries keep their turn numbers from that sitting — marked as from an
   // earlier session so the agent never calls them "earlier in this interview".)
   let seededLedger: DeferralEntry[] = mintSourceItems(
-    parseLedger(priorMeta?._deferralLedger).map((e) => ({ ...e, earlierSession: true })),
+    screenLedgerForSeller(parseLedger(priorMeta?._deferralLedger), documents).map((e) => ({ ...e, earlierSession: true })),
     kb,
     0,
   );
@@ -661,26 +706,42 @@ export async function startOrResumeSession(
     ? priorIndustryContext
     : openingResult.industryContext;
 
-  await db
-    .update(interviewSessions)
-    .set({
-      messages: [aiMessage],
-      questionsAsked: 1,
-      lastActivityAt: new Date(),
-      extractedInfo: {
-        _conductedBy: opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller",
-        ...(opts.conductedVia ? { _conductedVia: opts.conductedVia } : {}),
-        _industryContext: seededIndustryContext,
-        _deferredTopics: deferralTopicStrings(seededLedger),
-        _deferralLedger: seededLedger,
-        _stopSignalCount: 0,
-        // Carry seller confirmations forward from any prior session — a
-        // fresh map would demote confirmed fields to "inferred" and make
-        // the agent re-verify answers the seller already gave.
-        _confidenceLevels: priorConfidenceLevels,
-      },
-    })
-    .where(eq(interviewSessions.id, session.id));
+  const sessionState = {
+    messages: [aiMessage],
+    questionsAsked: 1,
+    lastActivityAt: new Date(),
+    extractedInfo: {
+      _conductedBy: opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller",
+      ...(opts.conductedVia ? { _conductedVia: opts.conductedVia } : {}),
+      _industryContext: seededIndustryContext,
+      _deferredTopics: deferralTopicStrings(seededLedger),
+      _deferralLedger: seededLedger,
+      _stopSignalCount: 0,
+      // Carry seller confirmations forward from any prior session — a
+      // fresh map would demote confirmed fields to "inferred" and make
+      // the agent re-verify answers the seller already gave.
+      _confidenceLevels: priorConfidenceLevels,
+    },
+  };
+  if (reuseSessionId) {
+    await db.update(interviewSessions).set(sessionState).where(eq(interviewSessions.id, sessionId));
+  } else {
+    // Another server process may have opened a session meanwhile — resume
+    // that one rather than add a second active session.
+    const raced = (await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId))).find(
+      (s) => (s.status === "active" || s.status === "paused") && !existingSessions.some((e) => e.id === s.id),
+    );
+    if (raced) return startOrResumeSessionOnce(dealId, { ...opts, onProgress: undefined });
+    await db.insert(interviewSessions).values({
+      id: sessionId,
+      dealId,
+      participantId: deal.sellerId || deal.brokerId,
+      status: "active",
+      questionsAnswered: 0,
+      questionsSkipped: 0,
+      ...sessionState,
+    });
+  }
 
   // If the AI identified industry context in the opening, update the KB
   if (seededIndustryContext) {
@@ -698,7 +759,7 @@ export async function startOrResumeSession(
     targetSection: aiMessage.targetSection,
     suggestedAnswers: openingResult.suggestedAnswers,
     turnMessages: { ai: aiMessage },
-    sessionId: session.id,
+    sessionId,
     captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
     sectionCoverage: kb.sectionCoverage.map(coverageForClient),
     industryContext: extractIndustryContextForFrontend(kb.industryContext),
@@ -769,8 +830,10 @@ export async function processTurn(
   // Conflicts and flagged risks the sources raise join the ledger (as
   // "source" items) the first time they appear, so the agent can resolve
   // them and governance can tell what is still open.
+  // (Re-checked against the current sources first: an item minted while a
+  // source was shared must not keep quoting it once it is broker-only.)
   const priorLedger: DeferralEntry[] = mintSourceItems(
-    parseLedger(sessionMeta._deferralLedger),
+    screenLedgerForSeller(parseLedger(sessionMeta._deferralLedger), documents),
     kb,
     (session.messages as ConversationMessage[]).filter((m) => m.role === "user").length,
   );
@@ -1195,6 +1258,35 @@ export async function processTurn(
       guarded.response.privateNotes = [...(aiResponse.privateNotes ?? []), ...(guarded.response.privateNotes ?? [])];
       aiResponse = guarded.response;
       filterFigureChips();
+    }
+  }
+
+  // NORMALISATION GUARD (normalisation-guard.ts): the reply never tells the
+  // seller what is added back or what SDE / adjusted earnings come to — the
+  // broker's call, and the broker's private working. Held on the stream (see
+  // heldForLaterGuards); ONE corrective re-call, then the asserting
+  // sentences give way to the hand-off.
+  if (!degraded && assertsNormalisation(aiResponse.message)) {
+    console.warn(`[session-manager] Normalisation guard: reply asserts add-back treatment or a normalised figure — corrective re-call`);
+    const { response: corrected, degraded: correctionDegraded } = await callInterviewWithRecovery(anthropic, {
+      ...callParams,
+      messages: [
+        ...conversation,
+        { role: "assistant" as const, content: aiResponse.message },
+        { role: "user" as const, content: NORMALISATION_CORRECTION },
+      ],
+    });
+    if (!correctionDegraded && corrected.message && !assertsNormalisation(corrected.message)) {
+      // The rewrite is about wording: what the draft recorded, withdrew or
+      // kept private still stands.
+      if (Object.keys(corrected.extractedFields ?? {}).length === 0) corrected.extractedFields = aiResponse.extractedFields;
+      corrected.retractedFields = aiResponse.retractedFields;
+      corrected.privateNotes = [...(aiResponse.privateNotes ?? []), ...(corrected.privateNotes ?? [])];
+      aiResponse = corrected;
+      filterFigureChips();
+    } else {
+      console.error(`[session-manager] Normalisation guard: re-call still asserted — handing off`);
+      aiResponse.message = stripNormalisationAssertions(aiResponse.message);
     }
   }
 
@@ -2531,7 +2623,7 @@ export function createMessageRelease(onDelta?: (chunk: string) => void) {
  * (the retraction backstop may re-call).
  */
 export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boolean; valuationLeak: boolean }): boolean {
-  return ctx.retractionInMessage || ctx.valuationLeak || leaksInternalMachinery(text) || findLegalAssertions(text).length > 0;
+  return ctx.retractionInMessage || ctx.valuationLeak || leaksInternalMachinery(text) || findLegalAssertions(text).length > 0 || assertsNormalisation(text);
 }
 /** How long a streamed question waits for the answer check before it is shown anyway. */
 const STREAM_CHECK_TIMEOUT_MS = 4_000;
@@ -2576,8 +2668,14 @@ export function financialCoreGaps(extractedNow: Record<string, unknown>, ledger:
   ].filter((x): x is string => !!x);
 }
 
-/** How long a new session's opening waits for a source review still being built. */
-const SOURCE_REVIEW_WAIT_MS = 25_000;
+/**
+ * How long a new session's opening waits for a source review still being
+ * built. Short: the seller is looking at a loading screen, and the review
+ * usually finished long before (the broker's Overview starts it); when it
+ * hasn't, the opening goes to the mechanical conflicts and later turns
+ * pick the review up. (Was 25s — openings took 39–49s.)
+ */
+const SOURCE_REVIEW_WAIT_MS = 8_000;
 /** Past this many seller turns, flagged items no longer hold the interview open on their own. */
 const MAX_TURNS_HELD_OPEN = 40;
 /** How many flagged risks go on the agenda (most-flagged first). */

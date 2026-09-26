@@ -271,7 +271,8 @@ export interface SourceConflict {
   key: string;
   /** What the conflict is about, in plain words. */
   topic: string;
-  values: { value: string; source: string }[];
+  /** documentId: the row a side quotes, when known (the source review stamps it) — re-checked against its visibility on every read. */
+  values: { value: string; source: string; documentId?: string }[];
   /** Blocks the interview's end until reconciled (revenue, earnings, owner pay…). */
   critical: boolean;
   origin: "alternates" | "merge" | "review";

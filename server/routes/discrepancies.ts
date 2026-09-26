@@ -19,6 +19,8 @@ import {
   mutateDealInfo,
   setBrokerFact,
   addFact,
+  markHiddenFromSeller,
+  resolvedToPrivateSide,
   NEEDS_MAPPING,
   NARRATIVE_FACT,
   NO_FACT_KEY,
@@ -210,7 +212,17 @@ export function registerDiscrepancyRoutes(app: Express) {
       // "Save as a new fact": the resolution becomes a broker fact of its own.
       const newLabel = typeof newFactLabel === "string" ? newFactLabel.trim().slice(0, 120) : "";
       if (newLabel && updated.status === "resolved" && (updated.resolvedValue || "").trim()) {
-        const key = await mutateDealInfo(updated.dealId, (info) => addFact(info, newLabel, String(updated.resolvedValue).trim(), null));
+        // Resolved to the broker's own material's value: the new fact is as
+        // private to the seller interview as its source (see resolvedToPrivateSide).
+        const brokerOnlyDocIds = new Set(
+          (await storage.getDocumentsByDeal(updated.dealId)).filter((doc) => doc.visibility === "broker_only").map((doc) => doc.id),
+        );
+        const hidden = resolvedToPrivateSide(updated, String(updated.resolvedValue).trim(), brokerOnlyDocIds);
+        const key = await mutateDealInfo(updated.dealId, (info) => {
+          const k = addFact(info, newLabel, String(updated.resolvedValue).trim(), null);
+          if (hidden) markHiddenFromSeller(info, k);
+          return k;
+        });
         const linked = (await storage.updateDiscrepancy(updated.id, { factKey: key, factYear: null } as any)) ?? updated;
         return res.json({ ...linked, factWrite: { status: "written", key }, staleFacts: (await staleFactsFor(linked)).stale });
       }
