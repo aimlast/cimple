@@ -24,7 +24,10 @@ if (process.env.SHOW) {
 // 1. The count comes down to about the number of matters.
 {
   assert.equal(RIDGE_NOTES.length, 35);
-  assert.ok(notes.length <= 18 && notes.length >= 12, `about 15 notes, got ${notes.length}`);
+  // 19: the ~15 matters, plus the dividend and the buy-sell premium notes (their matter is a
+  // fact already, but the note says more than it — who was paid, another year's premium)
+  // and Devin's contract, which the broker still has to verify.
+  assert.ok(notes.length <= 19 && notes.length >= 12, `about 15 notes, got ${notes.length}`);
   console.log(`✓ 35 → ${notes.length} notes`);
 }
 
@@ -55,19 +58,23 @@ if (process.env.SHOW) {
   assert.equal(where(/^Luis Ortega owns 15%/), "entityType");
   assert.equal(where(/^Seller is 64/), "ownerAge");
   assert.equal(where(/unaudited compilation/), "auditStatus");
-  assert.equal(promoted.get(RIDGE_NOTES.find((x) => /Class D dividend of \$60,000/.test(x.note))!.note), "dividendsDeclared");
-  assert.match(String(info.dividendsDeclared), /\$60,000 declared December 16, 2024/);
-  assert.equal(getFieldSources(info).dividendsDeclared?.documentId, "minute", "credited to the minute book");
+  // The FY2024 $60,000 dividend is on file already (dividendsPaid, dividendsDeclaredByYear):
+  // no second dividend fact is written; the note (it names who was paid) stays a note.
+  assert.equal(where(/Class D dividend of \$60,000/), undefined);
+  for (const k of ["dividendsDeclared", "dividendHistory"]) assert.equal(info[k], undefined, `no duplicate ${k}`);
+  assert.ok(has(notes, /Class D dividend of \$60,000/), "the dividend note stays a note");
   assert.equal(where(/^Shareholder agreement amended/), "shareholdersAgreement");
   assert.doesNotMatch(String(info.shareholdersAgreement), /recorded in business fields|company transaction matter/, "the model's commentary is not part of the fact");
   assert.equal(where(/^Market rent opinion/), "marketRentOpinion");
   assert.equal(where(/^Associated with McAllister/), "associatedCorporations");
-  assert.equal(where(/buy-sell life insurance/), "insuranceCoverage");
-  assert.match(String(info.insuranceCoverage), /\$15,000/);
-  for (const re of [/Class D dividend/, /unaudited compilation/, /^Seller is 64/, /Market rent opinion/, /Associated with McAllister/, /buy-sell life insurance/, /owns 85%/]) {
+  // The buy-sell policies are on file (insuranceExpense: "$16,000 … life insurance premiums
+  // for corporate-owned buy-sell policies"); the note's other year's $15,000 stays a note.
+  assert.equal(where(/buy-sell life insurance/), undefined);
+  for (const k of ["insuranceCoverage", "buySellInsurance"]) assert.equal(info[k], undefined, `no duplicate ${k}`);
+  for (const re of [/unaudited compilation/, /^Seller is 64/, /Market rent opinion/, /Associated with McAllister/, /owns 85%/]) {
     assert.ok(!notes.some((n) => re.test(n.note)), `${re} left the notes`);
   }
-  console.log("✓ ownership, dividend, compilation, age, USA, market rent, associated corp, buy-sell insurance → facts");
+  console.log("✓ ownership, compilation, age, USA, market rent, associated corp → facts; the dividend and buy-sell policies already on file get no second fact");
 }
 
 // 4. Process chatter goes; deal terms and the broker's strategy stay.

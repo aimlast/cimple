@@ -59,6 +59,7 @@ import {
   SOURCE_META_KEYS,
   type FieldSource,
   type SourceKind,
+  type SourceRowLookup,
 } from "../interview/info-merger";
 import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, rememberPeriodEnd } from "./ingest";
 import { compactPrivateNotes } from "../interview/info-merger";
@@ -446,6 +447,16 @@ export async function reprocessDealDocuments(
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
 
 /**
+ * `src` as a source for fact `key`: a specialist when its row is the
+ * dedicated source of that fact (isSpecialistSource on the row's title).
+ */
+function asSourceFor(key: string, src: FieldSource, lookup?: SourceRowLookup): FieldSource {
+  if (src.specialist || !src.documentId || (src.source !== "document" && src.source !== "email")) return src;
+  const title = lookup?.titleOf?.(src.documentId);
+  return title && isSpecialistSource(key, title) ? { ...src, specialist: true } : src;
+}
+
+/**
  * Mutates `info`: every fact still on file under a spelling that now has a
  * canonical name (canonicalFieldName — grossMarginPercentByYear,
  * earningsBeforeInterestAmortizationAndIncomeTaxesByYear,
@@ -455,6 +466,13 @@ const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === 
  * the old spelling goes, with its other values and confirmations. A fresh
  * extraction already files under the canonical name; this carries over what
  * was stored before. Returns the keys folded.
+ *
+ * A value stored under the old spelling was judged as a source for THAT
+ * spelling: the statements' EBITDA line filed as
+ * earningsBeforeInterestAmortizationAndIncomeTaxesByYear was no specialist
+ * (the statements are the dedicated source of ebitda*, not of that key), so
+ * a call's figure outranked it. Each value is weighed again as a source for
+ * the canonical fact (asSourceFor).
  */
 export function foldAliasedFacts(info: Record<string, unknown>, ctx: MergeContext = {}): string[] {
   const folded: string[] = [];
@@ -471,10 +489,10 @@ export function foldAliasedFacts(info: Record<string, unknown>, ctx: MergeContex
       const years = resolvedYearSources(src, value, ctx.lookup);
       for (const [y, v] of Object.entries(value)) {
         if (v === null || v === undefined || v === "") continue;
-        mergeYearMapInto(info, canon, { [y]: String(v) }, years[y] ?? src, ctx);
+        mergeYearMapInto(info, canon, { [y]: String(v) }, asSourceFor(canon, years[y] ?? src, ctx.lookup), ctx);
       }
     } else if (!empty) {
-      mergeScalarInto(info, canon, value, src, ctx);
+      mergeScalarInto(info, canon, value, asSourceFor(canon, src, ctx.lookup), ctx);
     }
     // Its other values and confirmations follow it ("key" and "key.2024").
     for (const mapKey of [FIELD_ALTERNATES_KEY, FIELD_CORROBORATIONS_KEY]) {

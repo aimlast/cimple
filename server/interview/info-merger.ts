@@ -1101,14 +1101,21 @@ export function yearEntryDocId(e: YearEntry | null | undefined): string | undefi
 export interface SourceRowLookup {
   kindOf?: (documentId: string) => SourceKind | undefined;
   brokerOnlyOf?: (documentId: string) => boolean | undefined;
+  /** The row's title ("Compiled financial statements FY2024 · …") — whether it is a specialist source for a fact. */
+  titleOf?: (documentId: string) => string | undefined;
 }
 
 /** Builds a SourceRowLookup from the deal's documents rows. */
 export function sourceRowLookup(
-  documents: Array<{ id: string; sourceKind?: string | null; visibility?: string | null }>,
+  documents: Array<{ id: string; sourceKind?: string | null; visibility?: string | null; name?: string | null; subcategory?: string | null }>,
 ): SourceRowLookup {
   const byId = new Map(documents.map((d) => [d.id, d]));
   return {
+    titleOf: (id) => {
+      const d = byId.get(id);
+      const title = d ? [d.name, d.subcategory].filter(Boolean).join(" · ") : "";
+      return title || undefined;
+    },
     kindOf: (id) => {
       const d = byId.get(id);
       if (!d) return undefined;

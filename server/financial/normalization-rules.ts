@@ -889,6 +889,17 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
   const onlyYear = sentenceYears.length === 1 ? sentenceYears[0] : null;
   const used = new Set<number>();
   const after = (a: MoneyAt) => sentence.slice(a.end, a.end + 40).split(/[(;]|\s[—–]\s/)[0];
+  /**
+   * A metric that labels a figure rather than stating one: inside
+   * parentheses ("$1,717,000 (SDE)") or right after a figure ("$1,717,000
+   * SDE − …").
+   */
+  const isTermLabel = (m: RegExpMatchArray, from = 0): boolean => {
+    const before = sentence.slice(from, m.index!);
+    if ((before.match(/\(/g) ?? []).length > (before.match(/\)/g) ?? []).length) return true;
+    const prev = [...monies].reverse().find((x) => x.end <= m.index!);
+    return !!prev && prev.index >= from && /^\s*\(?\s*$/.test(sentence.slice(prev.end, m.index!));
+  };
   const trailingYear = (a: MoneyAt) =>
     sentence.slice(a.end, a.end + 18).match(/^\s*(?:\(\s*(?:FY\s?)?((?:19|20)\d{2})\s*\)|(?:in|for|during)\s+(?:FY\s?|fiscal\s+)?((?:19|20)\d{2})\b)/i);
 
@@ -910,7 +921,10 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
     const depth = (before.match(/\(/g) ?? []).length - (before.match(/\)/g) ?? []).length;
     if (depth > 0) continue; // a sub-calculation inside parentheses
     if (!subject) {
-      const own = [...metrics].reverse().find((m) => m.index! >= chainStart && m.index! < p) ?? null;
+      // The chain's subject is the metric it is about, never a label on one
+      // of its terms: "2024 Adjusted EBITDA: $1,717,000 (SDE) − $165,000 (…)
+      // = $1,552,000" is adjusted EBITDA; "(SDE)" names the $1,717,000.
+      const own = [...metrics].reverse().find((m) => m.index! >= chainStart && m.index! < p && !isTermLabel(m, chainStart)) ?? null;
       subject = own ?? inherited;
       ownSubject = !!own;
     }
@@ -955,6 +969,11 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
       // A weight on it ("2024 SDE $208,032 × 30%") still leaves it the year's figure.
       const rest = sentence.slice(amount.end);
       if (isTerm(rest) && !/^\s*(?:[×*]|x\s*\d)/.test(rest)) return;
+      // The figure carries its own label naming another metric: "Adjusted
+      // EBITDA: $1,717,000 (SDE) less a $165,000 salary gives $1,552,000" —
+      // the $1,717,000 is the SDE, not the adjusted EBITDA.
+      const label = rest.match(/^\s*\(\s*(adjusted\s+|normali[sz]ed\s+|reported\s+|unadjusted\s+)?(ebitda|sde)\b[^()]{0,20}\)/i);
+      if (label && (label[2].toUpperCase() !== metric || (label[1] || "").trim().toLowerCase() !== qualifier)) return;
       used.add(amount.index);
       const ty = trailingYear(amount);
       // "2024 SDE $208,032": the year written just before the metric.

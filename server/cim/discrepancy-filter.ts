@@ -87,18 +87,26 @@ export interface NumTok {
   unitWord: string;
   /** Up to 90 characters either side (lower-cased) — what the number is about. */
   context: string;
+  /** Where the number stands in tokenText(text): the match's start and end. */
+  at?: number;
+  end?: number;
 }
 
 const APPROX_BEFORE_RE = /(?:~|≈|\babout|\bapprox\.?|\bapproximately|\baround|\broughly|\bover|\bmore than|\bunder|\bless than|\bnearly|\balmost|\bestimated|\bsome|\bclose to)\s*\$?\s*$/;
 
 const MAG: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
 
-/** Every quantity in a value, with its unit and surroundings. */
-export function numberTokens(text: string, opts: { keepSourceLabel?: boolean } = {}): NumTok[] {
+/** The text numberTokens reads a value as (lower-cased; days of the month and ISO days dropped) — tokens' `at` index it. */
+export function tokenText(text: string, opts: { keepSourceLabel?: boolean } = {}): string {
   let t = (opts.keepSourceLabel ? text : stripLabel(text)).toLowerCase();
   // Days of the month are not quantities: "December 31, 2024" → "december 2024".
   t = t.replace(new RegExp(`\\b(${MONTHS})[a-z]*\\.?\\s+\\d{1,2}(?:st|nd|rd|th)?(?![0-9]),?`, "g"), "$1 ");
-  t = t.replace(/\b(\d{4})-\d{2}-\d{2}\b/g, "$1");
+  return t.replace(/\b(\d{4})-\d{2}-\d{2}\b/g, "$1");
+}
+
+/** Every quantity in a value, with its unit and surroundings. */
+export function numberTokens(text: string, opts: { keepSourceLabel?: boolean } = {}): NumTok[] {
+  const t = tokenText(text, opts);
   const out: NumTok[] = [];
   const re = /(\$)?\s*(\d[\d,]*(?:\.\d+)?)\s*(k|mm|m|million|thousand|b|billion)?(?![a-z0-9])\s*(%|percent\b)?/g;
   let m: RegExpExecArray | null;
@@ -120,7 +128,7 @@ export function numberTokens(text: string, opts: { keepSourceLabel?: boolean } =
     const approx = APPROX_BEFORE_RE.test(before) || /^\s*\+|^\s*or so\b|^\s*ish\b/.test(after);
     const unitWord = (after.match(/^\s*[-+]?\s*([a-z]{2,})/)?.[1] ?? "").replace(/(?:es|s)$/, "");
     const context = t.slice(Math.max(0, m.index - 90), re.lastIndex + 90);
-    out.push({ value: n, pct, year, durationYears, period, approx, raw: m[0].trim(), unitWord, context });
+    out.push({ value: n, pct, year, durationYears, period, approx, raw: m[0].trim(), unitWord, context, at: m.index, end: re.lastIndex });
   }
   return out;
 }
@@ -329,24 +337,97 @@ function principal(tokens: NumTok[]): NumTok | undefined {
  * elsewhere). Date-like facts (a lease's expiry) never get here: their years
  * are the value, not a period.
  */
-export function periodAlignment(claim: string, evidence: string): "same" | "different_periods" | null {
+export function periodAlignment(claim: string, evidence: string, measure?: string | null): "same" | "different_periods" | null {
   const c = withoutSourceLabel(claim);
   const e = withoutSourceLabel(evidence);
   const cy = periodYears(c);
   if (cy.size !== 1) return null;
   const year = Array.from(cy)[0];
-  const cp = principal(numberTokens(c, { keepSourceLabel: true }));
-  if (!cp) return null;
+  const words = measureWords(measure);
+  const claimTokens = numberTokens(c, { keepSourceLabel: true });
+  if (!claimTokens.some((t) => !t.year)) return null;
   const ey = periodYears(e);
   if (ey.size === 0) return null;
   // The evidence's figures, clause by clause, for the one year each clause names.
   const forYear: NumTok[] = [];
   for (const clause of periodClauses(e)) {
     const ys = periodYears(clause);
-    if (ys.size === 1 && ys.has(year)) forYear.push(...numberTokens(clause, { keepSourceLabel: true }).filter((t) => !t.year));
+    if (ys.size !== 1 || !ys.has(year)) continue;
+    forYear.push(...numberTokens(clause, { keepSourceLabel: true }).filter((t) => !t.year));
   }
-  if (forYear.length > 0) return forYear.some((t) => tokensMatch(cp, t)) ? "same" : null;
+  if (forYear.length > 0) {
+    // The claim's figure for the disputed measure: its only figure, or the
+    // one the measure's words stand next to ("… and EBITDA around $400K") —
+    // never simply the first ("2024 revenue of $2.3M" for an EBITDA row).
+    const cp = measureFigure(c, claimTokens, words);
+    if (!cp) return null;
+    return forYear.some((t) => tokensMatch(cp, t)) ? "same" : null;
+  }
   return ey.has(year) ? null : "different_periods";
+}
+
+/** Words that name no measure of their own in a field's label or key. */
+const MEASURE_FILLER = new Set([
+  "the", "and", "for", "per", "total", "value", "amount", "figure", "number", "count", "annual", "current", "stated", "reported",
+  "claimed", "actual", "fiscal", "year", "years", "estimate", "estimated", "level", "details", "detail", "status",
+]);
+/** One spelling per measure ("sales" is revenue; salary, compensation and wages are pay). */
+const MEASURE_SYNONYMS: Record<string, string> = {
+  sale: "revenue", sales: "revenue", revenues: "revenue", turnover: "revenue",
+  salary: "pay", salaries: "pay", compensation: "pay", comp: "pay", wage: "pay", wages: "pay", remuneration: "pay",
+  customers: "customer", earnings: "earning",
+};
+const measureWord = (w: string) => MEASURE_SYNONYMS[w] ?? (w.length > 4 ? w.replace(/(?<![su])s$/, "") : w);
+
+/** The words a field's label or key names its measure by ("EBITDA (2024)" → ebitda; "ownerSalaryByYear" → owner, pay). */
+export function measureWords(field?: string | null): string[] {
+  if (!field) return [];
+  return Array.from(new Set(
+    field
+      .replace(/\([^)]*\)/g, " ")
+      .replace(/ByYear\b/g, "")
+      .replace(/([a-z])([A-Z])/g, "$1 $2")
+      .toLowerCase()
+      .split(/[^a-z]+/)
+      .filter((w) => w.length >= 3 && !MEASURE_FILLER.has(w))
+      .map(measureWord),
+  ));
+}
+
+/**
+ * The tokens of `text` whose own words name the measure: a measure word in
+ * the stretch since the previous figure (within the clause), or right after
+ * the figure ("$400K of EBITDA").
+ */
+export function tiedToMeasure(text: string, tokens: NumTok[], words: string[]): NumTok[] {
+  if (words.length === 0) return [];
+  const t = tokenText(text, { keepSourceLabel: true });
+  // Years are words here ("24% of 2024 sales"): only quantities bound a figure's stretch.
+  const all = numberTokens(text, { keepSourceLabel: true }).filter((x) => !x.year);
+  const named = (stretch: string) =>
+    (stretch.match(/[a-z]+/g) ?? []).some((w) => words.includes(measureWord(w)));
+  return tokens.filter((tok) => {
+    if (tok.at === undefined || tok.end === undefined) return false;
+    const prevEnd = Math.max(0, ...all.filter((x) => x.end !== undefined && x.end <= tok.at!).map((x) => x.end!));
+    const before = t.slice(Math.max(prevEnd, tok.at - 60), tok.at).split(/[;|\n()]|,\s/).pop() ?? "";
+    const nextAt = Math.min(t.length, ...all.filter((x) => x.at !== undefined && x.at >= tok.end!).map((x) => x.at!));
+    const after = t.slice(tok.end, Math.min(nextAt, tok.end + 30)).split(/[;|\n,(]/)[0] ?? "";
+    return named(before) || (/^\s*(?:of|in)\s/.test(after) && named(after));
+  });
+}
+
+/**
+ * The claim's figure for the disputed measure: its only share or money
+ * figure (else its only quantity), or — when it states several — the one
+ * its words tie to the measure. Undefined when that can't be told.
+ */
+function measureFigure(text: string, tokens: NumTok[], words: string[]): NumTok | undefined {
+  const q = tokens.filter((t) => !t.year);
+  const valued = q.filter((t) => t.pct || /\$/.test(t.raw) || /[km]\b|million|thousand/i.test(t.raw));
+  const pool = valued.length > 0 ? valued : q;
+  if (pool.length === 1) return pool[0];
+  const tied = tiedToMeasure(text, pool, words);
+  return tied.length > 0 ? tied[0] : undefined;
 }
 
 /** What kind of value a money figure is, by the words next to it. */
@@ -398,7 +479,17 @@ const DATE_LIKE_FIELD_RE = /\b(?:lease|expir\w*|term|renew\w*|option|matur\w*|de
 // the document "does not provide a replacement cost estimate", or it
 // "confirms this for 2024" and differs only for another year.
 const DOC_LACKS_MEASURE_RE =
-  /\b(?:does not|doesn'?t|do not|don'?t)\s+(?:provide|include|state|give|contain|list|specify|show|mention|have)\b[^.;]{0,20}?\b(?:a|an|any)\s+(?:[a-z-]+\s+){0,3}(?:estimate|figure|value|amount|number|cost|price|rate)\b/i;
+  /\b(?:does not|doesn'?t|do not|don'?t)\s+(?:provide|include|state|give|contain|list|specify|show|mention|have)\b[^.;]{0,20}?\b(?:a|an|any)\s+((?:[a-z-]+\s+){0,3}(?:estimate|figure|value|amount|number|cost|price|rate))\b/i;
+/**
+ * Words in "does not provide a … figure" that name no measure: "the
+ * statements do not provide a separate figure for the owner's salary" says
+ * only how the document lays it out — the owner's pay is still disputed.
+ */
+const LACKED_FILLER = new Set([
+  "separate", "specific", "single", "exact", "precise", "standalone", "stand-alone", "distinct", "individual", "direct", "clear",
+  "explicit", "detailed", "breakdown", "total", "current", "updated", "estimate", "figure", "value", "amount", "number", "cost",
+  "price", "rate", "similar", "comparable", "matching", "corresponding", "different",
+]);
 const DOC_CONFIRMS_FOR_YEAR_RE =
   /\b(?<!not |n't )(?:confirms?|matches|agrees with|supports)\s+(?:this|that|it|the (?:seller'?s?\s+)?(?:claim|figure|statement|value|number))\s+for\s+(?:fy\s?)?((?:19|20)\d{2})\b/i;
 
@@ -414,7 +505,16 @@ export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean
     const ey = periodYears(evidence);
     if (ey.size > 0 && !ey.has(confirms[1])) return true;
   }
-  if (DOC_LACKS_MEASURE_RE.test(text)) {
+  const lacks = text.match(DOC_LACKS_MEASURE_RE);
+  if (lacks) {
+    // The measure the document lacks must be named ("a replacement cost
+    // estimate", against "original cost, NBV, FMV") and not be what the
+    // evidence states; "a separate figure" names none — the two figures are
+    // then simply in conflict.
+    const lower = (s: string) => ` ${s.toLowerCase().replace(/[^a-z-]+/g, " ").replace(/\s+/g, " ").trim()} `;
+    const phrase = lower(lacks[1]);
+    const named = phrase.trim().split(" ").filter((w) => w.length >= 3 && !LACKED_FILLER.has(w));
+    if (named.length === 0 || lower(evidence).includes(phrase)) return false;
     // …and the claim's own figure is nowhere on the evidence side.
     const cp = principal(numberTokens(claim, { keepSourceLabel: true }));
     if (cp && !numberTokens(evidence, { keepSourceLabel: true }).some((t) => tokensMatch(cp, t))) return true;
@@ -430,7 +530,7 @@ export function dropReason(item: DiscrepancyCandidateLike, today: Date = new Dat
   const claim = item.interviewValue ?? "";
   const evidence = item.documentValue ?? "";
   if (!DATE_LIKE_FIELD_RE.test(item.field ?? "")) {
-    const aligned = periodAlignment(claim, evidence) ?? periodAlignment(evidence, claim);
+    const aligned = periodAlignment(claim, evidence, item.field) ?? periodAlignment(evidence, claim, item.field);
     if (aligned === "same") return "equal";
     if (aligned === "different_periods") return "different_periods";
   }

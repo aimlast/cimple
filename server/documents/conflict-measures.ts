@@ -322,7 +322,7 @@ export function falseConflictReason(factKey: string, x: ConflictSideInfo, y: Con
   // another year's line of the same schedule ("41% of 2024 revenue" vs
   // "FY2022: Top 3 customers 35.0%").
   if (!DATE_VALUE_KEY.test(factKey)) {
-    const aligned = periodAlignment(a, b) ?? periodAlignment(b, a);
+    const aligned = periodAlignment(a, b, factKey) ?? periodAlignment(b, a, factKey);
     if (aligned === "same") return "the value for the same year agrees";
     if (aligned === "different_periods") return "figures for different fiscal years";
   }

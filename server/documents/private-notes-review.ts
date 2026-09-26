@@ -66,7 +66,9 @@ import {
   COVER_SYNONYMS,
   GENERIC_TIE_WORDS,
   chatterReason,
+  isOpenQuestionNote,
   isSensitiveNote,
+  statesBrokerTerms,
   multiplesOf,
   stripNoteCommentary,
   withoutDocLabels,
@@ -158,39 +160,52 @@ const FACT_CLASSES: Array<{
   /** The keys the final pass writes a note of this class under — the first one free. */
   keys: string[];
   /**
+   * Every fact key of this kind, whatever its spelling ("insurancePolicies",
+   * "lifeInsurance", "officerLifeInsurance", "dividendsDeclaredByYear"): while
+   * one is on file, the final pass writes no second fact of the kind — the
+   * note is either said by what is on file, or stays a note.
+   */
+  family: RegExp;
+  /**
    * The class's own vocabulary that reads as a stance anywhere else: a
    * shareholders' agreement "waives" and "agrees", an age is "years old".
    * Taken out before the promotable screens, for this class only.
    */
   allow?: RegExp;
 }> = [
-  { key: /^dividends?(?:Declared|Paid|History|ByYear)?$/, subject: /\bdividends?\b/i, keys: ["dividendsDeclared", "dividendHistory"] },
-  { key: /^(?:personalGuarantees?|guarantees?)$/, subject: /\bguarant(?:ee|or)\w*\b/i, keys: ["personalGuarantees"] },
-  { key: /^relatedParty(?:Transactions?|Lease|Leases|Arrangements?)?$/, subject: /\brelated[- ]party\b|\b(?:owned|controlled) by\b[^.;]{0,60}\b(?:shareholder|owner|holdco|holding)|\bfamily member\b[^.;]{0,40}\bemployed\b/i, keys: ["relatedPartyTransactions"] },
+  { key: /^dividends?(?:Declared|Paid|History|ByYear)?$/, subject: /\bdividends?\b/i, keys: ["dividendsDeclared", "dividendHistory"], family: /dividend/i },
+  { key: /^(?:personalGuarantees?|guarantees?)$/, subject: /\bguarant(?:ee|or)\w*\b/i, keys: ["personalGuarantees"], family: /guarant/i },
+  { key: /^relatedParty(?:Transactions?|Lease|Leases|Arrangements?)?$/, subject: /\brelated[- ]party\b|\b(?:owned|controlled) by\b[^.;]{0,60}\b(?:shareholder|owner|holdco|holding)|\bfamily member\b[^.;]{0,40}\bemployed\b/i, keys: ["relatedPartyTransactions"], family: /^relatedParty/i },
   {
     key: /^shareholders?(?:Agreement|Agreements|AgreementTerms|AgreementAmendments?)$/,
     subject: /\bshareholders?'? ?agreement\b|\busa\b|\bfirst refusal\b/i,
     keys: ["shareholdersAgreement", "shareholdersAgreementAmendments"],
+    family: /^(?:shareholders?Agreement|usa[A-Z]|unanimousShareholder)/i,
     allow: /\b(?:agrees?|agreed|waives?|waived|consents?|consented|forces?|forced|drag[- ]along|tag[- ]along)\b/gi,
   },
-  { key: /^(?:shareStructure|shareClasses|shareCapital|capitalStructure|directors|boardOfDirectors)$/, subject: /\b(?:class [a-z] (?:shares?|dividends?|structure)|shares? (?:issued|class)|share (?:structure|capital)|directors?|board of directors|board (?:resolution|approv\w*))\b/i, keys: ["shareStructure", "shareClasses"] },
+  // The share classes and capital. Who the directors are is its own fact
+  // (below): "Directors who approved statements: …" is no share structure,
+  // and "includes a non-operating director" is about pay, not the board.
+  { key: /^(?:shareStructure|shareClasses|shareCapital|capitalStructure)$/, subject: /\b(?:class [a-z] (?:shares?|dividends?|structure|common|preferred)|shares? (?:issued|class)|share (?:structure|capital|classes))\b/i, keys: ["shareStructure", "shareClasses"], family: /^(?:share(?:Structure|Classes|Capital)|capitalStructure|authori[sz]edShares|issuedShares)/i },
+  { key: /^(?:directors|boardOfDirectors)$/, subject: /\b(?:[Dd]irectors?|[Bb]oard(?: of [Dd]irectors)?)\b(?:\s+who\s[^:;.]{0,50})?\s*(?::|are|is|include[sd]?)\s+[A-Z]/, keys: ["directors"], family: /^(?:directors?|boardOfDirectors|board)$/i },
   {
     key: /^(?:ownershipStructure|ownership)$/,
     subject: /\bowns?\b[^.;]{0,30}?\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\s?%\s+(?:of (?:the )?)?(?:voting |common |non-voting |class [a-z] )*(?:shares|equity|ownership|stake|interest)\b/i,
     keys: ["ownershipStructure"],
+    family: /^(?:ownership\w*|shareholders|shareholding\w*)$/i,
   },
-  { key: /^customer(?:NonRenewal|NonRenewals|Notice|Notices|Loss|Losses|Churn|Terminations?|Departures?)$/, subject: /\b(?:non-?renewal|notice|terminat\w*|cancel\w*|churn\w*|leaving|lost|lose|losing|not renew\w*)\b/i, keys: ["customerNonRenewal"] },
-  { key: /^(?:insurance|insuranceCoverage|insurancePolicies|lifeInsurance|keyPersonInsurance|buySellInsurance|corporateLifeInsurance)$/, subject: /\binsurance\b|\bpolic(?:y|ies)\b/i, keys: ["insuranceCoverage", "buySellInsurance"] },
-  { key: /^(?:auditStatus|financialStatementType|financialStatementBasis|reviewEngagement|assuranceLevel)$/, subject: /\b(?:audit\w*|unaudited|review engagement|compil\w*|notice to reader)\b/i, keys: ["auditStatus", "financialStatementType"] },
-  { key: /^(?:excludedAssets?|assetsExcluded)$/, subject: /\bexclu(?:ded|des?|sion) from (?:the |any )?sale\b|\bnot (?:included|part of|in) (?:the )?sale\b|\bowner keeps\b/i, keys: ["excludedAssets"] },
-  { key: /^(?:litigation|legalProceedings|pendingLitigation|lawsuits?)$/, subject: /\b(?:litigation|lawsuit|sued|suing|court|claim filed|statement of claim)\b/i, keys: ["litigation"] },
-  { key: /^(?:keyEmployeeContracts?|employmentContracts?|employmentAgreements?)$/, subject: /\bemployment (?:contract|agreement)s?\b/i, keys: ["keyEmployeeContracts"] },
-  { key: /^(?:shareholderLoans?|dueFromShareholders?|dueToShareholders?|dueFromRelatedParties|dueToRelatedParties)$/, subject: /\b(?:shareholder loans?|due (?:to|from) (?:shareholders?|holdco|related)|loans? (?:to|from) (?:the )?(?:shareholder|owner))\b/i, keys: ["shareholderLoans"] },
-  { key: /^(?:marketRentOpinion|marketRent|rentAppraisal)$/, subject: /\bmarket (?:net )?rent\b|\brent(?:al)? (?:opinion|appraisal)\b/i, keys: ["marketRentOpinion"] },
-  { key: /^associatedCorporations?$/, subject: /\bassociated (?:with|corporations?|compan(?:y|ies))\b/i, keys: ["associatedCorporations"] },
+  { key: /^customer(?:NonRenewal|NonRenewals|Notice|Notices|Loss|Losses|Churn|Terminations?|Departures?)$/, subject: /\b(?:non-?renewal|notice|terminat\w*|cancel\w*|churn\w*|leaving|lost|lose|losing|not renew\w*)\b/i, keys: ["customerNonRenewal"], family: /^customer(?:NonRenewal|Notice|Loss|Churn|Termination|Departure)/i },
+  { key: /^(?:insurance|insuranceCoverage|insurancePolicies|lifeInsurance|keyPersonInsurance|buySellInsurance|corporateLifeInsurance)$/, subject: /\binsurance\b|\bpolic(?:y|ies)\b/i, keys: ["insuranceCoverage", "buySellInsurance"], family: /insurance/i },
+  { key: /^(?:auditStatus|financialStatementType|financialStatementBasis|reviewEngagement|assuranceLevel)$/, subject: /\b(?:audit\w*|unaudited|review engagement|compil\w*|notice to reader)\b/i, keys: ["auditStatus", "financialStatementType"], family: /^(?:auditStatus|financialStatement(?:Type|Basis|Level)|reviewEngagement|assuranceLevel)$/i },
+  { key: /^(?:excludedAssets?|assetsExcluded)$/, subject: /\bexclu(?:ded|des?|sion) from (?:the |any )?sale\b|\bnot (?:included|part of|in) (?:the )?sale\b|\bowner keeps\b/i, keys: ["excludedAssets"], family: /^(?:excludedAssets?|assetsExcluded)$/i },
+  { key: /^(?:litigation|legalProceedings|pendingLitigation|lawsuits?)$/, subject: /\b(?:litigation|lawsuit|sued|suing|court|claim filed|statement of claim)\b/i, keys: ["litigation"], family: /litigation|legalProceedings|lawsuit/i },
+  { key: /^(?:keyEmployeeContracts?|employmentContracts?|employmentAgreements?)$/, subject: /\bemployment (?:contract|agreement)s?\b/i, keys: ["keyEmployeeContracts"], family: /employ\w*(?:Contract|Agreement)/i },
+  { key: /^(?:shareholderLoans?|dueFromShareholders?|dueToShareholders?|dueFromRelatedParties|dueToRelatedParties)$/, subject: /\b(?:shareholder loans?|due (?:to|from) (?:shareholders?|holdco|related)|loans? (?:to|from) (?:the )?(?:shareholder|owner))\b/i, keys: ["shareholderLoans"], family: /^(?:shareholderLoans?|due(?:To|From)(?:Shareholders?|RelatedParties))/i },
+  { key: /^(?:marketRentOpinion|marketRent|rentAppraisal)$/, subject: /\bmarket (?:net )?rent\b|\brent(?:al)? (?:opinion|appraisal)\b/i, keys: ["marketRentOpinion"], family: /^(?:marketRent\w*|rentAppraisal)$/i },
+  { key: /^associatedCorporations?$/, subject: /\bassociated (?:with|corporations?|compan(?:y|ies))\b/i, keys: ["associatedCorporations"], family: /^associatedCorporations?$/i },
   // The owner's age said on its own ("Seller is 64 years old"). Anything
   // else personal in the note keeps it a note.
-  { key: /^(?:ownerAge|sellerAge)$/, subject: AGE_PHRASE_RE, keys: ["ownerAge"], allow: new RegExp(AGE_PHRASE_RE.source, "gi") },
+  { key: /^(?:ownerAge|sellerAge)$/, subject: AGE_PHRASE_RE, keys: ["ownerAge"], family: /^(?:ownerAge|sellerAge)$/i, allow: new RegExp(AGE_PHRASE_RE.source, "gi") },
 ];
 
 /** True when `key` is a fact a private note may become and `text` is about it (and promotable at all). */
@@ -241,7 +256,10 @@ export function numberValues(raw: string): number[] {
   return out;
 }
 
-const hasValue = (pool: number[], v: number) => pool.some((p) => Math.abs(p - v) <= Math.max(Math.abs(p), Math.abs(v)) * 0.005);
+/** A year ("2022", "2025"): only the same year is the same figure (0.5% of 2022 is ten years). */
+const isYearFigure = (v: number) => Number.isInteger(v) && v >= 1900 && v <= 2100;
+const hasValue = (pool: number[], v: number) =>
+  pool.some((p) => (isYearFigure(v) || isYearFigure(p) ? p === v : Math.abs(p - v) <= Math.max(Math.abs(p), Math.abs(v)) * 0.005));
 
 /**
  * Words the deal's notes also use in lower case ("engaged", "advisor") —
@@ -649,34 +667,84 @@ function factEntries(info: Info): FactEntry[] {
     if (!text.trim()) continue;
     const keyWords = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/ByYear$/, "").toLowerCase();
     const words = coverWords(`x ${text} ${keyWords}`, true);
-    out.push({ key, text, lower: ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `, numbers: numberValues(text), words });
+    // The key's own words count as the fact's ("Associated with McAllister …"
+    // meets associatedCorporations even when its value never says "associated").
+    out.push({ key, text, lower: ` ${`${text} ${keyWords}`.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `, numbers: numberValues(text), words });
+  }
+  return out;
+}
+
+/** A figure as written, with the precision its writing gives it ("$1.4M" → ±$50K; "$251,000" → ±$500). */
+interface WrittenFigure { value: number; unit: number; year: boolean; money: boolean }
+
+function writtenFigures(raw: string): WrittenFigure[] {
+  const text = digitsForWords(raw);
+  const out: WrittenFigure[] = [];
+  const mult: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, billion: 1e9 };
+  const re = /(\$\s?)?(\d[\d,]*)(?:\.(\d+))?\s*(k|mm|m|million|thousand|b|billion)?(?![a-z])\s*(%|percent\b)?/gi;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const whole = m[2].replace(/,/g, "");
+    const k = m[4] ? mult[m[4].toLowerCase()] ?? 1 : 1;
+    const value = parseFloat(`${whole}${m[3] ? `.${m[3]}` : ""}`) * k;
+    if (Number.isNaN(value)) continue;
+    const trailing = m[3] ? 0 : Math.min(whole.match(/0*$/)?.[0].length ?? 0, 3);
+    const unit = m[3] ? k * Math.pow(10, -m[3].length) : m[4] ? k : Math.pow(10, trailing);
+    const money = !!m[1] || !!m[4] || !!m[5];
+    out.push({ value, unit, year: !money && !m[3] && isYearFigure(value), money });
   }
   return out;
 }
 
 /**
- * The fact on file that already says what a note's text says, or null: one
- * fact holds every figure and every name of the note and at least half of
- * its words. A note too thin to judge (no figure, no name, under three
- * words) is never covered.
+ * True when a pool of figures states the note's figure at the precision the
+ * note wrote it: a year only as that year; "$251,000" is not "$250,000";
+ * "$1.4M" is "$1,398,000".
  */
-function coveringFact(raw: string, facts: FactEntry[], common: Set<string>): string | null {
+function statesFigure(pool: number[], f: WrittenFigure): boolean {
+  if (f.year) return pool.some((p) => p === f.value);
+  return pool.some((p) => Math.abs(p - f.value) <= f.unit / 2 + 1e-9);
+}
+
+/**
+ * The fact on file that already says what a note's text says, or null: one
+ * fact holds every figure (at the note's own precision; a year exactly) and
+ * every name of the note, and at least half of its words. A note too thin
+ * to judge (no figure, no name, under three words) is never covered.
+ * `opts.moneyOnly`: only money, shares and years must be there (a note's
+ * day of the month or share count may be missing) — for a fact of the
+ * note's own kind (familyCovers), with a third of the words.
+ */
+function coveringFact(raw: string, facts: FactEntry[], common: Set<string>, opts: { moneyOnly?: boolean; minShare?: number } = {}): string | null {
   const text = coverNoteText(raw);
   if (!text) return null;
-  const nums = numberValues(text);
+  const figs = writtenFigures(text).filter((f) => !opts.moneyOnly || f.money || f.year);
   const names = Array.from(properNames(text, common));
   const words = Array.from(coverWords(text)).filter((w) => !names.includes(w));
-  if (nums.length === 0 && names.length === 0 && words.length < 3) return null;
+  if (figs.length === 0 && names.length === 0 && words.length < 3) return null;
   // Someone named with a figure, both in the fact ("Luis Ortega … 15%"):
   // a third of the other words is enough.
-  const anchored = names.length > 0 && nums.some((n) => !(Number.isInteger(n) && n >= 1900 && n <= 2100));
+  const anchored = names.length > 0 && figs.some((f) => !f.year);
+  const share = opts.minShare ?? (anchored ? 1 / 3 : 0.5);
   for (const f of facts) {
-    if (!nums.every((n) => hasValue(f.numbers, n))) continue;
+    if (!figs.every((x) => statesFigure(f.numbers, x))) continue;
     if (!names.every((n) => f.lower.includes(` ${n} `))) continue;
     const hit = words.filter((w) => f.words.has(w)).length;
-    if (words.length === 0 || hit / words.length >= (anchored ? 1 / 3 : 0.5)) return f.key;
+    if (words.length === 0 || hit / words.length >= share) return f.key;
   }
   return null;
+}
+
+/**
+ * The fact of the note's own kind on file that says it (every money figure,
+ * share, year and name; a third of its words), or null. A note whose kind
+ * is already a fact is never written as a second one (promotionKey); this
+ * decides whether it goes or stays a note.
+ */
+function familyCovers(text: string, info: Info, common: Set<string>): string | null {
+  const keys = new Set(familyKeysOnFile(info, text));
+  if (keys.size === 0) return null;
+  return coveringFact(text, factEntries(info).filter((f) => keys.has(f.key)), common, { moneyOnly: true, minShare: 1 / 3 });
 }
 
 /** Capitalised words that are nobody's name. */
@@ -706,6 +774,10 @@ function properNames(text: string, common: Set<string>): Set<string> {
 function coverable(text: string): boolean {
   const t = withoutDocLabels(stripNoteCommentary(text).text);
   if (!t || isSensitiveNote(t)) return false;
+  // The broker's terms and relationships, and the broker's own open question
+  // ("no employment contract — needs verification"): a fact stating the
+  // claim says neither.
+  if (statesBrokerTerms(text) || isOpenQuestionNote(t)) return false;
   return isPromotableNote(t.replace(new RegExp(AGE_PHRASE_RE.source, "gi"), " "));
 }
 
@@ -719,12 +791,60 @@ function sharedPromotionSources(n: BrokerPrivateNote, docs: Map<string, ReviewDo
   return out;
 }
 
-/** The first free key of the class `text` is about, when the text may be that fact. */
-function promotionKey(info: Info, text: string): string | null {
+const filled = (v: unknown) => v !== undefined && v !== null && v !== "";
+
+/**
+ * The facts on file of the kinds `text` is about (its FACT_CLASSES
+ * families): "dividendsDeclared" for a note about a dividend, whatever key
+ * the extraction used ("dividendsDeclaredByYear", "dividendsPaidDetail").
+ */
+function familyKeysOnFile(info: Info, text: string): string[] {
+  const classes = FACT_CLASSES.filter((c) => c.subject.test(text));
+  return Object.keys(info).filter((k) => isFactKey(k) && filled(info[k]) && classes.some((c) => c.family.test(k)));
+}
+
+/**
+ * The fact of the note's own kind on file that is about the same matter,
+ * whatever else it says, or null: it states the note's money figures
+ * ("$60,000" — the FY2024 dividend on dividendsDeclared), or it uses most of
+ * the note's words for no other year ("Corporate-owned buy-sell life
+ * insurance policies in place (premiums $16,000)" for the note giving the
+ * prior year's $15,000). A fact about another year's dividend ("$40,000 …
+ * 2022 and 2021") is another matter.
+ */
+function sameMatterOnFile(text: string, info: Info, common: Set<string>): string | null {
+  const keys = new Set(familyKeysOnFile(info, text));
+  if (keys.size === 0) return null;
+  const body = coverNoteText(text);
+  const figs = writtenFigures(body);
+  const money = figs.filter((f) => f.money && !f.year);
+  const years = figs.filter((f) => f.year).map((f) => f.value);
+  const names = properNames(body, common);
+  const words = Array.from(coverWords(body)).filter((w) => !names.has(w));
+  for (const f of factEntries(info)) {
+    if (!keys.has(f.key)) continue;
+    if (money.length > 0 && money.every((x) => statesFigure(f.numbers, x))) return f.key;
+    const factYears = f.numbers.filter(isYearFigure);
+    if (years.length > 0 && factYears.length > 0 && !years.some((y) => factYears.includes(y))) continue;
+    if (words.length >= 3 && words.filter((w) => f.words.has(w)).length / words.length >= 0.6) return f.key;
+  }
+  return null;
+}
+
+/**
+ * The first free key of the class `text` is about, when the text may be that
+ * fact — and none while a fact of that kind about the same matter is on file
+ * under any key (sameMatterOnFile): a second fact about one matter
+ * (dividendHistory beside dividendsDeclared, insuranceCoverage beside
+ * insurancePolicies) reaches the CIM twice. Such a note is either said by
+ * the fact on file (familyCovers) or stays a note.
+ */
+function promotionKey(info: Info, text: string, common: Set<string> = new Set()): string | null {
   const classes = FACT_CLASSES.filter((c) => c.subject.test(text));
   // The broker deleted a fact of this kind: nothing like it is written back under another name.
   const suppressed = Array.isArray(info[BROKER_SUPPRESSED_KEY]) ? (info[BROKER_SUPPRESSED_KEY] as unknown[]).map(String) : [];
   if (classes.some((c) => suppressed.some((k) => c.key.test(k) || c.keys.includes(k)))) return null;
+  if (sameMatterOnFile(text, info, common)) return null;
   for (const c of classes) {
     for (const key of c.keys) {
       if (isBrokerProcessKey(key) || isSuppressed(info, key)) continue;
@@ -870,7 +990,7 @@ export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info:
     for (const src of sharedPromotionSources(n, docs)) {
       const value = withoutDocLabels(stripNoteCommentary(src.text).text);
       if (!value || isSensitiveNote(value)) continue;
-      const key = promotionKey(next, value);
+      const key = promotionKey(next, value, common);
       if (!key) continue;
       // An age is written as the age ("64 years old"), not as the sentence around it.
       const age = key === "ownerAge" ? value.match(AGE_PHRASE_RE) : null;
@@ -885,7 +1005,15 @@ export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info:
       promoted = true;
       break;
     }
-    if (!promoted) kept.push(n);
+    if (promoted) continue;
+    // A fact of the note's kind is on file already (promotionKey writes no
+    // second one): the note goes when that fact says it, else it stays.
+    const famKey = texts.map((t) => (coverable(t) ? familyCovers(t, next, common) : null)).find((k): k is string => !!k);
+    if (famKey && texts.every((t) => chatterReason(t, ctx, isHousekeepingNote) !== null || (coverable(t) && familyCovers(t, next, common) !== null))) {
+      report.covered.push({ note: n.note, key: famKey });
+      continue;
+    }
+    kept.push(n);
   }
   // 4: notes about one matter fold together.
   const textsOf = kept.map(noteTexts);

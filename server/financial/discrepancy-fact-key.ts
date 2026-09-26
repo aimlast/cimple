@@ -70,6 +70,8 @@ function spelledKey(label: string): string {
 
 const OWNER_PAY_LABEL = /\bowner'?s?\b[^.;]{0,20}\b(?:comp\w*|pay|salar\w*|wages?|remuneration|draws?)\b|\b(?:management|shareholders?|officers?)'?\s+(?:salar\w*|comp\w*|remuneration)\b/i;
 
+const OTHER_PERSON_RE = /\b(?:spouse|wife|husband|son|daughter|family|relative|partner's|employee|staff|bookkeeper|manager's)\b/i;
+
 /** The side's value without the " — source" label the analysis appends. */
 function bare(v: string): string {
   const idx = v.indexOf(" — ");
@@ -130,7 +132,8 @@ export function analysisFactKey(finding: AnalysisFinding, info: Info): { factKey
   if (canonSpelled && keys.includes(canonSpelled)) return done(canonSpelled);
 
   // Owner pay: the owner-pay fact that states a side's figure, else ownerSalary.
-  if (OWNER_PAY_LABEL.test(finding.field) || (given && isOwnerPayKey(given))) {
+  // (Someone else's pay — "Management salary (spouse)" — is not the owner's.)
+  if ((OWNER_PAY_LABEL.test(finding.field) || (given && isOwnerPayKey(given))) && !OTHER_PERSON_RE.test(finding.field)) {
     // The headline owner-salary fact first (the one the CIM reads; a resolution
     // for a year keeps its year on the row).
     const pay = keys.filter(isOwnerPayKey).sort((a, b) => Number(b === "ownerSalary") - Number(a === "ownerSalary"));
@@ -140,12 +143,20 @@ export function analysisFactKey(finding: AnalysisFinding, info: Info): { factKey
     return pay.length === 1 ? done(pay[0]) : null;
   }
 
-  // A key whose words are all in the label; a value that states a side decides a tie.
+  // A key whose words are all in the label AND that names what the label is
+  // about: more than half of the label's words ("Signed backlog" → backlog;
+  // "Crane rebuild expense" → craneRebuild), or half with a value that states
+  // a side's figure. A key naming one word of a longer label is a different
+  // thing: "Owner's truck expenses" is not totalExpenses, "Legal fees —
+  // shareholder agreement" is not the shareholders' agreement, "Rent paid to
+  // holdco" is not annualRent.
   const words = labelWords(finding.field);
   const scored = keys
     .map((k) => ({ k, kw: keyWords(k) }))
     .filter(({ kw }) => kw.length > 0 && kw.every((w) => words.has(w)))
-    .map(({ k, kw }) => ({ k, score: kw.length * 2 + (statesASide(info, k, finding) ? 3 : 0) + (year && /ByYear$/.test(k) ? 1 : 0) }))
+    .map(({ k, kw }) => ({ k, kw, states: statesASide(info, k, finding), share: new Set(kw).size / words.size }))
+    .filter(({ share, states }) => share > 0.5 || (share >= 0.5 && states))
+    .map(({ k, kw, states }) => ({ k, score: kw.length * 2 + (states ? 3 : 0) + (year && /ByYear$/.test(k) ? 1 : 0) }))
     .sort((a, b) => b.score - a.score);
   if (scored.length === 0) return null;
   if (scored.length > 1 && scored[1].score === scored[0].score) return null;

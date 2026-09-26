@@ -56,6 +56,40 @@ export function isSensitiveNote(text: string): boolean {
   return SENSITIVE_RE.test(withoutDocLabels(text));
 }
 
+/**
+ * The broker's own terms and relationships — a fee and its kind, commission,
+ * exclusivity, the engagement's length, who referred the seller, a prior
+ * approach or offer. CLAUDE.md: broker-process info (referral, fees, prior
+ * approaches) belongs in the private notes, so a note stating any of it is
+ * never chatter and never "already a fact" — whether or not it names a
+ * figure ("success fee, modest work fee, 12-month term"; "Referral from Ravi
+ * Kaur (accountant)"). A note that only says such terms exist ("fee
+ * arrangement referenced but not detailed") states nothing and may go.
+ */
+const BROKER_TERMS_RE =
+  /\b(?:success fees?|work fees?|flat fees?|monthly fees?|up-?front fees?|minimum fees?|fees? (?:of|is|are|at|will be)|retainers?|commissions?|exclusiv\w*|tail (?:period|clause|provision)|\d+[- ]months? (?:term|engagement|exclusiv\w*|listing|mandate)|referr(?:al|als|ed)|approach(?:ed|es)?|offers?|offered|lowball\w*|insulting)\b/i;
+/** Who introduced the seller: "intro'd by Gary", "introduced by Heather Kwan" (a person, not "by email"). */
+const INTRODUCED_BY_RE = /\b(?:[Ii]ntroduced|[Ii]ntro'?d)\s+(?:us\s+|him\s+|her\s+|them\s+)?(?:by|through|via)\s+(?!e-?mail|phone|text|call|zoom|teams)[A-Z][a-z]+/;
+const TERMS_ABSENT_RE = /\bnot (?:disclosed|detailed|specified|mentioned|provided|referenced|stated|included|discussed)\b/i;
+
+/** True when a note states the broker's own terms or relationships (kept as a note, whatever else it says). */
+export function statesBrokerTerms(text: string): boolean {
+  const t = stripNoteCommentary(text).text || text;
+  return (BROKER_TERMS_RE.test(t) || INTRODUCED_BY_RE.test(t)) && !TERMS_ABSENT_RE.test(t);
+}
+
+/**
+ * The broker's open question about a claim: "needs verification", "need to
+ * check", "unconfirmed", "TBC". A fact that states the claim does not state
+ * the doubt — such a note is never "already a fact".
+ */
+const OPEN_QUESTION_RE =
+  /\b(?:needs?\s+(?:to\s+be\s+)?(?:verif\w*|confirm\w*|check\w*|follow[- ]?up)|needs? to (?:check|ask|verify|confirm|see)|to be (?:verified|confirmed|checked)|verify|unverified|unconfirmed|not (?:yet )?(?:verified|confirmed)|tbc|follow[- ]?up (?:on|with|needed)|check (?:with|whether|if))\b/i;
+
+export function isOpenQuestionNote(text: string): boolean {
+  return OPEN_QUESTION_RE.test(text);
+}
+
 /** A money figure or a share: a note naming one is about terms or figures, never chatter. */
 const AMOUNT_RE = /\$\s?\d|\d\s?%|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand|billion)\b|\bpercent\b|\bcommission\b|\bexclusiv\w*/i;
 
@@ -138,6 +172,9 @@ export function chatterReason(raw: string, ctx: ChatterContext, isHousekeeping: 
   const { text: stripped, declaredProcess } = stripNoteCommentary(raw);
   if (!stripped) return "only commentary about the note";
   if (isSensitiveNote(stripped)) return null;
+  // Fees, referral, a prior approach: the broker's business, kept (even when
+  // the model's own commentary calls it "process").
+  if (statesBrokerTerms(raw)) return null;
   const text = withoutDocLabels(stripped);
   if (!text) return "only a document label";
   const amount = AMOUNT_RE.test(text);

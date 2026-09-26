@@ -24,10 +24,16 @@ interface Line {
   notRow?: RegExp;
 }
 
+/**
+ * "Current portion" — never inside "non-current portion", which is the
+ * long-term part (Ridgeline's row: "Long-term debt (non-current portion)").
+ */
+const CURRENT_PORTION = String.raw`(?<!\bnon[- ]?)\bcurrent portion\b`;
+
 const LINES: Line[] = [
-  { note: /\blong[- ]term debt\b/i, row: /\blong[- ]term debt\b|\bterm loans?\b/i, notRow: /\bcurrent portion\b|\bdue within\b/i },
+  { note: /\blong[- ]term debt\b/i, row: /\blong[- ]term debt\b|\bterm loans?\b/i, notRow: new RegExp(String.raw`${CURRENT_PORTION}|\bdue within\b`, "i") },
   { note: /\btotal debt\b/i, row: /^total debt\b/i },
-  { note: /\bcurrent portion\b/i, row: /\bcurrent portion\b/i },
+  { note: new RegExp(CURRENT_PORTION, "i"), row: new RegExp(CURRENT_PORTION, "i") },
   { note: /\bcash(?: and (?:cash )?equivalents)?\b/i, row: /^cash\b/i },
   { note: /\baccounts receivable\b|\breceivables\b/i, row: /\breceivable/i, notRow: /\bdue from\b|\bshareholder\b/i },
   { note: /\binventor(?:y|ies)\b/i, row: /\binventor/i },
@@ -108,8 +114,19 @@ export function correctBalanceSheetFigures(text: string, bs: UiReclassifiedTable
       const wrong = rows.find((h) => typeof h.values[year] === "number" && Object.entries(h.values).some(([y, v]) => y !== year && same(v, stated)));
       if (!wrong) continue;
       const belongsTo = Object.entries(wrong.values).find(([y, v]) => y !== year && same(v, stated))![0];
-      const corrected = fmt(Math.abs(wrong.values[year]));
+      const right = Math.abs(wrong.values[year]);
+      const corrected = fmt(right);
       fixed = fixed.replace(figText, corrected);
+      // A multiple worked out from the wrong figure ("… is modest (0.8x
+      // adjusted EBITDA)") is worked out again from the right one.
+      const at = fixed.indexOf(corrected) + corrected.length;
+      const multiple = fixed.slice(at, at + 60).match(/^([^.;]*?)\b(\d+(?:\.\d+)?)\s?x\b/i);
+      if (multiple && stated > 0) {
+        const decimals = Math.max(1, multiple[2].split(".")[1]?.length ?? 0);
+        const redone = ((Number(multiple[2]) * right) / stated).toFixed(decimals);
+        const from = at + multiple[1].length;
+        fixed = fixed.slice(0, from) + fixed.slice(from).replace(multiple[2], redone);
+      }
       corrections.push({ stated: figText.trim(), year, belongsTo, corrected });
     }
     if (fixed !== sentence) out = out.replace(sentence, fixed);

@@ -1,0 +1,347 @@
+{
+ "normalization": {
+  "notes": [
+   "Normalization adjusts reported net income to Seller's Discretionary Earnings (SDE) and adjusted EBITDA by adding back owner compensation, depreciation, interest, taxes, one-time expenses, and discretionary/personal expenses.",
+   "SDE = Net Income + Owner's Full Compensation + D&A + Interest + Taxes + One-Time Items + Discretionary Items.",
+   "Adjusted EBITDA = Net Income + (Owner Comp − Market Salary) + D&A + Interest + Taxes + One-Time Items + Discretionary Items = SDE − Market Salary.",
+   "2024 SDE: $896,410 (net income) + $180,000 (owner comp) + $312,000 (D&A) + $58,000 (interest) + $131,590 (taxes) + $64,000 (crane) + $18,000 (legal) + $28,000 (truck) + $12,000 (hockey) + $17,000 (Donna) = $1,717,000.",
+   "2024 Adjusted EBITDA: $1,717,000 (SDE) − $165,000 (market GM salary) = $1,552,000.",
+   "Check: the note above states 2024 SDE as $1,552,000; the add-backs listed here compute $1,717,000.",
+   "2023 SDE: $779,090 + $180,000 + $286,000 + $66,000 + $150,910 = $1,462,000. 2023 Adjusted EBITDA: $1,297,000.",
+   "2022 SDE: $601,910 + $180,000 + $268,000 + $71,000 + $97,090 + $22,000 (Silverthorn) = $1,240,000. 2022 Adjusted EBITDA: $1,075,000.",
+   "2021 SDE: $484,250 + $180,000 + $251,000 + $79,000 + $60,750 = $1,055,000. 2021 Adjusted EBITDA: $890,000.",
+   "SDE has grown 63% from 2021 to 2024 ($1,055,000 to $1,717,000). Adjusted EBITDA has grown 74% ($890,000 to $1,552,000).",
+   "SDE margin: 13.7% (2021), 14.7% (2022), 16.0% (2023), 17.5% (2024). Adjusted EBITDA margin: 11.6% (2021), 12.8% (2022), 14.2% (2023), 15.8% (2024). Strong margin expansion driven by revenue growth, equipment efficiency, and pricing discipline.",
+   "Owner compensation: Gord McAllister's $180,000 T4 salary is the only owner compensation on the P&L. Dividends ($40,000 in 2021-2022, $60,000 in 2023-2024) are distributions of after-tax profit and are not add-backs.",
+   "Replacement GM salary: A general manager for a $10M custom fabrication business in the Edmonton/Nisku market would cost approximately $165,000 (base $140,000 + benefits/bonus ~18%). This is a conservative estimate; some buyers may use a lower figure ($120-140K for an operations manager if the buyer's corporate team handles sales and finance).",
+   "One-time items: The 2024 crane rebuild ($64,000) and shareholder agreement legal fees ($18,000) are genuine one-time expenses. The 2022 Silverthorn bad debt ($22,000) is also non-recurring (single receivership event).",
+   "Discretionary items: Owner's truck/personal expenses ($28,000), hockey sponsorship ($12,000), and Donna's salary above market ($17,000) are discretionary and would not recur under new ownership. Total discretionary add-backs: $57,000 in 2024.",
+   "Donna's salary: She is paid $62,000/year for part-time bookkeeping (per accountant's notes). A market-rate part-time bookkeeper would cost ~$45,000. The $17,000 excess is added back. A buyer may eliminate the role entirely and use their own accounting staff or outsource to the accountant.",
+   "No add-backs for 2021-2023 discretionary items: The seller's add-back list only covers 2024. Truck, hockey, and Donna's excess salary likely existed in prior years but are not quantified. The 2021-2023 SDE and adjusted EBITDA figures are conservative (understated) as a result.",
+   "Related-party rent: The $336,000/year rent (2024) paid to McAllister Properties Ltd. is at market per an independent market rent opinion (December 2021). No add-back is appropriate. A buyer can either purchase the building at $4.1M (appraised value, November 2024) or sign a new 10-year lease at $12.50/sq ft net ($350,000/year) with two 5-year renewal options.",
+   "Capital expenditures: Maintenance capex is estimated at $200-250,000/year. 2024 capex of $430,000 includes the new plasma table ($468,000, growth capex). Buyers should budget for replacement of the 110-ton brake (~$180,000) and old plasma table within 2 years.",
+   "Working capital: Net working capital (cash-free, debt-free) is $1,237,000 at Dec 31 2024 (12.6% of revenue). This is appropriate for the business and should be maintained at closing (peg at average of year-end NWC).",
+   "Debt: Long-term debt of $1,342,000 (Dec 31 2024) is modest (0.8x adjusted EBITDA). The equipment term loan matures November 2027; vehicle/equipment loans mature 2026-2028. A buyer can assume or refinance the debt.",
+   "Backlog: Signed backlog is $3.1M at May 31, 2025 (per WIP report). Open quotes total $2.2M (historical win rate ~35%). YTD revenue (Jan-May 2025) is ~$4.18M, up 8% vs prior year. The business has strong momentum.",
+   "Key risks: (1) Larkspur (18% of revenue) is consolidating vendors in 2026 (8 to 3 approved fabricators); Ridgeline expects to make the short list but re-bid is required. (2) Westlock job ($1.1M) is verbally awarded but PO not yet issued (board approval pending). (3) Devin (chief estimator) has no employment contract or non-compete; retention bonus recommended. (4) Two senior welders retiring in 2-3 years. (5) Equipment replacement needs (110-ton brake, old plasma table, forklift).",
+   "Seller's asking price: $6.5M for the business (excluding real estate). At 2024 adjusted EBITDA of $1,552,000, this is 4.2x. At 2024 SDE of $1,717,000, this is 3.8x. Both multiples are reasonable for a profitable, growing, CWB-certified fabrication business with diversified revenue and strong backlog.",
+   "Reported net income does not tie to the Income Statement rows — 2024: Income Statement 936,410 vs reported 896,410 (+40,000). The normalization starts from the reported figure; review the Income Statement reclassification before relying on either."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "metric": "sde",
+  "addbacks": [
+   {
+    "id": "ab_muiso8ya_53",
+    "type": "ebitda",
+    "label": "Owner compensation (President — Gord McAllister)",
+    "amounts": {
+     "2021": 15000,
+     "2022": 15000,
+     "2023": 15000,
+     "2024": 15000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "Owner's pay $180,000 (2024) less a $165,000 market salary for the role: the difference counts for EBITDA and SDE; the market salary is added back for SDE only. Gord McAllister's T4 salary of $180,000/year as President. A replacement general manager for a $10M fabrication business in Alberta would cost approximately $165,000 (base salary $140,000 + benefits/bonus ~18%). The $15,000 excess is added back to adjusted EBITDA; the full $180,000 is added back to SDE.",
+    "marketSalary": 165000,
+    "ownerCompPart": "excess",
+    "ownerActualComp": {
+     "2021": 180000,
+     "2022": 180000,
+     "2023": 180000,
+     "2024": 180000
+    }
+   },
+   {
+    "id": "ab_muiso8ya_53_market",
+    "type": "sde",
+    "label": "Owner compensation (President — Gord McAllister) — market salary",
+    "amounts": {
+     "2021": 165000,
+     "2022": 165000,
+     "2023": 165000,
+     "2024": 165000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "SDE adds back the owner's full pay; this is the market-salary part. A buyer who hires someone for the role pays it, so it is not added back to EBITDA.",
+    "ownerCompPart": "market"
+   },
+   {
+    "id": "ab_muiso8yb_54",
+    "label": "Depreciation & amortization",
+    "amounts": {
+     "2021": 251000,
+     "2022": 268000,
+     "2023": 286000,
+     "2024": 312000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Book amortization of tangible assets. Non-cash expense added back to EBITDA and SDE."
+   },
+   {
+    "id": "ab_muiso8yb_55",
+    "label": "Interest expense",
+    "amounts": {
+     "2021": 79000,
+     "2022": 71000,
+     "2023": 66000,
+     "2024": 58000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Interest on long-term debt (equipment term loan and vehicle/equipment loans). Added back to EBITDA and SDE."
+   },
+   {
+    "id": "ab_muiso8yb_56",
+    "label": "Income taxes",
+    "amounts": {
+     "2021": 60750,
+     "2022": 97090,
+     "2023": 150910,
+     "2024": 131590
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Current income taxes (taxes payable method). Added back to EBITDA and SDE."
+   },
+   {
+    "id": "ab_muiso8yb_57",
+    "label": "Crane rebuild (one-time)",
+    "amounts": {
+     "2024": 64000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Rebuild of both 10-ton overhead cranes in 2024 (new hoists, end trucks, pendants). Deducted as current expense; will not recur for ~20 years. One-time add-back."
+   },
+   {
+    "id": "ab_muiso8yb_58",
+    "label": "Legal fees — shareholder agreement (one-time)",
+    "amounts": {
+     "2024": 18000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Legal fees for November 2024 amendment to unanimous shareholder agreement (waived Luis's ROFR for sale). One-time expense."
+   },
+   {
+    "id": "ab_muiso8yb_59",
+    "label": "Owner's truck & personal expenses",
+    "amounts": {
+     "2024": 28000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Owner's 3/4-ton pickup truck expenses (fuel, insurance, personal use, season tickets) run through the company. Excluded from normalized EBITDA and SDE."
+   },
+   {
+    "id": "ab_muiso8yb_60",
+    "label": "Hockey sponsorship (discretionary)",
+    "amounts": {
+     "2024": 12000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Sponsorship of Leduc junior hockey team. Discretionary marketing expense; excluded from normalized EBITDA and SDE."
+   },
+   {
+    "id": "ab_muiso8yb_61",
+    "label": "Donna's salary above market (bookkeeper)",
+    "amounts": {
+     "2024": 17000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Donna McAllister (owner's spouse) performs part-time bookkeeping and is paid $62,000/year. Market rate for a part-time bookkeeper is estimated at $45,000. The $17,000 excess is discretionary and added back."
+   },
+   {
+    "id": "ab_muiso8yb_62",
+    "label": "Silverthorn bad debt (non-recurring)",
+    "amounts": {
+     "2022": 22000
+    },
+    "approved": true,
+    "category": "non_recurring",
+    "confidence": "high",
+    "description": "2022 bad debt of $22,000 from Silverthorn Energy Services receivership (September 2022). Single event; 2023 and 2024 bad debts ($9,000 and $12,000) are ordinary small write-offs. Non-recurring add-back for 2022 only."
+   }
+  ],
+  "computed": {
+   "sde": {
+    "2021": 1055000,
+    "2022": 1240000,
+    "2023": 1462000,
+    "2024": 1717000
+   },
+   "latestYear": "2024",
+   "adjustedEbitda": {
+    "2021": 890000,
+    "2022": 1075000,
+    "2023": 1297000,
+    "2024": 1552000
+   },
+   "reportedEbitda": {
+    "2021": 875000,
+    "2022": 1038000,
+    "2023": 1282000,
+    "2024": 1398000
+   }
+  },
+  "netIncome": {
+   "2021": 484250,
+   "2022": 601910,
+   "2023": 779090,
+   "2024": 896410
+  },
+  "adjustedSde": 1717000,
+  "adjustedEbitda": 1552000
+ },
+ "balanceSheet": {
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "rows": [
+   {
+    "id": "row_muiso8y9_29",
+    "name": "Accounts receivable (incl. holdbacks)",
+    "values": {
+     "2021": 1104000,
+     "2022": 1268000,
+     "2023": 1392000,
+     "2024": 1486000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muiso8y9_30",
+    "name": "Contract assets — costs and earnings in excess of billings",
+    "values": {
+     "2021": 142000,
+     "2022": 171000,
+     "2023": 196000,
+     "2024": 238000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muiso8y9_31",
+    "name": "Inventory — steel, components & consumables",
+    "values": {
+     "2021": 441000,
+     "2022": 486000,
+     "2023": 512000,
+     "2024": 544000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muiso8y9_32",
+    "name": "Prepaid expenses & deposits",
+    "values": {
+     "2021": 35000,
+     "2022": 38000,
+     "2023": 41000,
+     "2024": 46000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muiso8y9_33",
+    "name": "Property and equipment (net)",
+    "values": {
+     "2021": 1812000,
+     "2022": 1948000,
+     "2023": 2066000,
+     "2024": 2184000
+    },
+    "category": "Fixed Assets"
+   },
+   {
+    "id": "row_muiso8y9_34",
+    "name": "Accounts payable & accrued liabilities",
+    "values": {
+     "2021": 648000,
+     "2022": 712000,
+     "2023": 781000,
+     "2024": 842000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muiso8y9_35",
+    "name": "Contract liabilities — billings in excess of costs and earnings",
+    "values": {
+     "2021": 96000,
+     "2022": 118000,
+     "2023": 142000,
+     "2024": 164000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muiso8y9_36",
+    "name": "Government remittances payable",
+    "values": {
+     "2021": 54000,
+     "2022": 61000,
+     "2023": 66000,
+     "2024": 71000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muiso8y9_37",
+    "name": "Long-term debt (non-current portion)",
+    "values": {
+     "2021": 1604000,
+     "2022": 1342000,
+     "2023": 1068000,
+     "2024": 624000
+    },
+    "category": "Long-Term Liabilities"
+   },
+   {
+    "id": "row_muiso8y9_38",
+    "name": "Share capital",
+    "values": {
+     "2021": 150950,
+     "2022": 150950,
+     "2023": 150950,
+     "2024": 150950
+    },
+    "category": "Equity"
+   },
+   {
+    "id": "row_muiso8y9_39",
+    "name": "Retained earnings",
+    "values": {
+     "2021": 846770,
+     "2022": 1408680,
+     "2023": 2127770,
+     "2024": 2964180
+    },
+    "category": "Equity"
+   }
+  ]
+ }
+}
