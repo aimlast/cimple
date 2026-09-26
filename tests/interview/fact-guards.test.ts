@@ -4,6 +4,8 @@
 import assert from "node:assert/strict";
 import {
   detectRetraction,
+  detectCorrection,
+  detectPrivacyRequest,
   applySellerRetractions,
   restatesWithdrawnValue,
   guessRetractedFields,
@@ -46,9 +48,14 @@ const change = (fieldName: string, newValue: string, newConfidence = "confirmed"
 {
   const gl = "Let me take those mold numbers back — I was guessing, and I don't want a guess ending up in the book. Rob keeps the tooling list with owner and customer for every mold; he can send it over. What I do know is nearly all of it is customer-owned, which is normal for us.";
   assert.equal(detectRetraction(gl), true);
-  for (const s of ["Scratch that, it's closer to 40.", "Actually ignore what I said about the margins.", "Don't put that number in the book.", "Those were just guesses."]) {
+  for (const s of ["Scratch that, it's closer to 40.", "Actually ignore what I said about the margins.", "Those were just guesses."]) {
     assert.equal(detectRetraction(s), true, s);
   }
+  // Round V: keeping something out of the book is a privacy request, not a withdrawal.
+  assert.equal(detectRetraction("Don't put that number in the book."), false);
+  assert.equal(detectPrivacyRequest("Don't put that number in the book."), true);
+  // …and a withdrawal that gives the new value is a correction.
+  assert.equal(detectCorrection("Scratch that, it's closer to 40."), true);
   for (const s of ["We take back returned pallets at no charge.", "I was guessing the weather would hold, but it didn't.".replace("I was guessing", "we were hoping")]) {
     assert.equal(detectRetraction(s), false, s);
   }
@@ -319,11 +326,13 @@ const change = (fieldName: string, newValue: string, newConfidence = "confirmed"
     "Let me take those mold numbers back — I was guessing.",
     "Scratch that, it's 14 not 12.",
     "I take that back — it's closer to 40.",
-    "Actually, don't put that in the book.",
-    "Please leave that out of the CIM.",
     "Honestly that was just a guess.",
     "Oh, ignore what I said about the margins.",
   ]) assert.equal(detectRetraction(s), true, `retraction: ${s}`);
+  for (const s of ["Actually, don't put that in the book.", "Please leave that out of the CIM."]) {
+    assert.equal(detectRetraction(s), false, `privacy, not a retraction: ${s}`);
+    assert.equal(detectPrivacyRequest(s), true, `privacy: ${s}`);
+  }
   // With no shared words, a long answer never gives up the previous turn's fact.
   const info: Record<string, unknown> = {
     warrantyTerms: "10-year parts, 2-year labour on every install",

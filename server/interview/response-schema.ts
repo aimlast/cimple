@@ -311,7 +311,7 @@ export const INTERVIEW_RESPONSE_TOOL = {
       },
       retractedFields: {
         type: "array",
-        description: "Facts the seller WITHDREW this turn — they said to take something back, that they were guessing, to scratch it, or to keep it out of the book. List the extractedInfo key of each withdrawn fact (the exact key it is on file under) and do NOT re-record the withdrawn value in extractedFields. Also add a newDeferral naming who holds the real answer. Empty array (or omit) on almost every turn.",
+        description: "Facts the seller WITHDREW this turn without giving a new value — they said to take something back or that they were guessing. List the extractedInfo key of each withdrawn fact (the exact key it is on file under) and do NOT re-record the withdrawn value in extractedFields. Also add a newDeferral naming who holds the real answer. NOT for corrections ('scratch that, it's 12 not 10' — record the new value under the same key instead) and NOT for 'keep that out of the book' (that goes to privateNotes). Empty array (or omit) on almost every turn.",
         items: {
           type: "object",
           required: ["field", "reason"],

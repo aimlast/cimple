@@ -517,22 +517,51 @@ const HABIT_RE =
 // "…to a meeting in ten minutes, so quickly: …" — leaving is imminent.
 const SOON_RE = /\b(?:right now|shortly|in (?:a (?:few|couple(?: of)?) |\d+ |five |ten |fifteen |twenty )?min(?:ute)?s?|in a (?:sec|second|bit|minute))\b/i;
 const APOLOGY_START_RE = /^(?:sorry|so sorry|apologies|oh|oops|ah|actually|unfortunately|hey|listen|ok(?:ay)?|shoot|darn|argh)\b/i;
+// What "later" may resume in a resume-later request: the conversation itself
+// ("this", "the rest", "where we left off") — never a job, and never "it" /
+// "that", which are usually a task: "Yes, I'll do that tomorrow" answering
+// "could you upload the lease?", "I'll finish it tomorrow and send it over"
+// (review-caught: those ended interviews). A task commitment or a deferral
+// of ONE question ("Can I come back to this after I check with my
+// accountant?") is the classifier's to read (seller-intent.ts), not a
+// pattern's — only requests that can't be anything but ending this
+// conversation are instant.
+const RESUME_OBJECT = String.raw`(?: (?:this|things|the rest(?: of (?:this|it|the questions))?|this conversation|the interview|the questions|where we left off))`;
 const ADDRESSED_STOP_PHRASES: string[] = [
-  String.raw`(?:let'?s|can we|could we|we should|we can|we'?ll (?:have|need) to|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we|time to|i think we (?:should|can)|${I_MUST})\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break|leave it (?:there|at that)|cut (?:this|it|things) short)(?: (?:the|this|our) (?:session|call|chat|interview|conversation|meeting))?(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
-  String.raw`(?:let'?s|can we|could we|we can|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we)\s+(?:(?:finish|continue|resume|pick (?:this|it|things) up|come back to (?:this|it|the rest)|do the rest|carry on|keep going|chat|talk|speak)\s+(?:\w+\s+){0,4}?)${LATER}${CLAUSE_END}`,
+  // "Let's stop here", "can we end it here", "I'd like to wrap this up now".
+  // Never "we can …" — that is the business ("we can stop the line").
+  String.raw`(?:let'?s|can we|could we|we should|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we|time to|i think we (?:should|can)|${I_MUST})\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break|leave it (?:there|at that)|cut (?:this|it|things) short)(?: (?:it|this|things|(?:the|this|our) (?:session|call|chat|interview|conversation|meeting)))?(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
+  // "Can we do this another time?", "let's continue later", "could we pick
+  // this up tomorrow" — the seller asking the interviewer to resume later.
+  // Subjects that address the interviewer only: never "I'll …" (a task: "I'll
+  // do that tomorrow") and never the business "we could / we can". ("Can we
+  // come back to this later?" is usually one question set aside — the
+  // classifier's call.)
+  String.raw`(?:let'?s|can we|could we|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we)\s+(?:just\s+)?(?:(?:finish|continue|resume|do|carry on|keep going|pick (?:this|things) (?:back )?up)${RESUME_OBJECT}|(?:continue|resume|carry on|keep going|pick (?:this|things) (?:back )?up|chat|talk|speak))(?: (?:again|maybe|then|with you))? ${LATER}${CLAUSE_END}`,
   // "Can we pick this up?" — resuming later, said as a question. (Not "can
-  // we continue with the lease next?" — that's a seller who wants to go on.)
-  String.raw`(?:can|could) (?:we|i) pick (?:this|it|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
+  // we continue with the lease next?" — that's a seller who wants to go on;
+  // not "can I pick it up tomorrow?" — that's a document.)
+  String.raw`(?:can|could) we pick (?:this|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
+  // "Could we do the rest on Monday?" (Not "can I come back to this after I
+  // check with my accountant?" — one question set aside, and the interview
+  // goes on.)
+  String.raw`(?:can|could|may) (?:we|i) (?:continue|do|pick up|finish) (?:the rest|this conversation|the interview|the questions)\b[^.?!]{0,40}\?`,
   String.raw`(?<=^|[.!?,]\s{0,3}|\b(?:ok|okay|please|so|sorry|alright|right)\s{1,3})stop (?:here|now|there)${CLAUSE_END}`,
+  // "I'll stop here", "I'm going to stop now", "I think I'll leave it there".
+  String.raw`(?:i'?ll|i will|i'?m (?:going to|gonna)|i think i'?ll|i'?d better|i better)\s+(?:have to\s+)?(?:stop|leave it|call it)(?: (?:there|here|now|at that|a day|for (?:now|today|tonight|the day))){1,2}${CLAUSE_END}`,
   String.raw`stop (?:the interview|this (?:interview|conversation|session|chat))`,
   String.raw`end (?:this (?:interview|conversation|session|call|chat)|the (?:interview|conversation|chat))\b`,
   String.raw`${I_MUST} ${LEAVE_VERB}(?: (?:now|soon|shortly|real quick|unfortunately|in a (?:minute|sec|second|few|bit)|for (?:a bit|a while|now|today)))?${CLAUSE_END}`,
-  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)\s{1,3})(?:gotta|got to) (?:go|run|head out|jump|dash|split)${CLAUSE_END}`,
-  String.raw`that(?:'| i)?s (?:all|enough|it)(?: (?:for|from) (?:me|us))?(?: i (?:have|can do|'ve got))?(?: for)? (?:now|today|tonight|the day)${CLAUSE_END}`,
+  // "Sorry, have to run." / "OK gotta go."
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)[,.!]?\s{1,3})(?:gotta|got to|have to|need to) (?:go|run|head out|head off|jump|dash|split|leave|bounce)${CLAUSE_END}`,
+  String.raw`that(?:'| i)?s (?:all|enough|it)(?: (?:for|from) (?:me|us))?(?: i (?:have|can do|'ve got))?(?: for)? (?:now|today|tonight|the day|(?:one|a) day)${CLAUSE_END}`,
   String.raw`(?:i'?m|we'?re|i am|we are) (?:all )?done for (?:now|today|tonight|the day)`,
-  String.raw`enough for (?:now|today|tonight)${CLAUSE_END}`,
+  String.raw`enough for (?:now|today|tonight|(?:one|a) day)${CLAUSE_END}`,
   String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:ok|okay|so|thanks|thank you|bye|alright|great|anyway|cheers)[,!.]?\s{1,3})talk (?:to you )?(?:later|tomorrow|soon|next time)${CLAUSE_END}`,
-  String.raw`no more questions(?: for (?:now|today))?${CLAUSE_END}`,
+  // "No more today please." — only as its own sentence.
+  // (Not "No more today, we sold out by noon.")
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3})no more (?:for )?(?:today|tonight|right now|for now)(?=\s*(?:[.!]|$)|\s+(?:please|thanks|thank you)\b)`,
+  String.raw`i (?:can'?t|cannot|don'?t think i can) (?:do|handle|take|answer) (?:any ?more|much more|this any ?more|more (?:questions|of this))(?: (?:today|tonight|right now|now|for (?:today|now)))?${CLAUSE_END}`,
   String.raw`(?:don'?t|do not|won'?t) have (?:any )?(?:more )?time (?:for (?:(?:any )?more|this|the rest|questions|it now)|today|right now|to (?:continue|keep going|finish))|no more time for (?:this|questions|today)`,
   // Self-addressed completion declarations are unambiguous stops even
   // without a wrap offer — "from me" / "I've got" removes the ambiguity
@@ -553,6 +582,24 @@ const SHORT_ONLY_STOP_PHRASES: string[] = [
   String.raw`(?:good)?bye(?: for now)?${CLAUSE_END}`,
 ];
 
+// A seller who wants the questions to stop NOW — "please stop asking me
+// questions", "no more questions". Not a pause-and-resume: the first one is
+// the end (a goodbye, no closing question).
+// Addressed to the interviewer: it opens its sentence (or follows "please",
+// "can you"…) — "customers stop asking for discounts" and "the bank had no
+// more questions" describe the business.
+const TO_INTERVIEWER = String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:please|just|ok|okay|so|now|honestly|seriously|can you|could you|would you|will you)[,]?\s{1,3})`;
+const FIRM_STOP_PHRASES: string[] = [
+  String.raw`${TO_INTERVIEWER}(?:please )?stop (?:asking(?: me)?(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?|with (?:the|all the|these|all these) questions|the questions)(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
+  String.raw`${TO_INTERVIEWER}(?:no|enough|not any) more questions(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`,
+  String.raw`${TO_INTERVIEWER}enough (?:with the )?questions${CLAUSE_END}`,
+  String.raw`i(?:'m| am) (?:done|finished) (?:answering(?: questions)?|with (?:the|these|your) questions)`,
+  String.raw`i (?:don'?t|do not) want to answer any (?:more|further) questions`,
+];
+const FIRM_STOP_RE = new RegExp(`\\b(?:${FIRM_STOP_PHRASES.join("|")})`, "i");
+// The whole message is "Stop." / "Stop now please."
+const BARE_STOP_RE = /^\s*(?:(?:ok(?:ay)?|please|just)[,\s]+)?stop(?:[,\s]+(?:please|now|it|there))*\s*[.!]*\s*$/i;
+
 const ADDRESSED_STOP_RE = new RegExp(`\\b(?:${ADDRESSED_STOP_PHRASES.join("|")})`, "i");
 const SHORT_ONLY_STOP_RE = new RegExp(`\\b(?:${SHORT_ONLY_STOP_PHRASES.join("|")})`, "i");
 // Words that may surround a stop phrase in a final sentence without making
@@ -565,10 +612,24 @@ const SHORT_STOP_MESSAGE_WORDS = 25;
 const wordCount = (s: string) => (s.trim().match(/\S+/g) ?? []).length;
 const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
 
+function isFirmStop(text: string): boolean {
+  return BARE_STOP_RE.test(text) || FIRM_STOP_RE.test(text);
+}
+
+/**
+ * True when the seller wants the questions to stop now ("Please stop asking
+ * me questions.", "No more questions.", "Stop.") — the instant pattern tier
+ * of the firm stop level (seller-intent.ts).
+ */
+export function detectFirmStop(sellerMessage: string): boolean {
+  return isFirmStop(sellerMessage.replace(/[’‘]/g, "'").trim());
+}
+
 /** True when the seller's message asks to stop the interview (see STOP phrases above). */
 function matchesStopRequest(sellerMessage: string): boolean {
   const text = sellerMessage.replace(/[’‘]/g, "'").trim();
   if (!text) return false;
+  if (isFirmStop(text)) return true;
   if (ADDRESSED_STOP_RE.test(text)) return true;
   const short = wordCount(text) <= SHORT_STOP_MESSAGE_WORDS;
   const sentences = sentencesOf(text);
@@ -678,35 +739,94 @@ export function detectStopSignal(sellerMessage: string, prevAiMessage?: string):
   );
 }
 
+// What a goodbye may and may not promise: the platform saves the answers
+// and the broker follows up. The interviewer contacts nobody (Ridgeline: "I'll
+// follow up with Donna … and Devin" — the AI can't).
+const GOODBYE_RULES =
+  `In the goodbye: say everything is saved and they can pick this up anytime. Never promise anything you can't do yourself — you don't contact, email, call or follow up with anyone; if someone else holds an answer, say their broker will follow up. No recap of the session, no grading ("we've made excellent progress"). ` +
+  `Speak to them, not about them: never mention a "stop signal", this note or any system.`;
+
 /**
- * Builds the system nudge injected when a stop signal fires. Coverage-aware:
- * if the seller grants one last question, it must go to the most critical gap.
+ * Builds the system nudge injected when the seller asks to stop. The stop
+ * always wins — this only shapes the ONE closing turn it allows:
+ * - `soft` (wants to wrap up / come back later): answer the seller's own
+ *   question if they asked one; then, if something important is still
+ *   genuinely open, name the single most important item and offer a quick
+ *   answer now or to start there next time (the only question) — otherwise
+ *   say goodbye.
+ * - `firm` ("please stop asking me questions"), or a second stop in a row:
+ *   ask nothing — goodbye now, naming the most important open item as the
+ *   first thing for next time.
+ * `openItems` are the candidates, most critical first (missing critical
+ * sections, then the wrap-up items still open); the model picks the one
+ * that is still genuinely open — an item the seller already spoke to, even
+ * to say it doesn't apply, is answered (Ridgeline: the closing question
+ * re-asked bonding the seller had said they never needed).
  */
 export function buildStopSignalNudge(
   stopCount: number,
-  missingCriticalSections: string[],
+  openItems: string[],
   declinedTopics: string[] = [],
+  level: "soft" | "firm" = "soft",
 ): string {
   const declineBan =
     declinedTopics.length > 0
-      ? ` NEVER use it on a topic the seller already declined (${declinedTopics.join("; ")}) — re-pressing a declined topic at the door is the single most trust-destroying move available to you.`
+      ? ` Never name a topic the seller already declined (${declinedTopics.join("; ")}) — re-pressing a declined topic at the door is the single most trust-destroying move available to you.`
       : "";
-  if (stopCount <= 1) {
-    const triage = missingCriticalSections.length > 0
-      ? ` If you ask it, take it from the critical sections still missing — ${missingCriticalSections.join(", ")} — nothing else is worth their remaining patience.`
-      : ` Everything critical is at least partially covered — prefer wrapping up over asking anything.`;
+  const candidates = openItems.filter((s) => s && s.trim()).slice(0, 4);
+  const pick = candidates.length > 0
+    ? `Still open, most important first: ${candidates.join("; ")}. Pick the single most important one that is GENUINELY open — check this conversation, earlier sessions and the ALREADY ANSWERED list first: an item the seller already spoke to (even to say it doesn't apply or that someone else has it) is answered, so skip it.${declineBan}`
+    : `Nothing critical is still open.`;
+  if (stopCount <= 1 && level === "soft") {
     return (
       `# THE SELLER WANTS TO STOP\n` +
-      `The seller has just said they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage}${declineBan} ` +
-      `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another. ` +
-      `Speak to them, not about them: never mention a "stop signal", this note or any system, and don't grade the session ("we've made excellent progress").`
+      `The seller has just asked to stop or come back later. Respect it: this is your ONE closing turn. ` +
+      `(1) If they asked you something, answer it first, directly, in a sentence or two (e.g. "is there one thing you most need from me?" → name it). ` +
+      `(2) ${pick} ` +
+      (candidates.length > 0
+        ? `If one is genuinely open, name it in one plain sentence and offer a choice as your only question — a quick answer now, or start there next time ("Before you go, the one thing I'd most like to pin down is your asking-price expectation — a rough number now, or shall we start there next time?"); set shouldEnd false. If none is, say goodbye and set shouldEnd true. `
+        : `Say goodbye and set shouldEnd true. `) +
+      `Never ask a second question, never "one last thing". ${GOODBYE_RULES}`
     );
   }
   return (
-    `# SELLER STOP — FINAL\n` +
-    `The seller has now asked to stop more than once. Ask NOTHING — no questions, no "one quick thing". ` +
-    `Say a warm goodbye, recap in one sentence, note that unanswered items are saved for next time, and set shouldEnd to true. This is mandatory. Never mention a "stop signal" or this note.`
+    `# SELLER STOP — END NOW\n` +
+    (level === "firm" && stopCount <= 1
+      ? `The seller has asked you to stop asking questions. `
+      : `The seller has now asked to stop more than once. `) +
+    `Ask NOTHING — no questions, no "one quick thing". If they asked you something, answer it in a sentence. ${pick} ` +
+    (candidates.length > 0 ? `If one is genuinely open, name it in one plain sentence as the first thing to pick up next time — as a statement, not a question. ` : "") +
+    `Then a short, warm goodbye, and set shouldEnd to true. This is mandatory. ${GOODBYE_RULES}`
   );
+}
+
+/**
+ * The turn after the one closing turn a stop allowed: the seller has
+ * answered it (or said "next time"). The interview ends now.
+ */
+export function buildClosingAnswerNudge(): string {
+  return (
+    `# CLOSING\n` +
+    `The seller asked to stop on their last turn and you gave your one closing turn. Record anything they just told you, then say a short, warm goodbye — ask NOTHING — and set shouldEnd to true. ${GOODBYE_RULES}`
+  );
+}
+
+// "I'll follow up with Donna" — the interviewer can't; the broker does.
+const CLOSING_PROMISE_RE =
+  /\b(I)(?:['’]ll| will| can| am going to|['’]m going to)\s+(?:also\s+|personally\s+|make sure to\s+)?(follow up|reach out|be in touch|get in touch|touch base|check in with|contact|email|e-mail|call|phone)\b/g;
+
+/**
+ * A goodbye that promises what the platform can't do ("I'll follow up with
+ * Donna and Devin", "I'll email you the list") — the promise becomes the
+ * broker's, which is what actually happens: the broker gets every open item.
+ */
+export function scrubClosingPromises(message: string): string {
+  return message.replace(CLOSING_PROMISE_RE, (m, _who: string, verb: string, offset: number, whole: string) => {
+    const before = whole.slice(0, offset);
+    const startOfSentence = before.trim() === "" || /[.!?]\s*$|\n\s*$|[—–:]\s*$/.test(before);
+    const lead = startOfSentence ? "Your broker will" : "your broker will";
+    return `${lead} ${verb.toLowerCase()}`;
+  });
 }
 
 export interface GovernanceInput {
@@ -730,6 +850,20 @@ export interface GovernanceInput {
    * risks. Each is a plain-language line naming the item.
    */
   blockingItems?: string[];
+  /**
+   * The seller-intent classifier's stop verdict for this turn
+   * (seller-intent.ts): "stop", "none", or "unavailable" when it failed or
+   * timed out. The model's own endReason ("the seller asked to stop") is a
+   * corroborating signal: it counts only when there is no classifier verdict
+   * to weigh it against — never against an explicit "none" (QA harvest,
+   * Clearwater: the model wrote "seller wants to stop" on an ordinary answer).
+   */
+  intentStop?: "stop" | "none" | "unavailable";
+}
+
+/** The model's endReason says the seller asked to stop / leave. */
+export function endReasonSaysSellerStop(endReason: string | undefined): boolean {
+  return !!endReason && /\bseller\b[^.]{0,40}\b(?:asked|requested|wants?|wanted|needs?|needed|has|had|said|signal\w*|chose|prefers?)\b[^.]{0,20}\b(?:to )?(?:stop|end|pause|leave|go|wrap|finish|break|come back|continue later|pick (?:this|it) up)/i.test(endReason);
 }
 
 export interface GovernanceResult {
@@ -750,14 +884,20 @@ export interface GovernanceResult {
 export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (!input.shouldEnd) return { allowEnd: false };
 
-  // Session-manager's stop detection is authoritative (it sees the previous
-  // agent message, which unlocks completion-acceptance stops like "that
-  // covers it" — the phrase check alone would miss those and force the model
-  // to keep questioning a seller who just accepted the wrap-up). The model's
-  // own endReason never counts: "seller wants to stop" written by the model
-  // on an ordinary answer used to skip every check (QA harvest).
+  // Session-manager's stop detection is authoritative (the seller-intent
+  // classifier plus the instant patterns; it sees the previous agent message,
+  // which unlocks completion-acceptance stops like "that covers it"). The
+  // model's own endReason corroborates: it counts when the classifier gave no
+  // verdict (failed / timed out) — so a gap in the patterns can never trap a
+  // seller who asked to stop — but never against the classifier's "none"
+  // ("seller wants to stop" written on an ordinary answer, QA harvest). The
+  // patterns alone count only without a classifier verdict — its "none"
+  // withdraws a soft pattern stop (combineIntent; a firm one never reaches
+  // "none").
   const sellerAskedToStop =
-    input.sellerStopDetected === true || matchesStopRequest(input.sellerMessage);
+    input.sellerStopDetected === true ||
+    (input.intentStop !== "none" && matchesStopRequest(input.sellerMessage)) ||
+    (input.intentStop === "unavailable" && endReasonSaysSellerStop(input.endReason));
   if (sellerAskedToStop) return { allowEnd: true };
 
   // Critical = the base floor plus whatever the deal's industry ranking

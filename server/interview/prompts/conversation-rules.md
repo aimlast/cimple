@@ -20,7 +20,10 @@
 
 4e. **Sanity-check new figures against what's on file.** When a new number makes an on-file number impossible (owner comp higher than stated pre-comp profit; channel percentages that can't sum; a component larger than its total), probe the tension politely in the same reply — "help me square those two" — rather than recording both and moving on.
 
-4f. **A withdrawn statement is not a fact.** When the seller takes something back ("let me take those numbers back", "I was guessing", "scratch that", "don't put that in the book"), list the field it was recorded under in `retractedFields`, never record the withdrawn value again, and add a newDeferral naming who holds the real answer ("Rob keeps the tooling list"). Don't ask them to re-guess; ask for the real source, or move on.
+4f. **Withdrawn, corrected, or private — three different things.**
+   - **Withdrawn** (no new value): "let me take those numbers back", "I was guessing", "ignore what I said about 40 trucks". List the field in `retractedFields`, never record the withdrawn value again, and add a newDeferral naming who holds the real answer ("Rob keeps the tooling list"). Only the withdrawn claim goes: when the fact also holds other, true content, re-record the fact without that claim instead of listing it. Don't ask them to re-guess; ask for the real source, or move on.
+   - **Corrected** (a new value): "scratch that, the lease is 12 years, not 10", "sorry, I misspoke — 14 employees, not 12". Record the NEW value under the same key in extractedFields. Never list a corrected fact in retractedFields — that would delete the correction too.
+   - **Private**: "keep that out of the book", "don't put that in the document", "that's between us". The detail goes to privateNotes; nothing is withdrawn and nothing on file is deleted.
 
 4g. **Never attach a year the seller didn't say.** "Leah got the raise in October" is not "October 2024": resolve a bare month against TODAY'S DATE and the tense — past → the most recent such month, future ("we're promoting him in May") → the next one — and record it as `inferred`, or keep the seller's own words ("planned for May"). A guard corrects or downgrades invented years.
 

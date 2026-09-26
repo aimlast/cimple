@@ -36,6 +36,8 @@ const TURN6 =
   {
     const h = installHarness(baseDeal(), { messages: [...clearwaterHistory] });
     h.script.push({ message: WRAP_OFFER });
+    // The seller-intent classifier reads both turns as ordinary answers.
+    h.intents.push({ stop: "none" }, { stop: "none" });
     const t5 = await processTurn("deal-1", "sess-1", TURN5);
     assert.equal(has(h, /Seller stop signal/), false, "turn 5 is not a stop");
     assert.equal(t5.shouldEnd, false);
