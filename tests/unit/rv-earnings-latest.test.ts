@@ -9,7 +9,8 @@ import { earningsCanon, canonLines, earningsWarnings } from "../../server/cim/ea
 import { buildCimFinancials, earningsChangedAt, stampEarningsChange } from "../../server/cim/cim-financials";
 
 // The analysis after the broker's later add-back edit: 2024 bridges to $700,000, SDE $840,000.
-const fin = (bridgeChangedAt?: string): any => ({
+// `changed` dates every figure of the bridge (per-figure dates: section 7).
+const fin = (changed?: string | Record<string, string>): any => ({
   analysisId: "a3", version: 3, reviewed: true, years: ["2023", "2024"],
   pnl: { "2023": { revenue: 5_000_000, ebitda: 520_000 }, "2024": { revenue: 5_400_000, ebitda: 560_000 } },
   lines: [],
@@ -19,7 +20,9 @@ const fin = (bridgeChangedAt?: string): any => ({
     adjusted: { "2023": 640_000, "2024": 700_000 }, sdeOnly: [{ label: "Owner salary", amounts: { "2023": 140_000, "2024": 140_000 } }], sde: { "2023": 780_000, "2024": 840_000 },
   },
   workingCapital: null,
-  ...(bridgeChangedAt ? { bridgeChangedAt } : {}),
+  ...(changed
+    ? { bridgeChangedAt: typeof changed === "string" ? Object.fromEntries(["adjusted|2023", "adjusted|2024", "sde|2023", "sde|2024"].map((k) => [k, changed])) : changed }
+    : {}),
 });
 const resolution = (resolvedAt: string): any => ({
   id: "d1", field: "2024 Adjusted EBITDA", factKey: "ebitdaByYear", year: "2024",
@@ -89,9 +92,9 @@ const norm = (approved: boolean, notes?: string[]): any => ({
 {
   const t1 = new Date("2026-09-15T12:00:00Z");
   const edited = stampEarningsChange(norm(false), norm(true), t1) as any;
-  assert.equal(edited.earningsChangedAt, t1.toISOString(), "approving an add-back dates the change");
+  assert.deepEqual(edited.earningsChangedAt, { "adjusted|2024": t1.toISOString() }, "approving an add-back dates the change");
   const noted = stampEarningsChange(edited, { ...norm(true, ["checked with CPA"]) }, new Date("2026-09-18T00:00:00Z")) as any;
-  assert.equal(noted.earningsChangedAt, t1.toISOString(), "a note keeps the earlier date");
+  assert.deepEqual(noted.earningsChangedAt, { "adjusted|2024": t1.toISOString() }, "a note keeps the earlier date");
   const fresh = stampEarningsChange(norm(false), norm(false, ["n"]), t1) as any;
   assert.equal(fresh.earningsChangedAt, undefined, "nothing moved, nothing stamped");
   console.log("✓ the bridge date moves only with its figures");
@@ -102,11 +105,60 @@ const norm = (approved: boolean, notes?: string[]): any => ({
   const v2 = { id: "v2", version: 2, status: "completed", brokerReviewedAt: null, createdAt: new Date("2026-09-01T00:00:00Z"), normalization: norm(true) } as any;
   const v3same = { id: "v3", version: 3, status: "completed", brokerReviewedAt: null, createdAt: new Date("2026-09-20T00:00:00Z"), normalization: norm(true) } as any;
   const v3diff = { ...v3same, normalization: norm(false) };
-  assert.equal(earningsChangedAt(v3same, [v2, v3same]), "2026-09-01T00:00:00.000Z");
-  assert.equal(earningsChangedAt(v3diff, [v2, v3diff]), "2026-09-20T00:00:00.000Z");
-  assert.equal(buildCimFinancials(v3diff, [v2, v3diff])!.bridgeChangedAt, "2026-09-20T00:00:00.000Z");
+  assert.deepEqual(earningsChangedAt(v3same, [v2, v3same]), { "adjusted|2024": "2026-09-01T00:00:00.000Z" });
+  assert.deepEqual(earningsChangedAt(v3diff, [v2, v3diff]), { "adjusted|2024": "2026-09-20T00:00:00.000Z" });
+  assert.deepEqual(buildCimFinancials(v3diff, [v2, v3diff])!.bridgeChangedAt, { "adjusted|2024": "2026-09-20T00:00:00.000Z" });
   assert.equal(buildCimFinancials({ ...v3same, createdAt: undefined } as any)!.bridgeChangedAt, undefined, "unknown stays absent");
   console.log("✓ re-runs keep the date of the last real change");
+}
+
+// 7. Per figure: an edit that moves another year or the other metric leaves
+//    the broker's decision standing (the whole-analysis stamp used to date
+//    out every earnings decision on any add-back change).
+{
+  const n2 = (o: { legal2024?: boolean; legal2023?: boolean; owner?: boolean }): any => ({
+    metric: "ebitda", years: ["2023", "2024"], netIncome: { "2023": 400_000, "2024": 430_000 },
+    addbacks: [
+      { id: "a1", label: "Interest", amounts: { "2023": 60_000, "2024": 70_000 }, approved: true, type: "ebitda" },
+      { id: "a2", label: "Depreciation", amounts: { "2023": 180_000, "2024": 180_000 }, approved: true, type: "ebitda" },
+      { id: "a3", label: "One-time legal 2024", amounts: { "2024": 94_752 }, approved: !!o.legal2024, type: "ebitda" },
+      { id: "a4", label: "Legal 2023", amounts: { "2023": 20_000 }, approved: !!o.legal2023, type: "ebitda" },
+      { id: "a5", label: "Owner market salary", amounts: { "2023": 140_000, "2024": 140_000 }, approved: !!o.owner, type: "sde" },
+    ],
+  });
+  const analysis = (n: any): any => ({ id: "a", version: 2, status: "completed", brokerReviewedAt: null, createdAt: new Date("2026-09-01T00:00:00Z"), reclassifiedPnl: null, normalization: n });
+  // Bridge: 2024 adjusted = $680,000; the broker resolved it at $650,000 on 2026-09-10.
+  const decided: any[] = [{ id: "d1", field: "2024 Adjusted EBITDA", factKey: "ebitdaByYear", year: "2024", resolvedValue: "$650,000", supersededValues: ["$680,000"], resolvedAt: "2026-09-10T00:00:00Z", source: "financial_analysis" }];
+  const later = new Date("2026-09-15T00:00:00Z");
+  const canonAfter = (edit: any) => earningsCanon(buildCimFinancials(analysis(stampEarningsChange(n2({}), edit, later))), "$3,200,000", { extractedInfo: {}, resolved: decided })!;
+
+  const moved = canonAfter(n2({ legal2024: true }));
+  assert.equal(moved.adjustedEbitda["2024"], 774_752, "a 2024 add-back approved later: the newer bridge wins");
+  assert.equal(moved.staleBrokerFigures?.length, 1);
+
+  const sdeOnly = canonAfter(n2({ owner: true }));
+  assert.equal(sdeOnly.adjustedEbitda["2024"], 650_000, "the SDE-only owner salary doesn't touch the 2024 adjusted EBITDA decision");
+  assert.equal(sdeOnly.override?.withheld, "bridge");
+  assert.equal(sdeOnly.staleBrokerFigures, undefined);
+
+  const otherYear = canonAfter(n2({ legal2023: true }));
+  assert.equal(otherYear.adjustedEbitda["2024"], 650_000, "a 2023 add-back doesn't touch the 2024 decision");
+  assert.equal(otherYear.staleBrokerFigures, undefined);
+
+  // The stamps name exactly the figures that moved, and keep the others' dates.
+  const s1 = stampEarningsChange(n2({}), n2({ legal2023: true }), later) as any;
+  assert.deepEqual(Object.keys(s1.earningsChangedAt), ["adjusted|2023"]);
+  const s2 = stampEarningsChange(s1, n2({ legal2023: true, owner: true }), new Date("2026-09-20T00:00:00Z")) as any;
+  assert.equal(s2.earningsChangedAt["adjusted|2023"], later.toISOString(), "an unmoved figure keeps its date");
+  assert.equal(s2.earningsChangedAt["sde|2024"], "2026-09-20T00:00:00.000Z", "SDE appearing is a change of the SDE figure");
+  assert.equal(s2.earningsChangedAt["adjusted|2024"], undefined);
+  // Across runs, per figure: v3 moved only 2023, so 2024 keeps v2's date.
+  const v2 = { id: "v2", version: 2, status: "completed", createdAt: new Date("2026-09-01T00:00:00Z"), normalization: n2({}) } as any;
+  const v3 = { id: "v3", version: 3, status: "completed", createdAt: new Date("2026-09-20T00:00:00Z"), normalization: n2({ legal2023: true }) } as any;
+  const dates = earningsChangedAt(v3, [v2, v3]);
+  assert.equal(dates["adjusted|2024"], "2026-09-01T00:00:00.000Z");
+  assert.equal(dates["adjusted|2023"], "2026-09-20T00:00:00.000Z");
+  console.log("✓ the date is per metric and year: other years and SDE-only edits leave a decision standing");
 }
 
 console.log("rv-earnings-latest: all passed");

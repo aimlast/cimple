@@ -48,4 +48,26 @@ console.log("✓ a fact entry goes when its source is made broker-only");
   console.log("✓ an older fact entry goes when the value on file no longer states its figures");
 }
 
+// An older (version-1) entry with no figures: nothing to check but its words.
+// It used to stand on whatever value the view fell back to after its source
+// went broker-only ("Westline Foods is the anchor customer" quoted while the
+// view said "Top customers are regional grocers").
+{
+  const info3: Record<string, unknown> = {
+    keyCustomers: "Westline Foods is the anchor customer, about a third of sales",
+    _fieldSources: { keyCustomers: { source: "document", documentId: "D" } },
+    _fieldAlternates: { keyCustomers: [{ value: "Top customers are regional grocers", source: "document", documentId: "E" }] },
+  };
+  const t3: EvidenceTarget = { id: "field:customerConcentration", kind: "field", key: "customerConcentration", label: "Customer concentration", sellerAccount: false };
+  const legacyEntry = { answer: "Westline Foods is the anchor customer", source: "on file as keyCustomers", sourceKind: "fact", factKey: "keyCustomers" };
+  const v1 = { interviewEvidence: { version: 1, fingerprint: "x", computedAt: new Date().toISOString(), status: "ready", checked: [t3.id], entries: { [t3.id]: legacyEntry } } };
+  assert.equal(onFileItems(v1, [t3], { documents: shared, view: sellerInterviewView(info3 as any, shared) }).length, 1, "stands while the value still says it");
+  assert.deepEqual(onFileItems(v1, [t3], { documents: nowPrivate, view: sellerInterviewView(info3 as any, nowPrivate) }), [], "goes once the value no longer says it");
+  // A version-2 entry without a source row is a fact the seller said (no document): not held to its words.
+  const said = { answer: "Westline is the main account", source: "on file as keyCustomers", sourceKind: "fact", factKey: "keyCustomers" };
+  const v2 = { interviewEvidence: { ...v1.interviewEvidence, version: 2, entries: { [t3.id]: said } } };
+  assert.equal(onFileItems(v2, [t3], { documents: shared, view: sellerInterviewView(info3 as any, shared) }).length, 1);
+  console.log("✓ an older figureless fact entry stands only while the value on file still says it");
+}
+
 console.log("rv-on-file-facts: all passed");

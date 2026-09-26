@@ -43,4 +43,42 @@ console.log("✓ ordinary angles still pass");
   console.log("✓ the AI review's holds are applied to the angle");
 }
 
+// Paraphrases that share no word with the clause: its figures, or a pending
+// new contract/customer when the only one on file is held. On the live
+// Pacific wording (one long growth clause naming Harvest Lane) every one of
+// these passed the word check.
+{
+  const live = {
+    businessDescription: "Regional LTL and warehousing carrier; long-term contracts with grocery distributors; 20+ years in business.",
+    growthOpportunities: "Cooler expansion (15,000 sq ft, ~$1.1–1.2M capex, sub-three-year payback), Alberta cross-dock opportunity (Calgary, 25–30K sq ft, to capture freight currently given to other carriers), electric day cab deployment (two battery-electric units on order mid-2026 with provincial incentive), potential Harvest Lane Markets contract ($2–2.5M annual starting late 2026)",
+    fleet: "112 power units, 240 trailers",
+  };
+  const g = outreachAngleGuard(live, { clauses: [], names: ["Harvest Lane Markets", "Harvest Lane"], pairs: [] });
+  assert.equal(g.heldProspect, true);
+  for (const angle of [
+    "Close to landing a new supermarket customer that could add $2-2.5M a year from late 2026.",
+    "In the running for a large new retail account in the Fraser Valley.",
+    "The business is close to winning a large new grocery retailer, a near-term upside for a buyer.",
+    "Pending new retail-chain customer could lift revenue by roughly a tenth.",
+    "Upside includes a potential new contract worth $2-2.5M a year starting late 2026.",
+    "A carrier that could add $2.5M of annual revenue next year.",
+  ]) {
+    assert.equal(angleKeepsOut(angle, g), false, `held: ${angle}`);
+  }
+  for (const angle of [
+    "A profitable West Coast LTL and warehousing carrier with a young fleet - a clean add-on for your logistics platform.",
+    "An established regional trucking business with 20+ years of history and a management team that stays on.",
+    "A logistics company with long-term contracts with grocery distributors and a strong safety record.",
+    "A 112-unit fleet serving long-term grocery distribution contracts.",
+  ]) {
+    assert.equal(angleKeepsOut(angle, g), true, `kept: ${angle}`);
+  }
+  // A pending contract buyers MAY hear about: the prospect rule steps aside.
+  const open = { ...live, growthPipeline: "Pending renewal and a potential new contract with a national retailer (shared with buyers)." };
+  const g2 = outreachAngleGuard(open, { clauses: [], names: ["Harvest Lane Markets", "Harvest Lane"], pairs: [] });
+  assert.equal(g2.heldProspect, false);
+  assert.equal(angleKeepsOut("A potential new contract with a national retailer adds upside.", g2), true);
+  console.log("✓ figures and pending-deal paraphrases of a held item are dropped; ordinary angles pass");
+}
+
 console.log("rv-outreach-angle: all passed");

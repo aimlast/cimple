@@ -50,4 +50,25 @@ const items = [{ key: "k1", text: shared, sources: [{ documentId: "d1" } as any]
   console.log("✓ faithful rewordings stay; additions fall back to the note");
 }
 
+// 4. A leaky value an earlier promotion already WROTE into the facts is
+//    cleaned on re-apply (it used to stay until a reprocess rebuilt the
+//    facts); a value the broker has since written is left alone.
+{
+  const stored = { ...emptyReview(), items: { k1: { d: "fact", key: "customerNonRenewal", value: leaky, documentId: "d1", kind: "email", text: shared } } };
+  const written = {
+    _brokerPrivateNotes: [{ note: shared, documentId: "d1", source: "email" }],
+    customerNonRenewal: leaky,
+    _fieldSources: { customerNonRenewal: { source: "email", documentId: "d1", brokerOnly: false, note: "Moved from the private notes", at: "2026-09-20T00:00:00Z" } },
+  };
+  const applied = applyNotesReview(written as any, stored as any, docs as any);
+  assert.equal(applied.info.customerNonRenewal, shared, "the written leaky value is replaced by the shared wording");
+  const src = (applied.info._fieldSources as any).customerNonRenewal;
+  assert.equal(src.documentId, "d1");
+  assert.equal(src.brokerOnly, false);
+  assert.equal((written._fieldSources as any).customerNonRenewal.at, "2026-09-20T00:00:00Z", "the input is not mutated");
+  const brokerSaid = { ...written, _fieldSources: { customerNonRenewal: { source: "broker", at: "2026-09-21T00:00:00Z" } } };
+  assert.equal(applyNotesReview(brokerSaid as any, stored as any, docs as any).info.customerNonRenewal, leaky, "the broker's own value is theirs");
+  console.log("✓ a leaky value already written by an earlier promotion is cleaned on re-apply");
+}
+
 console.log("rv-notes-promotion: all passed");

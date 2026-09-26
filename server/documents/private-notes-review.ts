@@ -50,6 +50,7 @@ import {
   isSourceKind,
   isSuppressed,
   setFieldSource,
+  getFieldSources,
   type BrokerPrivateNote,
   type FieldSource,
   type PrivateNoteSource,
@@ -415,7 +416,21 @@ function applyPromotion(info: Info, key: string, value: string, note: string, sr
   if (!src || !isPromotableFact(key, note) || isBrokerProcessKey(key)) return false;
   if (isSuppressed(info, key)) return false;
   const cur = info[key];
-  if (cur !== undefined && cur !== null && cur !== "") return factCoversNote(cur, note);
+  if (cur !== undefined && cur !== null && cur !== "") {
+    // A value this very promotion wrote before the check (credited to the
+    // same shared source, never since edited) is cleaned too: whatever it
+    // says beyond the shared wording goes.
+    const prior = getFieldSources(info)[key];
+    if (typeof cur === "string" && prior?.note === MOVED_FROM_NOTES && prior.documentId === src.documentId) {
+      const clean = promotedValue(key, cur, note);
+      if (clean !== cur) {
+        info[key] = clean;
+        setFieldSource(info, key, { ...prior, excerpt: note.slice(0, 300), at: new Date().toISOString() });
+      }
+      return true;
+    }
+    return factCoversNote(cur, note);
+  }
   // Checked again here: a decision stored before the check (re-applied on
   // every reprocess) never writes more than the shared note says.
   info[key] = promotedValue(key, value, note);
@@ -512,11 +527,11 @@ export function applyNotesReview(info: Info, review: NotesReview, docs: Map<stri
     out.push(buildNote(it.text, [it]));
   }
   // A fact moved out of a note stays a fact while its source is on the deal
-  // (a reprocess that no longer re-reads it as a note never loses it).
+  // (a reprocess that no longer re-reads it as a note never loses it). A
+  // value it already wrote is re-checked there too (applyPromotion cleans
+  // its own earlier write, and leaves any other value alone).
   for (const dec of Object.values(review.items)) {
     if (dec.d !== "fact" || !dec.documentId || !dec.text) continue;
-    const cur = next[dec.key];
-    if (cur !== undefined && cur !== null && cur !== "") continue;
     applyPromotion(next, dec.key, dec.value, dec.text, promotionSource({ sources: [{ documentId: dec.documentId }] }, docs));
   }
   if (out.length > 0) next[BROKER_PRIVATE_NOTES_KEY] = out;

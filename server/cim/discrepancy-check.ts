@@ -19,13 +19,18 @@ import type { Deal, Discrepancy } from "@shared/schema";
 import {
   runDiscrepancyCheck,
   isSameDiscrepancy,
+  isCheckRow,
+  severityRank,
+  recordsSameDispute,
+  settledRowSettles,
   buildDiscrepancyInput,
   isEvidenceDocument,
   type CheckDocument,
 } from "./discrepancy-engine";
 import { dropReason } from "./discrepancy-filter";
-import { sameConflictByFigures } from "./discrepancy-backstop";
-import { settleMergeRowsQuietly, sameConflict } from "../documents/merge-conflicts";
+import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+
+export { recordsSameDispute };
 
 type DocRow = CheckDocument & { isProcessed?: boolean | null };
 
@@ -157,10 +162,10 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
     for (const item of items) {
       const { referenced, covers } = matchersFor(item, existing);
       // A settled row keeps a dispute from coming back — another engine's
-      // only when the broker settled it at this severity or above (a minor
-      // twin settled never silences a critical finding).
-      const settles = (d: Discrepancy) => isCheckRow(d) || severityRank(d.severity) >= severityRank(item.severity);
-      if ((referenced && settled.includes(referenced) && settles(referenced)) || settled.some((d) => covers(d) && settles(d))) continue;
+      // only when it is the same dispute settled at this severity or above
+      // (a minor twin settled never silences a critical finding). The same
+      // rule as the engine's own backstop (settledRowSettles).
+      if ((referenced && settled.includes(referenced) && settledRowSettles(item, referenced)) || settled.some((d) => settledRowSettles(item, d))) continue;
       const openMatch = referenced && unsettled.includes(referenced)
         ? referenced
         : unsettled.find((d) => !touched.has(d.id) && covers(d));
@@ -232,42 +237,10 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
   return task;
 }
 
-/** A row this check raised (legacy rows have no source). */
-const isCheckRow = (d: Pick<Discrepancy, "source">) => !d.source || d.source === "interview";
-
-const SEVERITY_RANK: Record<string, number> = { minor: 1, significant: 2, critical: 3 };
-const severityRank = (s: string | null | undefined) => SEVERITY_RANK[s || ""] ?? 0;
 const SETTLED_STATUSES: ReadonlySet<string> = new Set(["resolved", "accepted"]);
 
 type DisputeSides = Pick<Discrepancy, "field"> &
   Partial<Pick<Discrepancy, "factKey" | "interviewValue" | "documentValue" | "resolvedValue" | "aiExplanation">>;
-
-/**
- * `other` records the same dispute as the check's finding or row `own`: both
- * of own's values are other's sides (sameConflict; a resolved row's chosen
- * value counts as a side), or the same two figures under different names
- * (sameConflictByFigures: Westlock vs "Signed backlog"). A shared fact key,
- * year or field word alone is NOT the same dispute: the seller's "$2.3M"
- * against the P&L's "$1,820,000" and the T2's "$1,790,000" against that P&L
- * are two disputes about one figure. Pure.
- */
-export function recordsSameDispute(own: DisputeSides, other: DisputeSides): boolean {
-  const a = (own.interviewValue ?? "").trim();
-  const b = (own.documentValue ?? "").trim();
-  if (!a || !b) return false;
-  const row = {
-    field: other.field,
-    factKey: other.factKey ?? null,
-    interviewValue: other.interviewValue ?? null,
-    documentValue: other.documentValue ?? null,
-    resolvedValue: other.resolvedValue ?? null,
-  };
-  if (sameConflict(own.factKey || other.factKey || own.field, a, b, row)) return true;
-  return sameConflictByFigures(
-    { field: own.field, interviewValue: a, documentValue: b, aiExplanation: own.aiExplanation },
-    { ...row, aiExplanation: other.aiExplanation },
-  );
-}
 
 /**
  * How a finding matches the deal's existing rows. The check's own rows

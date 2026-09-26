@@ -107,12 +107,13 @@ export interface CimFinancials {
   bridgeWithheld?: string | null;
   workingCapital: UiWorkingCapital | null;
   /**
-   * When the bridge's adjusted EBITDA / SDE figures last changed (ISO): a
-   * broker's add-back edit that moved them, else the run that produced them.
-   * A broker earnings figure set before this no longer overrules the bridge
-   * (earnings-canon.ts). Absent when unknown.
+   * When each of the bridge's figures last changed, per metric and year
+   * ("adjusted|2024" / "sde|2023" → ISO; see bridgeFigures): a broker's
+   * add-back edit that moved that figure, else the run that produced it. A
+   * broker earnings figure set before its own figure's date no longer
+   * overrules the bridge (earnings-canon.ts). Absent when unknown.
    */
-  bridgeChangedAt?: string | null;
+  bridgeChangedAt?: Record<string, string> | null;
 }
 
 const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
@@ -246,7 +247,13 @@ function bridgeOf(n: UiNormalization) {
 
 // ── When the bridge last changed ─────────────────────────────────────────
 
-/** The normalization's stamp of its last earnings change (see stampEarningsChange). */
+/**
+ * The normalization's stamps of its last earnings changes, one per metric
+ * and year ({ "adjusted|2024": iso, "sde|2023": iso } — see
+ * stampEarningsChange). Per figure, not per analysis: approving a 2023
+ * add-back, or the SDE-only owner salary, leaves the broker's 2024 adjusted
+ * EBITDA decision standing.
+ */
 const EARNINGS_STAMP = "earningsChangedAt";
 
 function isoOf(v: unknown): string | null {
@@ -255,59 +262,107 @@ function isoOf(v: unknown): string | null {
   return Number.isNaN(d.getTime()) ? null : d.toISOString();
 }
 
-/** The bridge's earnings figures (adjusted, SDE, adjusted-EBITDA subtotal) as a comparable string, or null. */
-function earningsKey(normalization: unknown): string | null {
+/**
+ * A bridge's earnings figures per metric and year, as the earnings canon
+ * reads them: "adjusted" = adjusted EBITDA (the headline in EBITDA mode,
+ * the subtotal in SDE mode), "sde" = SDE. Keyed "adjusted|2024". Pure.
+ */
+export function bridgeFigures(b: CimFinancials["bridge"] | null | undefined): Record<string, number> {
+  const out: Record<string, number> = {};
+  if (!b) return out;
+  const series: Array<["adjusted" | "sde", Record<string, number> | null | undefined]> = [
+    ["adjusted", b.metric === "ebitda" ? b.adjusted : b.adjustedEbitda],
+    ["sde", b.metric === "sde" ? b.adjusted : b.sde],
+  ];
+  for (const [metric, m] of series) {
+    for (const [y, v] of Object.entries(m ?? {})) if (typeof v === "number" && Number.isFinite(v)) out[`${metric}|${y}`] = v;
+  }
+  return out;
+}
+
+/** The normalization's earnings figures, rounded to the dollar (null = no bridge). */
+function earningsOf(normalization: unknown): Record<string, number> | null {
   if (!normalization || typeof normalization !== "object") return null;
   const row = normalizeFinancialAnalysisRow({ normalization } as Record<string, unknown>) as Record<string, any>;
   const norm = row.normalization as UiNormalization | null;
   if (!norm || !Array.isArray(norm.addbacks)) return null;
-  const b = bridgeOf(norm);
-  if (!b) return null;
-  const round = (m: Record<string, number> | null | undefined) =>
-    Object.fromEntries(Object.entries(m ?? {}).sort(([a], [c]) => a.localeCompare(c)).map(([y, v]) => [y, Math.round(v)]));
-  return JSON.stringify({ metric: b.metric, adjusted: round(b.adjusted), sde: round(b.sde), adjustedEbitda: round(b.adjustedEbitda) });
+  const figures = bridgeFigures(bridgeOf(norm));
+  return Object.fromEntries(Object.entries(figures).map(([k, v]) => [k, Math.round(v)]));
+}
+
+/** The stored stamps, per figure. (A single date stamps every figure.) */
+function stampsOf(normalization: unknown, keys: string[]): Record<string, string> {
+  const raw = normalization && typeof normalization === "object" ? (normalization as Record<string, unknown>)[EARNINGS_STAMP] : undefined;
+  const out: Record<string, string> = {};
+  if (typeof raw === "string") {
+    const iso = isoOf(raw);
+    if (iso) for (const k of keys) out[k] = iso;
+  } else if (raw && typeof raw === "object") {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      const iso = isoOf(v);
+      if (iso) out[k] = iso;
+    }
+  }
+  return out;
 }
 
 /**
- * A broker edit of the normalization (PATCH): stamps when its adjusted
- * EBITDA / SDE figures change, and carries the earlier stamp when they
- * don't (a note, a reclassification that moves no total). Pure.
+ * A broker edit of the normalization (PATCH): stamps each adjusted EBITDA /
+ * SDE figure (per year) that the edit moved, and carries the earlier stamp
+ * of every figure it didn't (a note, a reclassification that moves no
+ * total, an add-back in another year or for the other metric). Pure.
  */
 export function stampEarningsChange<T>(prior: unknown, next: T, now: Date): T {
   if (!next || typeof next !== "object") return next;
-  const before = earningsKey(prior);
-  const after = earningsKey(next);
-  const priorStamp = prior && typeof prior === "object" ? (prior as Record<string, unknown>)[EARNINGS_STAMP] : undefined;
+  const before = earningsOf(prior) ?? {};
+  const after = earningsOf(next) ?? {};
+  const keys = Array.from(new Set([...Object.keys(before), ...Object.keys(after)])).sort();
+  const priorStamps = stampsOf(prior, keys);
+  const stamps: Record<string, string> = {};
+  for (const k of Object.keys(after).sort()) {
+    if (before[k] !== after[k]) stamps[k] = now.toISOString();
+    else if (priorStamps[k]) stamps[k] = priorStamps[k];
+  }
   const out = { ...(next as Record<string, unknown>) };
-  if (before !== after) out[EARNINGS_STAMP] = now.toISOString();
-  else if (typeof priorStamp === "string") out[EARNINGS_STAMP] = priorStamp;
+  if (Object.keys(stamps).length > 0) out[EARNINGS_STAMP] = stamps;
   else delete out[EARNINGS_STAMP];
   return out as T;
 }
 
 /**
- * When the analysis's earnings figures last changed: its own stamp (a broker
- * edit that moved them), else — when the run before it bridged to the same
- * figures (a re-run carries the broker's add-back decisions forward) — that
- * run's, else the run's own creation. Null when unknown.
+ * When each of the analysis's earnings figures last changed ("adjusted|2024"
+ * → ISO): its own stamp (a broker edit that moved that figure), else — when
+ * the run before it bridged to the same figure (a re-run carries the
+ * broker's add-back decisions forward) — that run's, else the run's own
+ * creation. A figure whose date is unknown is left out.
  */
-export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[] = []): string | null {
-  let cur: AnalysisLike | undefined = analysis;
-  const seen = new Set<string>();
-  while (cur && !seen.has(String(cur.id))) {
-    seen.add(String(cur.id));
-    const norm = cur.normalization as Record<string, unknown> | null | undefined;
-    const stamp = norm && typeof norm === "object" ? isoOf(norm[EARNINGS_STAMP]) : null;
-    if (stamp) return stamp;
+export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[] = []): Record<string, string> {
+  const out: Record<string, string> = {};
+  const figures = earningsOf(analysis.normalization);
+  if (!figures) return out;
+  const earlier = (cur: AnalysisLike): AnalysisLike | undefined => {
     const version: number = cur.version ?? 0;
-    const prev: AnalysisLike | undefined = history
+    return history
       .filter((a) => (a.version ?? 0) < version && (a.status === "completed" || a.status === "reviewed"))
       .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))[0];
-    const key = earningsKey(cur.normalization);
-    if (!prev || key === null || earningsKey(prev.normalization) !== key) return isoOf(cur.createdAt);
-    cur = prev;
+  };
+  for (const [key, value] of Object.entries(figures)) {
+    let cur: AnalysisLike | undefined = analysis;
+    const seen = new Set<string>();
+    while (cur && !seen.has(String(cur.id))) {
+      seen.add(String(cur.id));
+      const stamp = stampsOf(cur.normalization, [key])[key];
+      if (stamp) { out[key] = stamp; break; }
+      const prev = earlier(cur);
+      if (!prev || (earningsOf(prev.normalization) ?? {})[key] !== value) {
+        const created = isoOf(cur.createdAt);
+        if (created) out[key] = created;
+        break;
+      }
+      cur = prev;
+    }
   }
-  return null;
+  return out;
 }
 
 /**
@@ -326,7 +381,7 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
   if (!hasTable && !hasNorm && !hasWc) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
   const years = Array.from(new Set([...(hasTable ? table!.years : []), ...(hasNorm ? norm!.years ?? [] : [])])).sort();
-  const changedAt = hasNorm ? earningsChangedAt(analysis, history ?? []) : null;
+  const changedAt = hasNorm ? earningsChangedAt(analysis, history ?? []) : {};
   return {
     analysisId: String(analysis.id),
     version: analysis.version ?? 1,
@@ -340,7 +395,7 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
       : [],
     bridge: hasNorm ? bridgeOf(norm!) : null,
     workingCapital: hasWc ? wc : null,
-    ...(changedAt ? { bridgeChangedAt: changedAt } : {}),
+    ...(Object.keys(changedAt).length > 0 ? { bridgeChangedAt: changedAt } : {}),
   };
 }
 

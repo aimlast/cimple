@@ -21,9 +21,10 @@
  *     "sde2024", "adjustedEbitda" …);
  *  3. the financial analysis bridge.
  * Latest wins: a broker figure (1 or 2) set before the bridge's add-backs
- * last moved its figures (CimFinancials.bridgeChangedAt) was decided against
- * a bridge that no longer exists, so it doesn't overrule the newer one — the
- * broker is told, and can enter it again.
+ * last moved THAT figure — the same metric and year
+ * (CimFinancials.bridgeChangedAt) — was decided against a bridge figure that
+ * no longer exists, so it doesn't overrule the newer one — the broker is
+ * told, and can enter it again.
  * Where the broker's figure and the bridge disagree, the broker's figure is
  * used and the part of the bridge it contradicts is left out of the CIM (a
  * waterfall that doesn't end at the CIM's figure can't be shown): the whole
@@ -134,11 +135,18 @@ export function earningsCanon(
   // bridge was decided against a bridge that no longer exists (the broker
   // accepted the analysis's $674,752, then approved another add-back). It
   // never overrules the newer bridge; it is named in a warning instead.
-  const changedAt = b && fin?.bridgeChangedAt ? Date.parse(fin.bridgeChangedAt) : NaN;
+  // Per figure: only a change to THIS metric and year dates the decision out
+  // (a 2023 add-back, or the SDE-only owner salary, leaves the broker's 2024
+  // adjusted EBITDA standing).
+  const changedAtOf = (f: BrokerFigure): number => {
+    const iso = b ? fin?.bridgeChangedAt?.[`${f.metric}|${f.year}`] : undefined;
+    return iso ? Date.parse(iso) : NaN;
+  };
   const staleBrokerFigures: NonNullable<EarningsCanon["staleBrokerFigures"]> = [];
   const isStale = (f: BrokerFigure): boolean => {
     const bv = bridgeSeries[f.metric][f.year];
     const at = f.at ? Date.parse(f.at) : NaN;
+    const changedAt = changedAtOf(f);
     if (typeof bv !== "number" || Number.isNaN(changedAt) || Number.isNaN(at) || at >= changedAt) return false;
     if (within(f.value, Math.max(f.tolerance, Math.abs(bv) * 0.005), bv)) return false;
     staleBrokerFigures.push({ figure: f, bridge: bv });

@@ -99,8 +99,12 @@ export interface OnFileItem extends OnFileEntry {
   label: string;
 }
 
-/** 1: first version. */
-export const EVIDENCE_VERSION = 1;
+/**
+ * 1: first version. 2: FACTS entries carry the source row their value came
+ * from (factSourceId). A version-1 build is rebuilt; until then its fact
+ * entries are "legacy" (see makeStands).
+ */
+export const EVIDENCE_VERSION = 2;
 
 const LEAD_KINDS = new Set(["crm", "website", "social"]);
 /** The seller (or their staff) speaking or writing. */
@@ -148,7 +152,28 @@ export function storedEvidence(deal: { interviewEvidence?: unknown }): OnFileEvi
   return e;
 }
 
-type StandCtx = { documents?: DocLike[]; view?: Record<string, unknown>; sessionIds?: string[] };
+type StandCtx = {
+  documents?: DocLike[];
+  view?: Record<string, unknown>;
+  sessionIds?: string[];
+  /** The entries come from a version-1 build (no factSourceId recorded). */
+  legacy?: boolean;
+};
+
+/** Content words (4+ letters) of a text, lower-cased, with a plain plural "s" dropped. */
+function contentWords(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const w of text.toLowerCase().match(/[a-z][a-z'-]{3,}/g) ?? []) out.add(w.length > 4 && w.endsWith("s") && !w.endsWith("ss") ? w.slice(0, -1) : w);
+  return out;
+}
+
+/** At least half of the answer's content words are in the value — it still says this. */
+function wordsSupported(answer: string, value: string): boolean {
+  const mine = Array.from(contentWords(answer));
+  if (mine.length === 0) return true;
+  const theirs = contentWords(value);
+  return mine.filter((w) => theirs.has(w)).length * 2 >= mine.length;
+}
 
 /**
  * Does a stored entry still stand? A document entry whose source is gone or
@@ -173,7 +198,14 @@ function makeStands(ctx: StandCtx): (e: OnFileEntry) => boolean {
       if (ctx.view) {
         const v = e.factKey ? ctx.view[e.factKey] : undefined;
         if (!e.factKey || !isSubstantive(v)) return false;
-        if (!figuresSupported(e.answer, typeof v === "string" ? v : JSON.stringify(repairCharIndexedValue(v)))) return false;
+        const text = typeof v === "string" ? v : JSON.stringify(repairCharIndexedValue(v));
+        if (!figuresSupported(e.answer, text)) return false;
+        // A version-1 entry doesn't say which source it was read from, so a
+        // figureless one ("Westline Foods is the anchor customer") would
+        // stand on any value — even one another source now supplies because
+        // its own went broker-only. It stands only while the value still says
+        // it (until the rebuild the version bump brings replaces it).
+        if (ctx.legacy && !e.factSourceId && !wordsSupported(e.answer, text)) return false;
       }
       return true;
     }
@@ -190,7 +222,7 @@ export function onFileItems(
 ): OnFileItem[] {
   const stored = storedEvidence(deal);
   if (!stored) return [];
-  const stands = makeStands(ctx);
+  const stands = makeStands({ ...ctx, legacy: (stored.version ?? 1) < 2 });
   const out: OnFileItem[] = [];
   for (const t of targets) {
     const e = stored.entries[t.id];
@@ -693,7 +725,7 @@ export async function computeOnFileEvidence(
     // that still stand (a source made broker-only since takes its entries,
     // fact entries included, with it; they are not kept for the retry hour).
     const prior = storedEvidence(deal);
-    const stands = makeStands({ documents: args.documents, view: args.view, sessionIds: args.sessions.map((s) => s.id) });
+    const stands = makeStands({ documents: args.documents, view: args.view, sessionIds: args.sessions.map((s) => s.id), legacy: !!prior && (prior.version ?? 1) < 2 });
     const failed: OnFileEvidence = prior
       ? { ...prior, entries: Object.fromEntries(Object.entries(prior.entries).filter(([, e]) => stands(e))), failedAt: new Date().toISOString() } as OnFileEvidence
       : { version: EVIDENCE_VERSION, fingerprint, computedAt: new Date().toISOString(), status: "failed", checked: [], entries: {} };
