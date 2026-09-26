@@ -12,7 +12,7 @@ import { ToastAction } from "@/components/ui/toast";
 import { Check, Loader2, Pencil, Trash2, Layers, X } from "lucide-react";
 import type { FactAlternate, FactSourceInfo, InformationFact } from "@shared/information";
 import { KIND_META, sourceChipText, formatShortDate, UNTRACKED_HINT, INFERRED_HINT } from "./source-kinds";
-import { useInformationAction } from "./useInformation";
+import { useInformationAction, RequestError } from "./useInformation";
 
 const LONG_TEXT = 260;
 
@@ -177,6 +177,16 @@ export function FactRow({
     }
   }, [editing]);
 
+  // Year rows only when the years don't all come from one source (else the plain line reads better).
+  const yearRows: Array<[string, string, FactSourceInfo | undefined]> | null = (() => {
+    if (!fact.isMap || !fact.yearSources || !fact.value || typeof fact.value !== "object") return null;
+    const labels = new Set(Object.values(fact.yearSources).map((src) => src.label));
+    if (labels.size <= 1) return null;
+    return Object.entries(fact.value as Record<string, unknown>)
+      .sort(([a], [b]) => (/^\d{4}$/.test(a) && /^\d{4}$/.test(b) ? Number(b) - Number(a) : a.localeCompare(b)))
+      .map(([y, v]) => [y, typeof v === "string" ? v : JSON.stringify(v), fact.yearSources![y]]);
+  })();
+
   const startEdit = () => {
     setDraft(initialDraft(fact));
     setEditing(true);
@@ -294,19 +304,35 @@ export function FactRow({
           </div>
         ) : (
           <>
-            <p
-              className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${long && !expanded ? "line-clamp-4" : ""}`}
-              onDoubleClick={startEdit}
-            >
-              {fact.displayValue}
-            </p>
-            {long && (
+            {yearRows ? (
+              // By-year facts: each year with its own source — a CRM or
+              // private-note year among statement years is visible as such.
+              <ul className="space-y-1" onDoubleClick={startEdit} data-testid="fact-year-rows">
+                {yearRows.map(([year, v, src]) => (
+                  <li key={year} className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-sm leading-relaxed">
+                    <span className="break-words">
+                      <span className="text-muted-foreground tabular-nums">{year}:</span> {v}
+                    </span>
+                    {src && <SourceChip source={src} onOpen={onOpenSource} size="xs" />}
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p
+                className={`text-sm leading-relaxed whitespace-pre-wrap break-words ${long && !expanded ? "line-clamp-4" : ""}`}
+                onDoubleClick={startEdit}
+              >
+                {fact.displayValue}
+              </p>
+            )}
+            {long && !yearRows && (
               <button type="button" onClick={() => setExpanded((e) => !e)} className="text-[11px] text-muted-foreground hover:text-foreground mt-0.5">
                 {expanded ? "Show less" : "Show more"}
               </button>
             )}
             <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1.5">
-              <SourceChip source={fact.source} onOpen={onOpenSource} />
+              {/* Year rows carry their own sources; the summary chip would repeat one of them. */}
+              {!yearRows && <SourceChip source={fact.source} onOpen={onOpenSource} />}
               {(fact.corroboratedBy?.length ?? 0) > 0 && (
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -368,6 +394,9 @@ export function AddFactForm({
   const action = useInformationAction(dealId);
   const [label, setLabel] = useState(missingLabel ?? "");
   const [value, setValue] = useState("");
+  // The label names a fact already on file ("Revenue" while Annual revenue has
+  // a value): offer to update that one instead of adding a second copy.
+  const [existing, setExisting] = useState<{ key: string; label: string; value: string } | null>(null);
   const submit = () => {
     if (!value.trim() || (!missingKey && !label.trim())) return;
     const req = missingKey
@@ -378,9 +407,58 @@ export function AddFactForm({
         toast({ title: "Added", description: `${missingLabel ?? label.trim()} is on file.` });
         onDone();
       },
-      onError: (e) => toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" }),
+      onError: (e) => {
+        const body = e instanceof RequestError && e.status === 409 ? e.body : null;
+        if (body && typeof body.existingKey === "string") {
+          setExisting({
+            key: body.existingKey,
+            label: typeof body.existingLabel === "string" ? body.existingLabel : body.existingKey,
+            value: typeof body.currentValue === "string" ? body.currentValue : "",
+          });
+          return;
+        }
+        toast({ title: "Couldn't add it", description: (e as Error).message, variant: "destructive" });
+      },
     });
   };
+  const updateExisting = () => {
+    if (!existing || !value.trim()) return;
+    action.mutate(
+      { method: "PUT", path: `/facts/${encodeURIComponent(existing.key)}`, body: { value: value.trim() } },
+      {
+        onSuccess: () => {
+          toast({ title: "Updated", description: `${existing.label} now reads ${value.trim()}. The earlier value is kept as another value.` });
+          onDone();
+        },
+        onError: (e) => toast({ title: "Couldn't update it", description: (e as Error).message, variant: "destructive" }),
+      },
+    );
+  };
+  if (existing) {
+    return (
+      <div className="px-4 py-3 border-t border-border/40 bg-muted/20 space-y-2" data-testid="add-fact-existing">
+        <p className="text-sm">
+          <span className="font-medium">{existing.label}</span> is already on file
+          {existing.value ? (
+            <>
+              : <span className="text-muted-foreground break-words">{existing.value.length > 160 ? `${existing.value.slice(0, 160)}…` : existing.value}</span>
+            </>
+          ) : null}
+          .
+        </p>
+        <p className="text-xs text-muted-foreground">Update it to “{value.trim()}”? The current value stays available as another value.</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" className="h-7 text-xs bg-teal text-teal-foreground hover:bg-teal/90 gap-1" onClick={updateExisting} disabled={action.isPending} data-testid="button-update-existing-fact">
+            {action.isPending ? <Loader2 className="h-3 w-3 animate-spin" /> : <Check className="h-3 w-3" />}
+            Update {existing.label.charAt(0).toLowerCase() + existing.label.slice(1)}
+          </Button>
+          <Button size="sm" variant="ghost" className="h-7 text-xs gap-1" onClick={() => setExisting(null)}>
+            <X className="h-3 w-3" /> Back
+          </Button>
+        </div>
+      </div>
+    );
+  }
   return (
     <div className="px-4 py-3 border-t border-border/40 bg-muted/20 space-y-2" data-testid="add-fact-form">
       {missingKey ? (

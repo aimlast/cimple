@@ -37,12 +37,21 @@ export async function requestJson<T>(method: string, url: string, body?: unknown
   let parsed: any = null;
   try { parsed = text ? JSON.parse(text) : null; } catch { parsed = null; }
   if (!r.ok) {
-    throw new Error(
+    throw new RequestError(
       (parsed && typeof parsed.error === "string" && parsed.error) ||
         (r.status === 401 ? "Your session has expired — please sign in again." : `Request failed (${r.status})`),
+      r.status,
+      parsed && typeof parsed === "object" ? parsed : null,
     );
   }
   return parsed as T;
+}
+
+/** A failed request: its status and the server's JSON body (e.g. the existing fact on a 409). */
+export class RequestError extends Error {
+  constructor(message: string, public status: number, public body: Record<string, unknown> | null) {
+    super(message);
+  }
 }
 
 /** Everything else that reads the deal's facts (overview, readiness, outline). */

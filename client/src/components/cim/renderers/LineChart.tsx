@@ -18,6 +18,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
+import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
 
 interface SeriesConfig {
   key: string;
@@ -73,8 +74,15 @@ function CustomTooltip({ active, payload, label, unit, series }: CustomTooltipPr
 export function LineChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
   const data: LineChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
-  const chartData = data.data || [];
   const series = data.series || [];
+  // Series values written as text ("$3,596,200") are read as numbers; one
+  // that isn't a number leaves a gap in the line rather than a false zero.
+  const scale = unitScale(data.unit);
+  const chartData = (data.data || []).map((row) => {
+    const out: Record<string, number | string | null> = { ...row };
+    for (const s of series) if (s.key in row && typeof row[s.key] === "string") out[s.key] = parseChartNumber(row[s.key], scale);
+    return out;
+  });
 
   if (chartData.length === 0 || series.length === 0) {
     if (!content) return null;

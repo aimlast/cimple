@@ -78,6 +78,12 @@ export const GENERIC_FIELD_LABELS: Record<string, string> = {
   trainingSupport: "Training offered to the buyer",
   transitionPlan: "Transition plan",
   reasonForSale: "Reason for sale",
+  revenueByYear: "Revenue by year",
+  ebitda: "EBITDA",
+  sde: "Seller's discretionary earnings (SDE)",
+  netIncome: "Net income",
+  grossProfit: "Gross profit",
+  addbacks: "Add-backs",
   workingCapital: "Working capital",
   debt: "Debt",
   askingPrice: "Asking price",
@@ -96,12 +102,36 @@ function industryKey(s: string | null | undefined): string {
   return (s || "").trim().toLowerCase();
 }
 
-/** The stored plan if it was built for the deal's current industry. */
-export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan">): InterviewPlan | null {
+/** The stored plan if it was built for the deal's current industry (and sub-industry, when recorded). */
+export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan"> & { subIndustry?: string | null }): InterviewPlan | null {
   const plan = deal.interviewPlan as InterviewPlan | null | undefined;
   if (!plan || plan.status !== "ready" || !Array.isArray(plan.items)) return null;
   if (industryKey(plan.industry) !== industryKey(deal.industry)) return null;
+  // A plan records the deal's sub-industry it was built for; a broker edit
+  // (Home Services → "Landscaping and snow") rebuilds it. Plans built before
+  // this was recorded, or callers that don't load the column, keep theirs.
+  if (plan.dealSubIndustry !== undefined && deal.subIndustry !== undefined
+    && industryKey(plan.dealSubIndustry) !== industryKey(deal.subIndustry)) return null;
   return plan;
+}
+
+/**
+ * The sub-industry to build the checklist for: the broker's own entry on the
+ * deal first (a generic industry like "Home Services" only finds the
+ * landscaping playbook through it), then the interview's identified one.
+ * Null when neither — nor the industry alone — matches a playbook.
+ */
+export function planSubIndustry(
+  deal: { industry?: string | null; subIndustry?: string | null },
+  contextSub?: string | null,
+): { matched: boolean; subIndustry: string | null } {
+  const industry = (deal.industry || "").trim();
+  if (!industry) return { matched: false, subIndustry: null };
+  for (const sub of [deal.subIndustry, contextSub]) {
+    if (sub && sub.trim() && matchIndustrySection(industry, sub) != null) return { matched: true, subIndustry: sub.trim() };
+  }
+  if (matchIndustrySection(industry, null) != null) return { matched: true, subIndustry: (deal.subIndustry || contextSub || "").trim() || null };
+  return { matched: false, subIndustry: null };
 }
 
 /**
@@ -109,7 +139,7 @@ export function getInterviewPlan(deal: Pick<Deal, "industry" | "interviewPlan">)
  * items, minus broker-removed ones. Feeds buildSectionCoverage everywhere
  * coverage is computed, so the interview, readiness and outline agree.
  */
-export function coverageAdjustmentsForDeal(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline">): CoverageFieldAdjustments {
+export function coverageAdjustmentsForDeal(deal: Pick<Deal, "industry" | "interviewPlan" | "interviewOutline"> & { subIndustry?: string | null }): CoverageFieldAdjustments {
   const plan = getInterviewPlan(deal);
   const outline = getInterviewOutline(deal);
   const add: Record<string, { key: string; label: string; critical?: boolean; alias?: string | null }[]> = {};
@@ -204,18 +234,32 @@ const inflight = new Map<string, Promise<InterviewPlan | null>>();
  * interview carries on with the generic fields.
  */
 export async function computeInterviewPlan(
-  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "extractedInfo">,
+  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
+  /**
+   * A rebuild of a checklist already in use (new checklist rules — no broker
+   * action): the broker has seen its items, so they keep their keys, labels
+   * and the industry label; only items whose condition doesn't hold for this
+   * business drop out, and a missing critical probe may join. The change is
+   * recorded (plan.revision) and shown on the outline.
+   */
+  stableFrom?: InterviewPlan,
 ): Promise<InterviewPlan | null> {
   const industry = (deal.industry || "").trim();
   if (!industry) return null;
-  if (matchIndustrySection(industry, context?.subIndustry) == null) return null;
+  const target = planSubIndustry(deal, stableFrom?.subIndustry ?? context?.subIndustry);
+  if (!target.matched) return null;
+  // (The label the broker already saw stays: the rebuilt checklist is the same playbook.)
+  const subIndustry = stableFrom && stableFrom.subIndustry !== undefined ? (stableFrom.subIndustry ?? null) : target.subIndustry;
+  const dealSubIndustry = deal.subIndustry === undefined ? undefined : (deal.subIndustry ?? null);
   const existing = inflight.get(deal.id);
   if (existing) return existing;
 
+  // A plan built under older rules stays in use while this one is built.
+  const existingReady = "interviewPlan" in deal ? getInterviewPlan(deal as unknown as Pick<Deal, "industry" | "interviewPlan"> & { subIndustry?: string | null }) : null;
   const task = (async () => {
     try {
-      const playbook = buildIndustryKnowledge(industry, context?.subIndustry ?? null);
+      const playbook = buildIndustryKnowledge(industry, subIndustry);
       const sections = CIM_SECTIONS.map((s) => {
         const generic = (SECTION_FIELD_MAP[s.key] || []).map((f) => fieldLabel(f)).join("; ");
         return `- ${s.key}: ${s.title} (already covered generically: ${generic || "nothing"})`;
@@ -237,14 +281,18 @@ export async function computeInterviewPlan(
           "You turn an industry due-diligence playbook into a concrete data checklist for a CIM interview.",
           "For the business described, list the INDUSTRY-SPECIFIC data points the interview must capture, assigned to the CIM section they belong in.",
           `Rules: only data points specific to this industry/sub-industry — never repeat the generic items already listed per section; each is ONE concrete fact (a number, a yes/no, a term, a list), not a topic; at most ${MAX_ITEMS_PER_SECTION} per section; prefer the playbook's [CRITICAL] fields and MANDATORY PROBES and mark those critical; pick the sub-industry that matches this business and ignore the others; keys are camelCase and self-explanatory; labels and keys name the data point only — never a value, name or figure from the facts on file (the interviewer reads them to the seller).`,
+          `Conditional probes: many playbook items name the businesses they apply to ("movers and passenger operators", "any lane touching California", "for franchises", "consumer-facing"). Leave an item OUT when its condition doesn't hold for this business as described (a B2B freight carrier gets no consumer-complaint item; a carrier with no California lanes gets no CARB item). When unsure whether the condition holds, keep it but do not mark it critical.`,
         ].join(" "),
         messages: [{
           role: "user",
           content: [
-            `Business: ${deal.businessName} — ${industry}${context?.subIndustry ? ` (${context.subIndustry})` : ""}`,
+            `Business: ${deal.businessName} — ${industry}${subIndustry ? ` (${subIndustry})` : ""}`,
             deal.description ? `Description: ${String(deal.description).slice(0, 400)}` : "",
             `\nCIM sections:\n${sections}`,
             `\nFACTS ALREADY ON FILE (key: value):\n${onFile || "(none yet)"}`,
+            stableFrom
+              ? `\nCURRENT CHECKLIST — the broker already works from it. Return every item that still applies with EXACTLY the same sectionKey, key and label. Leave an item out only when its condition clearly doesn't hold for this business (a conditional probe for another kind of business). Add an item only if it is a [CRITICAL] field or MANDATORY PROBE of the playbook that the list lacks (at most 3):\n${stableFrom.items.map((i) => `- ${i.sectionKey} | ${i.key} | ${i.label}${i.critical ? " | critical" : ""}`).join("\n")}`
+              : "",
             `\nIndustry playbook:\n${playbook}`,
           ].filter(Boolean).join("\n"),
         }],
@@ -270,17 +318,28 @@ export async function computeInterviewPlan(
         items.push({ key, label: r.label.trim().slice(0, 90), sectionKey: r.sectionKey!, critical: r.critical === true, answeredByKey: alias });
       }
       if (items.length === 0) throw new Error("checklist came back empty");
+      let revision: InterviewPlan["revision"] | undefined;
+      if (stableFrom) {
+        const stable = stabilisePlanItems(stableFrom.items, items);
+        items.splice(0, items.length, ...stable.items);
+        revision = stable.removed.length + stable.added.length > 0
+          ? { at: new Date().toISOString(), reason: "rules", previousItemCount: stableFrom.items.length, removed: stable.removed, added: stable.added }
+          : stableFrom.revision;
+      }
       const matched = items.filter((i) => i.answeredByKey);
       const verdicts = await verifyMatches(matched.map((i) => ({ label: i.label, value: String(info[i.answeredByKey!]) })));
       matched.forEach((item, idx) => { if (!verdicts[idx]) item.answeredByKey = null; });
-      const plan: InterviewPlan = { industry, subIndustry: context?.subIndustry ?? null, computedAt: new Date().toISOString(), status: "ready", items };
+      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), rulesVersion: PLAN_RULES_VERSION, computedAt: new Date().toISOString(), status: "ready", items, ...(revision ? { revision } : {}) };
       await storage.updateDeal(deal.id, { interviewPlan: plan } as any);
       console.log(`[interview-plan] ${items.length} industry data points for deal ${deal.id} (${industry})`);
       return plan;
     } catch (err: any) {
       console.warn(`[interview-plan] build failed for deal ${deal.id}:`, err?.message || err);
       await storage.updateDeal(deal.id, {
-        interviewPlan: { industry, subIndustry: context?.subIndustry ?? null, computedAt: new Date().toISOString(), status: "failed", items: [] },
+        interviewPlan: {
+          // A failed REBUILD keeps the checklist the deal already had.
+          ...(existingReady ? { ...existingReady, failedRebuildAt: new Date().toISOString() } : { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), computedAt: new Date().toISOString(), status: "failed", items: [] }),
+        },
       } as any).catch(() => {});
       return null;
     } finally {
@@ -291,20 +350,72 @@ export async function computeInterviewPlan(
   return task;
 }
 
+/**
+ * A rebuilt checklist held to the one the broker already saw: every item
+ * that still applies keeps its key, label, section and critical flag; at
+ * most three new CRITICAL items join; an item drops out only when the new
+ * build leaves it out. A build that would drop more than a quarter of the
+ * list (at least 6) is not a rules refinement but a different checklist —
+ * the old items all stay. Pure.
+ */
+export function stabilisePlanItems(
+  previous: InterviewPlanItem[],
+  rebuilt: InterviewPlanItem[],
+): { items: InterviewPlanItem[]; removed: string[]; added: string[] } {
+  const byKey = new Map(rebuilt.map((i) => [i.key.toLowerCase(), i]));
+  const kept = previous.filter((p) => byKey.has(p.key.toLowerCase()));
+  const removed = previous.filter((p) => !byKey.has(p.key.toLowerCase())).map((p) => p.label);
+  const limit = Math.max(6, Math.ceil(previous.length * 0.25));
+  const prevKeys = new Set(previous.map((p) => p.key.toLowerCase()));
+  const added = rebuilt.filter((i) => !prevKeys.has(i.key.toLowerCase()) && i.critical).slice(0, 3);
+  if (removed.length > limit) {
+    // Too different to be the same checklist refined — keep what the broker saw.
+    return { items: previous.map((p) => ({ ...p, answeredByKey: byKey.get(p.key.toLowerCase())?.answeredByKey ?? p.answeredByKey ?? null })), removed: [], added: [] };
+  }
+  return {
+    items: [
+      ...kept.map((p) => ({ ...p, answeredByKey: byKey.get(p.key.toLowerCase())?.answeredByKey ?? null })),
+      ...added,
+    ],
+    removed,
+    added: added.map((a) => a.label),
+  };
+}
+
 /** True while a build for this deal is running. */
 export function isPlanBuilding(dealId: string): boolean {
   return inflight.has(dealId);
 }
 
+/**
+ * Version of the checklist rules. 2: conditional probes whose condition
+ * doesn't hold are left out (and never critical when unsure).
+ */
+export const PLAN_RULES_VERSION = 2;
+
 /** Start a build in the background when the deal has an industry but no current checklist. */
 export function ensureInterviewPlan(
-  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "interviewPlan" | "extractedInfo">,
+  deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "interviewPlan" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
 ): void {
-  if (!deal.industry || getInterviewPlan(deal) || inflight.has(deal.id)) return;
+  if (!deal.industry || inflight.has(deal.id)) return;
+  const current = getInterviewPlan(deal);
+  if (current) {
+    // Built under older rules (before conditional probes were dropped — a BC
+    // carrier's "CARB" item): rebuilt in the background, at most once an hour
+    // if it fails, while the old checklist stays in use.
+    if ((current.rulesVersion ?? 1) >= PLAN_RULES_VERSION) return;
+    const lastTry = (current as InterviewPlan & { failedRebuildAt?: string }).failedRebuildAt;
+    if (lastTry && Date.now() - new Date(lastTry).getTime() < 60 * 60 * 1000) return;
+    // The broker may already have seen this checklist: rebuilt stable (same
+    // items and labels, only inapplicable ones out), with the change shown.
+    void computeInterviewPlan(deal, context, current);
+    return;
+  }
   // Don't hammer a failing build: retry at most once an hour.
   const stored = deal.interviewPlan as InterviewPlan | null | undefined;
   if (stored?.status === "failed" && industryKey(stored.industry) === industryKey(deal.industry)
+    && (stored.dealSubIndustry === undefined || deal.subIndustry === undefined || industryKey(stored.dealSubIndustry) === industryKey(deal.subIndustry))
     && Date.now() - new Date(stored.computedAt).getTime() < 60 * 60 * 1000) return;
   void computeInterviewPlan(deal, context);
 }

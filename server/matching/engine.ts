@@ -16,8 +16,20 @@
  */
 import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
+import { agentConfig } from "../interview/config/load-config";
+import { firstMoney, parseHeadcount } from "./fact-numbers";
+import { regionInText } from "./regions";
+
+const asFactText = (v: unknown): string | number | null =>
+  typeof v === "string" || typeof v === "number" ? v : v && typeof v === "object" && "value" in (v as any) ? asFactText((v as any).value) : null;
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+type AiCreate = (params: any) => Promise<{ content: any[] }>;
+let aiCreate: AiCreate = (params) => anthropic.messages.create(params) as any;
+/** Tests replace the model call (no network). */
+export function setMatchingAiForTests(fn: AiCreate | null): void {
+  aiCreate = fn ?? ((params) => anthropic.messages.create(params) as any);
+}
 
 export interface BuyerCriteria {
   // Financial
@@ -100,6 +112,8 @@ export interface MatchBreakdown {
     overallAssessment: string;     // 1-2 sentence AI summary
     score: number;                 // 0-100 overall AI score
   };
+  /** Set when the AI qualitative pass ran but produced no usable score. */
+  aiQualitativeUnavailable?: string;
 
   // Meta
   deterministicScore: number;
@@ -108,6 +122,12 @@ export interface MatchBreakdown {
   criteriaMatched: number;
   criteriaTested: number;
   dataCompleteness: number;  // 0-100 — how much deal data was available to match
+  /** The buyer excludes this deal's industry — never a suggestion, whatever else matches. */
+  excludedIndustry?: boolean;
+  /** Which of the buyer's exclusions ruled it out ("Trucking"). */
+  excludedBy?: string | null;
+  /** An exclusion that may not apply (a narrower slice, or a market the business only serves): shown to the broker, never hides the buyer. */
+  exclusionCaution?: { by: string; why: "narrower" | "market"; note: string } | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -126,8 +146,14 @@ function firstNumber(val: string | number | undefined | null): number | null {
   else if (suffix === "k") num *= 1_000;
   return num;
 }
+// A money fact is often prose ("2024 net sales: $58,241,630, up 6.5%…"): the
+// first "$" or unit amount is the figure, never the year in front of it.
 function parseCurrency(val: string | undefined | null): number | null {
-  return firstNumber(val);
+  const money = firstMoney(val);
+  if (money !== null) return money;
+  const n = firstNumber(val);
+  if (n !== null && /^(?:19|20)\d{2}$/.test(String(n)) && /[a-z]/i.test(String(val ?? ""))) return null;
+  return n;
 }
 
 function parsePercent(val: string | undefined | null): number | null {
@@ -136,6 +162,26 @@ function parsePercent(val: string | undefined | null): number | null {
 
 function parseNum(val: string | undefined | null): number | null {
   return firstNumber(val);
+}
+
+/**
+ * A buyer's criterion as a usable bound: a positive number, or null. A
+ * criterion that can't be read ("abc", "N/A", "lots") or is zero ("0" as a
+ * maximum multiple is a blank form field, not a real limit) is not a
+ * criterion at all — never "tested", never scored.
+ */
+export function criterionBound(val: string | number | undefined | null): number | null {
+  const n = firstNumber(val as any);
+  return n !== null && Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** "$31.0M", "$3.9M", "$628K", "$950" — one money format for match notes. */
+export function formatMoney(n: number): string {
+  const a = Math.abs(n);
+  if (a >= 1e9) return `$${(n / 1e9).toFixed(1)}B`;
+  if (a >= 1e6) return `$${(n / 1e6).toFixed(a >= 1e7 ? 1 : 2).replace(/\.?0+$/, "")}M`;
+  if (a >= 1e3) return `$${Math.round(n / 1e3)}K`;
+  return `$${Math.round(n)}`;
 }
 
 function rangeScore(value: number, min: number | null, max: number | null): { score: number; note: string } {
@@ -255,6 +301,262 @@ export function industryMatches(dealText: string, targets: string[]): boolean {
   });
 }
 
+// Words that narrow an exclusion without naming an industry ("New-build
+// construction", "pure-play retail") — dropped before the all-words test.
+const EXCLUSION_QUALIFIERS = new Set([
+  "new", "build", "built", "newbuild", "ground", "up", "only", "pure", "play", "primarily", "mainly", "mostly",
+  "heavy", "light", "focused", "focus", "based", "type", "style", "commercial-only", "residential-only",
+  "project", "upstream", "downstream", "industrial", "commercial", "residential",
+]);
+
+/**
+ * Exclusions that are nothing but a sector's name ("Healthcare", "Healthcare
+ * services", "Home services", "Food & beverage") — written with the filler
+ * words ("services", "business", "and") taken out. Such an exclusion covers
+ * the whole family: a buyer who rules out "Healthcare" is ruling out a
+ * pharmacy. Anything more specific ("Healthcare delivery", "New-build
+ * construction", "Home care") is not a bare sector name and stays strict.
+ */
+const SECTOR_NAMES: Record<string, string[]> = {
+  healthcare: ["healthcare", "health", "health care", "medical", "medicine", "healthcare medical", "health wellness", "health care medical", "healthcare delivery", "health care delivery", "care delivery"],
+  "home services": ["home", "home services", "home service", "home trades", "home improvement"],
+  construction: ["construction", "contracting", "construction contracting", "construction trades", "trades construction"],
+  "food service": ["food", "food service", "food beverage", "f b", "hospitality", "restaurant food"],
+  "professional services": ["professional", "professional services"],
+  manufacturing: ["manufacturing", "manufacturer", "manufacturers"],
+  retail: ["retail", "retailer", "retailers", "retail trade", "consumer retail", "retail stores", "brick mortar retail"],
+  automotive: ["automotive", "auto"],
+  "business services": ["business services", "b2b", "b2b services"],
+  technology: ["technology", "tech", "high tech", "information technology", "it", "technology services"],
+};
+
+/**
+ * The families a deal belongs to, for exclusions. Same as `familiesOf`, except
+ * that trades which are usually service businesses (plumbing, electrical,
+ * roofing, renovation) don't make a deal "construction": a buyer who rules out
+ * construction means project-based building, not a residential HVAC and
+ * plumbing service company.
+ */
+const CONSTRUCTION_FOR_EXCLUSION = ["construction", "contractor", "contracting", "general contractor", "homebuild", "home builder", "excavat", "paving", "concrete", "framing", "drywall"];
+// Technology, for exclusions only: read from the deal's industry label, never
+// from descriptions (where "our booking software" doesn't make a clinic a tech
+// company), so target matching doesn't use it.
+const TECHNOLOGY_FOR_EXCLUSION = ["technology", "information technology", "it services", "it solutions", "managed it", "managed services", "managed service provider", "msp", "software", "saas", "cybersecurity"];
+function exclusionFamiliesOf(text: string): Set<string> {
+  const out = familiesOf(text);
+  if (TECHNOLOGY_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("technology");
+  out.delete("construction");
+  if (CONSTRUCTION_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("construction");
+  return out;
+}
+
+/** The family an exclusion names outright, if it is just a sector name. */
+function bareSector(phrase: string): string | null {
+  const all = words(phrase);
+  const core = all.filter((w) => !INDUSTRY_FILLER.has(w)).join(" ");
+  const full = all.join(" ");
+  for (const [family, names] of Object.entries(SECTOR_NAMES)) {
+    if (names.includes(core) || names.includes(full)) return family;
+  }
+  return null;
+}
+
+/**
+ * What a deal's industry label says the business IS, apart from who it sells
+ * to. Sub-industries often name the customers' industries: "Managed service
+ * provider (MSP) for dental, legal and accounting practices", "metal
+ * fabrication and welding (oil & gas, agriculture, commercial construction)",
+ * "Custom injection molding — automotive Tier-2 and medical device
+ * components". Those end markets are not the deal's industry: an IT buyer who
+ * rules out healthcare still wants an MSP whose clients are dentists.
+ *   - `own`: the activity — the text before "for / serving / to / —" and
+ *     short acronyms in brackets ("(MSP)", "(3PL)");
+ *   - `context`: everything else — bracketed detail and the end markets.
+ */
+export function splitIndustryLabel(...labels: Array<string | null | undefined>): { own: string; context: string } {
+  const own: string[] = [], context: string[] = [];
+  for (const raw of labels) {
+    let text = String(raw || "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    text = text.replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+      const t = inner.trim();
+      // An acronym for the activity itself stays with it; anything else in brackets is detail.
+      if (/^[A-Z0-9][A-Za-z0-9&./-]{1,9}$/.test(t) && /[A-Z]/.test(t)) return ` ${t} `;
+      if (t) context.push(t);
+      return " ";
+    }).replace(/\s+/g, " ").replace(/\s+([,.])/g, "$1").trim();
+    const cut = text.search(/\s(?:for|serving|servicing|supplying|supplier to|to|used by|used in|customers?|clients?|end[- ]markets?)\s|\s[—–-]\s|[—–:;]/i);
+    if (cut > 0) {
+      context.push(text.slice(cut).replace(/^[\s—–:;-]+/, ""));
+      text = text.slice(0, cut);
+    }
+    text = text.replace(/[\s,]+$/, "").trim();
+    if (text) own.push(text);
+  }
+  return { own: own.join(" · "), context: context.filter(Boolean).join(" · ") };
+}
+
+/**
+ * How one exclusion phrase meets a text: "certain" when the phrase, its
+ * sector (bare sector names only) or all of its words are there; "narrower"
+ * when only the words left after dropping narrowing qualifiers are there
+ * ("Heavy manufacturing" vs a manufacturer — maybe not heavy).
+ */
+function exclusionHitIn(text: string, phrase: string): "certain" | "narrower" | null {
+  const hay = text.toLowerCase();
+  if (!hay.trim()) return null;
+  if (new RegExp(`\\b${escapeRegex(phrase)}\\b`).test(hay)) return "certain";
+  const sector = bareSector(phrase);
+  if (sector && exclusionFamiliesOf(hay).has(sector)) return "certain";
+  const meaningful = words(phrase).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w));
+  if (meaningful.length && meaningful.every((w) => containsTerm(hay, w))) return "certain";
+  const core = meaningful.filter((w) => !EXCLUSION_QUALIFIERS.has(w));
+  if (core.length && core.length < meaningful.length && core.every((w) => containsTerm(hay, w))) return "narrower";
+  return null;
+}
+
+export interface IndustryExclusion {
+  /** The buyer's exclusion as they wrote it ("Healthcare"). */
+  by: string;
+  /** Certain: the business is in that industry — never suggested. Otherwise the broker should check. */
+  certain: boolean;
+  /** "industry": the deal's own activity; "narrower": the exclusion is a narrower slice
+   *  ("Heavy manufacturing") the deal may or may not be in; "market": named only as a
+   *  market the business serves. */
+  why: "industry" | "narrower" | "market";
+}
+
+/**
+ * Does a buyer's EXCLUDED industry rule this deal out? Stricter than
+ * `industryMatches` (which suits targets). Only what the business itself does
+ * can rule it out for certain: the whole exclusion phrase or all of its
+ * meaningful words in the deal's own activity, or — for an exclusion that is
+ * just a sector's name — the activity belonging to that sector. "Healthcare"
+ * excludes a pharmacy; "Home services" an HVAC business; "construction" a
+ * general contractor; "New-build construction" never a residential HVAC
+ * service company.
+ *
+ * A hit on a narrower slice ("New-build construction" vs a general
+ * contractor) or on an end market ("Healthcare" vs an MSP for dental
+ * practices, "Construction" vs a fabricator whose customers include
+ * contractors) is NOT an exclusion: the broker gets a caution instead and the
+ * buyer stays suggestible — hiding a best-fit buyer is the worse mistake.
+ */
+export function industryExclusion(
+  industry: string | null | undefined,
+  subIndustry: string | null | undefined,
+  exclusions: string[] | null | undefined,
+): IndustryExclusion | null {
+  const { own, context } = splitIndustryLabel(industry, subIndustry);
+  let possible: IndustryExclusion | null = null;
+  for (const raw of exclusions || []) {
+    const by = String(raw || "").trim();
+    const phrase = by.toLowerCase();
+    if (!phrase) continue;
+    const onOwn = exclusionHitIn(own, phrase);
+    if (onOwn === "certain") return { by, certain: true, why: "industry" };
+    if (possible) continue;
+    if (onOwn === "narrower") possible = { by, certain: false, why: "narrower" };
+    else if (exclusionHitIn(context, phrase)) possible = { by, certain: false, why: "market" };
+  }
+  return possible;
+}
+
+/** Broker-facing caution for an exclusion that may not apply. */
+export function exclusionCautionNote(ex: IndustryExclusion): string {
+  return ex.why === "market"
+    ? `Rules out “${ex.by}”. This business serves that market but isn't part of it — worth checking before you reach out.`
+    : `Rules out “${ex.by}”. That may or may not describe this business — worth checking before you reach out.`;
+}
+
+/**
+ * True when the exclusions rule out, for certain, a deal whose label is
+ * "Industry · Sub-industry" (the label's first part is the industry).
+ */
+export function excludedIndustryMatches(dealIndustryLabel: string, exclusions: string[]): boolean {
+  const [industry, ...rest] = String(dealIndustryLabel || "").split(" · ");
+  return industryExclusion(industry, rest.join(" · "), exclusions)?.certain === true;
+}
+
+// ── AI qualitative scoring ─────────────────────────────────────────────────
+
+export const AI_DIMENSIONS = [
+  "growthAlignment", "competitiveMoat", "managementDepth", "customerHealth", "strategicFit", "reasonForSaleRisk",
+] as const;
+
+const AI_SCORE_TOOL = {
+  name: "score_match",
+  description: "Scores for how well the business matches the buyer's qualitative criteria.",
+  input_schema: {
+    type: "object",
+    properties: {
+      growthAlignment: { type: "number", description: "0-10 how well growth potential matches buyer expectations" },
+      competitiveMoat: { type: "number", description: "0-10 strength of competitive advantages and defensibility" },
+      managementDepth: { type: "number", description: "0-10 management team strength and owner dependency risk" },
+      customerHealth: { type: "number", description: "0-10 customer diversification, retention, recurring revenue quality" },
+      strategicFit: { type: "number", description: "0-10 how well this fits as platform/add-on/strategic acquisition" },
+      reasonForSaleRisk: { type: "number", description: "0-10 how clean and low-risk the reason for sale is" },
+      overallAssessment: { type: "string", description: "1-2 sentence summary of match quality" },
+    },
+    required: [...AI_DIMENSIONS, "overallAssessment"],
+  },
+};
+
+/**
+ * The first complete JSON object in a model reply — tolerant of code fences
+ * and of prose before or after it ("{…}\n\nNote: …").
+ */
+export function firstJsonObject(text: string): any {
+  const t = (text || "").replace(/```[a-zA-Z]*\r?\n?/g, "");
+  const start = t.indexOf("{");
+  if (start < 0) throw new Error("No JSON object in reply");
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === "\\") esc = true;
+      else if (c === '"') inStr = false;
+      continue;
+    }
+    if (c === '"') inStr = true;
+    else if (c === "{") depth++;
+    else if (c === "}" && --depth === 0) return JSON.parse(t.slice(start, i + 1));
+  }
+  throw new Error("Unterminated JSON object in reply");
+}
+
+/**
+ * The AI's six 0-10 dimensions, coerced and clamped. A dimension the model
+ * left out, nulled or wrote as "N/A" is skipped; with fewer than 4 usable
+ * dimensions there is no AI score at all (null) — never NaN.
+ */
+export function scoreAiDimensions(parsed: any): { dims: Partial<Record<(typeof AI_DIMENSIONS)[number], number>>; score: number } | null {
+  if (!parsed || typeof parsed !== "object") return null;
+  const dims: Partial<Record<(typeof AI_DIMENSIONS)[number], number>> = {};
+  let sum = 0, n = 0;
+  for (const k of AI_DIMENSIONS) {
+    const raw = parsed[k];
+    if (raw === null || raw === undefined || typeof raw === "boolean") continue;
+    if (typeof raw === "string" && !/\d/.test(raw)) continue;
+    const v = typeof raw === "number" ? raw : parseFloat(String(raw));
+    if (!Number.isFinite(v)) continue;
+    const c = Math.min(10, Math.max(0, v));
+    dims[k] = c;
+    sum += c;
+    n++;
+  }
+  if (n < 4) return null;
+  const score = Math.round((sum / (n * 10)) * 100);
+  return Number.isFinite(score) ? { dims, score } : null;
+}
+
+/** Only finite integers 0-100 may be persisted as a match score. */
+export function finiteScore(v: unknown): number | null {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) ? Math.min(100, Math.max(0, Math.round(n))) : null;
+}
+
 const LOCATION_FILLER = new Set(["north", "northern", "south", "southern", "east", "eastern", "west", "western", "central", "greater", "area", "region", "metro", "the", "and", "of", "near", "around", "within", "anywhere", "in", "province", "state"]);
 const CA_PROVINCES: Record<string, string> = {
   on: "ontario", bc: "british columbia", ab: "alberta", qc: "quebec", mb: "manitoba", sk: "saskatchewan",
@@ -276,6 +578,9 @@ export function locationMatches(dealLocation: string, targets: string[]): boolea
   for (const [abbr, name] of Object.entries(CA_PROVINCES)) {
     if (new RegExp(`\\b${abbr}\\b`).test(hay)) hay += ` ${name} `;
   }
+  // US state codes and well-known cities too ("Toledo, OH" → Ohio, United States).
+  const region = regionInText(dealLocation);
+  if (region) hay += ` ${region.region.toLowerCase()} ${region.country.toLowerCase()} `;
   if (textMatchesAny(hay, targets)) return true;
   const isCanada = hay.includes("canada") || Object.values(CA_PROVINCES).some((p) => hay.includes(p));
   const isUS = /\b(usa|united states)\b/.test(hay) || US_STATES.some((st) => hay.includes(` ${st} `) || hay.includes(` ${st}`));
@@ -350,38 +655,34 @@ export async function matchBuyerToDeal(
   const financialDetails: Record<string, { score: number; max: number; note: string }> = {};
 
   // Revenue
+  // A criterion counts as tested only when it can be read (criterionBound):
+  // "abc" / "N/A" / "0" never produce a "No criteria specified" half-score.
+  const ranged = (key: string, value: number | null, minRaw: unknown, maxRaw: unknown) => {
+    const min = criterionBound(minRaw as any), max = criterionBound(maxRaw as any);
+    if (!value || (min === null && max === null)) return;
+    const r = rangeScore(value, min, max);
+    financialDetails[key] = { score: r.score, max: 100, note: `${formatMoney(value)} — ${r.note}` };
+  };
   const dealRevenue = parseCurrency(info.annualRevenue) || parseCurrency(fa?.reclassifiedPnl?.totalRevenue);
-  if (dealRevenue && (criteria.revenueMin || criteria.revenueMax)) {
-    const r = rangeScore(dealRevenue, parseCurrency(criteria.revenueMin), parseCurrency(criteria.revenueMax));
-    financialDetails.revenue = { score: r.score, max: 100, note: `$${(dealRevenue / 1e6).toFixed(1)}M — ${r.note}` };
-  }
+  ranged("revenue", dealRevenue, criteria.revenueMin, criteria.revenueMax);
 
   // EBITDA
   const dealEbitda = parseCurrency(fa?.normalization?.adjustedEbitda) || parseCurrency(info.ebitda);
-  if (dealEbitda && (criteria.ebitdaMin || criteria.ebitdaMax)) {
-    const r = rangeScore(dealEbitda, parseCurrency(criteria.ebitdaMin), parseCurrency(criteria.ebitdaMax));
-    financialDetails.ebitda = { score: r.score, max: 100, note: `$${(dealEbitda / 1e3).toFixed(0)}K — ${r.note}` };
-  }
+  ranged("ebitda", dealEbitda, criteria.ebitdaMin, criteria.ebitdaMax);
 
   // SDE
   const dealSde = parseCurrency(fa?.normalization?.adjustedSde) || parseCurrency(info.sde);
-  if (dealSde && (criteria.sdeMin || criteria.sdeMax)) {
-    const r = rangeScore(dealSde, parseCurrency(criteria.sdeMin), parseCurrency(criteria.sdeMax));
-    financialDetails.sde = { score: r.score, max: 100, note: `$${(dealSde / 1e3).toFixed(0)}K — ${r.note}` };
-  }
+  ranged("sde", dealSde, criteria.sdeMin, criteria.sdeMax);
 
   // Asking price — the broker's listed price (a broker correction on the
   // Information tab wins over a stale deal column), else the price on file.
   const dealPrice = parseCurrency(effectiveAskingPrice({ askingPrice: deal.askingPrice ?? null, extractedInfo: info }));
-  if (dealPrice && (criteria.askingPriceMin || criteria.askingPriceMax)) {
-    const r = rangeScore(dealPrice, parseCurrency(criteria.askingPriceMin), parseCurrency(criteria.askingPriceMax));
-    financialDetails.askingPrice = { score: r.score, max: 100, note: `$${(dealPrice / 1e6).toFixed(2)}M — ${r.note}` };
-  }
+  ranged("askingPrice", dealPrice, criteria.askingPriceMin, criteria.askingPriceMax);
 
   // Gross margin
   const dealGrossMargin = parsePercent(info.operatingMargins) || (fa?.reclassifiedPnl?.grossProfit && dealRevenue ? (parseCurrency(fa.reclassifiedPnl.grossProfit)! / dealRevenue) * 100 : null);
-  if (dealGrossMargin && criteria.grossMarginMin) {
-    const minGm = parsePercent(criteria.grossMarginMin)!;
+  const minGm = criterionBound(criteria.grossMarginMin);
+  if (dealGrossMargin && minGm !== null) {
     financialDetails.grossMargin = dealGrossMargin >= minGm
       ? { score: 100, max: 100, note: `${dealGrossMargin.toFixed(1)}% — meets minimum ${minGm}%` }
       : { score: dealGrossMargin >= minGm * 0.85 ? 50 : 0, max: 100, note: `${dealGrossMargin.toFixed(1)}% — below ${minGm}%` };
@@ -389,8 +690,9 @@ export async function matchBuyerToDeal(
 
   // EBITDA margin
   const dealEbitdaMargin = parsePercent(fa?.normalization?.ebitdaMargin);
-  if (dealEbitdaMargin && criteria.ebitdaMarginMin) {
-    const min = parsePercent(criteria.ebitdaMarginMin)!;
+  const minEbitdaMargin = criterionBound(criteria.ebitdaMarginMin);
+  if (dealEbitdaMargin && minEbitdaMargin !== null) {
+    const min = minEbitdaMargin;
     financialDetails.ebitdaMargin = dealEbitdaMargin >= min
       ? { score: 100, max: 100, note: `${dealEbitdaMargin.toFixed(1)}% — meets minimum ${min}%` }
       : { score: dealEbitdaMargin >= min * 0.85 ? 50 : 0, max: 100, note: `${dealEbitdaMargin.toFixed(1)}% — below ${min}%` };
@@ -398,8 +700,10 @@ export async function matchBuyerToDeal(
 
   // Revenue growth
   const dealGrowth = parsePercent(info.revenueGrowth);
-  if (dealGrowth !== null && criteria.revenueGrowthMin) {
-    const min = parsePercent(criteria.revenueGrowthMin)!;
+  // Growth may legitimately be 0 or negative ("not shrinking") — any readable number counts.
+  const minGrowth = parsePercent(criteria.revenueGrowthMin);
+  if (dealGrowth !== null && minGrowth !== null) {
+    const min = minGrowth;
     financialDetails.revenueGrowth = dealGrowth >= min
       ? { score: 100, max: 100, note: `${dealGrowth.toFixed(1)}% growth — meets minimum` }
       : { score: dealGrowth >= 0 ? 40 : 0, max: 100, note: `${dealGrowth.toFixed(1)}% growth — below ${min}%` };
@@ -407,8 +711,9 @@ export async function matchBuyerToDeal(
 
   // Customer concentration
   const dealConcentration = parsePercent(info.customerConcentration);
-  if (dealConcentration !== null && criteria.maxCustomerConcentration) {
-    const max = parsePercent(criteria.maxCustomerConcentration)!;
+  const maxConcentration = criterionBound(criteria.maxCustomerConcentration);
+  if (dealConcentration !== null && maxConcentration !== null) {
+    const max = maxConcentration;
     financialDetails.customerConcentration = dealConcentration <= max
       ? { score: 100, max: 100, note: `${dealConcentration}% — within acceptable range` }
       : { score: dealConcentration <= max * 1.2 ? 50 : 0, max: 100, note: `${dealConcentration}% — exceeds ${max}% max` };
@@ -416,17 +721,20 @@ export async function matchBuyerToDeal(
 
   // Recurring revenue
   const dealRecurring = parsePercent(info.recurringRevenue);
-  if (dealRecurring !== null && criteria.recurringRevenueMin) {
-    const min = parsePercent(criteria.recurringRevenueMin)!;
+  const minRecurring = criterionBound(criteria.recurringRevenueMin);
+  if (dealRecurring !== null && minRecurring !== null) {
+    const min = minRecurring;
     financialDetails.recurringRevenue = dealRecurring >= min
       ? { score: 100, max: 100, note: `${dealRecurring}% recurring — meets minimum` }
       : { score: dealRecurring >= min * 0.5 ? 40 : 0, max: 100, note: `${dealRecurring}% recurring — below ${min}%` };
   }
 
   // Asking multiple
-  if (dealPrice && dealEbitda && criteria.multipleMax) {
+  // "0" as a maximum multiple is a blank field, not a limit (criterionBound).
+  const maxMultiple = criterionBound(criteria.multipleMax);
+  if (dealPrice && dealEbitda && maxMultiple !== null) {
     const multiple = dealPrice / dealEbitda;
-    const max = parseNum(criteria.multipleMax)!;
+    const max = maxMultiple;
     financialDetails.askingMultiple = multiple <= max
       ? { score: 100, max: 100, note: `${multiple.toFixed(1)}x — within ${max}x max` }
       : { score: multiple <= max * 1.15 ? 50 : 0, max: 100, note: `${multiple.toFixed(1)}x — exceeds ${max}x max` };
@@ -437,6 +745,7 @@ export async function matchBuyerToDeal(
   // ── INDUSTRY FIT ───────────────────────────────────────────────────────────
   const industryDetails: Record<string, { score: number; max: number; note: string }> = {};
   const dealIndustry = deal.industry || "";
+  let excludedBy: string | null = null;
   const dealIndustryText = dealBusinessText(deal, info);
 
   if (criteria.targetIndustries && criteria.targetIndustries.length > 0) {
@@ -446,16 +755,22 @@ export async function matchBuyerToDeal(
       : { score: 0, max: 100, note: `${dealIndustry} — not in target list` };
   }
 
+  // Only the business's own activity rules it out; a narrower slice or an end
+  // market it serves is a caution for the broker, not an exclusion.
+  let exclusionCaution: MatchBreakdown["exclusionCaution"] = null;
   if (criteria.excludedIndustries && criteria.excludedIndustries.length > 0) {
-    const excluded = industryMatches([dealIndustry, deal.subIndustry].filter(Boolean).join(" · "), criteria.excludedIndustries);
-    if (excluded) {
+    const ex = industryExclusion(dealIndustry, deal.subIndustry, criteria.excludedIndustries);
+    if (ex?.certain) {
+      excludedBy = ex.by;
       industryDetails.excluded = { score: 0, max: 100, note: `${dealIndustry} — EXCLUDED industry` };
+    } else if (ex) {
+      exclusionCaution = { by: ex.by, why: ex.why as "narrower" | "market", note: exclusionCautionNote(ex) };
     }
   }
 
-  if (criteria.yearsInBusinessMin) {
+  if (criterionBound(criteria.yearsInBusinessMin) !== null) {
     const dealYears = parseNum(info.yearsOperating);
-    const minYears = parseNum(criteria.yearsInBusinessMin)!;
+    const minYears = criterionBound(criteria.yearsInBusinessMin)!;
     if (dealYears !== null) {
       industryDetails.yearsInBusiness = dealYears >= minYears
         ? { score: 100, max: 100, note: `${dealYears} years — meets ${minYears} year minimum` }
@@ -482,9 +797,9 @@ export async function matchBuyerToDeal(
   const opDetails: Record<string, { score: number; max: number; note: string }> = {};
 
   // Owner involvement
-  if (criteria.ownerInvolvementMax) {
+  if (criterionBound(criteria.ownerInvolvementMax) !== null) {
     const dealOwnerHrs = parseNum(info.ownerInvolvement) || parseNum(info.ownerHoursPerWeek);
-    const maxHrs = parseNum(criteria.ownerInvolvementMax)!;
+    const maxHrs = criterionBound(criteria.ownerInvolvementMax)!;
     if (dealOwnerHrs !== null) {
       opDetails.ownerInvolvement = dealOwnerHrs <= maxHrs
         ? { score: 100, max: 100, note: `${dealOwnerHrs}hrs/wk — within ${maxHrs}hr max` }
@@ -493,9 +808,11 @@ export async function matchBuyerToDeal(
   }
 
   // Employee count
-  const dealEmployees = parseNum(info.employees) || parseNum(info.totalEmployees);
-  if (dealEmployees !== null && (criteria.minEmployees || criteria.maxEmployees)) {
-    const r = rangeScore(dealEmployees, parseNum(criteria.minEmployees), parseNum(criteria.maxEmployees));
+  // Headcount, not "the first number" (a "since 2014" in the staff list is not 2,014 staff).
+  const dealEmployees = parseHeadcount(asFactText(info.totalEmployees)) ?? parseHeadcount(asFactText(info.employees));
+  const minEmp = criterionBound(criteria.minEmployees), maxEmp = criterionBound(criteria.maxEmployees);
+  if (dealEmployees !== null && (minEmp !== null || maxEmp !== null)) {
+    const r = rangeScore(dealEmployees, minEmp, maxEmp);
     opDetails.employees = { score: r.score, max: 100, note: `${dealEmployees} employees — ${r.note}` };
   }
 
@@ -508,9 +825,9 @@ export async function matchBuyerToDeal(
   }
 
   // Lease length
-  if (criteria.leaseLengthMin) {
+  if (criterionBound(criteria.leaseLengthMin) !== null) {
     const leaseInfo = info.leaseDetails || info.leaseExpiry || "";
-    const minYears = parseNum(criteria.leaseLengthMin)!;
+    const minYears = criterionBound(criteria.leaseLengthMin)!;
     if (leaseInfo) {
       // Try to extract years from lease info
       const yearMatch = String(leaseInfo).match(/(\d+)\s*year/i);
@@ -569,6 +886,7 @@ export async function matchBuyerToDeal(
 
   // ── AI QUALITATIVE SCORING ─────────────────────────────────────────────────
   let aiQualitative: MatchBreakdown["aiQualitative"];
+  let aiQualitativeUnavailable: string | undefined;
   let aiScore = 0;
 
   if (!options?.skipAI && criteriaTested > 0 && process.env.ANTHROPIC_API_KEY) {
@@ -610,10 +928,13 @@ export async function matchBuyerToDeal(
         platformAcquisition: criteria.platformAcquisition,
       }, null, 0);
 
-      const response = await anthropic.messages.create({
-        model: "claude-sonnet-4-5",
-        max_tokens: 600,
-        system: `You are an M&A analyst scoring how well a business matches a buyer's qualitative criteria. Score each dimension 0-10. Be critical — only give 8+ for genuinely strong matches. Return ONLY valid JSON.`,
+      const response = await aiCreate({
+        model: agentConfig.models.supportingAgents,
+        max_tokens: 1000,
+        temperature: 0,
+        system: `You are an M&A analyst scoring how well a business matches a buyer's qualitative criteria. Score each dimension 0-10. Be critical — only give 8+ for genuinely strong matches. When the buyer states nothing for a dimension, score how attractive the business is on it for a typical buyer of this kind. Always give a number.`,
+        tools: [AI_SCORE_TOOL as any],
+        tool_choice: { type: "tool", name: AI_SCORE_TOOL.name },
         messages: [{
           role: "user",
           content: `Score this deal against the buyer's qualitative criteria.
@@ -622,38 +943,37 @@ DEAL PROFILE:
 ${dealProfile}
 
 BUYER QUALITATIVE CRITERIA:
-${buyerProfile}
-
-Return JSON:
-{
-  "growthAlignment": <0-10 how well growth potential matches buyer expectations>,
-  "competitiveMoat": <0-10 strength of competitive advantages and defensibility>,
-  "managementDepth": <0-10 management team strength and owner dependency risk>,
-  "customerHealth": <0-10 customer diversification, retention, recurring revenue quality>,
-  "strategicFit": <0-10 how well this fits as platform/add-on/strategic acquisition>,
-  "reasonForSaleRisk": <0-10 how clean and low-risk the reason for sale is>,
-  "overallAssessment": "<1-2 sentence summary of match quality>"
-}`,
+${buyerProfile}`,
         }],
       });
 
-      const raw = response.content[0].type === "text" ? response.content[0].text : "";
-      const parsed = JSON.parse(raw.replace(/```json\s*/gi, "").replace(/```/g, "").trim());
-      aiQualitative = parsed;
-      aiScore = Math.round(
-        ((parsed.growthAlignment + parsed.competitiveMoat + parsed.managementDepth +
-          parsed.customerHealth + parsed.strategicFit + parsed.reasonForSaleRisk) / 60) * 100
-      );
-      aiQualitative!.score = aiScore;
+      const toolBlock = response.content.find((b: any) => b.type === "tool_use");
+      const textBlock = response.content.find((b: any) => b.type === "text");
+      const parsed: any = toolBlock && toolBlock.type === "tool_use"
+        ? toolBlock.input
+        : firstJsonObject(textBlock && textBlock.type === "text" ? textBlock.text : "");
+      const scored = scoreAiDimensions(parsed);
+      if (scored) {
+        aiScore = scored.score;
+        aiQualitative = {
+          ...(scored.dims as any),
+          overallAssessment: typeof parsed.overallAssessment === "string" ? parsed.overallAssessment.slice(0, 500) : "",
+          score: aiScore,
+        };
+      } else {
+        aiQualitativeUnavailable = "AI scoring unavailable — the reply had too few usable scores.";
+      }
     } catch (err) {
-      console.error("[matching] AI qualitative scoring failed:", err);
+      console.error("[matching] AI qualitative scoring failed:", (err as Error)?.message ?? err);
+      aiQualitativeUnavailable = "AI scoring unavailable — the AI didn't answer.";
     }
   }
 
   // ── FINAL BLEND ────────────────────────────────────────────────────────────
-  const finalScore = aiQualitative
-    ? Math.round(deterministicScore * 0.6 + aiScore * 0.4)
-    : deterministicScore;
+  const safeDeterministic = finiteScore(deterministicScore) ?? 0;
+  const finalScore = finiteScore(
+    aiQualitative ? safeDeterministic * 0.6 + aiScore * 0.4 : safeDeterministic,
+  ) ?? safeDeterministic;
 
   // Data completeness — how many deal fields were available
   const keyFields = ["annualRevenue", "ebitda", "sde", "operatingMargins", "revenueGrowth",
@@ -670,12 +990,15 @@ Return JSON:
     dealStructureFit,
     qualificationFit,
     aiQualitative,
-    deterministicScore,
+    ...(aiQualitativeUnavailable ? { aiQualitativeUnavailable } : {}),
+    deterministicScore: safeDeterministic,
     aiScore,
     finalScore,
     criteriaMatched: Object.values(financialDetails).concat(Object.values(industryDetails), Object.values(locationDetails), Object.values(opDetails), Object.values(dsDetails))
       .filter(d => d.score >= 60).length,
     criteriaTested,
     dataCompleteness,
+    ...(excludedBy ? { excludedIndustry: true, excludedBy } : {}),
+    ...(exclusionCaution ? { exclusionCaution } : {}),
   };
 }

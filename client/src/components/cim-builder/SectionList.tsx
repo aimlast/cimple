@@ -1,13 +1,14 @@
 /**
  * SectionList — the builder's outline: drag to reorder (by the handle, or
  * Alt+↑/↓ on a focused row), "+" between any two sections, and a menu per
- * section (rename, duplicate, move, hide, access tier, delete).
+ * section (rename, duplicate, move, hide, access tier, redo its blind
+ * version, delete).
  */
 import { useEffect, useRef, useState } from "react";
 import { Reorder, useDragControls } from "framer-motion";
 import {
   AlertTriangle, ArrowDown, ArrowUp, CheckCircle2, Copy, Eye, EyeOff, GripVertical, Loader2, Lock,
-  MoreHorizontal, Pencil, Plus, Sparkles, Trash2, Users,
+  MoreHorizontal, Pencil, Plus, RefreshCw, Sparkles, Trash2, Users,
 } from "lucide-react";
 import {
   DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuRadioGroup,
@@ -28,6 +29,8 @@ export interface SectionListActions {
   onToggleVisible: (s: BuilderSection) => void;
   onSetTier: (id: string, tier: "teaser" | "full") => void;
   onDelete: (s: BuilderSection) => void;
+  /** Redo this section's blind version (shown once the deal has a Blind CIM). */
+  onRedoBlind?: (id: string) => void;
 }
 
 interface Props extends SectionListActions {
@@ -99,7 +102,7 @@ interface RowProps extends SectionListActions {
 
 function Row({
   section: s, idx, total, selected, showBlindStatus, readOnly, onDragStart, onDragEnd, onMove,
-  onSelect, onAddAfter, onRename, onDuplicate, onToggleVisible, onSetTier, onDelete,
+  onSelect, onAddAfter, onRename, onDuplicate, onToggleVisible, onSetTier, onDelete, onRedoBlind,
 }: RowProps) {
   const controls = useDragControls();
   const [renaming, setRenaming] = useState(false);
@@ -191,7 +194,7 @@ function Row({
               {s.sectionTitle}
             </p>
           )}
-          <div className="flex items-center gap-1.5 mt-0.5 min-w-0 text-[10px] text-muted-foreground">
+          <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 mt-0.5 min-w-0 text-[10px] text-muted-foreground">
             <span className="truncate">{layoutLabel(s.layoutType)}</span>
             {s.accessTier === "full" && (
               <span className="inline-flex items-center gap-0.5 text-teal shrink-0" title="Full access only — locked for teaser buyers">
@@ -214,9 +217,26 @@ function Row({
             {showBlindStatus && s.blindStatus === "held" && !running && (
               <span
                 className="inline-flex items-center gap-0.5 text-red-400 shrink-0"
-                title={`Blind buyers don't see this section: ${s.blindError || "its blind version couldn't be made"}. Edit the section or retry the blind version.`}
+                title={`Blind buyers don't see this section: ${s.blindError || "its blind version couldn't be made"}. Edit the section or use "Redo blind version" in its menu.`}
               >
                 <AlertTriangle className="h-2.5 w-2.5" /> Blind held back
+              </span>
+            )}
+            {s.figureWarnings?.length > 0 && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-amber-500 shrink-0"
+                title={`Some figures couldn't be traced to the deal's information — open the section to see which.`}
+                data-testid={`chip-figures-${s.id}`}
+              >
+                <AlertTriangle className="h-2.5 w-2.5" /> Check figures
+              </span>
+            )}
+            {(s.ddStatus === "stale" || s.ddStatus === "missing") && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-blue-400 shrink-0"
+                title="Due-diligence buyers see the current named version of this section until its DD version is refreshed."
+              >
+                <RefreshCw className="h-2.5 w-2.5" /> DD out of date
               </span>
             )}
           </div>
@@ -276,6 +296,14 @@ function Row({
                   <Lock className="h-3.5 w-3.5 mr-2" /> Full access only
                 </DropdownMenuRadioItem>
               </DropdownMenuRadioGroup>
+              {showBlindStatus && onRedoBlind && s.blindStatus !== "excluded" && (
+                <>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem onSelect={() => onRedoBlind(s.id)} disabled={running} data-testid={`section-redo-blind-${s.id}`}>
+                    <RefreshCw className="h-3.5 w-3.5 mr-2" /> Redo blind version
+                  </DropdownMenuItem>
+                </>
+              )}
               <DropdownMenuSeparator />
               <DropdownMenuItem className="text-red-500 focus:text-red-500" onSelect={() => onDelete(s)} disabled={running}>
                 <Trash2 className="h-3.5 w-3.5 mr-2" /> Delete…

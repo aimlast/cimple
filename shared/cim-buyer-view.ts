@@ -17,8 +17,11 @@
  *     redacted title only, no content.
  *   - Fail closed: a blind section (or stub title) that still contains
  *     anything identifying from the deal's facts — business name, a person,
- *     the city or street, contacts (shared/blind-guard.ts) — is held back
- *     and reported in `leaked` so the caller re-redacts it.
+ *     the city or street, contacts (shared/blind-guard.ts) — or an unfilled
+ *     template placeholder ("[Province/State]") is held back and reported
+ *     in `leaked` (why in `leakReasons`) so the caller re-redacts it. A
+ *     blind map's region is deterministic (shared/cim-media.ts) and is not
+ *     re-checked: only its redacted words are.
  *   - Blind section keys are always neutral (`s_<id prefix>`): keys reach
  *     the page as data attributes and analytics ids, and broker- or
  *     AI-made keys are slugs of the title ("kitchener_clinic_team").
@@ -40,7 +43,7 @@ import {
   sectionTier,
 } from "./cim-layouts";
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
-import { blindLeakTerms, findBlindLeaks } from "./blind-guard";
+import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
 
 export interface BuyerSection {
@@ -70,6 +73,8 @@ export interface BuyerCim {
    * something identifying — the caller should re-redact them.
    */
   leaked: string[];
+  /** Per leaked section: what it still contained (for the broker, never the buyer). */
+  leakReasons: Record<string, string>;
 }
 
 /**
@@ -137,7 +142,7 @@ export function buildBuyerCim(input: {
     sectionTitle: s.sectionTitle,
     order: s.order,
     layoutType: s.layoutType,
-    layoutData: s.layoutData,
+    layoutData: withoutAiPreparedBy(s.layoutType, s.layoutData),
     aiDraftContent: s.aiDraftContent ?? null,
     brokerEditedContent: s.brokerEditedContent ?? null,
     isVisible: true,
@@ -147,9 +152,9 @@ export function buildBuyerCim(input: {
     const sections: BuyerSection[] = [];
     for (const s of visible) {
       const data = mediaData(s, null);
-      if (data) sections.push({ ...base(s), layoutData: data });
+      if (data) sections.push({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) });
     }
-    return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
 
   const overrideMap = new Map(input.overrides.map((o) => [String(o.cimSectionId), o]));
@@ -166,15 +171,17 @@ export function buildBuyerCim(input: {
         if (data) sections.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null });
         continue;
       }
-      const o = overrideMap.get(s.id);
+      // A DD version written before the section's last edit is stale: the
+      // current named content is served until the broker refreshes it.
+      const o = s.ddStaleAt ? undefined : overrideMap.get(s.id);
       sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
     }
-    return { mode, sections, preparing: false, heldBack: 0, leaked: [] };
+    return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
 
   // ── Blind ──
   if (input.overrides.length === 0) {
-    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [] };
+    return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [], leakReasons: {} };
   }
   const codename = deal.blindCodename || "Confidential Opportunity";
   const redactTitle = blindTitleRedactor(deal as any, codename);
@@ -184,6 +191,7 @@ export function buildBuyerCim(input: {
   const out: BuyerSection[] = [];
   let heldBack = 0;
   const leaked: string[] = [];
+  const leakReasons: Record<string, string> = {};
   // Real key → neutral key, for every section (relatedSections point at keys).
   const keyMap = new Map(visible.map((s) => [s.sectionKey, blindSectionKey(s.id)]));
   /** Serve it only if nothing identifying is left in what the buyer receives. */
@@ -199,10 +207,15 @@ export function buildBuyerCim(input: {
           .filter((k): k is string => !!k),
       };
     }
-    const texts = [section.sectionTitle, section.aiDraftContent ?? "", section.brokerEditedContent ?? "", section.layoutData];
-    if (findBlindLeaks(texts, leakTerms).length > 0) {
+    const texts = [section.sectionTitle, section.aiDraftContent ?? "", section.brokerEditedContent ?? "", checkedData(s, section.layoutData)];
+    const leaks = findBlindLeaks(texts, leakTerms);
+    const placeholders = leaks.length ? [] : blindPlaceholders(texts, [s.sectionTitle, s.aiDraftContent ?? "", s.brokerEditedContent ?? "", ...collectStrings(s.layoutData)]);
+    if (leaks.length > 0 || placeholders.length > 0) {
       heldBack++;
       leaked.push(s.id);
+      leakReasons[s.id] = leaks.length > 0
+        ? `it still named ${leaks.slice(0, 3).map((l) => `"${l}"`).join(", ")}`
+        : `it kept placeholders such as ${placeholders.slice(0, 2).join(", ")}`;
       return;
     }
     out.push(section);
@@ -250,12 +263,43 @@ export function buildBuyerCim(input: {
     s.layoutData = { ...data, relatedSections: (data.relatedSections as string[]).filter((k) => servedKeys.has(k)) };
   }
 
-  return { mode, sections: out, preparing: false, heldBack, leaked };
+  return { mode, sections: out, preparing: false, heldBack, leaked, leakReasons };
 }
 
-function pick(s: { layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }) {
+/**
+ * What of a served blind section the identity check reads: everything,
+ * except a map's regions — those are computed from the address
+ * (regionFromAddress: a province/state or country only), never written by
+ * the AI, and "British Columbia" must not hold the map back forever.
+ */
+function checkedData(s: CimSection, data: unknown): unknown {
+  if (s.layoutType !== "location_map" || !data || typeof data !== "object") return data;
+  const d = data as Record<string, unknown>;
+  if (!Array.isArray(d.locations)) return data;
   return {
-    layoutData: s.layoutData,
+    ...d,
+    locations: (d.locations as unknown[]).map((l) => {
+      if (!l || typeof l !== "object") return l;
+      const { region: _r, ...rest } = l as Record<string, unknown>;
+      return rest;
+    }),
+  };
+}
+
+/**
+ * Cover "Prepared by" is presentation-only (the renderer shows the
+ * brokerage from its settings). Older covers carry an AI-filled value —
+ * once the seller's accountant — so it never leaves the server.
+ */
+function withoutAiPreparedBy(layoutType: string, layoutData: unknown): unknown {
+  if (layoutType !== "cover_page" || !layoutData || typeof layoutData !== "object" || !("preparedBy" in (layoutData as object))) return layoutData;
+  const { preparedBy: _p, ...rest } = layoutData as Record<string, unknown>;
+  return rest;
+}
+
+function pick(s: { layoutType?: string; layoutData?: unknown; aiDraftContent?: string | null; brokerEditedContent?: string | null }) {
+  return {
+    layoutData: withoutAiPreparedBy(s.layoutType ?? "", s.layoutData),
     aiDraftContent: s.aiDraftContent ?? null,
     brokerEditedContent: s.brokerEditedContent ?? null,
   };

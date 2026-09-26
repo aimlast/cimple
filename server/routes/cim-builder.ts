@@ -32,13 +32,19 @@ import {
   retryBlindNow,
   invalidateBlind,
   scheduleBlindRefresh,
+  redoSectionsBlind,
+  redoLeakedBlind,
+  dealHasBlindVersion,
 } from "../cim/blind-sync";
+import { buildBuyerCim } from "@shared/cim-buyer-view";
+import { renameDealCodename } from "../cim/codenames";
 import {
   deleteSection,
   duplicateSection,
   historyWith,
   insertSectionAt,
   undoLastChange,
+  withStaleStamps,
 } from "../cim/section-ops";
 import {
   SectionTaskRunningError,
@@ -49,9 +55,13 @@ import {
   startSectionTask,
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
+import { refreshSectionDd } from "../cim/dd-enrichment";
 import { dealStreetAddress } from "@shared/cim-media";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
+
+/** Deals whose out-of-date DD sections are being refreshed right now. */
+const ddRefreshRunning = new Set<string>();
 
 /** Context for a blank section's starting data (a map starts at the deal's address). */
 function blankContext(deal: Deal, title: string | null) {
@@ -87,8 +97,22 @@ async function ownedSection(req: Request, res: Response): Promise<{ section: Cim
   return { section, deal };
 }
 
+/**
+ * DD version of a section: "none" (the deal has no DD CIM), "fresh",
+ * "stale" (edited since its DD version was written — DD buyers see the
+ * named content until it is refreshed), "missing" (added after the DD CIM),
+ * "excluded" (cover/divider/media: nothing to enrich).
+ */
+type DdStatus = "none" | "fresh" | "stale" | "missing" | "excluded";
+function ddStatusOf(s: CimSection, ddGenerated: boolean, hasDd: boolean): DdStatus {
+  if (!ddGenerated) return "none";
+  if (s.layoutType === "cover_page" || s.layoutType === "divider" || getCimLayout(s.layoutType)?.editor === "media") return "excluded";
+  if (!hasDd) return "missing";
+  return s.ddStaleAt ? "stale" : "fresh";
+}
+
 /** Section row for the builder: task normalised, undo stack summarised. */
-function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: boolean) {
+function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: boolean, dd: { generated: boolean; has: boolean } = { generated: false, has: false }) {
   const { contentHistory, ...rest } = s;
   const history = Array.isArray(contentHistory) ? (contentHistory as Array<{ reason: string; at: string }>) : [];
   const last = history[history.length - 1];
@@ -110,6 +134,9 @@ function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: b
             : "updating",
     /** Why the blind version is held back (last redaction failed), for the broker. */
     blindError: excluded ? null : blindSectionError(s.id),
+    ddStatus: ddStatusOf(s, dd.generated, dd.has),
+    /** Figures/names the check couldn't trace to the deal's data (empty = clean). */
+    figureWarnings: Array.isArray(s.figureWarnings) ? s.figureWarnings : [],
   };
 }
 
@@ -138,8 +165,20 @@ export function registerCimBuilderRoutes(app: Express): void {
         storage.getBuyerAccessByDeal(deal.id),
       ]);
       const withOverride = new Set(blindOverrides.map((o) => o.cimSectionId));
+      const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
       const blindGenerated = blindOverrides.length > 0;
-      const rows = sections.map((s) => toBuilderSection(s, blindGenerated, withOverride.has(s.id)));
+      const ddGenerated = ddOverrides.length > 0;
+      if (blindGenerated) {
+        // The same final check the view room runs: a blind version that still
+        // names something, or kept a "[Province/State]" placeholder, is redone
+        // now rather than waiting for the first buyer to open the CIM.
+        const check = buildBuyerCim({ deal, accessLevel: "full", sections, overrides: blindOverrides, media: null });
+        if (check.leaked.length > 0) {
+          redoLeakedBlind(deal.id, check.leaked, check.leakReasons).catch((err) => console.error("[cim-builder] blind redo failed:", err));
+          for (const id of check.leaked) withOverride.delete(id);
+        }
+      }
+      const rows = sections.map((s) => toBuilderSection(s, blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }));
       const active = buyers.filter((b) => !b.revokedAt);
       const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
       for (const b of active) byLevel[b.accessLevel || "teaser"] = (byLevel[b.accessLevel || "teaser"] ?? 0) + 1;
@@ -156,7 +195,12 @@ export function registerCimBuilderRoutes(app: Express): void {
           /** Sections whose redaction failed — blind buyers don't get them until one succeeds. */
           held: blind.held,
         },
-        dd: { generated: ddOverrides.length > 0 },
+        dd: {
+          generated: ddGenerated,
+          /** Sections whose DD version is out of date or missing — DD buyers see the named content for them. */
+          outOfDate: rows.filter((r) => r.ddStatus === "stale" || r.ddStatus === "missing").length,
+          running: ddRefreshRunning.has(deal.id),
+        },
         buyers: { total: active.length, byLevel },
         deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
       });
@@ -280,8 +324,7 @@ export function registerCimBuilderRoutes(app: Express): void {
           })
           .where(eq(cimSections.id, section.id))
           .returning();
-        await invalidateBlind(deal.id, [section.id]);
-        return res.json({ section: updated });
+        return res.json({ section: withStaleStamps(updated, await invalidateBlind(deal.id, [section.id])) });
       }
 
       const blocked = await discrepancyBlock(deal.id);
@@ -395,6 +438,103 @@ export function registerCimBuilderRoutes(app: Express): void {
     } catch (err) {
       console.error("[cim-builder] blind retry failed:", err);
       res.status(500).json({ error: "Couldn't retry the blind version" });
+    }
+  });
+
+  // ── Refresh ONE section's DD version (after an edit) ──
+  // Replaces only that section's DD row. Synchronous: one section is ~20s.
+  app.post("/api/cim-sections/:sectionId/dd/refresh", requireBroker, aiLimiter, async (req, res) => {
+    try {
+      const owned = await ownedSection(req, res);
+      if (!owned) return;
+      const { section, deal } = owned;
+      if ((await storage.getCimSectionOverrides(deal.id, "dd")).length === 0) {
+        return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
+      }
+      if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section — wait for it to finish." });
+      const blocked = await discrepancyBlock(deal.id);
+      if (blocked) return res.status(409).json({ error: blocked });
+      const { warning } = await refreshSectionDd(section, deal);
+      res.json({ success: true, warning: warning ?? null });
+    } catch (err: any) {
+      if (err?.message === "changed") {
+        return res.status(409).json({ error: "The section changed while its DD version was being written. Refresh it again." });
+      }
+      console.error("[cim-builder] DD refresh failed:", err);
+      res.status(500).json({ error: "Couldn't refresh the DD version" });
+    }
+  });
+
+  // ── Refresh every out-of-date DD section (background; the builder polls) ──
+  app.post("/api/deals/:dealId/cim-dd/refresh", requireBroker, requireOwnedDeal, aiLimiter, async (req, res) => {
+    const deal = res.locals.deal as Deal;
+    try {
+      if (ddRefreshRunning.has(deal.id)) return res.status(409).json({ error: "The DD version is already being refreshed." });
+      const [sections, ddOverrides] = await Promise.all([
+        storage.getCimSectionsByDeal(deal.id),
+        storage.getCimSectionOverrides(deal.id, "dd"),
+      ]);
+      if (ddOverrides.length === 0) return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
+      const blocked = await discrepancyBlock(deal.id);
+      if (blocked) return res.status(409).json({ error: blocked });
+      const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
+      const todo = sections.filter((s) => {
+        const st = ddStatusOf(s, true, withDd.has(s.id));
+        return (st === "stale" || st === "missing") && !isTaskRunning(s.id);
+      });
+      ddRefreshRunning.add(deal.id);
+      res.status(202).json({ started: true, sections: todo.length });
+      void (async () => {
+        try {
+          for (let i = 0; i < todo.length; i += 3) {
+            await Promise.all(
+              todo.slice(i, i + 3).map((s) =>
+                refreshSectionDd(s, deal).catch((err) => console.warn(`[cim-builder] DD refresh of ${s.id} skipped:`, err?.message)),
+              ),
+            );
+          }
+        } finally {
+          ddRefreshRunning.delete(deal.id);
+        }
+      })();
+    } catch (err) {
+      ddRefreshRunning.delete(deal.id);
+      console.error("[cim-builder] DD refresh-all failed:", err);
+      if (!res.headersSent) res.status(500).json({ error: "Couldn't refresh the DD version" });
+    }
+  });
+
+  // ── Redo one section's blind version (e.g. it reads oddly, or is held back) ──
+  app.post("/api/cim-sections/:sectionId/blind/redo", requireBroker, aiLimiter, async (req, res) => {
+    try {
+      const owned = await ownedSection(req, res);
+      if (!owned) return;
+      const { section, deal } = owned;
+      if (getCimLayout(section.layoutType)?.blind === "exclude") {
+        return res.status(400).json({ error: "This section is never shown in the Blind CIM." });
+      }
+      if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section." });
+      if (!(await dealHasBlindVersion(deal.id))) {
+        return res.status(409).json({ error: "There's no blind version yet — generate it first." });
+      }
+      await redoSectionsBlind(deal.id, [section.id]);
+      res.status(202).json({ started: true });
+    } catch (err) {
+      console.error("[cim-builder] blind redo failed:", err);
+      res.status(500).json({ error: "Couldn't redo the blind version" });
+    }
+  });
+
+  // ── Set or rename the Blind CIM's project codename ──
+  app.patch("/api/deals/:dealId/codename", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = res.locals.deal as Deal;
+      const r = await renameDealCodename(deal, req.body?.codename);
+      if (!r.ok) return res.status(r.status).json({ error: r.error });
+      res.json({ codename: r.codename, updated: r.updated });
+    } catch (err) {
+      console.error("[cim-builder] codename change failed:", err);
+      res.status(500).json({ error: "Couldn't change the codename" });
     }
   });
 

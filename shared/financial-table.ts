@@ -93,16 +93,21 @@ export function normalizeFinancialTable(data: { headers?: unknown; rows?: unknow
 
   const rows: NormalizedFinancialRow[] = rawRows.map((r, i) => {
     const vals = valueLists[i];
+    const cells = Array.from({ length: columnCount }, (_, j) => {
+      const v = (vals[j] ?? "").trim();
+      return v ? v : null;
+    });
+    // A "section header" that carries figures ("Revenue" with a total per
+    // year) is a bold line item — drawn as a header its figures were hidden
+    // and the table lost its revenue line.
+    const hasFigures = cells.some((c) => c !== null);
     return {
       label: text(r.label),
-      cells: Array.from({ length: columnCount }, (_, j) => {
-        const v = (vals[j] ?? "").trim();
-        return v ? v : null;
-      }),
+      cells,
       isTotal: !!r.isTotal,
-      isSectionHeader: !!r.isSectionHeader,
+      isSectionHeader: !!r.isSectionHeader && !hasFigures,
       indent: typeof r.indent === "number" && Number.isFinite(r.indent) ? Math.max(0, Math.min(4, r.indent)) : 0,
-      bold: !!r.bold,
+      bold: !!r.bold || (!!r.isSectionHeader && hasFigures),
     };
   });
 

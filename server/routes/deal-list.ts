@@ -37,7 +37,9 @@ import { getSectionImportance } from "../interview/section-importance.js";
 import { getInterviewOutline } from "../interview/outline.js";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan.js";
 import { brokerFactsView } from "../information/facts";
-import { typedNumericValues } from "../interview/info-merger";
+import { getFieldSources, repairCharIndexedValue, typedNumericValues, yearSource } from "../interview/info-merger";
+import { isAdjustedOnly } from "../documents/merge-policy";
+import { isLeadFact, isPrivateToBroker } from "../information/cim-facts";
 import { getLiveCimGenerationStatus } from "../cim/generation-jobs";
 import { effectiveAskingPrice } from "../information/deal-mirror";
 
@@ -58,7 +60,12 @@ export interface DealListRow {
   askingPrice: string | null;
   askingPriceValue: number | null;
   annualRevenue: number | null;
+  /** The revenue figure is only a lead (CRM note, website) or broker-only — shown flagged. */
+  revenueUnverified?: boolean;
+  /** SDE on file (kept for older clients) — prefer `earnings`. */
   sde: number | null;
+  /** The earnings figure the card shows: SDE or EBITDA, labelled. */
+  earnings: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean; year?: string } | null;
   readiness: { score: number; label: CimReadiness["label"] } | null;
   nextStep: NextStep;
   counts: { documents: number; buyersWithAccess: number; buyerViews: number; openDiscrepancies: number };
@@ -106,18 +113,76 @@ export function moneyValue(raw: unknown): number | null {
   return n && n > 0 ? n : null;
 }
 
-/** Latest year's value from a { "2023": "$1.8M", ... } map. */
-function latestYearValue(map: unknown): number | null {
-  if (!map || typeof map !== "object" || Array.isArray(map)) return null;
-  const years = Object.keys(map as Record<string, unknown>)
-    .filter((k) => /^\d{4}/.test(k))
-    .sort()
-    .reverse();
-  for (const y of years) {
-    const v = moneyValue((map as Record<string, unknown>)[y]);
-    if (v) return v;
-  }
-  return null;
+/** A headline figure for the deal card; `unverified` = only a CRM note / the website / a broker-only source states it. */
+export interface HeadlineMoney {
+  value: number;
+  unverified?: boolean;
+  /** The fiscal year the figure is for, when an older one than the revenue's (the card says "SDE · FY2023"). */
+  year?: string;
+}
+
+export interface DealEarnings extends HeadlineMoney {
+  label: "SDE" | "EBITDA";
+}
+
+/** Below this revenue SDE is the earnings buyers price on; above it, EBITDA. */
+const SDE_SIZED_REVENUE = 5_000_000;
+
+/**
+ * The deal card's revenue and earnings, provenance-aware: a figure only a
+ * lead (CRM note, website) or a broker-only source states never stands as
+ * the headline when a confirmed one exists — and is flagged unverified when
+ * it is all there is. Revenue: the headline fact, else the latest confirmed
+ * year of revenue by year. Earnings: SDE on SDE-sized deals (or when only
+ * SDE is on file), otherwise EBITDA / adjusted EBITDA — labelled.
+ */
+export function dealHeadlineFigures(info: Record<string, unknown>): { revenue: HeadlineMoney | null; earnings: DealEarnings | null } {
+  const sources = getFieldSources(info);
+  // Which fiscal year a figure is for (internal — only surfaced when older than the revenue's).
+  const years = new WeakMap<HeadlineMoney, string>();
+  const withYear = (m: HeadlineMoney, year: string | undefined) => { if (year) years.set(m, year); return m; };
+  const scalar = (key: string): HeadlineMoney | null => {
+    const value = moneyValue(info[key]);
+    if (!value) return null;
+    const year = /^\d{4}/.test(sources[key]?.period ?? "") ? sources[key]!.period!.slice(0, 4) : undefined;
+    return withYear(isLeadFact(info, key) ? { value, unverified: true } : { value }, year);
+  };
+  const latestYear = (key: string): HeadlineMoney | null => {
+    const map = repairCharIndexedValue(info[key]);
+    if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+    let lead: HeadlineMoney | null = null;
+    for (const y of Object.keys(map as Record<string, unknown>).filter((k) => /^\d{4}$/.test(k)).sort().reverse()) {
+      const value = moneyValue((map as Record<string, unknown>)[y]);
+      if (!value) continue;
+      const ys = yearSource(sources[key], y);
+      const unconfirmed = !!ys && (isPrivateToBroker(ys) || ((ys.source === "website" || ys.source === "social") && !ys.acceptedByBroker));
+      if (!unconfirmed) return withYear({ value }, y);
+      lead ??= withYear({ value, unverified: true }, y);
+    }
+    return lead;
+  };
+  const pick = (...c: Array<HeadlineMoney | null>) => c.find((x) => x && !x.unverified) ?? c.find((x) => !!x) ?? null;
+
+  const revenue = pick(scalar("annualRevenue"), latestYear("revenueByYear"));
+  const sde = pick(scalar("sde"), latestYear("sdeByYear"));
+  // The card's EBITDA is reported EBITDA: an adjusted figure filed under the
+  // plain key ("$3,900,000 adjusted EBITDA (FY2024)") yields to the reported year's.
+  const adjustedText = typeof info.ebitda === "string" && isAdjustedOnly(info.ebitda);
+  const ebitda = adjustedText
+    ? pick(latestYear("ebitdaByYear"), scalar("ebitda"), scalar("adjustedEbitda"), latestYear("adjustedEbitdaByYear"))
+    : pick(scalar("ebitda"), scalar("adjustedEbitda"), latestYear("ebitdaByYear"), latestYear("adjustedEbitdaByYear"));
+  let earnings: DealEarnings | null = null;
+  const sdeSized = !revenue || revenue.value < SDE_SIZED_REVENUE;
+  if (sde && !sde.unverified && (sdeSized || !ebitda || ebitda.unverified)) earnings = { label: "SDE", ...sde };
+  else if (ebitda && !ebitda.unverified) earnings = { label: "EBITDA", ...ebitda };
+  else if (sde) earnings = { label: "SDE", ...sde };
+  else if (ebitda) earnings = { label: "EBITDA", ...ebitda };
+  // An earnings figure for an older year than the revenue says which year it is.
+  const src = earnings?.label === "SDE" ? sde : ebitda;
+  const earningsYear = src ? years.get(src) : undefined;
+  const revenueYear = revenue ? years.get(revenue) : undefined;
+  if (earnings && earningsYear && revenueYear && earningsYear < revenueYear) earnings = { ...earnings, year: earningsYear };
+  return { revenue, earnings };
 }
 
 const PROVINCES: Record<string, string> = {
@@ -383,6 +448,7 @@ function toListRow(d: SlimDeal, facts: DealSideFacts | undefined): DealListRow {
   // One value with the Information tab (see information/deal-mirror.ts).
   const askingText = effectiveAskingPrice({ askingPrice: d.askingPrice, extractedInfo: info });
   const readiness = readinessFor(d, facts?.confidence);
+  const headline = dealHeadlineFigures(info);
   return {
     id: d.id,
     businessName: d.businessName,
@@ -401,8 +467,10 @@ function toListRow(d: SlimDeal, facts: DealSideFacts | undefined): DealListRow {
     lastActivityAt: new Date(facts?.lastActivityMs || toMs(d.createdAt)).toISOString(),
     askingPrice: askingText,
     askingPriceValue: moneyValue(askingText),
-    annualRevenue: moneyValue(info.annualRevenue) ?? latestYearValue(info.revenueByYear),
-    sde: moneyValue(info.sde),
+    annualRevenue: headline.revenue?.value ?? null,
+    ...(headline.revenue?.unverified ? { revenueUnverified: true } : {}),
+    sde: headline.earnings?.label === "SDE" ? headline.earnings.value : null,
+    earnings: headline.earnings,
     readiness,
     // The readiness score decides "can the CIM be written yet?" when the
     // interview isn't complete — the same rule as every Generate button.

@@ -20,7 +20,11 @@ export interface DealListRow {
   askingPrice: string | null;
   askingPriceValue: number | null;
   annualRevenue: number | null;
+  /** Only a CRM note / the website / a broker-only source states the revenue — shown flagged. */
+  revenueUnverified?: boolean;
   sde: number | null;
+  /** The earnings figure for the card: SDE or EBITDA, labelled. */
+  earnings?: { label: "SDE" | "EBITDA"; value: number; unverified?: boolean; year?: string } | null;
   readiness: { score: number; label: "Thin" | "Developing" | "Solid" | "Buyer-ready" } | null;
   nextStep: NextStep;
   counts: { documents: number; buyersWithAccess: number; buyerViews: number; openDiscrepancies: number };

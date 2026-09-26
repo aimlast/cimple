@@ -306,6 +306,8 @@ export interface CimLayoutSection {
   layoutOverride?: string;      // Set if broker changed the AI-chosen layout
   brokerApproved: boolean;
   brokerEditedContent?: string;
+  /** Figures/names the post-generation check couldn't trace to the deal's data (figure-check.ts). */
+  figureWarnings?: string[];
   // Computed after analytics
   engagementScore?: number;     // 0–100, populated from analytics
 }

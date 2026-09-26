@@ -25,7 +25,7 @@ export interface QualifiedLeadInput {
     "profileCompletionPct" | "hasProofOfFunds" | "buyerType" | "liquidFunds" | "buyerCriteria" | "targetIndustries"
   >;
   /** Optional deep match against a specific deal — when present, match-fit factors into the score. */
-  match?: Pick<MatchBreakdown, "criteriaMatched" | "criteriaTested" | "deterministicScore" | "finalScore"> | null;
+  match?: Pick<MatchBreakdown, "criteriaMatched" | "criteriaTested" | "deterministicScore" | "finalScore" | "excludedIndustry" | "excludedBy"> | null;
   /** Engagement signals from analytics — used when scoring buyers who have viewed deals. */
   engagement?: {
     viewCount?: number;
@@ -55,6 +55,8 @@ export interface QualifiedLeadScore {
   };
   hasDealContext: boolean;
   reasons: string[];           // Short broker-facing strings explaining the score
+  /** The buyer rules out this deal’s industry: scored cold, never suggested. */
+  excluded?: boolean;
 }
 
 const DEFAULT_WEIGHTS = {
@@ -146,6 +148,22 @@ export function calculateQualifiedLeadScore(input: QualifiedLeadInput): Qualifie
   if (engagement.reason) reasons.push(engagement.reason);
   if (profile >= 80) reasons.push("Complete profile");
   else if (profile >= 50) reasons.push("Profile filled in");
+
+  // A buyer who rules out this industry is never a warm lead for this deal,
+  // however complete, funded or engaged they are: no match credit, capped
+  // below "cool", and the reason says why.
+  if (input.match?.excludedIndustry) {
+    const capped = Math.min(Math.round(profile * weights.profile + engagement.score * weights.engagement + proofOfFunds * weights.proofOfFunds), 20);
+    return {
+      total: Math.max(0, capped),
+      tier: "cold",
+      breakdown: { matchFit: 0, profile, engagement: engagement.score, proofOfFunds },
+      weights,
+      hasDealContext,
+      reasons: [`Rules out ${input.match.excludedBy ? `“${input.match.excludedBy}”` : "this industry"}`],
+      excluded: true,
+    };
+  }
 
   return {
     total: Math.max(0, Math.min(100, total)),

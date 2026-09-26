@@ -22,6 +22,8 @@ interface OutlineItem {
   label: string;
   onFile: boolean;
   value: string | null;
+  /** Answered in a source or an earlier session (not yet a recorded fact): where. */
+  onFileIn?: string | null;
   industrySpecific: boolean;
   critical: boolean;
   addedByBroker: boolean;
@@ -41,7 +43,15 @@ interface OutlineSection {
 
 interface OutlineView {
   outline: InterviewOutline;
-  plan: { status: "ready" | "building" | "unavailable" | "no_industry"; industry: string | null; itemCount: number };
+  plan: {
+    status: "ready" | "building" | "unavailable" | "no_industry";
+    industry: string | null;
+    itemCount: number;
+    /** The checklist changed without a broker edit (new checklist rules). */
+    revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] } | null;
+  };
+  /** The documents, calls and earlier sessions being read for answers already on file. */
+  evidence?: { status: "building" | "ready" | "none"; checkedAt: string | null };
   sections: OutlineSection[];
 }
 
@@ -94,8 +104,9 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
       if (!r.ok) throw new Error(await readError(r, "Failed to load the interview outline"));
       return r.json();
     },
-    // The industry checklist builds in the background (~30s) — poll until ready.
-    refetchInterval: (q) => (q.state.data?.plan.status === "building" ? 5000 : false),
+    // The industry checklist builds in the background (~30s), and the file is
+    // read for answers already on file (~1 min) — poll until both are done.
+    refetchInterval: (q) => (q.state.data?.plan.status === "building" || q.state.data?.evidence?.status === "building" ? 5000 : false),
   });
   const invalidate = () => {
     queryClient.invalidateQueries({ queryKey: key });
@@ -200,6 +211,27 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
             {plan.status === "unavailable" && "Standard checklist — no industry playbook matched this business type yet."}
             {plan.status === "no_industry" && "Add the business's industry to get its industry-specific checklist."}
           </p>
+          {data.evidence?.status === "building" && (
+            <p className="text-[11px] text-muted-foreground/80 mt-0.5 flex items-start gap-1" data-testid="outline-evidence-status">
+              <Loader2 className="h-3 w-3 animate-spin shrink-0 mt-px" />
+              Reading the documents, calls and earlier sessions for answers already on file — the “on file” count will update.
+            </p>
+          )}
+          {plan.status === "ready" && plan.revision && (plan.revision.removed.length > 0 || plan.revision.added.length > 0) && (
+            <p
+              className="text-[11px] text-muted-foreground/70 mt-0.5"
+              title={[
+                plan.revision.removed.length > 0 ? `No longer asked: ${plan.revision.removed.join("; ")}` : "",
+                plan.revision.added.length > 0 ? `Added: ${plan.revision.added.join("; ")}` : "",
+              ].filter(Boolean).join("\n")}
+              data-testid="outline-plan-revision"
+            >
+              Checklist refreshed {new Date(plan.revision.at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+              {plan.revision.removed.length > 0 && ` — ${plan.revision.removed.length} item${plan.revision.removed.length === 1 ? "" : "s"} that don't apply to this business removed`}
+              {plan.revision.added.length > 0 && `${plan.revision.removed.length > 0 ? "," : " —"} ${plan.revision.added.length} critical item${plan.revision.added.length === 1 ? "" : "s"} added`}
+              {` (was ${plan.revision.previousItemCount}).`}
+            </p>
+          )}
 
           {expanded && (
             <div className="mt-3 space-y-3">
@@ -242,6 +274,7 @@ export function InterviewOutlineCard({ dealId, interviewStarted }: { dealId: str
                                 {it.industrySpecific && !it.addedByBroker && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">industry</span>}
                                 {it.addedByBroker && <span className="ml-1.5 text-[9px] uppercase tracking-wider text-muted-foreground/60">added</span>}
                                 {it.onFile && it.value && <span className="block text-[11px] text-muted-foreground/70 truncate" title={it.value}>{it.value}</span>}
+                                {it.onFile && it.onFileIn && <span className="block text-[10px] text-muted-foreground/50 truncate" title={it.onFileIn}>{/^on file as /i.test(it.onFileIn) ? `On file as ${it.onFileIn.replace(/^on file as /i, "")}` : `In ${it.onFileIn}`}</span>}
                               </span>
                               {!UNREMOVABLE.has(it.key) && (
                                 <button

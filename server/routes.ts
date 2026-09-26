@@ -9,10 +9,14 @@ import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
-import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError } from "./cim/generation-jobs.js";
+import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
+import { startCimGeneration, getCimGenerationStatus, getLiveCimGenerationStatus, listBrokerCimGeneration, CimGenerationRunningError, buildLayoutParams } from "./cim/generation-jobs.js";
 import { getSectionImportance, computeSectionImportance } from "./interview/section-importance.js";
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
-import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel } from "./interview/interview-plan.js";
+import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel, planSubIndustry } from "./interview/interview-plan.js";
+import { ensureSourceReview } from "./interview/source-review.js";
+import { storedEvidence, isEvidenceBuilding } from "./interview/on-file-evidence.js";
+import { startOnFileEvidenceBuild } from "./interview/on-file-refresh.js";
 import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } from "./interview/knowledge-base.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
@@ -38,6 +42,9 @@ import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-g
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
 import { registerCimBuilderRoutes } from "./routes/cim-builder.js";
+import { registerDiscrepancyRoutes } from "./routes/discrepancies.js";
+import { ensureDiscrepancyGate } from "./cim/discrepancy-check.js";
+import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
@@ -47,9 +54,11 @@ import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
+import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
+import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
-import { runDecisionReminders } from "./reminders/decision-reminders.js";
+import { runDecisionReminders, canSnoozeDecision } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
@@ -129,6 +138,8 @@ async function generateSectionWithClaude(
     scrapedData?: Record<string, any> | null;
     description?: string | null;
     askingPrice?: string | null;
+    /** Items that must not reach buyers (keep-out.ts keepOutFor). */
+    keepOut?: KeepOut | null;
   }
 ): Promise<string> {
   const desc = CIM_SECTION_PROMPTS[sectionKey] || sectionKey;
@@ -143,7 +154,11 @@ async function generateSectionWithClaude(
   // Facts split by provenance: CRM notes / website / social claims are
   // leads, never presented as confirmed; per-source notes and "_" keys are
   // never CIM input.
-  const { confirmed, leads } = splitFactsForCim(data.extractedInfo);
+  const split = splitFactsForCim(data.extractedInfo);
+  // Personal details and clauses the facts mark confidential never reach CIM text.
+  const keepOut = data.keepOut ?? keepOutFromNotes(data.extractedInfo);
+  const confirmed = screenFactsForCim(split.confirmed, keepOut).safe;
+  const leads = screenFactsForCim(split.leads, keepOut).safe;
   if (confirmed.length > 0) {
     contextParts.push(
       `=== CONFIRMED (seller interview, broker, documents, questionnaire) ===\n` +
@@ -228,10 +243,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
   // Product rule: unresolved CRITICAL discrepancies block every CIM-producing
   // step (content, layout, publish). "ask_seller" counts as handled.
   const BLOCKING_DISCREPANCY_STATUSES = new Set(["open", "seller_responded"]);
-  const blockingCriticalDiscrepancies = async (dealId: string) =>
-    (await storage.getDiscrepanciesByDeal(dealId)).filter(
+  const blockingCriticalDiscrepancies = async (dealId: string) => {
+    // A merge row whose conflict no longer stands (its source deleted, its facts moved on) never blocks.
+    await settleMergeRowsQuietly(dealId, "discrepancy-gate");
+    return (await storage.getDiscrepanciesByDeal(dealId)).filter(
       (d) => d.severity === "critical" && BLOCKING_DISCREPANCY_STATUSES.has(d.status),
     );
+  };
   const discrepancyBlockResponse = (res: Response, open: { id: string; field: string }[], verb: string) =>
     res.status(409).json({
       error: `${open.length} critical discrepanc${open.length === 1 ? "y" : "ies"} must be resolved before ${verb}`,
@@ -763,24 +781,37 @@ export async function registerRoutes(app: Express): Promise<Server> {
   app.get("/api/deals/:dealId/suggested-buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
+      const { scoreBuyersForDeal, topDimensions, passesFirstPass, reachedBuyers, suggestionPools, isExcludedBuyer } = await import("./matching/suggested.js");
+      const { isDeepCheckRunning } = await import("./matching/deep-check.js");
+      // Read "is it running" BEFORE the deal: the job writes its final state
+      // and only then stops running, so a stored "running" with no live job
+      // is a real failure — checked the other way round, a check that just
+      // finished read as failed.
+      const deepRunning = isDeepCheckRunning(dealId);
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-
-      const { scoreBuyersForDeal, topDimensions, passesFirstPass } = await import("./matching/suggested.js");
-      const { isDeepCheckRunning } = await import("./matching/deep-check.js");
 
       const [scoredRaw, existingOutreach, existingAccess] = await Promise.all([
         scoreBuyersForDeal(deal),
         storage.getDealOutreachByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
       ]);
-      const contactedBuyerIds = new Set(existingOutreach.map(o => o.buyerUserId));
-      const accessBuyerIds = new Set(existingAccess.filter(a => a.buyerUserId).map(a => a.buyerUserId as string));
+      // Matched on account id AND email: access rows aren't linked to the
+      // buyer's account until they verify, so id-only missed them.
+      const reached = reachedBuyers(existingOutreach, existingAccess);
       const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
+      // One definition of who is suggested / deep-checked (suggestionPools),
+      // shared with the deep-check job so every count agrees.
+      const pools = suggestionPools(scoredRaw, reached);
+      const inPool = new Set(pools.pool.map((s) => s.buyer.id));
 
       const scored = scoredRaw.map((s) => {
         const { buyer: buyerUser, contact, breakdown, score, lastActivityAt } = s;
-        const aiCheck = deep?.results?.[buyerUser.id] ?? null;
+        // A verdict is shown only for a buyer the list still suggests (an
+        // older check may hold results for buyers who since got access).
+        const aiCheck = inPool.has(buyerUser.id) ? deep?.results?.[buyerUser.id] ?? null : null;
+        const { alreadyHasAccess, alreadyContacted } = reached(buyerUser);
+        const excluded = isExcludedBuyer(s);
         // With an AI verdict, rank on it (60%) blended with the lead score.
         const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
         return {
@@ -795,9 +826,13 @@ export async function registerRoutes(app: Express): Promise<Server> {
           targetIndustries: buyerUser.targetIndustries,
           source: contact?.source ?? "deal",
           tags: contact?.tags ?? [],
-          alreadyHasAccess: accessBuyerIds.has(buyerUser.id),
-          alreadyContacted: contactedBuyerIds.has(buyerUser.id),
+          alreadyHasAccess,
+          alreadyContacted,
           passesFirstPass: passesFirstPass(s),
+          excluded,
+          excludedBy: excluded ? (breakdown?.excludedBy ?? null) : null,
+          // An exclusion that may not apply (a market the business serves, a narrower slice): the broker checks.
+          exclusionCaution: !excluded ? (breakdown?.exclusionCaution?.note ?? null) : null,
           match: breakdown ? {
             criteriaMatched: breakdown.criteriaMatched,
             criteriaTested: breakdown.criteriaTested,
@@ -836,11 +871,17 @@ export async function registerRoutes(app: Express): Promise<Server> {
         suggested: scored,
         totalCandidates: scored.length,
         deepCheck: deep ? {
-          status: isDeepCheckRunning(dealId) ? "running" : deep.status === "running" ? "failed" : deep.status,
+          status: deepRunning ? "running" : deep.status === "running" ? "failed" : deep.status,
           total: deep.total, done: deep.done, skipped: deep.skipped ?? 0,
           startedAt: deep.startedAt, finishedAt: deep.finishedAt ?? null, error: deep.error ?? null,
         } : null,
-        firstPassCount: scored.filter((s) => s.passesFirstPass && !s.alreadyHasAccess).length,
+        firstPassCount: pools.candidates.length,
+        counts: {
+          suggested: pools.pool.length,
+          deepCheckable: pools.candidates.length,
+          excluded: pools.excluded.length,
+          withAccess: pools.withAccess.length,
+        },
       });
     } catch (err: any) {
       console.error("Error fetching suggested buyers:", err);
@@ -850,11 +891,12 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Likely acquirers from outside the broker's list (web research, cited).
   app.get("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
+    const { isExternalSearchRunning } = await import("./matching/external-acquirers.js");
+    const searchRunning = isExternalSearchRunning(req.params.dealId); // before the read — see suggested-buyers
     const deal = await storage.getDeal(req.params.dealId);
     if (!deal) return res.status(404).json({ error: "Deal not found" });
-    const { isExternalSearchRunning } = await import("./matching/external-acquirers.js");
     const s = (deal.externalAcquirers as any) || null;
-    if (s && s.status === "running" && !isExternalSearchRunning(deal.id)) s.status = "failed";
+    if (s && s.status === "running" && !searchRunning) s.status = "failed";
     res.json(s ?? { status: "none", results: [] });
   });
   app.post("/api/deals/:dealId/external-acquirers", requireBroker, requireOwnedDeal, async (req, res) => {
@@ -914,6 +956,11 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // hook fed into it): a draft naming the business, owner, staff, city,
       // street or contacts is discarded for the blind-safe template.
       const outreachTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
+      // …and the hook never draws on an item kept from buyers (an angle stored before this check included).
+      const { outreachAngleGuard, angleKeepsOut } = await import("./matching/angle-keep-out.js");
+      const { keepOutFor } = await import("./cim/keep-out.js");
+      const dealInfo = ((deal.extractedInfo as Record<string, unknown>) || {});
+      const angleGuard = outreachAngleGuard(dealInfo, await keepOutFor(deal.id, dealInfo));
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
@@ -936,7 +983,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // The AI deep check's blind-safe hook for this buyer, when there is one.
         const deepResult = ((deal as any).buyerDeepCheck as BuyerDeepCheck | null)?.results?.[buyerUserId];
         const rawAngle = deepResult?.outreachAngle || null;
-        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 ? rawAngle : null;
+        const outreachAngle = rawAngle && findBlindLeaks(rawAngle, outreachTerms).length === 0 && angleKeepsOut(rawAngle, angleGuard) ? rawAngle : null;
 
         // Try to use Claude Sonnet to personalise; fall back to a deterministic
         // template if the API is unavailable or the draft isn't blind-safe.
@@ -1307,12 +1354,54 @@ Return JSON only.`,
       if (!(await canAccessDeal(req, dealId))) {
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
-      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined;
-      const result = await startOrResumeSession(dealId, { conductedBy, conductedVia: parseConductedVia(req.body?.conductedVia) });
+      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? ("broker_with_seller" as const) : undefined;
+      // A finished interview is continued only on an explicit request
+      // ("Continue interview" / "Add more detail") — loading the page alone
+      // returns its finished state and starts nothing.
+      const startOpts = {
+        conductedBy,
+        conductedVia: parseConductedVia(req.body?.conductedVia),
+        resume: req.body?.resume === true,
+      };
+      // stream: true → Server-Sent Events: "status" events while a new
+      // session's opening is prepared (reading the file, checking the
+      // sources, writing the first question — it can take half a minute),
+      // then "done" with the same result as the JSON response.
+      if (req.body?.stream === true) {
+        res.setHeader("Content-Type", "text/event-stream");
+        res.setHeader("Cache-Control", "no-cache, no-transform");
+        res.setHeader("Connection", "keep-alive");
+        res.flushHeaders?.();
+        const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
+        try {
+          const result = await startOrResumeSession(dealId, { ...startOpts, onProgress: (stage) => send({ type: "status", stage }) });
+          send({ type: "done", result: await interviewResultFor(req, dealId, result) });
+        } catch (err: any) {
+          console.error("Interview start error:", err);
+          send({ type: "error", error: err.message || "Failed to start interview" });
+        }
+        res.end();
+        return;
+      }
+      const result = await startOrResumeSession(dealId, startOpts);
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
       console.error("Interview start error:", error);
       res.status(500).json({ error: error.message || "Failed to start interview" });
+    }
+  });
+
+  // Broker: reopen a finished interview (e.g. one that ended too early) —
+  // the deal shows the interview in progress again and the seller's link
+  // opens the conversation instead of the "complete" card.
+  app.post("/api/interview/:dealId/reopen", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const { reopenInterview } = await import("./interview/session-manager");
+      await reopenInterview(req.params.dealId);
+      res.json({ ok: true });
+    } catch (error: any) {
+      console.error("Interview reopen error:", error);
+      res.status(500).json({ error: "Couldn't reopen the interview" });
     }
   });
 
@@ -1614,7 +1703,9 @@ Return JSON only.`,
       res.setHeader("Cache-Control", "no-cache, no-transform");
       res.setHeader("Connection", "keep-alive");
       res.flushHeaders?.();
-      const send = (obj: unknown) => res.write(`data: ${JSON.stringify(obj)}\n\n`);
+      // (A reply still being typed out when the turn failed must not write
+      // after the response has ended.)
+      const send = (obj: unknown) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(obj)}\n\n`); };
 
       try {
         const result = await processTurn(
@@ -1875,17 +1966,26 @@ Return JSON only.`,
         brokerId: req.session.brokerId,
       });
       let deal = await storage.createDeal(validatedData);
-      // An asking price entered at creation becomes the broker's fact too
-      // (one value with the Information tab — see information/deal-mirror.ts).
-      if (deal.askingPrice) {
-        try {
-          const { setMirroredDealFact } = await import("./information/facts");
-          const { MIRROR_NOTES } = await import("./information/deal-mirror");
-          await setMirroredDealFact(deal.id, "askingPrice", deal.askingPrice, MIRROR_NOTES.created);
-          deal = (await storage.getDeal(deal.id)) ?? deal;
-        } catch (e) {
-          console.warn("[deals] asking-price fact not recorded:", e);
-        }
+      // The name, industry and asking price entered at creation become the
+      // broker's facts too (one value with the Information tab — see
+      // information/deal-mirror.ts); a document's NAICS text or a CRM note
+      // never takes the industry or the name over.
+      try {
+        const { setMirroredDealFacts } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFacts(
+          deal.id,
+          {
+            businessName: deal.businessName,
+            industry: deal.industry,
+            ...(deal.subIndustry ? { subIndustry: deal.subIndustry } : {}),
+            ...(deal.askingPrice ? { askingPrice: deal.askingPrice } : {}),
+          },
+          MIRROR_NOTES.created,
+        );
+        deal = (await storage.getDeal(deal.id)) ?? deal;
+      } catch (e) {
+        console.warn("[deals] deal-detail facts not recorded:", e);
       }
 
       // Auto-populate document requirements from industry intelligence
@@ -2375,22 +2475,37 @@ Return JSON only.`,
   });
 
   // ── Re-run document extraction with the current pipeline ──
-  // Replays stored extractions through the canonicalising merge and, where
-  // the files are on disk, re-extracts with the expanded CIM vocabulary.
-  // Fixes deals whose documents were ingested before the coverage fix.
+  // Re-reads every source with the current prompt and rebuilds the facts
+  // (see reprocess.ts). A deal with many sources takes 10–15 minutes, so it
+  // runs as a background job: POST starts it (202, or 409 with the running
+  // job), GET reports its progress and, when done, what changed.
   app.post("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
     try {
       const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      // Re-extraction calls Claude per document — allow up to 10 minutes.
-      req.setTimeout(10 * 60 * 1000);
-      res.setTimeout(10 * 60 * 1000);
-      const { reprocessDealDocuments } = await import("./documents/reprocess");
-      const result = await reprocessDealDocuments(deal.id);
-      res.json(result);
+      const { startReprocessJob } = await import("./documents/reprocess-jobs");
+      const { job, started } = startReprocessJob(deal.id, async (dealId) => {
+        // Intake answers are re-seeded too — split for privacy, so an answer
+        // seeded before the split existed loses its personal detail.
+        const { seedQuestionnaireFacts } = await import("./interview/session-manager");
+        await seedQuestionnaireFacts(dealId);
+      });
+      res.status(started ? 202 : 409).json(job);
     } catch (error: any) {
       console.error("Reprocess error:", error);
       res.status(500).json({ error: error.message || "Failed to reprocess documents" });
+    }
+  });
+
+  app.get("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { reprocessJobFor } = await import("./documents/reprocess-jobs");
+      res.json(reprocessJobFor(deal.id) ?? { dealId: deal.id, status: "idle" });
+    } catch (error: any) {
+      console.error("Reprocess status error:", error);
+      res.status(500).json({ error: "Failed to read reprocess status" });
     }
   });
 
@@ -2500,6 +2615,25 @@ Return JSON only.`,
         const openCritical = await blockingCriticalDiscrepancies(req.params.id);
         if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, gatedVerb);
       }
+      // Going live needs both design approvals — the UI hides Publish until
+      // then, and the server now holds the same line. The broker can still
+      // record the seller's approval on their behalf (same request or before).
+      if (dealPatch.isLive === true) {
+        const current = await storage.getDeal(req.params.id);
+        const approved = (k: "designApprovedByBroker" | "designApprovedBySeller") =>
+          dealPatch[k] === true || (dealPatch[k] === undefined && current?.[k] === true);
+        const missing = [
+          !approved("designApprovedByBroker") ? "broker" : null,
+          !approved("designApprovedBySeller") ? "seller" : null,
+        ].filter((m): m is string => !!m);
+        if (missing.length > 0) {
+          return res.status(409).json({
+            error: "Both design approvals are needed before publishing",
+            code: "needs_design_approvals",
+            missing,
+          });
+        }
+      }
       // A seller finishing the intake wizard completes the questionnaire
       // step — this flag drove broker checklists but was never set. The
       // wizard autosaves each step; only the final save carries
@@ -2539,6 +2673,19 @@ Return JSON only.`,
         const { setMirroredDealFact } = await import("./information/facts");
         const { MIRROR_NOTES } = await import("./information/deal-mirror");
         await setMirroredDealFact(req.params.id, "askingPrice", askingPrice, MIRROR_NOTES.valuation);
+        deal = (await storage.getDeal(req.params.id)) ?? deal;
+      }
+      // The broker renaming the deal or changing its industry: the facts follow
+      // (the column was written above; the fact is the broker's own value).
+      const identityPatch = Object.fromEntries(
+        (["businessName", "industry", "subIndustry"] as const)
+          .filter((k) => req.session.brokerId && k in (validatedData as Record<string, unknown>))
+          .map((k) => [k, (validatedData as Record<string, unknown>)[k]]),
+      );
+      if (Object.keys(identityPatch).length > 0) {
+        const { setMirroredDealFacts } = await import("./information/facts");
+        const { MIRROR_NOTES } = await import("./information/deal-mirror");
+        await setMirroredDealFacts(req.params.id, identityPatch, MIRROR_NOTES.edited);
         deal = (await storage.getDeal(req.params.id)) ?? deal;
       }
       // Intake answers become facts (source "questionnaire") as soon as the
@@ -2791,6 +2938,7 @@ Return JSON only.`,
         docCategory: category,
         uploadedBy,
         requirementId,
+        sourceKind: requestedKind,
       });
       if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
         const previous = await storage.getDocument(previousFileId);
@@ -3212,6 +3360,13 @@ Return JSON only.`,
             });
           }
         }
+        // EBITDA / SDE are recomputed in code from the edited add-backs —
+        // the stored canonical figures always match what the panel shows.
+        const { withCanonicalEarnings } = await import("./financial/normalization-rules");
+        // Dated when those figures move: an earnings decision the broker made
+        // before no longer overrules the bridge (cim/earnings-canon.ts).
+        const { stampEarningsChange } = await import("./cim/cim-financials");
+        updates.normalization = stampEarningsChange(existing.normalization, withCanonicalEarnings(updates.normalization), new Date());
       }
 
       if (req.body.brokerReviewed) {
@@ -3294,7 +3449,27 @@ Return JSON only.`,
       // would then raise twice. Compare the same sliced text the create path
       // stores, normalized for whitespace and case.
       const normalizeField = (s: unknown) => String(s ?? "").trim().replace(/\s+/g, " ").toLowerCase();
-      const routedField = normalizeField(String(question.question).slice(0, 200));
+      // The interview reads this row: a sentence that quotes the broker's
+      // private material (a CRM note, "per broker recast") is dropped, and
+      // the row is flagged so the interview asks neutrally.
+      // A sentence that quotes a figure only the broker's private material
+      // holds goes too, whether or not it names the source ("The owner's
+      // $185K isn't in the statements" when only a CRM note says $185K).
+      const { mentionsPrivateSource } = await import("@shared/discrepancy-sides");
+      const { loadDealFigureIndex, privateOnlyFigures } = await import("./financial/private-figures");
+      const figureIndex = await loadDealFigureIndex(req.params.dealId, storage);
+      const isPrivateSentence = (sentence: string) => mentionsPrivateSource(sentence) || privateOnlyFigures(sentence, figureIndex).length > 0;
+      const keptQuestion = String(question.question)
+        .split(/(?<=[.?!])\s+/)
+        .filter((sentence) => !isPrivateSentence(sentence))
+        .join(" ")
+        .trim();
+      // What is left after a cut must still stand as a question ("Can you
+      // confirm what is booked there?" alone asks nothing) — otherwise the
+      // broker resolves it here.
+      const cut = keptQuestion !== String(question.question).trim();
+      const publicQuestion = cut && keptQuestion.split(/\s+/).filter(Boolean).length < 8 ? "" : keptQuestion;
+      const routedField = normalizeField(publicQuestion.slice(0, 200));
       if (!discrepancy) {
         const existingRouted = (await storage.getDiscrepanciesByDeal(req.params.dealId)).find(
           (d) =>
@@ -3309,10 +3484,20 @@ Return JSON only.`,
         // "high" maps to "significant" (not "critical") on purpose: an unanswered
         // question should not block CIM generation the way a critical value conflict does.
         const severity = question.severity === "low" ? "minor" : "significant";
-        const context = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
+        if (!publicQuestion) {
+          return res.status(409).json({
+            error: "This question quotes your private notes (a source or a figure only they hold), so it can't be sent to the seller as written. Resolve it here instead.",
+            code: "private_question",
+          });
+        }
+        const rawContext = typeof question.context === "string" && question.context.trim() ? question.context.trim() : null;
+        const privateContext = !!rawContext && isPrivateSentence(rawContext);
+        const context = privateContext ? null : rawContext;
+        const hadPrivate = privateContext || publicQuestion !== String(question.question).trim();
         discrepancy = await storage.createDiscrepancy({
           dealId: req.params.dealId,
-          field: String(question.question).slice(0, 200),
+          ...(hadPrivate ? { sideSources: { interview: { kind: "crm", brokerOnly: true } } as any } : {}),
+          field: publicQuestion.slice(0, 200),
           interviewValue: context,
           documentValue: null,
           documentId: null,
@@ -3369,7 +3554,9 @@ Return JSON only.`,
     const orderedYears: string[] = Array.isArray(norm.years) && norm.years.length > 0
       ? norm.years.map(String)
       : [];
-    return (norm.addbacks || []).map((a: any) => {
+    // The seller reviews these: an add-back that rests only on the broker's
+    // private notes stays out until the broker has approved it.
+    return (norm.addbacks || []).filter((a: any) => !a?.privateEvidence || (a.approvedOverride === true && a.approved)).map((a: any) => {
       const amounts: Record<string, number> = {};
       for (const [year, v] of Object.entries(a.amounts || {})) {
         const n = Number(v);
@@ -4093,16 +4280,21 @@ Return JSON only.`,
       // (the seller-safe knowledge base: nothing a broker-only source
       // asserted, not the broker's listed price, the session's confidence
       // labels, resolved discrepancies), so the seller never sees two
-      // different quality labels.
+      // different quality labels. The RECORDED coverage, as the interview
+      // header shows it: what the file merely states somewhere (on-file
+      // evidence) steers the interview's questions but is not a recorded
+      // fact — counting it here showed "Buyer-ready 94" beside the
+      // header's "Solid 60".
       const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
       const kbDocuments = await storage.getDocumentsByDeal(deal.id);
-      const sectionCoverage = assembleKnowledgeBase(
+      const progressKb = assembleKnowledgeBase(
         deal,
         kbDocuments,
         await storage.getTasksByDeal(deal.id),
         sessions[0] ?? null,
         await storage.getResolvedDiscrepancies(deal.id),
-      ).sectionCoverage;
+      );
+      const sectionCoverage = progressKb.recordedCoverage ?? progressKb.sectionCoverage;
       const readiness = computeCimReadiness(sectionCoverage);
       const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
       const partial = sectionCoverage.filter((s) => s.status === "partial").length;
@@ -4110,7 +4302,8 @@ Return JSON only.`,
         ? Math.round(((wellCovered + partial * 0.4) / sectionCoverage.length) * 100)
         : 0;
       const hasActiveSession = sessions.some((s) => s.status === "active");
-      const hasCompletedSession = sessions.some((s) => s.status === "completed");
+      // A session the broker reopened no longer counts as the interview being done.
+      const hasCompletedSession = sessions.some((s) => s.status === "completed" && !(s.extractedInfo as any)?._reopenedAt);
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
 
       // Document requirements
@@ -4461,7 +4654,7 @@ Return JSON only.`,
       // too, and its redaction is redone.
       if (buyerCim.leaked.length > 0) {
         console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
-        redoLeakedBlind(deal.id, buyerCim.leaked).catch((err) => console.error("[view] blind redo failed:", err));
+        redoLeakedBlind(deal.id, buyerCim.leaked, buyerCim.leakReasons).catch((err) => console.error("[view] blind redo failed:", err));
       } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
       res.json({
         access: freshAccess,
@@ -4650,11 +4843,22 @@ Return JSON only.`,
       // "Need more time" isn't a terminal decision — it resets the reminder
       // clock (fresh day-3/6/8 cycle) and leaves the buyer under review.
       if (decision === "need_more_time") {
+        // Only while still deciding: it never reverts a final decision
+        // (an "interested" already synced to the CRM, or a lapse).
+        if (!canSnoozeDecision(access.decision)) {
+          return res.status(409).json({
+            error: "Your decision is already recorded. To change it, contact the broker.",
+            decision: access.decision,
+          });
+        }
         await storage.updateBuyerAccess(access.id, {
-          decision: null,
+          // Still deciding: back under review, so the reminder pipeline
+          // picks it up again (a NULL decision was never selected).
+          decision: "under_review",
           decisionAt: null,
           firstViewedAt: new Date(),
           reminderStage: "none",
+          lastReminderAt: null,
         } as any);
         await recordDecisionEvent("need_more_time");
         return res.json({ success: true, decision: "need_more_time" });
@@ -5278,12 +5482,9 @@ Return JSON only.`,
           return res.status(404).json({ error: "Section not found" });
         }
         const existingSections = await storage.getCimSectionsByDeal(dealId);
-        const resolvedDiscrepancies = await storage.getResolvedDiscrepancies(dealId);
-        const extractedInfo = { ...(deal.extractedInfo as Record<string, unknown> || {}) };
-        for (const d of resolvedDiscrepancies) {
-          if (d.resolvedValue && d.field) extractedInfo[d.field] = d.resolvedValue;
-        }
-        const branding = await storage.getBrandingByBroker(deal.brokerId);
+        // Same knowledge base as a full generation (resolved values, the
+        // financial analysis, privacy screening) — see generation-jobs.
+        const layoutParams = await buildLayoutParams(deal, "content");
         const refs = existingSections.map(s => ({
           sectionKey: s.sectionKey,
           sectionTitle: s.sectionTitle,
@@ -5293,26 +5494,17 @@ Return JSON only.`,
           aiLayoutReasoning: s.aiLayoutReasoning,
         }));
         const regenerated = await regenerateCimSection(
-          {
-            dealId,
-            businessName: deal.businessName,
-            industry: deal.industry,
-            askingPrice: listedAskingPrice(deal),
-            extractedInfo,
-            scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
-            questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
-            operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
-            employeeChart: (deal.employeeChart as unknown[]) || null,
-            cimContent: (deal.cimContent as Record<string, string>) || null,
-            brokerBranding: branding ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor } : null,
-          },
+          layoutParams,
           refs,
           refs.find(r => r.sectionKey === target.sectionKey)!,
           { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
         );
         const updatedSection = await storage.updateCimSection(String(target.id), {
+          // Usually unchanged; a scorecard of words comes back as highlight cards.
+          layoutType: regenerated.layoutType,
           layoutData: regenerated.layoutData as any,
           aiDraftContent: regenerated.aiDraftContent || null,
+          figureWarnings: regenerated.figureWarnings?.length ? regenerated.figureWarnings : null,
           brokerEditedContent: null,
           brokerApproved: false,
         });
@@ -5338,6 +5530,7 @@ Return JSON only.`,
           scrapedData: (deal as any).scrapedData as Record<string, any> | null,
           description: deal.description,
           askingPrice: listedAskingPrice(deal),
+          keepOut: await keepOutFor(deal.id, (deal.extractedInfo as Record<string, unknown>) || {}),
         };
         if (!CIM_SECTION_PROMPTS[sectionKey]) {
           return res.status(400).json({ error: `Unknown section key: ${sectionKey}` });
@@ -5373,7 +5566,7 @@ Return JSON only.`,
         return res.status(409).json({ error: infoGate.reason, code: "needs_information", readiness: infoGate.readiness });
       }
       try {
-        const job = await startCimGeneration(deal, "content");
+        const job = await startCimGeneration(deal, "content", { beforeWriting: (onChecking) => ensureDiscrepancyGate(dealId, onChecking) });
         return res.status(202).json({ started: true, job });
       } catch (err) {
         if (err instanceof CimGenerationRunningError) {
@@ -5424,27 +5617,13 @@ Return JSON only.`,
         return res.status(400).json({ error: "Generate CIM content first" });
       }
 
-      // Gather DD context
-      const [addbackVerification, financialAnalyses, allDocs] = await Promise.all([
-        storage.getAddbackVerificationByDeal(dealId),
-        storage.getFinancialAnalysesByDeal(dealId),
-        storage.getDocumentsByDeal(dealId),
-      ]);
-
-      const { generateDdOverrides } = await import("./cim/dd-enrichment");
-      const overrides = await generateDdOverrides(sections, {
-        businessName: deal.businessName,
-        industry: deal.industry,
-        extractedInfo: deal.extractedInfo as Record<string, any> | null,
-      }, {
-        addbackVerification,
-        financialAnalysis: financialAnalyses[0] || null,
-        documents: allDocs.map(d => ({
-          name: d.name,
-          category: d.category || "other",
-          extractedText: d.extractedText,
-        })),
-      });
+      // DD context: shared documents only, CIM-safe facts, the computed
+      // financial analysis (never the analyzer's raw JSON or its internal
+      // questions) — see dd-enrichment buildDdContext.
+      const { generateDdOverrides, loadDdInputs, markDdFresh } = await import("./cim/dd-enrichment");
+      const startedAt = new Date();
+      const inputs = await loadDdInputs(deal);
+      const overrides = await generateDdOverrides(sections, { businessName: deal.businessName, industry: deal.industry }, inputs);
 
       // Delete old DD overrides and insert new ones
       await storage.deleteCimSectionOverrides(dealId, "dd");
@@ -5457,8 +5636,11 @@ Return JSON only.`,
           contentOverride: override.contentOverride,
         });
       }
+      // Sections edited while this ran keep their stale mark.
+      await markDdFresh(dealId, startedAt);
 
-      res.json({ success: true, overrideCount: overrides.length });
+      const warnings = overrides.map((o) => o.warning).filter((w): w is string => !!w);
+      res.json({ success: true, overrideCount: overrides.length, warnings });
     } catch (error: any) {
       console.error("Error generating DD CIM:", error);
       res.status(500).json({ error: error.message || "Failed to generate DD CIM" });
@@ -6157,60 +6339,27 @@ Return JSON only.`,
       const buyers = await storage.getBuyerAccessByDeal(dealId);
       const latestFA = await storage.getLatestFinancialAnalysis(dealId);
 
-      const { matchBuyerToDeal } = await import("./matching/engine.js");
-
-      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map(async (buyer: any) => {
-        const criteria = (buyer.buyerCriteria || {}) as any;
-        const hasCriteria = Object.keys(criteria).length > 0;
-
-        if (!hasCriteria) {
-          return {
-            buyerId: buyer.id,
-            buyerName: buyer.buyerName || "Unknown",
-            buyerEmail: buyer.buyerEmail,
-            buyerCompany: buyer.buyerCompany,
-            buyerType: buyer.buyerType,
-            matchScore: null,
-            breakdown: null,
-            noCriteria: true,
-          };
-        }
-
-        const breakdown = await matchBuyerToDeal(
-          criteria,
-          {
-            industry: deal.industry,
-            subIndustry: deal.subIndustry,
-            askingPrice: deal.askingPrice,
-            description: deal.description ?? null,
-            extractedInfo: (deal.extractedInfo || {}) as Record<string, any>,
-            financialAnalysis: latestFA ? {
-              reclassifiedPnl: latestFA.reclassifiedPnl,
-              normalization: latestFA.normalization,
-              workingCapital: latestFA.workingCapital,
-            } : undefined,
-          },
-          { skipAI: req.query.skipAI === "true" }
-        );
-
-        // Persist score
-        await storage.updateBuyerAccess(buyer.id, {
-          matchScore: breakdown.finalScore,
-          matchBreakdown: breakdown as any,
-        });
-
-        return {
-          buyerId: buyer.id,
-          buyerName: buyer.buyerName || "Unknown",
-          buyerEmail: buyer.buyerEmail,
-          buyerCompany: buyer.buyerCompany,
-          buyerType: buyer.buyerType,
-          prequalified: buyer.prequalified,
-          proofOfFunds: buyer.proofOfFunds,
-          matchScore: breakdown.finalScore,
-          breakdown,
-        };
-      }));
+      const { matchBuyerDealRow } = await import("./matching/match-run.js");
+      const dealForMatch = {
+        industry: deal.industry,
+        subIndustry: deal.subIndustry,
+        askingPrice: deal.askingPrice,
+        description: deal.description ?? null,
+        extractedInfo: (deal.extractedInfo || {}) as Record<string, any>,
+        financialAnalysis: latestFA ? {
+          reclassifiedPnl: latestFA.reclassifiedPnl,
+          normalization: latestFA.normalization,
+          workingCapital: latestFA.workingCapital,
+        } : undefined,
+      };
+      // One buyer failing (odd criteria, an AI hiccup, a write error) never
+      // fails the batch — that buyer comes back with an error instead.
+      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map((buyer: any) =>
+        matchBuyerDealRow(buyer, dealForMatch, {
+          skipAI: req.query.skipAI === "true",
+          persist: (id, patch) => storage.updateBuyerAccess(id, patch as any).then(() => undefined),
+        }),
+      ));
 
       results.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       res.json(results);
@@ -6278,7 +6427,7 @@ Return JSON only.`,
       // Background job — see generation-jobs.ts. 202 now, progress via GET
       // /api/deals/:dealId/cim-generation.
       try {
-        const job = await startCimGeneration(deal, "layout");
+        const job = await startCimGeneration(deal, "layout", { beforeWriting: (onChecking) => ensureDiscrepancyGate(dealId, onChecking) });
         return res.status(202).json({ started: true, job });
       } catch (err) {
         if (err instanceof CimGenerationRunningError) {
@@ -6293,16 +6442,27 @@ Return JSON only.`,
   });
 
   // ── Interview outline — what the interview will cover, editable in plain language ──
-  const outlineView = (deal: any) => {
+  const outlineView = (deal: any, extra: { evidenceBuilding?: boolean } = {}) => {
     const outline = getInterviewOutline(deal);
     const importance = getSectionImportance(deal);
     // Kick off the industry checklist if it's missing (background, ~20–40s).
+    // The deal's own sub-industry counts: "Home Services" alone matches no
+    // playbook, "Landscaping and snow & ice management" does.
     ensureInterviewPlan(deal);
     const plan = getInterviewPlan(deal);
+    // (A build that just failed waits an hour before retrying — don't spin meanwhile.)
+    const lastBuildFailed = (deal.interviewPlan as { status?: string } | null)?.status === "failed";
+    const playbookMatches = planSubIndustry(deal).matched && !lastBuildFailed;
     // Data points per section with on-file status — the same coverage the
     // interview and the quality score use (excluded sections kept here so a
     // removed section still shows what it would have covered).
-    const adjustments = coverageAdjustmentsForDeal(deal);
+    // (Items a source or an earlier session already answers show as on file,
+    // with where — the interview won't ask them.)
+    const onFile: Record<string, { answer: string; source: string; partial?: boolean; missing?: string }> = {};
+    for (const [id, e] of Object.entries(storedEvidence(deal)?.entries ?? {})) {
+      if (id.startsWith("field:")) onFile[id.slice(6)] = { answer: e.answer, source: e.source, ...(e.partial ? { partial: true, missing: e.missing } : {}) };
+    }
+    const adjustments = { ...coverageAdjustmentsForDeal(deal), onFile };
     const coverage = buildCoverageForOutline((deal.extractedInfo || {}) as any, undefined, importance, [], adjustments);
     const byKey = new Map(coverage.map((c) => [c.key, c]));
     // Every key that belongs to a section (generic + industry + broker-added),
@@ -6314,9 +6474,18 @@ Return JSON only.`,
     return {
       outline,
       plan: {
-        status: plan ? "ready" : isPlanBuilding(deal.id) ? "building" : deal.industry ? "unavailable" : "no_industry",
-        industry: plan?.industry ?? deal.industry ?? null,
+        status: plan ? "ready" : isPlanBuilding(deal.id) ? "building" : !deal.industry ? "no_industry" : playbookMatches ? "building" : "unavailable",
+        // The playbook it came from ("Landscaping and snow…" rather than "Home Services").
+        industry: plan ? (plan.subIndustry || plan.industry) : deal.industry ?? null,
         itemCount: plan?.items.length ?? 0,
+        // A change to the checklist no broker made (new checklist rules).
+        revision: plan?.revision ?? null,
+      },
+      // The file being read for answers already on file: the "on file"
+      // count changes when it lands — said on the card, not a silent shift.
+      evidence: {
+        status: extra.evidenceBuilding || isEvidenceBuilding(deal.id) ? "building" : storedEvidence(deal) ? "ready" : "none",
+        checkedAt: storedEvidence(deal)?.computedAt ?? null,
       },
       sections: CIM_SECTIONS.map((s) => ({
         key: s.key,
@@ -6331,6 +6500,7 @@ Return JSON only.`,
           label: f.label ?? fieldLabel(f.fieldName),
           onFile: f.value !== null,
           value: f.value ? String(f.value).slice(0, 140) : null,
+          onFileIn: f.onFile ?? null,
           industrySpecific: !!f.industrySpecific,
           critical: !!f.critical,
           addedByBroker: (outline.addedItems ?? []).some((a) => a.key === f.fieldName),
@@ -6346,7 +6516,17 @@ Return JSON only.`,
     try {
       const deal = await storage.getDeal(req.params.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      res.json(outlineView(deal));
+      // Review the sources for conflicts in the background, so the
+      // interview can open on them. A no-op while the stored review matches
+      // the current sources; a source added since gets reviewed now, before
+      // the seller's next session.
+      storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
+      // …and what the file already answers among the interview's open items,
+      // so the seller's next session never asks it (background; a no-op
+      // while current). Started before the reply, so the card can say it is
+      // reading the file (and poll) instead of its count shifting later.
+      const evidenceRun = await startOnFileEvidenceBuild(deal.id).catch(() => null);
+      res.json(outlineView(deal, { evidenceBuilding: !!evidenceRun }));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load interview outline" });
     }
@@ -6485,147 +6665,9 @@ Return JSON only.`,
   // DISCREPANCY RESOLUTION
   // ════════════════════════════════════════════════════════════
 
-  // Run discrepancy check
-  app.post("/api/deals/:dealId/run-discrepancy-check", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const { dealId } = req.params;
-      const deal = await storage.getDeal(dealId);
-      if (!deal) return res.status(404).json({ error: "Deal not found" });
-
-      const allDocs = await storage.getDocumentsByDeal(dealId);
-      const processedDocs = allDocs.filter(d => d.isProcessed && (d.extractedText || d.extractedData));
-
-      if (processedDocs.length === 0) {
-        return res.status(400).json({ error: "No processed documents to cross-reference. Upload and process documents first." });
-      }
-
-      // Every discrepancy already on the deal: resolved ones must not come
-      // back under a new name; open ones get refreshed in place, not duplicated.
-      const existing = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status !== "superseded");
-
-      const { runDiscrepancyCheck, isSameDiscrepancy } = await import("./cim/discrepancy-engine");
-      const { items, clearedIds } = await runDiscrepancyCheck(
-        {
-          id: dealId,
-          businessName: deal.businessName,
-          industry: deal.industry,
-          extractedInfo: (deal.extractedInfo as Record<string, any>) || {},
-          questionnaireData: deal.questionnaireData as Record<string, any> | null,
-        },
-        processedDocs.map(d => ({
-          id: d.id,
-          name: d.name,
-          category: d.category,
-          extractedText: d.extractedText,
-          extractedData: d.extractedData,
-        })),
-        existing,
-      );
-
-      const settled = existing.filter((d) => d.status === "resolved" || d.status === "accepted");
-      const unsettled = existing.filter((d) => d.status !== "resolved" && d.status !== "accepted");
-      const touched = new Set<string>();
-      const created = [];
-      let refreshedCount = 0;
-      for (const item of items) {
-        const referenced = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
-        if ((referenced && settled.includes(referenced)) || settled.some((d) => isSameDiscrepancy(item, d))) continue;
-
-        const openMatch = referenced && unsettled.includes(referenced)
-          ? referenced
-          : unsettled.find((d) => !touched.has(d.id) && isSameDiscrepancy(item, d));
-        const values = {
-          interviewValue: item.interviewValue,
-          documentValue: item.documentValue,
-          documentId: item.documentId || null,
-          documentName: item.documentName || null,
-          severity: item.severity,
-          category: item.category,
-          aiExplanation: item.aiExplanation,
-          suggestedResolution: item.suggestedResolution,
-        };
-        if (openMatch) {
-          touched.add(openMatch.id);
-          // Keep the broker's routing/status and the original field name; refresh the evidence.
-          await storage.updateDiscrepancy(openMatch.id, values);
-          refreshedCount++;
-          continue;
-        }
-        const disc = await storage.createDiscrepancy({ dealId, field: item.field, ...values, status: "open" });
-        created.push(disc);
-      }
-
-      // Open rows the model explicitly re-evaluated and found consistent.
-      // Rows the broker routed to the seller stay with the seller.
-      let clearedCount = 0;
-      for (const id of clearedIds) {
-        const row = existing.find((d) => d.id === id);
-        if (!row || touched.has(id) || (row.status !== "open" && row.status !== "seller_responded")) continue;
-        await storage.updateDiscrepancy(id, { status: "superseded" });
-        clearedCount++;
-      }
-
-      res.json({
-        success: true,
-        count: created.length,
-        refreshed: refreshedCount,
-        cleared: clearedCount,
-        discrepancies: created,
-      });
-    } catch (error: any) {
-      console.error("Error running discrepancy check:", error);
-      res.status(500).json({ error: error.message || "Discrepancy check failed" });
-    }
-  });
-
-  // Get discrepancies for a deal
-  app.get("/api/deals/:dealId/discrepancies", requireBroker, requireOwnedDeal, async (req, res) => {
-    try {
-      const discrepancies = await storage.getDiscrepanciesByDeal(req.params.dealId);
-      res.json(discrepancies);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to fetch discrepancies" });
-    }
-  });
-
-  // Update a discrepancy (resolve, respond, etc.)
-  app.patch("/api/discrepancies/:id", requireBroker, async (req, res) => {
-    try {
-      const existingDisc = await storage.getDiscrepancy(req.params.id);
-      if (!existingDisc || !(await ownsDeal(req, existingDisc.dealId))) return res.status(404).json({ error: "Discrepancy not found" });
-      const { sellerResponse, brokerNotes, resolvedValue, status } = req.body;
-      const DISCREPANCY_STATUSES = new Set(["open", "seller_responded", "resolved", "accepted", "ask_seller", "superseded"]);
-      if (status !== undefined && !DISCREPANCY_STATUSES.has(String(status))) {
-        return res.status(400).json({ error: `Invalid status "${status}"` });
-      }
-      const updates: any = {};
-      if (sellerResponse !== undefined) updates.sellerResponse = sellerResponse;
-      if (brokerNotes !== undefined) updates.brokerNotes = brokerNotes;
-      if (resolvedValue !== undefined) updates.resolvedValue = resolvedValue;
-      if (status !== undefined) {
-        updates.status = status;
-        if (status === "resolved") {
-          updates.resolvedAt = new Date();
-        }
-      }
-      const updated = await storage.updateDiscrepancy(req.params.id, updates);
-      if (!updated) return res.status(404).json({ error: "Discrepancy not found" });
-      // The broker's resolution becomes the fact on file (source "broker"),
-      // with the conflicting values kept as alternates — not just a read-time
-      // overlay. (The overlays in the KB/generation paths keep working.)
-      if (updated.status === "resolved" && typeof updated.resolvedValue === "string" && updated.resolvedValue.trim()) {
-        try {
-          const { applyDiscrepancyResolution } = await import("./information/facts");
-          await applyDiscrepancyResolution(updated);
-        } catch (e) {
-          console.warn("[discrepancies] couldn't write the resolution into the deal's facts:", e);
-        }
-      }
-      res.json(updated);
-    } catch (error: any) {
-      res.status(500).json({ error: "Failed to update discrepancy" });
-    }
-  });
+  // Run the check, list, resolve, link a resolution to its fact and carry
+  // it through to other facts: server/routes/discrepancies.ts.
+  registerDiscrepancyRoutes(app);
 
   // ════════════════════════════════════════════════════════════
   // DEAL TEAMS — Members, roles, notifications

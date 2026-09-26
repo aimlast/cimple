@@ -11,6 +11,8 @@ export interface FinancialInsight {
   title: string;
   detail: string;
   cimSection?: string;
+  /** Set server-side when the insight states an EBITDA/SDE figure the normalization doesn't compute. */
+  flag?: string;
 }
 
 export interface InsightsData {
@@ -155,6 +157,11 @@ function InsightCard({ insight }: { insight: FinancialInsight }) {
     <Card className={`${borderColor} ${accentBg}`}>
       <CardContent className="p-3">
         <p className="text-xs font-medium mb-1">{insight.title}</p>
+        {insight.flag && (
+          <Badge className="mb-1 bg-amber-500/10 text-amber-400 border-0 text-2xs gap-1" title={insight.flag}>
+            <AlertTriangle className="h-2.5 w-2.5" /> Figure doesn't tie to the normalization
+          </Badge>
+        )}
         <p className="text-2xs text-muted-foreground leading-relaxed">
           {insight.detail}
         </p>

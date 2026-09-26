@@ -1,6 +1,7 @@
 import type Anthropic from "@anthropic-ai/sdk";
 import { INTERVIEW_RESPONSE_TOOL, type InterviewResponse, type ExtractedField } from "./response-schema";
 import type { SystemBlock } from "./system-prompt";
+import { guardNormalisationFields } from "./reply-guards";
 
 /**
  * turn-guard
@@ -164,6 +165,26 @@ export function normalizeInterviewResponse(raw: unknown): {
         }))
     : [];
 
+  // Withdrawn facts: [{field, reason}] (a bare string array is tolerated).
+  const retractedFields: NonNullable<InterviewResponse["retractedFields"]> = Array.isArray(r.retractedFields)
+    ? (r.retractedFields as unknown[])
+        .map((x) =>
+          typeof x === "string"
+            ? { field: x, reason: "" }
+            : x && typeof x === "object" && typeof (x as Record<string, unknown>).field === "string"
+              ? { field: (x as Record<string, string>).field, reason: typeof (x as Record<string, unknown>).reason === "string" ? (x as Record<string, string>).reason : "" }
+              : null,
+        )
+        .filter((x): x is { field: string; reason: string } => !!x && x.field.trim().length > 0)
+        .map((x) => ({ field: x.field.trim(), reason: x.reason.trim() }))
+    : [];
+
+  // No normalisation conclusion is recorded as the seller's fact ("All $260K
+  // is add-back for new owner") — it goes to the broker's private notes
+  // (reply-guards.guardNormalisationFields).
+  const normalised = guardNormalisationFields(extractedFields, privateNotes);
+  if (normalised.length > 0) console.warn(`[turn-guard] Add-back call kept out of the facts: ${normalised.join(", ")}`);
+
   const response: InterviewResponse = {
     message,
     whyItMatters:
@@ -183,6 +204,7 @@ export function normalizeInterviewResponse(raw: unknown): {
     reasoning,
     privateNotes,
     newTasks,
+    retractedFields,
     shouldEnd: r.shouldEnd === true,
     endReason: typeof r.endReason === "string" ? r.endReason : undefined,
   };
@@ -264,7 +286,16 @@ export async function callInterviewWithRecovery(
   /** When provided, the FIRST attempt streams the message field and emits each
    *  new text chunk here. Retries and governance re-calls never stream. */
   onDelta?: (chunk: string) => void,
-): Promise<{ response: InterviewResponse; degraded: boolean }> {
+  /**
+   * Streaming only: called once, as soon as the message field is complete
+   * (before the rest of the response — extracted facts, reasoning — is
+   * generated). Returning false stops the call there: the result is
+   * `rejected` with just that message, so the caller can ask for a rewrite
+   * without waiting for (or showing) the rest. Used by the re-ask guard, so
+   * a question that re-asks something on file is never shown to the seller.
+   */
+  onMessageComplete?: (message: string) => boolean | Promise<boolean>,
+): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean }> {
   const attempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean }> => {
@@ -297,7 +328,7 @@ export async function callInterviewWithRecovery(
   // validation to the non-streaming path.
   const streamAttempt = async (
     messages: InterviewCallParams["messages"],
-  ): Promise<{ response: InterviewResponse; valid: boolean }> => {
+  ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean }> => {
     const stream = anthropic.messages.stream({
       model: params.model,
       max_tokens: params.maxTokens,
@@ -310,6 +341,7 @@ export async function callInterviewWithRecovery(
 
     let jsonBuf = "";
     let emitted = 0;
+    let checked = false;
     for await (const event of stream) {
       if (
         event.type === "content_block_delta" &&
@@ -320,6 +352,23 @@ export async function callInterviewWithRecovery(
         if (msg && msg.text.length > emitted) {
           onDelta!(msg.text.slice(emitted));
           emitted = msg.text.length;
+        }
+        if (msg?.complete && !checked && onMessageComplete) {
+          checked = true;
+          let keep = true;
+          try {
+            keep = await onMessageComplete(msg.text);
+          } catch (err) {
+            console.warn("[turn-guard] message-complete hook failed — continuing:", err);
+          }
+          if (!keep) {
+            // A listener, so the SDK doesn't report the deliberate abort as
+            // an unhandled rejection.
+            stream.on("abort", () => {});
+            stream.abort();
+            const { response } = normalizeInterviewResponse({ message: msg.text });
+            return { response, valid: false, rejected: true };
+          }
         }
       }
     }
@@ -341,6 +390,7 @@ export async function callInterviewWithRecovery(
     const first = onDelta
       ? await streamAttempt(params.messages)
       : await attempt(params.messages);
+    if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };
     if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
 
     console.warn("[turn-guard] Invalid interview response — issuing corrective retry");
@@ -421,45 +471,290 @@ export const CRITICAL_SECTIONS = new Set([
 
 /**
  * Phrases that mean the seller is asking to stop — their request always wins.
- * Used BOTH to allow a model-proposed end (governCompletion) and to detect
- * incoming stop signals BEFORE the model call (detectStopSignal), so the two
- * sides of governance can never disagree about what counts as a stop.
+ * Used to detect incoming stop signals BEFORE the model call
+ * (detectStopSignal); governCompletion trusts that detection.
+ *
+ * Detection is about INTENT, not vocabulary. A bare phrase inside an ordinary
+ * answer is not a request to stop: "a lot of them come back later", "I'm
+ * leaving the business once…", "that's enough to cover payroll", "we're done
+ * installing by 3pm", "a hard stop on credit at 60 days" all describe the
+ * business (QA harvest: one such sentence ended a Clearwater interview at 6
+ * of the 10-turn minimum). So there are two tiers:
+ *
+ * - ADDRESSED phrases talk about THIS conversation ("let's stop here", "can we
+ *   pick this up tomorrow?", "I have to run", "end the interview", "that's
+ *   all for today") — they count anywhere in the message.
+ * - SHORT-ONLY phrases ("I'm done", "hard stop at 3", "out of time", "call
+ *   it a day") are ambiguous in a long answer — they count only in a short
+ *   message, or when they make up the whole final sentence.
  *
  * Bare "stop" is intentionally NOT matched (sellers say "customers stop by",
  * "we stop taking orders at 9") — stop must be phrased as a request to end.
  */
-const STOP_PHRASES: string[] = [
-  String.raw`(?:let'?s|can we|we should|i(?:'d| would)? (?:like|want|need) to|please) (?:stop|end|wrap(?: it| this)? up|call it)(?: here| now| a day)?`,
-  String.raw`stop (?:here|now|the interview|this)`,
-  String.raw`end (?:this|the) ?(?:interview|conversation|overview|session|call)`,
-  String.raw`we(?:'| a)?re done(?! with)`,
-  String.raw`i(?:'| a)?m done(?! with)`,
-  String.raw`that(?:'| i)?s (?:all|enough|it) for (?:now|today|tonight)`,
-  String.raw`that(?:'| i)?s enough`,
-  String.raw`enough for (?:now|today)`,
-  String.raw`done for (?:now|today|the day)`,
-  String.raw`i (?:(?:really|just|actually|do) ){0,2}(?:have|need|got|gotta) to (?:go|run|leave|head out|get back)`,
-  String.raw`have to get back to`,
-  String.raw`gotta (?:go|run)`,
-  String.raw`out of time`,
-  String.raw`no more time`,
-  String.raw`hard stop`,
-  String.raw`call it a day`,
-  String.raw`wrap (?:this|it) up`,
-  String.raw`pick (?:this|it) up (?:later|tomorrow|another time)`,
-  String.raw`(?:finish|continue|come back) (?:later|tomorrow|another time)`,
-  String.raw`talk (?:later|tomorrow)`,
-  String.raw`i(?:'| a)?m leaving`,
-  String.raw`no more questions`,
+// A phrase counts only where its clause ends — "that's enough to cover
+// payroll" and "talk later about it" are not the stop phrases they contain.
+// (A hyphen joined to a word isn't a clause end: "Bye-laws in our township".)
+const CLAUSE_END = String.raw`(?=\s*(?:[.!?,;:)—–]|-(?![A-Za-z])|$|\n|\s(?:thanks|thank you|please|bye|sorry|anyway|so|and|but|i|we|let'?s)\b))`;
+const LATER = String.raw`(?:later(?: on)?|tomorrow|another (?:time|day)|some other time|next (?:time|week)|(?:on )?(?:monday|tuesday|wednesday|thursday|friday|the weekend))`;
+// Who is doing the stopping: the seller about themselves or this conversation
+// ("let's", "can we", "I have to", "I'm going to have to") — never "we" the
+// business ("we stop taking orders at 9", "we end the session with…").
+const I_MUST = String.raw`(?:i (?:(?:really|just|actually|do|unfortunately|now|kind of|kinda) ){0,2}(?:have|need|got|gotta|'ve got|'ve gotta) to|i(?:'ve)? got(?:ta| to)|i'?m (?:going to|gonna) have to|i'?ll (?:have|need) to|i must)`;
+const LEAVE_VERB = String.raw`(?:go|run|leave|head out|head off|jump(?: off)?|hop off|sign off|get going|take off|dash|split|bounce|step away|log off)`;
+// Leaving FOR something: "go to a meeting", "leave for an appointment", "run
+// to the bank", "go pick up my daughter", "jump on another call". Unlike the
+// bare "I have to go", these read like business in a long answer ("I have to
+// go to the supplier every Monday"), so they count only in a short message
+// or as the closing (or apologetic opening) sentence, and never with a
+// habit word in the sentence.
+const LEAVE_FOR_DEST = String.raw`(?:meeting|appointment|appt|call|zoom|job|job ?site|site|bank|doctor|dentist|school|daycare|kids?|daughter|son|wife|husband|partner|mom|mum|dad|family|flight|airport|plane|train|lunch|dinner|class|practice|game|funeral|delivery|client|customer|patient|supplier|vendor|inspector|inspection|shift|errand|thing|event|store|shop|office|clinic|plant|warehouse|truck|crew|guys|staff|emergency|fire)s?`;
+const ERRAND_STOP_RE = new RegExp(
+  String.raw`\b(?:${I_MUST}|(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)\s{1,3})(?:gotta|got to)) ${LEAVE_VERB}(?: (?:now|quickly|real quick|right now))?(?: (?:to|for|and|into|over to|out to|off to|on|meet|see|grab|get|catch|take|pick(?: [\w']+)? up)\b)(?: [\w'-]+){0,4}? ${LEAVE_FOR_DEST}\b`,
+  "i",
+);
+const HABIT_RE =
+  /\b(?:every|each|usually|normally|typically|often|sometimes|always|whenever|once a|twice a|per (?:week|month|day)|regularly|most (?:days|weeks|mornings|nights)|on (?:mondays|tuesdays|wednesdays|thursdays|fridays|saturdays|sundays|weekends))\b/i;
+// "…to a meeting in ten minutes, so quickly: …" — leaving is imminent.
+const SOON_RE = /\b(?:right now|shortly|in (?:a (?:few|couple(?: of)?) |\d+ |five |ten |fifteen |twenty )?min(?:ute)?s?|in a (?:sec|second|bit|minute))\b/i;
+const APOLOGY_START_RE = /^(?:sorry|so sorry|apologies|oh|oops|ah|actually|unfortunately|hey|listen|ok(?:ay)?|shoot|darn|argh)\b/i;
+// What "later" may resume in a resume-later request: the conversation itself
+// ("this", "the rest", "where we left off") — never a job, and never "it" /
+// "that", which are usually a task: "Yes, I'll do that tomorrow" answering
+// "could you upload the lease?", "I'll finish it tomorrow and send it over"
+// (review-caught: those ended interviews). A task commitment or a deferral
+// of ONE question ("Can I come back to this after I check with my
+// accountant?") is the classifier's to read (seller-intent.ts), not a
+// pattern's — only requests that can't be anything but ending this
+// conversation are instant.
+const RESUME_OBJECT = String.raw`(?: (?:this|things|the rest(?: of (?:this|it|the questions))?|this conversation|the interview|the questions|where we left off))`;
+const ADDRESSED_STOP_PHRASES: string[] = [
+  // "Let's stop here", "can we end it here", "I'd like to wrap this up now".
+  // Never "we can …" — that is the business ("we can stop the line").
+  String.raw`(?:let'?s|can we|could we|we should|i(?:'d| would)? (?:like|want|need|prefer) to|i'?d rather|please|maybe we|time to|i think we (?:should|can)|${I_MUST})\s+(?:just\s+)?(?:stop|end|pause|wrap(?: it| this| things)? up|call it(?: a day| here| quits)?|take a break|leave it (?:there|at that)|cut (?:this|it|things) short)(?: (?:it|this|things|(?:the|this|our) (?:session|call|chat|interview|conversation|meeting)))?(?: (?:here|now|there|for (?:now|today|tonight|the day))){0,2}${CLAUSE_END}`,
+  // "Can we do this another time?", "let's continue later", "could we pick
+  // this up tomorrow" — the seller asking the interviewer to resume later.
+  // Subjects that address the interviewer only: never "I'll …" (a task: "I'll
+  // do that tomorrow") and never the business "we could / we can". ("Can we
+  // come back to this later?" is usually one question set aside — the
+  // classifier's call.)
+  String.raw`(?:let'?s|can we|could we|i(?:'d| would)? (?:like|want|prefer) to|i'?d rather|maybe we|how about we)\s+(?:just\s+)?(?:(?:finish|continue|resume|do|carry on|keep going|pick (?:this|things) (?:back )?up)${RESUME_OBJECT}|(?:continue|resume|carry on|keep going|pick (?:this|things) (?:back )?up|chat|talk|speak))(?: (?:again|maybe|then|with you))? ${LATER}${CLAUSE_END}`,
+  // "Can we pick this up?" — resuming later, said as a question. (Not "can
+  // we continue with the lease next?" — that's a seller who wants to go on;
+  // not "can I pick it up tomorrow?" — that's a document.)
+  String.raw`(?:can|could) we pick (?:this|things) (?:back )?up(?: (?:again|some ?time|at some point|another time|later))?\s*\?`,
+  // "Could we do the rest on Monday?" (Not "can I come back to this after I
+  // check with my accountant?" — one question set aside, and the interview
+  // goes on.)
+  String.raw`(?:can|could|may) (?:we|i) (?:continue|do|pick up|finish) (?:the rest|this conversation|the interview|the questions)\b[^.?!]{0,40}\?`,
+  String.raw`(?<=^|[.!?,]\s{0,3}|\b(?:ok|okay|please|so|sorry|alright|right)\s{1,3})stop (?:here|now|there)${CLAUSE_END}`,
+  // "I'll stop here", "I'm going to stop now", "I think I'll leave it there".
+  String.raw`(?:i'?ll|i will|i'?m (?:going to|gonna)|i think i'?ll|i'?d better|i better)\s+(?:have to\s+)?(?:stop|leave it|call it)(?: (?:there|here|now|at that|a day|for (?:now|today|tonight|the day))){1,2}${CLAUSE_END}`,
+  String.raw`stop (?:the interview|this (?:interview|conversation|session|chat))`,
+  String.raw`end (?:this (?:interview|conversation|session|call|chat)|the (?:interview|conversation|chat))\b`,
+  String.raw`${I_MUST} ${LEAVE_VERB}(?: (?:now|soon|shortly|real quick|unfortunately|in a (?:minute|sec|second|few|bit)|for (?:a bit|a while|now|today)))?${CLAUSE_END}`,
+  // "Sorry, have to run." / "OK gotta go."
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:sorry|ok|okay|anyway|oh|well|yeah|so|but|and)[,.!]?\s{1,3})(?:gotta|got to|have to|need to) (?:go|run|head out|head off|jump|dash|split|leave|bounce)${CLAUSE_END}`,
+  String.raw`that(?:'| i)?s (?:all|enough|it)(?: (?:for|from) (?:me|us))?(?: i (?:have|can do|'ve got))?(?: for)? (?:now|today|tonight|the day|(?:one|a) day)${CLAUSE_END}`,
+  String.raw`(?:i'?m|we'?re|i am|we are) (?:all )?done for (?:now|today|tonight|the day)`,
+  String.raw`enough for (?:now|today|tonight|(?:one|a) day)${CLAUSE_END}`,
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3}|\b(?:ok|okay|so|thanks|thank you|bye|alright|great|anyway|cheers)[,!.]?\s{1,3})talk (?:to you )?(?:later|tomorrow|soon|next time)${CLAUSE_END}`,
+  // "No more today please." — only as its own sentence.
+  // (Not "No more today, we sold out by noon.")
+  String.raw`(?<=^|[.!?,;:—–]\s{0,3})no more (?:for )?(?:today|tonight|right now|for now)(?=\s*(?:[.!]|$)|\s+(?:please|thanks|thank you)\b)`,
+  String.raw`i (?:can'?t|cannot|don'?t think i can) (?:do|handle|take|answer) (?:any ?more|much more|this any ?more|more (?:questions|of this))(?: (?:today|tonight|right now|now|for (?:today|now)))?${CLAUSE_END}`,
+  String.raw`(?:don'?t|do not|won'?t) have (?:any )?(?:more )?time (?:for (?:(?:any )?more|this|the rest|questions|it now)|today|right now|to (?:continue|keep going|finish))|no more time for (?:this|questions|today)`,
   // Self-addressed completion declarations are unambiguous stops even
   // without a wrap offer — "from me" / "I've got" removes the ambiguity
   // that keeps bare "that's everything" gated behind the wrap-offer check.
   String.raw`that(?:'| i)?s (?:everything|all|it) from me`,
-  String.raw`that(?:'| i)?s (?:everything|all) i(?:'ve| have)? got`,
+  String.raw`that(?:'| i)?s (?:everything|all) i(?:'ve| have)? got${CLAUSE_END}`,
   String.raw`nothing (?:more|else) from me`,
 ];
+const SHORT_ONLY_STOP_PHRASES: string[] = [
+  String.raw`(?:i'?m|we'?re|i am|we are) (?:all )?done(?: here| now)?${CLAUSE_END}`,
+  String.raw`that(?:'| i)?s enough(?: now| questions)?${CLAUSE_END}`,
+  String.raw`(?:i'?m|we'?re|i am|we are) (?:about |running |nearly )?out of time${CLAUSE_END}`,
+  String.raw`no more time${CLAUSE_END}`,
+  String.raw`(?:i (?:have|'ve got|got) a )?hard stop(?: (?:at|in) [\w: ]{1,12})?${CLAUSE_END}`,
+  String.raw`wrap (?:this|it) up${CLAUSE_END}`,
+  String.raw`call it a day${CLAUSE_END}`,
+  String.raw`(?:have|need|got) to get back to (?:work|the (?:shop|floor|office|store|site|clinic|kitchen|yard)|my (?:day|desk|customers|patients|crew))${CLAUSE_END}`,
+  String.raw`(?:good)?bye(?: for now)?${CLAUSE_END}`,
+];
 
-const STOP_SIGNAL_RE = new RegExp(`\\b(?:${STOP_PHRASES.join("|")})\\b`, "i");
+// A seller who wants the questions to stop NOW — "please stop asking me
+// questions", "no more questions". Not a pause-and-resume: the first one is
+// the end (a goodbye, no closing question).
+//
+// Two tiers (review RV-INT-1: "Once the inspector signs off, that's it, no
+// more questions." and "they just stop asking" force-ended interviews,
+// because a lead-in of "just", "now", "so" or any comma let the phrase stand
+// mid-answer, and a pattern firm stop overruled the classifier; round 2:
+// "The auditor finished Tuesday, no more questions for now.", "No more
+// questions, they signed the renewal the same week." and "I'm done with the
+// questions from the lender" still stood):
+// - STANDING — said to the interviewer beyond doubt, so it stands even when
+//   the classifier reads the turn otherwise: the whole message ("Stop."); an
+//   imperative opening its sentence after nothing but filler ("Please stop
+//   with the questions", "Seriously, stop asking me things", "Enough with the
+//   questions"); "No more questions" as the whole closing sentence ("No more
+//   questions for today, please."); an explicit addressee after a clause
+//   break ("…, stop asking me", "…, no more questions for me / please"); or
+//   the seller about themselves with nothing after it ("I'm done answering
+//   questions", "I don't want to answer any more questions").
+// - PATTERN — a stop more often than not, but the classifier's reading
+//   decides when there is one (seller-intent.ts combineIntent): the bare
+//   phrase closing a very short clause ("I'm tired, no more questions.",
+//   "…, no more questions for now."), or "No more questions" opening a
+//   sentence that goes on ("No more questions, I'm exhausted.").
+// A longer clause in front ("Once the inspector signs off, that's it, no
+// more questions."), "customers stop asking for discounts", "the bank had no
+// more questions", "the reps just stop asking", "no more questions from the
+// bank", "I'm done with the questions from the lender", "I'm done answering
+// the CRA's questions" and "I don't want to answer any more questions about
+// the lawsuit" (one topic declined — the classifier's to read) match neither.
+const STOP_PHRASE_CORE = String.raw`(?:please )?stop (?:asking(?: me)?(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?|with (?:the|all the|these|all these) questions|the questions)(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`;
+const NO_MORE_WORDS = String.raw`(?:no|enough|not any) more questions`;
+const NO_MORE_CORE = String.raw`${NO_MORE_WORDS}(?: (?:for (?:now|today|tonight)|today|please))?${CLAUSE_END}`;
+const ENOUGH_CORE = String.raw`enough (?:with the )?questions${CLAUSE_END}`;
+// Filler that may open the sentence before the phrase ("Ok, look, please …").
+const IMPERATIVE_FILLER = String.raw`(?:(?:please|just|ok|okay|look|honestly|seriously|sorry|alright|can you|could you|would you|will you)[,!]?\s+)*`;
+// What may follow the phrase in its own sentence without making it about
+// anything else ("No more questions for today, please.").
+const STOP_TAIL = String.raw`(?:[,\s]+(?:please|thanks|thank you|ok(?:ay)?|now|right now|for (?:me|now|today|tonight)|from you|today|tonight))*`;
+// The phrase is where its sentence ends.
+const SENTENCE_END = String.raw`\s*[.!?…]*\s*$`;
+// Nothing about the business follows the seller's words about themselves.
+const SELF_END = String.raw`(?=\s*(?:[.!?,;:—–…]|$|\s(?:please|thanks|thank you|sorry|ok|okay|i|i'm|i've)\b))`;
+// Opening the sentence (after filler) — an imperative is said to someone.
+const IMPERATIVE_OPEN_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}(?:${STOP_PHRASE_CORE}|${ENOUGH_CORE})`, "i");
+// "No more questions" as the whole sentence.
+const NO_MORE_WHOLE_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}${NO_MORE_WORDS}${STOP_TAIL}${SENTENCE_END}`, "i");
+// "No more questions, …" opening a sentence that goes on.
+const NO_MORE_OPEN_RE = new RegExp(String.raw`^${IMPERATIVE_FILLER}${NO_MORE_CORE}`, "i");
+const STANDING_IN_SENTENCE_RE = new RegExp(
+  [
+    // An explicit addressee after a clause break.
+    String.raw`(?:^|[,;:—–]\s*)${IMPERATIVE_FILLER}stop asking me(?: (?:questions|so many questions|all these questions|anything else|any more questions|things|stuff|all this))?(?=\s*(?:[.!?,;:—–]|$|\s(?:please|now|i|i'm|it|this|ok|okay)\b))`,
+    String.raw`(?:^|[,;:—–]\s*)${IMPERATIVE_FILLER}${NO_MORE_WORDS}(?: (?:for (?:now|today|tonight)|today|now))?,? (?:for me|from you|please)${CLAUSE_END}`,
+    // The seller about themselves.
+    String.raw`\bi(?:'m| am) (?:done|finished) (?:answering(?: (?:your |these |the |any more |more |all (?:the |these |your ))?questions)?|with (?:the|these|your|all (?:the|these|your)) questions)(?: (?:for (?:now|today|tonight)|today|now|here))?${SELF_END}`,
+    String.raw`\bi (?:don'?t|do not) want to answer any (?:more|further) questions(?: (?:today|now|right now|for (?:now|today|tonight)))?${SELF_END}`,
+  ].join("|"),
+  "i",
+);
+// The bare phrase after a clause break — a PATTERN firm stop only when the
+// clause before it is a few words ("I'm tired, no more questions.").
+const CLAUSE_FIRM_RE = new RegExp(String.raw`[,;:—–]\s*(?:(?:please|just|ok|okay|look|honestly|seriously)[,!]?\s+)*(?:${STOP_PHRASE_CORE}|${NO_MORE_CORE}|${ENOUGH_CORE})`, "i");
+const CLAUSE_FIRM_MAX_LEAD_WORDS = 4;
+// A longer clause in front that is about the seller's patience or time, not
+// the business ("I've had enough of this, no more questions.", "Look, I've
+// got a customer waiting, no more questions.") — still a PATTERN stop, so a
+// real stop is honoured even when the classifier is down.
+const STOP_MOOD_RE =
+  /\b(?:i'?m|i am|i'?ve|i have|i'?ve got|i)\b[^,;:.]{0,30}\b(?:enough|tired|exhausted|done|busy|fed up|sick of|had it|wiped|beat|over (?:this|it))\b|\b(?:customer|customers|patient|patients|client|clients|someone|people|guy|lady|truck|delivery) (?:is |are )?waiting\b|\b(?:you'?ve|you have|you) (?:already |just )?asked me\b|\balready told you\b|\b(?:got|have|need) to (?:go|run|leave)\b|\bgotta (?:go|run)\b|\bno time\b|\b(?:don'?t|do not) have (?:the )?time\b|\btaking (?:forever|too long)\b/i;
+// After "No more questions." as its own sentence, what may still follow for
+// it to stand ("No more questions. I'm tired." — not "No more questions.
+// They signed off on the loan in a week.").
+const AFTER_STOP_MAX_WORDS = 5;
+// The whole message is "Stop." / "Stop now please."
+const BARE_STOP_RE = /^\s*(?:(?:ok(?:ay)?|please|just)[,\s]+)?stop(?:[,\s]+(?:please|now|it|there))*\s*[.!]*\s*$/i;
+// A transcript line's speaker label ("Seller: …").
+const SPEAKER_LABEL_RE = /^\s*[a-z]{2,12}:\s*/i;
+
+/** "stands": said to the interviewer beyond doubt; "pattern": probably a firm stop; null: none. */
+export type FirmStopTier = "stands" | "pattern" | null;
+
+function firmStopTier(text: string): FirmStopTier {
+  if (BARE_STOP_RE.test(text)) return "stands";
+  const sentences = text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((s) => s.replace(SPEAKER_LABEL_RE, "").trim())
+    .filter(Boolean);
+  let tier: FirmStopTier = null;
+  for (let i = 0; i < sentences.length; i++) {
+    const s = sentences[i];
+    if (IMPERATIVE_OPEN_RE.test(s) || STANDING_IN_SENTENCE_RE.test(s)) return "stands";
+    if (NO_MORE_WHOLE_RE.test(s)) {
+      const after = sentences.slice(i + 1);
+      if (wordCount(after.join(" ")) <= AFTER_STOP_MAX_WORDS) return "stands";
+      tier = "pattern";
+      continue;
+    }
+    if (NO_MORE_OPEN_RE.test(s)) {
+      tier = "pattern";
+      continue;
+    }
+    const m = CLAUSE_FIRM_RE.exec(s);
+    if (!m) continue;
+    const lead = s.slice(0, m.index);
+    if (wordCount(lead) <= CLAUSE_FIRM_MAX_LEAD_WORDS || STOP_MOOD_RE.test(lead)) tier = "pattern";
+  }
+  return tier;
+}
+
+const ADDRESSED_STOP_RE = new RegExp(`\\b(?:${ADDRESSED_STOP_PHRASES.join("|")})`, "i");
+const SHORT_ONLY_STOP_RE = new RegExp(`\\b(?:${SHORT_ONLY_STOP_PHRASES.join("|")})`, "i");
+// Words that may surround a stop phrase in a final sentence without making
+// it about the business ("Anyway, I think that's it for today, thanks").
+const CONVERSATIONAL_FILLER = new Set(
+  "ok okay so well anyway anyways alright all right honestly look sorry but yeah yes and thanks thank you for today now really just guess think i i'm im me we us that's that it's oh um uh hey right then though yep sure cheers".split(" "),
+);
+const SHORT_STOP_MESSAGE_WORDS = 25;
+
+const wordCount = (s: string) => (s.trim().match(/\S+/g) ?? []).length;
+const sentencesOf = (text: string) => text.split(/(?<=[.!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+
+function isFirmStop(text: string): boolean {
+  return firmStopTier(text) !== null;
+}
+
+/**
+ * True when the seller wants the questions to stop now ("Please stop asking
+ * me questions.", "No more questions.", "Stop.") — the instant pattern tier
+ * of the firm stop level (seller-intent.ts).
+ */
+export function detectFirmStop(sellerMessage: string): boolean {
+  return isFirmStop(sellerMessage.replace(/[’‘]/g, "'").trim());
+}
+
+/**
+ * How sure the instant patterns are of a firm stop: "stands" (bare or
+ * addressed to the interviewer — it overrules the classifier), "pattern"
+ * (the classifier's reading decides when there is one), or null.
+ */
+export function firmStopLevel(sellerMessage: string): FirmStopTier {
+  return firmStopTier(sellerMessage.replace(/[’‘]/g, "'").trim());
+}
+
+/** True when the seller's message asks to stop the interview (see STOP phrases above). */
+function matchesStopRequest(sellerMessage: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'").trim();
+  if (!text) return false;
+  if (isFirmStop(text)) return true;
+  if (ADDRESSED_STOP_RE.test(text)) return true;
+  const short = wordCount(text) <= SHORT_STOP_MESSAGE_WORDS;
+  const sentences = sentencesOf(text);
+  const last = sentences[sentences.length - 1] ?? "";
+  // Leaving for something: anywhere in a short message; in a long one only
+  // as the closing sentence, or an opening one that apologises or says it's
+  // imminent ("I have to go to a meeting in ten minutes, so quickly: …").
+  const first = sentences[0] ?? "";
+  const leadsWithIt = sentences.length > 1 && (APOLOGY_START_RE.test(first) || SOON_RE.test(first));
+  const errandZone = short ? sentences : [last, ...(leadsWithIt ? [first] : [])];
+  if (errandZone.some((s) => ERRAND_STOP_RE.test(s) && !HABIT_RE.test(s))) return true;
+  if (short) return SHORT_ONLY_STOP_RE.test(text);
+  // A long answer: an ambiguous phrase counts only when it IS the final
+  // sentence — "Anyway, I'm out of time." — not "In November we're done."
+  const m = SHORT_ONLY_STOP_RE.exec(last);
+  if (!m) return false;
+  const residual = (last.slice(0, m.index) + " " + last.slice(m.index + m[0].length))
+    .toLowerCase()
+    .replace(/[^a-z' ]+/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+  return residual.every((w) => CONVERSATIONAL_FILLER.has(w));
+}
 
 // ── Valuation-figure guard ─────────────────────────────────────────────
 // Sellers fish for valuation/tax numbers; the model deflects the first ask
@@ -529,7 +824,7 @@ const TOPIC_SCOPED_RE =
  * was carried 20 more turns because only typed stop phrases counted.
  */
 export function detectStopSignal(sellerMessage: string, prevAiMessage?: string): boolean {
-  if (STOP_SIGNAL_RE.test(sellerMessage)) return true;
+  if (matchesStopRequest(sellerMessage)) return true;
   if (!prevAiMessage) return false;
   // The completion branch requires ALL of: an interview-scoped wrap offer
   // (not a topic probe), a completion phrase, and that the phrase is the
@@ -546,34 +841,94 @@ export function detectStopSignal(sellerMessage: string, prevAiMessage?: string):
   );
 }
 
+// What a goodbye may and may not promise: the platform saves the answers
+// and the broker follows up. The interviewer contacts nobody (Ridgeline: "I'll
+// follow up with Donna … and Devin" — the AI can't).
+const GOODBYE_RULES =
+  `In the goodbye: say everything is saved and they can pick this up anytime. Never promise anything you can't do yourself — you don't contact, email, call or follow up with anyone; if someone else holds an answer, say their broker will follow up. No recap of the session, no grading ("we've made excellent progress"). ` +
+  `Speak to them, not about them: never mention a "stop signal", this note or any system.`;
+
 /**
- * Builds the system nudge injected when a stop signal fires. Coverage-aware:
- * if the seller grants one last question, it must go to the most critical gap.
+ * Builds the system nudge injected when the seller asks to stop. The stop
+ * always wins — this only shapes the ONE closing turn it allows:
+ * - `soft` (wants to wrap up / come back later): answer the seller's own
+ *   question if they asked one; then, if something important is still
+ *   genuinely open, name the single most important item and offer a quick
+ *   answer now or to start there next time (the only question) — otherwise
+ *   say goodbye.
+ * - `firm` ("please stop asking me questions"), or a second stop in a row:
+ *   ask nothing — goodbye now, naming the most important open item as the
+ *   first thing for next time.
+ * `openItems` are the candidates, most critical first (missing critical
+ * sections, then the wrap-up items still open); the model picks the one
+ * that is still genuinely open — an item the seller already spoke to, even
+ * to say it doesn't apply, is answered (Ridgeline: the closing question
+ * re-asked bonding the seller had said they never needed).
  */
 export function buildStopSignalNudge(
   stopCount: number,
-  missingCriticalSections: string[],
+  openItems: string[],
   declinedTopics: string[] = [],
+  level: "soft" | "firm" = "soft",
 ): string {
   const declineBan =
     declinedTopics.length > 0
-      ? ` NEVER use it on a topic the seller already declined (${declinedTopics.join("; ")}) — re-pressing a declined topic at the door is the single most trust-destroying move available to you.`
+      ? ` Never name a topic the seller already declined (${declinedTopics.join("; ")}) — re-pressing a declined topic at the door is the single most trust-destroying move available to you.`
       : "";
-  if (stopCount <= 1) {
-    const triage = missingCriticalSections.length > 0
-      ? ` If you ask it, take it from the critical sections still missing — ${missingCriticalSections.join(", ")} — nothing else is worth their remaining patience.`
-      : ` Everything critical is at least partially covered — prefer wrapping up over asking anything.`;
+  const candidates = openItems.filter((s) => s && s.trim()).slice(0, 4);
+  const pick = candidates.length > 0
+    ? `Still open, most important first: ${candidates.join("; ")}. Pick the single most important one that is GENUINELY open — check this conversation, earlier sessions and the ALREADY ANSWERED list first: an item the seller already spoke to (even to say it doesn't apply or that someone else has it) is answered, so skip it.${declineBan}`
+    : `Nothing critical is still open.`;
+  if (stopCount <= 1 && level === "soft") {
     return (
-      `# SELLER STOP SIGNAL\n` +
-      `The seller has just signaled they want to stop. Respect it. You may ask AT MOST ONE brief, high-value closing question — or none.${triage}${declineBan} ` +
-      `Then thank them, recap in one or two sentences, tell them everything is saved and they can pick this up anytime, and set shouldEnd to true. Do not promise "one last thing" and then ask another.`
+      `# THE SELLER WANTS TO STOP\n` +
+      `The seller has just asked to stop or come back later. Respect it: this is your ONE closing turn. ` +
+      `(1) If they asked you something, answer it first, directly, in a sentence or two (e.g. "is there one thing you most need from me?" → name it). ` +
+      `(2) ${pick} ` +
+      (candidates.length > 0
+        ? `If one is genuinely open, name it in one plain sentence and offer a choice as your only question — a quick answer now, or start there next time ("Before you go, the one thing I'd most like to pin down is your asking-price expectation — a rough number now, or shall we start there next time?"); set shouldEnd false. If none is, say goodbye and set shouldEnd true. `
+        : `Say goodbye and set shouldEnd true. `) +
+      `Never ask a second question, never "one last thing". ${GOODBYE_RULES}`
     );
   }
   return (
-    `# SELLER STOP — FINAL\n` +
-    `The seller has now asked to stop more than once. Ask NOTHING — no questions, no "one quick thing". ` +
-    `Say a warm goodbye, recap in one sentence, note that unanswered items are saved for next time, and set shouldEnd to true. This is mandatory.`
+    `# SELLER STOP — END NOW\n` +
+    (level === "firm" && stopCount <= 1
+      ? `The seller has asked you to stop asking questions. `
+      : `The seller has now asked to stop more than once. `) +
+    `Ask NOTHING — no questions, no "one quick thing". If they asked you something, answer it in a sentence. ${pick} ` +
+    (candidates.length > 0 ? `If one is genuinely open, name it in one plain sentence as the first thing to pick up next time — as a statement, not a question. ` : "") +
+    `Then a short, warm goodbye, and set shouldEnd to true. This is mandatory. ${GOODBYE_RULES}`
   );
+}
+
+/**
+ * The turn after the one closing turn a stop allowed: the seller has
+ * answered it (or said "next time"). The interview ends now.
+ */
+export function buildClosingAnswerNudge(): string {
+  return (
+    `# CLOSING\n` +
+    `The seller asked to stop on their last turn and you gave your one closing turn. Record anything they just told you, then say a short, warm goodbye — ask NOTHING — and set shouldEnd to true. ${GOODBYE_RULES}`
+  );
+}
+
+// "I'll follow up with Donna" — the interviewer can't; the broker does.
+const CLOSING_PROMISE_RE =
+  /\b(I)(?:['’]ll| will| can| am going to|['’]m going to)\s+(?:also\s+|personally\s+|make sure to\s+)?(follow up|reach out|be in touch|get in touch|touch base|check in with|contact|email|e-mail|call|phone)\b/g;
+
+/**
+ * A goodbye that promises what the platform can't do ("I'll follow up with
+ * Donna and Devin", "I'll email you the list") — the promise becomes the
+ * broker's, which is what actually happens: the broker gets every open item.
+ */
+export function scrubClosingPromises(message: string): string {
+  return message.replace(CLOSING_PROMISE_RE, (m, _who: string, verb: string, offset: number, whole: string) => {
+    const before = whole.slice(0, offset);
+    const startOfSentence = before.trim() === "" || /[.!?]\s*$|\n\s*$|[—–:]\s*$/.test(before);
+    const lead = startOfSentence ? "Your broker will" : "your broker will";
+    return `${lead} ${verb.toLowerCase()}`;
+  });
 }
 
 export interface GovernanceInput {
@@ -588,6 +943,29 @@ export interface GovernanceInput {
   /** Session-manager's authoritative stop detection for this turn (sees the
    *  previous agent message; covers completion-acceptance stops). */
   sellerStopDetected?: boolean;
+  /**
+   * Items that must be discussed or deferred before the interview may end on
+   * its own (see completion-gaps.ts): uncaptured critical checklist items in
+   * partly covered critical sections, seller-only topics (reason for sale,
+   * transition, owner pay, add-backs, deal structure, key-person risk) with
+   * no seller source, unreconciled critical source conflicts, open flagged
+   * risks. Each is a plain-language line naming the item.
+   */
+  blockingItems?: string[];
+  /**
+   * The seller-intent classifier's stop verdict for this turn
+   * (seller-intent.ts): "stop", "none", or "unavailable" when it failed or
+   * timed out. The model's own endReason ("the seller asked to stop") is a
+   * corroborating signal: it counts only when there is no classifier verdict
+   * to weigh it against — never against an explicit "none" (QA harvest,
+   * Clearwater: the model wrote "seller wants to stop" on an ordinary answer).
+   */
+  intentStop?: "stop" | "none" | "unavailable";
+}
+
+/** The model's endReason says the seller asked to stop / leave. */
+export function endReasonSaysSellerStop(endReason: string | undefined): boolean {
+  return !!endReason && /\bseller\b[^.]{0,40}\b(?:asked|requested|wants?|wanted|needs?|needed|has|had|said|signal\w*|chose|prefers?)\b[^.]{0,20}\b(?:to )?(?:stop|end|pause|leave|go|wrap|finish|break|come back|continue later|pick (?:this|it) up)/i.test(endReason);
 }
 
 export interface GovernanceResult {
@@ -608,14 +986,20 @@ export interface GovernanceResult {
 export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (!input.shouldEnd) return { allowEnd: false };
 
-  // Session-manager's stop detection is authoritative (it sees the previous
-  // agent message, which unlocks completion-acceptance stops like "that
-  // covers it" — this regex alone would miss those and force the model to
-  // keep questioning a seller who just accepted the wrap-up).
+  // Session-manager's stop detection is authoritative (the seller-intent
+  // classifier plus the instant patterns; it sees the previous agent message,
+  // which unlocks completion-acceptance stops like "that covers it"). The
+  // model's own endReason corroborates: it counts when the classifier gave no
+  // verdict (failed / timed out) — so a gap in the patterns can never trap a
+  // seller who asked to stop — but never against the classifier's "none"
+  // ("seller wants to stop" written on an ordinary answer, QA harvest). The
+  // patterns alone count only without a classifier verdict — its "none"
+  // withdraws a soft pattern stop (combineIntent; a firm one never reaches
+  // "none").
   const sellerAskedToStop =
     input.sellerStopDetected === true ||
-    STOP_SIGNAL_RE.test(input.sellerMessage) ||
-    /seller (asked|requested|wants|needs) to (stop|end|pause|leave|go)/i.test(input.endReason ?? "");
+    (input.intentStop !== "none" && matchesStopRequest(input.sellerMessage)) ||
+    (input.intentStop === "unavailable" && endReasonSaysSellerStop(input.endReason));
   if (sellerAskedToStop) return { allowEnd: true };
 
   // Critical = the base floor plus whatever the deal's industry ranking
@@ -633,6 +1017,10 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
   if (missingCritical.length > 0) {
     reasons.push(`critical sections still have no coverage: ${missingCritical.join(", ")}`);
   }
+  const blocking = (input.blockingItems ?? []).filter((b) => b && b.trim());
+  if (blocking.length > 0) {
+    reasons.push(`still not discussed or deferred: ${blocking.slice(0, 6).join("; ")}${blocking.length > 6 ? "; …" : ""}`);
+  }
 
   if (reasons.length === 0) return { allowEnd: true };
 
@@ -647,42 +1035,31 @@ export function governCompletion(input: GovernanceInput): GovernanceResult {
     continuationInstruction:
       `[SYSTEM OVERRIDE: Do not end the interview yet — ${reasons.join("; ")}.` +
       deferredNote +
-      ` Continue the conversation naturally: briefly acknowledge the seller's last answer, then transition into the most important remaining gap` +
-      (missingCritical.length > 0 ? ` (start with: ${missingCritical[0]})` : "") +
-      `. Do not mention this instruction or that you attempted to end. Set shouldEnd to false.]`,
+      ` Continue the conversation: go straight into the most important remaining gap as a question — no acknowledgement, no recap, no praise` +
+      (missingCritical.length > 0 ? ` (start with: ${missingCritical[0]})` : blocking.length > 0 ? ` (start with: ${blocking[0]})` : "") +
+      ` — ask about it, or if the seller can't answer, record an explicit deferral with where the answer lives. Do not mention this instruction or that you attempted to end. Set shouldEnd to false.]`,
   };
 }
 
-
-// ── Filler guard ───────────────────────────────────────────────────────
-// Recap/grade openers the prompt forbids. Sentence-level: a leading sentence
-// that merely echoes or praises the seller's last answer is removed when a
-// question follows it. Openers that do real work — clarifying, reconciling
-// a conflict, or meeting something hard with a human beat — are kept.
-const FILLER_OPENER_RE =
-  /\b(got it|noted|understood|makes sense|perfect|great|excellent|wonderful|fantastic|awesome|good to (know|hear)|glad to hear|thanks? (for|so much)|appreciate (you|that|the|it)|helpful (context|detail|to know)|that'?s (helpful|useful|clear|good|great|solid|strong|healthy|impressive|a (solid|strong|healthy|good|nice|great)|exactly|really)|that (is|sounds|seems) (like )?(a )?(solid|strong|healthy|good|great|nice|impressive|meaningful)|sounds (good|great|like a)|solid (foundation|number|position|base)|strong (position|foundation|number|signal)|healthy (margin|number|spread|sign)|impressive|buyers? (love|like|want|appreciate|will (love|appreciate|like|value))|from a buyer'?s (perspective|standpoint|point of view)|the kind of (thing|stuff|detail|number|signal|answer)|exactly the kind|what buyers|a good sign|good sign|nice (to see|spread|mix)|love to see|congrat|(is|are|looks|sounds) (a |an )?(very |really |quite |pretty )?(strong|solid|healthy|impressive|excellent|great)\b|that'?s the kind of|buyers? (look|are looking|will look|tend to look) for|buyers? (notice|value|reward|pay (more|a premium)))/i;
-const KEEP_OPENER_RE =
-  /\b(clarif|confirm|to be sure|make sure|just to check|double.?check|you mentioned|earlier you|you said|on file|i had|down as|your broker|the broker|privately|private|off the record|between (you|us)|won'?t (go|be|appear) in|stays? (with|between)|flag that|keep that|not (in|for) the (document|cim|memorandum)|your call|whenever you'?re ready|we can (skip|leave|come back)|correct(ed|ion)|updat(ed|ing) (that|it)|the (p&l|questionnaire|document|statement)s? (say|show|list|has|have)|doesn'?t (match|line up|square)|conflict|differ|discrepanc|versus|vs\.?|sorry|i'?m sorry|that (must|sounds) (be |like )?(a |an )?(really |very )?(hard|difficult|tough|rough|painful|a lot)|understandable|take your time|no pressure|apolog|my mistake|you'?re right|fair point|i should have)/i;
-
 /**
- * Splits off leading sentences. A "sentence" ends at . ! ? or an em-dash
- * clause break followed by whitespace.
+ * The turn after a stop signal. The seller's stop stands — they may answer
+ * the one closing question the agent allowed, at any length, and the
+ * interview still ends ("seller stop always wins"). It is withdrawn only
+ * when the seller SAYS they want to carry on: "let's keep going", "I've got
+ * a few more minutes", "can we continue with the lease?". Talking at length
+ * is not a decline — a seller answering "…who holds the lease? Or shall we
+ * wrap up?" in full has answered the closing question, not changed their
+ * mind (review-caught: a length rule kept questioning a seller who had asked
+ * to stop).
  */
-const ABBREVIATION_RE = /\b(Dr|Mr|Mrs|Ms|Jr|Sr|St|No|vs|Inc|Ltd|Co|Corp|approx|est|e\.g|i\.e)\.$/i;
-function leadingSentence(text: string): { head: string; rest: string } | null {
-  // Walk sentence terminators; skip abbreviations ("Dr. Rao") and decimals ("1.5")
-  const re = /[.!?](?=\s+\S)/g;
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(text)) !== null) {
-    const head = text.slice(0, m.index + 1);
-    if (head.length < 3 || head.length > 240) { if (head.length > 240) return null; continue; }
-    if (ABBREVIATION_RE.test(head)) continue;
-    if (/\d\.$/.test(head) && /^\s*\d/.test(text.slice(m.index + 1))) continue;
-    const rest = text.slice(m.index + 1).replace(/^\s+/, "");
-    return { head, rest };
-  }
-  return null;
+const CONTINUE_RE =
+  /\b(?:let'?s (?:keep going|continue|carry on|keep at it|push on|do (?:a few|some|a couple(?: of)?) more|finish (?:this|it|up) (?:now|today))|(?:i'?m|i am) (?:happy|fine|good|ok(?:ay)?|glad) to (?:keep going|continue|carry on|do (?:a few |some )?more)|(?:i|we) (?:can|could) (?:keep going|carry on|do (?:a few|some|a couple(?: of)?) more)|(?:can|could|shall) we (?:continue|keep going|carry on|move on)\b(?! (?:later|tomorrow|another|some other|next (?:time|week)))|i(?:'ve| have)(?: got)? (?:a few|a couple(?: of)?|some|\d+|five|ten|fifteen) (?:more )?minutes|i (?:still )?(?:have|'ve got) (?:some|more|a bit of|plenty of) time|not (?:done|finished) yet|i'?m not done|no,? (?:let'?s )?(?:keep going|continue|carry on)|(?:we|i) can keep going)\b/i;
+export function sellerDeclinedWrapUp(_prevAiMessage: string | undefined, sellerMessage: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'");
+  if (matchesStopRequest(text) || COMPLETION_RE.test(text)) return false;
+  return CONTINUE_RE.test(text);
 }
+
 
 // Praise of the seller's question itself ("Great question.", "Good
 // questions — …") — never an answer to anything.
@@ -693,10 +1070,9 @@ const QUESTION_PRAISE_PREFIX_RE =
 
 // "Got it — $8,417 is confirmed." — an acknowledgement that only reports the
 // seller's last answer was recorded. The "confirm" in it isn't a
-// clarification (KEEP_OPENER_RE), it's the recap the tone rules forbid.
+// clarification, it's the recap the tone rules forbid.
 const RECAP_RECORDED_RE =
   /^(?:got it|noted|understood|perfect|great|thanks|thank you|okay|ok|all right|alright|good)\b[^.?!]*\b(?:is|are|'s|has been|have been)\s+(?:now\s+)?(?:confirmed|noted|recorded|captured|locked in|on file|updated)\s*[.!]$/i;
-const keepsOpener = (head: string) => KEEP_OPENER_RE.test(head) && !RECAP_RECORDED_RE.test(head.trim());
 
 // Words that open a direct answer ("Yes — …", "No, …", "It depends …").
 const ANSWER_START_RE =
@@ -725,15 +1101,363 @@ export function sellerAskedQuestion(sellerMessage: string | null | undefined): b
   return questions.some((q) => {
     const s = q.trim().replace(/^["'(\s]+/, "").replace(/^(?:and|but|so|also|ok(?:ay)?|oh|well|hey|hmm|um|sorry|then)[,\s]+/i, "");
     if (/^(?:what|why|how|when|where|which|who|whom|whose|is|are|was|were|am|do|does|did|can|could|should|would|will|shall|may|might|must|have|has|had|isn'?t|aren'?t|wasn'?t|don'?t|doesn'?t|didn'?t|can'?t|couldn'?t|shouldn'?t|wouldn'?t|won'?t|haven'?t|hasn'?t|any|anything|you|your|so what|what's|how's|who's|where's)\b/i.test(s)) return true;
-    return /(?:,|\bor)\s*(?:right|correct|yes|no|ok(?:ay)?|true|isn'?t (?:it|that)|don'?t (?:you|they|we)|aren'?t (?:they|we|you)|won'?t (?:it|they)|you think|you know|agreed)\s*\?$/i.test(s) || /\b(?:right|correct)\?$/i.test(s);
+    return /(?:,|\bor)\s*(?:right|correct|yes|no|ok(?:ay)?|true|isn'?t (?:it|that)|don'?t (?:you|they|we)|aren'?t (?:they|we|you)|won'?t (?:it|they)|you think|agreed)\s*\?$/i.test(s) || /\b(?:right|correct)\?$/i.test(s);
   });
 }
 
+// ── Filler guard ───────────────────────────────────────────────────────
+// The founder's tone rule: the reply IS the next question. A sentence in
+// front of the question survives only when it does real work — answering
+// the seller, reconciling a conflict with what's on file, a short human beat
+// on something hard, a privacy promise, a clarification, or asking for a
+// document. Everything else that merely echoes, grades or praises the
+// seller's last answer ("That's a realistic read —", "Good — a clean Phase I
+// removes a major due diligence risk for buyers.", "That powertrain-agnostic
+// mix is actually a strength") is cut. The check is sentence-by-sentence
+// over EVERY sentence before the question (not just the first two), so a
+// two-sentence grade or a grade tucked after a useful sentence goes too.
+//
+// Three verdicts per sentence, in this order:
+//   1. WORK (kept): phrase-anchored patterns for the jobs above. Anchored on
+//      whole phrases — "confirm whether", "stays with your broker" — never on
+//      fragments: "clarif"/"confirm"/"your broker" used to keep "That's
+//      helpful — having Dana confirm…" and "That's exactly right — your
+//      broker will want…" (QA harvest).
+//   2. FILLER (cut): acknowledgement words, a back-reference ("That…",
+//      "This…", "It…") followed by a verdict, grading vocabulary, buyer
+//      cheerleading, session recaps, or a sentence that is mostly the
+//      seller's own words played back.
+//   3. Otherwise kept — context the question needs ("On patient records: in
+//      a share sale, the records stay with the corporation.").
+
+/** Sentences that do a job for the seller — never cut. */
+const WORK_PATTERNS: RegExp[] = [
+  // Privacy promises
+  /\b(?:stays?|goes|go|kept|keep (?:it|that|this)) (?:only )?(?:with|to|between) (?:you and )?(?:your broker|the broker)\b|\b(?:your|the) broker only\b|\bbroker[- ]only\b|\bprivately\b|\bin private\b|\b(?:kept|keep (?:it|that|this)|stays?|remains?) private\b|\bprivate (?:to|between|note)\b|\boff the record\b|\bwon'?t (?:go|be|appear|end up) in\b|\bnot (?:go )?in(?:to)? (?:the|any) (?:sale |marketing )?(?:document|cim|memorandum|materials)|\bnever (?:in )?the (?:sale )?document\b|\bthat'?s the whole story\b|\bfrom a document perspective\b/i,
+  // A human beat on something hard
+  /\b(?:i'?m (?:so |really |very |truly )?sorry|sorry to hear|that (?:must|sounds|would) (?:be |have been |like )?(?:a |an )?(?:really |very |incredibly )?(?:hard|difficult|tough|rough|painful|stressful|a lot|heavy|awful)|understandable|take your time|no pressure|no rush|i (?:completely |totally )?understand (?:that|why|if|how)|that'?s a lot to (?:carry|deal with|manage))\b/i,
+  // Owning a miss
+  /\b(?:you'?re (?:right|correct)(?=\s*(?:[\u2014\u2013,.!:;]|-\s|$))|my mistake|my apologies|apologies|i should have|i missed that|good catch)/i,
+  // Reconciling a conflict with what's on file
+  /\b(?:doesn'?t|don'?t|does not|do not) (?:match|line up|square|tie out|agree)|\bconflicts? with\b|\bdiffers? from\b|\bdifferent from\b|\bdiscrepanc\w*|\bversus\b|\bvs\.?(?=\s)|\bhelp me square\b|\breconcile\b|\b(?:(?:a bit|a little|slightly|well|much|quite a bit|a lot) )?(?:above|below|higher than|lower than|short of) (?:the|what|your)\b|\bwhereas\b|\bbut (?:the|your) (?:p&l|statements?|documents?|financials?|questionnaire|file|records?|t2|tax returns?|books|reports?|lease|roster|list|schedule|notes)\b/i,
+  // Clarifying (phrase-anchored)
+  /\b(?:just to (?:clarify|confirm|check|be sure|make sure|be clear)|to (?:clarify|be clear)|let me (?:clarify|make sure|check)|quick clarification|double.?check(?:ing)?|(?:want|need) to make sure i (?:have|understood|got)|(?:i )?(?:want|need) to confirm (?:whether|that|which|if|what|the)|confirm(?:ing)? (?:whether|which|if)|clarify (?:whether|if|which|what))\b/i,
+  // Asking for a document / naming the follow-up
+  /\b(?:if (?:you|\w+) (?:can|could) (?:send|upload|share|pull|forward|dig out|grab|have (?:[\w'-]+ ){1,3}?(?:send|upload|pull|share|forward|email|dig out|grab))|(?:please|could you|can you|would you) (?:upload|send|share|forward)|upload (?:it|that|them|the|those)|(?:after|once) we (?:finish|wrap|are done)|documents? area|i'?ll (?:note|flag|add|record|make a note of|pass|leave) (?:that|it|this|those|them)(?= (?:for|as|down|with|to)\b|\s*(?:[.,;:!\u2014\u2013]|$))|i'?ll follow up\b|(?:as|for) (?:a )?follow.?up)\b/i,
+  // "Have Donna pull the WCB rate letters", "get Devin to send the bid log"
+  /^(?:(?:and|so|just)\s+)?(?:have|get|ask) [A-Z][\w'-]+(?: [A-Z][\w'-]+)? (?:to )?(?:send|pull|upload|forward|share|email|dig out|grab|put together|export|print)\b/,
+  // Handing the seller a choice
+  /\b(?:your call|whenever you'?re ready|we can (?:skip|leave|come back|move on|circle back)|happy to (?:skip|come back|move on)|if you'?d rather)\b/i,
+];
+
+const ACK_START_RE =
+  /^(?:good|great|perfect|excellent|wonderful|fantastic|awesome|nice|lovely|brilliant|exactly|absolutely|right|okay|ok|got it|understood|noted|makes sense|(?:that|it|this|all of that|all that) (?:(?:really|totally|completely) )?makes (?:(?:complete|total|perfect|a lot of|good) )?sense|fair enough|thanks?(?: you)?|thank you|(?:i )?(?:really )?appreciate|helpful|interesting|cool|all right|alright|glad|love that|congrat\w*|(?:that|this|it) (?:really |definitely )?(?:clarifies|squares|helps|tracks|works|adds up|checks out)(?: (?:it|that|things|everything|the (?:numbers|picture|gap|mix|question)|a lot|up))?(?=\s*(?:[—–,.;:!]|-\s|$))|(?:that|this|it)(?:'d| would)(?: really| definitely)? (?:be )?(?:useful|helpful|great|good|ideal|perfect|handy|a (?:big |great )?help)|i hear you|i get (?:it|that)|(?:that'?s|that is|how) reassuring|reassuring|good to (?:know|hear|have|see)|sounds (?:good|great|right|fair)|that(?:'s| is) (?:fair|fine|clear|understandable)(?=\s*(?:[—–,.;:!]|-\s|$)))\b/i;
+// A courtesy beat that stays in front of a privacy promise or a document
+// request ("Understood — that stays with your broker only", "No problem —
+// if Donna can send…") and goes anywhere else.
+const COURTESY_RE = /^(?:understood|no problem|not a problem|no worries|of course|sure|absolutely|totally fair|fair enough|that'?s (?:ok|okay|fine|no problem))[.!]?$/i;
+// "That…", "This…", "It…", "Those…", "Both of those…" + a verdict verb: the
+// sentence is a comment on what the seller just said.
+const BACKREF_VERDICT_RE =
+  /^(?:that|this|those|these|both(?: of (?:those|these|them))?|it|which|all of (?:that|this)|the fact that)(?:'s|\s+(?:[\w$€£%.,'’&/\-–]+\s+){0,12}?(?:is|are|was|were|'s|sounds?|seems?|looks?|feels?|reads?|makes?|made|confirms?|clarifies|clarified|helps?|gives?|shows?|covers?|comes? through|matters?|will (?:matter|help|land|play|give|resonate|go)|would (?:matter|help|give)|lines? up|tracks?|speaks?|removes?|reduces?|simplifies|simplify|puts?|paints?|adds? up|counts?|stands? out|resonates?|tells?))\b/i;
+const GRADING_PATTERNS: RegExp[] = [
+  // "That's a realistic read", "Smart planning —", "A clear picture —",
+  // "Good detail on the rate structure" — sentence-initial only, so "I don't
+  // have a clear read on working capital" is not a grade.
+  /^(?:(?:that'?s|that is|this is|it'?s|what|such|also)\s+)?(?:a |an )?(?:really |very |pretty |quite |genuinely )?(?:realistic|candid|clear(?:-eyed)?|clean|helpful|useful|important|smart|sensible|solid|strong|healthy|impressive|reassuring|favou?rable|meaningful|straightforward|manageable|great|good|nice|excellent|fair|honest|familiar|well[- ]spec'?d|valuable|compelling|promising|positive|rare|cleaner|stronger|better|tidy|thoughtful|proactive)\s+(?:read|picture|assessment|reality check|approach|planning|plan|point|context|detail|note|structure|outcome|move|answer|call|summary|split|view|position|story|track record|record|foundation|base|number|figure|margin|mix|setup|set-?up|arrangement|signal|sign|spread|profile|acquisition|bottleneck|pass-through|facility|operation|result|place|thing|info(?:rmation)?|explanation|insight|breakdown|overview|update|news|to (?:know|hear|have|see|get))\b/i,
+  // "…is actually a strength —", "…is meaningful —", "…is actually favorable
+  // given…" — a verdict ending its clause; "the lease is a standard 10-year
+  // term" (the word describes a noun) is context, not a grade.
+  /\b(?:is|are|'s|was|looks?|sounds?|seems?)\s+(?:(?:actually|really|quite|very|pretty|genuinely|definitely|exactly|also|already|clearly|a|an)\s+)*(?:strength|differentiator|asset|plus|advantage|selling point|good sign|favou?rable|meaningful|reassuring|standard|straightforward|manageable|healthy|strong|solid|clean|impressive|significant|notable|valuable|encouraging|good news|good thing|the right (?:answer|approach|call|move|way|instinct|thing to do)|smart|sensible|exactly right|spot on|helpful|useful)(?=\s*(?:[\u2014\u2013,.;:!]|-\s|$)|\s+(?:for|given|in|at|and|to|because|here|there|now|overall|too|as well)\b)/i,
+  // "…, that's a manageable transition if…", "which is a strong position"
+  /\b(?:that|this|which|it)(?:'s| is) (?:a |an )?(?:really |very |pretty |quite |genuinely |actually )?(?:manageable|realistic|clean|healthy|solid|strong|smart|sensible|great|good|nice|excellent|impressive|reassuring|favou?rable|meaningful|valuable|compelling|promising|positive|rare|tidy|enviable|remarkable)\b/i,
+  // "The vet clinics sound sticky", "that looks solid"
+  /\b(?:sounds?|seems?|looks?|feels?)\s+(?:really |very |pretty |quite |fairly |genuinely )?(?:sticky|good|great|solid|strong|healthy|stable|reasonable|manageable|promising|positive|right|clean|smart|sensible|fine|reassuring|encouraging|well[- ]\w+|like (?:a )?(?:good|great|solid|strong|smart|sensible|healthy|clean))\b/i,
+  // Buyer commentary: "A smart buyer will prioritize that conversation…"
+  /^(?:a|the|any|most|every)?\s*(?:smart |savvy |serious |good |right |sophisticated )?(?:buyers?|acquirers?|purchasers?)\b[^.?!]*\b(?:will|would|should|tend to|typically|usually)\b/i,
+  // Recaps of the seller's own point / the file's state
+  /\byou(?:'ve| have) already (?:flagged|covered|mentioned|noted|said|addressed|identified|thought)\b|\bi (?:now )?have a (?:clear|good|full|solid|great|much (?:clearer|better)) (?:picture|sense|read|understanding)\b|\bmade (?:(?:really|very|some|such) )?(?:good|great|real|solid|excellent|terrific|tremendous|fantastic|wonderful|strong|amazing|significant|substantial|a lot of|lots of|huge) progress\b|\b(?:all |are all |is all )?(?:well|nicely|thoroughly|fully) (?:captured|covered|documented|understood)\b|\bwe (?:have|now have|'ve got) (?:strong|good|solid|great|comprehensive|thorough|detailed) (?:documentation|coverage|detail|information|data)\b|\bwhich is why\b|\b(?:will|would) likely be part of\b|\bdirectly (?:impacts?|affects?)\b/i,
+  // Buyer cheerleading and valuation commentary
+  /\b(?:buyers?|acquirers?|lenders?|insurers?|investors?|purchasers?|a buyer|the buyer|the right buyer)\b[^.?!]{0,60}\b(?:love|like|appreciate|value|reward|want to (?:see|hear)|need to hear|will (?:love|like|appreciate|value|notice|want to see)|pay (?:more|a premium)|look for|are looking for|tend to look for|feel confident|(?:will |would )?(?:want|need|expect) (?:certainty|comfort|confidence|assurance|clarity|to (?:know|understand|see))|prioriti[sz]e)\b/i,
+  // "Forty trucks is a significant operation", "is a much simpler picture
+  // for buyers", "keeps everything clean for a buyer's accountant", "is
+  // clearly a big part of what makes this business attractive"
+  /\b(?:is|are|'s|was|were|makes? (?:for|it|this)|keeps? (?:it|this|that))\s+(?:(?:a|an|the)\s+)?(?:(?:much|far|really|very|pretty|quite|fairly|genuinely|actually|clearly|definitely|also)\s+)*(?:significant|sizable|sizeable|substantial|serious|major|big|simple|simpler|clean|cleaner|clearer|tidy|tidier|nice|solid|strong|healthy|stable|good|great|better|manageable|straightforward|compelling|attractive|appealing|impressive|meaningful|valuable|sticky|durable|resilient|rare|enviable|remarkable|reasonable|sensible|realistic)(?:\s+[\w-]+)?\s+(?:operation|picture|story|business|setup|set-up|structure|position|profile|fleet|base|footprint|book|foundation|platform|asset|arrangement|outcome|result|sign|signal|number|figure|margin|mix|situation|spot|place|shape|trajectory|track record|record|team|relationship|moat|advantage)s?\b/i,
+  /\bkeeps? (?:everything|things|it|this|that|the (?:books|numbers|picture|story|file|deal))\s+(?:\w+\s+)?(?:clean|simple|tidy|clear|straightforward|neat)\b|\bsimplif(?:y|ies) (?:things|matters|the (?:picture|story|deal|diligence))\b|\bwhat makes (?:this|the|your|a) (?:business|company|practice|shop|clinic|pharmacy|operation|firm) (?:attractive|valuable|special|work|stand out|compelling|appealing)\b|\b(?:a )?(?:big|huge|key|major|core) part of (?:what|the (?:value|appeal|story))\b|\bmakes? (?:complete |total |perfect |good |a lot of )?sense\s*[.!]?$/i,
+  /\b(?:gives?|give|giving|provides?) (?:a |the )?(?:buyers?|them|a buyer|the buyer|buyers and their \w+)\b[^.?!]{0,30}\b(?:confidence|comfort|a clear picture|certainty|peace of mind|a sense of|real|a (?:clear |real )?path|runway|a head start)\b|\b(?:will|would|should) (?:land|play|read|sit|go over) well\b|\bland well\b|\bmatters? (?:to|for|in) (?:buyers|valuation|a buyer|the deal)\b|\bwill matter to\b|\bthe distinction that matters\b|\bwhat (?:buyers|they|a buyer) (?:want|need|like|love|expect) to (?:see|hear)\b|\bexactly (?:what|the kind)\b|\bthe kind of (?:detail|thing|answer|number|signal|stuff|insight|story)\b|\bremoves? (?:a |the |most of the |one )?(?:major |big |key |common |real )?(?:\w+ )?(?:risk|concern|obstacle|question mark)\b|\bde-?risks?\b|\b(?:a )?(?:real|genuine|clear|big|major) (?:asset|strength|differentiator|plus|advantage)\b|\bspeaks for itself\b|\b(?:will|would|should|could|is going to|are going to) (?:really |definitely |certainly )?resonate\b|\bresonates? (?:with|well)\b|\btells a (?:good|great|strong) story\b|\bcomes? through clearly\b|\bwell below (?:the )?industry\b|\bincreasingly rare\b|\bsmart (?:planning|move|approach|buyer)\b|\bgood (?:to (?:know|hear|have|see|get)|detail|news|sign)\b|\blines up with what i'?d expect\b|\bin (?:a )?(?:good|great|strong) (?:place|position|shape)\b|\bwell[- ]positioned\b|\bbuyers? (?:and their \w+ )?(?:will|would) (?:definitely |certainly )?(?:want|need) (?:that |this |it )?nailed down\b|\byou(?:'ve| have) built\b|\bsomething (?:solid|special|great|real)\b|\b(?:cleaner|stronger|better) [\w ]{0,30}(?:i'?ve seen|out there)\b/i,
+];
+// Session recaps in front of a question ("We've covered a lot of ground —
+// your market position, referral channels…").
+const RECAP_START_RE =
+  /^(?:(?:\w+,\s+)?we(?:'ve| have) (?:now |really )?(?:covered|gone through|been through|talked through|walked through)|you(?:'ve| have) (?:given|shared|walked|painted|told)|that (?:covers|gives me|rounds out)|i (?:now )?have a (?:clear|good|full|solid) (?:picture|sense|read)|(?:\w+,\s+)?(?:we|i)(?:'ve| have) (?:now |already )?(?:noted|captured|logged|recorded|got(?:ten)? down)(?! (?:that|it|this|those) (?:for|as)\b))/i;
+
+const isWork = (s: string) => WORK_PATTERNS.some((re) => re.test(s)) && !RECAP_RECORDED_RE.test(s.trim());
+
 /**
- * Removes filler sentences at the top of a reply when a question remains
- * after them. Returns the message unchanged when no question follows
- * (wrap-ups, goodbyes), when the opener does real work, or when nothing
- * matches.
+ * True when a sentence placed in front of the question only acknowledges,
+ * grades, praises or recaps — nothing in it survives trimLeadSentence.
+ * `sellerMessage` enables the played-back check.
+ */
+export function isFillerSentence(sentence: string, sellerMessage?: string | null): boolean {
+  const s = sentence.trim();
+  if (!s || s.includes("?")) return false;
+  return trimLeadSentence(s, { sellerMessage: sellerMessage ?? null, question: null }).trim() === "";
+}
+
+// ── Clause-level trimming ──────────────────────────────────────────────
+// A verdict word used to cost the whole sentence it sat in, taking the
+// document figure the question stood on with it: "Your 2024 T2 shows $180K
+// in shareholder loans outstanding, which is significant. How much of that
+// do you plan to repay?" reached the seller as "How much of that do you plan
+// to repay?" (round-V review; Great Lakes turn 10 lost its IATF
+// recertification date the same way). So a lead sentence is read clause by
+// clause: the acknowledgement, the grade and the buyer commentary go; the
+// fact stays. "…, which is significant." → "."; "Got it — have Donna pull
+// the WCB letters" → "Have Donna pull the WCB letters"; "your 18 PPM … are
+// strong, but IATF 16949 recertification is coming up fall 2026" → "IATF
+// 16949 recertification is coming up fall 2026".
+
+type ClauseVerdict = "work" | "courtesy" | "filler" | "content";
+interface Clause { sep: string; text: string }
+
+// Where a sentence divides into clauses: a spaced dash, a semicolon, a colon
+// after a lead-in, or a comma before "which / but / so / though …".
+const CLAUSE_SEP_RE =
+  /(\s[—–]\s|\s-\s|;\s+|:\s+|,\s+(?=(?:which|but|though|although|whereas|so|and (?:that|this|it|which)(?:'s| is| was| will| would))\b))/i;
+const LEADING_CONJ_RE = /^(?:and|but|so|though|although|whereas|yet|also)\s+/i;
+const WHICH_CLAUSE_RE = /^(?:which|and (?:that|this|it|which))\b/i;
+// A clause that restates ("so the $260K is your total…", "so that's…").
+const SO_RECAP_RE = /^so\s+(?:the|that|this|it|you|your|all|both|those|these|basically|essentially)\b/i;
+// Contrast that turns from a grade to the new point: "…are strong, but IATF …".
+const CONTRAST_RE = /^(?:but|though|although|whereas|yet)\b/i;
+// A clause that points at the file: "your 2024 T2 shows", "the lease you
+// uploaded", "the call notes mention", "on file".
+const CITES_FILE_RE =
+  /\b(?:your|the|their)\s(?:[\w&'’.-]+\s){0,4}?(?:t2s?|t4s?|p&l|pnl|statements?|financials?|documents?|docs|reports?|lease|leases|contracts?|agreements?|msa|schedules?|registers?|roster|returns?|filings?|notes|transcripts?|call|calls|emails?|questionnaire|files?|books|ledger|polic(?:y|ies)|certificates?|budget|forecast|invoices?|records|summary|sheets?|deck|website|appraisal|audit|letters?|log|add-?back list)\b(?:\s[\w&'’.,$%-]+){0,5}?\s(?:shows?|says?|lists?|mentions?|notes?|states?|indicates?|puts?|records?|has|had|runs?|ran|expires?|ends?|renews?|covers?|includes?|reports?|gives?)\b|\b(?:you|they) (?:uploaded|sent|shared|provided)\b|\baccording to\b|\bon file\b|\bin (?:your|the) (?:documents?|files?|statements?|p&l|t2|report|lease|contract|agreement|questionnaire)\b/i;
+// Something specific: a number, a month, or a mid-sentence proper name / acronym.
+const SPECIFIC_FACT_RE = /\d|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b|(?<=\s)(?:[A-Z]{2,}|[A-Z][a-z]+)\b/;
+
+function clausesOf(body: string): Clause[] {
+  const parts = body.split(CLAUSE_SEP_RE);
+  const out: Clause[] = [{ sep: "", text: parts[0] ?? "" }];
+  for (let i = 1; i < parts.length; i += 2) out.push({ sep: parts[i], text: parts[i + 1] ?? "" });
+  // A colon only divides after a short lead-in ("On the lease side:",
+  // "Stepping back to quality:"); after a longer clause it stays inside it.
+  const merged: Clause[] = [];
+  for (const c of out) {
+    const prev = merged[merged.length - 1];
+    if (prev && /^:\s+$/.test(c.sep) && wordCount(prev.text) > 8) prev.text += c.sep + c.text;
+    else merged.push({ ...c });
+  }
+  return merged;
+}
+
+/** Content stems plus figures, for the played-back check. */
+function echoTokens(text: string): string[] {
+  const figures = (text.match(/\d[\d,.]*/g) ?? []).map((n) => n.replace(/[,.]+$/, "").replace(/,/g, "")).filter(Boolean);
+  return [...Array.from(contentStems(text)), ...figures];
+}
+function echoesSeller(text: string, sellerMessage: string | null): boolean {
+  if (!sellerMessage) return false;
+  const own = echoTokens(text);
+  if (own.length < 4) return false;
+  const said = new Set(echoTokens(sellerMessage));
+  return own.filter((w) => said.has(w)).length / own.length >= 0.7;
+}
+
+function clauseVerdict(raw: string, sellerMessage: string | null): ClauseVerdict {
+  const s = raw.trim().replace(/^["'(\s]+/, "").replace(/[’‘]/g, "'").replace(/[.!]+$/, "");
+  if (!s) return "filler";
+  const bare = s.replace(LEADING_CONJ_RE, "");
+  if (RECAP_RECORDED_RE.test(`${bare}.`)) return "filler";
+  if (isWork(s)) return "work";
+  if (COURTESY_RE.test(bare)) return "courtesy";
+  // An aside between dashes hides the verdict from the back-reference
+  // check: "That differentiation — the 45-minute follow-ups, continuity of
+  // care — will resonate with buyers" (seen live after round 1).
+  const flat = bare.replace(/\s[—–]\s[^—–.?!]{1,220}?\s[—–]\s/g, " ");
+  const any = (re: RegExp) => re.test(bare) || (flat !== bare && re.test(flat));
+  if (QUESTION_PRAISE_SENTENCE_RE.test(`${bare}.`)) return "filler";
+  if (ACK_START_RE.test(bare)) return "filler";
+  if (any(RECAP_START_RE)) return "filler";
+  // "I'll note that the referrals are personal to you" — the recap in note
+  // form (a real follow-up note, "I'll note that for Carol", is work above).
+  if (/^i'?ll (?:note|flag|record|make a note(?: of)?) (?:that|how|the|your)\b/i.test(bare)) return "filler";
+  if (GRADING_PATTERNS.some(any)) return "filler";
+  // "…, which directly affects next year's revenue", "…, which is standard"
+  // are caught as grades above; "…, which includes the Westlock terminal"
+  // adds a fact and stays.
+  // Mostly the seller's own words played back ("A range of six to seven
+  // thousand active patients, with Carol pulling the exact count.").
+  if (echoesSeller(bare, sellerMessage)) return "filler";
+  // A figure, a comparison or an implication the question stands on is
+  // context, not a comment — even when it opens with "That's": "That's
+  // about $400K more than the T2 shows.", "That would make Leah your only
+  // senior physio." (It got here without a grade.)
+  if (FACT_CONTEXT_RE.test(bare)) return "content";
+  if (any(BACKREF_VERDICT_RE)) return "filler";
+  return "content";
+}
+
+/**
+ * The part of a lead sentence worth keeping — "" when nothing is. Clauses
+ * that acknowledge, grade, praise, recap or cheer for buyers are dropped;
+ * work (a clarification, a reconciliation, a privacy promise, a document
+ * request, a human beat) stays. In a sentence that carries a grade, the
+ * rest stays only when it is context the question stands on:
+ *  - before the grade: it cites the file or carries something specific ("Your
+ *    2024 T2 shows $180K in shareholder loans outstanding[, which is
+ *    significant]"); an opinion with no fact in it ("Keeping them engaged is
+ *    the real retention play[, which you've already flagged]") goes with it;
+ *  - after a dropped acknowledgement or grade — usually the seller's answer
+ *    played back ("That clarifies it — Maplecrest at 41% …"): only when it
+ *    cites the file, or turns ("…, but IATF 16949 recertification is coming
+ *    up fall 2026") to something specific. Word overlap with the question
+ *    proved no guide: a recap shares the question's topic by nature (QA
+ *    corpus: "That's a clear picture — Comfort Club as the base, heat pumps
+ *    as a growth engine…" before a heat-pump question).
+ * `question` is kept for callers; the rules above don't need it.
+ */
+export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string | null; question: string | null }): string {
+  const lead = sentence.match(/^\s*/)?.[0] ?? "";
+  const trail = sentence.match(/\s*$/)?.[0] ?? "";
+  const core = sentence.trim();
+  if (!core || core.includes("?")) return sentence;
+  const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
+  const body = core.slice(0, core.length - end.length);
+  // An aside between dashes is part of the clause around it: "That
+  // differentiation — the 45-minute follow-ups, continuity of care — will
+  // resonate with buyers" is "That differentiation will resonate with
+  // buyers", all of it a grade (seen live after round 1).
+  const flat = body.replace(/\s[—–]\s[^—–.?!]{1,220}?\s[—–]\s/g, " ");
+  if (flat !== body && trimLeadSentence(`${flat}.`, ctx).trim() === "") return "";
+  const clauses = clausesOf(body);
+  // "We've covered a lot of ground: <the topics>" — everything after the
+  // session-recap lead-in is the recap itself.
+  if (clauses.length > 1 && RECAP_START_RE.test(clauses[0].text.trim()) && /^(?::\s+|\s[—–]\s|\s-\s)$/.test(clauses[1].sep)) return "";
+  const verdicts = clauses.map((c) => clauseVerdict(c.text, ctx.sellerMessage));
+  if (!verdicts.some((v) => v === "filler" || v === "courtesy")) return sentence;
+
+  const isLabel = (i: number) => /^:\s+$/.test(clauses[i + 1]?.sep ?? "") && wordCount(clauses[i].text) <= 8;
+  const keep: boolean[] = clauses.map(() => false);
+  let afterFiller = false;
+  for (let i = 0; i < clauses.length; i++) {
+    const v = verdicts[i];
+    const text = clauses[i].text.trim();
+    if (v === "filler") { afterFiller = true; continue; }
+    if (v === "courtesy") {
+      if (verdicts.slice(i + 1).find((x) => x !== "filler") === "work") keep[i] = true;
+      else afterFiller = true;
+      continue;
+    }
+    if (v === "work" || isLabel(i)) { keep[i] = true; continue; }
+    const bare = text.replace(LEADING_CONJ_RE, "");
+    if (!afterFiller) {
+      // Before the grade: a fact the question stands on, not an opinion.
+      if (CITES_FILE_RE.test(text) || FACT_CONTEXT_RE.test(bare) || SPECIFIC_FACT_RE.test(bare)) keep[i] = true;
+      continue;
+    }
+    // After a dropped acknowledgement or grade.
+    if (SO_RECAP_RE.test(text)) continue;
+    const turns = CONTRAST_RE.test(text) || /^,?\s*(?:but|though|although|whereas|yet)\b/i.test(clauses[i].sep.trim());
+    if (CITES_FILE_RE.test(text) || (turns && SPECIFIC_FACT_RE.test(bare))) keep[i] = true;
+  }
+  const kept = keep.map((k, i) => (k ? i : -1)).filter((i) => i >= 0);
+  if (kept.length === 0) return "";
+  // A lead-in label ("On the lease side:") on its own is nothing.
+  if (kept.every(isLabel)) return "";
+  let out = "";
+  kept.forEach((idx, n) => {
+    let text = clauses[idx].text.trim();
+    const prev = n > 0 ? kept[n - 1] : -1;
+    const startsSentence = n === 0 || (prev >= 0 && isLabel(prev) && prev !== idx - 1);
+    if (startsSentence && idx > 0 && prev !== idx - 1) {
+      text = text.replace(LEADING_CONJ_RE, "");
+      // A which-clause can't open a sentence.
+      if (WHICH_CLAUSE_RE.test(text)) return;
+    }
+    if (n === 0) { out = capitalise(text); return; }
+    const sep = prev === idx - 1 ? clauses[idx].sep : isLabel(prev) ? ": " : /,/.test(clauses[idx].sep) ? ", " : clauses[idx].sep;
+    out += sep + text;
+  });
+  out = out.trim().replace(/[,;:\s—–-]+$/, "");
+  if (!out || kept.every((i) => isLabel(i)) || /:$/.test(out)) return "";
+  return `${lead}${out}${end || "."}${trail}`;
+}
+
+/** A lead sentence carrying a figure, a comparison or an implication. */
+const FACT_CONTEXT_RE =
+  /\$\s?\d|\d[\d,.]*\s?(?:%|percent\b)|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand|people|employees|staff|techs?|trucks?|units?|clients?|customers?|patients?|locations?|sites?|years?|months?|weeks?|days?|hours?|sq\.? ?ft|square feet)\b|\b(?:more|less|higher|lower|bigger|smaller|larger|fewer|greater|older|newer|longer|shorter) than\b|\bnet of\b|\b(?:before|after|excluding|including|net|gross) (?:of )?(?:the |your |any )?(?:refunds?|returns?|tax(?:es)?|salary|salaries|owner|addbacks?|add-backs?|depreciation|interest|rent|fees|discounts?|cogs|expenses|chargebacks?|hst|gst|payroll|wages)\b|\bgross (?:figure|number|revenue|sales|amount|margin)\b|\b(?:up|down) from\b|\bcompared (?:to|with)\b|\binstead of\b|\brather than\b|\bthe first i'?ve heard\b|\bnew to me\b|^(?:that|this|which) (?:would|will|could|might) (?:mean|make|leave|put)\b/i;
+
+/** Praise of the seller or the business in a goodbye — the recap itself stays. */
+const CLOSING_PRAISE_PATTERNS: RegExp[] = [
+  ...GRADING_PATTERNS.slice(1),
+  /^(?:that|this|it)(?:'s| is| makes)\s+(?:complete |total |perfect )?(?:sense|clear|great|exactly)\b/i,
+  /^(?:both of (?:those|these)|the fact that)\b/i,
+  /\b(?:strong|solid|great|impressive|clean|healthy) (?:foundation|business|operation|position|story|picture|team|track record)\b/i,
+];
+
+export interface Span { text: string }
+
+/**
+ * Splits text into sentences, each carrying the whitespace that follows it,
+ * so cutting one keeps everything else — paragraph breaks included — exactly
+ * as written. A sentence ends at . ! ? (not in "Dr. Rao", "1.5", "e.g.")
+ * followed by whitespace, or at a blank line.
+ */
+const ABBREVIATION_RE = /\b(Dr|Mr|Mrs|Ms|Jr|Sr|St|No|vs|Inc|Ltd|Co|Corp|approx|est|e\.g|i\.e|U\.S|Mt|Ft|Ave|Blvd|Rd)\.$/i;
+export function splitSentences(text: string): Span[] {
+  const spans: Span[] = [];
+  let start = 0;
+  const re = /[.!?]["')\]\u201d]*\s+(?=\S)|\n\s*\n\s*(?=\S)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const end = m.index + m[0].length;
+    const head = text.slice(start, end);
+    if (!/^\n/.test(m[0])) {
+      const body = text.slice(start, m.index + 1);
+      if (body.trim().length < 3) continue;
+      if (ABBREVIATION_RE.test(body.trimEnd())) continue;
+      if (/\d\.$/.test(body) && /^\d/.test(text.slice(end))) continue;
+    }
+    if (head.trim()) spans.push({ text: head });
+    start = end;
+  }
+  if (text.slice(start).trim()) spans.push({ text: text.slice(start) });
+  return spans;
+}
+
+/** What's left after cuts, with a capital first letter. */
+function rebuild(spans: Span[], cut: Set<number>): string {
+  // A cut sentence that ended a paragraph hands its break to the sentence
+  // kept before it, so the question still starts its own paragraph.
+  const kept: string[] = [];
+  spans.forEach((s, i) => {
+    if (!cut.has(i)) { kept.push(s.text); return; }
+    const trailing = s.text.match(/\s*$/)?.[0] ?? "";
+    if (kept.length > 0 && trailing.includes("\n") && !/\n\s*$/.test(kept[kept.length - 1])) {
+      kept[kept.length - 1] = kept[kept.length - 1].replace(/\s*$/, trailing);
+    }
+  });
+  const out = kept.join("").trim();
+  return out.charAt(0).toUpperCase() + out.slice(1);
+}
+
+// "Good — what's the lease term?" → "What's the lease term?"
+// Also "I appreciate the context on differentiation — but …" and
+// "Understood on the team stability — and …" in front of the question.
+const ACK_PREFIX_RE =
+  /^(?:(?:good|great|perfect|excellent|got it|thanks|thank you|understood|okay|ok|exactly|absolutely|makes sense|noted|right|sure|that'?s (?:helpful|great|good|clear|useful|fair|interesting))|(?:i )?(?:really )?appreciate (?:the|that|you|it|your|all|this|these|those)[^\u2014\u2013.?!]{0,60}|(?:understood|noted|thanks?) (?:on|for|about) [^\u2014\u2013.?!]{1,60})\s*(?:[\u2014\u2013:,]|\s-)\s*(?:(?:but|and|so)\s+)?(?=\S)/i;
+// A sentence left leading with a back-reference once what it referred to was
+// cut: "It shows operational leverage as the 3PL side scales." (Pacific T17).
+const DANGLING_BACKREF_RE = /^(?:it|this|that|which|these|those|they|so|and|but|also)\b/i;
+
+const capitalise = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
+
+/**
+ * Removes filler sentences in front of the question (see the verdicts
+ * above). Returns the message unchanged when it asks nothing and isn't a
+ * closing, when every lead sentence does work, or when nothing matches.
  *
  * `sellerMessage` (the seller's last message) switches on question mode when
  * the seller asked something: the reply's opening may then BE the answer
@@ -741,32 +1465,116 @@ export function sellerAskedQuestion(sellerMessage: string | null | undefined): b
  * question reads as being ignored. In that mode only these go:
  *   - praise of the question ("Great question." / a "Good question — "
  *     prefix), never an answer;
- *   - a recap/praise sentence that neither starts like an answer nor shares
- *     a content word with what the seller asked — including one that
- *     follows the answer ("Yes — $2.3M, noted. That's a strong number.
- *     What …?" keeps the answer and drops the grade).
+ *   - a filler sentence that neither starts like an answer nor shares a
+ *     content word with what the seller asked — including one that follows
+ *     the answer ("Yes — $2.3M, noted. That's a strong number. What …?"
+ *     keeps the answer and drops the grade).
  * Anything that looks like an answer, clarifies or empathises is kept.
+ *
+ * `closing` (the reply ends the interview and asks nothing): the goodbye and
+ * a factual recap stay; sentences praising the seller or the business go.
  */
-export function stripFillerPreamble(message: string, opts: { sellerMessage?: string | null } = {}): string {
+export function stripFillerPreamble(
+  message: string,
+  opts: { sellerMessage?: string | null; closing?: boolean } = {},
+): string {
+  if (opts.closing && !message.includes("?")) return stripClosingPraise(message);
   const questionMode = sellerAskedQuestion(opts.sellerMessage);
-  return questionMode ? stripInQuestionMode(message, opts.sellerMessage!) : stripOpeners(message);
+  return questionMode
+    ? stripInQuestionMode(message, opts.sellerMessage!)
+    : stripOpeners(message, opts.sellerMessage ?? null);
 }
 
-function stripOpeners(message: string): string {
-  let current = message.trim();
-  for (let i = 0; i < 2; i++) {
-    const parts = leadingSentence(current);
-    if (!parts) break;
-    const { head, rest } = parts;
-    if (!rest.includes("?")) break;               // nothing to ask after it
-    if (head.includes("?")) break;                // the opener IS a question
-    if (keepsOpener(head)) break;                 // clarifying / reconciling / empathy
-    if (!FILLER_OPENER_RE.test(head) && !QUESTION_PRAISE_SENTENCE_RE.test(head.trim())) break; // not recognisably filler
-    if (!/^[A-Z"'(]/.test(rest.trim())) break;    // would leave a mid-sentence fragment
-    current = rest.trim();
+function stripOpeners(message: string, sellerMessage: string | null): string {
+  const spans = splitSentences(message.trim());
+  const q = spans.findIndex((s) => s.text.includes("?"));
+  if (q < 0) return message; // nothing to ask after it (the no-question guard handles these)
+  const cut = new Set<number>();
+  let edited = false;
+  for (let i = 0; i < q; i++) {
+    const s = spans[i].text;
+    const trimmed = trimLeadSentence(s, { sellerMessage, question: spans[q].text.trim() });
+    if (trimmed.trim() === "") cut.add(i);
+    else if (cut.has(i - 1) && DANGLING_BACKREF_RE.test(trimmed.trim()) && !isWork(trimmed)) cut.add(i);
+    else if (trimmed !== s) { spans[i] = { text: trimmed }; edited = true; }
   }
-  if (current === message.trim()) return message;
-  return current.charAt(0).toUpperCase() + current.slice(1);
+  // Buyer-rationale tacked on after the last question belongs in
+  // whyItMatters ("Buyers will want to see whether the growth is a one-year
+  // spike or part of a trend."); what does work there stays, trimmed.
+  const lastQ = spans.reduce((acc, s, i) => (s.text.includes("?") ? i : acc), q);
+  for (let i = lastQ + 1; i < spans.length; i++) {
+    const trimmed = trimLeadSentence(spans[i].text, { sellerMessage, question: null });
+    if (trimmed.trim() === "") cut.add(i);
+    else if (trimmed !== spans[i].text) { spans[i] = { text: trimmed }; edited = true; }
+  }
+  // The question sentence itself: drop an acknowledgement or a grade in
+  // front of it ("Good — what's the lease term?", "Forty trucks is a
+  // significant operation — is that a dedicated fleet?").
+  const qHead = trimQuestionHead(spans[q].text.replace(/^\s+/, ""));
+  if (qHead !== spans[q].text.replace(/^\s+/, "")) {
+    spans[q] = { text: qHead };
+    edited = true;
+  }
+  // …and a conjunction left leading the question once everything before it
+  // was cut ("But does ClinicNest have…?" → "Does ClinicNest have…?").
+  if (q > 0 && Array.from({ length: q }, (_, i) => i).every((i) => cut.has(i))) {
+    const body = spans[q].text.replace(/^\s+/, "");
+    const m = body.match(/^(?:but|and|so|also)\s+(?=[a-z])/i);
+    if (m) { spans[q] = { text: capitalise(body.slice(m[0].length)) }; edited = true; }
+  }
+  if (cut.size === 0 && !edited) return message;
+  return rebuild(spans, cut);
+}
+
+/**
+ * The question sentence's own lead-in: "<ack or grade> — <question>" →
+ * "<question>". A head that carries context or does work stays ("The 2008
+ * press is due for replacement at around $380K — where does that stand?").
+ */
+function trimQuestionHead(sentence: string): string {
+  const prefix = sentence.match(ACK_PREFIX_RE);
+  if (prefix && !isWork(sentence.slice(prefix[0].length))) return capitalise(sentence.slice(prefix[0].length));
+  const m = sentence.match(/^([^?]{3,240}?)(\s[—–]\s|:\s+|,\s+)(?=\S)([\s\S]*\?[\s\S]*)$/);
+  if (!m) return sentence;
+  const [, head, sep, rest] = m;
+  // A comma splits only an acknowledgement ("Got it, and how many…?").
+  if (/^,/.test(sep) && !ACK_START_RE.test(head.trim())) return sentence;
+  // (No played-back check here: a topic lead-in names what the seller just
+  // talked about by nature — "On Tidewater's June 2026 renewal — …?")
+  const v = clauseVerdict(head, null);
+  if (v !== "filler" && !(v === "courtesy" && !isWork(rest))) return sentence;
+  // "…is strong, but is the recert on track?" — keep the turn's topic.
+  const body = rest.replace(/^(?:but|and|so|also)\s+(?=[a-z])/i, "");
+  return /[A-Za-z]/.test(body) && body.includes("?") && wordCount(body) >= 3 ? capitalise(body) : sentence;
+}
+
+// Praise strong enough that it is never the answer to a seller's question,
+// even when it shares a word with it ("That makes complete sense, and it's
+// exactly the kind of insight that helps the right buyer…").
+const STRONG_PRAISE_RE =
+  /\bexactly (?:what|the kind|the sort|the type)\b|\bresonat\w*|\bcomes? through clearly\b|\byou(?:'ve| have) built\b|\bgenuine(?:ly)? (?:differentiator|rare|strength|asset)\b|\b(?:real|genuine|big|major|huge) (?:asset|strength|differentiator)\b|\bmakes? (?:complete|total|perfect) sense\b|\bspeaks for itself\b|\b(?:great|good|excellent|smart|fair) (?:question|point|instinct)\b|\blove (?:that|this|it)\b|\bmade (?:(?:really|very) )?(?:good|great|excellent|real|solid) progress\b/i;
+
+function stripClosingPraise(message: string): string {
+  const text = message.trim();
+  const spans = splitSentences(text);
+  const cut = new Set<number>();
+  spans.forEach((sp, i) => {
+    const s = sp.text.trim().replace(/[’‘]/g, "'");
+    if (isWork(s)) return;
+    if (/^(?:thanks?|thank you)\b/i.test(s) && !CLOSING_PRAISE_PATTERNS.some((re) => re.test(s))) return;
+    if (CLOSING_PRAISE_PATTERNS.some((re) => re.test(s))) cut.add(i);
+  });
+  if (cut.size === 0 || cut.size === spans.length) return message;
+  // "Thank you for being so thorough — this is one of the cleaner pictures
+  // I've seen." goes as praise; the goodbye keeps a plain thanks.
+  const thanksCut = Array.from(cut).find((i) => /^(?:thanks?|thank you)\b/i.test(spans[i].text.trim()));
+  const thanksKept = spans.some((sp, i) => !cut.has(i) && /\b(?:thanks?|thank you)\b/i.test(sp.text));
+  if (thanksCut !== undefined && !thanksKept) {
+    cut.delete(thanksCut);
+    const trailing = spans[thanksCut].text.match(/\s*$/)?.[0] ?? "";
+    spans[thanksCut] = { text: `Thank you.${trailing}` };
+  }
+  return rebuild(spans, cut);
 }
 
 function stripInQuestionMode(message: string, sellerMessage: string): string {
@@ -786,49 +1594,202 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
   // who runs the day-to-day.") — the first real sentence is the answer.
   let answerExpected =
     asked.size === 0 || /\b(why|how come|what for|what does (?:that|it|this) matter|does (?:that|it|this) matter|what'?s the point)\b/i.test(questionText);
-  // Walk the leading sentences by position and cut only the filler ones out
-  // of the text, so everything kept — paragraph breaks included — is exactly
-  // as the agent wrote it.
   // "Do you have my price down?" — then "Noted — $2.3M is on file." IS the
-  // answer, so the first sentence keeps the plain clarification rule.
+  // answer, so the first sentence may report the record.
   const askedAboutRecord = /\b(have|got|get|on file|down|recorded?|noted?|correct(?:ly)?|right|confirm\w*|captur\w*)\b/i.test(questionText);
-  const cuts: Array<[number, number]> = [];
-  let pos = 0;
+  const spans = splitSentences(text);
+  const q = spans.findIndex((s) => s.text.includes("?"));
+  if (q < 0) return text === original ? message : text;
+  const cut = new Set<number>();
   let first = true;
-  let keptCount = 0;
-  for (let i = 0; i < 3 && keptCount < 2; i++) {
-    const current = text.slice(pos);
-    const parts = leadingSentence(current);
-    if (!parts) break;
-    const { head, rest } = parts;
-    if (!rest.includes("?")) break;               // nothing to ask after it
-    if (head.includes("?")) break;                // a question — the reply's own
-    if (!/^[A-Z"'(]/.test(rest.trim())) break;    // would leave a mid-sentence fragment
-    const h = head.trim();
+  for (let i = 0; i < q; i++) {
+    const h = spans[i].text.trim();
     const praiseOfQuestion = QUESTION_PRAISE_SENTENCE_RE.test(h);
+    const reportsRecord = first && askedAboutRecord && /\b(?:on file|down as|recorded|noted|confirmed|captured|i have)\b/i.test(h);
+    // Only the presumed answer (the first real sentence) is protected by
+    // opening like one — "It's the honest read, and sophisticated buyers will
+    // appreciate the distinction." after the answer is a grade (seen live).
+    const answerStart = first && ANSWER_START_RE.test(h.replace(/^["'(]+/, ""));
     const filler =
       praiseOfQuestion ||
+      // "Good to know the landlord is receptive." opens with an
+      // acknowledgement, not an answer — even when it names what was asked.
+      (!answerExpected && !reportsRecord && !answerStart && ACK_START_RE.test(h) && isFillerSentence(h, null)) ||
+      (!answerExpected && !answerStart && !isWork(h) && STRONG_PRAISE_RE.test(h)) ||
       (!answerExpected &&
-        FILLER_OPENER_RE.test(h) &&
-        !(first && askedAboutRecord ? KEEP_OPENER_RE.test(h) : keepsOpener(h)) &&
-        !ANSWER_START_RE.test(h.replace(/^["'(]+/, "")) &&
+        !reportsRecord &&
+        isFillerSentence(h, null) &&
+        !answerStart &&
         !Array.from(contentStems(h)).some((w) => asked.has(w)));
     if (!praiseOfQuestion) {
-      answerExpected = false;                      // only the first real sentence is the presumed answer
+      answerExpected = false; // only the first real sentence is the presumed answer
       first = false;
     }
-    const next = pos + (current.length - rest.length);
-    if (filler) cuts.push([pos, next]);
-    else keptCount++;                              // the answer (or a clarification) stays
-    pos = next;
+    if (filler) cut.add(i);
   }
-  if (cuts.length === 0 && text === original) return message;
-  let out = "";
-  let from = 0;
-  for (const [a, b] of cuts) {
-    out += text.slice(from, a);
-    from = b;
-  }
-  out = (out + text.slice(from)).trim();
+  if (cut.size === 0) return text === original ? message : text;
+  return rebuild(spans, cut);
+}
+
+// ── Output guards: internal vocabulary, a question every turn, a rationale
+// that matches the question ─────────────────────────────────────────────
+
+/**
+ * The agent's own machinery named to the seller ("On the mandatory probes I
+ * need to check off: …", "the coverage map shows revenue and EBITDA detail")
+ * — the prompt's internal checklists and panels, which make the interview
+ * read like the form it must never feel like (QA harvest, Pacific T15/T17).
+ */
+const INTERNAL_MACHINERY_RE =
+  /\bmandatory probes?\b|\b(?:need|have|want) to check off\b|\bcheck(?:ing)? (?:it|them|that|this|those|these) off\b|\bcoverage (?:map|dashboard|panel|list|checklist)\b|(?<!\b(?:your|our|their|client|clients'|customer|customers'|support|internal|team|it|documentation|shared) )\bknowledge base\b|\b(?:deferral|my) ledger\b|\bopen deferrals?\b|\bsystem (?:note|override|instructions?|prompt|correction)s?\b|\bCIM sections?\b|\bsection (?:priorities|coverage)\b|\bmy (?:checklist|list of (?:questions|items|topics)|notes say|outline|playbook|coverage)\b|\b(?:industry|interview) playbook\b|\binterview (?:plan|outline)\b|\bpriorCheck\b|\bextracted ?fields\b|\bALREADY ANSWERED\b|\bmarked as (?:critical|important|helpful)\b|\bstop signals?\b/i;
+
+export function leaksInternalMachinery(text: string): boolean {
+  return INTERNAL_MACHINERY_RE.test(text);
+}
+
+/**
+ * Last-resort scrub when a rewrite still names the machinery: a lead-in
+ * clause that only announces the checklist is dropped ("On the mandatory
+ * probes I need to check off: has your insurer…?" → "Has your insurer…?"),
+ * "the coverage map shows X, but…" becomes "I have X, but…", and any other
+ * sentence that names it is removed when a question remains.
+ */
+export function scrubInternalMachinery(text: string): string {
+  let out = text.replace(
+    /(^|[.!?]\s+|\n)([^.!?:\n]*?\b(?:mandatory probes?|check (?:it |them |that |this )?off|coverage (?:map|dashboard|list|checklist)|knowledge base|(?:deferral |my )ledger|my (?:checklist|list|outline|playbook))\b[^.!?:\n]*):\s*(\S)/gi,
+    (_m, lead: string, _clause: string, next: string) => `${lead}${next.toUpperCase()}`,
+  );
+  out = out.replace(/\b(?:the |my )?(?:coverage (?:map|dashboard|panel|list)|knowledge base|interview (?:plan|outline)|checklist) (?:shows|has|lists|says)\b/gi, "I have");
+  if (!leaksInternalMachinery(out)) return out.trim();
+  const sentences = out.split(/(?<=[.!?])\s+/);
+  const kept = sentences.filter((s) => !leaksInternalMachinery(s));
+  // Drop the sentences that name it — when a question survives, or when the
+  // reply never asked one (a goodbye: "Since the seller stop signal came
+  // through, I want to respect your time.").
+  if (kept.some((s) => s.includes("?")) || (kept.length > 0 && !out.includes("?"))) out = kept.join(" ");
+  else out = out.replace(INTERNAL_MACHINERY_RE, "what I have so far");
+  out = out.trim();
   return out.charAt(0).toUpperCase() + out.slice(1);
 }
+
+/** Does the reply ask the seller something? (A wrap-up offer counts.) */
+export function asksQuestion(message: string): boolean {
+  return /\?/.test(message);
+}
+
+/**
+ * A question to append when a non-final turn still asks nothing after its
+ * corrective rewrite: the agent's own planned question (reasoning.nextIntent
+ * often IS one), else a plain ask about the topic it was on.
+ */
+export function fallbackQuestion(nextIntent: string, currentTopic: string): string {
+  const q = (nextIntent.match(/[^.!?]*\?/) ?? [])[0]?.trim();
+  const INSTRUCTION_RE = /^(?:ask|probe|explore|find out|understand|clarify|confirm|learn|get|cover)\b/i;
+  if (q && q.length >= 12 && !INSTRUCTION_RE.test(q)) return q.charAt(0).toUpperCase() + q.slice(1);
+  const intent = (q && INSTRUCTION_RE.test(q) ? q.replace(/\?$/, "") : nextIntent)
+    .replace(/\s*\(.*$/, "")
+    .replace(/\b(?:because|since|so that|to (?:confirm|understand|see))\b.*$/i, "")
+    .trim();
+  const m = intent.match(/^(?:ask|probe|explore|find out|understand|clarify|confirm|learn|get|cover)(?: the seller| them)?(?: about| on| whether| if| how| what| why| when| who)?\s+(.{6,140})$/i);
+  if (m) {
+    const topic = m[1].replace(/[.;:,]+$/, "");
+    if (/^(?:whether|if)\b/i.test(intent.split(/\s+/).slice(1).join(" "))) return `Can you tell me whether ${topic}?`;
+    return `Could you walk me through ${topic}?`;
+  }
+  const topic = currentTopic.replace(/^industry_specific:/, "").replace(/[_-]+/g, " ").trim();
+  return topic ? `What else should I understand about ${topic}?` : "What would you like a buyer to understand next about the business?";
+}
+
+// Generic deal words that say nothing about WHICH question a rationale
+// belongs to ("…during ownership transfer…" fits every transition question).
+const GENERIC_RATIONALE_STEMS = new Set(
+  "buyer buyers owner owners owner's ownership transfer transfers transition deal deals sale sell selling seller closing close process change changes control value valuation price revenue business company risk risks new make makes mean means help helps important matter matters often typically need needs want wants show shows clear clearly confidence certainty".split(" ").map((w) => w.slice(0, 5)),
+);
+const rationaleStems = (text: string) =>
+  new Set(Array.from(contentStems(text)).filter((w) => !GENERIC_RATIONALE_STEMS.has(w)));
+
+/**
+ * Whether "Why we ask this" belongs to the question actually asked. Dropped
+ * on a goodbye, on an open wrap-up question ("Anything else before we wrap
+ * up?" carried the environmental-permits rationale), when it shares no
+ * specific word with the question or the sentence leading into it, and when
+ * it is the PREVIOUS question's rationale left standing — it shares more
+ * with the question before than with this one (Clearwater: a patient-records
+ * question explained by the direct-billing gap its predecessor asked about).
+ * Measured on the QA harvest's 75 rationales: exactly the two mismatches and
+ * one generic line are dropped.
+ */
+export function whyItMattersFits(
+  message: string,
+  whyItMatters: string | undefined,
+  shouldEnd: boolean,
+  prevAiMessage?: string | null,
+): boolean {
+  if (!whyItMatters) return false;
+  if (shouldEnd) return false;
+  const spans = message.split(/(?<=[.!?])\s+|\n+/).map((x) => x.trim()).filter(Boolean);
+  const qi = spans.findIndex((x) => x.includes("?"));
+  if (qi < 0) return false;
+  const questions = spans.filter((x) => x.includes("?")).join(" ");
+  const qStems = rationaleStems(questions);
+  const ctx = new Set([...Array.from(qStems), ...Array.from(rationaleStems(qi > 0 ? spans[qi - 1] : ""))]);
+  const why = rationaleStems(whyItMatters);
+  // A word shared with the question itself counts double; one shared only
+  // with the sentence leading into it counts once. (An open "anything else
+  // before we wrap up?" names nothing, so it keeps no rationale; one about a
+  // named area — "anything else a buyer would need transferred on the
+  // permits side?" — keeps a permits rationale.)
+  const here = Array.from(why).reduce((acc, w) => acc + (qStems.has(w) ? 2 : ctx.has(w) ? 1 : 0), 0);
+  if (here === 0) return false;
+  const prevQ = prevAiMessage ? (prevAiMessage.match(/[^.!?\n]*\?/g) ?? []).join(" ") : "";
+  const before = Array.from(rationaleStems(prevQ)).filter((w) => !ctx.has(w) && why.has(w)).length;
+  return here >= before;
+}
+
+const GREETING_RE =
+  /\b(?:hi|hello|hey|welcome|good (?:morning|afternoon|evening)|thanks? (?:for|you)|thank you|(?:nice|good|great|lovely|pleased) to (?:meet|talk|speak|connect|e-?meet)|glad (?:to|you))\b/i;
+
+/** A first message that greets the seller (the opening must not jump straight to a question). */
+export function hasWelcome(message: string): boolean {
+  const spans = splitSentences(message.trim());
+  return !!spans[0] && GREETING_RE.test(spans[0].text);
+}
+
+const MATERIALS_READ_RE = /\b(?:i'?ve|i have|i) (?:already )?(?:read|reviewed|gone through|been through|looked (?:at|through)|had a (?:look|chance to (?:read|review)))\b/i;
+
+// "I'm here to help build the document buyers will read about Clearwater" —
+// the purpose line of a first contact.
+const PURPOSE_RE =
+  /\b(?:i'?m here to|here to help|help (?:you )?(?:build|put together|pull together|prepare)|the document (?:that )?buyers|what buyers will (?:read|see)|this conversation (?:is|will))\b/i;
+
+/**
+ * The opening message: the welcome, the purpose line and "I've read your
+ * materials" are never run through the filler guard — "thanks for" is
+ * filler mid-interview but a greeting on first contact (QA harvest: openings
+ * arrived with the welcome stripped, straight into a mid-priority question).
+ * Anything else in front of the question is held to the usual rule. An
+ * opening that still has no greeting gets a short one — for a RETURNING
+ * seller a welcome-back, never the first-meeting "Welcome, and thanks for
+ * making time" (QA round V: Clearwater's second session opened like a first
+ * meeting), and a sentence that picks up from last time is kept.
+ */
+export function finalizeOpeningMessage(message: string, opts: { returning?: boolean } = {}): string {
+  const text = message.trim();
+  const spans = splitSentences(text);
+  const q = spans.findIndex((sp) => sp.text.includes("?"));
+  const end = q < 0 ? spans.length : q;
+  const cut = new Set<number>();
+  for (let i = 0; i < end; i++) {
+    const sentence = spans[i].text;
+    if (GREETING_RE.test(sentence) || MATERIALS_READ_RE.test(sentence) || PURPOSE_RE.test(sentence)) continue;
+    if (opts.returning && CONTINUITY_RE.test(sentence)) continue;
+    if (isFillerSentence(sentence)) cut.add(i);
+  }
+  const out = cut.size > 0 ? rebuild(spans, cut) : text;
+  if (opts.returning) return hasWelcome(out) || CONTINUITY_RE.test(splitSentences(out)[0]?.text ?? "") ? out : `Welcome back. ${out}`;
+  return hasWelcome(out) ? out : `Welcome, and thanks for making time for this. ${out}`;
+}
+
+/** Words that pick up an earlier conversation ("welcome back", "where we left off", "last time"). */
+export const CONTINUITY_RE =
+  /\b(welcome back|good to (?:see|have) you back|nice to (?:see|have) you back|glad you'?re back|picking (?:up|back up|things up)|pick (?:up|things up|back up) where|where we left off|last time|when we (?:last )?(?:spoke|talked)|our (?:last|previous|earlier) (?:session|conversation|chat)|since we (?:last )?(?:spoke|talked)|back again|continu(?:e|ing) (?:from|where)|following up on|to follow up on)\b/i;

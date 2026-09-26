@@ -27,6 +27,8 @@ export interface Addback {
   custom?: boolean;
   /** Broker toggled approval — carried across re-runs. */
   approvedOverride?: boolean;
+  /** Rests only on the broker's private notes: excluded until the broker includes it. */
+  privateEvidence?: boolean;
 }
 
 export interface NormalizationData {
@@ -277,7 +279,7 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                               {ab.label}
                             </p>
                             {ab.description && (
-                              <p className="text-2xs text-muted-foreground mt-0.5 truncate">{ab.description}</p>
+                              <p className="text-2xs text-muted-foreground mt-0.5 line-clamp-2" title={ab.description}>{ab.description}</p>
                             )}
                           </div>
                           {ab.type === "sde" && (
@@ -288,6 +290,14 @@ export function NormalizationPanel({ data, onUpdate }: NormalizationPanelProps) 
                           {isCustomAddback(ab) && (
                             <Badge className="bg-teal/10 text-teal border-0 text-2xs shrink-0">
                               Added by you
+                            </Badge>
+                          )}
+                          {ab.privateEvidence && (
+                            <Badge
+                              className="bg-amber-500/10 text-amber-400 border-0 text-2xs shrink-0"
+                              title="This add-back rests only on your CRM notes or broker-only files. It stays out of EBITDA, SDE and the CIM until you include it."
+                            >
+                              {ab.approved ? "From your private notes" : "Private notes · include to use"}
                             </Badge>
                           )}
                           <Badge className={`${catCfg.color} text-2xs shrink-0`}>

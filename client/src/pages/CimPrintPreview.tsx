@@ -163,11 +163,29 @@ export default function CimPrintPreview() {
         ) : (
           <CimMediaProvider value={{}}>
             <CimDesignProvider design={cimDesign} sections={shown}>
-              {version === "blind" && view && view.heldBack > 0 && (
-                <p className="print:hidden mb-3 text-xs text-amber-500 flex items-center gap-1.5">
-                  <Loader2 className="h-3 w-3 animate-spin" /> {view.heldBack} section{view.heldBack === 1 ? " is" : "s are"} still being redacted and left out.
-                </p>
-              )}
+              {version === "blind" && view && view.heldBack > 0 && (() => {
+                // Held back for good (the redaction keeps failing) vs. still being redacted.
+                const held = (builder.data?.sections ?? []).filter((s) => s.blindStatus === "held" && s.isVisible !== false);
+                const waiting = Math.max(0, view.heldBack - held.length);
+                return (
+                  <div className="print:hidden mb-3 space-y-1 text-xs">
+                    {held.length > 0 && (
+                      <p className="text-red-400 flex items-start gap-1.5">
+                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>
+                          Left out of the blind version: {held.map((s) => `“${s.sectionTitle}”`).join(", ")}
+                          {held[0].blindError ? ` — ${held[0].blindError}` : ""}. Use “Redo blind version” on the section in the CIM builder.
+                        </span>
+                      </p>
+                    )}
+                    {waiting > 0 && (
+                      <p className="text-amber-500 flex items-center gap-1.5">
+                        <Loader2 className="h-3 w-3 animate-spin" /> {waiting} section{waiting === 1 ? " is" : "s are"} still being redacted and left out.
+                      </p>
+                    )}
+                  </div>
+                );
+              })()}
               <CimSheet className="px-5 py-6 sm:px-12 sm:py-12">
                 {pages.map((item, i) => {
                   const next = pages[i + 1];

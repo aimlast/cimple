@@ -19,20 +19,33 @@ import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import type { Deal, ExternalAcquirer, ExternalAcquirerSearch } from "@shared/schema";
+import { blindLeakTerms, findBlindLeaks, honorificNames, peopleInFact, type BlindTerm } from "@shared/blind-guard";
+import { isRegionLabel, isRegionWord } from "@shared/cim-media";
+import { splitFactsForCim } from "../information/cim-facts";
+import { briefRegion } from "./regions";
+import { firstMoney, headcountBand, parseHeadcount } from "./fact-numbers";
+import {
+  applyClaimChecks, claimsFor, stripTracking, CHANNEL_TOOL, CHECK_SYSTEM, CHECK_TOOL,
+  type AcquirerCheck, type AppliedChecks, type Channel, type ChannelCheck,
+} from "./claim-check";
+import { EVERYDAY_NAME_WORDS, isBroadRegionWord, isCommonWord, isOccupationWord } from "@shared/blind-vocabulary";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 const running = new Set<string>();
 
-const PROVINCES: Record<string, string> = { ON: "Ontario", QC: "Quebec", BC: "British Columbia", AB: "Alberta", MB: "Manitoba", SK: "Saskatchewan", NS: "Nova Scotia", NB: "New Brunswick", NL: "Newfoundland and Labrador", PE: "Prince Edward Island" };
-const REGION_RE = /\b(Ontario|Quebec|British Columbia|Alberta|Manitoba|Saskatchewan|Nova Scotia|New Brunswick|Newfoundland|Prince Edward Island|Alabama|Alaska|Arizona|Arkansas|California|Colorado|Connecticut|Delaware|Florida|Georgia|Hawaii|Idaho|Illinois|Indiana|Iowa|Kansas|Kentucky|Louisiana|Maine|Maryland|Massachusetts|Michigan|Minnesota|Mississippi|Missouri|Montana|Nebraska|Nevada|New Hampshire|New Jersey|New Mexico|New York|North Carolina|North Dakota|Ohio|Oklahoma|Oregon|Pennsylvania|Rhode Island|South Carolina|South Dakota|Tennessee|Texas|Utah|Vermont|Virginia|Washington|West Virginia|Wisconsin|Wyoming|ON|QC|BC|AB|MB|SK|NS|NB|NL|PE)\b/;
+const REGION_NAMES = ["Ontario", "Quebec", "British Columbia", "Alberta", "Manitoba", "Saskatchewan", "Nova Scotia", "New Brunswick", "Newfoundland", "Prince Edward Island", "Alabama", "Alaska", "Arizona", "Arkansas", "California", "Colorado", "Connecticut", "Delaware", "Florida", "Georgia", "Hawaii", "Idaho", "Illinois", "Indiana", "Iowa", "Kansas", "Kentucky", "Louisiana", "Maine", "Maryland", "Massachusetts", "Michigan", "Minnesota", "Mississippi", "Missouri", "Montana", "Nebraska", "Nevada", "New Hampshire", "New Jersey", "New Mexico", "New York", "North Carolina", "North Dakota", "Ohio", "Oklahoma", "Oregon", "Pennsylvania", "Rhode Island", "South Carolina", "South Dakota", "Tennessee", "Texas", "Utah", "Vermont", "Virginia", "Washington", "West Virginia", "Wisconsin", "Wyoming"];
+// Multi-word region names: "British Columbia" is the province, even though
+// the facts' people parser may list "Columbia" as a name.
+const MULTI_WORD_REGION = new RegExp(`\\b(?:${REGION_NAMES.filter((n) => n.includes(" ")).join("|")})\\b`, "gi");
 
 const txt = (v: unknown): string => (typeof v === "string" ? v : v && typeof v === "object" && "value" in (v as any) ? txt((v as any).value) : "");
-function band(raw: string): string | null {
-  const m = raw.replace(/,/g, "").match(/\$?\s*([\d.]+)\s*(m|mm|million|k|thousand)?/i);
-  if (!m) return null;
-  let n = parseFloat(m[1]);
-  const u = (m[2] || "").toLowerCase();
-  if (u.startsWith("m")) n *= 1_000_000; else if (u.startsWith("k") || u === "thousand") n *= 1000;
+/**
+ * A money fact as a size band. Reads the first real money figure — a "$"
+ * amount or a number with a million/thousand unit — so prose such as
+ * "2024 net sales: $58,241,630, up 6.5%" is $58M, not "2024".
+ */
+export function band(raw: string): string | null {
+  const n = firstMoney(raw);
   if (!n || n < 10_000) return null;
   if (n < 500_000) return "under $500K";
   if (n < 1_000_000) return "$500K–$1M";
@@ -43,25 +56,549 @@ function band(raw: string): string | null {
   return "$25M+";
 }
 
-/** Blind research brief — nothing that identifies the business. */
-export function blindBrief(deal: Deal): { brief: string; region: string | null } {
+const escapeRe = (x: string) => x.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+const L = "A-Za-z0-9À-ÖØ-öø-ÿ";
+const TITLE = "Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof";
+const RELATION =
+  "son|daughter|wife|husband|spouse|partner|brother|sister|nephew|niece|cousin|father|mother|dad|mom|mum|grandson|granddaughter|son-in-law|daughter-in-law|stepson|stepdaughter";
+/**
+ * A term as a fold-tolerant pattern ("Manpreet Grewal" also matches
+ * "Manpreet  Grewal's"), with what surrounds a name in prose captured so it
+ * can be rewritten naturally: 1 = title ("Dr. "), 2 = relation ("son "),
+ * 3 = the name itself, 4 = possessive "'s", 5 = " family".
+ */
+function termPattern(text: string): RegExp {
+  const words = text.split(new RegExp(`[^${L}]+`)).filter(Boolean).map(escapeRe);
+  return new RegExp(
+    `(?<![${L}])(?:((?:${TITLE})\\.?\\s+)|((?:${RELATION})\\s+))?(${words.join(`[^${L}]+`)})(?![${L}])(['’]s)?(\\s+family\\b)?`,
+    "gi",
+  );
+}
+/** Replace a term with a neutral phrase that still reads well in its sentence. */
+function neutralise(text: string, term: string, kind: BlindTerm["kind"], capitalisedOnly: boolean, regionWord?: BlindTerm): string {
+  return text.replace(termPattern(term), (m, title: string | undefined, rel: string | undefined, core: string, poss: string | undefined, family: string | undefined, offset: number, whole: string) => {
+    // Everyday-word terms count only capitalised — never rewrite the word itself.
+    if (capitalisedOnly && core === core.toLowerCase()) return m;
+    const before = whole.slice(0, offset);
+    const after = whole.slice(offset + m.length);
+    // A surname that is also a province/state ("Dana Washington"): leave the
+    // place ("Washington State lanes", "customers in Montana") alone — the
+    // blind guard decides from the words around this one mention.
+    if (regionWord && !findBlindLeaks(`${before.slice(-40)}${m}${after.slice(0, 40)}`, [regionWord]).length) return m;
+    const s = poss ? "’s" : "";
+    const afterThe = /\bthe\s+$/i.test(before);
+    if (kind === "person") {
+      if (family) return `${afterThe ? "" : "the "}owner’s family`;
+      if (rel) {
+        const owned = /\b(?:my|our|his|her|their|the|owner['’]s|seller['’]s)\s+$/i.test(before);
+        return `${owned ? "" : "the owner’s "}${rel.trim()}${s}`;
+      }
+      // "head baker Rosa" → "head baker": the role already says who.
+      const prevWord = /([A-Za-z]+)\s+$/.exec(before)?.[1] ?? "";
+      if (!s && /^[a-z]/.test(prevWord) && (isOccupationWord(prevWord) || /^(?:gm|manager|lead|controller|bookkeeper|foreman|supervisor)$/i.test(prevWord))) return "";
+      return `a key person${s}`;
+    }
+    const tail = family ? family : "";
+    if (kind === "name") return `${title ?? ""}${rel ?? ""}${afterThe ? "" : "the "}business${s}${tail}`;
+    if (kind === "place") {
+      // "Delta cross-dock" → "local cross-dock"; "in Delta" → "in the local area".
+      const adjectival = /^\s+[a-z]/.test(after) && !poss;
+      return `${title ?? ""}${rel ?? ""}${adjectival ? "local" : "the local area"}${s}${tail}`;
+    }
+    return `${title ?? ""}${rel ?? ""}`;
+  });
+}
+/** Hide multi-word region names while checking/rewriting, then put them back. */
+function withRegionsMasked(text: string, fn: (masked: string) => string): string {
+  const kept: string[] = [];
+  const masked = text.replace(MULTI_WORD_REGION, (m) => `⟦${kept.push(m) - 1}⟧`);
+  return fn(masked).replace(/⟦(\d+)⟧/g, (_m, i) => kept[Number(i)] ?? "");
+}
+/** Identifying terms in text, ignoring words that are part of a province/state name. */
+export function briefLeaks(text: string, terms: BlindTerm[]): string[] {
+  let hits: string[] = [];
+  withRegionsMasked(text, (masked) => {
+    hits = findBlindLeaks(masked, terms);
+    return masked;
+  });
+  return hits;
+}
+
+// Brands that look like people ("Tim Hortons", "Wendy's", "Mr. Lube",
+// "Dr. Oetker", "Edward Jones"). For a franchise resale the brand is the
+// research's key signal and identifies no single business, so the person
+// heuristics must leave it alone. A name counts as a brand when the deal's
+// industry label names it (the broker's own classification never names
+// people) or when it is directly followed by a franchise/dealer word. A name
+// after a relation word ("son Tim") is always a person. The deal's own terms
+// are applied before this and still win: a business named "Tim Hortons
+// Bedford" keeps its brand hidden.
+const BRAND_WORDS = [
+  "franchise", "franchises", "franchisee", "franchisees", "franchisor", "franchising", "dealer", "dealers", "dealership", "dealerships",
+  "distributor", "distributors", "distributorship", "branch", "branches", "licensee", "licensees", "brand", "banner", "outlet", "outlets",
+];
+// Case-sensitive on purpose: the one word allowed between the name and the
+// franchise word must be capitalised ("Mary Brown's Chicken franchise") or
+// "restaurant" ("Harvey's restaurant franchise"), so "keeps Maria as branch
+// manager" is not read as a brand.
+const BRAND_AFTER = new RegExp(
+  `^(?:['’]s)?(?:\\s+(?:[A-Z][${L}'’-]*|restaurants?))?\\s+(?:${BRAND_WORDS.flatMap((w) => [w, w[0].toUpperCase() + w.slice(1)]).join("|")})(?![${L}])`,
+);
+const RELATION_BEFORE = new RegExp(`\\b(?:${RELATION})\\s+$`, "i");
+
+/** The person-looking names in text, as bare names (no title, no "Ms." variants). */
+function nameCandidates(text: string): string[] {
+  const raw = [...honorificNames(text), ...peopleInFact(text, "prose")].map((p) => p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), "").trim());
+  return Array.from(new Set(raw.filter(Boolean))).sort((a, b) => b.length - a.length);
+}
+
+/**
+ * Hide brand names while the person heuristics run, then put them back.
+ * `known` = brands the industry label names (always brands, wherever they
+ * appear); any other name is a brand only where a franchise word follows it.
+ */
+function withBrandsMasked(text: string, known: string[], fn: (masked: string) => string): string {
+  const kept: string[] = [];
+  const pattern = (name: string) => {
+    const words = name.split(new RegExp(`[^${L}]+`)).filter(Boolean).map(escapeRe);
+    return words.length ? new RegExp(`(?<![${L}])((?:${TITLE})\\.?\\s+)?${words.join(`[^${L}]+`)}(?![${L}])`, "g") : null;
+  };
+  // A name is a brand when the label names it, or when any of its mentions
+  // here is followed by a franchise word — then every mention is the brand
+  // ("Mr. Lube franchise; Mr. Lube must approve the buyer").
+  const brands = new Set(known.map((k) => k.toLowerCase()));
+  for (const name of nameCandidates(text)) {
+    const re = pattern(name);
+    let hit: RegExpExecArray | null;
+    while (re && (hit = re.exec(text))) {
+      if (!RELATION_BEFORE.test(text.slice(0, hit.index)) && BRAND_AFTER.test(text.slice(hit.index + hit[0].length))) brands.add(name.toLowerCase());
+    }
+  }
+  let masked = text;
+  for (const name of Array.from(new Set([...known, ...nameCandidates(text)])).sort((a, b) => b.length - a.length)) {
+    const re = pattern(name);
+    if (!re || !brands.has(name.toLowerCase())) continue;
+    masked = masked.replace(re, (m, _title, offset: number, whole: string) =>
+      RELATION_BEFORE.test(whole.slice(0, offset)) ? m : `⟪${kept.push(m) - 1}⟫`,
+    );
+  }
+  return fn(masked).replace(/⟪(\d+)⟫/g, (_m, i) => kept[Number(i)] ?? "");
+}
+
+/** Brand names in the deal's industry label ("Franchise — Tim Hortons franchise"). */
+export function labelBrands(label: string): string[] {
+  let found: string[] = [];
+  withRegionsMasked(label, (masked) => {
+    found = nameCandidates(masked).filter((n) => {
+      const re = new RegExp(`(?<![${L}])${escapeRe(n)}(?![${L}])`, "g");
+      let hit: RegExpExecArray | null;
+      while ((hit = re.exec(masked))) {
+        if (!RELATION_BEFORE.test(masked.slice(0, hit.index).replace(new RegExp(`(?:${TITLE})\\.?\\s+$`, "i"), ""))) return true;
+      }
+      return false;
+    });
+    return masked;
+  });
+  return found;
+}
+
+// A run of capitalised words, joined by a space, a hyphen or a small linking
+// word ("Port of Vancouver", "Hartwell's", "Veridian and Halvorsen").
+const CAP_RUN = new RegExp(`(?<![${L}'’])[A-Z][${L}'’]*(?:(?:[ -]|\\s(?:of|de|du|la|le|the|and|&)\\s)[A-Z][${L}'’]*)*`, "g");
+// Ordinary English word shapes: a capitalised one at a sentence start is a word, not a name.
+const ENGLISH_SHAPE = /(?:ing|ings|ed|tion|tions|sion|sions|ment|ments|ness|ity|ities|ive|ives|al|als|ic|ics|ous|ful|less|able|ible|ary|ery|ory|ance|ence|ism|ize|ise|ly|er|ers|ies|ian|ians)$/i;
+const LINKING = new Set(["of", "de", "du", "la", "le", "the", "and", "&"]);
+// Titles and abbreviations: never a name themselves, and their "." ends no sentence.
+const ABBREV_WORD = /^(?:Dr|Dre|Mr|Mrs|Ms|Mx|Miss|Prof|St|Ste|Mt|Ft|Jr|Sr|Inc|Ltd|Co|Corp|No|Approx|Incl|Est)$/;
+// Capitalised words that name nobody: pronouns, holidays, methods.
+const GENERIC_CAPS = new Set([
+  "someone", "somebody", "anyone", "anybody", "everyone", "nobody", "whoever", "likely", "possibly", "ideally", "preferably",
+  "thanksgiving", "easter", "halloween", "valentine", "hanukkah", "diwali", "ramadan", "eid", "passover", "boxing",
+  "pilates", "yoga", "zumba", "crossfit", "keto", "vegan", "halal", "kosher", "celsius", "fahrenheit", "naics",
+]);
+const ABBREV_BEFORE = /\b(?:Dr|Dre|Mr|Mrs|Ms|Mx|Prof|St|Ste|Mt|Ft|Jr|Sr|e\.g|i\.e|vs|approx|incl|est|No)\.\s*$/i;
+
+/**
+ * Replace proper names the deal's term list doesn't know — customers,
+ * suppliers, towns — with a neutral phrase. A capitalised word is kept when
+ * it is an everyday word, an acronym ("LTC", "GM"), part of a province /
+ * state / country name, or — at a sentence start — shaped like an ordinary
+ * English word ("Compounding", "Wholesale"). Brands and region names must
+ * already be masked by the caller.
+ */
+export function scrubProperNames(text: string, replacement: string): string {
+  return text.replace(CAP_RUN, (run: string, offset: number, whole: string) => {
+    const before = whole.slice(0, offset);
+    const sentenceStart = /(?:^|[.!?;:]\s*|\n\s*)$/.test(before) && !ABBREV_BEFORE.test(before);
+    const words = run.split(/[ -]+/).filter((w) => w && !LINKING.has(w.toLowerCase()));
+    // A region wider than a province or state ("the Midwest", "Atlantic
+    // Canada", "the Maritime provinces") names no business — a Blind CIM
+    // keeps it (blind-vocabulary isBroadRegionWord). Only a run that is ALL
+    // region stays: "Midwest Plastics" is still a name.
+    const regionOnly = words.every((w) => {
+      const core = w.replace(/['’]s$/, "");
+      return isBroadRegionWord(core) || isRegionWord(core) || isRegionLabel(core) || (words.length > 1 && /^(?:provinces?|states?|region)$/i.test(core));
+    });
+    if (regionOnly) return run;
+    const unknown = words.some((w, i) => {
+      const core = w.replace(/['’]s$/, "");
+      if (core.length <= 1 || ABBREV_WORD.test(core) || DEAL_WORDS.test(core) || GENERIC_CAPS.has(core.toLowerCase())) return false;
+      if (/^[A-Z0-9&]{2,6}s?$/.test(core)) return false;            // acronym
+      if (isCommonWord(core) || isRegionWord(core) || isRegionLabel(core)) return false;
+      if (sentenceStart && i === 0 && ENGLISH_SHAPE.test(core)) return false;
+      return true;
+    });
+    if (!unknown) return run;
+    const possessive = /['’]s$/.test(run) ? "’s" : "";
+    const capitalise = /(?:^|[.!?]\s*|\n\s*)$/.test(before) && !ABBREV_BEFORE.test(before);
+    const phrase = capitalise ? replacement.charAt(0).toUpperCase() + replacement.slice(1) : replacement;
+    return `${phrase}${possessive}`;
+  });
+}
+
+/**
+ * Free text from the facts made blind: every identifying term the facts
+ * name (business names, people, city, street, contacts) and any titled or
+ * known-given-name person in the prose is replaced with a neutral phrase.
+ * Brand names (see `withBrandsMasked`) are not people and stay.
+ * Returns null when something identifying is still there — the caller
+ * leaves the line out (fail closed).
+ */
+export function blindFreeText(text: string, terms: BlindTerm[], opts: { prose?: boolean; brands?: string[]; scrubNames?: string } = {}): string | null {
+  // prose=false: only the deal's own terms — for AI output about OTHER
+  // organisations, where the name heuristics would rewrite real names.
+  const prose = opts.prose !== false;
+  const brands = opts.brands ?? [];
+  const byLength = [...terms].sort((a, b) => b.text.length - a.text.length);
+  let out = withRegionsMasked(text, (masked) => {
+    let o = masked;
+    for (const t of byLength) {
+      if (!findBlindLeaks(o, [t]).length) continue;
+      if (t.titled) {
+        // "Ms. Winter" — the surname counts only with a title or "family".
+        const surname = t.text.split(/\s+/).pop() || "";
+        o = o.replace(new RegExp(`\\b(?:${TITLE})\\.?\\s+${escapeRe(surname)}\\b(['’]s)?`, "gi"), (_m, poss) => `a key person${poss ? "’s" : ""}`);
+        o = o.replace(new RegExp(`\\b(the\\s+)?${escapeRe(surname)}(?:['’]s)?\\s+family\\b`, "gi"), "the owner’s family");
+        continue;
+      }
+      o = neutralise(o, t.text, t.kind, !!t.common, t.regionWord ? t : undefined);
+    }
+    // People the facts don't list but the prose names ("son Manpreet", "Dr. Lee").
+    if (!prose) return o;
+    return withBrandsMasked(o, brands, (m) => {
+      let x = m;
+      for (const p of [...honorificNames(x), ...peopleInFact(x, "prose")].sort((a, b) => b.length - a.length)) {
+        x = neutralise(x, p.replace(new RegExp(`^(?:${TITLE})\\.?\\s+`, "i"), ""), "person", false);
+      }
+      // Names the facts never list as identifiers — customers, suppliers,
+      // towns ("Maplecrest 5 homes ~41%", "wholesale to Hartwell's") — with
+      // brands and provinces masked, so they stay.
+      if (opts.scrubNames) x = scrubProperNames(x, opts.scrubNames);
+      return x;
+    });
+  });
+  out = out
+    .replace(/\b(a key person)(?:\s+a key person)+/g, "$1")
+    .replace(/\bthe\s+the\b/gi, "the")
+    .replace(/(^|[.!?]\s+)(a key person|the owner’s|the business|the local area)/g, (_m, p: string, w: string) => p + w[0].toUpperCase() + w.slice(1))
+    .replace(/\s{2,}/g, " ")
+    .replace(/\s+([,.;:])/g, "$1")
+    .trim();
+  if (!out || briefLeaks(out, terms).length) return null;
+  if (!prose) return out;
+  let people = 0;
+  withRegionsMasked(out, (masked) =>
+    withBrandsMasked(masked, brands, (m) => {
+      people = honorificNames(m).length + peopleInFact(m, "prose").length;
+      return m;
+    }),
+  );
+  return people ? null : out;
+}
+
+const DEAL_WORDS = /^(?:buyers?|sellers?|owners?|purchasers?|acquirers?|investors?|vendors?|brokers?|landlords?|tenants?|someone|anyone|company|companies|operators?|management|staff|team|employees?|customers?|clients?|partners?)$/i;
+
+/** The terms that would identify this deal, for the brief and the stored results. */
+export function briefTerms(deal: Deal): BlindTerm[] {
+  // The province/state is part of the brief on purpose (Blind CIMs keep it
+  // too), so a region name the facts happen to list is not an identifier here
+  // — except a person's surname that is also a region ("Dana Washington"):
+  // the blind guard marks it `regionWord` and counts it only where it means
+  // the person, so it stays.
+  // Words about the deal itself ("Buyer", "Seller", "Owner") are never an
+  // identifier, even when a loosely written fact makes one look like a place.
+  const terms = blindLeakTerms(deal as any, { codename: (deal as any).blindCodename ?? null })
+    .filter((t) => (t.regionWord || !isRegionLabel(t.text)) && !DEAL_WORDS.test(t.text.trim()));
+  // People are talked about by first name ("son Manpreet stays on"): each
+  // person's given name counts on its own too (capitalised only).
+  const have = new Set(terms.map((t) => t.text.toLowerCase()));
+  for (const t of [...terms]) {
+    if (t.kind !== "person" || t.titled) continue;
+    const first = t.text.split(/\s+/)[0].replace(/[^A-Za-zÀ-ÖØ-öø-ÿ'’-]/g, "");
+    if (first.length < 3 || first === t.text || have.has(first.toLowerCase()) || isRegionLabel(first)) continue;
+    have.add(first.toLowerCase());
+    // A first name that is also a word ("Mark", "Grant") counts only capitalised.
+    const word = EVERYDAY_NAME_WORDS.has(first.toLowerCase()) || isCommonWord(first.toLowerCase());
+    terms.push({ text: first, kind: "person", common: word });
+  }
+  return terms;
+}
+
+export class BlindBriefError extends Error {}
+
+/**
+ * Blind research brief — nothing that identifies the business. It goes into
+ * web searches, so it is pre-NDA material: structured bands and region, and
+ * free text only after `blindFreeText` (lines that can't be made blind are
+ * left out). The whole brief is checked again before it is returned; if it
+ * still names anything, it throws (the research never runs).
+ */
+/** The free-text facts the brief describes (each rewritten generically when AI is available). */
+export const BRIEF_TEXT_FIELDS = ["businessType", "revenueStreams", "idealBuyer"] as const;
+export type BriefTextField = (typeof BRIEF_TEXT_FIELDS)[number];
+
+/**
+ * The facts the brief may be built from: confirmed business facts only.
+ * Anything only a broker-only source asserted (CRM notes, private files —
+ * cim-facts.isPrivateToBroker) and unconfirmed website/social leads never
+ * become the research brief, least of all the binding buyer preferences.
+ */
+export function briefFacts(deal: Deal): Record<string, unknown> {
   const info = ((deal as any).extractedInfo || {}) as Record<string, unknown>;
-  const locText = [txt(info.locationSite), txt(info.location), txt(info.leaseAddress)].join(" ");
-  const m = REGION_RE.exec(locText);
-  const region = m ? PROVINCES[m[1]] ?? m[1] : null;
-  const country = region && Object.values(PROVINCES).includes(region) ? "Canada" : region ? "United States" : null;
+  return Object.fromEntries(splitFactsForCim(info).confirmed);
+}
+
+export function blindBrief(
+  deal: Deal,
+  opts: { rewritten?: Partial<Record<BriefTextField, string | null>> | null } = {},
+): { brief: string; region: string | null; withheld: number } {
+  const info = briefFacts(deal);
+  const terms = briefTerms(deal);
+  let withheld = 0;
+  const industryLabel = `${deal.industry || "unknown"}${(deal as any).subIndustry ? ` — ${(deal as any).subIndustry}` : ""}`;
+  const brands = labelBrands(industryLabel);
+  const free = (label: string, raw: string, max: number, scrubNames?: string): string => {
+    if (!raw.trim()) return "";
+    const clean = blindFreeText(clip(raw, max * 2), terms, { brands, scrubNames });
+    if (!clean) { withheld++; return ""; }
+    return `${label}${clip(clean, max)}`;
+  };
+  // The generic rewrite (buildResearchBrief) when there is one, else the fact itself.
+  const rewrote = (field: BriefTextField) => {
+    const r = opts.rewritten?.[field];
+    return typeof r === "string" && r.trim() ? r : null;
+  };
+  const text = (field: BriefTextField): string => rewrote(field) ?? txt(info[field]);
+  // The proper-name net: always on revenue streams (customer names live
+  // there); on the other lines only when the AI rewrite isn't available —
+  // a rewritten buyer preference may name other companies' home towns
+  // ("a Toronto-based consolidator"), which identify nothing.
+  const net = (field: BriefTextField, phrase: string) => (field === "revenueStreams" || !rewrote(field) ? phrase : undefined);
+  const where = briefRegion(deal as any, info);
+  const region = where?.region ?? null;
+  const country = where?.country ?? null;
+  const industry = free("", industryLabel, 240) || `${deal.industry && !briefLeaks(deal.industry, terms).length ? deal.industry : "unknown"}`;
+  const headcount = parseHeadcount(txt(info.totalEmployees) || txt(info.employees));
   const lines = [
-    `Industry: ${deal.industry || "unknown"}${(deal as any).subIndustry ? ` — ${(deal as any).subIndustry}` : ""}`,
-    txt(info.businessType) ? `Business type: ${txt(info.businessType).slice(0, 200)}` : "",
+    `Industry: ${industry}`,
+    free("Business type: ", text("businessType"), 200, net("businessType", "a named company")),
     region ? `Region: ${region}${country ? `, ${country}` : ""}` : "",
     band(txt(info.annualRevenue)) ? `Revenue: ${band(txt(info.annualRevenue))}` : "",
     band(txt(info.sde)) ? `SDE: ${band(txt(info.sde))}` : "",
     band(txt(info.ebitda)) ? `EBITDA: ${band(txt(info.ebitda))}` : "",
-    txt(info.employees) ? `Employees: ${txt(info.employees).replace(/[^0-9–-]+/g, " ").trim().split(" ")[0] || "n/a"}` : "",
-    txt(info.revenueStreams) ? `Services / revenue streams: ${txt(info.revenueStreams).slice(0, 300)}` : "",
-    txt(info.idealBuyer) ? `SELLER'S BUYER PREFERENCES (binding): ${txt(info.idealBuyer).slice(0, 400)}` : "",
+    headcount ? `Employees: ${headcountBand(headcount)}` : "",
+    // Customer and supplier names are identifying pre-NDA: scrubbed.
+    free("Services / revenue streams: ", text("revenueStreams"), 300, net("revenueStreams", "a named client")),
+    free("SELLER'S BUYER PREFERENCES (binding): ", text("idealBuyer"), 400, net("idealBuyer", "a named company")),
   ];
-  return { brief: lines.filter(Boolean).join("\n"), region };
+  const brief = lines.filter(Boolean).join("\n");
+  // The fixed labels ("SELLER'S BUYER PREFERENCES") are ours; check what follows them.
+  // The Region line is built from the fixed province/state list, never from
+  // free text, so it is not re-checked (a surname like "Washington" would
+  // otherwise read "Region: Washington" as the person).
+  const values = lines.filter((l) => l && !l.startsWith("Region: ")).map((l) => l.slice(l.indexOf(": ") + 2)).join("\n");
+  if (briefLeaks(values, terms).length) throw new BlindBriefError("research brief still names the business");
+  return { brief, region, withheld };
+}
+
+type AiCreate = (params: any, options?: any) => Promise<any>;
+let aiCreate: AiCreate = (params, options) => anthropic.messages.create(params, options) as any;
+/** Tests replace the model calls (no network). */
+export function setAcquirerAiForTests(fn: AiCreate | null): void {
+  aiCreate = fn ?? ((params, options) => anthropic.messages.create(params, options) as any);
+}
+
+const REWRITE_TOOL = {
+  name: "generic_lines",
+  description: "The same facts, rewritten with no proper names.",
+  input_schema: {
+    type: "object",
+    properties: Object.fromEntries(BRIEF_TEXT_FIELDS.map((f) => [f, { type: ["string", "null"] }])),
+    required: [...BRIEF_TEXT_FIELDS],
+  },
+};
+
+/**
+ * The brief's free-text lines rewritten generically by the supporting model:
+ * every customer, supplier, person, business, brand, street and town becomes
+ * a description ("the largest client group, 5 homes, ~41% of LTC revenue").
+ * The deterministic checks in blindBrief still run on the result. Null when
+ * the model isn't available — blindBrief then scrubs the facts itself.
+ */
+export async function genericBriefLines(deal: Deal): Promise<Partial<Record<BriefTextField, string | null>> | null> {
+  const facts = briefFacts(deal);
+  const input = Object.fromEntries(BRIEF_TEXT_FIELDS.map((f) => [f, clip(txt(facts[f]), 900) || null]));
+  if (!Object.values(input).some(Boolean) || !process.env.ANTHROPIC_API_KEY) return null;
+  try {
+    const r = await aiCreate({
+      model: agentConfig.models.supportingAgents,
+      max_tokens: 1200,
+      temperature: 0,
+      tools: [REWRITE_TOOL],
+      tool_choice: { type: "tool", name: REWRITE_TOOL.name },
+      system: [
+        "You prepare a confidential business profile for web research on likely acquirers. Rewrite each line so it can be searched without identifying the business.",
+        "Remove EVERY proper name: customers, clients, suppliers, landlords, people, the business itself, its brands or programmes, streets, neighbourhoods, cities and towns where the business or its customers are. Replace each with a plain description (e.g. 'the largest client group', 'a local grocer', 'a key employee', 'a 9-location competitor chain').",
+        "Keep everything else: services, customer TYPES, counts, percentages, sizes, margins, the seller's buyer preferences and exclusions, franchise brand names the business operates under, and provinces/states.",
+        "Never add facts or opinions. Keep each line about as long as the original. Return null for a line that is null.",
+      ].join(" "),
+      messages: [{ role: "user", content: JSON.stringify(input) }],
+    });
+    const block = (r?.content || []).find((b: any) => b.type === "tool_use");
+    const out = (block?.input || {}) as Record<string, unknown>;
+    const lines: Partial<Record<BriefTextField, string | null>> = {};
+    for (const f of BRIEF_TEXT_FIELDS) lines[f] = typeof out[f] === "string" && (out[f] as string).trim() ? String(out[f]).slice(0, 1200) : null;
+    return lines;
+  } catch (err) {
+    console.warn("[external-acquirers] generic brief rewrite failed:", (err as Error)?.message);
+    return null;
+  }
+}
+
+// ── Claim check (claim-check.ts holds the rules) ──────────────────────────
+const CHECK_BATCH = 4;
+const CHECK_CONCURRENCY = 3;
+// Web fetch was a beta on the supporting model's generation; the header is
+// harmless where it is generally available.
+const FETCH_HEADERS = { headers: { "anthropic-beta": "web-fetch-2025-09-10" } };
+
+async function checkClaimBatch(
+  batch: Array<{ ref: string; a: ExternalAcquirer }>,
+  excerpts: Map<string, string[]>,
+  deadline: number,
+): Promise<Map<string, AcquirerCheck>> {
+  const payload = batch.map(({ ref, a }) => ({
+    ref,
+    organisation: a.name,
+    claims: claimsFor(a),
+    sources: a.sources.map((u) => ({ url: u, excerpts: (excerpts.get(normaliseUrl(u)) ?? []).slice(0, 8).map((t) => clip(t, 500)) })),
+  }));
+  const domains = Array.from(new Set(batch.flatMap(({ a }) => a.sources.map((u) => normaliseUrl(u).split("/")[0]).filter(Boolean))));
+  const fetchTool = { type: "web_fetch_20250910", name: "web_fetch", max_uses: Math.min(12, batch.length * 3), allowed_domains: domains, max_content_tokens: 6000 };
+  const parse = (r: any): Map<string, AcquirerCheck> | null => {
+    const block = (r?.content || []).find((b: any) => b.type === "tool_use" && b.name === CHECK_TOOL.name);
+    if (!block) return null;
+    const out = new Map<string, AcquirerCheck>();
+    for (const e of Array.isArray(block.input?.entries) ? block.input.entries : []) {
+      if (e?.ref && Array.isArray(e.claims)) out.set(String(e.ref), { claims: e.claims, supportedWhy: e.supportedWhy ?? null });
+    }
+    return out;
+  };
+  const messages: any[] = [{ role: "user", content: `Check every claim against its sources.\n${JSON.stringify(payload)}` }];
+  let withFetch = domains.length > 0;
+  for (let turn = 0; turn < 5 && Date.now() < deadline; turn++) {
+    const force = turn >= 3 || !withFetch;
+    let r: any;
+    try {
+      r = await aiCreate({
+        model: agentConfig.models.supportingAgents,
+        max_tokens: 4000,
+        temperature: 0,
+        system: CHECK_SYSTEM,
+        tools: withFetch ? [fetchTool, CHECK_TOOL] : [CHECK_TOOL],
+        tool_choice: force ? { type: "tool", name: CHECK_TOOL.name } : { type: "auto" },
+        messages,
+      }, { ...(withFetch ? FETCH_HEADERS : {}), timeout: Math.max(20_000, deadline - Date.now()) });
+    } catch (err: any) {
+      // Page fetching unavailable for this key/model: check against the excerpts alone.
+      // Only a complaint about the tool itself — a billing or other 400 would fail the same way again.
+      if (withFetch && err?.status === 400 && turn === 0 && /web_fetch|tool|beta|allowed_domains|not supported/i.test(String(err?.message ?? ""))) {
+        console.warn("[external-acquirers] claim check without page fetch:", err?.message);
+        withFetch = false;
+        turn--;
+        continue;
+      }
+      throw err;
+    }
+    const got = parse(r);
+    if (got) return got;
+    messages.push({ role: "assistant", content: r.content });
+    if (r.stop_reason !== "pause_turn") messages.push({ role: "user", content: "Now call report_claim_checks with every ref and claim id." });
+  }
+  return new Map();
+}
+
+async function checkChannels(channels: Channel[], corpus: string, deadline: number): Promise<Array<ChannelCheck | null> | null> {
+  if (!channels.length) return [];
+  const r: any = await aiCreate({
+    model: agentConfig.models.supportingAgents,
+    max_tokens: 1500,
+    temperature: 0,
+    system: "You check suggested outreach channels for an M&A buyer search against what a web search returned. General advice needs no source. An organisation named as an example must appear in the research text in that role (a lender as a lender, an association as an association); otherwise remove it from 'how'. Drop a channel (keep=false) only if it rests on a factual claim the research contradicts or doesn't back. Never add facts.",
+    tools: [CHANNEL_TOOL],
+    tool_choice: { type: "tool", name: CHANNEL_TOOL.name },
+    messages: [{ role: "user", content: `CHANNELS:\n${JSON.stringify(channels.map((c, i) => ({ ref: String(i + 1), name: c.name, how: c.how })))}\n\nRESEARCH TEXT:\n${corpus.slice(0, 20000)}` }],
+  }, { timeout: Math.max(20_000, deadline - Date.now()) });
+  const block = (r?.content || []).find((b: any) => b.type === "tool_use");
+  const list = Array.isArray(block?.input?.channels) ? block.input.channels : null;
+  if (!list) return null;
+  return channels.map((_, i) => {
+    const c = list.find((x: any) => String(x?.ref) === String(i + 1));
+    return c ? { keep: c.keep !== false, how: typeof c.how === "string" ? c.how : null } : null;
+  });
+}
+
+/**
+ * Check every organisation's claims (and the channels) against what the
+ * research cited. Failures never hide an organisation — it is kept and
+ * marked unchecked.
+ */
+export async function checkAcquirerClaims(
+  results: ExternalAcquirer[],
+  channels: Channel[],
+  ctx: { excerpts: Map<string, string[]>; corpus: string },
+): Promise<AppliedChecks> {
+  const deadline = Date.now() + 3 * 60_000;
+  const checks: Array<AcquirerCheck | null> = results.map(() => null);
+  const batches: Array<Array<{ ref: string; a: ExternalAcquirer; i: number }>> = [];
+  results.forEach((a, i) => {
+    if (i % CHECK_BATCH === 0) batches.push([]);
+    batches[batches.length - 1].push({ ref: String(i + 1), a, i });
+  });
+  let next = 0;
+  await Promise.all(Array.from({ length: Math.min(CHECK_CONCURRENCY, batches.length) }, async () => {
+    while (next < batches.length) {
+      const batch = batches[next++];
+      try {
+        const got = await checkClaimBatch(batch, ctx.excerpts, deadline);
+        for (const { ref, i } of batch) checks[i] = got.get(ref) ?? null;
+      } catch (err) {
+        console.error("[external-acquirers] claim check batch failed:", (err as Error)?.message ?? err);
+      }
+    }
+  }));
+  let channelChecks: Array<ChannelCheck | null> | null = null;
+  try {
+    channelChecks = await checkChannels(channels, ctx.corpus, deadline);
+  } catch (err) {
+    console.error("[external-acquirers] channel check failed:", (err as Error)?.message ?? err);
+  }
+  return applyClaimChecks(results, checks, channels, channelChecks, ctx.corpus);
+}
+
+/** The research brief: the AI's generic rewrite where available, always through blindBrief's checks. */
+export async function buildResearchBrief(deal: Deal): Promise<ReturnType<typeof blindBrief>> {
+  return blindBrief(deal, { rewritten: await genericBriefLines(deal) });
 }
 
 const REPORT_TOOL = {
@@ -82,9 +619,10 @@ const REPORT_TOOL = {
             whyInterested: { type: "string", description: "1-2 sentences: the specific evidence they'd want this business (e.g. acquired X similar businesses in the region in 2025; platform in this sector)." },
             evidence: { type: "array", items: { type: "string" }, description: "Up to 3 concrete facts, e.g. 'Acquired MCA Dental Group (27 clinics, ON/QC), Oct 2025'." },
             contact: { type: ["string", "null"], description: "ONLY an email/phone/contact page that appears in the research text. Otherwise null. Never guess." },
-            sources: { type: "array", items: { type: "string" }, description: "URLs from the research that support this entry." },
+            sourceRefs: { type: "array", items: { type: "integer" }, description: "Numbers of the SOURCES entries (from the numbered list) that support this entry. Cite every source that mentions the organisation." },
+            sources: { type: "array", items: { type: "string" }, description: "Any other URLs from the research text that support this entry." },
           },
-          required: ["name", "type", "whyInterested", "evidence", "sources"],
+          required: ["name", "type", "whyInterested", "evidence", "sourceRefs"],
         },
       },
       note: { type: ["string", "null"], description: "When few or no organisations fit (e.g. the seller's preferences point to individual buyers who aren't publicly visible), 1-2 sentences saying why. Otherwise null." },
@@ -111,20 +649,156 @@ export async function startExternalAcquirerSearch(dealId: string, opts: { includ
   const state: ExternalAcquirerSearch = { status: "running", startedAt: new Date().toISOString(), results: ((deal.externalAcquirers as ExternalAcquirerSearch | null)?.results) || [] };
   await storage.updateDeal(dealId, { externalAcquirers: state } as any);
   void research(deal, !!opts.includeExcluded)
-    .then(async ({ results, mode, note, channels }) => {
-      await storage.updateDeal(dealId, { externalAcquirers: { status: "done", startedAt: state.startedAt, finishedAt: new Date().toISOString(), mode, results, note, channels, includeExcluded: !!opts.includeExcluded } } as any);
+    .then(async ({ results, mode, note, channels, droppedCount, removedClaims }) => {
+      await storage.updateDeal(dealId, { externalAcquirers: { status: "done", startedAt: state.startedAt, finishedAt: new Date().toISOString(), mode, results, note, channels, droppedCount, removedClaims, includeExcluded: !!opts.includeExcluded } } as any);
     })
     .catch(async (err) => {
-      console.error("[external-acquirers] failed:", err);
-      await storage.updateDeal(dealId, { externalAcquirers: { ...state, status: "failed", finishedAt: new Date().toISOString(), error: "The research didn't finish — try again in a minute." } } as any);
+      const blind = err instanceof BlindBriefError;
+      console.error("[external-acquirers] failed:", blind ? "research brief could not be made blind — not sent" : err);
+      await storage.updateDeal(dealId, {
+        externalAcquirers: {
+          ...state,
+          status: "failed",
+          finishedAt: new Date().toISOString(),
+          error: blind
+            ? "The research was stopped because the business profile still named the business or its people. Nothing was searched."
+            : "The research didn't finish — try again in a minute.",
+        },
+      } as any);
     })
     .finally(() => running.delete(dealId));
   return { started: true };
 }
 
-async function research(deal: Deal, includeExcluded: boolean): Promise<{ results: ExternalAcquirer[]; mode: "web" | "knowledge"; note: string | null; channels: Array<{ name: string; how: string; url?: string | null }> }> {
-  let { brief, region } = blindBrief(deal);
+/**
+ * A URL in comparable form: no scheme, no "www.", lower-case host, no query
+ * string, fragment or trailing slash. "https://www.mullen-group.com/" and
+ * "http://mullen-group.com" are the same page.
+ */
+export function normaliseUrl(u: string): string {
+  const s = String(u || "").trim();
+  if (!s) return "";
+  const noScheme = s.replace(/^[a-z][a-z0-9+.-]*:\/\//i, "");
+  const [hostPart, ...rest] = noScheme.split("/");
+  const host = hostPart.toLowerCase().replace(/^www\./, "").replace(/:\d+$/, "").replace(/\.$/, "");
+  const path = rest.join("/").split(/[?#]/)[0].replace(/\/+$/, "");
+  return path ? `${host}/${path}` : host;
+}
+
+/** True when `u` is one of the known URLs, or a page/home page on the same site as one. */
+export function urlMatches(u: string, known: string[]): boolean {
+  const n = normaliseUrl(u);
+  if (!n) return false;
+  return known.some((k) => {
+    const nk = normaliseUrl(k);
+    return !!nk && (nk === n || nk.startsWith(`${n}/`) || n.startsWith(`${nk}/`));
+  });
+}
+
+/** Shorten at a sentence (or word) boundary — never mid-word. */
+export function clip(text: string, max: number): string {
+  const t = text.replace(/\s+/g, " ").trim();
+  if (t.length <= max) return t;
+  const cut = t.slice(0, max);
+  const sentence = cut.lastIndexOf(". ");
+  if (sentence >= max * 0.5) return cut.slice(0, sentence + 1);
+  const word = cut.lastIndexOf(" ");
+  return `${cut.slice(0, word > 0 ? word : max).replace(/[,;:\s]+$/, "")}…`;
+}
+
+export interface StructuredAcquirerInput {
+  acquirers?: any[];
+  note?: string | null;
+  channels?: any[];
+}
+
+/**
+ * The structured list, checked against what the research actually returned.
+ *  - Sources are the numbered SOURCES the model cited (by index) plus any URL
+ *    it wrote that matches a URL the search returned (normalised).
+ *  - In web mode an organisation with no matching source is kept only when
+ *    the research text itself names it — marked unverified, so the broker
+ *    knows to check it; anything else is dropped and counted.
+ *  - A contact is kept only when it appears verbatim in cited text.
+ *  - Free text is kept blind (no names from the deal's facts).
+ */
+export function buildAcquirerList(
+  input: StructuredAcquirerInput,
+  ctx: {
+    mode: "web" | "knowledge";
+    sourceList: string[];
+    researchText: string;
+    citedText: string;
+    theirs?: Set<string>;
+    terms?: BlindTerm[];
+  },
+): { results: ExternalAcquirer[]; note: string | null; channels: Array<{ name: string; how: string; url?: string | null }>; droppedCount: number } {
+  const { mode, sourceList } = ctx;
+  const theirs = ctx.theirs ?? new Set<string>();
+  const terms = ctx.terms ?? [];
+  const cited = ctx.citedText.toLowerCase();
+  const research = ctx.researchText.toLowerCase();
+  const urlOk = (u: string) => mode === "knowledge" || urlMatches(u, sourceList);
+  const clean = (s: string) => (terms.length ? blindFreeText(s, terms, { prose: false }) ?? "" : s);
+
+  const raw = Array.isArray(input.acquirers) ? input.acquirers : [];
+  // The note speaks about the seller's preferences, so it is kept blind too.
+  // Entries describe OTHER companies and are left as researched: scrubbing
+  // them against this deal's terms rewrote real facts (a shared city name).
+  const noteRaw = input.note ? clip(String(input.note), 900) : null;
+  const note = noteRaw ? clean(noteRaw) || null : null;
+  const channels = (Array.isArray(input.channels) ? input.channels : [])
+    .filter((c) => c?.name && c?.how && !/\bbroker|brokerage|m&a advis/i.test(`${c.name} ${c.how}`))
+    .slice(0, 5)
+    .map((c) => ({ name: String(c.name).slice(0, 120), how: clip(String(c.how), 300), url: c.url && urlOk(String(c.url)) ? String(c.url) : null }))
+    .filter((c) => c.how);
+
+  const verified: ExternalAcquirer[] = [];
+  const unverified: ExternalAcquirer[] = [];
+  let droppedCount = 0;
+  for (const a of raw) {
+    if (!a?.name || !a?.whyInterested) { droppedCount++; continue; }
+    const name = String(a.name).trim();
+    const byRef = (Array.isArray(a.sourceRefs) ? a.sourceRefs : [])
+      .map((n: unknown) => sourceList[Number(n) - 1])
+      .filter((u: string | undefined): u is string => !!u);
+    const byUrl = (Array.isArray(a.sources) ? a.sources : []).map(String).filter(urlOk);
+    const sources = Array.from(new Set([...byRef, ...byUrl].map(stripTracking))).slice(0, 4);
+    let isVerified = true;
+    if (mode === "web" && sources.length === 0) {
+      // Named in the research but not tied to a source: keep it, flagged.
+      const inResearch = name.length >= 3 && research.includes(name.toLowerCase());
+      if (!inResearch) { droppedCount++; continue; }
+      isVerified = false;
+    }
+    let contact: string | null = a.contact ? String(a.contact).trim() : null;
+    if (contact && (mode === "knowledge" || !cited.includes(contact.toLowerCase()))) contact = null;
+    const website = a.website ? String(a.website) : null;
+    const domain = website ? normaliseUrl(website).split("/")[0] : "";
+    const entry: ExternalAcquirer = {
+      name: name.slice(0, 120),
+      type: ["strategic", "private_equity", "family_office", "search_fund", "other"].includes(a.type) ? a.type : "other",
+      headquarters: a.headquarters ? String(a.headquarters).slice(0, 120) : null,
+      website,
+      whyInterested: clip(String(a.whyInterested), 500),
+      evidence: (Array.isArray(a.evidence) ? a.evidence : []).map((e: unknown) => clip(String(e), 240)).filter(Boolean).slice(0, 3),
+      contact,
+      sources,
+      inYourList: theirs.has(name.toLowerCase().replace(/[^a-z0-9]/g, "")) || (!!domain && theirs.has(domain)),
+      ...(isVerified ? {} : { unverified: true }),
+    };
+    (isVerified ? verified : unverified).push(entry);
+  }
+  return { results: [...verified, ...unverified].slice(0, 15), note, channels, droppedCount };
+}
+
+async function research(deal: Deal, includeExcluded: boolean): Promise<{ results: ExternalAcquirer[]; mode: "web" | "knowledge"; note: string | null; channels: Array<{ name: string; how: string; url?: string | null }>; droppedCount: number; removedClaims: number }> {
+  let { brief, region } = await buildResearchBrief(deal);
+  const terms = briefTerms(deal);
   if (includeExcluded) brief = brief.replace("SELLER'S BUYER PREFERENCES (binding):", "Seller's stated preference (broker asked to include ALL buyer types anyway — list them, and flag any that conflict with it):");
+  // The brief is blind by construction; logging it lets anyone audit what
+  // left the platform (no names, no city — see blindBrief).
+  console.log(`[external-acquirers] deal ${deal.id} brief:\n${brief}`);
   const system = [
     "You are an M&A research analyst building a buyer list for a business for sale. Find 8-15 organisations likely to acquire it, beyond individual buyers:",
     "(1) strategic acquirers/consolidators actively buying similar businesses — especially in this region; (2) private-equity firms with a platform in this sector (add-on) or a stated thesis for it; (3) family offices or holding companies known to buy in this space.",
@@ -138,13 +812,21 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
 
   const urls = new Set<string>();
   const citedText: string[] = [];
+  // What the search returned per page (titles + cited text), for the claim check.
+  const excerpts = new Map<string, string[]>();
+  const addExcerpt = (url: string, text: string) => {
+    const k = normaliseUrl(url);
+    const list = excerpts.get(k) ?? [];
+    if (!list.includes(text)) list.push(text);
+    excerpts.set(k, list);
+  };
   let finalText = "";
   let mode: "web" | "knowledge" = "web";
   // Bounded research: ~8 searches, at most one continuation, 4 minutes overall.
   const deadline = Date.now() + 4 * 60_000;
   try {
     for (let turn = 0; turn < 2 && Date.now() < deadline; turn++) {
-      const r: any = await anthropic.messages.create({
+      const r: any = await aiCreate({
         model: agentConfig.models.supportingAgents,
         max_tokens: 5000,
         system,
@@ -153,13 +835,20 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
       } as any, { timeout: Math.max(30_000, deadline - Date.now()) });
       for (const b of r.content as any[]) {
         if (b.type === "web_search_tool_result" && Array.isArray(b.content)) {
-          for (const item of b.content) if (item?.url) urls.add(String(item.url));
+          for (const item of b.content) {
+            if (!item?.url) continue;
+            urls.add(String(item.url));
+            if (item.title) addExcerpt(String(item.url), String(item.title));
+          }
         }
         if (b.type === "text") {
           finalText += b.text;
           for (const c of b.citations || []) {
             if (c?.url) urls.add(String(c.url));
-            if (c?.cited_text) citedText.push(String(c.cited_text));
+            if (c?.cited_text) {
+              citedText.push(String(c.cited_text));
+              if (c.url) addExcerpt(String(c.url), String(c.cited_text));
+            }
           }
         }
       }
@@ -173,29 +862,27 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
     if (!finalText.trim()) mode = "knowledge";
   }
 
-  const structuring = await anthropic.messages.create({
+  // The URLs live in the search results, not in the prose — hand the
+  // structuring pass a numbered list so it can cite by number.
+  const sourceList = Array.from(urls).slice(0, 120);
+  const sourcesBlock = sourceList.map((u, i) => `[${i + 1}] ${u}`).join("\n");
+  const prefLine = brief.split("\n").find((l) => l.startsWith("SELLER'S BUYER PREFERENCES")) ?? "";
+  const structure = async (extra = "") => aiCreate({
     model: agentConfig.models.supportingAgents,
     max_tokens: 4000,
     temperature: 0,
     tools: [REPORT_TOOL as any],
     tool_choice: { type: "tool", name: "report_acquirers" },
     system: mode === "web"
-      ? `Turn the research into the structured list. Use only organisations, facts, URLs and contacts that appear in the research. Do not add anything. Drop any organisation that conflicts with the seller's buyer preferences.${brief.includes("SELLER'S BUYER PREFERENCES") ? `\n\n${brief.split("\n").find((l) => l.startsWith("SELLER'S BUYER PREFERENCES")) ?? ""}` : ""}`
+      ? `Turn the research into the structured list. Use only organisations, facts, URLs and contacts that appear in the research. Do not add anything. For each organisation, cite the numbered SOURCES that mention or support it in sourceRefs (a search result about the organisation or its acquisitions counts). Drop any organisation that conflicts with the seller's buyer preferences.${prefLine ? `\n\n${prefLine}` : ""}${extra}`
       : "List likely acquirers for this business profile from your own knowledge. Mark nothing as a contact. Sources may be the organisations' home pages only. Be conservative — only well-known, real organisations active in this sector.",
-    messages: [{ role: "user", content: mode === "web" ? `RESEARCH:\n${finalText.slice(0, 30000)}` : `Business profile:\n${brief}` }],
+    messages: [{
+      role: "user",
+      content: mode === "web"
+        ? `RESEARCH:\n${finalText.slice(0, 30000)}\n\nSOURCES (cite by number):\n${sourcesBlock || "(none)"}`
+        : `Business profile:\n${brief}`,
+    }],
   });
-  const block = structuring.content.find((b) => b.type === "tool_use");
-  const cited = citedText.join("\n").toLowerCase();
-  const known = Array.from(urls);
-  const urlOk = (u: string) => mode === "knowledge" || known.some((k) => k === u || k.startsWith(u) || u.startsWith(k));
-
-  const input = ((block && block.type === "tool_use" ? block.input : {}) as { acquirers?: any[]; note?: string | null; channels?: any[] });
-  const raw = input.acquirers ?? [];
-  const note = input.note ? String(input.note).slice(0, 900) : null;
-  const channels = (Array.isArray(input.channels) ? input.channels : [])
-    .filter((c) => c?.name && c?.how && !/\bbroker|brokerage|m&a advis/i.test(`${c.name} ${c.how}`))
-    .slice(0, 5)
-    .map((c) => ({ name: String(c.name).slice(0, 120), how: String(c.how).slice(0, 300), url: c.url && urlOk(String(c.url)) ? String(c.url) : null }));
 
   // Mark organisations the broker already has in their buyer list.
   const contacts = await storage.getBrokerBuyerContactList(deal.brokerId!).catch(() => []);
@@ -206,26 +893,28 @@ async function research(deal: Deal, includeExcluded: boolean): Promise<{ results
     if (dom) theirs.add(dom.toLowerCase());
   }
 
-  const out: ExternalAcquirer[] = [];
-  for (const a of raw) {
-    if (!a?.name || !a?.whyInterested) continue;
-    const sources = (Array.isArray(a.sources) ? a.sources : []).map(String).filter(urlOk).slice(0, 4);
-    if (mode === "web" && sources.length === 0) continue;   // uncited → dropped
-    let contact: string | null = a.contact ? String(a.contact).trim() : null;
-    if (contact && (mode === "knowledge" || !cited.includes(contact.toLowerCase()))) contact = null;
-    const website = a.website ? String(a.website) : null;
-    const domain = website ? website.replace(/^https?:\/\//, "").replace(/^www\./, "").split("/")[0].toLowerCase() : "";
-    out.push({
-      name: String(a.name).slice(0, 120),
-      type: ["strategic", "private_equity", "family_office", "search_fund", "other"].includes(a.type) ? a.type : "other",
-      headquarters: a.headquarters ? String(a.headquarters).slice(0, 120) : null,
-      website,
-      whyInterested: String(a.whyInterested).slice(0, 500),
-      evidence: (Array.isArray(a.evidence) ? a.evidence : []).map(String).slice(0, 3),
-      contact,
-      sources,
-      inYourList: theirs.has(String(a.name).toLowerCase().replace(/[^a-z0-9]/g, "")) || (!!domain && theirs.has(domain)),
-    });
+  const toList = (resp: Awaited<ReturnType<typeof structure>>) => {
+    const block = (resp?.content || []).find((b: any) => b.type === "tool_use");
+    const input = (block && block.type === "tool_use" ? block.input : {}) as StructuredAcquirerInput;
+    return buildAcquirerList(input, { mode, sourceList, researchText: finalText, citedText: citedText.join("\n"), theirs, terms });
+  };
+  let out = toList(await structure());
+  // Research that describes acquirers but structured to nothing: one retry,
+  // told plainly that organisations named in the research belong in the list.
+  if (mode === "web" && out.results.length === 0 && finalText.trim().length > 400) {
+    const retry = toList(await structure("\n\nThe research names organisations — list every one that fits, with the numbers of the sources that mention it. Do not return an empty list unless the research names none."));
+    if (retry.results.length > 0) out = retry;
+    else out.droppedCount = Math.max(out.droppedCount, retry.droppedCount);
   }
-  return { results: out.slice(0, 15), mode, note, channels };
+  // Every claim checked against the pages it cites (claim-check.ts).
+  let removedClaims = 0;
+  if (mode === "web" && (out.results.length || out.channels.length)) {
+    const corpus = [...citedText, ...Array.from(excerpts.values()).flat()].join("\n");
+    const checked = await checkAcquirerClaims(out.results, out.channels, { excerpts, corpus });
+    removedClaims = checked.removedClaims;
+    out = { ...out, results: checked.results, channels: checked.channels, droppedCount: out.droppedCount + checked.droppedUnsupported };
+    console.log(`[external-acquirers] deal ${deal.id}: claim check — ${checked.removedClaims} claim(s) removed, ${checked.droppedUnsupported} organisation(s) dropped, ${checked.unchecked} unchecked`);
+  }
+  if (out.droppedCount) console.log(`[external-acquirers] deal ${deal.id}: ${out.results.length} kept, ${out.droppedCount} left out (not backed by the research)`);
+  return { ...out, mode, removedClaims };
 }

@@ -1,12 +1,18 @@
 /**
  * TwoColumn renderer
  * Two equal columns. Each side can render prose, list, metric, or a sub-layout
- * (chart, table, etc.) using the standard CIM renderers.
+ * (chart, table, stats, cards…) using the standard CIM renderers.
+ *
+ * Columns go through resolveTwoColumnColumn (shared/cim-layouts.ts) first:
+ * a placeholder where the data should be ({content: "stats", layoutType:
+ * "icon_stat_row"}) is never printed — the column is left out and the other
+ * one takes the full width — and a list of cards with no layoutType is drawn
+ * as cards, not as a heading with nothing under it.
  */
 import { Component, type ReactNode } from "react";
-import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { resolveTwoColumnColumn, type TwoColumnColumn } from "@shared/cim-layouts";
 import { ProseFallback, renderInline, renderProse } from "../richText";
 import { findProseColumnIndex } from "../editableText";
 
@@ -22,21 +28,20 @@ class ColumnErrorBoundary extends Component<
 
 import { MetricGridRenderer } from "./MetricGrid";
 import { BarChartRenderer } from "./BarChart";
+import { HorizontalBarChartRenderer } from "./HorizontalBarChart";
 import { PieChartRenderer } from "./PieChart";
 import { LineChartRenderer } from "./LineChart";
 import { FinancialTableRenderer } from "./FinancialTable";
+import { ComparisonTableRenderer } from "./ComparisonTable";
 import { CalloutListRenderer } from "./CalloutList";
+import { NumberedListRenderer } from "./NumberedList";
 import { StatCalloutRenderer } from "./StatCallout";
-
-interface ColumnContent {
-  title?: string;
-  content: any; // string for prose/list/metric, object for sub-layouts
-  layoutType?: string;
-}
+import { ScorecardRenderer } from "./Scorecard";
+import { TimelineRenderer } from "./Timeline";
 
 interface TwoColumnLayoutData {
-  left?: ColumnContent;
-  right?: ColumnContent;
+  left?: unknown;
+  right?: unknown;
   title?: string;
 }
 
@@ -47,16 +52,22 @@ interface RendererProps {
   section: CimSection;
 }
 
-/** Known sub-layout types that can be rendered inside a column */
+/** Sub-layouts that can be rendered inside a column (TWO_COLUMN_SUB_LAYOUTS). */
 const SUB_RENDERERS: Record<string, React.ComponentType<any>> = {
   bar_chart: BarChartRenderer,
+  horizontal_bar_chart: HorizontalBarChartRenderer,
   pie_chart: PieChartRenderer,
   donut_chart: PieChartRenderer,
   line_chart: LineChartRenderer,
   metric_grid: MetricGridRenderer,
   financial_table: FinancialTableRenderer,
+  comparison_table: ComparisonTableRenderer,
   callout_list: CalloutListRenderer,
+  icon_stat_row: CalloutListRenderer,
+  numbered_list: NumberedListRenderer,
   stat_callout: StatCalloutRenderer,
+  scorecard: ScorecardRenderer,
+  timeline: TimelineRenderer,
 };
 
 function parseMetricLines(text: string): Array<{ label: string; value: string }> {
@@ -67,12 +78,19 @@ function parseMetricLines(text: string): Array<{ label: string; value: string }>
   });
 }
 
-function SafeColumnBlock({ col, branding, section }: { col: ColumnContent; branding: CimBranding; section: CimSection }) {
-  const fallbackContent = typeof col.content === "string" ? col.content : JSON.stringify(col.content, null, 2);
+function ColumnTitle({ title }: { title?: string }) {
+  if (!title) return null;
+  return <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">{title}</p>;
+}
+
+function SafeColumnBlock({ col, branding, section }: { col: TwoColumnColumn; branding: CimBranding; section: CimSection }) {
+  // A crashed sub-renderer shows the column's words, never raw JSON.
   const fallbackUI = (
-    <div className="rounded border border-border/40 bg-muted/20 p-3">
-      {col.title && <p className="text-xs font-semibold text-muted-foreground mb-1">{col.title}</p>}
-      <pre className="text-xs text-muted-foreground whitespace-pre-wrap">{fallbackContent}</pre>
+    <div>
+      <ColumnTitle title={col.title} />
+      {typeof col.content === "string" && (
+        <div className="text-foreground/80">{renderProse(col.content, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}</div>
+      )}
     </div>
   );
   return (
@@ -82,30 +100,23 @@ function SafeColumnBlock({ col, branding, section }: { col: ColumnContent; brand
   );
 }
 
-function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; branding: CimBranding; section: CimSection }) {
+function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; branding: CimBranding; section: CimSection }) {
   const type = col.layoutType || "prose";
   const content = col.content;
 
-  // If this column's layoutType matches a known sub-renderer, delegate to it
   const SubRenderer = SUB_RENDERERS[type];
   if (SubRenderer) {
-    // The sub-renderer expects layoutData (the object content) and a content string
     const layoutData = typeof content === "object" && content !== null ? content : {};
-    const contentStr = typeof content === "string" ? content : "";
     return (
       <div>
-        {col.title && (
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            {col.title}
-          </p>
-        )}
-        <SubRenderer layoutData={layoutData} content={contentStr} branding={branding} section={section} />
+        <ColumnTitle title={col.title} />
+        {/* Sub-renderers read the layout type from the section (icon_stat_row, donut…). */}
+        <SubRenderer layoutData={layoutData} content="" branding={branding} section={{ ...section, layoutType: type }} />
       </div>
     );
   }
 
-  // Ensure content is a string for simple types
-  const textContent = typeof content === "string" ? content : (content != null ? JSON.stringify(content) : "");
+  const textContent = typeof content === "string" ? content : "";
 
   if (type === "list") {
     // One item per line; a single line of "a|b|c" (a shape the AI sometimes
@@ -114,11 +125,7 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
     if (lines.length === 1 && lines[0].includes("|")) lines = lines[0].split("|").map((l) => l.trim()).filter(Boolean);
     return (
       <div>
-        {col.title && (
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            {col.title}
-          </p>
-        )}
+        <ColumnTitle title={col.title} />
         <ul className="space-y-1.5">
           {lines.map((line, i) => (
             <li key={i} className="flex items-start gap-2">
@@ -135,11 +142,7 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
     const pairs = parseMetricLines(textContent);
     return (
       <div>
-        {col.title && (
-          <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-            {col.title}
-          </p>
-        )}
+        <ColumnTitle title={col.title} />
         <div className="space-y-2">
           {pairs.map((pair, i) => (
             <div key={i} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0">
@@ -155,11 +158,7 @@ function ColumnBlockInner({ col, branding, section }: { col: ColumnContent; bran
   // prose (default)
   return (
     <div>
-      {col.title && (
-        <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">
-          {col.title}
-        </p>
-      )}
+      <ColumnTitle title={col.title} />
       <div className="text-foreground/80">
         {renderProse(textContent, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
       </div>
@@ -175,17 +174,23 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
     return <ProseFallback content={content} />;
   }
 
-  let left = data.left || { content: "", layoutType: "prose" };
-  let right = data.right || { content: "", layoutType: "prose" };
+  let left = resolveTwoColumnColumn(data.left);
+  let right = resolveTwoColumnColumn(data.right);
 
   // A broker edit replaces the narrative column (see editableText.ts). If
   // neither column is prose, the edit is shown above the columns so it is
   // never silently dropped.
   const edited = section.brokerEditedContent || "";
   const proseIdx = edited ? findProseColumnIndex(data as Record<string, unknown>) : -1;
-  if (edited && proseIdx === 0) left = { ...left, content: edited };
-  if (edited && proseIdx === 1) right = { ...right, content: edited };
+  if (edited && proseIdx === 0) left = { ...(left ?? { layoutType: "prose" }), layoutType: "prose", content: edited };
+  if (edited && proseIdx === 1) right = { ...(right ?? { layoutType: "prose" }), layoutType: "prose", content: edited };
   const editedAbove = edited && proseIdx === -1;
+
+  const columns = [left, right].filter((c): c is TwoColumnColumn => !!c);
+  if (columns.length === 0 && !editedAbove) {
+    if (!content) return null;
+    return <ProseFallback content={content} />;
+  }
 
   return (
     <div>
@@ -199,15 +204,22 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
           {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
         </div>
       )}
-      {/* Stacks on phones (a rule between the two), side by side from md. */}
-      <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
+      {columns.length === 1 ? (
+        // Only one column holds anything: it takes the full width.
         <div className="min-w-0">
-          <SafeColumnBlock col={left} branding={branding} section={section} />
+          <SafeColumnBlock col={columns[0]} branding={branding} section={section} />
         </div>
-        <div className="min-w-0 border-t border-border pt-6 md:border-t-0 md:border-l md:pl-8 md:pt-0">
-          <SafeColumnBlock col={right} branding={branding} section={section} />
+      ) : columns.length === 2 ? (
+        // Stacks on phones (a rule between the two), side by side from md.
+        <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
+          <div className="min-w-0">
+            <SafeColumnBlock col={columns[0]} branding={branding} section={section} />
+          </div>
+          <div className="min-w-0 border-t border-border pt-6 md:border-t-0 md:border-l md:pl-8 md:pt-0">
+            <SafeColumnBlock col={columns[1]} branding={branding} section={section} />
+          </div>
         </div>
-      </div>
+      ) : null}
     </div>
   );
 }

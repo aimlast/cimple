@@ -23,23 +23,32 @@ import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { AlertCircle, ExternalLink, Loader2, Lock, Plus, Trash2 } from "lucide-react";
 import type { InformationSource } from "@shared/information";
+import { sourceContributionText, sourceCountText, sourceFoundNothing } from "@shared/information";
 import type { DocumentSourceMeta, SourceKind } from "@shared/schema";
-import { KIND_META, formatShortDate } from "./source-kinds";
+import { KIND_META, formatShortDate, sourceDateValue } from "./source-kinds";
 import { informationKey, requestJson, useInformationAction } from "./useInformation";
 
 const PLATFORM: Record<string, string> = { zoom: "Zoom", meet: "Google Meet", teams: "Teams", cimple: "Cimple call", person: "In person", other: "Other" };
 
-export function metaLine(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): string {
+/**
+ * A source's date and the rest of its details (from → to, participants,
+ * platform…), apart: the list shows the date on its own so a long email
+ * address line can't truncate it away.
+ */
+export function metaParts(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): { when: string | null; rest: string } {
   const parts: string[] = [];
   if (meta?.from || meta?.to) parts.push([meta.from, meta.to].filter(Boolean).join(" → "));
   if (meta?.participants) parts.push(meta.participants);
   if (meta?.platform) parts.push(PLATFORM[meta.platform] ?? meta.platform);
   if (meta?.provider) parts.push(meta.provider.charAt(0).toUpperCase() + meta.provider.slice(1));
   if (meta?.durationMin) parts.push(`${meta.durationMin} min`);
-  const when = formatShortDate(date);
-  if (when) parts.push(when);
   if (kind === "website" && meta?.url) parts.push(meta.url.replace(/^https?:\/\//, ""));
-  return parts.join(" · ");
+  return { when: formatShortDate(date), rest: parts.join(" · ") };
+}
+
+export function metaLine(kind: SourceKind, meta: DocumentSourceMeta | null | undefined, date: string | null): string {
+  const { when, rest } = metaParts(kind, meta, date);
+  return [when, rest].filter(Boolean).join(" · ");
 }
 
 function StatusBit({ status }: { status?: string }) {
@@ -74,17 +83,13 @@ export function SourcesPanel({
   /** Facts collected before source tracking that match no source. */
   untrackedFacts?: number;
 }) {
-  const sorted = [...sources].sort((a, b) => {
-    const ad = a.date ? +new Date(a.date) : 0;
-    const bd = b.date ? +new Date(b.date) : 0;
-    return bd - ad;
-  });
+  const sorted = [...sources].sort((a, b) => sourceDateValue(b.date) - sourceDateValue(a.date));
   return (
     <section className="rounded-lg border border-border bg-card" data-testid="sources-panel">
       <header className="flex items-center justify-between gap-2 px-4 py-3 border-b border-border/60">
         <div>
           <h3 className="text-sm font-semibold">Sources</h3>
-          <p className="text-[11px] text-muted-foreground">{sources.length} source{sources.length === 1 ? "" : "s"}</p>
+          <p className="text-[11px] text-muted-foreground" data-testid="sources-count">{sourceCountText(sources, untrackedFacts)}</p>
           {untrackedFacts > 0 && (
             <p className="text-[11px] text-muted-foreground/80 mt-0.5 max-w-[15rem] leading-snug" data-testid="sources-untracked-note">
               {untrackedFacts} earlier fact{untrackedFacts === 1 ? "" : "s"} can't be traced to one of these.
@@ -104,7 +109,7 @@ export function SourcesPanel({
           {sorted.map((s) => {
             const Icon = KIND_META[s.kind]?.icon ?? KIND_META.unknown.icon;
             const active = activeSourceId === s.id;
-            const line = metaLine(s.kind, s.meta, s.date);
+            const { when, rest } = metaParts(s.kind, s.meta, s.date);
             const openable = !!s.documentId || !!s.sessionId || s.kind === "website";
             return (
               <li key={s.id} className={`px-4 py-2.5 ${active ? "bg-teal/5" : ""}`}>
@@ -122,12 +127,30 @@ export function SourcesPanel({
                     </button>
                     <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[10px] text-muted-foreground">
                       <span>{KIND_META[s.kind]?.label ?? s.kind}</span>
-                      {line && <span className="truncate max-w-full">{line}</span>}
+                      {when && <span className="shrink-0 tabular-nums">{when}</span>}
+                      {rest && <span className="truncate min-w-0 max-w-full">{rest}</span>}
                       {s.visibility === "broker_only" && (
                         <span className="inline-flex items-center gap-0.5 text-teal"><Lock className="h-2.5 w-2.5" /> Broker only</span>
                       )}
                       <StatusBit status={s.status} />
+                      {/* Read, but nothing came out of it (a scanned org chart, a photo of a list): the
+                          broker should open it — the interview can only use what's legible in it. */}
+                      {sourceFoundNothing(s, untrackedFacts) && (
+                          <span
+                            className="inline-flex items-center gap-1 text-amber-500"
+                            title="Nothing was extracted from this source. Open it to check it's readable — if it's a scan or a picture, add a typed or text copy."
+                            data-testid={`source-no-facts-${s.id}`}
+                          >
+                            <AlertCircle className="h-2.5 w-2.5" /> No facts found
+                          </span>
+                        )}
                     </div>
+                    {/* What it gave beyond the facts recorded from it — a source that only confirmed others isn't "0 facts". */}
+                    {((s.corroboratedCount ?? 0) > 0 || (s.alternateCount ?? 0) > 0) && (
+                      <p className="mt-0.5 text-[10px] text-muted-foreground/80" data-testid={`source-contribution-${s.id}`}>
+                        {sourceContributionText(s)}
+                      </p>
+                    )}
                   </div>
                   <button
                     type="button"
@@ -151,7 +174,9 @@ export function SourcesPanel({
                     data-testid={`source-facts-${s.id}`}
                   >
                     {/* A bare "0 facts" reads as broken when earlier facts can't be traced, so show a dash then. */}
-                    {s.factCount === 0 && untrackedFacts > 0 ? "—" : `${s.factCount} fact${s.factCount === 1 ? "" : "s"}`}
+                    {s.factCount === 0 && ((s.corroboratedCount ?? 0) > 0 || (s.alternateCount ?? 0) > 0)
+                      ? "0 recorded"
+                      : s.factCount === 0 && untrackedFacts > 0 ? "—" : `${s.factCount} fact${s.factCount === 1 ? "" : "s"}`}
                   </button>
                 </div>
               </li>

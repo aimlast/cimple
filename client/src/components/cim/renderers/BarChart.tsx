@@ -18,6 +18,7 @@ import { useCimTheme } from "../CimDesignContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
+import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
 
 interface BarDataPoint {
   name: string;
@@ -85,10 +86,9 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
 
   const normalized = chartData.map((d) => ({
     ...d,
-    value: typeof d.value === "string" ? parseFloat(d.value) || 0 : d.value,
-    secondaryValue: d.secondaryValue != null
-      ? typeof d.secondaryValue === "string" ? parseFloat(d.secondaryValue) || 0 : d.secondaryValue
-      : undefined,
+    // Text values ("$1,250,000") are read as numbers, never drawn as zero.
+    value: parseChartNumber(d.value, unitScale(data.unit)) ?? 0,
+    secondaryValue: d.secondaryValue != null ? parseChartNumber(d.secondaryValue, unitScale(data.unit)) ?? 0 : undefined,
   }));
 
   const yAxisWidth = axisWidthFor(

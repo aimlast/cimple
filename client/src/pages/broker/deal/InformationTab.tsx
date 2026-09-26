@@ -38,6 +38,7 @@ import type {
   InformationSource,
   InformationView,
 } from "@shared/information";
+import { sourceCountText } from "@shared/information";
 import { FactRow, AddFactForm, SourceChip } from "@/components/information/FactRow";
 import { SourcesPanel, SourceViewer } from "@/components/information/SourcesPanel";
 import { AddSourceDialog } from "@/components/information/AddSourceDialog";
@@ -138,9 +139,9 @@ export function InformationTab() {
   };
 
   const readiness = view.readiness;
-  // Sources that actually account for facts (recorded or traced).
-  const sourceCount = view.sources.filter((s) => s.factCount > 0).length;
   const untracked = view.counts.unknown ?? 0;
+  // One wording with the Sources panel: "24 sources · 1 with nothing found".
+  const sourcesText = sourceCountText(view.sources, untracked);
   const inferredFacts = view.inferredFacts ?? 0;
   const activeSource = sourceFilter ? view.sources.find((s) => s.id === sourceFilter) : null;
 
@@ -177,19 +178,10 @@ export function InformationTab() {
             <h2 className="text-lg font-semibold tracking-tight">Collected information</h2>
             <p className="text-sm text-muted-foreground mt-1">{readiness.summary}</p>
             <p className="text-xs text-muted-foreground/80 mt-2 tabular-nums">
-              {untracked > 0 ? (
-                // "64 facts · 29 from 6 sources · 35 earlier records"
-                <>
-                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
-                  {sourceCount > 0 && <>{" · "}{view.totalFacts - untracked} from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
-                  {" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}
-                </>
-              ) : (
-                <>
-                  {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
-                  {sourceCount > 0 && <> from {sourceCount} source{sourceCount === 1 ? "" : "s"}</>}
-                </>
-              )}
+              {/* "64 facts · 8 sources · 1 with nothing found · 35 earlier records" */}
+              {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
+              {view.sources.length > 0 && <>{" · "}{sourcesText}</>}
+              {untracked > 0 && <>{" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}</>}
               {missingCount > 0 && (
                 <>
                   {" · "}
@@ -490,6 +482,7 @@ export function InformationTab() {
                         <p className="text-xs font-medium text-muted-foreground">{d.label}</p>
                         <p className="text-sm text-muted-foreground/80 line-through decoration-muted-foreground/40 break-words line-clamp-2">{d.displayValue}</p>
                         <div className="mt-1"><SourceChip source={d.source} size="xs" /></div>
+                        {d.note && <p className="mt-1 text-[11px] text-muted-foreground/80">{d.note}</p>}
                       </div>
                       <Button
                         size="sm"

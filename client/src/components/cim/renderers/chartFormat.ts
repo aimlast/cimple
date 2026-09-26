@@ -125,6 +125,20 @@ export function formatFullValue(v: unknown, unit?: string): string {
   return `${sign}${k.prefix}${body}${k.fullSuffix}`;
 }
 
+/**
+ * A long plain figure shortened for a narrow card: "$31,020,000" → "$31.02M",
+ * "C$6,212,400" → "C$6.21M", "1,250,000" → "1.25M" (at most two decimals).
+ * Anything that isn't a single plain number — ranges, "350+", "12.8%",
+ * words, figures under 10,000 — comes back unchanged.
+ */
+export function compactFigure(value: string): string {
+  const m = value.trim().match(/^(-)?((?:[A-Z]{1,3}\s?)?[$€£¥])?\s?(\d{1,3}(?:,\d{3})+|\d{5,})(\.\d+)?$/);
+  if (!m) return value;
+  const n = Number(`${m[3].replace(/,/g, "")}${m[4] ?? ""}`);
+  if (!Number.isFinite(n) || n < 10_000) return value;
+  return `${m[1] ?? ""}${(m[2] ?? "").replace(/\s/g, "")}${compact(n, 2)}`;
+}
+
 /** YAxis width that fits the longest formatted tick (11px tick font). */
 export function axisWidthFor(values: unknown[], unit?: string): number {
   let longest = 1;

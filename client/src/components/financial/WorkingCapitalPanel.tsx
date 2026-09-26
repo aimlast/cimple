@@ -19,6 +19,10 @@ export interface WorkingCapitalData {
   asOfPeriod?: string;
   /** Analyzer notes — e.g. "No balance sheet data provided". */
   notes?: string[];
+  /** Year-end net working capital per fiscal year (from the balance sheet, cash-free and debt-free). */
+  history?: Record<string, number>;
+  /** How the suggested peg was worked out. */
+  pegBasis?: string;
 }
 
 interface WorkingCapitalPanelProps {
@@ -74,7 +78,8 @@ export function WorkingCapitalPanel({ data, analysisComplete }: WorkingCapitalPa
     );
   }
 
-  const { currentAssets, currentLiabilities, netWorkingCapital, pegAmount, asOfPeriod } = data;
+  const { currentAssets, currentLiabilities, netWorkingCapital, pegAmount, asOfPeriod, pegBasis } = data;
+  const history = Object.entries(data.history ?? {});
 
   const totalAssets = currentAssets.reduce((sum, item) => sum + item.amount, 0);
   const totalLiabilities = currentLiabilities.reduce((sum, item) => sum + item.amount, 0);
@@ -84,7 +89,7 @@ export function WorkingCapitalPanel({ data, analysisComplete }: WorkingCapitalPa
       {asOfPeriod && (
         <p className="text-xs text-muted-foreground px-1">As of {asOfPeriod}</p>
       )}
-      <div className="grid grid-cols-2 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {/* Current Assets */}
         <Card>
           <CardHeader className="pb-3">
@@ -170,6 +175,7 @@ export function WorkingCapitalPanel({ data, analysisComplete }: WorkingCapitalPa
                 <tr className="border-t border-border/50">
                   <td className="px-4 py-2.5 text-xs text-muted-foreground">
                     Working Capital Peg
+                    {pegBasis && <span className="block text-2xs mt-0.5">{pegBasis}</span>}
                   </td>
                   <td className="text-right px-4 py-2.5 text-xs tabular-nums text-muted-foreground">
                     {formatAmount(pegAmount)}
@@ -192,6 +198,30 @@ export function WorkingCapitalPanel({ data, analysisComplete }: WorkingCapitalPa
           </table>
         </CardContent>
       </Card>
+
+      {history.length > 1 && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">Year-end net working capital</CardTitle>
+          </CardHeader>
+          <CardContent className="p-0 overflow-x-auto">
+            <table className="w-full text-sm">
+              <tbody>
+                <tr className="border-b border-border/50">
+                  {history.map(([year]) => (
+                    <td key={year} className="px-4 py-2 text-2xs text-muted-foreground text-right">{year}</td>
+                  ))}
+                </tr>
+                <tr>
+                  {history.map(([year, value]) => (
+                    <td key={year} className="px-4 py-2.5 text-xs text-right tabular-nums">{formatAmount(value)}</td>
+                  ))}
+                </tr>
+              </tbody>
+            </table>
+          </CardContent>
+        </Card>
+      )}
 
       <AnalyzerNotes notes={notes} />
     </div>

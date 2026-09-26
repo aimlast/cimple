@@ -147,8 +147,7 @@ export async function duplicateSection(section: CimSection, opts: { hidden: bool
     },
     { afterSectionId: section.id },
   );
-  await invalidateBlind(section.dealId, [created.id]);
-  return created;
+  return withStaleStamps(created, await invalidateBlind(section.dealId, [created.id]));
 }
 
 // ── Undo stack ───────────────────────────────────────────────────────────
@@ -189,8 +188,17 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
     })
     .where(eq(cimSections.id, section.id))
     .returning();
-  await invalidateBlind(section.dealId, [section.id]);
-  return updated ?? null;
+  const at = await invalidateBlind(section.dealId, [section.id]);
+  return updated ? withStaleStamps(updated, at) : null;
+}
+
+/**
+ * The row as stored once invalidateBlind has run: its blind and DD versions
+ * are stale from `at`. The UPDATE's RETURNING row predates that stamp, so a
+ * PATCH reported ddStaleAt: null while the builder showed "DD stale".
+ */
+export function withStaleStamps<T extends { blindStaleAt?: Date | null; ddStaleAt?: Date | null }>(row: T, at: Date): T {
+  return { ...row, blindStaleAt: at, ddStaleAt: at };
 }
 
 /** The prose the renderer shows (broker edit → body → AI draft). */
@@ -262,6 +270,8 @@ export async function patchCimSection(req: Request, res: Response) {
       if (typeof approved !== "boolean") return bad("brokerApproved must be true or false");
       set.brokerApproved = approved;
     }
+    // The broker checked the flagged figures and they're right.
+    if (body.dismissFigureWarnings === true) set.figureWarnings = null;
     if (body.accessTier !== undefined) {
       if (!(CIM_ACCESS_TIERS as readonly unknown[]).includes(body.accessTier)) return bad("Access must be teaser or full");
       set.accessTier = body.accessTier as string;
@@ -279,14 +289,16 @@ export async function patchCimSection(req: Request, res: Response) {
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);
+      // The broker edited the content: the figure check's flags described
+      // the AI's version, and the broker now owns what the section says.
+      if ("layoutData" in set || "brokerEditedContent" in set || "layoutType" in set) set.figureWarnings = null;
     }
     const [updated] = await db
       .update(cimSections)
       .set({ ...set, updatedAt: new Date() })
       .where(eq(cimSections.id, section.id))
       .returning();
-    if (contentChanged) await invalidateBlind(section.dealId, [section.id]);
-    res.json(updated);
+    res.json(contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated);
   } catch (err) {
     console.error("[cim-sections] update failed:", err);
     res.status(500).json({ error: "Failed to update section" });

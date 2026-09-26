@@ -1,5 +1,6 @@
 import type { ExtractedInfo } from "@shared/schema";
 import { SOURCE_KINDS, type SourceKind } from "@shared/schema";
+import { sameNoteContent, withoutHousekeeping } from "@shared/private-notes";
 import type { ExtractedField, InterviewReasoning } from "./response-schema";
 import type { IndustryContext, LocationContext } from "./knowledge-base";
 
@@ -91,6 +92,12 @@ const FIELD_ALIASES: Record<string, string> = {
   insurancePolicies: "insuranceCoverage",
   clients: "customerBase",
   customers: "customerBase",
+  // One contract backlog, whoever names it (the WIP report, the seller on a call).
+  backlogValue: "backlog",
+  contractBacklog: "backlog",
+  currentBacklog: "backlog",
+  orderBacklog: "backlog",
+  signedBacklog: "backlog",
 };
 
 // Case-insensitive alias lookup — "ATMrevenue" and "atmRevenue" must resolve
@@ -633,8 +640,13 @@ export interface FieldSource {
   source: SourceKind;
   /** The documents row (document, email, call transcript, CRM note, …) that asserted it. */
   documentId?: string;
-  /** Map fields (revenueByYear): which document asserted each sub-key. */
-  years?: Record<string, string>;
+  /**
+   * Map fields (revenueByYear, sdeByYear…): the source of each sub-key (year).
+   * Current writes store a full FieldSource per year; older rows store the
+   * bare documentId of the row that stated it. Always read through
+   * yearSource() / resolvedYearSources(), never directly.
+   */
+  years?: Record<string, YearEntry>;
   /** Interview / call session that captured it, and the seller turn number. */
   sessionId?: string;
   turn?: number;
@@ -645,11 +657,42 @@ export interface FieldSource {
   /** The words the value came from, when known. */
   excerpt?: string;
   /**
+   * Call / video-call transcripts: who said it — "Luis Ortega (operations
+   * manager)". Lets the interview attribute a fact to the person who said it
+   * instead of telling the seller "you mentioned" (see fact-guards.ts).
+   */
+  speaker?: string;
+  /**
    * The broker explicitly accepted this value into the facts ("Accept into
    * facts" on a website claim): the kind still ranks as its source, but the
    * broker vouched for it, so CIM writers treat it as a fact, not a lead.
    */
   acceptedByBroker?: boolean;
+  /**
+   * The fiscal period the value is for (ISO yyyy-mm-dd — a statement's
+   * period end), else the source's own date. Between two sources of equal
+   * authority the newer period wins (see server/documents/merge-policy.ts).
+   */
+  period?: string;
+  /** The source's own date (ISO yyyy-mm-dd: email sent, call held, statement signed) — the tie-break after period. */
+  dated?: string;
+  /** Asserted by a broker-only source row (documents.visibility = 'broker_only'); false = a shared row. */
+  brokerOnly?: boolean;
+  /**
+   * The broker's own figure taken from their private material (a discrepancy
+   * resolved to a CRM note's / broker-only file's value): a fact for the CIM
+   * (the broker's call), never shown to the seller interview.
+   */
+  hiddenFromSeller?: boolean;
+  /** A dedicated source for this fact (the org chart for key employees, the lease for lease terms). */
+  specialist?: boolean;
+  /**
+   * The reader worked the value out ("implied", "calculated", a vague
+   * "Barrie area (address not stated)") rather than the source stating it:
+   * it fills an empty field but never displaces a value, and any explicit
+   * value replaces it.
+   */
+  valueInferred?: boolean;
 }
 export const FIELD_SOURCES_KEY = "_fieldSources";
 export const FIELD_ALTERNATES_KEY = "_fieldAlternates";
@@ -894,13 +937,20 @@ export function noteSameValue(
   info: Record<string, unknown>,
   key: string,
   src: FieldSource,
-  opts: { current?: unknown; recorded?: FieldSource | null; setRecorded?: (s: FieldSource) => void } = {},
+  opts: {
+    current?: unknown;
+    recorded?: FieldSource | null;
+    setRecorded?: (s: FieldSource) => void;
+    /** True when `src` should become the recorded source (default: a strictly higher kind rank). */
+    outranks?: (incoming: FieldSource, current: FieldSource) => boolean;
+  } = {},
 ): void {
   const cur = opts.recorded !== undefined ? opts.recorded : getFieldSources(info)[key];
   if (isUntrackedSource(cur)) return;
   if (originKey(cur!) === originKey(src)) return; // the same source re-read
   const value = serializeFactValue(repairCharIndexedValue(opts.current !== undefined ? opts.current : info[key]));
-  if (sourceRank(src.source) > sourceRank(cur!.source)) {
+  const takesOver = opts.outranks ? opts.outranks(src, cur!) : sourceRank(src.source) > sourceRank(cur!.source);
+  if (takesOver) {
     if (opts.setRecorded) opts.setRecorded(src);
     else setFieldSource(info, key, src);
     addCorroboration(info, key, value, cur!);
@@ -984,6 +1034,134 @@ export function mergeAlternateMaps(
   return out;
 }
 
+// ── Per-year provenance ─────────────────────────────────────────────────
+// A map fact (revenueByYear, sdeByYear, …) records who stated EACH year in
+// FieldSource.years: a full FieldSource per year (current writes) or, on
+// older rows, the bare documentId of the row that stated it. A year with no
+// entry belongs to the fact's recorded source (older rows only — current
+// writes list every year). The fact's own FieldSource is a display summary
+// (the source of its latest confirmed year, see summariseMapSource).
+//
+// Every per-year decision — which year the CIM may state, what the seller
+// interview sees, what a document delete removes, which figure a merge keeps
+// — reads the year's OWN source through yearSource() / resolvedYearSources(),
+// never the map's summary: a CRM or broker-only year inside a map of
+// statement figures stays a CRM / broker-only year.
+
+/** One year's source: a full FieldSource, or (older rows) the documentId that stated it. */
+export type YearEntry = string | FieldSource;
+
+/** The documents row behind one year entry, if any. */
+export function yearEntryDocId(e: YearEntry | null | undefined): string | undefined {
+  if (!e) return undefined;
+  return typeof e === "string" ? e || undefined : e.documentId;
+}
+
+/**
+ * Resolves a documents row to its kind and visibility — lets older bare-id
+ * year entries be read as the source they really are (a CRM note, a
+ * broker-only email) instead of inheriting the map's kind.
+ */
+export interface SourceRowLookup {
+  kindOf?: (documentId: string) => SourceKind | undefined;
+  brokerOnlyOf?: (documentId: string) => boolean | undefined;
+}
+
+/** Builds a SourceRowLookup from the deal's documents rows. */
+export function sourceRowLookup(
+  documents: Array<{ id: string; sourceKind?: string | null; visibility?: string | null }>,
+): SourceRowLookup {
+  const byId = new Map(documents.map((d) => [d.id, d]));
+  return {
+    kindOf: (id) => {
+      const d = byId.get(id);
+      if (!d) return undefined;
+      return isSourceKind(d.sourceKind) ? d.sourceKind : "document";
+    },
+    brokerOnlyOf: (id) => {
+      const d = byId.get(id);
+      return d ? d.visibility === "broker_only" : undefined;
+    },
+  };
+}
+
+/** The full source of one year of a map fact whose recorded source is `recorded`. */
+export function yearSource(
+  recorded: FieldSource | null | undefined,
+  year: string,
+  lookup?: SourceRowLookup,
+): FieldSource | null {
+  if (!recorded) return null;
+  const entry = recorded.years?.[year];
+  if (entry && typeof entry === "object") {
+    // A full entry — completed from its row when it doesn't say its visibility.
+    if (entry.documentId && entry.brokerOnly === undefined) {
+      const bo = lookup?.brokerOnlyOf?.(entry.documentId);
+      if (bo !== undefined) return { ...entry, brokerOnly: bo };
+    }
+    return entry;
+  }
+  const { years: _years, ...base } = recorded;
+  if (typeof entry === "string" && entry) {
+    // Older rows kept only the documentId. Its own row says what it is;
+    // without the row, the map's kind when the map was that kind of row.
+    const kind = lookup?.kindOf?.(entry) ?? (isRowBackedSource(recorded) ? recorded.source : "document");
+    const brokerOnly = lookup?.brokerOnlyOf?.(entry);
+    return { source: kind, documentId: entry, ...(brokerOnly !== undefined ? { brokerOnly } : {}) };
+  }
+  // Unlisted year (older rows): it belongs to the recorded source — never to
+  // a document an older merge bug stamped on a broker / interview source.
+  if (base.documentId && !isRowBackedSource(base)) delete base.documentId;
+  if (base.documentId && base.brokerOnly === undefined) {
+    const bo = lookup?.brokerOnlyOf?.(base.documentId);
+    if (bo !== undefined) return { ...base, brokerOnly: bo };
+  }
+  return base;
+}
+
+/** Every year of `map` with its full source (see yearSource). */
+export function resolvedYearSources(
+  recorded: FieldSource | null | undefined,
+  map: Record<string, unknown>,
+  lookup?: SourceRowLookup,
+): Record<string, FieldSource> {
+  const out: Record<string, FieldSource> = {};
+  for (const y of Object.keys(map)) {
+    const s = yearSource(recorded, y, lookup);
+    if (s) out[y] = s;
+  }
+  return out;
+}
+
+const SUMMARY_LEAD_KINDS: ReadonlySet<string> = new Set(["crm", "website", "social"]);
+
+/** Newest year first ("2024" before "2023"; non-year keys last). */
+export function compareYearKeysDesc(a: string, b: string): number {
+  const ya = /^\d{4}$/.test(a) ? Number(a) : -1;
+  const yb = /^\d{4}$/.test(b) ? Number(b) : -1;
+  return yb - ya || a.localeCompare(b);
+}
+
+/**
+ * The recorded source of a map fact, rebuilt from its per-year sources: the
+ * source of the latest year that isn't a lead or broker-only (else the
+ * latest year's), carrying every year's full source in `years`.
+ */
+export function summariseMapSource(yearSources: Record<string, FieldSource>): FieldSource | null {
+  const entries = Object.entries(yearSources).sort(([a], [b]) => compareYearKeysDesc(a, b));
+  if (entries.length === 0) return null;
+  const pick =
+    entries.find(([, s]) => !s.brokerOnly && !SUMMARY_LEAD_KINDS.has(String(s.source)) && !isUntrackedSource(s)) ??
+    entries[0];
+  const { years: _y, ...base } = pick[1];
+  const years: Record<string, FieldSource> = {};
+  for (const [y, s] of entries) {
+    const { years: _inner, ...clean } = s;
+    years[y] = clean;
+  }
+  return { ...base, years };
+}
+
 /**
  * Removes every field (and alternate) that a deleted source asserted — any
  * documents-backed kind (document, email, call / video-call transcript, CRM
@@ -1020,46 +1198,39 @@ export function removeDocumentFields(
 
   for (const [key, src] of Object.entries(sources)) {
     const ownsWhole = isRowBackedSource(src) && src.documentId === documentId;
-    // Map field with per-sub-key contributors: strip only this document's
-    // years (unlisted years belong to the recorded source).
+    // Map field with per-year sources: strip only this document's years,
+    // each read through yearSource (an unlisted year belongs to the
+    // recorded source; a broker / interview year never belongs to a row).
     if (src.years && out[key] && typeof out[key] === "object" && !Array.isArray(out[key])) {
       const map = { ...(repairCharIndexedValue(out[key]) as Record<string, unknown>) };
-      const years = { ...src.years };
+      const years = resolvedYearSources(src, map);
       let touched = false;
       // Only years whose figure actually went count as removed — a year
       // another source also stated stays on file under that source.
       let yearRemoved = false;
       for (const y of Object.keys(map)) {
-        const contributor = years[y] ?? (ownsWhole ? documentId : undefined);
-        if (contributor !== documentId) continue;
+        const ys = years[y];
+        if (!isRowBackedSource(ys) || ys.documentId !== documentId) continue;
         touched = true;
         const other = takeCorroboration(`${key}.${y}`, serializeFactValue(map[y]));
         if (other) {
           // Another source gave the same figure for this year — it stays.
-          if (other.documentId) years[y] = other.documentId;
-          else delete years[y];
+          const { value: _v, ...otherSrc } = other;
+          years[y] = otherSrc as FieldSource;
           continue;
         }
         delete map[y];
         delete years[y];
         yearRemoved = true;
       }
-      for (const [y, docId] of Object.entries(years)) if (docId === documentId && !(y in map)) delete years[y];
       if (!touched) {
-        if (src.documentId === documentId) { sources[key] = stripDocumentId(src); changed = true; }
+        if (src.documentId === documentId) { sources[key] = summariseMapSource(years) ?? stripDocumentId(src); changed = true; }
         continue;
       }
       changed = true;
       if (Object.keys(map).length === 0) { delete out[key]; delete sources[key]; removed.push(key); continue; }
       out[key] = map;
-      const next: FieldSource = { ...src, years };
-      if (Object.keys(years).length === 0) delete next.years;
-      if (src.documentId === documentId) {
-        const remaining = Object.values(years);
-        if (ownsWhole && remaining[0]) next.documentId = remaining[0];
-        else delete next.documentId;
-      }
-      sources[key] = next;
+      sources[key] = summariseMapSource(years) ?? stripDocumentId(src);
       if (yearRemoved) removed.push(`${key}:${documentId}`);
       continue;
     }
@@ -1149,6 +1320,14 @@ export interface PrivateNoteSource {
   reason?: string;
   /** Interview turn it was recorded on. */
   turn?: number;
+  /** The seller typed it in the intake questionnaire. */
+  questionnaire?: boolean;
+  /**
+   * This source's own words, when they differ from the note's (a restatement
+   * merged into the note on file). Kept so a merge never loses what the
+   * source said; it becomes the note's text if the first source goes.
+   */
+  wording?: string;
 }
 
 export interface BrokerPrivateNote extends PrivateNoteSource {
@@ -1157,7 +1336,7 @@ export interface BrokerPrivateNote extends PrivateNoteSource {
   alsoFrom?: PrivateNoteSource[];
 }
 
-const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn"] as const;
+const SOURCE_FIELDS = ["documentId", "brokerOnly", "reason", "turn", "questionnaire", "wording"] as const;
 
 function pickNoteSource(n: PrivateNoteSource): PrivateNoteSource {
   const out: PrivateNoteSource = {};
@@ -1170,9 +1349,14 @@ export function privateNoteText(note: string): string {
   return note.toLowerCase().replace(/\s+/g, " ").replace(/[.!\s]+$/, "").trim();
 }
 
-/** One identity per source: the document, or the seller's own sessions. */
+/**
+ * One identity per source (the document, the intake questionnaire, or the
+ * seller's own sessions) and wording: one source saying two related things
+ * in different words keeps both.
+ */
 function noteSourceId(s: PrivateNoteSource): string {
-  return s.documentId ? `doc:${s.documentId}` : "session";
+  const id = s.documentId ? `doc:${s.documentId}` : s.questionnaire ? "questionnaire" : "session";
+  return s.wording ? `${id}|${privateNoteText(s.wording)}` : id;
 }
 
 /** A (note, source) pair's identity — what a turn save compares against the snapshot. */
@@ -1195,36 +1379,92 @@ function withSources(n: BrokerPrivateNote, sources: PrivateNoteSource[]): Broker
   const rest: Record<string, unknown> = { ...n };
   for (const f of SOURCE_FIELDS) delete rest[f];
   delete rest.alsoFrom;
+  let note = n.note;
+  let list = sources;
+  // The first source restated the note in its own words: those words are
+  // the note now, and every other source's implicit wording (the old text)
+  // is written out so nothing changes what it said.
+  if (sources[0]?.wording) {
+    note = sources[0].wording;
+    list = sources.map((s, i) => {
+      const { wording, ...bare } = s;
+      if (i === 0) return bare;
+      const said = wording ?? n.note;
+      return privateNoteText(said) === privateNoteText(note) ? bare : { ...bare, wording: said };
+    });
+  }
   return {
-    ...(rest as { note: string }),
-    ...sources[0],
-    ...(sources.length > 1 ? { alsoFrom: sources.slice(1) } : {}),
+    ...(rest as object),
+    note,
+    ...list[0],
+    ...(list.length > 1 ? { alsoFrom: list.slice(1) } : {}),
   };
 }
 
 /**
- * Records `note` from `src` on `info` (mutates). A note already on file with
- * the same text gains `src` as another source instead of being skipped — the
- * old skip left the note depending on its first source alone. Returns true
- * when anything changed.
+ * Records `note` from `src` on `info` (mutates). A note already on file that
+ * says the same thing — the same text, or the same content in other words
+ * (sameNoteContent: "Owner had a cardiac event in 2024" / "Seller disclosed a
+ * 2024 heart event") — gains `src` as another source instead of a second
+ * entry, with the source's own words kept on it when they differ, so no
+ * merge loses anything a source said; the old skip left the note depending
+ * on its first source alone. `src.wording`, when given, is the text (a
+ * source re-added from a note on file). Returns true when anything changed.
  */
 export function addPrivateNote(info: Record<string, unknown>, note: string, src: PrivateNoteSource): boolean {
-  const text = note.trim();
+  // "Sample document — fictional business", "NDA in place", "Ask for the WIP
+  // report" are not notes; a confidentiality stamp is cut from a longer note.
+  const text = withoutHousekeeping(src.wording ?? note);
   if (!text) return false;
   const notes = getPrivateNotes(info);
   const key = privateNoteText(text);
-  const idx = notes.findIndex((n) => privateNoteText(n.note) === key);
-  const source = pickNoteSource(src);
+  const texts = (n: BrokerPrivateNote) => [n.note, ...privateNoteSources(n).map((s) => s.wording).filter((w): w is string => !!w)];
+  let idx = notes.findIndex((n) => texts(n).some((t) => privateNoteText(t) === key));
+  // A restatement merges only with a note worded by the same side: the note
+  // keeps its first source's words, and a broker-only CRM note's wording
+  // must never become what the seller-side (interview) view shows.
+  if (idx === -1) idx = notes.findIndex((n) => !!n.brokerOnly === !!src.brokerOnly && texts(n).some((t) => sameNoteContent(t, text)));
+  const { wording: _given, ...bare } = pickNoteSource(src);
   if (idx === -1) {
-    info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...source }];
+    info[BROKER_PRIVATE_NOTES_KEY] = [...notes, { note: text, ...bare }];
     return true;
   }
+  const source: PrivateNoteSource = privateNoteText(notes[idx].note) === key ? bare : { ...bare, wording: text };
   const sources = privateNoteSources(notes[idx]);
   if (sources.some((s) => noteSourceId(s) === noteSourceId(source))) return false;
   const next = [...notes];
   next[idx] = withSources(notes[idx], [...sources, source]);
   info[BROKER_PRIVATE_NOTES_KEY] = next;
   return true;
+}
+
+/**
+ * Folds notes on file that say the same thing (recorded before restatements
+ * were merged on write) into one entry each, keeping every source and its
+ * words (mutates); entries that are no notes at all (withoutHousekeeping)
+ * go. Returns true when anything changed.
+ */
+export function compactPrivateNotes(info: Record<string, unknown>): boolean {
+  const notes = getPrivateNotes(info);
+  if (notes.length === 0) return false;
+  const scratch: Record<string, unknown> = {};
+  for (const n of notes) {
+    for (const s of privateNoteSources(n)) addPrivateNote(scratch, n.note, s.wording ? s : { ...s, wording: n.note });
+  }
+  const next = getPrivateNotes(scratch);
+  if (JSON.stringify(next) === JSON.stringify(notes)) return false;
+  if (next.length > 0) info[BROKER_PRIVATE_NOTES_KEY] = next;
+  else delete info[BROKER_PRIVATE_NOTES_KEY];
+  return true;
+}
+
+/** Every wording `documentId` stated a private note in (its own words on each note it is a source of). */
+export function privateNoteTextsFromSource(info: Record<string, unknown>, documentId: string): string[] {
+  const out: string[] = [];
+  for (const n of getPrivateNotes(info)) {
+    for (const s of privateNoteSources(n)) if (s.documentId === documentId) out.push(s.wording ?? n.note);
+  }
+  return out;
 }
 
 /**
@@ -1240,6 +1480,29 @@ export function removePrivateNoteSource(info: Record<string, unknown>, documentI
   for (const n of notes) {
     const sources = privateNoteSources(n);
     const surviving = sources.filter((s) => s.documentId !== documentId);
+    if (surviving.length === sources.length) { kept.push(n); continue; }
+    changed = true;
+    if (surviving.length > 0) kept.push(withSources(n, surviving));
+  }
+  if (!changed) return false;
+  if (kept.length > 0) info[BROKER_PRIVATE_NOTES_KEY] = kept;
+  else delete info[BROKER_PRIVATE_NOTES_KEY];
+  return true;
+}
+
+/**
+ * Drops only the given wordings of `documentId` from the private notes
+ * (mutates): the source's other wordings stay exactly where they are. A note
+ * no other source states goes. Returns true when anything changed.
+ */
+export function removePrivateNoteWordings(info: Record<string, unknown>, documentId: string, wordings: string[]): boolean {
+  const drop = new Set(wordings.map(privateNoteText));
+  if (drop.size === 0 || !Array.isArray(info[BROKER_PRIVATE_NOTES_KEY])) return false;
+  let changed = false;
+  const kept: BrokerPrivateNote[] = [];
+  for (const n of getPrivateNotes(info)) {
+    const sources = privateNoteSources(n);
+    const surviving = sources.filter((s) => !(s.documentId === documentId && drop.has(privateNoteText(s.wording ?? n.note))));
     if (surviving.length === sources.length) { kept.push(n); continue; }
     changed = true;
     if (surviving.length > 0) kept.push(withSources(n, surviving));

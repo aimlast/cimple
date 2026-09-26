@@ -22,7 +22,7 @@ import type {
   WebsiteItem,
 } from "@shared/information";
 import { computeCimReadiness } from "@shared/cim-readiness";
-import { buildSectionCoverage, SECTION_FIELD_MAP, isSubstantiveValue } from "../interview/knowledge-base";
+import { buildSectionCoverage, SECTION_FIELD_MAP, isSubstantiveValue, type CoverageFieldAdjustments } from "../interview/knowledge-base";
 import { coverageAdjustmentsForDeal, getInterviewPlan, fieldLabel } from "../interview/interview-plan";
 import { getSectionImportance } from "../interview/section-importance";
 import { getInterviewOutline } from "../interview/outline";
@@ -35,6 +35,9 @@ import {
   repairCharIndexedValue,
   serializeFactValue,
   getFieldCorroborations,
+  yearEntryDocId,
+  resolvedYearSources,
+  sourceRowLookup,
   SOURCE_META_KEYS,
   type FieldSource,
   type SourceKind,
@@ -106,21 +109,63 @@ const DISPLAY_SECTION_HINTS: Record<string, string> = {
  * Last-resort display grouping for ad-hoc keys the interview or a document
  * minted (ownerSalary, cerecMill, activePatientCount…) — first match wins.
  * Display only: coverage and the interview are unaffected.
+ *
+ * Matched against the key split into words ("otherCurrentAssets" → "other
+ * current assets"), each term at a word start: "rent" used to match inside
+ * "current", filing currentHiring and otherCurrentAssets under Real estate.
  */
 const KEY_SECTION_PATTERNS: Array<[RegExp, string]> = [
-  [/^(companyName|ownerName|legalName|tradeName|dba|businessName)$/i, "overview"],
-  [/askingPrice|dealStructure|saleType|sellerFinanc|earnOut/i, "asking_price"],
-  [/revenueShare|revenueMix|Mix$|stream|services?$|products?$/i, "revenue_sources"],
-  [/equipment|software|system|supplier|vendor|inventory|mill|technolog|process/i, "operations"],
-  [/revenue|sales|ebitda|sde|profit|margin|income|expense|cost|wage|salary|payroll|depreciation|debt|loan|cash|fiscal|liabilit|receivable|payable|capex|addback|currency|tax/i, "financials"],
-  [/lease|rent|premises|sqft|squareFeet|property|building/i, "real_estate"],
-  [/licen|permit|compliance|regulat|insurance|accredit|certif/i, "permits_licenses"],
-  [/employee|staff|hygienist|associate|dentist|manager|team|personnel|contractor|owner(Role|Hours|Involvement)/i, "employees"],
-  [/patient|customer|client|market|referral|payer|demographic/i, "target_market"],
-  [/season|peak|slow/i, "seasonality"],
-  [/growth|expansion|opportunit/i, "growth_potential"],
-  [/training|transition|handover/i, "training_support"],
+  [/^(company name|owner name|legal name|trade name|dba|business name)$/, "overview"],
+  [/\basking price|\bdeal structure|\bsale type|\bseller financ|\bearn ?out/, "asking_price"],
+  [/\brevenue share|\brevenue mix|\bmix$|\bstreams?\b|\bservices?$|\bproducts?$/, "revenue_sources"],
+  [/\bequipment|\bsoftware|\bsystems?\b|\bsupplier|\bvendor|\binventor|\bmill\b|\btechnolog|\bprocess/, "operations"],
+  [/\brevenue|\bsales\b|\bebitda|\bsde\b|\bprofit|\bmargin|\bincome|\bexpense|\bcosts?\b|\bwages?\b|\bsalar|\bpayroll|\bdepreciat|\bamortiz|\bdebt|\bloans?\b|\bcash\b|\bfiscal|\bliabilit|\breceivable|\bpayable|\bcapex|\baddbacks?\b|\bcurrency|\btax|\bassets?\b|\bequity\b|\bdividend|\bworking capital/, "financials"],
+  [/\bhiring|\brecruit|\bemployee|\bstaff|\bhygienist|\bassociates?\b|\bdentist|\bmanager|\bteam\b|\bpersonnel|\bcontractor|\bowner (role|hours|involvement)|\bheadcount|\btechnicians?\b/, "employees"],
+  [/\blease|\brent\b|\brental|\bpremises|\bsqft\b|\bsquare (feet|footage)|\bpropert|\bbuilding|\broof|\butilit|\bfacilit|\bzoning/, "real_estate"],
+  [/\blicen|\bpermit|\bcompliance|\bregulat|\binsurance|\baccredit|\bcertif/, "permits_licenses"],
+  [/\bpatient|\bcustomer|\bclient|\bmarket|\breferral|\bpayer|\bdemographic/, "target_market"],
+  [/\bseason|\bpeak\b|\bslow\b/, "seasonality"],
+  [/\bgrowth|\bexpansion|\bopportunit/, "growth_potential"],
+  [/\btraining|\btransition|\bhandover/, "training_support"],
 ];
+
+/** "otherCurrentAssets" → "other current assets"; "ATMrevenue" → "atm revenue"; "sde2024" → "sde 2024". */
+export function keyAsWords(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .toLowerCase()
+    .trim();
+}
+
+/** The display section an ad-hoc key's own words point to, or null. */
+export function patternSectionFor(key: string): string | null {
+  const words = keyAsWords(key);
+  return KEY_SECTION_PATTERNS.find(([re]) => re.test(words))?.[1] ?? null;
+}
+
+/**
+ * Where a fact is shown on the Information tab: the broker's own choice, the
+ * key's main section, the section whose checklist lists it (generic, then
+ * the deal's industry checklist / broker items), a known hint, then the
+ * key's own words.
+ */
+export function sectionForKey(
+  key: string,
+  ctx: { brokerSectionOf?: Record<string, string>; adjustments?: CoverageFieldAdjustments } = {},
+): string | null {
+  const broker = ctx.brokerSectionOf?.[key];
+  if (broker && CIM_SECTIONS.some((s) => s.key === broker)) return broker;
+  if (PRIMARY_SECTION[key]) return PRIMARY_SECTION[key];
+  for (const s of CIM_SECTIONS) {
+    if ((SECTION_FIELD_MAP[s.key] ?? []).includes(key)) return s.key;
+    if ((ctx.adjustments?.add?.[s.key] ?? []).some((x) => x.key === key)) return s.key;
+  }
+  if (DISPLAY_SECTION_HINTS[key]) return DISPLAY_SECTION_HINTS[key];
+  return patternSectionFor(key);
+}
 
 const LIVE_KINDS = new Set(["interview", "call", "video_call"]);
 
@@ -183,7 +228,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     const documentName = src.documentId ? docName(src.documentId) : undefined;
     return {
       kind: src.source,
-      label: describeSource(src, docName) + (src.inferred ? " (inferred)" : ""),
+      label: describeSource(src, docName) + (src.inferred ? " (inferred)" : "") + (src.valueInferred ? " · worked out, not stated outright" : ""),
       ...(src.inferred ? { inferred: true } : {}),
       ...(brokerAcceptedSource(src) ? { acceptedByBroker: true } : {}),
       ...(isPrivateSource(src) ? { brokerOnly: true } : {}),
@@ -275,10 +320,19 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       .map(({ value: _v, ...src }) => sourceInfo(src as FieldSource));
   };
 
+  const rowLookup = sourceRowLookup(documents);
   const makeFact = (key: string, extra: { industrySpecific?: boolean; critical?: boolean } = {}): InformationFact => {
     const value = repairCharIndexedValue(info[key]);
     const src = traced[key];
     const agree = corroboratedBy(key, value);
+    // A by-year map: each year's own source (a CRM year among statement years shows as CRM).
+    let yearSources: Record<string, FactSourceInfo> | undefined;
+    if (src?.years && value && typeof value === "object" && !Array.isArray(value)) {
+      yearSources = {};
+      for (const [y, ys] of Object.entries(resolvedYearSources(src, value as Record<string, unknown>, rowLookup))) {
+        yearSources[y] = sourceInfo(ys as InferredFieldSource);
+      }
+    }
     return {
       key,
       label: labelOf(key),
@@ -289,6 +343,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       confidence: confidenceOf(key, src),
       alternates: alternatesFor(key),
       ...(agree.length > 0 ? { corroboratedBy: agree } : {}),
+      ...(yearSources ? { yearSources } : {}),
       brokerEdited: src?.source === "broker",
       ...extra,
     };
@@ -324,18 +379,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   );
   const coverageByKey = new Map(allCoverage.map((c) => [c.key, c]));
   const brokerSectionOf = (info[BROKER_SECTION_OF_KEY] as Record<string, string> | undefined) || {};
-  const validSections = new Set<string>(CIM_SECTIONS.map((s) => s.key));
-
-  const sectionFor = (key: string): string | null => {
-    if (brokerSectionOf[key] && validSections.has(brokerSectionOf[key])) return brokerSectionOf[key];
-    if (PRIMARY_SECTION[key]) return PRIMARY_SECTION[key];
-    for (const s of CIM_SECTIONS) {
-      if ((SECTION_FIELD_MAP[s.key] ?? []).includes(key)) return s.key;
-      if ((adjustments.add?.[s.key] ?? []).some((x) => x.key === key)) return s.key;
-    }
-    if (DISPLAY_SECTION_HINTS[key]) return DISPLAY_SECTION_HINTS[key];
-    return KEY_SECTION_PATTERNS.find(([re]) => re.test(key))?.[1] ?? null;
-  };
+  const sectionFor = (key: string): string | null => sectionForKey(key, { brokerSectionOf, adjustments });
 
   const bySection = new Map<string, string[]>();
   for (const key of factKeys) {
@@ -391,6 +435,27 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     factKeys.filter((k) => traced[k] && !isUntrackedSource(traced[k]) && pred(traced[k]));
   const factCountWhere = (pred: (s: InferredFieldSource) => boolean) => tracedWhere(pred).length;
   const inferredCountWhere = (pred: (s: InferredFieldSource) => boolean) => tracedWhere((s) => !!s.inferred && pred(s)).length;
+  // What each row gave beyond the facts recorded from it: facts on file it
+  // states too (corroborations) and different values it gave (alternates) —
+  // a specialist source that only confirmed what others said no longer
+  // reads as "0 facts".
+  const factKeySet = new Set(factKeys);
+  const keysByDoc = (raw: Record<string, Array<{ documentId?: string }>>) => {
+    const byDoc = new Map<string, Set<string>>();
+    for (const [k, list] of Object.entries(raw)) {
+      const base = k.includes(".") ? k.slice(0, k.indexOf(".")) : k;
+      if (!factKeySet.has(base) || !Array.isArray(list)) continue;
+      for (const e of list) {
+        if (!e?.documentId) continue;
+        (byDoc.get(e.documentId) ?? byDoc.set(e.documentId, new Set()).get(e.documentId)!).add(base);
+      }
+    }
+    return byDoc;
+  };
+  const corroboratedByDoc = keysByDoc(corroborations);
+  const alternatesByDoc = keysByDoc(alternates);
+  const statesDoc = (s: InferredFieldSource, id: string) =>
+    s.documentId === id || Object.values(s.years ?? {}).some((e) => yearEntryDocId(e) === id);
   const sourcesOut: InformationSource[] = [];
   for (const d of documents) {
     const data = (d.extractedData as Record<string, unknown> | null) || {};
@@ -413,8 +478,10 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       date: meta?.date ?? new Date(d.createdAt).toISOString(),
       meta,
       visibility: d.visibility === "broker_only" ? "broker_only" : "shared",
-      factCount: factCountWhere((s) => s.documentId === d.id || Object.values(s.years ?? {}).includes(d.id)),
-      inferredFactCount: inferredCountWhere((s) => s.documentId === d.id || Object.values(s.years ?? {}).includes(d.id)),
+      factCount: factCountWhere((s) => statesDoc(s, d.id)),
+      inferredFactCount: inferredCountWhere((s) => statesDoc(s, d.id)),
+      corroboratedCount: corroboratedByDoc.get(d.id)?.size ?? 0,
+      alternateCount: alternatesByDoc.get(d.id)?.size ?? 0,
       status: d.status,
       uploadedBy: d.uploadedBy,
       fileUrl: d.fileUrl,
@@ -500,13 +567,14 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
   }
 
   // Deleted facts (restorable)
-  const deletedRaw = (info[BROKER_DELETED_KEY] as Record<string, { value: unknown; source: FieldSource | null; at: string }> | undefined) || {};
+  const deletedRaw = (info[BROKER_DELETED_KEY] as Record<string, { value: unknown; source: FieldSource | null; at: string; note?: string }> | undefined) || {};
   const deleted: DeletedFact[] = Object.entries(deletedRaw).map(([key, d]) => ({
     key,
     label: labelOf(key),
     displayValue: displayValue(d?.value),
     source: sourceInfo(d?.source ?? null),
     deletedAt: d?.at ?? "",
+    ...(typeof d?.note === "string" && d.note ? { note: d.note } : {}),
   }));
 
   // Website (scraped, unverified) with accept status

@@ -47,6 +47,21 @@ export interface UiAddback {
   custom?: boolean;
   /** Broker toggled approval (PATCH diff). Carried forward by label across re-runs. */
   approvedOverride?: boolean;
+  /** Owner-comp lines: the owner's actual salary + benefits on the P&L per year. */
+  ownerActualComp?: Record<string, number>;
+  /** Owner-comp lines: the market replacement salary for the role (annual, or per year). */
+  marketSalary?: number | Record<string, number>;
+  /**
+   * Set by the owner-compensation split (normalization-rules.ts): "excess" =
+   * pay above market (EBITDA and SDE), "market" = the market salary (SDE only).
+   */
+  ownerCompPart?: "excess" | "market";
+  /**
+   * The add-back's only support is the broker's private material (a CRM note,
+   * a broker-only file). It is left out of EBITDA/SDE and every CIM/DD bridge
+   * until the broker approves it (approvedOverride + approved).
+   */
+  privateEvidence?: boolean;
 }
 
 export interface UiNormalization {
@@ -57,6 +72,19 @@ export interface UiNormalization {
   notes?: string[];
   /** Broker chose the base metric (PATCH diff). Carried forward across re-runs. */
   metricOverride?: boolean;
+  /**
+   * EBITDA / SDE per year computed in code from net income + the approved
+   * add-backs (normalization-rules.ts) — the canonical figures; recomputed on
+   * every broker edit. adjustedEbitda / adjustedSde = the latest year's.
+   */
+  computed?: {
+    reportedEbitda: Record<string, number>;
+    adjustedEbitda: Record<string, number>;
+    sde: Record<string, number>;
+    latestYear: string | null;
+  };
+  adjustedEbitda?: number;
+  adjustedSde?: number;
 }
 
 export interface UiWorkingCapitalItem {
@@ -72,6 +100,10 @@ export interface UiWorkingCapital {
   targetNwc?: number | null;
   asOfPeriod?: string;
   notes?: string[];
+  /** Year-end net working capital per fiscal year, computed from the balance sheet (cash-free, debt-free). */
+  history?: Record<string, number>;
+  /** How the suggested peg was worked out ("Average of year-end net working capital, 2022–2024"). */
+  pegBasis?: string;
 }
 
 export interface UiClarifyingQuestion {
@@ -89,6 +121,12 @@ export interface UiClarifyingQuestion {
    * routed ask_seller discrepancy always has a Questions card to take it back from).
    */
   carriedFromVersion?: number;
+  /**
+   * Figures in the question that only the broker's private material holds
+   * (never the seller's documents or answers). Those sentences are never
+   * sent to the seller.
+   */
+  privateFigures?: string[];
 }
 
 export interface UiInsight {
@@ -97,6 +135,8 @@ export interface UiInsight {
   title: string;
   detail: string;
   cimSection?: string;
+  /** Set when the insight states an EBITDA/SDE figure the normalization doesn't compute. */
+  flag?: string;
 }
 
 export interface UiInsights {
@@ -262,6 +302,16 @@ export function coerceNormalization(raw: any): UiNormalization | null {
         confidence,
         ...(a.custom === true || (typeof a.id === "string" && a.id.startsWith("custom_")) ? { custom: true } : {}),
         ...(a.approvedOverride === true ? { approvedOverride: true } : {}),
+        ...(a.ownerActualComp && typeof a.ownerActualComp === "object" && Object.keys(numberMap(a.ownerActualComp)).length > 0
+          ? { ownerActualComp: numberMap(a.ownerActualComp) }
+          : {}),
+        ...(typeof a.marketSalary === "number" && Number.isFinite(a.marketSalary) && a.marketSalary > 0
+          ? { marketSalary: a.marketSalary }
+          : a.marketSalary && typeof a.marketSalary === "object" && Object.keys(numberMap(a.marketSalary)).length > 0
+            ? { marketSalary: numberMap(a.marketSalary) }
+            : {}),
+        ...(a.ownerCompPart === "excess" || a.ownerCompPart === "market" ? { ownerCompPart: a.ownerCompPart } : {}),
+        ...(a.privateEvidence === true ? { privateEvidence: true } : {}),
       };
     });
 
@@ -369,6 +419,8 @@ export function coerceWorkingCapital(
       targetNwc: toNumber(raw.targetNwc) ?? null,
       asOfPeriod: raw.asOfPeriod ? String(raw.asOfPeriod) : undefined,
       notes: Array.isArray(raw.notes) ? raw.notes.map(String) : undefined,
+      ...(raw.history && typeof raw.history === "object" && Object.keys(numberMap(raw.history)).length > 0 ? { history: numberMap(raw.history) } : {}),
+      ...(typeof raw.pegBasis === "string" && raw.pegBasis ? { pegBasis: raw.pegBasis } : {}),
     };
   }
 
@@ -439,6 +491,7 @@ export function coerceClarifyingQuestions(raw: any): UiClarifyingQuestion[] | nu
           ? q.status
           : "pending",
         ...(typeof q.carriedFromVersion === "number" ? { carriedFromVersion: q.carriedFromVersion } : {}),
+        ...(Array.isArray(q.privateFigures) && q.privateFigures.length > 0 ? { privateFigures: q.privateFigures.map(String) } : {}),
       };
     });
   return out.length > 0 ? out : null;

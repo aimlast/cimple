@@ -18,6 +18,7 @@
  *   TWILIO_PHONE_NUMBER
  */
 import { storage } from "../storage";
+import { redactLogText } from "../log-redact";
 import { NOTIFICATION_ROUTING } from "@shared/schema";
 import type { DealMember, SellerInvite, User } from "@shared/schema";
 
@@ -165,7 +166,7 @@ async function sendSms(to: string, body: string): Promise<boolean> {
   const from = process.env.TWILIO_PHONE_NUMBER;
 
   if (!sid || !token || !from) {
-    console.log(`[notify:sms] (no Twilio credentials) → ${to}: ${body.slice(0, 80)}...`);
+    console.log(`[notify:sms] (no Twilio credentials) → ${to}: ${redactLogText(body).slice(0, 80)}...`);
     return false;
   }
 
@@ -188,7 +189,7 @@ async function sendSms(to: string, body: string): Promise<boolean> {
       return false;
     }
 
-    console.log(`[notify:sms] Sent to ${to}: ${body.slice(0, 50)}...`);
+    console.log(`[notify:sms] Sent to ${to}: ${redactLogText(body).slice(0, 50)}...`);
     return true;
   } catch (err) {
     console.error(`[notify:sms] Error sending to ${to}:`, err);

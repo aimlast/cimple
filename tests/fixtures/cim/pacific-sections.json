@@ -1,0 +1,1144 @@
+{
+ "hallucinated": [
+  {
+   "sectionTitle": "Historical Financial Performance",
+   "layoutType": "financial_table",
+   "layoutData": {
+    "rows": [
+     {
+      "bold": true,
+      "label": "Revenue",
+      "values": [
+       "$28,640,000",
+       "$29,180,000",
+       "$31,020,000"
+      ]
+     },
+     {
+      "label": "Cost of Sales",
+      "values": [
+       "$20,948,200",
+       "$20,612,900",
+       "$21,706,300"
+      ]
+     },
+     {
+      "label": "Gross Profit",
+      "values": [
+       "$7,691,800",
+       "$8,567,100",
+       "$9,313,700"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Operating Expenses",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Driver wages & benefits",
+      "indent": true,
+      "values": [
+       "$7,002,200",
+       "$7,122,900",
+       "$7,358,300"
+      ]
+     },
+     {
+      "label": "Warehouse labour & benefits",
+      "indent": true,
+      "values": [
+       "$1,380,000",
+       "$1,690,000",
+       "$1,690,000"
+      ]
+     },
+     {
+      "label": "Fleet repairs, maintenance & tires",
+      "indent": true,
+      "values": [
+       "$1,720,000",
+       "$1,850,000",
+       "$1,850,000"
+      ]
+     },
+     {
+      "label": "Fleet & cargo insurance",
+      "indent": true,
+      "values": [
+       "$1,060,000",
+       "$1,150,000",
+       "$1,240,000"
+      ]
+     },
+     {
+      "label": "Property & general liability insurance",
+      "indent": true,
+      "values": [
+       "$80,000",
+       "$88,000",
+       "$94,000"
+      ]
+     },
+     {
+      "label": "Fuel costs",
+      "indent": true,
+      "values": [
+       "$5,420,000",
+       "$4,760,000",
+       "$4,760,000"
+      ]
+     },
+     {
+      "label": "Purchased transportation",
+      "indent": true,
+      "values": [
+       "$3,260,000",
+       "$2,860,000",
+       "$3,180,000"
+      ]
+     },
+     {
+      "label": "Office, dispatch & administration salaries",
+      "indent": true,
+      "values": [
+       "$1,090,000",
+       "$1,150,000",
+       "$1,150,000"
+      ]
+     },
+     {
+      "label": "Shareholder salaries",
+      "indent": true,
+      "values": [
+       "$488,000",
+       "$505,000",
+       "$582,000"
+      ]
+     },
+     {
+      "label": "Rental expense (warehouse & yard)",
+      "indent": true,
+      "values": [
+       "$1,897,500",
+       "$2,337,500",
+       "$2,444,500"
+      ]
+     },
+     {
+      "label": "Professional fees",
+      "indent": true,
+      "values": [
+       "$168,000",
+       "$231,000",
+       "$341,000"
+      ]
+     },
+     {
+      "label": "Tractor leases & equipment rentals",
+      "indent": true,
+      "values": [
+       "$566,000",
+       "$590,000",
+       "$581,000"
+      ]
+     },
+     {
+      "label": "Other operating expenses",
+      "indent": true,
+      "values": [
+       "$1,150,000",
+       "$1,150,000",
+       "$1,211,000"
+      ]
+     },
+     {
+      "label": "Facility relocation costs",
+      "indent": true,
+      "values": [
+       "$186,000",
+       "$0",
+       "$0"
+      ]
+     },
+     {
+      "label": "Total Operating Expenses",
+      "values": [
+       "$25,467,700",
+       "$24,484,400",
+       "$26,481,800"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "EBITDA",
+      "values": [
+       "$3,944,100",
+       "$4,695,600",
+       "$4,781,900"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Amortization",
+      "values": [
+       "$1,720,000",
+       "$1,880,000",
+       "$1,950,000"
+      ]
+     },
+     {
+      "label": "Interest expense",
+      "values": [
+       "$268,000",
+       "$448,000",
+       "$433,000"
+      ]
+     },
+     {
+      "label": "Gain on disposal of equipment",
+      "values": [
+       "($118,000)",
+       "($72,000)",
+       "($64,000)"
+      ]
+     },
+     {
+      "label": "Net Income Before Tax",
+      "values": [
+       "$2,074,100",
+       "$2,439,600",
+       "$2,462,900"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Income taxes",
+      "indent": true,
+      "values": [
+       "$423,900",
+       "$645,000",
+       "$293,240"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Net Income After Tax",
+      "values": [
+       "$1,650,200",
+       "$1,794,600",
+       "$2,169,660"
+      ],
+      "isTotal": true
+     }
+    ],
+    "headers": [
+     "Line item",
+     "FY2022",
+     "FY2023",
+     "FY2024"
+    ],
+    "currency": "CAD",
+    "footnotes": [
+     "Financial statements prepared under Canadian accounting standards for private enterprises (ASPE); review engagement by Harmon Bains LLP (FY2022-2024).",
+     "EBITDA calculated as Net Income Before Tax plus Interest plus Amortization minus Gain on Disposal.",
+     "FY2022 included one-time facility relocation costs of $186,000.",
+     "Shareholder salaries include compensation to Harjit S. Grewal, Manpreet Grewal, and Surinder K. Grewal.",
+     "See EBITDA Normalization section for adjustments to arrive at normalized earnings for valuation purposes."
+    ],
+    "expandable": true,
+    "expandLabel": "Show detailed breakdown",
+    "collapseLabel": "Show summary",
+    "relatedSections": [
+     "ebitda_normalization",
+     "revenue_growth"
+    ]
+   }
+  },
+  {
+   "sectionTitle": "EBITDA Normalization & Adjustments",
+   "layoutType": "waterfall_chart",
+   "layoutData": {
+    "unit": "$",
+    "items": [
+     {
+      "type": "start",
+      "label": "Net Income (FY2024)",
+      "value": 972960
+     },
+     {
+      "type": "add",
+      "label": "Income Taxes",
+      "value": 293240
+     },
+     {
+      "type": "add",
+      "label": "Interest Expense",
+      "value": 433000
+     },
+     {
+      "type": "add",
+      "label": "Amortization",
+      "value": 1950000
+     },
+     {
+      "type": "add",
+      "label": "Harjit Salary (Excess over $120K Replacement Cost)",
+      "value": 95000
+     },
+     {
+      "type": "add",
+      "label": "Surinder Salary (Non-Working Family Member)",
+      "value": 85000
+     },
+     {
+      "type": "add",
+      "label": "Below-Market Yard Rent Adjustment",
+      "value": 78000
+     },
+     {
+      "type": "add",
+      "label": "One-Time Legal & Consulting Fees",
+      "value": 156000
+     },
+     {
+      "type": "subtract",
+      "label": "Gain on Equipment Disposal",
+      "value": 64000
+     },
+     {
+      "type": "total",
+      "label": "Adjusted EBITDA (FY2024)",
+      "value": 3900200
+     }
+    ],
+    "currency": "CAD"
+   }
+  },
+  {
+   "sectionTitle": "Customer Diversification",
+   "layoutType": "horizontal_bar_chart",
+   "layoutData": {
+    "data": [
+     {
+      "name": "Alderbrook Grocery Distributors",
+      "unit": "%",
+      "value": 22
+     },
+     {
+      "name": "Kestrel Building Supply",
+      "unit": "%",
+      "value": 8
+     },
+     {
+      "name": "Tidewater Beverage Co.",
+      "unit": "%",
+      "value": 6.5
+     },
+     {
+      "name": "Fraser Valley Dairy Co-op",
+      "unit": "%",
+      "value": 5.2
+     },
+     {
+      "name": "Pacific Pet Food Distributors",
+      "unit": "%",
+      "value": 4.8
+     },
+     {
+      "name": "Coastal Furniture Group",
+      "unit": "%",
+      "value": 3.9
+     },
+     {
+      "name": "Other customers (294+)",
+      "unit": "%",
+      "value": 49.6
+     }
+    ],
+    "unit": "%",
+    "title": "Share of FY2024 revenue ($31.02M)",
+    "yLabel": "Customer",
+    "relatedSections": [
+     "anchor_customer"
+    ],
+    "showPercentages": true
+   }
+  }
+ ],
+ "checkerRun": [
+  {
+   "sectionTitle": "Revenue by Service Line",
+   "layoutType": "horizontal_bar_chart",
+   "layoutData": {
+    "data": [
+     {
+      "name": "Dry van truckload & regional distribution",
+      "value": "$13,560,000"
+     },
+     {
+      "name": "Temperature-controlled (reefer) transport",
+      "value": "$8,410,000"
+     },
+     {
+      "name": "3PL warehousing, cross-dock & handling",
+      "value": "$6,720,000"
+     },
+     {
+      "name": "Port of Vancouver container drayage",
+      "value": "$2,330,000"
+     }
+    ],
+    "unit": "$",
+    "title": "FY2024",
+    "yLabel": "Service line",
+    "showPercentages": true
+   }
+  },
+  {
+   "sectionTitle": "Revenue Growth Trend",
+   "layoutType": "bar_chart",
+   "layoutData": {
+    "data": [
+     {
+      "name": "FY2022",
+      "color": "#6B7280",
+      "value": 28640000
+     },
+     {
+      "name": "FY2023",
+      "color": "#6B7280",
+      "value": 29180000
+     },
+     {
+      "name": "FY2024",
+      "color": "#10B981",
+      "value": 31020000
+     }
+    ],
+    "unit": "$",
+    "xLabel": "Fiscal Year",
+    "yLabel": "Revenue",
+    "relatedSections": [
+     "financial_summary",
+     "revenue_by_service"
+    ]
+   }
+  },
+  {
+   "sectionTitle": "Customer Diversification",
+   "layoutType": "two_column",
+   "layoutData": {
+    "left": {
+     "title": "Diversified Revenue Base",
+     "content": "Pacific Coast Logistics serves over 300 active customers across British Columbia and the Pacific Northwest, providing meaningful diversification while maintaining scale with anchor accounts.\n\nThe largest customer, Alderbrook Grocery Distributors, represents 22.0 percent of annual revenue under a master service agreement that runs through March 2027. The second-largest account, a building supply company, contributes approximately 8 percent, and no other single customer exceeds 7 percent of total volume.\n\nThe top six customers together account for just over half of annual revenue, and the remaining half is distributed across nearly 300 smaller accounts, including spot freight and seasonal shippers. The company has demonstrated its ability to retain major accounts for decades while continuously adding new customers through referrals and its reputation for reliability during supply chain disruptions.",
+     "layoutType": "prose"
+    },
+    "right": {
+     "title": "Revenue Concentration",
+     "content": "\u2022 Total active customers: 300+\n\u2022 Largest customer (Alderbrook): 22.0%\n\u2022 Second-largest customer: ~8%\n\u2022 Top 5 customers: 47%\n\u2022 Top 10 customers: 63.5%\n\u2022 Food-related freight: ~50%\n\u2022 Remaining 290+ accounts: ~36.5%\n\nThe customer mix spans food distribution and grocery, building supply, beverage, pet food, furniture, and dairy sectors. Food-related freight represents approximately 50 percent of the business, reflecting the company's strength in temperature-controlled logistics and its long-standing relationships with grocery and produce distributors.\n\nThis diversification provides revenue stability while maintaining meaningful relationships with anchor accounts that have been with the company for over two decades.",
+     "layoutType": "list"
+    },
+    "title": "Customer Diversification"
+   }
+  },
+  {
+   "sectionTitle": "Three-Year Financial Summary",
+   "layoutType": "financial_table",
+   "layoutData": {
+    "rows": [
+     {
+      "label": "Revenue",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Dry van truckload & regional distribution",
+      "indent": 1,
+      "values": [
+       "$13,480,000",
+       "$12,610,000",
+       "$13,560,000"
+      ]
+     },
+     {
+      "label": "Temperature-controlled (reefer) transport",
+      "indent": 1,
+      "values": [
+       "$7,420,000",
+       "$7,890,000",
+       "$8,410,000"
+      ]
+     },
+     {
+      "label": "3PL warehousing, cross-dock & handling",
+      "indent": 1,
+      "values": [
+       "$4,960,000",
+       "$6,020,000",
+       "$6,720,000"
+      ]
+     },
+     {
+      "label": "Port of Vancouver container drayage",
+      "indent": 1,
+      "values": [
+       "$2,780,000",
+       "$2,660,000",
+       "$2,330,000"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Total Revenue",
+      "values": [
+       "$28,640,000",
+       "$29,180,000",
+       "$31,020,000"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Cost of Sales",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Driver wages & benefits",
+      "indent": 1,
+      "values": [
+       "$7,002,200",
+       "$7,122,900",
+       "$7,358,300"
+      ]
+     },
+     {
+      "label": "Purchased transportation",
+      "indent": 1,
+      "values": [
+       "$3,260,000",
+       "$2,860,000",
+       "$3,180,000"
+      ]
+     },
+     {
+      "label": "Fuel",
+      "indent": 1,
+      "values": [
+       "$5,420,000",
+       "$4,760,000",
+       "$4,860,000"
+      ]
+     },
+     {
+      "label": "Fleet repairs, maintenance & tires (incl. shop wages)",
+      "indent": 1,
+      "values": [
+       "$1,720,000",
+       "$1,850,000",
+       "$1,960,000"
+      ]
+     },
+     {
+      "label": "Fleet & cargo insurance",
+      "indent": 1,
+      "values": [
+       "$1,060,000",
+       "$1,150,000",
+       "$1,240,000"
+      ]
+     },
+     {
+      "label": "Warehouse labour & benefits",
+      "indent": 1,
+      "values": [
+       "$1,380,000",
+       "$1,690,000",
+       "$1,862,000"
+      ]
+     },
+     {
+      "label": "Licences, permits, tolls & fuel tax",
+      "indent": 1,
+      "values": [
+       "$344,000",
+       "$362,000",
+       "$386,000"
+      ]
+     },
+     {
+      "label": "Tractor leases & equipment rentals",
+      "indent": 1,
+      "values": [
+       "$566,000",
+       "$590,000",
+       "$612,000"
+      ]
+     },
+     {
+      "label": "Warehouse supplies & materials handling",
+      "indent": 1,
+      "values": [
+       "$196,000",
+       "$228,000",
+       "$248,000"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Total Cost of Sales",
+      "values": [
+       "$20,948,200",
+       "$20,612,900",
+       "$21,706,300"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "Gross Profit",
+      "values": [
+       "$7,691,800",
+       "$8,567,100",
+       "$9,313,700"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Gross Margin",
+      "indent": 1,
+      "values": [
+       "26.9%",
+       "29.4%",
+       "30.0%"
+      ]
+     },
+     {
+      "label": "Operating Expenses",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Office, dispatch & administration salaries",
+      "indent": 1,
+      "values": [
+       "$1,090,000",
+       "$1,150,000",
+       "$1,210,000"
+      ]
+     },
+     {
+      "label": "Management salaries \u2014 shareholders (Manpreet, working)",
+      "indent": 1,
+      "values": [
+       "$141,000",
+       "$158,000",
+       "$175,000"
+      ]
+     },
+     {
+      "label": "Management salaries \u2014 shareholders (Harjit)",
+      "indent": 1,
+      "values": [
+       "$285,000",
+       "$285,000",
+       "$285,000"
+      ]
+     },
+     {
+      "label": "Management salaries \u2014 shareholders (Surinder, non-working)",
+      "indent": 1,
+      "values": [
+       "$62,000",
+       "$62,000",
+       "$62,000"
+      ]
+     },
+     {
+      "label": "Facility rent & additional rent (warehouse)",
+      "indent": 1,
+      "values": [
+       "$1,217,000",
+       "$2,337,500",
+       "$2,348,500"
+      ]
+     },
+     {
+      "label": "Yard & shop rent \u2014 related party",
+      "indent": 1,
+      "values": [
+       "$96,000",
+       "$96,000",
+       "$96,000"
+      ]
+     },
+     {
+      "label": "Utilities",
+      "indent": 1,
+      "values": [
+       "$232,000",
+       "$274,000",
+       "$286,000"
+      ]
+     },
+     {
+      "label": "Insurance \u2014 property & general liability",
+      "indent": 1,
+      "values": [
+       "$80,000",
+       "$88,000",
+       "$94,000"
+      ]
+     },
+     {
+      "label": "Office, IT & software subscriptions",
+      "indent": 1,
+      "values": [
+       "$262,000",
+       "$291,000",
+       "$246,000"
+      ]
+     },
+     {
+      "label": "Telephone & communications",
+      "indent": 1,
+      "values": [
+       "$74,000",
+       "$79,000",
+       "$84,000"
+      ]
+     },
+     {
+      "label": "Professional fees (recurring)",
+      "indent": 1,
+      "values": [
+       "$168,000",
+       "$173,000",
+       "$214,000"
+      ]
+     },
+     {
+      "label": "Advertising & promotion",
+      "indent": 1,
+      "values": [
+       "$48,000",
+       "$58,000",
+       "$64,000"
+      ]
+     },
+     {
+      "label": "Meals & entertainment",
+      "indent": 1,
+      "values": [
+       "$42,000",
+       "$45,000",
+       "$48,000"
+      ]
+     },
+     {
+      "label": "Travel & vehicle",
+      "indent": 1,
+      "values": [
+       "$108,000",
+       "$117,000",
+       "$126,000"
+      ]
+     },
+     {
+      "label": "Dues, memberships & subscriptions",
+      "indent": 1,
+      "values": [
+       "$27,000",
+       "$29,000",
+       "$31,000"
+      ]
+     },
+     {
+      "label": "Bad debts",
+      "indent": 1,
+      "values": [
+       "$35,000",
+       "$61,000",
+       "$42,000"
+      ]
+     },
+     {
+      "label": "Bank charges",
+      "indent": 1,
+      "values": [
+       "$33,000",
+       "$36,000",
+       "$38,000"
+      ]
+     },
+     {
+      "label": "Driver recruiting, training & medicals",
+      "indent": 1,
+      "values": [
+       "$96,000",
+       "$108,000",
+       "$118,000"
+      ]
+     },
+     {
+      "label": "Total Operating Expenses (recurring)",
+      "values": [
+       "$3,910,000",
+       "$5,389,500",
+       "$5,440,500"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Non-Recurring Expenses",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Facility relocation costs (one-time)",
+      "indent": 1,
+      "values": [
+       "$186,000",
+       "$0",
+       "$0"
+      ]
+     },
+     {
+      "label": "Union certification legal fees (one-time)",
+      "indent": 1,
+      "values": [
+       "$0",
+       "$58,000",
+       "$0"
+      ]
+     },
+     {
+      "label": "TMS migration consultants (one-time)",
+      "indent": 1,
+      "values": [
+       "$0",
+       "$0",
+       "$72,000"
+      ]
+     },
+     {
+      "label": "Wrongful dismissal settlement (one-time)",
+      "indent": 1,
+      "values": [
+       "$0",
+       "$0",
+       "$55,000"
+      ]
+     },
+     {
+      "label": "Total Non-Recurring Expenses",
+      "values": [
+       "$186,000",
+       "$58,000",
+       "$127,000"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "Total Operating Expenses",
+      "values": [
+       "$4,096,000",
+       "$5,447,500",
+       "$5,567,500"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "EBITDA (before other income)",
+      "values": [
+       "$3,409,800",
+       "$3,061,600",
+       "$3,619,200"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "EBITDA Margin",
+      "indent": 1,
+      "values": [
+       "11.9%",
+       "10.5%",
+       "11.7%"
+      ]
+     },
+     {
+      "label": "Other Income",
+      "values": [
+       "",
+       "",
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Gain on disposal of equipment",
+      "indent": 1,
+      "values": [
+       "$118,000",
+       "$72,000",
+       "$64,000"
+      ]
+     },
+     {
+      "label": "Depreciation & Amortization",
+      "values": [
+       "$1,720,000",
+       "$1,880,000",
+       "$1,950,000"
+      ]
+     },
+     {
+      "label": "Interest Expense",
+      "values": [
+       "$268,000",
+       "$412,000",
+       "$395,000"
+      ]
+     },
+     {
+      "label": "Income Taxes",
+      "values": [
+       "$423,900",
+       "$175,685",
+       "$293,240"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Net Income",
+      "values": [
+       "$1,115,900",
+       "$665,915",
+       "$972,960"
+      ],
+      "isTotal": true
+     }
+    ],
+    "caption": "Review engagement statements (ASPE)",
+    "headers": [
+     "",
+     "FY2022",
+     "FY2023",
+     "FY2024"
+    ],
+    "currency": "CAD",
+    "footnotes": [
+     "Operating expenses include owner compensation: Harjit $285,000 annually, Surinder (non-working) $62,000, Manpreet (working VP Operations) $141,000\u2013$175,000.",
+     "Warehouse rent reflects 15-year lease commenced 2022 with annual step-ups; year-over-year increase FY2022\u2013FY2023 reflects first full year of occupancy.",
+     "Yard & shop rent is paid to related party (Grewal Family Holdings Ltd.) at below-market rate.",
+     "Non-recurring items are one-time expenses identified for normalization purposes."
+    ],
+    "expandable": true,
+    "expandLabel": "Show full profit & loss detail",
+    "collapseLabel": "Show summary",
+    "relatedSections": [
+     "adjusted_ebitda_bridge",
+     "revenue_growth",
+     "gross_margin_evolution"
+    ]
+   }
+  },
+  {
+   "sectionTitle": "Adjusted EBITDA Reconciliation",
+   "layoutType": "waterfall_chart",
+   "layoutData": {
+    "unit": "$",
+    "items": [
+     {
+      "type": "start",
+      "label": "Net income",
+      "value": "$972,960"
+     },
+     {
+      "type": "add",
+      "label": "Interest expense",
+      "value": "$395,000"
+     },
+     {
+      "type": "add",
+      "label": "Income taxes",
+      "value": "$293,240"
+     },
+     {
+      "type": "add",
+      "label": "Depreciation & amortization",
+      "value": "$1,950,000"
+     },
+     {
+      "type": "add",
+      "label": "TMS migration consultants (one-time)",
+      "value": "$72,000"
+     },
+     {
+      "type": "add",
+      "label": "Wrongful dismissal settlement (one-time)",
+      "value": "$55,000"
+     },
+     {
+      "type": "subtract",
+      "label": "Below-market yard rent adjustment",
+      "value": "$78,000"
+     },
+     {
+      "type": "subtract",
+      "label": "Gain on disposal of equipment",
+      "value": "$64,000"
+     },
+     {
+      "type": "total",
+      "label": "Adjusted EBITDA",
+      "value": "$3,596,200"
+     }
+    ],
+    "currency": "CAD"
+   }
+  },
+  {
+   "sectionTitle": "Working Capital Position",
+   "layoutType": "financial_table",
+   "layoutData": {
+    "rows": [
+     {
+      "label": "Current Assets",
+      "values": [
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Cash",
+      "indent": 1,
+      "values": [
+       "$1,022,999"
+      ]
+     },
+     {
+      "label": "Accounts receivable",
+      "indent": 1,
+      "values": [
+       "$4,380,000"
+      ]
+     },
+     {
+      "label": "Inventory \u2014 fuel, parts and tires",
+      "indent": 1,
+      "values": [
+       "$312,000"
+      ]
+     },
+     {
+      "label": "Prepaid expenses",
+      "indent": 1,
+      "values": [
+       "$486,000"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Total Current Assets",
+      "values": [
+       "$6,200,999"
+      ],
+      "isTotal": true
+     },
+     {
+      "label": "Current Liabilities",
+      "values": [
+       ""
+      ],
+      "isSectionHeader": true
+     },
+     {
+      "label": "Bank indebtedness (operating line)",
+      "indent": 1,
+      "values": [
+       "$0"
+      ]
+     },
+     {
+      "label": "Accounts payable and accrued liabilities",
+      "indent": 1,
+      "values": [
+       "$2,640,000"
+      ]
+     },
+     {
+      "label": "Income taxes payable",
+      "indent": 1,
+      "values": [
+       "$118,000"
+      ]
+     },
+     {
+      "label": "Current portion of long-term debt",
+      "indent": 1,
+      "values": [
+       "$2,420,000"
+      ]
+     },
+     {
+      "bold": true,
+      "label": "Total Current Liabilities",
+      "values": [
+       "$5,178,000"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "Net Working Capital",
+      "values": [
+       "$1,022,999"
+      ],
+      "isTotal": true
+     },
+     {
+      "bold": true,
+      "label": "Working Capital Peg (Target)",
+      "values": [
+       "$2,400,000"
+      ]
+     }
+    ],
+    "headers": [
+     "Line item",
+     "December 31, 2024"
+    ],
+    "currency": "CAD",
+    "footnotes": [
+     "Based on review engagement financial statements as of December 31, 2024.",
+     "The working capital peg of $2,400,000 represents the normalized level of working capital to be delivered at closing."
+    ]
+   }
+  }
+ ]
+}

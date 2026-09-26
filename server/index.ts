@@ -9,6 +9,7 @@ import * as Sentry from "@sentry/node";
 import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
+import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -17,6 +18,12 @@ if (process.env.SENTRY_DSN) {
     dsn: process.env.SENTRY_DSN,
     environment: process.env.NODE_ENV || "development",
     tracesSampleRate: 0.1,
+    // Seller/buyer/approval links carry bearer tokens in the URL: scrub
+    // them from every event, transaction and breadcrumb before sending.
+    sendDefaultPii: false,
+    beforeSend: (event) => scrubSentryEvent(event),
+    beforeSendTransaction: (event) => scrubSentryEvent(event),
+    beforeBreadcrumb: (crumb) => scrubSentryEvent(crumb),
   });
   console.log("[sentry] Error monitoring active");
 }
@@ -181,16 +188,9 @@ app.use((req, res, next) => {
   res.on("finish", () => {
     const duration = Date.now() - start;
     if (path.startsWith("/api")) {
-      let logLine = `${req.method} ${path} ${res.statusCode} in ${duration}ms`;
-      if (capturedJsonResponse) {
-        logLine += ` :: ${JSON.stringify(capturedJsonResponse)}`;
-      }
-
-      if (logLine.length > 80) {
-        logLine = logLine.slice(0, 79) + "…";
-      }
-
-      log(logLine);
+      // Token routes are logged as /api/<route>/:token with no body, and
+      // secret-looking fields are blanked everywhere (see log-redact.ts).
+      log(formatRequestLogLine(req.method, path, res.statusCode, duration, capturedJsonResponse));
     }
   });
 

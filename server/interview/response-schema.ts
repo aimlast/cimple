@@ -46,6 +46,14 @@ export interface InterviewResponse {
   /** Tasks to create for deferred/unresolvable items */
   newTasks: NewTask[];
 
+  /**
+   * Facts the seller WITHDREW this turn ("take those numbers back", "I was
+   * guessing", "don't put that in the book"). The server removes the
+   * withdrawn value from the deal's facts (kept in the deleted-facts
+   * history) and never lets it be recorded again this session.
+   */
+  retractedFields?: { field: string; reason: string }[];
+
   /** Whether the interview should end after this turn */
   shouldEnd: boolean;
 
@@ -146,7 +154,7 @@ export const INTERVIEW_RESPONSE_TOOL = {
     properties: {
       message: {
         type: "string",
-        description: "Your conversational message to the seller. This is what they see. Keep it warm, professional, and concise. One brief acknowledgment of their answer, then your next question.",
+        description: "Your conversational message to the seller. This is what they see. The message IS your next question — usually one or two sentences, starting with the question itself. No recap of their answer, no praise, no grading, no buyer cheerleading. Lead with something else only to answer a question the seller asked, reconcile a conflict with what's on file, respond humanly to something sensitive, or promise privacy. Never name your internal tools (probes, checklists, coverage, the knowledge base, sections, deferrals). Unless shouldEnd is true, it must end with exactly one question.",
       },
       whyItMatters: {
         type: "string",
@@ -298,6 +306,18 @@ export const INTERVIEW_RESPONSE_TOOL = {
           properties: {
             note: { type: "string", description: "The sensitive fact, stated plainly for the broker." },
             reason: { type: "string", description: "Why it is broker-private (e.g. 'seller asked this stay out of documents; health-related')." },
+          },
+        },
+      },
+      retractedFields: {
+        type: "array",
+        description: "Facts the seller WITHDREW this turn without giving a new value — they said to take something back or that they were guessing. List the extractedInfo key of each withdrawn fact (the exact key it is on file under) and do NOT re-record the withdrawn value in extractedFields. Also add a newDeferral naming who holds the real answer. NOT for corrections ('scratch that, it's 12 not 10' — record the new value under the same key instead) and NOT for 'keep that out of the book' (that goes to privateNotes). Empty array (or omit) on almost every turn.",
+        items: {
+          type: "object",
+          required: ["field", "reason"],
+          properties: {
+            field: { type: "string", description: "The extractedInfo key the withdrawn statement is recorded under (e.g. 'toolingOwnership')." },
+            reason: { type: "string", description: "The seller's words or reason, e.g. 'seller said the mold counts were a guess; Rob has the tooling list'." },
           },
         },
       },

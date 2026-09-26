@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { mergeExtractedData } from "../../server/documents/extractor";
 import {
-  removeDocumentFields, getFieldSources, getFieldAlternates, getFieldCorroborations,
+  removeDocumentFields, getFieldSources, getFieldAlternates, getFieldCorroborations, yearEntryDocId, yearSource,
 } from "../../server/interview/info-merger";
 import {
   editFact, deleteFact, useAlternate, applyResolutionToInfo, revenueYearOfField, mutateDealInfo, acceptWebsiteFact,
@@ -75,7 +75,7 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     info = mergeExtractedData(info, { revenueByYear: { "2024": "$1.8M", "2025": "$2.0M" } } as any, "pB");
     const r = removeDocumentFields(info, "pA");
     assert.deepEqual(r.info.revenueByYear, { "2024": "$1.8M", "2025": "$2.0M" });
-    assert.equal(getFieldSources(r.info).revenueByYear.years?.["2024"], "pB");
+    assert.equal(yearEntryDocId(getFieldSources(r.info).revenueByYear.years?.["2024"]), "pB");
   }
   {
     // Two sources giving the same losing value are both kept as alternates.
@@ -111,14 +111,17 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     const src = getFieldSources(info).revenueByYear;
     assert.equal(src.source, "broker");
     assert.equal(src.documentId, undefined, "no documentId stamped on the broker's source");
-    assert.deepEqual(src.years, { "2022": "EM" });
+    // Per-year sources: the email's 2022, the broker's other years.
+    assert.equal(yearEntryDocId(src.years?.["2022"]), "EM");
+    for (const y of ["2023", "2024", "2025"]) assert.equal(yearSource(src, y)?.source, "broker");
     assert.equal(getFieldAlternates(info)["revenueByYear.2024"][0].value, "$1.95M");
     // reprocess: the email re-extracts the same
     const docsMerged = mergeExtractedData({}, { revenueByYear: { "2022": "$1.7M", "2024": "$1.95M" } } as any, { documentId: "EM", source: "email" });
     const rebuilt = overlayExistingFacts(docsMerged, info);
     assert.deepEqual(rebuilt.revenueByYear, { "2022": "$1.7M", "2023": "$1.8M", "2024": "$1.9M", "2025": "$2.013M" });
     assert.equal(getFieldSources(rebuilt).revenueByYear.source, "broker");
-    assert.deepEqual(getFieldSources(rebuilt).revenueByYear.years, { "2022": "EM" });
+    assert.equal(yearEntryDocId(getFieldSources(rebuilt).revenueByYear.years?.["2022"]), "EM");
+    for (const y of ["2023", "2024", "2025"]) assert.equal(yearSource(getFieldSources(rebuilt).revenueByYear, y)?.source, "broker");
     assert.ok(getFieldAlternates(rebuilt)["revenueByYear.2024"].some((a) => a.value === "$1.95M"), "email's 2024 kept as an alternate");
     // deleting the email removes only its 2022
     const r = removeDocumentFields(rebuilt, "EM");
@@ -152,8 +155,9 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     assert.equal((info.revenueByYear as any)["2024"], "$2.2M");
     const src = getFieldSources(info).revenueByYear;
     assert.equal(src.source, "broker");
-    assert.equal(src.years?.["2024"], undefined, "the chosen year belongs to the broker");
-    assert.equal(src.years?.["2023"], "A");
+    assert.equal(yearSource(src, "2024")?.source, "broker", "the chosen year belongs to the broker");
+    assert.equal(yearEntryDocId(src.years?.["2023"]), "A");
+    assert.equal(yearSource(src, "2023")?.source, "document", "the other year keeps its own source");
     const delA = removeDocumentFields(info, "A");
     assert.deepEqual(delA.info.revenueByYear, { "2024": "$2.2M" });
     const delB = removeDocumentFields(info, "B");
@@ -204,10 +208,10 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     // deleting the P&L keeps the broker's 2024 decision
     const r = removeDocumentFields(info, "PL");
     assert.deepEqual(r.info.revenueByYear, { "2024": "$1,894,000" });
-    // no target → nothing written
+    // no target → nothing written; the broker is asked which fact it updates
     const before = JSON.stringify(info);
-    assert.equal(applyResolutionToInfo(info, { field: "What were the owner's wages in 2024 and were they paid as salary?", resolvedValue: "$90K salary", source: "financial_analysis" } as any), null);
-    assert.equal(applyResolutionToInfo(info, { field: "2023 SDE", resolvedValue: "$410K", source: "financial_analysis" } as any), null);
+    assert.equal(applyResolutionToInfo(info, { field: "What were the owner's wages in 2024 and were they paid as salary?", resolvedValue: "$90K salary", source: "financial_analysis" } as any), "needs_mapping");
+    assert.equal(applyResolutionToInfo(info, { field: "2023 SDE", resolvedValue: "$410K", source: "financial_analysis" } as any), "needs_mapping");
     assert.equal(JSON.stringify(info), before);
     // a known label still works
     const k2 = applyResolutionToInfo(info, { field: "Annual Revenue", resolvedValue: "$1.9M", interviewValue: "$2.3M", documentValue: null, source: "interview" } as any);
@@ -229,10 +233,11 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     };
     const split = splitFactsForCim(info);
     assert.deepEqual(split.confirmed.map(([k]) => k).sort(), ["annualRevenue", "revenueByYear"]);
-    assert.deepEqual(split.leads.map(([k]) => k).sort(), ["askingPrice", "businessDescription"]);
+    // The broker's CRM note is never CIM input, not even as a lead (facts1); the website is a lead.
+    assert.deepEqual(split.leads.map(([k]) => k).sort(), ["businessDescription"]);
     const kbText = buildKnowledgeBase({ dealId: "d", businessName: "Biz", industry: "Dental", extractedInfo: info } as any);
-    assert.doesNotMatch(kbText, /Personal guarantee|Broker to follow up|legacy summary|floor \$1\.6M/);
-    assert.match(kbText, /UNCONFIRMED LEADS[\s\S]*Asking Price: around \$2\.1M/);
+    assert.doesNotMatch(kbText, /Personal guarantee|Broker to follow up|legacy summary|floor \$1\.6M|around \$2\.1M/);
+    assert.match(kbText, /UNCONFIRMED LEADS[\s\S]*Business Description: Family-owned since 1998/);
     assert.match(kbText, /Revenue By Year: 2024: \$1\.8M/, "maps rendered, never [object Object]");
     const canonical = kbText.split("CANONICAL FIGURES")[1]?.split("\n\n")[0] ?? "";
     assert.match(canonical, /Revenue: \$1\.8M/);
@@ -240,7 +245,7 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
     const crmOnly = buildKnowledgeBase({ dealId: "d", businessName: "Biz", industry: "Dental", extractedInfo: { annualRevenue: "about $2M", _fieldSources: { annualRevenue: { source: "crm", documentId: "c" } } } } as any);
     assert.doesNotMatch(crmOnly, /CANONICAL FIGURES/);
   }
-  ok("CIM writers get no per-source notes, and CRM / website facts only as unconfirmed leads");
+  ok("CIM writers get no per-source notes, no CRM facts, and website facts only as unconfirmed leads");
 
   // ── 2. Broker-only content never reaches the interview agent ──
   {

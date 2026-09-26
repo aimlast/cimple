@@ -19,10 +19,25 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, mergeExtractedData, type ExtractedDocumentData } from "./extractor";
-import { addPrivateNote, isSourceKind, SOURCE_META_KEYS, type SourceKind } from "../interview/info-merger";
+import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
+import { recordFactSpeakers } from "../interview/fact-guards";
+import {
+  addPrivateNote,
+  isSourceKind,
+  privateNoteTextsFromSource,
+  removePrivateNoteWordings,
+  sourceRowLookup,
+  SOURCE_META_KEYS,
+  type SourceKind,
+} from "../interview/info-merger";
 import type { Document, DocumentSourceMeta } from "@shared/schema";
+import { isHousekeepingNote, noteRecordedAsFact } from "@shared/private-notes";
 import { withDealFactsLock } from "./facts-lock";
+import { normalisePeriod, stampSourceDetails, type MergeConflict, type MergeContext } from "./merge-policy";
+import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { scheduleNotesReview } from "./private-notes-review";
+import { reconcileMirroredFacts } from "../information/deal-mirror";
+import { setBrokerFact } from "../information/facts";
 
 export type SourceVisibility = "shared" | "broker_only";
 
@@ -61,7 +76,7 @@ export function cleanSourceMeta(raw: unknown): DocumentSourceMeta | null {
   if (!raw || typeof raw !== "object") return null;
   const r = raw as Record<string, unknown>;
   const out: DocumentSourceMeta = {};
-  for (const key of ["from", "to", "subject", "date", "participants", "url", "platform", "provider", "recordType", "recordId"] as const) {
+  for (const key of ["from", "to", "subject", "date", "participants", "url", "platform", "provider", "recordType", "recordId", "periodEnd"] as const) {
     const v = r[key];
     if (typeof v === "string" && v.trim()) out[key] = v.trim().slice(0, 500);
     else if (typeof v === "number") out[key] = String(v);
@@ -178,26 +193,89 @@ export function mergeableExtraction(_doc: Pick<Document, "visibility">, data: Ex
  * Each note carries its source's documentId (deleting the source removes
  * it) and, for a broker-only source, `brokerOnly: true`: those are the
  * broker's own notes and never reach the interview agent at all.
+ * `facts` is the same source's extraction: a note that only repeats a
+ * business fact the source also recorded (a dividend, a personal guarantee
+ * of company debt — noteRecordedAsFact) is the fact filed twice, not a note.
  */
 export function addPrivateNotes(
   info: Record<string, unknown>,
   raw: unknown,
   doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
+  facts?: Record<string, unknown>,
 ): void {
-  if (typeof raw !== "string" || !raw.trim()) return;
+  const list = Array.isArray(raw) ? raw.map((x) => String(x ?? "")) : typeof raw === "string" ? raw.split("\n") : [];
   const brokerOnly = isBrokerOnly(doc);
-  const lines = Array.from(new Set(raw.split("\n").map((n) => n.trim()).filter(Boolean))).slice(0, 10);
+  // At most 10 from one extraction; notes already on file (a reprocess re-adding them) all stay.
+  const lines = Array.from(new Set(list.map((n) => n.trim()).filter(Boolean))).slice(0, Array.isArray(raw) ? undefined : 10);
   // A note already on file (an earlier version of the same CRM note, another
   // email) gains this source too — so retiring or deleting that other source
   // leaves the note in place while this one still states it.
   for (const note of lines) {
+    if (facts && noteRecordedAsFact(note, facts)) continue;
     addPrivateNote(info, note, { reason: `From ${doc.name}`, documentId: doc.id, ...(brokerOnly ? { brokerOnly: true } : {}) });
   }
+}
+
+/**
+ * A re-read source's private notes (reprocess; mutates): what it says now,
+ * plus every note it stated before that the fresh run simply didn't repeat
+ * — a model run is not a correction, and the note may be the broker's only
+ * record of it. An earlier note goes only when this source now records it
+ * as a business fact (a dividend, a guarantee an older prompt filed as
+ * private), or when it is no note at all ("NDA in place", a sample label).
+ * The earlier wordings stay exactly where they are — taking them out and
+ * adding them back re-folded the notes in another order and split some on
+ * every reprocess — and new wordings fold into the note they restate.
+ */
+export function refreshSourceNotes(
+  info: Record<string, unknown>,
+  doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility">,
+  data: Record<string, unknown>,
+): void {
+  const earlier = privateNoteTextsFromSource(info, doc.id);
+  removePrivateNoteWordings(info, doc.id, earlier.filter((t) => noteRecordedAsFact(t, data) || isHousekeepingNote(t)));
+  addPrivateNotes(info, data._privateNotes, doc, data);
 }
 
 // The per-deal facts queue lives in its own module so broker edits and the
 // interview turn (which can't import this pipeline) share it.
 export { withDealFactsLock };
+
+/**
+ * Who asserted a source's extraction, for mergeExtractedData: the row, its
+ * kind, its title (a dedicated source — the org chart, the lease — outranks
+ * passing mentions for its own facts), the fiscal period it reports (its
+ * extraction's periodEnd, else the one remembered on the row), its own date
+ * and whether it is broker-only. Ingestion and reprocess use the same one,
+ * so both decide every fact the same way.
+ */
+export function mergeSourceFor(
+  doc: Pick<Document, "id" | "name" | "sourceKind" | "visibility" | "sourceMeta" | "createdAt" | "subcategory">,
+  extracted?: ExtractedDocumentData | null,
+): MergeSource {
+  const meta = (doc.sourceMeta as DocumentSourceMeta | null) ?? null;
+  const period = normalisePeriod(extracted?._periodEnd) ?? normalisePeriod(meta?.periodEnd);
+  const dated = normalisePeriod(meta?.date) ?? normalisePeriod(doc.createdAt ? new Date(doc.createdAt).toISOString() : undefined);
+  return {
+    documentId: doc.id,
+    source: documentKind(doc),
+    title: [doc.name, doc.subcategory].filter(Boolean).join(" · "),
+    ...(period ? { period } : {}),
+    ...(dated ? { dated } : {}),
+    brokerOnly: isBrokerOnly(doc),
+  };
+}
+
+/** The row's sourceMeta with the extraction's fiscal period end remembered (a documents patch), or {}. */
+export function rememberPeriodEnd(
+  doc: Pick<Document, "sourceMeta">,
+  extracted: ExtractedDocumentData | null | undefined,
+): { sourceMeta?: DocumentSourceMeta } {
+  const periodEnd = normalisePeriod(extracted?._periodEnd);
+  const meta = (doc.sourceMeta as DocumentSourceMeta | null) ?? {};
+  if (!periodEnd || meta.periodEnd === periodEnd) return {};
+  return { sourceMeta: { ...meta, periodEnd } };
+}
 
 export interface IngestResult {
   status: "extracted" | "failed" | "missing";
@@ -222,33 +300,75 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     if (filePath && fs.existsSync(filePath)) text = await extractTextFromFile(filePath, doc.mimeType);
     if (!text && doc.extractedText) text = doc.extractedText;
 
-    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind);
+    const dealForChecklist = await storage.getDeal(doc.dealId);
+    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
+      checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+    });
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
+    // A failed extraction (an API error, no credits) never replaces the
+    // extraction on file — reprocess can still replay it.
+    const hadExtraction = !!doc.extractedData && typeof doc.extractedData === "object" &&
+      Object.keys(doc.extractedData as object).some((k) => !k.startsWith("_") && k !== "summary");
     await storage.updateDocument(doc.id, {
-      status: failed ? "failed" : "extracted",
+      status: failed ? (hadExtraction ? doc.status : "failed") : "extracted",
       extractedText: text,
-      extractedData: extracted,
-      isProcessed: !failed,
+      ...(failed && hadExtraction ? {} : { extractedData: extracted }),
+      isProcessed: failed ? (hadExtraction ? doc.isProcessed : false) : true,
+      ...(failed ? {} : rememberPeriodEnd(doc, extracted)),
     } as any);
     if (failed) return { status: "failed", fieldsWritten: [] };
-
-    // Serialised per deal: several sources finishing at once (a CRM import
-    // ingests a few in parallel) must not overwrite each other's facts.
-    return await withDealFactsLock(doc.dealId, async () => {
-      const deal = await storage.getDeal(doc.dealId);
-      if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
-      const before = (deal.extractedInfo as Record<string, unknown>) || {};
-      const merged = mergeExtractedData(before, mergeableExtraction(doc, extracted), { documentId: doc.id, source: kind });
-      addPrivateNotes(merged, extracted._privateNotes, doc);
-      const fieldsWritten = Object.keys(merged).filter(
-        (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
-      );
-      await storage.updateDeal(doc.dealId, { extractedInfo: merged } as any);
-      return { status: "extracted" as const, fieldsWritten };
-    });
+    return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {
     console.error(`[ingest] failed for doc ${documentId}:`, err);
     await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});
     return { status: "failed", fieldsWritten: [] };
   }
+}
+
+/**
+ * Merges one source row's extraction into its deal's facts with provenance
+ * (the second half of ingestDocument; also used to replay a stored
+ * extraction). Serialised per deal; material conflicts still standing after
+ * the merge become discrepancies.
+ */
+export async function mergeExtractionIntoDeal(doc: Document, extracted: ExtractedDocumentData): Promise<IngestResult> {
+  // Serialised per deal: several sources finishing at once (a CRM import
+  // ingests a few in parallel) must not overwrite each other's facts.
+  const conflicts: MergeConflict[] = [];
+  let saved: Record<string, unknown> = {};
+  const documents = await storage.getDocumentsByDeal(doc.dealId);
+  const result = await withDealFactsLock(doc.dealId, async () => {
+    const deal = await storage.getDeal(doc.dealId);
+    if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
+    const before = (deal.extractedInfo as Record<string, unknown>) || {};
+    const ctx: MergeContext = { conflicts, lookup: sourceRowLookup(documents) };
+    // Every source entry carries its row's visibility (older entries too),
+    // so the CIM writers and the deal list can tell broker-only years apart.
+    const merged = stampSourceDetails(
+      mergeExtractedData(before, mergeableExtraction(doc, extracted), mergeSourceFor(doc, extracted), ctx),
+      documents,
+    );
+    recordFactSpeakers(merged, extracted._speakers, doc.id); // who said it, on calls
+    // A note that only repeats a business fact this source recorded is not a note.
+    addPrivateNotes(merged, extracted._privateNotes, doc, extracted as Record<string, unknown>);
+    // The deal's own name, industry and listed price stay the broker's facts
+    // (deal-mirror.ts) — a CRM note's or a tax return's wording is another value.
+    const { columnPatch } = reconcileMirroredFacts(deal, merged, setBrokerFact);
+    const fieldsWritten = Object.keys(merged).filter(
+      (k) => !k.startsWith("_") && JSON.stringify(merged[k]) !== JSON.stringify(before[k]),
+    );
+    await storage.updateDeal(doc.dealId, { extractedInfo: merged, ...columnPatch } as any);
+    saved = merged;
+    return { status: "extracted" as const, fieldsWritten };
+  });
+  // Material conflicts still standing after the merge become discrepancies (deduplicated).
+  await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
+    console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
+  // Earlier merge rows this source settled (its figure agrees now, or it
+  // restates a value another row already disputes) stop standing.
+  await settleMergeRowsQuietly(doc.dealId, "ingest");
+  // New private notes are consolidated with the deal's others shortly after
+  // (several sources finishing together → one review).
+  if (extracted._privateNotes) scheduleNotesReview(doc.dealId);
+  return result;
 }

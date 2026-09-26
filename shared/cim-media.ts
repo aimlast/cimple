@@ -279,14 +279,84 @@ function isRegionName(seg: string, name: string): boolean {
   return rest === "" || /^\d{5}(\d{4})?$/.test(rest) || /^[a-z]\d[a-z]\d[a-z]\d$/.test(rest);
 }
 
+/**
+ * Every province, state and country name as written ("British Columbia",
+ * "New York", "Canada", "United States") — words a Blind CIM may keep, so
+ * the identity check must never read them as a person, a street or a city.
+ */
+export const REGION_NAMES: readonly string[] = Array.from(new Set([
+  ...Object.values(CA_PROVINCES),
+  ...Object.values(US_STATES),
+  "Québec", "Canada", "United States", "United States of America", "USA", "America", "United Kingdom",
+  "England", "Scotland", "Wales", "Ireland", "Australia", "New Zealand", "Mexico",
+]));
+
+const REGION_WORDS = new Set(REGION_NAMES.flatMap((n) => n.split(/\s+/).map((w) => normText(w))).filter((w) => w.length >= 3 && w !== "of"));
+
+/** True when a single word is part of a province, state or country name ("British", "Columbia", "Carolina"). */
+export function isRegionWord(word: string): boolean {
+  return REGION_WORDS.has(normText(word));
+}
+
+/**
+ * The deal's broad region, worked out from where its premises are —
+ * "British Columbia, Canada", "Ontario, Canada", "Ohio, USA" — or null.
+ * Read only from premises and province/state facts (address, head office,
+ * location, province…), never from markets served, so a BC trucking firm
+ * with Washington State lanes is "British Columbia, Canada". The most
+ * common answer wins; ties go to the first key in PREMISES_KEY_ORDER.
+ * This is what a Blind CIM says instead of the city.
+ */
+export function dealBlindRegion(extractedInfo: unknown): string | null {
+  if (!isObj(extractedInfo)) return null;
+  const read = (v: unknown): string | null =>
+    typeof v === "string" ? v : isObj(v) && typeof v.value === "string" ? v.value : null;
+  const votes = new Map<string, { n: number; rank: number }>();
+  const vote = (region: string | null, rank: number) => {
+    if (!region) return;
+    const cur = votes.get(region);
+    votes.set(region, { n: (cur?.n ?? 0) + 1, rank: Math.min(cur?.rank ?? rank, rank) });
+  };
+  for (const [key, raw] of Object.entries(extractedInfo)) {
+    if (key.startsWith("_")) continue;
+    const words = key.replace(/([a-z0-9])([A-Z])/g, "$1 $2").replace(/[_-]+/g, " ").toLowerCase().split(" ");
+    const has = (...w: string[]) => w.some((x) => words.includes(x));
+    // Premises only: never "serviceArea", "markets", "customerLocations"…
+    if (has("market", "markets", "served", "service", "customer", "customers", "supplier", "suppliers", "lanes", "area", "areas", "expansion", "target")) continue;
+    // A person's fact ("officeManager", "siteContact"), not the premises.
+    if (has("manager", "owner", "contact", "employee", "employees", "staff", "accountant", "lawyer", "person", "name")) continue;
+    const premises = has("address", "headoffice", "office", "premises", "facility", "location", "headquarters", "hq", "site", "city");
+    const regional = has("province", "state", "jurisdiction");
+    if (!premises && !regional) continue;
+    if (has("statement", "statements", "estate", "status")) continue;
+    const text = read(raw)?.split("\n")[0]?.trim();
+    if (!text || text.length > 300) continue;
+    const rank = regional ? 1 : 0;
+    // "Surrey BC", "19220 Campbell Ridge Drive, Surrey, BC V3Z 1K4", or a
+    // province on its own ("British Columbia", "British Columbia (100%)").
+    const cleaned = text.replace(/\([^)]*\)/g, " ").replace(/\s+/g, " ").trim();
+    vote(regionFromAddress(cleaned) ?? (isRegionLabel(cleaned) ? regionFromAddress(`x, ${cleaned}`) : null), rank);
+  }
+  let best: { region: string; n: number; rank: number } | null = null;
+  for (const [region, v] of Array.from(votes.entries())) {
+    // A country alone loses to any province/state.
+    const specific = region.includes(",") ? 1 : 0;
+    const bestSpecific = best?.region.includes(",") ? 1 : 0;
+    if (!best || specific > bestSpecific || (specific === bestSpecific && (v.n > best.n || (v.n === best.n && v.rank < best.rank)))) {
+      best = { region, ...v };
+    }
+  }
+  return best?.region ?? null;
+}
+
 /** Pieces of an address that would identify it (street line, city). */
 export function addressFragments(address: unknown): string[] {
   if (typeof address !== "string") return [];
-  const raw = address.split(/[,\n]/).map((s) => s.trim()).filter(Boolean);
-  const segs = raw.map((s) => normText(s)).filter((s) => s.length >= 4);
-  // The last segment is usually the province/postal code — not identifying
-  // on its own, and it would knock out the region label itself.
-  const out = segs.length > 2 ? segs.slice(0, -1) : segs.slice(0, 2);
+  // A province/state or country segment ("BC", "Canada") identifies nothing —
+  // and as a needle it would strip every caption that names the region.
+  const raw = address.split(/[,\n]/).map((s) => s.trim()).filter((s) => s && !isRegionLabel(s));
+  // Street line, unit, city, postal code: each one identifies the premises.
+  const out = raw.map((s) => normText(s)).filter((s) => s.length >= 4);
   // Distinctive street-name words too ("Fairway" from "210 Fairway Road South").
   for (const seg of raw.slice(0, 2)) {
     if (!/\d/.test(seg)) continue;

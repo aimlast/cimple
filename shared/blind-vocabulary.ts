@@ -42,7 +42,7 @@ const OCCUPATIONS = [
   "dispatcher", "planner", "coordinator", "buyer", "purchaser", "picker", "loader", "shipper", "receiver",
   "warehouseman",
   // office & professional
-  "bookkeeper", "accountant", "controller", "comptroller", "paralegal", "lawyer", "attorney", "notary", "secretary",
+  "bookkeeper", "accountant", "controller", "comptroller", "paralegal", "lawyer", "attorney", "barrister", "solicitor", "notary", "secretary",
   "typist", "administrator", "assistant", "associate", "consultant", "advisor", "adviser", "manager", "supervisor",
   "director", "officer", "executive", "foreman", "forewoman", "foreperson", "superintendent", "leadhand",
   "principal", "partner", "owner", "founder", "employee", "staffer", "volunteer", "intern", "trainee", "student",
@@ -200,7 +200,7 @@ hair hall hand handling happy harbour harbor hard hardware harvest hazard head h
 ice idea image imaging import improvement inbound income independent index indoor industrial industry infant information infrastructure inn innovation input inside inspection install installation institute insurance integrated intensive interior internal international internet intake inventory investment iron island
 jewelry jewellery job join joint journal juice junior justice
 keep kennel key kid kids kind king kitchen knowledge
-lab label labour labor lake land landscape landscaping lane language large laser last late launch laundry law lawn layout lead leader leadership learning lease leasing leather left legacy legal leisure lens level liberty library licence license life lift light lighting limited line linen link liquor list live living load loan local location lock lodge log logistics long loss lot love low lower loyalty lumber lunch luxury
+lab label labour labor lake land landscape landscaping lane language large laser last late launch laundry law lawn layout lead leader leadership learning lease leasehold freehold leasing leather left legacy legal leisure lens level liberty library licence license life lift light lighting limited line linen link liquor list live living load loan local location lock lodge log logistics long loss lot love low lower loyalty lumber lunch luxury
 machine machinery machining magazine mail main maintenance major make making mall man managed management manor manufacturing map maple marble marine mark market marketing marketplace mart massage master material maternity matter meadow meal means measure meat mechanical media medical medicine medium meeting member membership memory mental menu merchandise metal method metro middle mild mile military milk mill mind mini mining minor mint mission mix mobile mode model modern monday money month monthly more morning mortgage mother motion motor mountain mouth move moving multi municipal music
 nail name nation national natural nature near network new news next nice night nine noble none normal north northern note nursery nursing nutrition
 oak oasis ocean office official oil old olds on one online open opening operating operation operational operations optical optometry oral orange orchard order organic origin other outdoor outdoors outlet outpatient output outreach outside oven over overhead own
@@ -232,3 +232,65 @@ export function isCommonWord(w: string): boolean {
   }
   return false;
 }
+
+/**
+ * National and global brands a business buys, drives or sells — vehicle
+ * makes, equipment and HVAC manufacturers, software, big-box retailers and
+ * national distributors. Thousands of businesses use each one, so "leased
+ * Lexus", "authorized Lennox dealer" or "Samsara dash cams" names nothing:
+ * never read as one of the deal's counterparties. (A local supplier,
+ * landlord or customer still is.) Folded, lowercase.
+ */
+const NATIONAL_BRAND_LIST = `
+ford chevrolet chevy gmc ram dodge chrysler jeep toyota lexus honda acura nissan infiniti hyundai kia mazda subaru volkswagen vw audi bmw mercedes benz porsche tesla volvo buick cadillac mitsubishi isuzu hino sprinter
+freightliner kenworth peterbilt mack navistar international western star paccar cummins detroit bendix wabash utility manac stoughton hyundai translead thermo king carrier transicold great dane
+caterpillar cat deere kubota bobcat komatsu doosan hitachi jcb takeuchi genie skyjack jlg hyster yale toyota husqvarna stihl toro exmark scag hustler
+lennox trane goodman amana daikin rheem ruud york bryant payne heil tempstar napoleon fujitsu mitsubishi lg samsung bosch navien rinnai viessmann honeywell ecobee nest
+microsoft google apple amazon adobe oracle intuit quickbooks sage xero freshbooks ceridian adp paychex dayforce wagepoint shopify square clover lightspeed toast moneris stripe paypal salesforce hubspot zoho
+samsara geotab motive keeptruckin omnitracs fleetio axon magaya mcleod trimble verizon
+sysco gfs costco walmart target loblaw sobeys metro safeway kroger amazon homedepot lowes rona wolseley emco grainger fastenal uline staples
+dentsply sirona schein straumann invisalign
+mckesson amerisourcebergen cencora
+connectwise kaseya datto ninjaone ninjarmm nable sentinelone crowdstrike sophos huntress fortinet sonicwall cisco meraki ubiquiti veeam barracuda mimecast proofpoint webroot pax8 ingram synnex itglue dell lenovo 3cx ringcentral zoom dropbox autodesk procore crown case
+`;
+const NATIONAL_BRANDS = new Set(NATIONAL_BRAND_LIST.split(/\s+/).filter(Boolean));
+
+/** A national or global brand (folded, lowercase) — never a local counterparty. */
+export function isNationalBrand(w: string): boolean {
+  return NATIONAL_BRANDS.has(w.toLowerCase().replace(/[^a-z0-9]/g, ""));
+}
+
+/**
+ * Regions wider than one province or state ("the Midwest", "the Maritime
+ * provinces", "Atlantic Canada", "the Prairies", "the Pacific Northwest").
+ * A Blind CIM may name them, so a customer or supplier named after one
+ * ("Midwest Polymer", "Maritime Smiles") is caught by its full name, never by
+ * the region word alone. Folded, lowercase.
+ */
+const BROAD_REGION_WORDS = new Set(`
+midwest midwestern maritime maritimes atlantic pacific prairie prairies northeast northeastern northwest northwestern
+southeast southeastern southwest southwestern midatlantic gulf appalachia appalachian rockies cascadia heartland
+sunbelt lowcountry tristate panhandle interior northern southern eastern western central coastal canadian american
+`.split(/\s+/).filter(Boolean));
+
+/** A word naming a region wider than a province or state ("Midwest", "Maritime", "Mid-Atlantic"). */
+export function isBroadRegionWord(w: string): boolean {
+  const f = w.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "");
+  return BROAD_REGION_WORDS.has(f) || BROAD_REGION_WORDS.has(f.replace(/s$/, ""));
+}
+
+/**
+ * What a software product, a tool or a vendor service is — "NinjaOne RMM",
+ * "SentinelOne EDR", "Datto (on-site backup appliances)", "Fortinet
+ * (standard firewall)", "CareMAR eMAR interface". A tool the business runs
+ * on is used by thousands of others and names nothing (redaction rule 5
+ * keeps such brands). Read from the words right after a name in a supplier,
+ * vendor or contract fact — never in a customer fact. Folded, lowercase.
+ */
+export const TOOL_CATEGORY_WORDS = new Set(`
+rmm psa edr xdr mdr siem soc bcdr bdr erp crm pos ehr emr emar tms wms eld pms hris lms dms voip saas
+software platform app apps firewall firewalls antivirus ticketing documentation telematics dashcam dashcams
+backup backups scanner scanners dispensing packager packagers plugin
+`.split(/\s+/).filter(Boolean));
+/** Tool acronyms that are also everyday words in lowercase ("MAR" medication record vs "Mar 2026", "CAD"): capitals only. */
+export const TOOL_CATEGORY_ACRONYMS = new Set(["MAR", "CAD", "CAM", "MES", "CMMS"]);

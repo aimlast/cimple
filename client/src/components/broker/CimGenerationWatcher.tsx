@@ -68,6 +68,13 @@ export function CimGenerationWatcher() {
           duration: 12000,
           action: open,
         });
+      } else if (job.stoppedBy === "discrepancies") {
+        toast({
+          title: job.stoppedReason === "new" ? `New conflicts to review — ${job.businessName}` : `Resolve discrepancies first — ${job.businessName}`,
+          description: job.error || "The check found a critical conflict. Nothing was written.",
+          duration: 12000,
+          action: open,
+        });
       } else {
         toast({
           title: `CIM generation failed — ${job.businessName}`,

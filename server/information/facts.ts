@@ -31,12 +31,15 @@ import {
   isRowBackedSource,
   isUntrackedSource,
   isFactKey,
+  resolvedYearSources,
+  summariseMapSource,
   BROKER_SUPPRESSED_KEY,
   FIELD_ALTERNATES_KEY,
   LEGACY_SOURCE_NOTE,
   type FieldSource,
+  type FieldAlternate,
 } from "../interview/info-merger";
-import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
+import { GENERIC_FIELD_LABELS, fieldLabel } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import { withDealFactsLock } from "../documents/facts-lock";
 import { LEAD_SOURCE_KINDS, WEBSITE_ACCEPTED_NOTE } from "./cim-facts";
@@ -45,17 +48,33 @@ import {
   columnPatchAfterChange,
   columnText,
   sameValue,
-  MIRROR_NOTES,
+  isReconciledNote,
   type MirroredFactColumn,
 } from "./deal-mirror";
 import type { Deal, Discrepancy } from "@shared/schema";
+import { humanizeFieldKey, discrepancyHasPrivateSide, getSideSources } from "@shared/discrepancy-sides";
+import { resolvedFromPrivateSide as resolvedFromPrivateValues } from "../interview/source-privacy";
+import {
+  planResolution,
+  targetForFactKey,
+  valueAtTarget,
+  sourceAtTarget,
+  sameFigure,
+  bareDiscrepancyValue,
+  resolutionSourceExtras,
+  RESOLVED_NOTE,
+  type DiscrepancyTarget,
+} from "./resolution-write";
+
+// The write rules (shared with the CIM-time overlay) — re-exported for the routes and older callers.
+export { isNarrativeTarget, targetRelatesToSides, type DiscrepancyTarget } from "./resolution-write";
 
 export const BROKER_DELETED_KEY = "_brokerDeleted";
 export const BROKER_SECTION_OF_KEY = "_brokerSectionOf";
 export const BROKER_FACT_LABELS_KEY = "_brokerFactLabels";
 
 export class FactError extends Error {
-  constructor(message: string, public status = 400) {
+  constructor(message: string, public status = 400, public details?: Record<string, unknown>) {
     super(message);
   }
 }
@@ -129,48 +148,39 @@ export function setBrokerFact(info: Info, key: string, value: unknown, extra: Pa
 
 /**
  * The broker sets ONE entry of a map fact (a single year of revenue) — by
- * choosing another source's figure or resolving a discrepancy. The map's
- * recorded source becomes the broker; every other year keeps its
- * contributor in `years` (years the old recorded document owned are listed
- * explicitly, so deleting that document still removes exactly those), and
- * the broker's year has no contributor — no document delete or re-extraction
- * can take it away. The displaced figure is kept as that year's alternate.
+ * choosing another source's figure or resolving a discrepancy. Only that
+ * year becomes the broker's (no document delete or re-extraction can take
+ * it away); every other year keeps its own full source (a CRM year stays a
+ * CRM year — it is never promoted to "broker-confirmed" by the broker's
+ * choice on another year). The map's recorded source is the summary of its
+ * years (see summariseMapSource). The displaced figure is kept as that
+ * year's alternate under its real kind.
  */
-export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string): void {
+export function setBrokerMapEntry(info: Info, parent: string, sub: string, value: unknown, note: string, extra: Partial<FieldSource> = {}): void {
   const repaired = repairCharIndexedValue(info[parent]);
   if (repaired !== undefined && repaired !== null && repaired !== "" && !isPlainMap(repaired)) {
     throw new FactError("That fact isn't a list of values by year — edit the whole fact instead");
   }
   const map: Record<string, unknown> = isPlainMap(repaired) ? { ...repaired } : {};
   const prevSrc = getFieldSources(info)[parent];
-  const years: Record<string, string> = { ...(prevSrc?.years || {}) };
-  // Unlisted years belong to the recorded source — list them when that
-  // source is a document, because the map is about to be re-labelled.
-  if (prevSrc && isRowBackedSource(prevSrc)) {
-    for (const y of Object.keys(map)) if (!years[y]) years[y] = prevSrc.documentId!;
-  }
+  const legacy: FieldSource = { source: "system", note: LEGACY_SOURCE_NOTE };
+  // Every year's own source (older bare-id entries read as their row).
+  const years: Record<string, FieldSource> = prevSrc
+    ? resolvedYearSources(prevSrc, map)
+    : Object.fromEntries(Object.keys(map).map((y) => [y, legacy]));
   const previous = map[sub];
   const altKey = `${parent}.${sub}`;
   if (previous !== undefined && previous !== null && previous !== "" && serialize(previous) !== serialize(value)) {
-    const contributor = years[sub];
-    const prevYearSrc: FieldSource = contributor
-      ? { source: prevSrc && isRowBackedSource(prevSrc) ? prevSrc.source : "document", documentId: contributor }
-      : prevSrc && !isUntrackedSource(prevSrc)
-        ? (({ years: _y, documentId: _d, ...rest }) => rest)(prevSrc)
-        : { source: "system", note: LEGACY_SOURCE_NOTE };
+    const prevYearSrc = years[sub] && !isUntrackedSource(years[sub]) ? years[sub] : legacy;
     recordAlternate(info, altKey, previous, prevYearSrc);
   }
   map[sub] = value;
-  delete years[sub];
+  years[sub] = { source: "broker", at: new Date().toISOString(), note, ...extra };
   displaceCorroborations(info, altKey, value);
   dropAlternateValue(info, altKey, serialize(value));
   info[parent] = map;
-  setFieldSource(info, parent, {
-    source: "broker",
-    at: new Date().toISOString(),
-    note,
-    ...(Object.keys(years).length ? { years } : {}),
-  });
+  const summary = summariseMapSource(years);
+  if (summary) setFieldSource(info, parent, summary);
   unsuppress(info, parent);
 }
 
@@ -194,20 +204,59 @@ export function keyFromLabel(label: string): string {
   return /^[a-z]/.test(key) ? key : `fact${key}`;
 }
 
-/** Broker adds a new fact to a section. Returns the key it was stored under. */
+/** The key a known field would be stored under for this label, or null for an ad-hoc label. */
+export function knownFieldForLabel(label: string): string | null {
+  const clean = label.trim();
+  // A known field's own label ("Annual revenue").
+  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === clean.toLowerCase())?.[0];
+  if (byLabel) return byLabel;
+  const raw = keyFromLabel(clean);
+  const key = canonicalFieldName(raw);
+  // An alias of a known field ("Revenue" → annualRevenue, "Headcount" → employees).
+  if (key !== raw) return key;
+  if (GENERIC_FIELD_LABELS[key] || KNOWN_EXTRACTED_FIELDS.has(key)) return key;
+  return null;
+}
+
+/** 409 payload when the broker adds a fact that is already on file under a known field. */
+export interface ExistingFactConflict {
+  existingKey: string;
+  existingLabel: string;
+  currentValue: string;
+}
+
+/**
+ * Broker adds a new fact to a section. Returns the key it was stored under.
+ * A label that names a field already on file ("Revenue" while annualRevenue
+ * holds a value) is refused with 409 and the existing fact — the broker
+ * updates that one instead of a second copy (annualRevenue2) that coverage,
+ * the deal card and the CIM would never read. Ad-hoc labels that happen to
+ * collide still get their own numbered key.
+ */
 export function addFact(info: Info, label: string, value: unknown, sectionKey: string | null): string {
   const cleanLabel = label.trim().slice(0, 120);
   if (!cleanLabel) throw new FactError("Give the fact a name");
   const text = String(value ?? "").trim();
   if (!text) throw new FactError("Enter a value");
-  // Reuse a canonical key when the label names a known field ("Annual revenue").
-  const byLabel = Object.entries(GENERIC_FIELD_LABELS).find(([, l]) => l.toLowerCase() === cleanLabel.toLowerCase())?.[0];
-  const base = byLabel ?? canonicalFieldName(keyFromLabel(cleanLabel), Object.keys(info));
+  // Reuse a canonical key when the label names a known field ("Annual revenue", "Revenue").
+  const known = knownFieldForLabel(cleanLabel);
+  const hasValue = (k: string) => info[k] !== undefined && info[k] !== null && info[k] !== "";
+  if (known && hasValue(known)) {
+    const existingLabel = GENERIC_FIELD_LABELS[known] ?? (info[BROKER_FACT_LABELS_KEY] as Record<string, string> | undefined)?.[known] ?? fieldLabel(known);
+    const current = info[known];
+    const details: ExistingFactConflict = {
+      existingKey: known,
+      existingLabel,
+      currentValue: typeof current === "string" ? current : serialize(current),
+    };
+    throw new FactError(`${existingLabel} is already on file — update it instead of adding a second one`, 409, details as unknown as Record<string, unknown>);
+  }
+  const base = known ?? canonicalFieldName(keyFromLabel(cleanLabel), Object.keys(info));
   let key = base;
   // A different fact already lives under this key — never overwrite it silently.
-  for (let n = 2; info[key] !== undefined && info[key] !== null && info[key] !== "" && !byLabel; n++) key = `${base}${n}`;
+  for (let n = 2; hasValue(key) && !known; n++) key = `${base}${n}`;
   setBrokerFact(info, key, text);
-  if (!byLabel && !GENERIC_FIELD_LABELS[key]) {
+  if (!known && !GENERIC_FIELD_LABELS[key]) {
     const labels = objectAt(info, BROKER_FACT_LABELS_KEY);
     labels[key] = cleanLabel;
     info[BROKER_FACT_LABELS_KEY] = labels;
@@ -291,15 +340,18 @@ export function useAlternate(info: Info, altKey: string, index: number): void {
   const alt = list[index];
   const note = `Chose ${describeSource(alt)}`;
   const chosen = repairCharIndexedValue(parseAlternateValue(alt.value));
+  // A value from the broker's own material (a CRM note, a broker-only row)
+  // stays as private as its source once chosen (see resolvedToPrivateSide).
+  const hidden = alt.brokerOnly === true || alt.source === "crm" || alt.hiddenFromSeller === true ? { hiddenFromSeller: true } : {};
   const dot = altKey.indexOf(".");
   if (dot > 0) {
     // One year of a map: the broker's pick is theirs — no longer tied to
     // either document, so deleting the rejected (or the chosen) source
     // never takes it away.
-    setBrokerMapEntry(info, altKey.slice(0, dot), altKey.slice(dot + 1), chosen, note);
+    setBrokerMapEntry(info, altKey.slice(0, dot), altKey.slice(dot + 1), chosen, note, hidden);
     return;
   }
-  setBrokerFact(info, altKey, chosen, { note });
+  setBrokerFact(info, altKey, chosen, { note, ...hidden });
 }
 
 /** Scraped website fields → the fact key "Accept into facts" writes. */
@@ -365,13 +417,6 @@ function acceptWebsiteValue(info: Info, key: string, value: string): { key: stri
   return { key, addedAs: "alternate" };
 }
 
-/** Where a discrepancy resolution lands: a fact, or one year of a map fact. */
-export interface DiscrepancyTarget {
-  key: string;
-  /** Year (sub-key) of a map fact — "2024" of revenueByYear. */
-  sub?: string;
-}
-
 /**
  * "2024 Revenue", "FY2024 revenue", "Revenue 2024", "Total sales (2024)" →
  * "2024". The financial analysis names its per-year figures this way.
@@ -417,57 +462,283 @@ export function discrepancyFactKey(field: string, info: Info): string | null {
   return discrepancyFactTarget(field, info)?.key ?? null;
 }
 
-/** "$1,894,000 — 2024 P&L" → "$1,894,000" (the financial analysis appends where a value came from). */
-function bareDiscrepancyValue(v: string): string {
+/** The kind of source a financial-analysis value label names ("… — Seller interview"); null when it names none. */
+function kindFromValueLabel(v: string): FieldSource["source"] | null {
   const idx = v.indexOf(" — ");
-  return (idx > 0 ? v.slice(0, idx) : v).trim();
-}
-
-/** The kind of source a financial-analysis value label names ("… — Seller interview"). */
-function kindFromValueLabel(v: string): FieldSource["source"] {
-  const label = v.indexOf(" — ") > 0 ? v.slice(v.indexOf(" — ") + 3).toLowerCase() : "";
+  if (idx <= 0) return null;
+  const label = v.slice(idx + 3).toLowerCase();
+  if (/video|zoom|teams|meet\b/.test(label)) return "video_call";
+  if (/\bcall\b|phone/.test(label)) return "call";
   if (/interview|seller said|told/.test(label)) return "interview";
   if (/questionnaire|intake/.test(label)) return "questionnaire";
   if (/e-?mail/.test(label)) return "email";
+  if (/\bcrm\b|pipedrive|hubspot|salesforce/.test(label)) return "crm";
   return "document";
 }
 
 /**
- * Pure part of writing a discrepancy resolution into the deal's facts.
- * Returns the fact key written ("revenueByYear.2024" for one year of a map),
- * or null when the discrepancy names no fact (nothing is written then).
+ * The broker chose to keep a resolution as a note, not linked to any fact
+ * (stored as the discrepancy's factKey). Nothing is written for it, and it
+ * no longer asks "Which fact should this update?".
  */
-export function applyResolutionToInfo(info: Info, d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source">): string | null {
-  const target = discrepancyFactTarget(d.field, info);
+export const NO_FACT_KEY = "_none";
+
+/** Returned when a resolution names no fact — the broker is asked which fact it updates. */
+export const NEEDS_MAPPING = "needs_mapping" as const;
+
+/**
+ * Returned when the fact is a description the resolved figure is only part
+ * of ("Staff structure: 24 licensed technicians, 5 plumbers, …" resolved as
+ * "22 licensed technicians"): overwriting would throw the rest away, so
+ * nothing is written — the broker updates it through "facts that still say
+ * the old value" (a minimal rewrite, reviewed before it's saved).
+ */
+export const NARRATIVE_FACT = "narrative" as const;
+
+/**
+ * Where a resolution lands: the row's own factKey (chosen from the deal's
+ * real keys by the engine, the analysis, the merge — or by the broker in
+ * the picker) wins; legacy rows fall back to reading the field label.
+ */
+export function resolutionTarget(
+  info: Info,
+  d: Pick<Discrepancy, "field"> & Partial<Pick<Discrepancy, "factKey" | "factYear">>,
+): DiscrepancyTarget | typeof NO_FACT_KEY | null {
+  const factKey = (d.factKey || "").trim();
+  if (factKey === NO_FACT_KEY) return NO_FACT_KEY;
+  return targetForFactKey(info, factKey, d.factYear) ?? discrepancyFactTarget(d.field, info);
+}
+
+/**
+ * True when a discrepancy was resolved to the value of its private side
+ * (the broker's CRM note, a broker-only file, text citing the broker's own
+ * material) and not to a value the seller-visible side also states.
+ */
+export function resolvedToPrivateSide(
+  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "documentId" | "source"> & Partial<Pick<Discrepancy, "sideSources">>,
+  resolved: string,
+  brokerOnlyDocIds?: ReadonlySet<string>,
+): boolean {
+  const flags = discrepancyHasPrivateSide(d);
+  const sides = getSideSources(d);
+  const privA = flags.interview || (!!sides.interview?.documentId && !!brokerOnlyDocIds?.has(sides.interview.documentId));
+  const docB = d.documentId || sides.document?.documentId;
+  const privB = flags.document || (!!docB && !!brokerOnlyDocIds?.has(docB));
+  const bare = (v: string | null) => (d.source === "financial_analysis" ? bareDiscrepancyValue(v || "") : (v || "").trim());
+  const a = bare(d.interviewValue);
+  const b = bare(d.documentValue);
+  const privateVals = [privA ? a : "", privB ? b : ""].filter(Boolean);
+  const publicVals = [privA ? "" : a, privB ? "" : b].filter(Boolean);
+  return resolvedFromPrivateValues(resolved, privateVals, publicVals);
+}
+
+/**
+ * Marks a fact as the broker's figure from private material (never shown to
+ * the seller interview) — the same provenance a resolution to a private
+ * side writes (applyResolutionToInfo): brokerOnly + acceptedByBroker (the
+ * CIM may use it, the analysis keeps it private) + hiddenFromSeller.
+ */
+export function markHiddenFromSeller(info: Info, key: string): void {
+  const src = getFieldSources(info)[key];
+  if (src) setFieldSource(info, key, { ...src, brokerOnly: true, acceptedByBroker: true, hiddenFromSeller: true });
+}
+
+/**
+ * Where one side's value came from, as a fact source: the row's recorded
+ * side source; else the source of the value on file (or of an alternate)
+ * that states it — read BEFORE the resolution overwrites anything; else
+ * the analysis's " — source" label; else the side's own kind (the
+ * interview side is the seller's, the document side a document).
+ */
+function sideSource(
+  info: Info,
+  d: Pick<Discrepancy, "interviewValue" | "documentValue" | "documentId" | "source"> & Partial<Pick<Discrepancy, "sideSources">>,
+  side: "interview" | "document",
+  target: DiscrepancyTarget,
+): FieldSource {
+  const raw = (side === "interview" ? d.interviewValue : d.documentValue) || "";
+  const sides = (d.sideSources && typeof d.sideSources === "object" ? d.sideSources : {}) as Record<string, { kind?: string; documentId?: string; brokerOnly?: boolean } | undefined>;
+  const recorded = sides[side];
+  const note = "Conflicting value (discrepancy)";
+  const docId = side === "document" ? d.documentId || recorded?.documentId : recorded?.documentId;
+  // "broker": a merge row can set the broker's own earlier value against a source.
+  if (recorded?.kind && ["interview", "call", "video_call", "questionnaire", "email", "document", "crm", "website", "social", "broker"].includes(recorded.kind)) {
+    return {
+      source: recorded.kind as FieldSource["source"],
+      ...(docId ? { documentId: docId } : {}),
+      ...(recorded.brokerOnly ? { brokerOnly: true } : {}),
+      note,
+    };
+  }
+  // Legacy rows (no side sources): the fact on file, or one of its other
+  // values, that states this side's figure knows where it came from.
+  const value = bareDiscrepancyValue(raw);
+  if (value) {
+    const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
+    const current = valueAtTarget(info, target);
+    const curSrc = sourceAtTarget(info, target);
+    const candidates: Array<{ src: FieldSource; text: string }> = [];
+    if (typeof current === "string" && curSrc && !isUntrackedSource(curSrc) && sameFigure(current, value)) candidates.push({ src: curSrc, text: current });
+    for (const alt of getFieldAlternates(info)[altKey] ?? []) {
+      if (alt && typeof alt.value === "string" && alt.note !== note && !isUntrackedSource(alt) && sameFigure(alt.value, value)) candidates.push({ src: alt, text: alt.value });
+    }
+    // A document side stays a document, a seller side a seller's source.
+    const fitting = candidates.filter((c) => (side === "interview" ? c.src.source !== "document" : c.src.source === "document"));
+    const best = fitting.find((c) => c.text.trim() === value) ?? fitting[0];
+    if (best) {
+      const { value: _v, years: _y, at: _a, note: _n, ...rest } = best.src as FieldSource & { value?: string };
+      return { ...rest, ...(side === "document" && docId && !rest.documentId ? { documentId: docId } : {}), note };
+    }
+  }
+  const fromLabel = d.source === "financial_analysis" ? kindFromValueLabel(raw) : null;
+  return {
+    source: fromLabel ?? (side === "interview" ? "interview" : "document"),
+    ...(docId ? { documentId: docId } : {}),
+    ...(recorded?.brokerOnly ? { brokerOnly: true } : {}),
+    note,
+  };
+}
+
+/**
+ * Pure part of writing a discrepancy resolution into the deal's facts.
+ * Returns the fact key written ("revenueByYear.2024" for one year of a map);
+ * NEEDS_MAPPING when the discrepancy names no fact (nothing is written — the
+ * broker is asked which fact it updates, never left with a silent no-op);
+ * NARRATIVE_FACT when the fact is a description the figure is only part of
+ * (nothing is overwritten — the broker reviews a minimal rewrite instead);
+ * null when there is nothing to write (no resolved value, or the broker
+ * chose to keep it as a note only).
+ *
+ * The rules live in resolution-write.ts (planResolution) and are the same
+ * ones the CIM-time overlay applies. A headline figure and its by-year map
+ * are corrected together; a value taken from the broker's own private side
+ * is recorded as private provenance (brokerOnly + acceptedByBroker).
+ */
+export function applyResolutionToInfo(
+  info: Info,
+  d: Pick<Discrepancy, "field" | "resolvedValue" | "interviewValue" | "documentValue" | "documentId" | "source"> &
+    Partial<Pick<Discrepancy, "factKey" | "factYear" | "sideSources">>,
+  opts: { brokerChoseFact?: boolean; /** documents rows that are broker-only (a side backed by one is private). */ brokerOnlyDocIds?: ReadonlySet<string> } = {},
+): string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null {
   const resolved = (d.resolvedValue || "").trim();
-  if (!target || !resolved) return null;
-  const financial = d.source === "financial_analysis";
-  const note = "Resolved discrepancy";
+  if (!resolved) return null;
+  const target = resolutionTarget(info, d);
+  if (target === NO_FACT_KEY) return null;
+  if (!target) return NEEDS_MAPPING;
+  const plan = planResolution(info, target, d, opts);
+  if (plan.kind === "none") return null;
+  if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
+  if (plan.kind === "narrative") return NARRATIVE_FACT;
+  const labelled = d.source === "financial_analysis";
   const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
-  if (target.sub) setBrokerMapEntry(info, target.key, target.sub, resolved, note);
-  else setBrokerFact(info, target.key, coerceBrokerValue(info[target.key], resolved), { note });
+  // Where each ruled-out value came from — read before anything is overwritten.
+  const sideSrc = { interview: sideSource(info, d, "interview", target), document: sideSource(info, d, "document", target) };
+  // Resolved to the value of the broker's own material (a CRM note, a
+  // broker-only file): the fact is the broker's call for the CIM, but it
+  // stays as private as its source — the seller interview never sees it.
+  // (Either check: the row's recorded private side, or a side backed by a
+  // row that is broker-only now, compared text-for-text so small counts
+  // like "41 incl. 5 seasonal" count too.)
+  const fromPrivate = !!resolutionSourceExtras(d, resolved).brokerOnly || resolvedToPrivateSide(d, resolved, opts.brokerOnlyDocIds);
+  const extra: Partial<FieldSource> = fromPrivate ? { brokerOnly: true, acceptedByBroker: true, hiddenFromSeller: true } : {};
+  for (const w of plan.writes) {
+    if (w.sub) setBrokerMapEntry(info, w.key, w.sub, w.value, RESOLVED_NOTE, extra);
+    else setBrokerFact(info, w.key, coerceBrokerValue(info[w.key], w.value), { note: RESOLVED_NOTE, ...extra, ...(w.period ? { period: w.period } : {}) });
+  }
   // The conflicting values the broker ruled on stay visible as alternates —
   // bare figures (the " — source" label stripped) under their real kind.
-  const conflicting: Array<{ raw: string | null; src: FieldSource }> = [
-    {
-      raw: d.interviewValue,
-      src: { source: financial ? kindFromValueLabel(d.interviewValue || "") : "interview", note: "Conflicting value (discrepancy)" },
-    },
-    {
-      raw: d.documentValue,
-      src: {
-        source: financial ? kindFromValueLabel(d.documentValue || "") : "document",
-        ...(d.documentId ? { documentId: d.documentId } : {}),
-        note: "Conflicting value (discrepancy)",
-      },
-    },
-  ];
-  for (const { raw, src } of conflicting) {
+  // A broker-only side stays broker-only as an alternate (FieldSource.brokerOnly
+  // is what the seller view and the CIM inputs filter on).
+  for (const side of ["interview", "document"] as const) {
+    const raw = side === "interview" ? d.interviewValue : d.documentValue;
     if (!raw || !raw.trim()) continue;
-    const value = financial ? bareDiscrepancyValue(raw) : raw.trim();
-    if (value && value !== resolved) recordAlternate(info, altKey, value, src);
+    const value = labelled ? bareDiscrepancyValue(raw) : raw.trim();
+    if (value && value !== resolved) recordAlternate(info, altKey, value, sideSrc[side]);
+  }
+  // Settled on the broker's own private figure: the fact is hidden from the
+  // seller view, which would otherwise show the best other value in its
+  // place — the very value just ruled out. Mark every displaced value that
+  // states a ruled-out figure as ruled out, so none is promoted.
+  if (extra.brokerOnly) {
+    const losing = [d.interviewValue, d.documentValue].map((v) => bareDiscrepancyValue(v || "")).filter((v) => v && !sameFigure(v, resolved));
+    const alts = { ...getFieldAlternates(info) } as Record<string, FieldAlternate[]>;
+    for (const w of plan.writes) {
+      const k = w.sub ? `${w.key}.${w.sub}` : w.key;
+      if (!Array.isArray(alts[k])) continue;
+      alts[k] = alts[k].map((a) => (a && typeof a.value === "string" && losing.some((l) => sameFigure(a.value, l)) ? { ...a, note: "Conflicting value (discrepancy)" } : a));
+    }
+    info[FIELD_ALTERNATES_KEY] = alts;
   }
   return altKey;
+}
+
+export interface FactTargetOption {
+  key: string;
+  label: string;
+  /** Short preview of the value on file. */
+  value: string;
+}
+
+/**
+ * Facts a resolution could update, best matches first — for the "Which fact
+ * should this update?" picker. Scored on shared words between the
+ * discrepancy's label and the fact's key/label, plus a figure from either
+ * side appearing in the fact's current value.
+ */
+export function suggestFactTargets(
+  info: Info,
+  d: Pick<Discrepancy, "field"> & Partial<Pick<Discrepancy, "interviewValue" | "documentValue" | "resolvedValue">>,
+  limit = 6,
+): { suggestions: FactTargetOption[]; all: FactTargetOption[] } {
+  const stem = (w: string) => w.replace(/(?:ies|es|s)$/, "");
+  const words = (s: string) =>
+    new Set(s.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
+  // Measure words say how, not what ("revenue percentage" of WHICH customer?).
+  const GENERIC = new Set(["revenue", "percentage", "percent", "total", "value", "number", "count", "amount", "annual", "year", "claimed", "calculated", "actual", "stated", "vs", "and", "the", "for"].map(stem));
+  // A subject word that names a fact under another word.
+  const SYNONYMS: Record<string, string[]> = {
+    percentage: ["concentration"], share: ["concentration"], percent: ["concentration"],
+    headcount: ["employee", "staff"], staff: ["employee"], employee: ["staff", "headcount"],
+    van: ["fleet", "vehicle"], truck: ["fleet", "vehicle"], vehicle: ["fleet"],
+    member: ["membership", "subscriber"], expiry: ["lease"], renewal: ["lease"],
+  };
+  const subject = words(d.field || "");
+  const distinctive = new Set(Array.from(subject).filter((w) => !GENERIC.has(w)));
+  const synonyms = new Set(Array.from(subject).flatMap((w) => (SYNONYMS[w] ?? []).map(stem)));
+  // Figures as written ("18%", "$1,312,000", "2,900") — a fact that states one is likely the target.
+  const figures = [d.interviewValue, d.documentValue, d.resolvedValue]
+    .flatMap((v) => (v ? bareDiscrepancyValue(v).match(/\$?\d[\d,.]*\d%?|\$?\d%?/g) ?? [] : []))
+    .filter((n) => n.replace(/\D/g, "").length >= 2 && !/^(?:19|20)\d\d$/.test(n));
+  const labels = objectAt(info, BROKER_FACT_LABELS_KEY) as Record<string, string>;
+  const all: Array<FactTargetOption & { score: number }> = [];
+  for (const [key, raw] of Object.entries(info)) {
+    if (!isFactKey(key) || raw === null || raw === undefined || raw === "") continue;
+    const label = labels[key] || factDisplayLabel(info, key);
+    const text = typeof raw === "string" ? raw : JSON.stringify(raw);
+    const kw = words(`${key} ${label}`);
+    const valueWords = words(text);
+    let score = 0;
+    kw.forEach((w) => {
+      if (distinctive.has(w)) score += 3;
+      else if (subject.has(w)) score += 1;
+      if (synonyms.has(w)) score += 2;
+    });
+    score += Math.min(2, Array.from(distinctive).filter((w) => valueWords.has(w)).length);
+    if (figures.some((f) => text.includes(f))) score += 2;
+    all.push({ key, label, value: text.replace(/\s+/g, " ").slice(0, 120), score });
+  }
+  all.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
+  const strip = ({ score: _s, ...o }: FactTargetOption & { score: number }) => o;
+  return {
+    suggestions: all.filter((o) => o.score >= 2).slice(0, limit).map(strip),
+    all: [...all].sort((a, b) => a.label.localeCompare(b.label)).map(strip),
+  };
+}
+
+/** A fact's broker-facing name: the broker's own label, the known label, or its key in words ("sde" → "SDE"). */
+export function factDisplayLabel(info: Info, key: string): string {
+  const labels = objectAt(info, BROKER_FACT_LABELS_KEY) as Record<string, string>;
+  return labels[key] || GENERIC_FIELD_LABELS[key] || humanizeFieldKey(key);
 }
 
 /**
@@ -501,17 +772,35 @@ export async function mutateDealInfo<T>(dealId: string, fn: (info: Info) => T): 
  * column follows through mutateDealInfo. Empty clears the fact (restorable).
  */
 export async function setMirroredDealFact(dealId: string, key: MirroredFactColumn, value: unknown, note: string): Promise<void> {
-  const text = columnText(value);
+  await setMirroredDealFacts(dealId, { [key]: value }, note);
+}
+
+/**
+ * Several deal columns set at once (deal creation, the deal's details form):
+ * each becomes the broker's fact in one update — the business name, the
+ * industry, the asking price. A value a document or CRM note gave stays as
+ * another value.
+ */
+export async function setMirroredDealFacts(
+  dealId: string,
+  values: Partial<Record<MirroredFactColumn, unknown>>,
+  note: string,
+): Promise<void> {
+  const entries = Object.entries(values) as Array<[MirroredFactColumn, unknown]>;
+  if (entries.length === 0) return;
   await mutateDealInfo(dealId, (info) => {
-    if (!text) {
-      if (columnText(info[key])) deleteFact(info, key);
-      return;
+    for (const [key, value] of entries) {
+      const text = columnText(value);
+      if (!text) {
+        if (columnText(info[key])) deleteFact(info, key);
+        continue;
+      }
+      const src = getFieldSources(info)[key];
+      // Already the broker's value — unless it was only just lined up from the
+      // column a moment ago (then give it the real reason: Valuation, creation).
+      if (sameValue(columnText(info[key]), text) && src?.source === "broker" && !isReconciledNote(src.note)) continue;
+      setBrokerFact(info, key, text, { note });
     }
-    const src = getFieldSources(info)[key];
-    // Already the broker's value — unless it was only just lined up from the
-    // column a moment ago (then give it the real reason: Valuation, creation).
-    if (sameValue(columnText(info[key]), text) && src?.source === "broker" && src.note !== MIRROR_NOTES.reconciled) return;
-    setBrokerFact(info, key, text, { note });
   });
 }
 
@@ -530,7 +819,31 @@ export function brokerFactsView<D extends Pick<Deal, MirroredFactColumn | "extra
   return { ...deal, ...columnPatch, extractedInfo: info };
 }
 
-/** PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the fact on file. */
-export async function applyDiscrepancyResolution(d: Discrepancy): Promise<string | null> {
-  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d));
+/**
+ * PATCH /api/discrepancies/:id (resolve) → the resolved value becomes the
+ * fact on file. Returns the key written, NEEDS_MAPPING (ask the broker which
+ * fact), or null (nothing to write). A NEEDS_MAPPING result saves nothing.
+ */
+export async function applyDiscrepancyResolution(
+  d: Discrepancy,
+  opts: { brokerChoseFact?: boolean } = {},
+): Promise<string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null> {
+  const deal = await storage.getDeal(d.dealId);
+  if (!deal) throw new FactError("Deal not found", 404);
+  // Decide first without writing: a label that maps to nothing (or a
+  // description the figure is only part of) must not bump the deal (or take
+  // the facts lock) for a no-op.
+  const info = (deal.extractedInfo as Info | null) || {};
+  const probe = resolutionTarget(info, d);
+  const resolved = (d.resolvedValue || "").trim();
+  if (probe === NO_FACT_KEY || !resolved) return null;
+  if (!probe) return NEEDS_MAPPING;
+  const plan = planResolution(info, probe, d, opts);
+  if (plan.kind === "none") return null;
+  if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
+  if (plan.kind === "narrative") return NARRATIVE_FACT;
+  const brokerOnlyDocIds = new Set(
+    (await storage.getDocumentsByDeal(d.dealId)).filter((doc) => doc.visibility === "broker_only").map((doc) => doc.id),
+  );
+  return mutateDealInfo(d.dealId, (info) => applyResolutionToInfo(info, d, { ...opts, brokerOnlyDocIds }));
 }

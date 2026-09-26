@@ -17,7 +17,9 @@ import { useCimGenerationGate } from "@/hooks/useCimGenerationGate";
 import { CimGenerationProgress } from "@/components/deal/CimGenerationProgress";
 import { CimReadinessBadge, CimReadinessCard } from "@/components/deal/CimReadinessCard";
 import { InterviewOutlineCard } from "@/components/deal/InterviewOutlineCard";
+import { ReopenInterviewButton } from "@/components/deal/ReopenInterviewButton";
 import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
+import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
 import type { DealSellerContact } from "@shared/schema";
@@ -82,6 +84,8 @@ import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
+import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
+import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
 import { DealAnalyticsWidget } from "@/components/deal/DealAnalyticsWidget";
 import type {
   Deal,
@@ -103,22 +107,6 @@ const stripExt = (name?: string | null) => (name || "").replace(/\.[a-z0-9]{1,5}
 /* ═══════════════════════════════════════════
    SHARED HELPERS
 ═══════════════════════════════════════════ */
-/** "Who does this" badge shown next to each checklist item. */
-function ActorBadge({ who }: { who: "broker" | "seller" | "auto" }) {
-  const map = {
-    broker: { label: "You", cls: "bg-teal/10 text-teal" },
-    seller: { label: "Waiting on seller", cls: "bg-amber-500/10 text-amber-600" },
-    auto: { label: "Automatic", cls: "bg-muted text-muted-foreground" },
-  } as const;
-  const m = map[who];
-  return (
-    <span
-      className={`text-2xs font-medium px-1.5 py-0.5 rounded ${m.cls} shrink-0`}
-    >
-      {m.label}
-    </span>
-  );
-}
 
 /**
  * Error carrying the server's parsed `{ error, ... }` body. Mutations throw
@@ -344,7 +332,8 @@ function DocumentUploadCard({
               </Button>
               {docs.length > 0 && (
                 <span className="text-2xs text-muted-foreground">
-                  {docs.length} source{docs.length === 1 ? "" : "s"}
+                  {/* Documents, emails, transcripts and notes on file — the Information tab also counts interview sessions, the questionnaire and your edits as sources. */}
+                  {docs.length} document{docs.length === 1 ? "" : "s"}
                   {parsedCount > 0 && ` · ${parsedCount} read`}
                 </span>
               )}
@@ -838,21 +827,9 @@ Signed electronically via the Cimple platform.`;
               />
             )}
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <p
-                  className={`text-sm font-medium ${step.done ? "line-through text-muted-foreground" : ""}`}
-                >
-                  {step.label}
-                </p>
-                {/* "Waiting on seller" is only true while the step is open —
-                    a received questionnaire is not waiting on anyone. */}
-                {!step.done && <ActorBadge who={step.who} />}
-                {step.optional && !step.done && (
-                  <span className="text-2xs text-muted-foreground/60">
-                    optional
-                  </span>
-                )}
-              </div>
+              {/* "Waiting on seller" is only true while the step is open —
+                  a received questionnaire is not waiting on anyone. */}
+              <ChecklistStepTitle label={step.label} done={step.done} who={step.who} optional={step.optional} />
               <p className="text-xs text-muted-foreground mt-0.5">
                 {step.desc}
               </p>
@@ -1126,6 +1103,10 @@ function Phase2Center() {
   const [togetherOpen, setTogetherOpen] = useState(false);
   const [websiteInput, setWebsiteInput] = useState(deal.websiteUrl || "");
   const [showScraped, setShowScraped] = useState(false);
+  const [reviewingDiscrepancies, setReviewingDiscrepancies] = useState(false);
+  // The "next step" card must not say "Ready to build" while a critical
+  // discrepancy blocks generation (same rule as the server and Phase 3).
+  const { criticalUnresolved, discrepanciesError } = useDiscrepancyGate(dealId);
 
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const activeInvite = pickPrimaryInvite(invites);
@@ -1221,14 +1202,8 @@ function Phase2Center() {
             <Circle className="h-[1.125rem] w-[1.125rem] text-muted-foreground/30 shrink-0" />
           )}
           <div className="flex-1 min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <p
-                className={`text-sm font-medium ${deal.questionnaireData ? "line-through text-muted-foreground" : ""}`}
-              >
-                Seller onboarding
-              </p>
-              <ActorBadge who="seller" />
-            </div>
+            {/* Same rule as Phase 1: a finished step isn't waiting on anyone. */}
+            <ChecklistStepTitle label="Seller onboarding" done={!!deal.questionnaireData} who="seller" />
             <p className="text-xs text-muted-foreground">
               {deal.questionnaireData
                 ? "Systems, key people, business basics — completed by the seller"
@@ -1443,6 +1418,7 @@ function Phase2Center() {
                 >
                   <Pencil className="h-3 w-3" /> Add more detail
                 </Button>
+                <ReopenInterviewButton dealId={dealId} />
               </div>
             )}
             {!deal.interviewCompleted && (
@@ -1480,29 +1456,18 @@ function Phase2Center() {
           is done. Previously there was no path from here to CIM generation.
           Hidden once the deal is past Seller Intake (it would move it back). */}
       {deal.interviewCompleted && deal.phase === "phase2_platform_intake" && (
-        <div className="rounded-lg border border-teal/30 bg-teal/5 p-5 flex flex-col sm:flex-row sm:items-center gap-3 justify-between">
-          <div>
-            <p className="text-sm font-medium">Ready to build the CIM</p>
-            <p className="text-xs text-muted-foreground mt-0.5">
-              The interview is complete. Move to Content Creation to generate
-              the CIM from everything you've collected.
-            </p>
-          </div>
-          <Button
-            className="bg-teal text-teal-foreground hover:bg-teal/90 gap-1.5 shrink-0"
-            onClick={() => advanceToContent.mutate()}
-            disabled={advanceToContent.isPending}
-            data-testid="button-advance-phase-3"
-          >
-            {advanceToContent.isPending ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <>
-                Continue to Content Creation
-                <ChevronRight className="h-3.5 w-3.5" />
-              </>
-            )}
-          </Button>
+        <div className="space-y-3">
+          <ReadyToBuildCta
+            criticalCount={criticalUnresolved.length}
+            gateError={!!discrepanciesError}
+            pending={advanceToContent.isPending}
+            onContinue={() => advanceToContent.mutate()}
+            onReview={() => setReviewingDiscrepancies((v) => !v)}
+            reviewing={reviewingDiscrepancies}
+          />
+          {reviewingDiscrepancies && (criticalUnresolved.length > 0 || !!discrepanciesError) && (
+            <DiscrepancyPanel dealId={dealId} />
+          )}
         </div>
       )}
     </div>
@@ -1787,6 +1752,7 @@ function Phase3Center() {
                   "Generate CIM"
                 )}
               </Button>
+              {!blockReason && <DiscrepancyCheckNotice dealId={dealId} className="mt-3" />}
             </>
           )}
         </div>
@@ -1888,6 +1854,7 @@ function Phase3Center() {
       {(generation.isRunning || generation.job?.status === "failed") && (
         <CimGenerationProgress view={generation} />
       )}
+      {!generation.isRunning && !blockReason && <DiscrepancyCheckNotice dealId={dealId} className="sm:justify-end" />}
 
       <AlertDialog open={regenConfirmOpen} onOpenChange={setRegenConfirmOpen}>
         <AlertDialogContent>
@@ -1927,7 +1894,8 @@ function Phase3Center() {
       {/* The message above says "resolve N critical discrepancies" — give the
           broker the panel to resolve them (or take one back from the seller)
           right here instead of sending them hunting for it. */}
-      {generationBlocked && (
+      {/* Also after a run stopped to show new conflicts — the broker reviews them right here. */}
+      {(generationBlocked || (!generation.isRunning && generation.job?.stoppedBy === "discrepancies")) && (
         discrepanciesError ? (
           <PanelError what="discrepancies" onRetry={() => refetchDiscrepancies()} />
         ) : (

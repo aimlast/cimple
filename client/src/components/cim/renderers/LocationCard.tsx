@@ -60,11 +60,19 @@ function KVRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/** "2,650 sq ft" — the unit added only when the value doesn't already carry one. */
-function formatSqft(v: unknown): string {
-  if (typeof v === "number") return `${v.toLocaleString()} sq ft`;
+/**
+ * "2,650 sq ft" — the unit is added only to a bare number. A value that
+ * names its own unit ("4 acres", "1.2 ha", "450 m²") or is words ("4 acres
+ * with shop facility") is shown as written — never "4 acres sq ft".
+ */
+export function formatSqft(v: unknown): string {
+  if (typeof v === "number") return Number.isFinite(v) ? `${v.toLocaleString("en-US")} sq ft` : "";
   const t = String(v ?? "").trim();
-  return /sq\.?\s*f(ee)?t|square\s*f(ee|oo)t|ft²|sf\b|m²|sq\.?\s*m/i.test(t) ? t : `${t} sq ft`;
+  if (!t) return "";
+  const bare = t.match(/^~?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?$/);
+  if (!bare) return t;
+  const n = Number(`${bare[1].replace(/,/g, "")}${bare[2] ?? ""}`);
+  return Number.isFinite(n) ? `${t.startsWith("~") ? "~" : ""}${n.toLocaleString("en-US")} sq ft` : t;
 }
 
 export function LocationCardRenderer({ layoutData, content, branding, section }: RendererProps) {

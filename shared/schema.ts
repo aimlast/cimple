@@ -104,9 +104,15 @@ export interface InterviewPlanItem {
 export interface InterviewPlan {
   industry: string;
   subIndustry?: string | null;
+  /** The deal's own sub-industry when the plan was built — a broker edit to it rebuilds the plan. */
+  dealSubIndustry?: string | null;
+  /** Version of the checklist rules it was built under (older plans are rebuilt in the background). */
+  rulesVersion?: number;
   computedAt: string;
   status: "ready" | "failed";
   items: InterviewPlanItem[];
+  /** The last time the checklist changed without a broker edit (new checklist rules) — shown on the outline. */
+  revision?: { at: string; reason: "rules"; previousItemCount: number; removed: string[]; added: string[] };
 }
 
 /** The notetaker bot on an external call (Recall.ai). */
@@ -142,7 +148,8 @@ export interface CimGenerationStatus {
   status: "running" | "done" | "failed";
   /** "content" = Generate CIM from the Overview tab; "layout" = Designer regenerate-all. */
   mode: "content" | "layout";
-  phase: "planning" | "writing" | "saving" | "finished";
+  /** "checking" = the discrepancy check runs first (missing or stale). */
+  phase: "checking" | "planning" | "writing" | "saving" | "finished";
   /** Sections planned (0 until the manifest is ready). */
   total: number;
   /** Sections finished writing. */
@@ -155,6 +162,11 @@ export interface CimGenerationStatus {
   sectionCount?: number;
   /** Titles of sections finished so far, in completion order. */
   completedTitles: string[];
+  /** Set when the run stopped at the discrepancy gate before writing anything. */
+  stoppedBy?: "discrepancies";
+  /** "critical" = must be resolved first; "new" = the pre-run check just found conflicts to review. */
+  stoppedReason?: "critical" | "new";
+  blockingDiscrepancies?: Array<{ id: string; field: string }>;
 }
 
 /** One buyer's AI deep-check verdict for a deal. */
@@ -189,6 +201,9 @@ export interface ExternalAcquirer {
   contact?: string | null;          // only when found on a cited page — never invented
   sources: string[];                // URLs
   inYourList?: boolean;
+  unverified?: boolean;             // named in the research but not tied to a returned source
+  claimsChecked?: boolean;          // every claim shown was checked against the cited pages (server/matching/claim-check.ts)
+  claimsUnchecked?: boolean;        // the claim check couldn't run for this entry — check before reaching out
 }
 export interface ExternalAcquirerSearch {
   status: "running" | "done" | "failed";
@@ -199,6 +214,8 @@ export interface ExternalAcquirerSearch {
   note?: string | null;             // why few/none fit (e.g. seller prefers individual buyers)
   channels?: Array<{ name: string; how: string; url?: string | null }>;
   includeExcluded?: boolean;        // broker asked to include buyer types the seller ruled out
+  droppedCount?: number;            // organisations left out because the research didn't back them
+  removedClaims?: number;           // claims taken out because the cited pages didn't back them
   error?: string;
 }
 
@@ -334,6 +351,35 @@ export const deals = pgTable("deals", {
   isLive: boolean("is_live").default(false),
   
   // Metadata
+  // When the discrepancy check last ran, and a fingerprint of the processed
+  // sources it ran against — CIM generation runs the check first when it is
+  // missing or stale (sources changed since).
+  discrepancyCheckedAt: timestamp("discrepancy_checked_at"),
+  discrepancyCheckSources: text("discrepancy_check_sources"),
+  // @anchor:deals-cols:h-facts
+  // The supporting model's review of the broker-private notes
+  // (server/documents/private-notes-review.ts), per note wording: which
+  // notes are one matter (and that matter's consolidated note), which are no
+  // note at all (housekeeping), which are business facts moved into the
+  // facts — re-applied on every reprocess without asking again.
+  // { v, items: { [wording]: decision }, groups: { [id]: { text, members } }, nextId, at }.
+  privateNotesReview: jsonb("private_notes_review"),
+  // @anchor:deals-cols:h-findisc
+  // @anchor:deals-cols:h-interview
+  // Conflicts between the deal's seller-visible sources, found by the
+  // supporting model for the interview to reconcile with the seller
+  // (server/interview/source-review.ts): { fingerprint, computedAt, status,
+  // conflicts[] }. Rebuilt when the sources change.
+  interviewSourceReview: jsonb("interview_source_review"),
+  // Which of the interview's open items (checklist fields, flagged risks,
+  // source conflicts, seller-only topics) the deal's seller-visible file
+  // already answers — with the source and a checked quote
+  // (server/interview/on-file-evidence.ts): { version, fingerprint,
+  // computedAt, status, checked[], entries{} }. Rebuilt when the sources or
+  // earlier sessions change.
+  interviewEvidence: jsonb("interview_evidence"),
+  // @anchor:deals-cols:h-cim
+  // @anchor:deals-cols:h-misc
   // @anchor:deals-cols:seed
   // Set on seeded demo / QA deals (a stable key the seeding code uses to find
   // and refresh its own deals). Such deals are kept out of the industry-wide
@@ -532,6 +578,13 @@ export const cimSections = pgTable("cim_sections", {
   aiTask: jsonb("ai_task"),
   // Undo stack of earlier versions (CimSectionSnapshot[], newest last, capped).
   contentHistory: jsonb("content_history"),
+  // h-cim (cimgen): figures/names the post-generation check couldn't trace to
+  // the deal's data (string[]; server/cim/figure-check.ts). Null = clean.
+  figureWarnings: jsonb("figure_warnings").$type<string[]>(),
+  // h-cim (cimgen): set when the section's content changed after its DD
+  // version was written. The DD override is kept (not deleted) but a DD
+  // buyer is served the current Normal content until it is refreshed.
+  ddStaleAt: timestamp("dd_stale_at"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -1080,6 +1133,16 @@ export const discrepancies = pgTable("discrepancies", {
   // Where this discrepancy was generated: "interview" (interview-vs-document check)
   // or "financial_analysis" (cross-source check during the financial analysis run).
   source: text("source").notNull().default("interview"),
+  // The extractedInfo key this discrepancy is about (chosen from the deal's
+  // real fact keys), plus the fiscal year for per-year maps (revenueByYear…).
+  // Resolution writes the chosen value to this key. Null on legacy rows.
+  // Rows raised by the fact merge itself use source = "merge".
+  factKey: text("fact_key"),
+  factYear: text("fact_year"),
+  // Where each side came from: { interview?: SideSource; document?: SideSource }
+  // with SideSource = { kind, documentId?, brokerOnly? } — a broker-only side
+  // is never shown to the seller or quoted by the interview.
+  sideSources: jsonb("side_sources"),
   aiExplanation: text("ai_explanation"),
   suggestedResolution: text("suggested_resolution"),
   // "open" | "seller_responded" | "resolved" | "accepted"
@@ -2011,6 +2074,8 @@ export interface DocumentSourceMeta {
   provider?: string;
   recordType?: string;
   recordId?: string;
+  /** End (yyyy-mm-dd) of the latest fiscal period the source reports — set from its extraction. */
+  periodEnd?: string;
 }
 
 // @anchor:schema-tail:crm
@@ -2433,7 +2498,7 @@ export interface CimSectionAiTask {
     layoutType?: string;
   };
   /** Rewrite result, same layout type as the section. */
-  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null };
+  proposal?: { layoutData: Record<string, unknown>; aiDraftContent?: string | null; figureWarnings?: string[] };
 }
 
 /** One entry of a section's undo stack (cim_sections.content_history). */
@@ -2500,3 +2565,9 @@ export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 
 // @anchor:schema-tail:seed
 // (seed workstream)
+
+// @anchor:schema-tail:h-facts
+// @anchor:schema-tail:h-findisc
+// @anchor:schema-tail:h-interview
+// @anchor:schema-tail:h-cim
+// @anchor:schema-tail:h-misc

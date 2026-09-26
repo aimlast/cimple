@@ -65,6 +65,8 @@ export interface InformationFact {
   alternates: FactAlternate[];
   /** Other sources that state the same value (deleting one keeps the fact). */
   corroboratedBy?: FactSourceInfo[];
+  /** By-year facts (revenue by year): each year's own source. */
+  yearSources?: Record<string, FactSourceInfo>;
   brokerEdited: boolean;
   /** Industry checklist / broker-added item flags. */
   industrySpecific?: boolean;
@@ -102,6 +104,10 @@ export interface InformationSource {
   factCount: number;
   /** How many of factCount were traced by matching values, not recorded at the time. */
   inferredFactCount?: number;
+  /** Facts on file (recorded from another source) that this source states too. */
+  corroboratedCount?: number;
+  /** Facts for which this source gave a different value, kept as another value. */
+  alternateCount?: number;
   /** documents rows only */
   documentId?: string;
   status?: string;
@@ -129,6 +135,8 @@ export interface DeletedFact {
   displayValue: string;
   source: FactSourceInfo;
   deletedAt: string;
+  /** Why it was removed when it wasn't the broker ("Withdrawn by the seller in the interview"). */
+  note?: string;
 }
 
 export interface WebsiteItem {
@@ -159,4 +167,52 @@ export interface InformationView {
     scrapeSource: string | null;
     items: WebsiteItem[];
   } | null;
+}
+
+/** Source kinds whose reading should yield facts (a scan or a photo may yield none). */
+const READABLE_KINDS: ReadonlySet<string> = new Set(["document", "call", "video_call", "email"]);
+
+/**
+ * True when a source was read and gave nothing at all — no fact on file, no
+ * confirmation of one, no other value (a scanned org chart, a photo of a
+ * list): the broker should open it. Never while it is still being read or
+ * failed, and never while earlier facts can't be traced to any source
+ * (`untrackedFacts` — one of those may be this source's).
+ */
+export function sourceFoundNothing(
+  s: Pick<InformationSource, "kind" | "status" | "factCount" | "corroboratedCount" | "alternateCount">,
+  untrackedFacts = 0,
+): boolean {
+  if (untrackedFacts > 0 || !READABLE_KINDS.has(s.kind)) return false;
+  if (s.status === "pending" || s.status === "parsing" || s.status === "failed") return false;
+  return s.factCount === 0 && (s.corroboratedCount ?? 0) === 0 && (s.alternateCount ?? 0) === 0;
+}
+
+/**
+ * The one wording for "how many sources" — the Information tab header and
+ * the Sources panel both use it, so they never disagree: "24 sources", or
+ * "24 sources · 1 with nothing found" when some were read and gave nothing
+ * (the ones marked "No facts found" in the panel). It never puts a number
+ * next to the word "facts" that isn't a count of facts.
+ */
+export function sourceCountText(
+  sources: ReadonlyArray<Pick<InformationSource, "kind" | "status" | "factCount" | "corroboratedCount" | "alternateCount">>,
+  untrackedFacts = 0,
+): string {
+  const total = sources.length;
+  const empty = sources.filter((s) => sourceFoundNothing(s, untrackedFacts)).length;
+  const base = `${total} source${total === 1 ? "" : "s"}`;
+  return empty === 0 ? base : `${base} · ${empty} with nothing found`;
+}
+
+/**
+ * What one source gave, beyond the facts recorded from it:
+ * "3 recorded · confirms 5 · 2 other values" ("" when it gave nothing).
+ */
+export function sourceContributionText(s: Pick<InformationSource, "factCount" | "corroboratedCount" | "alternateCount">): string {
+  const parts: string[] = [];
+  if (s.factCount > 0) parts.push(`${s.factCount} recorded`);
+  if ((s.corroboratedCount ?? 0) > 0) parts.push(`confirms ${s.corroboratedCount}`);
+  if ((s.alternateCount ?? 0) > 0) parts.push(`${s.alternateCount} other value${s.alternateCount === 1 ? "" : "s"}`);
+  return parts.join(" · ");
 }

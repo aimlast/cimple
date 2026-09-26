@@ -214,7 +214,8 @@ function BuyerMatchingPanelInner({ dealId }: { dealId: string }) {
       queryClient.setQueryData<any[]>(buyersKey, (old) =>
         old?.map((row) => {
           const r = byId.get(row.id);
-          if (!r) return row;
+          // A buyer that couldn't be scored keeps whatever was stored before.
+          if (!r || (r as any).error && r.matchScore == null) return row;
           return {
             ...row,
             matchScore: r.noCriteria ? null : r.matchScore,
@@ -223,11 +224,12 @@ function BuyerMatchingPanelInner({ dealId }: { dealId: string }) {
         }),
       );
       await queryClient.invalidateQueries({ queryKey: buyersKey });
-      const scored = results.filter((r) => !r.noCriteria).length;
+      const failed = results.filter((r) => (r as any).error && r.matchScore == null).length;
+      const scored = results.filter((r) => !r.noCriteria).length - failed;
       toast({
-        description: scored === 0
+        description: scored === 0 && failed === 0
           ? "No buyers have criteria set yet — add criteria to score them."
-          : `Scored ${scored} buyer${scored === 1 ? "" : "s"}.`,
+          : `Scored ${scored} buyer${scored === 1 ? "" : "s"}.${failed ? ` ${failed} couldn't be scored — check their criteria and run again.` : ""}`,
       });
     },
     onError: (e: Error) => {

@@ -16,9 +16,20 @@ import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
 import { templateForDeal } from "./templates";
-import type { CimGenerationStatus, Deal } from "@shared/schema";
+import type { CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
+import { brokerFactsView } from "../information/facts";
+import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
+import { stampSourceDetails } from "../documents/merge-policy";
+import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
+import { keepOutFor } from "./keep-out";
+import { hasMonthYear } from "./fact-dates";
+import { getFieldSources, isFactKey } from "../interview/info-merger";
+import { factValueText } from "../information/cim-facts";
+import { db } from "../db";
+import { interviewSessions } from "@shared/schema";
+import { eq } from "drizzle-orm";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -63,21 +74,70 @@ async function persist(job: CimGenerationJob) {
 }
 
 /**
- * Build the layout-engine params from a deal. Content mode overlays resolved
- * discrepancies onto extractedInfo (the broker's accepted values win);
- * layout mode uses extractedInfo as stored, matching the old endpoints.
+ * For interview facts that state a "Month YYYY": the seller's words on the
+ * turn that recorded them (provenance keeps the session and seller turn), so
+ * the writer's knowledge base can correct a year the seller never said.
+ * Best-effort: a failed look-up just leaves the facts as they are.
+ */
+export async function factSourceWordsFor(
+  dealId: string,
+  info: Record<string, unknown>,
+  /** Keys the broker settled in a resolved discrepancy: their value is the broker's, not the seller's words. */
+  brokerSettled: ReadonlySet<string> = new Set(),
+): Promise<Record<string, { words: string; at: string }>> {
+  const sources = getFieldSources(info);
+  const wanted = Object.entries(sources).filter(
+    ([key, s]) => isFactKey(key) && !brokerSettled.has(key) && s?.sessionId && typeof s.turn === "number" && s.at && key in info && hasMonthYear(factValueText(info[key])),
+  );
+  if (wanted.length === 0) return {};
+  try {
+    const rows = await db.select({ id: interviewSessions.id, messages: interviewSessions.messages }).from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+    const byId = new Map(rows.map((r) => [r.id, Array.isArray(r.messages) ? (r.messages as Array<{ role?: string; content?: unknown }>) : []]));
+    const out: Record<string, { words: string; at: string }> = {};
+    for (const [key, s] of wanted) {
+      // `turn` counts the seller's messages (1-based) in that session.
+      const seller = (byId.get(s.sessionId!) ?? []).filter((m) => m?.role === "user");
+      const msg = seller[s.turn! - 1];
+      const words = typeof msg?.content === "string" ? msg.content : "";
+      if (words) out[key] = { words, at: s.at! };
+    }
+    return out;
+  } catch (err) {
+    console.warn(`[cim-generation] could not read interview words for deal ${dealId}:`, err);
+    return {};
+  }
+}
+
+/**
+ * Build the layout-engine params from a deal. Resolved discrepancies (both
+ * modes): a row naming a real fact key overlays that key (the broker's
+ * accepted value wins), and every resolved row reaches the writer in the
+ * "RESOLVED — FINAL VALUES" block with the values it superseded.
  */
 export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Promise<CimLayoutParams> {
-  const extractedInfo = { ...((deal.extractedInfo as Record<string, unknown>) || {}) };
-  if (mode === "content") {
-    const resolved = await storage.getResolvedDiscrepancies(deal.id);
-    for (const d of resolved) {
-      if (d.resolvedValue && d.field) extractedInfo[d.field] = d.resolvedValue;
-    }
-  }
-  const [branding, insights] = await Promise.all([
+  void mode;
+  // (A resolution a later edit or resolution replaced comes back marked
+  // superseded — it neither overlays nor reaches the RESOLVED block.)
+  // The deal's own name, industry and listed price are the broker's facts
+  // (deal-mirror.ts) — never a tax return's NAICS line or a CRM note's
+  // wording, even on facts saved before that rule.
+  const settled = settleResolvedFacts(
+    (brokerFactsView(deal).extractedInfo as Record<string, unknown>) || {},
+    resolvedNotes(await storage.getResolvedDiscrepancies(deal.id)),
+  );
+  const resolvedDiscrepancies = currentResolvedNotes(settled.notes);
+  // Every source entry stamped with its row's visibility (facts1): a
+  // broker-only / CRM fact or year never reaches the writer, even on facts
+  // recorded before the stamp existed.
+  const extractedInfo = stampSourceDetails(settled.facts, await storage.getDocumentsByDeal(deal.id));
+  const [branding, insights, analyses, factSourceWords] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
+    storage.getFinancialAnalysesByDeal(deal.id).catch((): FinancialAnalysis[] => []),
+    // A resolved discrepancy overlays the broker's value on a key whose
+    // provenance may still name the interview turn — that value's year is
+    // the broker's ruling, never stripped as "not said by the seller".
+    factSourceWordsFor(deal.id, extractedInfo, new Set(resolvedDiscrepancies.map((n) => n.factKey).filter((k): k is string => !!k))),
   ]);
   // The deal's design template may carry the brokerage's house structure
   // ("Match my existing CIM") — the planner follows it.
@@ -90,6 +150,7 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
     // over the deal column; never a seller's or document's figure.
     askingPrice: listedAskingPrice(deal),
     extractedInfo,
+    resolvedDiscrepancies,
     scrapedData: (deal.scrapedData as Record<string, unknown>) || null,
     questionnaireData: (deal.questionnaireData as Record<string, unknown>) || null,
     operationalSystems: (deal.operationalSystems as Record<string, unknown>) || null,
@@ -99,6 +160,13 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
       ? { companyName: branding.companyName || undefined, primaryColor: branding.primaryColor }
       : null,
     sectionOutline: template?.sectionOutline ?? null,
+    // The broker-reviewed financial analysis (else the latest completed one):
+    // statement tables and bridges are copied from it, never rebuilt.
+    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
+    factSourceWords,
+    // Items the broker's notes or the facts say must not reach buyers (AI
+    // review + rules, cached per content).
+    keepOut: await keepOutFor(deal.id, extractedInfo),
     engagementInsights:
       insights.length > 0
         ? insights.map((i) => ({
@@ -134,6 +202,7 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
       aiDraftContent: section.aiDraftContent || null,
       isVisible: section.isVisible,
       brokerApproved: false,
+      figureWarnings: section.figureWarnings?.length ? section.figureWarnings : null,
     });
     if (section.aiDraftContent) cimContent[section.sectionKey] = section.aiDraftContent;
   }
@@ -150,9 +219,27 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   await storage.updateDeal(deal.id, updates as any);
 }
 
-async function run(job: CimGenerationJob, deal: Deal) {
+/**
+ * Runs before any section is written — the discrepancy gate (see
+ * cim/discrepancy-check.ts ensureDiscrepancyGate): runs the check when it is
+ * missing or stale and throws when a critical conflict is open.
+ */
+export type BeforeWriting = (onChecking: () => void) => Promise<unknown>;
+
+async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWriting) {
   const touch = () => { job.updatedAt = new Date().toISOString(); };
   try {
+    if (beforeWriting) {
+      await beforeWriting(() => {
+        job.phase = "checking";
+        touch();
+        void persist(job);
+      });
+      job.phase = "planning";
+      touch();
+      // The check may have changed facts' discrepancies — build from the deal as it is now.
+      deal = (await storage.getDeal(deal.id)) ?? deal;
+    }
     const params = await buildLayoutParams(deal, job.mode);
     const document = await generator(params, (p) => {
       job.phase = p.phase;
@@ -173,10 +260,16 @@ async function run(job: CimGenerationJob, deal: Deal) {
     job.sectionCount = document.sections.length;
     job.warnings = document.warnings ?? [];
   } catch (err: any) {
-    console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
+    if (err?.name === "DiscrepancyGateError") console.log(`[cim-generation] deal ${job.dealId} stopped at the discrepancy gate: ${err.message}`);
+    else console.error(`[cim-generation] deal ${job.dealId} failed:`, err);
     job.status = "failed";
     job.phase = "finished";
     job.error = err?.message || "CIM generation failed";
+    if (err?.name === "DiscrepancyGateError") {
+      job.stoppedBy = "discrepancies";
+      job.stoppedReason = err.reason === "new" ? "new" : "critical";
+      job.blockingDiscrepancies = err.blocking;
+    }
   }
   job.finishedAt = new Date().toISOString();
   touch();
@@ -191,7 +284,11 @@ async function run(job: CimGenerationJob, deal: Deal) {
  * job is registered and its "running" status persisted. Throws
  * CimGenerationRunningError if a job is already running for the deal.
  */
-export async function startCimGeneration(deal: Deal, mode: CimGenerationMode): Promise<CimGenerationJob> {
+export async function startCimGeneration(
+  deal: Deal,
+  mode: CimGenerationMode,
+  opts: { beforeWriting?: BeforeWriting } = {},
+): Promise<CimGenerationJob> {
   const existing = jobs.get(deal.id);
   if (existing?.status === "running") throw new CimGenerationRunningError(existing);
   const now = new Date().toISOString();
@@ -211,7 +308,7 @@ export async function startCimGeneration(deal: Deal, mode: CimGenerationMode): P
   };
   jobs.set(deal.id, job);
   await persist(job);
-  void run(job, deal);
+  void run(job, deal, opts.beforeWriting);
   return job;
 }
 
