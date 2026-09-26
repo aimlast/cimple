@@ -56,6 +56,12 @@ export interface UiAddback {
    * pay above market (EBITDA and SDE), "market" = the market salary (SDE only).
    */
   ownerCompPart?: "excess" | "market";
+  /**
+   * The add-back's only support is the broker's private material (a CRM note,
+   * a broker-only file). It is left out of EBITDA/SDE and every CIM/DD bridge
+   * until the broker approves it (approvedOverride + approved).
+   */
+  privateEvidence?: boolean;
 }
 
 export interface UiNormalization {
@@ -94,6 +100,10 @@ export interface UiWorkingCapital {
   targetNwc?: number | null;
   asOfPeriod?: string;
   notes?: string[];
+  /** Year-end net working capital per fiscal year, computed from the balance sheet (cash-free, debt-free). */
+  history?: Record<string, number>;
+  /** How the suggested peg was worked out ("Average of year-end net working capital, 2022–2024"). */
+  pegBasis?: string;
 }
 
 export interface UiClarifyingQuestion {
@@ -111,6 +121,12 @@ export interface UiClarifyingQuestion {
    * routed ask_seller discrepancy always has a Questions card to take it back from).
    */
   carriedFromVersion?: number;
+  /**
+   * Figures in the question that only the broker's private material holds
+   * (never the seller's documents or answers). Those sentences are never
+   * sent to the seller.
+   */
+  privateFigures?: string[];
 }
 
 export interface UiInsight {
@@ -295,6 +311,7 @@ export function coerceNormalization(raw: any): UiNormalization | null {
             ? { marketSalary: numberMap(a.marketSalary) }
             : {}),
         ...(a.ownerCompPart === "excess" || a.ownerCompPart === "market" ? { ownerCompPart: a.ownerCompPart } : {}),
+        ...(a.privateEvidence === true ? { privateEvidence: true } : {}),
       };
     });
 
@@ -402,6 +419,8 @@ export function coerceWorkingCapital(
       targetNwc: toNumber(raw.targetNwc) ?? null,
       asOfPeriod: raw.asOfPeriod ? String(raw.asOfPeriod) : undefined,
       notes: Array.isArray(raw.notes) ? raw.notes.map(String) : undefined,
+      ...(raw.history && typeof raw.history === "object" && Object.keys(numberMap(raw.history)).length > 0 ? { history: numberMap(raw.history) } : {}),
+      ...(typeof raw.pegBasis === "string" && raw.pegBasis ? { pegBasis: raw.pegBasis } : {}),
     };
   }
 
@@ -472,6 +491,7 @@ export function coerceClarifyingQuestions(raw: any): UiClarifyingQuestion[] | nu
           ? q.status
           : "pending",
         ...(typeof q.carriedFromVersion === "number" ? { carriedFromVersion: q.carriedFromVersion } : {}),
+        ...(Array.isArray(q.privateFigures) && q.privateFigures.length > 0 ? { privateFigures: q.privateFigures.map(String) } : {}),
       };
     });
   return out.length > 0 ? out : null;

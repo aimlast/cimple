@@ -135,7 +135,9 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
 
 function bridgeOf(n: UiNormalization) {
   const metric = n.metric === "ebitda" ? "ebitda" : "sde";
-  const approved = (n.addbacks ?? []).filter((a: UiAddback) => a.approved);
+  // An add-back that rests only on the broker's private notes reaches a
+  // buyer-facing bridge only once the broker has approved it themselves.
+  const approved = (n.addbacks ?? []).filter((a: UiAddback) => a.approved && (!a.privateEvidence || a.approvedOverride === true));
   // SDE mode lists the add-backs that count for adjusted EBITDA first, then
   // the SDE-only ones (the owner's market salary — financial analysis
   // convention: SDE = adjusted EBITDA + the market salary), so the bridge
@@ -330,7 +332,9 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     for (const i of wc.currentAssets ?? []) out.push(`Current asset — ${i.name}: ${money(i.amount)}`);
     for (const i of wc.currentLiabilities ?? []) out.push(`Current liability — ${i.name}: ${money(i.amount)}`);
     if (typeof wc.netWorkingCapital === "number") out.push(`Net working capital: ${money(wc.netWorkingCapital)}`);
-    if (typeof wc.pegAmount === "number") out.push(`Working capital peg (target): ${money(wc.pegAmount)}`);
+    const history = Object.entries(wc.history ?? {});
+    if (history.length > 1) out.push(`Year-end net working capital: ${history.map(([y, v]) => `${y} ${money(v)}`).join(" · ")}`);
+    if (typeof wc.pegAmount === "number") out.push(`Working capital peg (target): ${money(wc.pegAmount)}${wc.pegBasis ? ` — ${wc.pegBasis}` : ""}`);
   }
   return out.filter((l) => l !== "").join("\n");
 }
