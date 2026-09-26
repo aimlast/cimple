@@ -119,7 +119,18 @@ export function keyTokens(key: string): string[] {
 
 const numberTokens = (s: string) => (s.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => n.replace(/,/g, ""));
 /** Figures only — not the digits inside a code ("313A" is a licence class, not 313; "G1", "V-11"). */
-const figureTokens = (s: string) => (s.match(/(?<![A-Za-z\d.-])\d[\d,]*(?:\.\d+)?(?![A-Za-z\d])/g) ?? []).map((n) => n.replace(/,/g, ""));
+const FIGURE_SCALE: Record<string, number> = { k: 1e3, thousand: 1e3, m: 1e6, mm: 1e6, million: 1e6, b: 1e9, bn: 1e9, billion: 1e9 };
+/**
+ * …as values, a K/M/B suffix or a scale word applied ("$1.6M", "$1.6
+ * million" and "$1,600,000" are one figure; "$240K" is 240000 — a cut at
+ * the letter gave "1" and nothing).
+ */
+export const figureTokens = (s: string) =>
+  Array.from(s.matchAll(/(?<![A-Za-z\d.-])(\d[\d,]*(?:\.\d+)?)(?:\s?(k|m|mm|b|bn)(?![A-Za-z\d])|\s+(thousand|million|billion)\b|(?![A-Za-z\d]))/gi)).map((m) => {
+    const n = m[1].replace(/,/g, "");
+    const scale = FIGURE_SCALE[(m[2] ?? m[3] ?? "").toLowerCase()];
+    return scale ? String(Math.round(parseFloat(n) * scale)) : n;
+  });
 const yearsIn = (s: string) => new Set((s.match(/(?<!\d)(?:19|20)\d{2}(?!\d)/g) ?? []).map(Number));
 /** Acronyms and mid-sentence capitalised names — the words that pin a question to one topic (CARB, BBB, EV, Megan). */
 function distinctiveTokens(text: string): Set<string> {
@@ -225,14 +236,20 @@ export function relevantExcerpt(text: string, question: string, max: number): st
 const OPTION_STOP = new Set(
   "a an the on by from to for of in at be is it its are was were this that these those your our their more mostly mainly primarily largely based driven expecting expect planning plan would will could should do does did has have had any some just rather than either whether".split(" "),
 );
+/** Question-filler words that are option words all the same. */
+const OPTION_WORDS = new Set(["share", "split"]);
 /** Words right before a phrase that deny it ("not a trailing average", "rather than …"). */
 const NEGATED_BEFORE_RE = /\b(?:not|never|no|n't|rather than|instead of|other than|except)\s+(?:\S+\s+){0,2}$/i;
+/** A seller who hasn't decided ("I don't know if…", "we haven't decided", "Tom would know") — not one hedging a figure ("probably $6.5 million"). */
+const UNDECIDED_RE =
+  /\b(?:(?:do ?n[o'’]t|doesn['’]t|didn['’]t) (?:know|remember|recall)|not sure|unsure|no idea|(?:have|has)n['’]?t (?:decided|settled|figured)|not (?:yet )?(?:decided|settled)|undecided|still (?:deciding|figuring|working (?:it|that) out)|back and forth|either way|up in the air|torn|debating|hard to say|can['’]?t say|depends|(?:would|will|might) know|(?:have|need) to check|check with|ask (?:my|our|the) \w+|we['’]?ll see)\b/i;
 const optionWords = (phrase: string) =>
   Array.from(
     new Set(
       (phrase.match(/[A-Za-z0-9][A-Za-z0-9'’&]*/g) ?? [])
         .map((w) => w.toLowerCase())
-        .filter((w) => !OPTION_STOP.has(w) && !QUESTION_STOP.has(w) && (w.length >= 3 || /\d/.test(w)))
+        // ("share" and "split" name options — a share sale, a fee split — though a question's "share with me" names none.)
+        .filter((w) => !OPTION_STOP.has(w) && (!QUESTION_STOP.has(w) || OPTION_WORDS.has(w)) && (w.length >= 3 || /\d/.test(w)))
         .map((w) => w.slice(0, 5)),
     ),
   );
@@ -244,7 +261,12 @@ const optionWords = (phrase: string) =>
  * seller had just said it (Great Lakes T10: "that's what I just said"). An
  * option is the noun phrase on either side of "or"; it counts when at least
  * two of its words, and three in four of them, sit together in the seller's message
- * and aren't denied there ("not a trailing average"). Returns the option,
+ * and aren't denied there ("not a trailing average"). A seller who hasn't
+ * chosen is left alone: one who names the other option too ("going back and
+ * forth between a share sale and an asset sale") or says they don't know
+ * ("I don't know if it'd be a trailing-twelve average or a snapshot — Tom
+ * would know") — this finding is sure, and telling the model such a seller
+ * already answered would have it treat them as decided. Returns the option,
  * or null. Pure.
  */
 export function choiceAnsweredNow(question: string, sellerMessage: string): string | null {
@@ -253,7 +275,7 @@ export function choiceAnsweredNow(question: string, sellerMessage: string): stri
   const q = (question.replace(/\s+/g, " ").match(/[^.!?]*\?/g) ?? []).pop()?.trim() ?? "";
   const said = sellerMessage.replace(/\s+/g, " ");
   const saidTokens = Array.from(said.matchAll(/[A-Za-z0-9][A-Za-z0-9'’&]*/g)).map((t) => ({ w: t[0].toLowerCase().slice(0, 5), at: t.index ?? 0 }));
-  const phrases: string[] = [];
+  const pairs: [string, string][] = [];
   for (const m of Array.from(q.matchAll(/\bor\b/gi))) {
     const at = m.index ?? 0;
     // A real choice between two things: "…, or a point-in-time snapshot?" —
@@ -270,27 +292,55 @@ export function choiceAnsweredNow(question: string, sellerMessage: string): stri
     const lw = (q.slice(0, at).split(/[?.!:;—–]/).pop() ?? "").replace(/,\s*$/, "").split(/[\s,]+/).filter(Boolean);
     let i = lw.length;
     while (i > 0 && !OPTION_STOP.has(lw[i - 1].toLowerCase())) i--;
-    phrases.push(lw.slice(i).join(" "));
+    const left = lw.slice(i).join(" ");
     // Right: past the leading function words, up to the next one.
     const rw = (q.slice(at + m[0].length).split(/[?.!:;,—–]/)[0] ?? "").split(/\s+/).filter(Boolean);
     let j = 0;
     while (j < rw.length && OPTION_STOP.has(rw[j].toLowerCase())) j++;
     let k = j;
     while (k < rw.length && !OPTION_STOP.has(rw[k].toLowerCase())) k++;
-    phrases.push(rw.slice(j, k).join(" "));
+    pairs.push([left, rw.slice(j, k).join(" ")]);
   }
-  for (const phrase of phrases) {
+  /** Where the message states the option (index of its first word), or -1. */
+  const statedAt = (phrase: string): number => {
     const words = optionWords(phrase);
-    if (words.length < 2) continue;
+    if (words.length < 2) return -1;
     // The best run of the option's words in the message (positions within a short span).
     for (let s = 0; s < saidTokens.length; s++) {
       if (!words.includes(saidTokens[s].w)) continue;
-      const window = saidTokens.slice(s, s + words.length + 2).map((t) => t.w);
+      const run = saidTokens.slice(s, s + words.length + 2);
+      const window = run.map((t) => t.w);
       const found = words.filter((w) => window.includes(w)).length;
       // (Three words in four: "signed contractor agreements" is not answered
       // by "associates on contractor agreements" — that was about the PTs.)
       if (found < 2 || found / words.length < 0.75) continue;
-      if (NEGATED_BEFORE_RE.test(said.slice(0, saidTokens[s].at))) continue;
+      // Denied anywhere in the run: "a share sale — not an asset sale" does
+      // not state "asset sale" (the run "sale — not an asset" held both).
+      if (run.some((t) => words.includes(t.w) && NEGATED_BEFORE_RE.test(said.slice(0, t.at)))) continue;
+      return s;
+    }
+    return -1;
+  };
+  /**
+   * The message names the other option at all — one of the words that set
+   * it apart ("asset", not the "sale" both options share), not denied
+   * ("…or a snapshot — Tom would know"; "not a snapshot" is a choice).
+   */
+  const named = (other: string, chosen: string): boolean =>
+    optionWords(other)
+      .filter((w) => w.length >= 4 && !optionWords(chosen).includes(w))
+      .some((w) => saidTokens.some((t) => t.w === w && !NEGATED_BEFORE_RE.test(said.slice(0, t.at))));
+  for (const [left, right] of pairs) {
+    for (const [phrase, other] of [[left, right], [right, left]]) {
+      const at = statedAt(phrase);
+      if (at < 0) continue;
+      // A seller who names BOTH options hasn't chosen ("going back and forth
+      // between a share sale and an asset sale"), and one who says they
+      // don't know hasn't either ("I don't know if it'd be a trailing-twelve
+      // average or a snapshot — Tom would know"): the question may stand.
+      if (named(other, phrase)) continue;
+      const sentence = sentencesOf(said).find((x) => x.includes(said.slice(saidTokens[at].at, saidTokens[at].at + 12))) ?? said;
+      if (UNDECIDED_RE.test(sentence)) continue;
       return phrase;
     }
   }
@@ -389,6 +439,8 @@ export interface ReaskContext {
   ownStatements?: string[];
   /** Figures the seller just gave that the file states differently (live-claims.ts), not yet raised. */
   liveConflicts?: ReaskFinding[];
+  /** When the seller's message arrived (ms) — bounds the answer check on a rewrite (rewriteCheckBudget). */
+  turnStartedAt?: number;
 }
 
 /** How many model-checked candidates one draft may carry (strongest first). */
@@ -396,6 +448,24 @@ const MAX_CANDIDATES = 8;
 
 /** Stems of a text as questionTokens makes them (5 characters, stop words out, acronyms kept). */
 const stemsOfText = (t: string) => questionTokens(t).stems;
+
+/** A clause that opens the ask: an auxiliary or a question word ("is there…", "how many…", "would you…"). */
+const ASK_HEAD_RE = /^(?:(?:and|but|so|then)\s+)?(?:is|are|was|were|do|does|did|would|will|can|could|should|has|have|had|what(?:['’]s)?|how(?:['’]s)?|which|who|whose|when|where|why)\b/i;
+
+/**
+ * The clause of the last question that asks — from its question word on —
+ * without the lead-in that sets it up ("On Leah specifically — given the
+ * Bowmont situation last fall and her importance to the concussion
+ * program, is there any retention arrangement being discussed…" → "is
+ * there any retention arrangement being discussed…"). "" when the question
+ * has no lead-in, or none can be told apart. Pure.
+ */
+export function askClause(text: string): string {
+  const last = (text.replace(/\s+/g, " ").match(/[^.!?]*\?/g) ?? []).pop()?.trim() ?? "";
+  const segs = last.split(/(?<=[,:;—–])\s*/).map((x) => x.trim()).filter(Boolean);
+  const at = segs.findIndex((x) => ASK_HEAD_RE.test(x));
+  return at > 0 ? segs.slice(at).join(" ") : "";
+}
 
 /**
  * Facts (and on-file items) that may answer the question, ranked by the
@@ -417,14 +487,21 @@ export function rankedFactCandidates(
   const qDistinct = distinctiveTokens(question);
   if (q.size < 2) return [];
   const sources = getFieldSources(info);
-  const scored: { score: number; finding: ReaskFinding }[] = [];
-  const score = (keyStems: string[], textStems: Set<string>) => {
+  type Score = { k: number; v: number; d: number; total: number };
+  type Entry = { keyStems: string[]; textStems: Set<string>; pass: (s: Score) => boolean; bonus: number; finding: ReaskFinding };
+  const entries: Entry[] = [];
+  const score = (keyStems: string[], textStems: Set<string>, w: (t: string) => number = () => 1): Score => {
     const k = keyStems.filter((t) => q.has(t)).length;
     let v = 0;
     let d = 0;
-    textStems.forEach((t) => { if (q.has(t) && !keyStems.includes(t)) v++; if (qDistinct.has(t)) d++; });
-    keyStems.forEach((t) => { if (qDistinct.has(t) && !textStems.has(t)) d++; });
-    return { k, v, total: k * 2 + v + d * 3, d };
+    let total = 0;
+    keyStems.forEach((t) => { if (q.has(t)) total += 2 * w(t); });
+    textStems.forEach((t) => {
+      if (q.has(t) && !keyStems.includes(t)) { v++; total += w(t); }
+      if (qDistinct.has(t)) { d++; total += 3 * w(t); }
+    });
+    keyStems.forEach((t) => { if (qDistinct.has(t) && !textStems.has(t)) { d++; total += 3 * w(t); } });
+    return { k, v, d, total };
   };
   for (const [key, raw] of Object.entries(info)) {
     if (!isFactKey(key) || raw === null || raw === undefined || raw === "" || exclude.has(key.toLowerCase())) continue;
@@ -433,22 +510,48 @@ export function rankedFactCandidates(
     const kt = keyTokens(key.replace(/\d+/g, " "));
     if (kt.length === 0) continue;
     const value = valueText(raw);
-    const s = score(kt, stemsOfText(value.slice(0, 800)));
     // Two of the key's words, or half of a short key's (robotCount for "how
     // many presses have robots") — not one broad word alone — or a name /
     // acronym in the value (PPM).
-    const broadOnly = s.k === 1 && kt.filter((t) => q.has(t)).every((t) => BROAD_SINGLE.has(t));
     // …or three of the question's topic words in the value itself ("the annual budget for the press
     // replacement program" vs maintenanceCapexRun "$1.6 million annually … press replacements").
-    if (!(s.k >= 2 || (s.k >= 1 && s.k / kt.length >= 0.5 && !broadOnly) || (s.d >= 1 && s.total >= 4) || s.v >= 3)) continue;
-    scored.push({ score: s.total, finding: { kind: "fact", detail: `${key}: ${relevantExcerpt(value, question, 280)} [${sourceLabel(sources[key], docs)}]`, verify: true } });
+    const pass = (s: Score) => {
+      const broadOnly = s.k === 1 && kt.filter((t) => q.has(t)).every((t) => BROAD_SINGLE.has(t));
+      return s.k >= 2 || (s.k >= 1 && s.k / kt.length >= 0.5 && !broadOnly) || (s.d >= 1 && s.total >= 4) || s.v >= 3;
+    };
+    entries.push({ keyStems: kt, textStems: stemsOfText(value.slice(0, 800)), pass, bonus: 0, finding: { kind: "fact", detail: `${key}: ${relevantExcerpt(value, question, 280)} [${sourceLabel(sources[key], docs)}]`, verify: true } });
   }
   for (const f of onFile) {
     if (exclude.has(f.key.toLowerCase())) continue;
     const kt = keyTokens(f.key);
-    const s = score(kt, stemsOfText(`${f.label} ${f.answer}`));
-    if (!(s.k >= 2 || (s.k >= 1 && s.total >= 3) || (s.d >= 1 && s.total >= 4) || s.total >= 4)) continue;
-    scored.push({ score: s.total + 1, finding: { kind: "fact", detail: `${f.key} (${f.label}): ${relevantExcerpt(f.answer, question, 280)} [${f.source}]`, verify: true } });
+    const pass = (s: Score) => s.k >= 2 || (s.k >= 1 && s.total >= 3) || (s.d >= 1 && s.total >= 4) || s.total >= 4;
+    entries.push({ keyStems: kt, textStems: stemsOfText(`${f.label} ${f.answer}`), pass, bonus: 1, finding: { kind: "fact", detail: `${f.key} (${f.label}): ${relevantExcerpt(f.answer, question, 280)} [${f.source}]`, verify: true } });
+  }
+  // Ranked by how telling the shared words are: a word most facts share
+  // (the seller's name, a key employee, the business's own vocabulary)
+  // says little about which fact answers; a word few facts use says a lot.
+  // Clearwater, "…given the Bowmont situation and her importance to the
+  // concussion program, is there any retention arrangement for Leah?": five
+  // facts naming Leah, Bowmont and the concussion program outranked the one
+  // that answers it (transitionPlan: "Retention arrangements recommended
+  // for Leah and Dana"), and the 5-fact limit cut it. Which facts qualify is
+  // still decided on plain counts; with a handful of facts there is nothing
+  // to weigh against, and every word counts the same.
+  // The words of the clause that asks count fully; the lead-in's ("On Leah
+  // specifically — given the Bowmont situation last fall, …") half — it
+  // sets the question up, the ask ("is there any retention arrangement…")
+  // is what an answer must state.
+  const n = entries.length;
+  const df = new Map<string, number>();
+  for (const e of entries) new Set([...e.keyStems, ...Array.from(e.textStems)]).forEach((t) => { if (q.has(t)) df.set(t, (df.get(t) ?? 0) + 1); });
+  const ask = askClause(question);
+  const askStems = ask ? stemsOfText(ask) : null;
+  const weight = (t: string) =>
+    (n < 8 ? 1 : Math.log(1 + n / Math.max(1, df.get(t) ?? 1)) / Math.log(1 + n)) * (askStems && !askStems.has(t) ? 0.5 : 1);
+  const scored: { score: number; finding: ReaskFinding }[] = [];
+  for (const e of entries) {
+    if (!e.pass(score(e.keyStems, e.textStems))) continue;
+    scored.push({ score: score(e.keyStems, e.textStems, weight).total + e.bonus, finding: e.finding });
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.finding);
 }
@@ -703,19 +806,31 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
     // of your techs hold the 313A?" with the count on the licensing summary).
     // A passage whose figure the draft already cites is what it builds on.
     {
+      // 3a. A document asked for that is on file ("Could Denise send over a
+      // breakdown of each tech's certifications?" with the staff roster with
+      // technician licences uploaded) — first: a request for a document the
+      // seller already sent is the plainest re-ask there is.
+      const requested = requestedDocumentCandidates(questionWithLeadIn(draft), ctx.documents);
+      for (const c of requested) {
+        findings.push({ kind: "source_text", detail: `${c.docName} is already on file (the seller sent it) — it reads: «${c.excerpt}»`, quote: c.excerpt, verify: true });
+      }
+      // …and the clause that asks on its own, after: a long lead-in ("given
+      // the Bowmont situation last fall and her importance to the concussion
+      // program, is there any retention arrangement…") pulled the Zoom
+      // call's best passage toward Bowmont and last fall, away from the line
+      // where the broker proposed retention for Leah and Dana. (Not instead:
+      // a lead-in can carry the subject — "of your 11 physiotherapists, how
+      // many are T4?")
+      const ask = askClause(draft);
+      const hits = [...searchSourcesTop(questionWithLeadIn(draft), ctx.documents, 4), ...(ask ? searchSourcesTop(ask, ctx.documents, 2) : [])];
       let kept = 0;
-      for (const hit of searchSourcesTop(questionWithLeadIn(draft), ctx.documents, 4)) {
+      for (const [i, hit] of Array.from(hits.entries())) {
         if (kept >= 3) break;
+        if (requested.some((c) => c.docName === hit.docName)) continue;
+        if (hits.findIndex((h) => h.snippet === hit.snippet) !== i) continue;
         if (figureTokens(hit.snippet).some((n) => n.length >= 2 && figureTokens(draft).includes(n))) continue;
         kept++;
         findings.push({ kind: "source_text", detail: `${hit.docName} already says (a quoted passage from that source — not your words): «${hit.snippet}»`, quote: hit.snippet, verify: true });
-      }
-      // 3b. A document asked for that is on file ("Could Denise send over a
-      // breakdown of each tech's certifications?" with the staff roster with
-      // technician licences and the licensing summary uploaded).
-      for (const c of requestedDocumentCandidates(questionWithLeadIn(draft), ctx.documents)) {
-        if (findings.some((f) => f.kind === "source_text" && f.detail.startsWith(`${c.docName} `))) continue;
-        findings.push({ kind: "source_text", detail: `${c.docName} is already on file (the seller sent it) — it reads: «${c.excerpt}»`, quote: c.excerpt, verify: true });
       }
     }
   }
@@ -753,11 +868,35 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
   // unless the draft already raises it.
   findings.push(...liveConflictFindings(ctx.liveConflicts ?? [], draft, findings));
 
-  // Strongest candidates first, at most MAX_CANDIDATES for the answer check.
-  const order = (f: ReaskFinding) => (!f.verify ? 0 : f.fallback ? 1 : f.kind === "fact" ? 2 : f.kind === "prior_question" ? 3 : f.kind === "source_text" ? 4 : 5);
-  const sorted = [...findings].sort((a, b) => order(a) - order(b));
-  let verifyCount = 0;
-  return sorted.filter((f) => !f.verify || ++verifyCount <= MAX_CANDIDATES);
+  return capCandidates(findings);
+}
+
+/** The kinds of model-checked candidates, in the order they take turns for the slots. */
+const CANDIDATE_KINDS: ReaskFinding["kind"][] = ["fact", "prior_question", "source_text", "own_statement"];
+
+/**
+ * At most MAX_CANDIDATES go to the answer check: the sure findings as they
+ * are, the strong mechanical matches (fallback) first, then the kinds TAKING
+ * TURNS — the best fact, the best earlier exchange, the best source passage,
+ * the best own statement, then the second of each… (each list is already
+ * ranked). Filling the slots kind by kind (facts, then earlier exchanges,
+ * then sources) cut every source whenever five facts and three earlier
+ * exchanges matched, which on a real deal is most turns: with the full
+ * acceptance-test context the staff roster the reply asked Denise to send
+ * (Lakeshore) and the Zoom line where the seller agreed to Leah's retention
+ * (Clearwater) never reached the check.
+ */
+export function capCandidates(findings: ReaskFinding[], max = MAX_CANDIDATES): ReaskFinding[] {
+  const sure = findings.filter((f) => !f.verify);
+  const strong = findings.filter((f) => f.verify && f.fallback);
+  const queues = CANDIDATE_KINDS.map((k) => findings.filter((f) => f.verify && !f.fallback && f.kind === k));
+  const other = findings.filter((f) => f.verify && !f.fallback && !CANDIDATE_KINDS.includes(f.kind));
+  const picked: ReaskFinding[] = strong.slice(0, max);
+  for (let round = 0; picked.length < max && queues.some((qu) => round < qu.length); round++) {
+    for (const qu of queues) if (round < qu.length && picked.length < max) picked.push(qu[round]);
+  }
+  for (const f of other) if (picked.length < max) picked.push(f);
+  return [...sure, ...picked];
 }
 
 /** The live claim check's conflicts the draft doesn't raise (and `existing` doesn't hold already). */
@@ -901,20 +1040,48 @@ export const MAX_REWRITES = 2;
 export const REWRITE_CHECK_TIMEOUT_MS = 6_000;
 
 /**
+ * By when, counted from the seller's message, a rewrite's answer check must
+ * be done. A confirmed candidate on a rewrite means one more Opus rewrite
+ * (+10–15s); past this point the seller has waited long enough, and the
+ * rewrite goes out on its sure findings alone — so a turn with two rewrites
+ * starts its last one within ~30s of the seller's message at the latest.
+ * (The first draft's check is not bounded by this.)
+ */
+export const REWRITE_CHECK_DEADLINE_MS = 30_000;
+/** Less time than this left for a rewrite's check: no model call (the check itself takes ~2–3s). */
+const MIN_REWRITE_CHECK_MS = 2_500;
+
+/**
+ * How long the answer check on rewrite number `attempt` (1 = the first
+ * rewrite) may take; 0 = no model call, only the sure findings count — on
+ * the last allowed rewrite (nothing could be rewritten again), or once the
+ * turn is past REWRITE_CHECK_DEADLINE_MS. Pure.
+ */
+export function rewriteCheckBudget(attempt: number, turnStartedAt?: number, now: number = Date.now()): number {
+  if (attempt >= MAX_REWRITES) return 0;
+  if (turnStartedAt === undefined || !Number.isFinite(turnStartedAt)) return REWRITE_CHECK_TIMEOUT_MS;
+  const left = turnStartedAt + REWRITE_CHECK_DEADLINE_MS - now;
+  return left < MIN_REWRITE_CHECK_MS ? 0 : Math.min(REWRITE_CHECK_TIMEOUT_MS, left);
+}
+
+/**
  * The check on rewrite number `attempt` (1 = the first rewrite): every
  * candidate goes to the answer check, as on the first draft (past the
- * timeout, only the strong mechanical matches stand); on the last allowed
- * rewrite no model call is made — nothing could be rewritten again — and
- * only the sure findings are returned.
+ * timeout, only the strong mechanical matches stand), within the turn's
+ * budget (rewriteCheckBudget); on the last allowed rewrite, or past the
+ * budget, no model call is made and only the sure findings are returned.
  */
 export async function checkRewrite(
   message: string,
   ctx: ReaskContext,
   attempt: number,
   verifier: AnswerVerifier = modelAnswerVerifier,
-  timeoutMs: number = REWRITE_CHECK_TIMEOUT_MS,
+  timeoutMs: number = rewriteCheckBudget(attempt, ctx.turnStartedAt),
 ): Promise<ReaskFinding[]> {
   const candidates = findReasks(message, ctx);
-  if (attempt >= MAX_REWRITES) return sureFindings(candidates);
+  if (attempt >= MAX_REWRITES || timeoutMs <= 0) {
+    if (attempt < MAX_REWRITES) console.log(`[reask-guard] rewrite ${attempt}: past the turn's check budget — sure findings only`);
+    return sureFindings(candidates);
+  }
   return confirmFindings(candidates, message, verifier, timeoutMs);
 }

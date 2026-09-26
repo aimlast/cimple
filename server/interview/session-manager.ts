@@ -138,7 +138,7 @@ import {
   liveConflictAddressed,
   liveConflictFindings,
   MAX_REWRITES,
-  REWRITE_CHECK_TIMEOUT_MS,
+  rewriteCheckBudget,
   type ReaskContext,
   type ReaskFinding,
   type OnFileFact,
@@ -1232,6 +1232,7 @@ export async function processTurn(
   const answeringNow = existingMessages[existingMessages.length - 1]?.role === "ai";
   const reaskCtx: ReaskContext = {
     sellerMessage,
+    turnStartedAt: Date.parse(receivedAt),
     // (A fact the broker settled is on file even where its value is held.)
     info: withHeldFacts(sellerView as Record<string, unknown>),
     documents,
@@ -1369,13 +1370,17 @@ export async function processTurn(
     // timeout only the strong mechanical matches stand) — a rewrite too: it
     // is a new question, and unchecked rewrites carried most of the
     // acceptance test's re-asks. After the last allowed rewrite nothing can
-    // change, so only the sure findings are counted (no model call).
+    // change, so only the sure findings are counted (no model call) — and
+    // likewise on a rewrite once the turn is past its budget
+    // (rewriteCheckBudget: a second rewrite must start within ~30s).
     const candidates = findReasks(text, { ...reaskCtx, liveConflicts: reaskCtx.liveConflicts ?? [] });
     const gateStart = Date.now();
+    const checkMs = reaskAttempt > 0 ? rewriteCheckBudget(reaskAttempt, reaskCtx.turnStartedAt) : STREAM_CHECK_TIMEOUT_MS;
+    if (reaskAttempt > 0 && reaskAttempt < MAX_REWRITES && checkMs === 0) console.log(`[session-manager] Stream gate: rewrite ${reaskAttempt} past the check budget — sure findings only`);
     const [checked, live] = await Promise.all([
-      reaskAttempt >= MAX_REWRITES
+      checkMs === 0
         ? Promise.resolve(sureFindings(candidates))
-        : confirmFindings(candidates, text, undefined, reaskAttempt > 0 ? REWRITE_CHECK_TIMEOUT_MS : STREAM_CHECK_TIMEOUT_MS),
+        : confirmFindings(candidates, text, undefined, checkMs),
       reaskCtx.liveConflicts ? Promise.resolve(null) : liveClaimsWithin(liveClaimsRun, LIVE_GATE_WAIT_MS),
     ]);
     const claimsPending = !live && !reaskCtx.liveConflicts;

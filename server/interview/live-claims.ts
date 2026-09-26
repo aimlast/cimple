@@ -381,6 +381,27 @@ export function figureNear(text: string, value: number, words: ReadonlySet<strin
 }
 
 /**
+ * The words naming what a counted figure counts: the seller's side of the
+ * conflict (`said`), else the check's topic, else the words of the seller's
+ * message within a few words of the figure. The model can phrase `said` as
+ * the bare figure ("22 of them"), and the table-row rule below was then
+ * skipped — 22 against the org chart's 112 operators was kept. Pure.
+ */
+export function countTopic(said: string, topic: string, message: string, figures: number[]): Set<string> {
+  const own = claimWords(said);
+  if (own.size > 0) return own;
+  const fromTopic = claimWords(topic);
+  if (fromTopic.size > 0) return fromTopic;
+  const tokens = message.match(/\$?\d[\d,]*(?:\.\d+)?%?|[A-Za-z][A-Za-z'’-]*/g) ?? [];
+  const out = new Set<string>();
+  tokens.forEach((t, i) => {
+    if (!/\d/.test(t) || !figures.some((n) => Math.abs(parseFloat(t.replace(/[$,%]/g, "")) - n) <= Math.max(1e-9, Math.abs(n) * 0.005))) return;
+    for (const w of tokens.slice(Math.max(0, i - 4), i + 5)) if (!/\d/.test(w)) claimWords(w).forEach((c) => out.add(c));
+  });
+  return out;
+}
+
+/**
  * Validates the model's conflicts: the material item exists, the file's
  * side quotes it (its figures are in that item), the owner's side is in the
  * message, and the two sides differ. Pure.
@@ -414,7 +435,10 @@ export function validateLiveClaims(raw: unknown[], message: string, material: Ma
     // a figure for "setup and process technicians" (acceptance test, Great
     // Lakes org chart). And when the same source gives the seller's figure
     // beside those words ("Setup & process technicians: 22"), it agrees.
-    const topic = claimWords(said);
+    // What was counted: the seller's words in `said`; when those are only a
+    // figure ("22 of them"), the check's own topic ("setup technicians"),
+    // then the words around the figure in the seller's message.
+    const topic = countTopic(said, String(x.topic ?? ""), message, a);
     if (figureKind(said) === "count" && topic.size > 0) {
       // (The same source only: the seller's own email agreeing with them is no answer to the fleet list.)
       if (material.some((mm) => mm.label === m.label && a.some((n) => figureNear(mm.text, n, topic)))) continue;
