@@ -19,6 +19,7 @@
  * KnownFigures.prose).
  */
 import { proseKnowledge, proseProblems, type ProseKnowledge } from "./prose-check";
+import { consistencyProblems, type ConsistencyKnowledge } from "./consistency-check";
 
 export interface Figure {
   value: number;
@@ -104,6 +105,8 @@ export interface KnownFigures {
   bridges?: KnownBridge[];
   /** What the prose checks need (prose-check.ts); absent = tables/charts only. */
   prose?: ProseKnowledge;
+  /** Working capital, debt by year and misread counts (consistency-check.ts); absent = not checked. */
+  consistency?: ConsistencyKnowledge;
 }
 
 export function normalizeForLookup(s: string): string {
@@ -119,6 +122,7 @@ export function knownFiguresFrom(
   kbText: string,
   bridges?: KnownBridge[],
   prose?: Parameters<typeof proseKnowledge>[1],
+  consistency?: ConsistencyKnowledge,
 ): KnownFigures {
   const figs = parseFigures(kbText);
   const growthPct = (prose?.growth ?? []).map((g) => ({ value: Number(g.pct.toFixed(1)), tolerance: 0.05, kind: "percent" as const, text: `${g.pct.toFixed(1)}%` }));
@@ -130,6 +134,7 @@ export function knownFiguresFrom(
     text: normalizeForLookup(kbText),
     bridges: bridges && bridges.length > 0 ? bridges : undefined,
     prose: prose ? proseKnowledge(kbText, prose) : undefined,
+    ...(consistency ? { consistency } : {}),
   };
 }
 
@@ -662,6 +667,7 @@ export function checkSectionFigures(section: SectionLike, known: KnownFigures): 
     ...(section.layoutType === "waterfall_chart" ? [...reconcileWaterfall(section), ...bridgeLines(section, known)] : []),
     ...unknownNames(section, known),
     ...proseProblems(section, known),
+    ...consistencyProblems(section, known.consistency),
   ];
   return Array.from(new Set(issues));
 }

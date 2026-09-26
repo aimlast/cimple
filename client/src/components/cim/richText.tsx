@@ -27,7 +27,7 @@ export const DD_CLOSE = "[[/dd]]";
 const PROSE_KEYS = new Set([
   "body", "description", "caption", "footnote", "footnotes", "notes", "pullQuote",
   "highlights", "summary", "tagline", "content", "normalizedCaption", "normalizedFootnotes",
-  "ownerDependency",
+  "ownerDependency", "intro",
 ]);
 
 const LEGACY_DD_TAG = /\[DD(?::\s*[^\]]*)?\]\s*/g;

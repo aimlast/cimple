@@ -19,6 +19,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
 import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { BlockTitle } from "./BlockTitle";
 
 interface HBarDataPoint {
   name: string;
@@ -98,11 +99,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={withPercent}

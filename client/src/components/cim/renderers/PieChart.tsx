@@ -22,6 +22,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
 import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { BlockTitle } from "./BlockTitle";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
 const SIDE_BY_SIDE_MIN = 480;
@@ -121,11 +122,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
   return (
     <div>
-      {data.title && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.title}
-        </h3>
-      )}
+      <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div
         ref={boxRef}
         className={cn("flex gap-6", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "flex-col items-center" : "items-center")}

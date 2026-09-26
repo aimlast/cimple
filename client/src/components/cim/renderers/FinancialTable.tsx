@@ -8,6 +8,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { financialLabelHeader, normalizeFinancialTable } from "@shared/financial-table";
+import { BlockTitle } from "./BlockTitle";
 
 interface TableRow {
   label: string;
@@ -80,11 +81,7 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
 
   return (
     <div>
-      {data.caption && (
-        <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">
-          {data.caption}
-        </h3>
-      )}
+      <BlockTitle title={data.caption} intro={(data as { intro?: unknown }).intro} />
       <div className="relative">
       <div
         ref={scroller.ref}

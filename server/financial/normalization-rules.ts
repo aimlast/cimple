@@ -1057,3 +1057,6 @@ export function flagEarningsNotes(normalization: UiNormalization | null): UiNorm
   }
   return { ...normalization, notes: Array.from(new Set(notes)) };
 }
+
+/** The cash-free, debt-free exclusions, for the CIM (cim-financials.ts cimWorkingCapital): one definition. */
+export { isExcludedAsset as isExcludedWorkingCapitalAsset, isExcludedLiability as isExcludedWorkingCapitalLiability };

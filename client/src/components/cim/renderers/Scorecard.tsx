@@ -13,6 +13,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { numericScore, scorecardIsNumeric } from "@shared/cim-layouts";
 import { ProseFallback, renderInline } from "../richText";
+import { BlockTitle } from "./BlockTitle";
 
 interface ScorecardItem {
   label: string;
@@ -54,8 +55,7 @@ export function benchmarkLabelPlacement(pct: number): { left?: string; right?: s
   return { left: `${pct}%`, transform: "translateX(-50%)" };
 }
 
-const Title = ({ title }: { title?: string }) =>
-  title ? <h3 className="text-sm font-semibold text-foreground/60 uppercase tracking-widest mb-4">{title}</h3> : null;
+const Title = ({ title, intro }: { title?: string; intro?: unknown }) => <BlockTitle title={title} intro={intro} />;
 
 export function ScorecardRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: ScorecardLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
@@ -71,7 +71,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
   if (!scorecardIsNumeric({ items })) {
     return (
       <div>
-        <Title title={data.title} />
+        <Title title={data.title} intro={(data as { intro?: unknown }).intro} />
         <div className="divide-y divide-border/60 rounded-lg border border-card-border bg-card">
           {items.map((item, i) => (
             <div key={i} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:justify-between sm:gap-6">
@@ -98,7 +98,7 @@ export function ScorecardRenderer({ layoutData, content, branding, section }: Re
 
   return (
     <div>
-      <Title title={data.title} />
+      <Title title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div className="space-y-4">
         {items.map((item, i) => {
           const score = numericScore(item.score) ?? 0;

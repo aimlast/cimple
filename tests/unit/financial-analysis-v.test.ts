@@ -389,7 +389,7 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   assert.equal(buf.pegAmount, null);
   // The CIM block carries the history and the basis.
   const block = renderCimFinancialsBlock(buildCimFinancials({ id: "x", version: 3, status: "completed", brokerReviewedAt: null, workingCapital: wc } as any));
-  assert.match(block, /Year-end net working capital: 2022 \$1,072,000 · 2023 \$1,152,000 · 2024 \$1,237,000/);
+  assert.match(block, /Year-end net working capital \(cash-free, debt-free\): 2022 \$1,072,000 · 2023 \$1,152,000 · 2024 \$1,237,000/);
   assert.match(block, /Working capital peg \(target\): \$1,153,667 — Average of year-end net working capital/);
 }
 

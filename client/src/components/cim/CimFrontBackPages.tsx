@@ -64,9 +64,9 @@ export function CimDisclaimerPage() {
             <p key={i} className="text-sm leading-[1.75]" style={{ color: t.inkSoft }}>{p}</p>
           ))}
         </div>
-        {design.brokerage.firmName && (
+        {(design.brokerage.firmName || design.brokerage.contactName) && (
           <p className="mt-6 text-xs" style={{ color: t.inkMuted }}>
-            Prepared by {design.brokerage.firmName}
+            Prepared by {[design.brokerage.firmName, design.brokerage.contactName].filter(Boolean).join(" · ")}
           </p>
         )}
       </div>

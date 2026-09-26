@@ -30,6 +30,14 @@ import {
 import { hasRelativeTime, repairInferredYears, staleTargets } from "./fact-dates";
 import { canonLines, earningsCanon, earningsWarnings, offCanon, screenEarningsFacts, type EarningsCanon, type EarningsHold } from "./earnings-canon";
 import { normalizeSpokenFigures } from "./spoken-figures";
+import {
+  consistencyKnowledge,
+  factConsistency,
+  mixesWorkingCapitalDefinitions,
+  workingCapitalProblems,
+  workingCapitalSectionData,
+  type SuspectCount,
+} from "./consistency-check";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -195,12 +203,17 @@ interface SharedSystem extends SystemBlock {
 function knownFor(kb: AssembledKb, params: CimLayoutParams): KnownFigures {
   // Figures are checked against the source blocks only — never against
   // leads, earlier AI drafts or the unverified scrape.
-  return knownFiguresFrom(kb.sourceText, knownBridges(kb.financials), {
-    earnings: kb.canon,
-    growth: kb.growth,
-    today: params.today ?? new Date(),
-    heldNames: kb.heldNames,
-  });
+  return knownFiguresFrom(
+    kb.sourceText,
+    knownBridges(kb.financials),
+    {
+      earnings: kb.canon,
+      growth: kb.growth,
+      today: params.today ?? new Date(),
+      heldNames: kb.heldNames,
+    },
+    consistencyKnowledge(kb.financials, kb.suspectCounts),
+  );
 }
 
 function buildSharedSystem(params: CimLayoutParams): SharedSystem {
@@ -413,6 +426,16 @@ async function checkAndRepairFigures(
               final = after;
             }
           }
+        }
+        // Working capital on two definitions reaches no buyer: rebuilt from
+        // the analysis in code (cash-free, debt-free lines beside the peg).
+        const wc = sharedSystem.known.consistency?.workingCapital;
+        if (wc && mixesWorkingCapitalDefinitions(workingCapitalProblems(sections[i], wc))) {
+          const rebuilt = workingCapitalSectionData(wc);
+          const candidate = { ...sections[i], layoutType: rebuilt.layoutType as LayoutType, layoutData: rebuilt.layoutData as CimLayoutSection["layoutData"], aiDraftContent: "" };
+          sections[i] = candidate;
+          final = checkSectionFigures(candidate, sharedSystem.known);
+          warnings.push(`"${section.sectionTitle}" set net working capital beside the peg on a different basis; it was rebuilt from the financial analysis on the cash-free, debt-free basis the peg uses. Review its wording before publishing.`);
         }
         if (final.length > 0) {
           sections[i] = { ...sections[i], figureWarnings: final };
@@ -1124,7 +1147,12 @@ TRUTH RULES (a buyer relies on every figure; a wrong one costs the broker the de
 22. PRIVATE MATTERS. Never mention an owner's or family member's health, medical history or personal circumstances, even as a reason for sale — say "retirement" or "succession" instead.
 23. FACTS ONLY — NO OUTSIDE KNOWLEDGE. Write only what the knowledge base says about this business. Never add market statistics, industry sizes, port or traffic volumes, equipment prices, typical costs, competitor counts, customer tenures or any other "general knowledge", even as background or as a round figure — a buyer reads every sentence as a claim about this deal. Describe the market and competition only through the facts on file.
 24. PEOPLE. Never assume anyone's gender. Use the person's name or role (or "they") unless the knowledge base itself says he or she for that person.
-25. THE SELLER'S WORDS. Facts are often recorded as the seller said them. Write them as clean, buyer-facing figures without changing the meaning ("six-point-something years" → "just over six years"; never quote casual phrasing). Give a growth rate only with the period the knowledge base states for it (GROWTH lists the exact periods) — a two-year change is never "year-over-year".`;
+25. THE SELLER'S WORDS. Facts are often recorded as the seller said them. Write them as clean, buyer-facing figures without changing the meaning ("six-point-something years" → "just over six years"; never quote casual phrasing). Give a growth rate only with the period the knowledge base states for it (GROWTH lists the exact periods) — a two-year change is never "year-over-year".
+26. WORKING CAPITAL IS CASH-FREE AND DEBT-FREE. A working-capital peg is always a cash-free, debt-free figure, so net working capital is stated on that same basis: copy the WORKING CAPITAL lines and "Net working capital (cash-free, debt-free)" from AUTHORITATIVE FINANCIALS. Cash, bank debt, the current portion of long-term debt and income taxes are never working-capital lines and never part of a net working capital figure — and total current assets less total current liabilities is never set beside a peg. Never tell buyers of a "shortfall" or "excess" against the peg except as the block states it, and never work one out; explain the closing adjustment only as a mechanism.
+27. COUNTS AND RATES AGREE. A rate and the counts behind it must give each other (6 of 64 is 9.4%). Never set a count beside a rate unless the knowledge base gives both for the same thing and they agree; when in doubt, state the rate alone.
+28. EVERY FIGURE KEEPS ITS YEAR. A balance (debt, a credit-line draw, cash, working capital) is stated with the date the knowledge base gives it — DEBT AT YEAR END ties each debt figure to its year, and a fact marked [balance sheet: … is the 2023 year-end …] is that year's, never the latest. "Annually", "per year" or "each year" only for a figure the knowledge base gives for every year (or as a yearly rate); one year's figure is written with its year.
+29. PLACES AND TERMS STAY WITH THEIR FACT. A place (highway, pass, town, region) and a contract term (evergreen, exclusive, MSA, month-to-month) are written only with the event or party the same fact ties them to — "the rest of the top 10 are on evergreen terms" says nothing about the customer named just before it, and a highway named for winter closures is not the one a flood cut.
+30. TITLES ARE SHORT LABELS. A layoutData "title" is at most a short caption (under 10 words, no full sentences). Any explanation a table, chart or list needs goes in "intro" (one or two plain sentences shown above it) — never a paragraph in a title.`;
 
 /**
  * buildKnowledgeBase
@@ -1178,6 +1206,8 @@ export interface AssembledKb {
   growth: CimGrowth[];
   /** Names the facts mark confidential. */
   heldNames: string[];
+  /** Counts from facts whose counts and rates disagree (consistency-check.ts): never stated. */
+  suspectCounts: SuspectCount[];
 }
 
 /**
@@ -1236,6 +1266,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
   const held: HeldFact[] = [];
   const confidential: ConfidentialHold[] = [];
   let heldNames: string[] = [];
+  let suspectCounts: SuspectCount[] = [];
   if (params.extractedInfo && Object.keys(params.extractedInfo).length > 0) {
     // "_"-prefixed keys (broker-private notes, provenance) and per-source
     // notes (a source's summary / red flags / to-dos) never feed CIM
@@ -1288,14 +1319,27 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
       const past = staleTargets(text, today);
       if (past.length > 0) stale.push(`"${formatKey(key)}" says ${past.map((p) => `"${p.phrase}"`).join(", ")}`);
       const arrived = past.length > 0 ? ` [date has arrived: ${past.map((p) => p.period).join(", ")} is not in the future any more — do not present it as a target]` : "";
-      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}${said}${arrived}`;
+      const checked = consistency?.notes[key] ? ` ${consistency.notes[key]}` : "";
+      return `${formatKey(key)}: ${text}${when ? ` [recorded ${when}]` : ""}${said}${arrived}${checked}`;
     };
+    let consistency: ReturnType<typeof factConsistency> | null = null;
     // A value that is an extractor's working-out ("$2,649,200 (calculated as …
     // wait, recalculating …)") is not a figure: its stray numbers would pass
     // the figure check. Held back until the broker fixes the fact.
     const unfinished = confirmedSafe.filter(([, v]) => WORKING_OUT.test(factValueText(v))).map(([k]) => k);
     if (unfinished.length > 0) warnings.push(UNFINISHED_FACT_WARNING(unfinished));
-    const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k));
+    // Facts that can't be true as written (working capital counting cash and
+    // debt beside a cash-free peg, counts that don't give their own rate)
+    // are held; a debt figure from an earlier year is marked with its year.
+    consistency = factConsistency(
+      confirmedSafe.filter(([k]) => !unfinished.includes(k)).map(([k, v]) => [k, factValueText(v)] as [string, string]),
+      fin,
+      formatKey,
+    );
+    warnings.push(...consistency.warnings);
+    suspectCounts = consistency.suspectCounts;
+    const inconsistent = consistency.held;
+    const usable = confirmedSafe.filter(([k]) => !unfinished.includes(k) && !inconsistent.includes(k));
     if (usable.length > 0) {
       parts.push("\n--- INTERVIEW DATA (the deal's facts: seller interview, broker, documents, questionnaire) ---");
       for (const [key, value] of usable) parts.push(line(key, value));
@@ -1422,6 +1466,7 @@ export function assembleKnowledgeBase(params: CimLayoutParams): AssembledKb {
     financials: fin,
     growth: cimGrowth(fin, canon),
     heldNames,
+    suspectCounts,
   };
 }
 
