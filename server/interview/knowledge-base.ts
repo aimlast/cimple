@@ -28,6 +28,7 @@ import { scrubBrokerWorkItems, isBrokerWorkText, BROKER_WORK_KEY_RE, sameResolve
 import { claimConflicts } from "./claim-conflicts";
 import { onFileItems, type EvidenceTarget, type OnFileItem } from "./on-file-evidence";
 import { openSellerOnlyTopics } from "./completion-gaps";
+import { sellerNamesFrom } from "./seller-voice";
 
 // =====================
 // Types
@@ -42,6 +43,8 @@ export interface KnowledgeBase {
     description: string | null;
     location: LocationContext | null;
   };
+  /** The person the interview talks to, and the names they go by (seller-voice.ts). Optional for old callers/fixtures. */
+  seller?: { name: string; title: string | null; names: string[] } | null;
 
   // Everything we know, organized by CIM section
   sectionCoverage: SectionCoverage[];
@@ -630,6 +633,7 @@ export function assembleKnowledgeBase(
       description: deal.description,
       location: parseLocation(deal, questionnaireData, baseExtractedInfo),
     },
+    seller: sellerIdentityOf(deal, baseExtractedInfo as Record<string, unknown>),
     // (A fact the broker settled but the interview can't see is on file,
     // not a gap to ask about — see rawCoverage above.)
     sectionCoverage,
@@ -800,6 +804,25 @@ export function sellerAnswered(info: Record<string, unknown>, key: string): bool
   if (!isSubstantiveValue(info[key])) return false;
   const src = getFieldSources(info)[key];
   return !!src && ["interview", "call", "video_call", "questionnaire", "broker"].includes(String(src.source));
+}
+
+/**
+ * The person the interview is talking to: the deal's seller contact, else a
+ * single owner name on file — and the names they go by (seller-voice.ts),
+ * so a fact written about them ("Diane and Rob have guaranteed…") is put to
+ * them as "you". Null when no one is named.
+ */
+function sellerIdentityOf(deal: Deal, view: Record<string, unknown>): KnowledgeBase["seller"] {
+  const contact = (deal as { sellerContact?: { name?: string; title?: string } | null }).sellerContact;
+  const fromFacts = [view.ownerName, view.sellerName].find((v) => typeof v === "string" && /^[A-Z]/.test(v.trim()) && !/[,;&]|\band\b/.test(v)) as string | undefined;
+  const name = (typeof contact?.name === "string" && contact.name.trim()) || fromFacts?.trim() || "";
+  if (!name) return null;
+  const others = Object.entries(view)
+    .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
+    .map(([, v]) => v as string)
+    .join("\n");
+  const names = sellerNamesFrom(name, others);
+  return names.length > 0 ? { name, title: typeof contact?.title === "string" ? contact.title : null, names } : null;
 }
 
 /** The owner's names on file (facts and the deal's seller contact) — to find their pay in the tax returns. */
@@ -1176,6 +1199,11 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   // Business identity
   parts.push(`## Business Profile`);
   parts.push(`- Name: ${kb.business.name}`);
+  if (kb.seller) {
+    // Facts on file speak about the seller in the third person; the agent talks to them.
+    const first = kb.seller.names[kb.seller.names.length - 1] ?? kb.seller.name;
+    parts.push(`- You are talking to: ${kb.seller.name}${kb.seller.title ? ` (${kb.seller.title})` : ""} — the seller, in person. Speak to them as "you". Facts on file name them in the third person ("${first} and a partner have guaranteed…", "${first}'s role"); re-voice those to them ("you and your partner have guaranteed…", "your role") — never talk about ${first} to ${first}. Use the name only to address them.`);
+  }
   parts.push(`- Industry: ${kb.business.industry}${kb.business.subIndustry ? ` (${kb.business.subIndustry})` : ""}`);
   if (kb.business.description) {
     parts.push(`- Description: ${kb.business.description}`);
@@ -1194,7 +1222,7 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   if (kb.sellerProfile) {
     parts.push("");
     parts.push(`## Seller Communication Profile`);
-    parts.push(`This profile was generated from broker notes, prior communications, and available data about the seller.`);
+    parts.push(`This profile is background for YOUR tone only, built from earlier conversations and what was shared about the seller. Never quote it, never mention that it exists or where it came from (no "broker notes", "your notes", "the profile") — the seller only knows their own calls, emails, documents and sessions.`);
     parts.push(`Use it to adapt your tone, pacing, and approach. Do NOT reference this profile directly to the seller.`);
     parts.push(``);
     // A profile awaiting its rebuild carries only what the broker set by

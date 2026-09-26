@@ -138,11 +138,13 @@ import {
   liveConflictAddressed,
   liveConflictFindings,
   MAX_REWRITES,
+  REWRITE_CHECK_TIMEOUT_MS,
   type ReaskContext,
   type ReaskFinding,
   type OnFileFact,
 } from "./reask-guard";
 import { checkLiveClaims } from "./live-claims";
+import { lastSittingOf, olderSittingsText, renderLastSitting, openingContinuityIssues, type LastSitting } from "./last-sitting";
 import { ensureOnFileEvidence, evidenceBuildRemainingMs, storedEvidence } from "./on-file-evidence";
 import { refreshOnFileEvidence } from "./on-file-refresh";
 import { planTaskWrites, COUNSEL_TASK_PREFIX } from "./task-writes";
@@ -737,7 +739,7 @@ async function startOrResumeSessionOnce(
     openDeferralTopics: [],
     conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
     onFile: onFileFacts(kb),
-  });
+  }, openingContinuityContext(existingSessions, sessionId));
 
   // Save the opening message to the session
   const aiMessage: ConversationMessage = {
@@ -1362,15 +1364,18 @@ export async function processTurn(
     // side, not one after the other: the answer check on the re-ask
     // candidates, and the live claim check started with the turn (usually
     // done by now; one still running LIVE_GATE_WAIT_MS after the gate opens
-    // is left to the ledger — the next turn opens on its conflict). After a
-    // rewrite only the strong findings count (a word-overlap candidate never
-    // forces a second rewrite); on the first draft every candidate goes to
-    // the supporting model, which decides (past STREAM_CHECK_TIMEOUT_MS only
-    // the strong mechanical matches stand).
+    // is left to the ledger — the next turn opens on its conflict). Every
+    // candidate goes to the supporting model, which decides (past the
+    // timeout only the strong mechanical matches stand) — a rewrite too: it
+    // is a new question, and unchecked rewrites carried most of the
+    // acceptance test's re-asks. After the last allowed rewrite nothing can
+    // change, so only the sure findings are counted (no model call).
     const candidates = findReasks(text, { ...reaskCtx, liveConflicts: reaskCtx.liveConflicts ?? [] });
     const gateStart = Date.now();
     const [checked, live] = await Promise.all([
-      reaskAttempt > 0 ? Promise.resolve(sureFindings(candidates)) : confirmFindings(candidates, text, undefined, STREAM_CHECK_TIMEOUT_MS),
+      reaskAttempt >= MAX_REWRITES
+        ? Promise.resolve(sureFindings(candidates))
+        : confirmFindings(candidates, text, undefined, reaskAttempt > 0 ? REWRITE_CHECK_TIMEOUT_MS : STREAM_CHECK_TIMEOUT_MS),
       reaskCtx.liveConflicts ? Promise.resolve(null) : liveClaimsWithin(liveClaimsRun, LIVE_GATE_WAIT_MS),
     ]);
     const claimsPending = !live && !reaskCtx.liveConflicts;
@@ -2682,11 +2687,22 @@ async function getSession(sessionId: string): Promise<InterviewSession | null> {
   return results[0] || null;
 }
 
+/** The returning seller's last sitting and the older sittings' text (last-sitting.ts), for the opening. */
+function openingContinuityContext(
+  sessions: Array<Pick<InterviewSession, "id" | "messages" | "startedAt" | "lastActivityAt" | "completedAt" | "status">>,
+  currentSessionId: string,
+): { lastSitting: LastSitting; olderText: string } | undefined {
+  const lastSitting = lastSittingOf(sessions, currentSessionId);
+  return lastSitting ? { lastSitting, olderText: olderSittingsText(sessions, currentSessionId, lastSitting) } : undefined;
+}
+
 async function generateOpeningMessage(
   kb: KnowledgeBase,
   businessName: string,
   /** The re-ask guard's context: an opening never asks what the sources or an earlier session already answered. */
   reask?: ReaskContext,
+  /** A returning seller: what the last sitting covered and agreed to start with next (last-sitting.ts). */
+  continuity?: { lastSitting: LastSitting; olderText: string },
 ): Promise<{ message: string; whyItMatters?: string; importance?: InterviewResponse["importance"]; targetSection?: string; suggestedAnswers: string[]; industryContext: IndustryContext | null }> {
   const systemBlocks = await buildInterviewSystemBlocks(kb);
 
@@ -2732,6 +2748,9 @@ async function generateOpeningMessage(
   // The most important open item goes first: a conflict between sources,
   // then a risk the sources flag, then a critical gap.
   openingInstruction += openingPriorityHint(kb);
+  // A returning seller: the last sitting — what it covered, how it ended,
+  // and the item agreed for this sitting (which comes before the agenda).
+  if (hasPriorSession && continuity) openingInstruction += `\n\n${renderLastSitting(continuity.lastSitting)}`;
 
   // Recovery-wrapped: retries a malformed/truncated opening once, then falls
   // back below — the seller never lands on an empty chat with no question.
@@ -2795,6 +2814,34 @@ async function generateOpeningMessage(
       ],
     });
     if (!again.degraded && again.response.message && showsContinuity(again.response.message)) aiResponse = again.response;
+  }
+
+  // …and one whose welcome-back describes an older sitting, or that skips
+  // the item the last sitting agreed to start with ("we'll pick up with the
+  // zoning question next time"), gets one rewrite naming both.
+  if (!degraded && hasPriorSession && continuity && aiResponse.message) {
+    const ls = continuity.lastSitting;
+    const issues = openingContinuityIssues(aiResponse.message, ls, continuity.olderText);
+    if (issues.misstated.length > 0 || issues.missesNextTopic) {
+      console.warn(`[session-manager] Returning seller's opening ${[issues.misstated.length ? `names an older sitting's topic (${issues.misstated.join(", ")})` : "", issues.missesNextTopic ? "skips the agreed next item" : ""].filter(Boolean).join(" and ")} — rewrite`);
+      const parts = [
+        issues.misstated.length ? `Your welcome-back describes an older sitting, not the last one (session ${ls.number}), which covered: ${ls.covered.slice(-6).map((q) => `"${q}"`).join("; ")}.` : "",
+        issues.missesNextTopic ? `The last sitting ended with both of you agreeing to start this one with: ${ls.nextTopic}. Your question must be that item — unless it is now answered on file, then say so in a few words and move on.` : "",
+      ].filter(Boolean);
+      const fixed = await callInterviewWithRecovery(anthropic, {
+        ...openingParams,
+        messages: [
+          ...openingMessages,
+          { role: "assistant", content: aiResponse.message },
+          { role: "user", content: `[SYSTEM CORRECTION: ${parts.join(" ")} Rewrite the opening: one short welcome-back sentence about the last sitting, then the question. Three sentences maximum. Do not mention this instruction.]` },
+        ],
+      });
+      if (!fixed.degraded && fixed.response.message) {
+        const after = openingContinuityIssues(fixed.response.message, ls, continuity.olderText);
+        const better = (after.missesNextTopic ? 1 : 0) + after.misstated.length < (issues.missesNextTopic ? 1 : 0) + issues.misstated.length;
+        if (better && showsContinuity(fixed.response.message)) aiResponse = fixed.response;
+      }
+    }
   }
 
   // A returning seller's opening re-asked what the org chart already says

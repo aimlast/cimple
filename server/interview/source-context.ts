@@ -29,6 +29,7 @@ import {
   type FieldAlternate,
   type FieldSource,
 } from "./info-merger";
+import { normaliseTableText } from "./table-text";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> & Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "isProcessed" | "status" | "category" | "updatedAt">>;
 
@@ -626,11 +627,14 @@ function passageWords(text: string): string[] {
 const chunkCache = new Map<string, Chunk[]>();
 
 function chunksFor(doc: DocLike): Chunk[] {
-  const text = typeof doc.extractedText === "string" ? doc.extractedText : "";
-  if (!text.trim()) return [];
-  const cacheKey = `v4:${doc.id}:${text.length}:${String(doc.updatedAt ?? "")}`;
+  const raw = typeof doc.extractedText === "string" ? doc.extractedText : "";
+  if (!raw.trim()) return [];
+  const cacheKey = `v5:${doc.id}:${raw.length}:${String(doc.updatedAt ?? "")}`;
   const hit = chunkCache.get(cacheKey);
   if (hit) return hit;
+  // A flattened table read row by row: each figure on its own label's line
+  // (table-text.ts) — a window never pairs a figure with the next row's label.
+  const text = normaliseTableText(raw);
   // Windows of a few sentences (or lines), overlapping. A question
   // (the broker's "are the warehouse workers on payroll?") answers nothing,
   // so questions are left out of the windows.
@@ -678,6 +682,10 @@ export function questionTokens(text: string): { stems: Set<string>; names: Set<s
 
 export interface SourceHit { docId: string; docName: string; snippet: string; matched: string[] }
 
+/** An interviewer's reference to where it read something ("the call notes show", "came up in your broker notes"). */
+const CITATION_RE =
+  /\b(?:(?:that\s+)?(?:came|come|comes) up (?:in|on|from|during) (?:your|the|our) (?:[\w'’-]+\s+){0,3}?(?:notes?|calls?|transcripts?|documents?|files?|records?|emails?)|(?:the|your|my|our) (?:[\w'’-]+\s+){0,3}?(?:notes?|transcripts?|recording|documents?|files?|records?|summary|report|roster|list|chart) (?:show|shows|showed|say|says|said|mention|mentions|mentioned|note|notes|noted|indicate|indicates|list|lists|has|had|put|puts)(?:\s+that)?|according to (?:the|your) (?:[\w'’-]+\s+){0,3}?[\w'’-]+|I see (?:from|in) (?:the|your) (?:[\w'’-]+\s+){0,3}?[\w'’-]+)\b/gi;
+
 /** Up to ~300 characters of a passage, starting at the sentence where its matched words begin. */
 function snippetAround(text: string, matched: string[]): string {
   if (text.length <= 300) return trim(text, 300);
@@ -697,7 +705,7 @@ const QUANTITY_QUESTION_RE = /\b(how many|how much|what (?:percentage|percent|sh
 const FIGURE_RE = /\d|\b(?:one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|hundred|thousand|million|dozen|half|quarter)\b/i;
 
 /** Question words that name no topic a passage could answer ("On the warehouse SIDE", "is it FULLY resolved"). */
-const SEARCH_NOISE = new Set(["side", "area", "part", "topic", "front", "piece", "point", "happen", "thing", "stuff", "handle", "going", "fully", "really", "actually", "current", "currently", "buyer", "need", "know"]);
+const SEARCH_NOISE = new Set(["side", "area", "part", "topic", "front", "piece", "point", "happen", "thing", "stuff", "handle", "going", "fully", "really", "actually", "current", "currently", "buyer", "need", "know", "hold", "make", "sure", "capture", "specifically"]);
 
 /** The topic words of a question clause, as searchWord forms (names and acronyms marked). */
 function probeWords(clause: string): { words: Set<string>; names: Set<string>; phrases: [string, string][] } {
@@ -742,6 +750,11 @@ export function searchSourcesTop(question: string, documents: DocLike[], n: numb
     // A lead-in ("On the warehouse side:", "Shifting to the lawsuit —") only
     // names the topic; the ask is what follows.
     .replace(/(^|[.!?]\s+)(?:on|about|for|regarding|turning to|shifting to|switching to|back to|speaking of|moving to|now|one more)\b[^:—–?]{0,60}[:—–]\s*/gi, "$1")
+    // Where the interviewer says it read something ("the call notes show",
+    // "came up in your broker notes", "according to the roster") names no
+    // topic — those words made "…the call notes show a preference not to
+    // sell to Bowmont" miss the Zoom line that answers it.
+    .replace(CITATION_RE, " ")
     .split(/[,;:—–]|\s-\s|\band\b|\bor\b|\?/i)
     .map((c) => c.trim())
     .filter((c) => c.length > 3);

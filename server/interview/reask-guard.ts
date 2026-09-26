@@ -28,7 +28,8 @@ import type Anthropic from "@anthropic-ai/sdk";
 import type { InterviewResponse } from "./response-schema";
 import { callInterviewWithRecovery, type InterviewCallParams } from "./turn-guard";
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
-import { questionPart, questionTokens, searchSourcesTop, valuesMateriallyDiffer, sourceLabel, QUESTION_STOP, spokenFigureConflicts } from "./source-context";
+import { questionPart, questionTokens, searchSourcesTop, valuesMateriallyDiffer, sourceLabel, QUESTION_STOP, spokenFigureConflicts, searchWord } from "./source-context";
+import { normaliseTableText } from "./table-text";
 import { modelAnswerVerifier, type AnswerVerifier } from "./answer-check";
 import { selfStatedFindings } from "./reply-guards";
 import type { Document } from "@shared/schema";
@@ -117,6 +118,8 @@ export function keyTokens(key: string): string[] {
 }
 
 const numberTokens = (s: string) => (s.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((n) => n.replace(/,/g, ""));
+/** Figures only — not the digits inside a code ("313A" is a licence class, not 313; "G1", "V-11"). */
+const figureTokens = (s: string) => (s.match(/(?<![A-Za-z\d.-])\d[\d,]*(?:\.\d+)?(?![A-Za-z\d])/g) ?? []).map((n) => n.replace(/,/g, ""));
 const yearsIn = (s: string) => new Set((s.match(/(?<!\d)(?:19|20)\d{2}(?!\d)/g) ?? []).map(Number));
 /** Acronyms and mid-sentence capitalised names — the words that pin a question to one topic (CARB, BBB, EV, Megan). */
 function distinctiveTokens(text: string): Set<string> {
@@ -173,6 +176,180 @@ function subjectWords(question: string): Set<string> {
 function valueText(v: unknown): string {
   const r = repairCharIndexedValue(v);
   return typeof r === "string" ? r : JSON.stringify(r);
+}
+
+/**
+ * The part of a long value or answer that bears on the question, at most
+ * `max` characters: the sentence (or clause) sharing most of the question's
+ * words, with its neighbours while they fit. A plain head-cut hid the
+ * answer from the answer check — "…Owner prefers not to sell to Bowmont
+ * (9-location compe" lost "for emotional reasons"; the reason behind a
+ * figure sat past the 400th character of a long answer — and the check
+ * rightly said the cut text didn't answer the question.
+ */
+export function relevantExcerpt(text: string, question: string, max: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  if (flat.length <= max) return flat;
+  const parts = flat
+    .split(/(?<=[.!?;])\s+/)
+    .flatMap((x) => (x.length > max ? x.split(/(?<=,)\s+|\s+(?=[—–])/) : [x]))
+    .map((x) => x.trim())
+    .filter(Boolean);
+  const q = stemsOfText(question);
+  const names = distinctiveTokens(question);
+  const scores = parts.map((x) => {
+    let v = 0;
+    stemsOfText(x).forEach((t) => { if (q.has(t)) v += names.has(t) ? 3 : 1; });
+    return v;
+  });
+  const top = Math.max(...scores);
+  if (!(top > 0)) return `${flat.slice(0, max)}…`;
+  const best = scores.indexOf(top);
+  let lo = best;
+  let hi = best;
+  let len = parts[best].length;
+  // Grow toward the more relevant neighbour (the next one on a tie) while it fits.
+  for (;;) {
+    const canNext = hi + 1 < parts.length && len + parts[hi + 1].length + 1 <= max;
+    const canPrev = lo > 0 && len + parts[lo - 1].length + 1 <= max;
+    if (canNext && (!canPrev || scores[hi + 1] >= scores[lo - 1])) { hi++; len += parts[hi].length + 1; continue; }
+    if (canPrev) { lo--; len += parts[lo].length + 1; continue; }
+    break;
+  }
+  const body = parts.slice(lo, hi + 1).join(" ");
+  const cut = body.length > max;
+  return `${lo > 0 ? "…" : ""}${cut ? body.slice(0, max) : body}${hi < parts.length - 1 || cut ? "…" : ""}`;
+}
+
+/** Words that name no option ("based on a …", "is it more …"). */
+const OPTION_STOP = new Set(
+  "a an the on by from to for of in at be is it its are was were this that these those your our their more mostly mainly primarily largely based driven expecting expect planning plan would will could should do does did has have had any some just rather than either whether".split(" "),
+);
+/** Words right before a phrase that deny it ("not a trailing average", "rather than …"). */
+const NEGATED_BEFORE_RE = /\b(?:not|never|no|n't|rather than|instead of|other than|except)\s+(?:\S+\s+){0,2}$/i;
+const optionWords = (phrase: string) =>
+  Array.from(
+    new Set(
+      (phrase.match(/[A-Za-z0-9][A-Za-z0-9'’&]*/g) ?? [])
+        .map((w) => w.toLowerCase())
+        .filter((w) => !OPTION_STOP.has(w) && !QUESTION_STOP.has(w) && (w.length >= 3 || /\d/.test(w)))
+        .map((w) => w.slice(0, 5)),
+    ),
+  );
+
+/**
+ * A choice question ("…a trailing-twelve-month average, or a point-in-time
+ * snapshot at closing?") one of whose options the seller's LAST message
+ * already states ("$6.5 to $6.8 million trailing-twelve average") — the
+ * seller had just said it (Great Lakes T10: "that's what I just said"). An
+ * option is the noun phrase on either side of "or"; it counts when at least
+ * two of its words, and three in four of them, sit together in the seller's message
+ * and aren't denied there ("not a trailing average"). Returns the option,
+ * or null. Pure.
+ */
+export function choiceAnsweredNow(question: string, sellerMessage: string): string | null {
+  if (!sellerMessage || !/\bor\b/i.test(question)) return null;
+  // The question sentence itself (its lead-in and any statement stay out).
+  const q = (question.replace(/\s+/g, " ").match(/[^.!?]*\?/g) ?? []).pop()?.trim() ?? "";
+  const said = sellerMessage.replace(/\s+/g, " ");
+  const saidTokens = Array.from(said.matchAll(/[A-Za-z0-9][A-Za-z0-9'’&]*/g)).map((t) => ({ w: t[0].toLowerCase().slice(0, 5), at: t.index ?? 0 }));
+  const phrases: string[] = [];
+  for (const m of Array.from(q.matchAll(/\bor\b/gi))) {
+    const at = m.index ?? 0;
+    // A real choice between two things: "…, or a point-in-time snapshot?" —
+    // not a second question joined on ("…your $10K deductible, or is there
+    // any portion still in dispute?", "…, or does it only apply to…").
+    if (/^\s*(?:is|are|was|were|do|does|did|would|will|can|could|should|has|have|had|might|may|must|if|when|whether|how|what|why|who|not|something|anything|someone|anyone)\b/i.test(q.slice(at + m[0].length))) continue;
+    // …nor a range ("one or two associates"), nor an "or" inside a phrase
+    // the question goes on past ("compounding or community prescriptions,
+    // and if so, how concentrated…"): the choice is what the question ends on.
+    if (/\b(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten|a few|few)\s*$/i.test(q.slice(0, at))) continue;
+    const tail = q.slice(at + m[0].length);
+    if (!/^\s*\?/.test(tail.slice(tail.split(/[?.!:;,—–]/)[0].length))) continue;
+    // Left: the words after the last function word before "or".
+    const lw = (q.slice(0, at).split(/[?.!:;—–]/).pop() ?? "").replace(/,\s*$/, "").split(/[\s,]+/).filter(Boolean);
+    let i = lw.length;
+    while (i > 0 && !OPTION_STOP.has(lw[i - 1].toLowerCase())) i--;
+    phrases.push(lw.slice(i).join(" "));
+    // Right: past the leading function words, up to the next one.
+    const rw = (q.slice(at + m[0].length).split(/[?.!:;,—–]/)[0] ?? "").split(/\s+/).filter(Boolean);
+    let j = 0;
+    while (j < rw.length && OPTION_STOP.has(rw[j].toLowerCase())) j++;
+    let k = j;
+    while (k < rw.length && !OPTION_STOP.has(rw[k].toLowerCase())) k++;
+    phrases.push(rw.slice(j, k).join(" "));
+  }
+  for (const phrase of phrases) {
+    const words = optionWords(phrase);
+    if (words.length < 2) continue;
+    // The best run of the option's words in the message (positions within a short span).
+    for (let s = 0; s < saidTokens.length; s++) {
+      if (!words.includes(saidTokens[s].w)) continue;
+      const window = saidTokens.slice(s, s + words.length + 2).map((t) => t.w);
+      const found = words.filter((w) => window.includes(w)).length;
+      // (Three words in four: "signed contractor agreements" is not answered
+      // by "associates on contractor agreements" — that was about the PTs.)
+      if (found < 2 || found / words.length < 0.75) continue;
+      if (NEGATED_BEFORE_RE.test(said.slice(0, saidTokens[s].at))) continue;
+      return phrase;
+    }
+  }
+  return null;
+}
+
+/** The reply asks the seller (or their staff) to send a document. */
+const DOC_REQUEST_RE =
+  /\b(?:send|upload|e-?mail|forward|share|pull(?: together)?|put together|provide|dig up|get (?:me|us|your broker)|could (?:you|\w+) (?:send|share))\b[^?]{0,40}?\b(?:list|report|breakdown|spreadsheet|schedule|summary|roster|copy|copies|statement|statements|document|file|chart|register|export|record|records|sheet|agreement|contract|certificates?|licen[cs]es?|table)\b/i;
+const LEAD_KIND = new Set(["crm", "website", "social"]);
+/** Words that name no document ("send over a copy of your …"). */
+const REQUEST_STOP = new Set(
+  "send over along upload email mail forward share pull together provide copy copies document documents file files could would please each every their your our breakdown list report summary showing show shows alongside with which specific individually name names help round section like out".split(" "),
+);
+
+/** Up to `max` characters of a document's lines that bear on the question (in their order). */
+export function relevantLines(text: string, question: string, max: number): string {
+  const q = stemsOfText(question);
+  const lines = normaliseTableText(text).split("\n").map((l) => l.trim()).filter((l) => l.length > 3);
+  const scored = lines.map((l, i) => ({ i, l, s: Array.from(stemsOfText(l)).filter((t) => q.has(t)).length })).filter((x) => x.s > 0);
+  scored.sort((a, b) => b.s - a.s || a.i - b.i);
+  const picked: typeof scored = [];
+  let len = 0;
+  for (const x of scored) {
+    if (len + x.l.length + 3 > max) continue;
+    picked.push(x);
+    len += x.l.length + 3;
+  }
+  return picked.sort((a, b) => a.i - b.i).map((x) => x.l).join(" | ");
+}
+
+/**
+ * Documents on file that a document request in the reply may be asking for
+ * again: the reply asks the seller to send something, and a seller-visible
+ * document's name shares two of the request's topic words (the words of the
+ * question and its lead-in: "which technicians hold which licences" →
+ * "Staff roster with technician licences"). Candidates only — the answer
+ * check decides whether the document covers what is asked.
+ */
+export function requestedDocumentCandidates(questionAndLeadIn: string, documents: DocLike[], limit = 2): { docName: string; excerpt: string }[] {
+  if (!DOC_REQUEST_RE.test(questionAndLeadIn)) return [];
+  const words = new Set(
+    (questionAndLeadIn.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? [])
+      .map((w) => searchWord(w))
+      .filter((w) => w.length >= 4 && !REQUEST_STOP.has(w) && !QUESTION_STOP.has(w)),
+  );
+  const out: { docName: string; excerpt: string; score: number }[] = [];
+  for (const d of documents) {
+    if (d.visibility === "broker_only" || LEAD_KIND.has(String(d.sourceKind))) continue;
+    const text = typeof d.extractedText === "string" ? d.extractedText : "";
+    if (!text.trim()) continue;
+    const nameWords = new Set((d.name.match(/[A-Za-z0-9][A-Za-z0-9'’&-]*/g) ?? []).map((w) => searchWord(w)));
+    const shared = Array.from(words).filter((w) => nameWords.has(w));
+    if (shared.length < 2) continue;
+    const excerpt = relevantLines(text, questionAndLeadIn, 420);
+    if (!excerpt) continue;
+    out.push({ docName: d.name, excerpt, score: shared.length });
+  }
+  return out.sort((a, b) => b.score - a.score).slice(0, limit).map(({ docName, excerpt }) => ({ docName, excerpt }));
 }
 
 /** The question sentences of a reply ("" when it asks nothing). */
@@ -247,7 +424,7 @@ export function rankedFactCandidates(
     let d = 0;
     textStems.forEach((t) => { if (q.has(t) && !keyStems.includes(t)) v++; if (qDistinct.has(t)) d++; });
     keyStems.forEach((t) => { if (qDistinct.has(t) && !textStems.has(t)) d++; });
-    return { k, total: k * 2 + v + d * 3, d };
+    return { k, v, total: k * 2 + v + d * 3, d };
   };
   for (const [key, raw] of Object.entries(info)) {
     if (!isFactKey(key) || raw === null || raw === undefined || raw === "" || exclude.has(key.toLowerCase())) continue;
@@ -256,20 +433,22 @@ export function rankedFactCandidates(
     const kt = keyTokens(key.replace(/\d+/g, " "));
     if (kt.length === 0) continue;
     const value = valueText(raw);
-    const s = score(kt, stemsOfText(value.slice(0, 400)));
+    const s = score(kt, stemsOfText(value.slice(0, 800)));
     // Two of the key's words, or half of a short key's (robotCount for "how
     // many presses have robots") — not one broad word alone — or a name /
     // acronym in the value (PPM).
     const broadOnly = s.k === 1 && kt.filter((t) => q.has(t)).every((t) => BROAD_SINGLE.has(t));
-    if (!(s.k >= 2 || (s.k >= 1 && s.k / kt.length >= 0.5 && !broadOnly) || (s.d >= 1 && s.total >= 4))) continue;
-    scored.push({ score: s.total, finding: { kind: "fact", detail: `${key}: ${value.replace(/\s+/g, " ").slice(0, 200)} [${sourceLabel(sources[key], docs)}]`, verify: true } });
+    // …or three of the question's topic words in the value itself ("the annual budget for the press
+    // replacement program" vs maintenanceCapexRun "$1.6 million annually … press replacements").
+    if (!(s.k >= 2 || (s.k >= 1 && s.k / kt.length >= 0.5 && !broadOnly) || (s.d >= 1 && s.total >= 4) || s.v >= 3)) continue;
+    scored.push({ score: s.total, finding: { kind: "fact", detail: `${key}: ${relevantExcerpt(value, question, 280)} [${sourceLabel(sources[key], docs)}]`, verify: true } });
   }
   for (const f of onFile) {
     if (exclude.has(f.key.toLowerCase())) continue;
     const kt = keyTokens(f.key);
     const s = score(kt, stemsOfText(`${f.label} ${f.answer}`));
     if (!(s.k >= 2 || (s.k >= 1 && s.total >= 3) || (s.d >= 1 && s.total >= 4) || s.total >= 4)) continue;
-    scored.push({ score: s.total + 1, finding: { kind: "fact", detail: `${f.key} (${f.label}): ${f.answer.slice(0, 200)} [${f.source}]`, verify: true } });
+    scored.push({ score: s.total + 1, finding: { kind: "fact", detail: `${f.key} (${f.label}): ${relevantExcerpt(f.answer, question, 280)} [${f.source}]`, verify: true } });
   }
   return scored.sort((a, b) => b.score - a.score).slice(0, limit).map((x) => x.finding);
 }
@@ -305,8 +484,8 @@ export function rankedPriorCandidates(question: string, priorQA: PriorQA[], skip
       finding: {
         kind: "prior_question",
         detail: p.current
-          ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`
-          : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`,
+          ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${relevantExcerpt(p.answer, question, 420)}"`
+          : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${relevantExcerpt(p.answer, question, 420)}"`,
         verify: true,
       },
     });
@@ -409,7 +588,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
         const citedBefore = nums.length > 0 && ctx.priorQA.some((p) => nums.some((n) => numberTokens(p.question).includes(n)));
         if (citedNow && !citedBefore) continue;
       }
-      findings.push({ kind: "fact", detail: `${key}: ${value.replace(/\s+/g, " ").slice(0, 160)} [${sourceLabel(src, docs)}]`, verify: true, fallback: true });
+      findings.push({ kind: "fact", detail: `${key}: ${relevantExcerpt(value, question, 220)} [${sourceLabel(src, docs)}]`, verify: true, fallback: true });
     }
 
     // 2. A question asked (and answered) before — reworded or not. The
@@ -431,6 +610,22 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
     // follow-up on it a re-ask.
     const sureAnswer = (p: PriorQA) => !p.current && words(p) >= 3 && !hedged(p);
     const matchedPrior = new Set<PriorQA>();
+    // 2a. A choice whose option the seller's last message states outright
+    // ("trailing-twelve-month average, or a snapshot at closing?" right after
+    // "…$6.5 to $6.8 million trailing-twelve average"). Sure, like a
+    // conflict — it stands without the answer check: offering the seller
+    // what they just said as an option asks them to repeat it. (Replayed
+    // over every recorded interview — 707 seller answers followed by a
+    // question — it fired twice, both real re-asks.)
+    const option = choiceAnsweredNow(question, ctx.sellerMessage);
+    if (option) {
+      const current = ctx.priorQA.find((p) => p.current);
+      if (current) matchedPrior.add(current);
+      findings.push({
+        kind: "prior_question",
+        detail: `the seller's last message already answers it — you offer "${option}" as an option, and they just said: "${relevantExcerpt(ctx.sellerMessage, option, 300)}"`,
+      });
+    }
     if (!delta && !Array.from(q).every((t) => seller.has(t))) {
       for (const p of ctx.priorQA) {
         if (!answered(p)) continue;
@@ -456,8 +651,8 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
         findings.push({
           kind: "prior_question",
           detail: p.current
-            ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`
-            : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${p.answer.replace(/\s+/g, " ").slice(0, 400)}"`,
+            ? `the seller's last message answered your previous question "${p.question.slice(0, 160)}": "${relevantExcerpt(p.answer, question, 420)}"`
+            : `asked ${p.where}: "${p.question.slice(0, 160)}" — the seller answered: "${relevantExcerpt(p.answer, question, 420)}"`,
           verify: true,
           // (A "why" after a "what" is usually the next facet — the model decides.)
           ...(onTopic && sureAnswer(p) && !reason ? { fallback: true } : {}),
@@ -501,16 +696,26 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
       findings.push(...ownStatementFindings(draft, question, ctx.ownStatements ?? []));
     }
 
-    // 3. A source that already answers it (skip when the reply cites one).
-    // Candidates only — the supporting model confirms them (confirmFindings).
-    if (!cites) {
+    // 3. A source that already answers it. Candidates only — the supporting
+    // model confirms them (confirmFindings). Searched even when the reply
+    // cites a source: naming the source is no licence to ask for what it
+    // says ("the staff roster lists your technicians' licences … how many
+    // of your techs hold the 313A?" with the count on the licensing summary).
+    // A passage whose figure the draft already cites is what it builds on.
+    {
       let kept = 0;
       for (const hit of searchSourcesTop(questionWithLeadIn(draft), ctx.documents, 4)) {
         if (kept >= 3) break;
-        // A passage whose figure the draft already cites is what it builds on.
-        if (numberTokens(hit.snippet).some((n) => n.length >= 2 && numberTokens(draft).includes(n))) continue;
+        if (figureTokens(hit.snippet).some((n) => n.length >= 2 && figureTokens(draft).includes(n))) continue;
         kept++;
         findings.push({ kind: "source_text", detail: `${hit.docName} already says (a quoted passage from that source — not your words): «${hit.snippet}»`, quote: hit.snippet, verify: true });
+      }
+      // 3b. A document asked for that is on file ("Could Denise send over a
+      // breakdown of each tech's certifications?" with the staff roster with
+      // technician licences and the licensing summary uploaded).
+      for (const c of requestedDocumentCandidates(questionWithLeadIn(draft), ctx.documents)) {
+        if (findings.some((f) => f.kind === "source_text" && f.detail.startsWith(`${c.docName} `))) continue;
+        findings.push({ kind: "source_text", detail: `${c.docName} is already on file (the seller sent it) — it reads: «${c.excerpt}»`, quote: c.excerpt, verify: true });
       }
     }
   }
@@ -677,15 +882,39 @@ export async function applyReaskGuard(
       if (!(k in response.extractedFields)) response.extractedFields[k] = v;
     }
     current = response;
-    // A second rewrite only for the sure findings — a fact on file, an
-    // answered question, a conflict still not raised — never for a fuzzy
-    // source-text match (each rewrite adds ~20s for the seller).
+    // The rewrite is a NEW question and gets the same check as the draft
+    // (checkRewrite): the acceptance test's re-asks were almost all
+    // rewrites that went out on the mechanical check alone — the 313A count
+    // on the licensing summary, Leah's retention from the Zoom call, the
+    // peg method the seller had just given. After the last rewrite nothing
+    // can change any more: only the sure findings are reported.
     toFix = response.shouldEnd
       ? []
-      : sureFindings(findReasks(response.message, { ...ctx, extractedFields: draft.extractedFields }));
+      : await checkRewrite(response.message, { ...ctx, extractedFields: draft.extractedFields }, attempt + 1, verifier);
   }
   return { response: current, findings, recalled: true, remaining: toFix };
 }
 
 /** Rewrites the re-ask guard may ask for on one turn. */
 export const MAX_REWRITES = 2;
+/** How long the answer check on a rewrite may take (the seller has already waited for one check and a rewrite). */
+export const REWRITE_CHECK_TIMEOUT_MS = 6_000;
+
+/**
+ * The check on rewrite number `attempt` (1 = the first rewrite): every
+ * candidate goes to the answer check, as on the first draft (past the
+ * timeout, only the strong mechanical matches stand); on the last allowed
+ * rewrite no model call is made — nothing could be rewritten again — and
+ * only the sure findings are returned.
+ */
+export async function checkRewrite(
+  message: string,
+  ctx: ReaskContext,
+  attempt: number,
+  verifier: AnswerVerifier = modelAnswerVerifier,
+  timeoutMs: number = REWRITE_CHECK_TIMEOUT_MS,
+): Promise<ReaskFinding[]> {
+  const candidates = findReasks(message, ctx);
+  if (attempt >= MAX_REWRITES) return sureFindings(candidates);
+  return confirmFindings(candidates, message, verifier, timeoutMs);
+}

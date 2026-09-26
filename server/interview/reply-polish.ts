@@ -10,6 +10,8 @@
  *   → options anchored to today      (reply-guards.anchorYearOptions)
  *   → the business's own vocabulary  (reply-guards.localiseTerms)
  *   → "you mentioned" only for the seller's words (reply-guards.fixAttribution)
+ *   → sources the seller knows      (source-wording.fixSourceReferences)
+ *   → the seller as "you"           (seller-voice.revoiceSeller)
  *
  * The chips and the rationale are put through the matching checks.
  */
@@ -30,6 +32,8 @@ import {
   type Jurisdiction,
   type AttributionFact,
 } from "./reply-guards";
+import { fixSourceReferences } from "./source-wording";
+import { revoiceSeller } from "./seller-voice";
 
 export interface PolishContext {
   /** The seller's message this reply answers (null: the opening, or unknown). */
@@ -42,6 +46,8 @@ export interface PolishContext {
   sellerUtterances?: string[];
   facts: AttributionFact[];
   today: Date;
+  /** The names the seller goes by (knowledge-base seller identity) — for re-voicing to "you". */
+  sellerNames?: string[];
 }
 
 /** Where the business is, as one string ("Calgary, AB"). */
@@ -117,6 +123,7 @@ export function buildPolishContext(args: {
     sellerUtterances: said,
     facts,
     today: args.today ?? new Date(),
+    sellerNames: args.kb.seller?.names ?? [],
   };
 }
 
@@ -127,6 +134,8 @@ export interface PolishReport {
   yearShift: number;
   vocabulary: boolean;
   attribution: string[];
+  /** Source references renamed and third-person mentions of the seller re-voiced. */
+  voice?: string[];
 }
 
 /**
@@ -158,6 +167,10 @@ export function polishMessage(message: string, ctx: PolishContext, opts: { closi
   const attr = fixAttribution(text, { sellerText: ctx.sellerText, sellerUtterances: ctx.sellerUtterances, facts: ctx.facts });
   report.attribution = attr.fixes;
   text = attr.message;
+  const named = fixSourceReferences(text);
+  const voiced = revoiceSeller(named.message, ctx.sellerNames ?? []);
+  report.voice = [...named.fixes, ...voiced.fixes];
+  text = voiced.message;
   return { message: text, report };
 }
 
@@ -183,7 +196,7 @@ export function polishChips(chips: string[], polishedMessage: string, report: Po
 
 export function polishRationale(why: string | undefined, ctx: PolishContext): string | undefined {
   if (!why) return why;
-  return localiseTerms(why, ctx.jurisdiction, ctx.location, ctx.sellerText);
+  return revoiceSeller(localiseTerms(why, ctx.jurisdiction, ctx.location, ctx.sellerText), ctx.sellerNames ?? []).message;
 }
 
 /** One log line for what the pass changed ("" when nothing). */
@@ -195,6 +208,7 @@ export function describeReport(r: PolishReport): string {
   if (r.yearShift) parts.push(`past-year options moved forward ${r.yearShift}y`);
   if (r.vocabulary) parts.push("local vocabulary");
   if (r.attribution.length) parts.push(`attribution (${r.attribution.join("; ")})`);
+  if (r.voice?.length) parts.push(`voice (${r.voice.join("; ")})`);
   return parts.join(", ");
 }
 

@@ -39,6 +39,7 @@ import { storage } from "../storage";
 import { agentConfig } from "./config/load-config";
 import type { Deal, Document, InterviewSession } from "@shared/schema";
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
+import { normaliseTableText } from "./table-text";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "extractedText" | "extractedData" | "createdAt" | "updatedAt">>;
@@ -257,7 +258,8 @@ export function evidenceSources(documents: DocLike[], sessions: SessionLike[], c
     const raw = typeof d.extractedText === "string" && d.extractedText.trim()
       ? d.extractedText
       : ["summary", "keyFacts"].map((k) => (typeof data[k] === "string" ? String(data[k]) : "")).filter(Boolean).join("\n");
-    const text = clip(flat(raw), Math.min(PER_SOURCE, budget));
+    // (A flattened table reads row by row — each figure beside its own label: table-text.ts.)
+    const text = clip(flat(normaliseTableText(raw)), Math.min(PER_SOURCE, budget));
     if (!text) continue;
     budget -= text.length;
     n++;
