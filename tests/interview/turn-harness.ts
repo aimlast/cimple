@@ -58,6 +58,11 @@ export interface Harness {
   script: ScriptedReply[];
   /** Every interview-model call: the last user content it was sent. */
   calls: string[];
+  /** Every interview-model call: its system prompt text. */
+  systems: string[];
+  /** Seller-intent classifier replies, in order (partial SellerIntent tool inputs). */
+  intents: Record<string, unknown>[];
+  intentCalls: number;
   logs: string[];
 }
 
@@ -68,6 +73,9 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
     tasks: [],
     script: [],
     calls: [],
+    systems: [],
+    intents: [],
+    intentCalls: 0,
     logs: [],
   };
   if (opts.messages) {
@@ -90,9 +98,18 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
   const proto = (Anthropic as any).Messages.prototype;
   proto.create = async function (params: any) {
     const tool = params?.tools?.[0]?.name;
+    // The seller-intent classifier: a scripted reading, or (none scripted)
+    // a failure — the turn then runs on the instant patterns.
+    if (tool === "seller_intent") {
+      h.intentCalls++;
+      const next = h.intents.shift();
+      if (!next) throw new Error("harness: no scripted intent");
+      return { content: [{ type: "tool_use", id: "i", name: "seller_intent", input: { stop: "none", continueRequest: false, sellerQuestion: "", retractions: [], corrections: [], privacyRequests: [], ...next } }], stop_reason: "tool_use" };
+    }
     if (tool !== "interview_response") throw new Error(`unexpected model call (${tool ?? "no tool"})`);
     const last = params.messages[params.messages.length - 1];
     h.calls.push(typeof last?.content === "string" ? last.content : JSON.stringify(last?.content));
+    h.systems.push(Array.isArray(params.system) ? params.system.map((b: any) => b.text).join("\n") : String(params.system ?? ""));
     const next = h.script.shift();
     if (!next) throw new Error("harness: no scripted reply left");
     return { content: [{ type: "tool_use", id: "t", name: "interview_response", input: toolInput(next) }], stop_reason: "tool_use" };

@@ -88,18 +88,74 @@ const RETRACTION_FORMS = [
   String.raw`(?:let me|lemme|i(?:'ll| will|'d like to| would like to| want to| wanna| need to| have to| gotta| should| must| better)?|can i|could i) take (?:that|those|it|this|them|(?:that|those|the|my) [\w-]+(?: [\w-]+)?) back(?! (?:to|from|into|in|for|and|at|on|off|when|every|each|as|with|under|through)\b)`,
   String.raw`(?:let me|lemme|i(?:'d like to| would like to| want to| wanna| need to| have to| should)?) take back (?:what i (?:just )?said|that(?: last)?(?: number| figure| part| bit)?|those (?:numbers|figures))`,
   String.raw`i was (?:just |only |really |kind of |sort of |kinda )?guessing(?=\s*(?:[.,;:!?—–)-]|$|\s(?:on|about|there|at|with|when|before|earlier|here|and|so|but|really|honestly|though)\b))`,
-  String.raw`(?:that|those|it|this) (?:was|were|is|are) (?:just |only |really |more of |more like )?(?:a |my )?(?:rough |wild |total )?guess(?:es|timates?)?(?=\s*(?:[.,;:!?—–)-]|$|\s(?:on my part|really|honestly|so|and|but|though|at best)\b))`,
+  String.raw`(?:that|those|it|this) (?:was|were|is|are) (?:just |only |really |more of |more like )?(?:a |my )?(?:rough |wild |total )?guess(?:es|timates?)?(?=\s*(?:[.,;:!?—–)-]|$|\s(?:on my part|on (?:the|that|those|my)|about (?:the|that|those)|there|really|honestly|so|and|but|though|at best|anyway)\b))`,
   String.raw`${IMPERATIVE_AT}scratch that(?! (?:off|out|from)\b)`,
   String.raw`${IMPERATIVE_AT}ignore (?:what i (?:just )?said|that(?: last)?(?: number| figure| part| bit| answer)?(?=\s*(?:[.,;:!?—–-]|$|\s(?:i|it|the|we)\b))|those (?:numbers|figures))`,
-  String.raw`${IMPERATIVE_AT}don'?t (?:put|write|include|use|record|keep) (?:that|those|it|this|them)(?: \w+){0,3} (?:in|down|on file)(?=\s*(?:[.,;:!?—–-]|$|\s(?:the|your|any|my|there|please|yet)\b))`,
   String.raw`${IMPERATIVE_AT}(?:strike|disregard|forget) (?:that(?: last)?(?: number| figure| part| bit| answer)?(?=\s*(?:[.,;:!?—–-]|$))|those (?:numbers|figures)|what i (?:just )?said)`,
   String.raw`i (?:mis-?spoke|shouldn'?t have said (?:that|it|those))`,
-  String.raw`${IMPERATIVE_AT}(?:leave|keep) (?:that|those|it|them) out(?: of (?:the|your|any) (?:book|cim|document|memo|write-?up|materials|notes))?(?=\s*(?:[.,;:!?—–-]|$|\s(?:please|for now|i|it)\b))`,
 ];
 export const RETRACTION_RE = new RegExp(`\\b(?:${RETRACTION_FORMS.join("|")})`, "i");
 
+/**
+ * The seller withdrawing or correcting something they said (the instant
+ * pattern tier; seller-intent.ts classifies the turn properly). A marker
+ * alone doesn't say WHICH: "Scratch that — the lease is 12 years, not 10"
+ * is a correction (the new value stands), "I was guessing, Rob has the
+ * list" a withdrawal — see detectCorrection. A request to keep something
+ * out of the book is neither (detectPrivacyRequest).
+ */
 export function detectRetraction(sellerMessage: string): boolean {
   return RETRACTION_RE.test(sellerMessage.replace(/[’‘]/g, "'"));
+}
+
+// A replacement value given with the withdrawal: "it's 12", "closer to 40",
+// "14 employees not 12", "it's Rob, not Rick", "make that $2.4M".
+const NUMBERISH = String.raw`(?:\$\s?)?(?:\d[\d,.]*|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty|forty|fifty|sixty|seventy|eighty|ninety|a hundred|half)`;
+const CORRECTION_FORMS = [
+  String.raw`(?:it'?s|it is|it was|they'?re|there(?:'s| is| are| were)|we (?:have|had|do|did|run|ran|made|make|are at|were at)|we'?re at|that'?s|that was|closer to|more like|make (?:that|it)|should (?:be|have been|read)|i meant|actually|really|more accurately|the (?:real|right|correct|actual) (?:number|figure|one|answer) is|revenue was)\s+(?:about |around |roughly |only |just |exactly |more like |actually |really )?${NUMBERISH}`,
+  String.raw`\b${NUMBERISH}(?:\s*[a-z%$'/-]+){0,3}\s*,?\s*(?:and )?not\s+${NUMBERISH}`,
+  String.raw`\bnot\s+${NUMBERISH}[\w%]*\s*[,;—–-]+\s*(?:it'?s|but|more like|closer to)?\s*${NUMBERISH}`,
+  String.raw`(?:it'?s|it was|the \w+ (?:is|was)|they'?re|he'?s|she'?s)\s+[A-Z][\w.&'-]*(?:\s+[A-Z][\w.&'-]*){0,3},?\s+not\s+[A-Z]`,
+];
+const CORRECTION_RE = new RegExp(`(?:${CORRECTION_FORMS.join("|")})`, "i");
+const CORRECTION_MARKER_RE =
+  /\b(?:scratch that|i mis-?spoke|ignore what i said|i take (?:that|it) back|take that back|correction|let me correct|i got (?:that|it) wrong|my mistake|i meant|sorry,? (?:i|it'?s|it was|that'?s)|wait|actually|no,? no|not quite|that'?s wrong|that was wrong|i was wrong)\b/i;
+
+/**
+ * A correction: the seller replaces a value with a new one in the same
+ * message ("Scratch that — the lease is 12 years, not 10", "Sorry, I
+ * misspoke, we have 14 employees not 12"). The new value is the fact — it is
+ * never withdrawn with the old one (QA harvest: both were deleted).
+ */
+export function detectCorrection(sellerMessage: string): boolean {
+  const text = sellerMessage.replace(/[’‘]/g, "'");
+  const xNotY = new RegExp(CORRECTION_FORMS.slice(1).join("|"), "i");
+  if (xNotY.test(text)) return true;
+  return (CORRECTION_MARKER_RE.test(text) || RETRACTION_RE.test(text)) && CORRECTION_RE.test(text);
+}
+
+// "Keep that out of the book", "don't put that in the document", "that's
+// between us", "off the record" — privacy, not a withdrawal: the detail goes
+// to the broker's private notes; nothing on file is deleted (QA harvest: a
+// health disclosure was treated as a retraction and the reason for sale
+// withdrawn).
+const DOC_NOUN = String.raw`(?:book|cim|c\.i\.m\.?|document|doc|memo|memorandum|write-?up|materials|listing|marketing|report|profile|package|record|file|thing you(?:'re| are) writing|sale document|sales? package)`;
+const PRIVACY_FORMS = [
+  String.raw`${IMPERATIVE_AT}(?:leave|keep) (?:that|this|those|it|them|the [\w-]+(?: [\w-]+)? (?:part|bit|stuff|piece|detail|details))(?: part| bit)? (?:out|off)(?: of (?:the|your|any|this) ${DOC_NOUN}| of (?:it|there|this))?(?=\s*(?:[.,;:!?—–-]|$|\s(?:please|for now|i|it|if|ok|okay)\b))`,
+  String.raw`${IMPERATIVE_AT}(?:please )?(?:don'?t|do not|never) (?:put|write|include|mention|share|use|record|keep|say) (?:that|this|those|it|them|any of (?:that|this)|the [\w-]+(?: [\w-]+)? (?:part|bit|stuff|detail|details|number|figure))(?: \w+){0,3} (?:in|into|on|down|to buyers|with buyers|on file)(?=\s*(?:[.,;:!?—–-]|$|\s(?:the|your|any|my|a|there|please|yet|for|anywhere)\b))`,
+  String.raw`(?:that'?s|this is|it'?s|keep (?:it|this|that)) (?:just |strictly |only )?between (?:us|you and me|me and you|you and my broker|me and my broker|ourselves)`,
+  String.raw`off the record`,
+  String.raw`(?:keep|treat) (?:that|this|it|them|those)(?: part| bit)? (?:private|confidential|to yourself|under wraps|quiet)`,
+  String.raw`(?:that'?s|this is|it'?s) (?:private|confidential|personal)(?:,| and| —| so)? (?:please|don'?t|keep|not for)`,
+  String.raw`(?:i )?(?:don'?t|do not) want (?:that|this|it|those|them|buyers|anyone|any buyer)(?: \w+){0,4} (?:in (?:the|a|any|your) ${DOC_NOUN}|to (?:know|see|read|hear) (?:that|this|about))`,
+  String.raw`(?:just |only )?for (?:my |the )?broker'?s? (?:eyes|ears|information|to know)`,
+  String.raw`(?:please )?(?:don'?t|do not) (?:tell|share (?:this|that|it) with|mention (?:this|that|it) to) (?:the )?(?:buyers?|anyone|anybody)`,
+];
+const PRIVACY_RE = new RegExp(`\\b(?:${PRIVACY_FORMS.join("|")})`, "i");
+
+/** The seller asking that something be kept out of the sale document. */
+export function detectPrivacyRequest(sellerMessage: string): boolean {
+  return PRIVACY_RE.test(sellerMessage.replace(/[’‘]/g, "'"));
 }
 
 export interface Retraction {
@@ -228,6 +284,73 @@ export function applySellerRetractions(
   return result;
 }
 
+/**
+ * Takes ONE claim out of a fact that also holds true content (Great Lakes:
+ * "…Buckeye Freight handles dedicated outbound lanes (~40 trucks/year).
+ * Approximately 40 customer trucks per week…" — the seller withdrew only
+ * the 40 trucks). `proposed` is the supporting model's rewrite of the value
+ * without the claim; it is used only when it is really the same value minus
+ * the claim (its words come from the value, none of the claim's figures
+ * survive). Otherwise the sentences / clauses that carry the claim — its
+ * figures, or failing that its distinctive words — are dropped.
+ * Returns the value to keep ("" = nothing true is left: remove the whole
+ * fact), or null when the claim can't be found in it.
+ */
+export function removeClaim(value: string, claim: string, proposed?: string | null, terms: string[] = [], opts: { termsOnly?: boolean } = {}): string | null {
+  const v = value.trim();
+  if (!v || !claim.trim()) return null;
+  const claimNums = numbersIn(claim);
+  const termRes = terms.map(termRegex).filter((re): re is RegExp => !!re);
+  const hasClaim = (text: string): boolean => {
+    if (termRes.some((re) => re.test(text))) return true;
+    // A private detail is found by its own words only — "wants to sell"
+    // shared with a reason-for-sale is not the diagnosis (QA round V).
+    if (opts.termsOnly) return false;
+    const nums = numbersIn(text);
+    if (claimNums.length > 0) return claimNums.some((c) => nums.some((n) => Math.abs(n - c) <= Math.max(1e-9, Math.abs(c) * 0.01)));
+    const distinctive = new Set(Array.from(stems(claim)).filter((w) => !WITHDRAWAL_VOCAB.has(w)));
+    return distinctive.size > 0 && overlap(stems(text), distinctive) >= Math.min(2, distinctive.size);
+  };
+  if (!hasClaim(v)) return null;
+  const sentencesOf = (t: string) => t.split(/(?<=[.;!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9$%]+/g, " ").trim();
+  if (typeof proposed === "string") {
+    const p = proposed.trim();
+    if (p === "" && sentencesOf(v).every(hasClaim)) return "";
+    const own = Array.from(stems(p));
+    const fromValue = own.length === 0 ? 1 : own.filter((w) => stems(v).has(w)).length / own.length;
+    // Every sentence the rewrite dropped or changed must carry the claim —
+    // a rewrite that also loses something true is not used (Clearwater: a
+    // private-detail move dropped "wants to sell while the business is
+    // growing").
+    const kept = norm(p);
+    const onlyClaimTouched = sentencesOf(v).every((s) => kept.includes(norm(s)) || hasClaim(s));
+    if (p && p !== v && p.length < v.length && fromValue >= 0.85 && !hasClaim(p) && onlyClaimTouched) return p;
+  }
+  // A claim in brackets goes on its own: "outbound lanes (~40 trucks/year)".
+  const unbracketed = v.replace(/\s*\([^()]*\)/g, (m) => (hasClaim(m) ? "" : m)).trim();
+  const parts = unbracketed.split(/(?<=[.;!?])\s+|\n+/).map((s) => s.trim()).filter(Boolean);
+  if (unbracketed !== v && !hasClaim(unbracketed)) return unbracketed;
+  const pieces = parts.length > 1 ? parts : unbracketed.split(/,\s+|\s+[—–]\s+/).map((s) => s.trim()).filter(Boolean);
+  const kept = pieces.filter((s) => !hasClaim(s));
+  if (kept.length === pieces.length) return null;
+  if (kept.length === 0) return "";
+  const joined = parts.length > 1 ? kept.join(" ") : kept.join(", ");
+  return joined.replace(/[,;\s]+$/, "").replace(/^\s*[,;]\s*/, "");
+}
+
+/**
+ * A word or phrase that must not appear, as a pattern: whole words, case
+ * ignored — except a short acronym ("MS"), which must match its case so
+ * "ms" and "terms" don't.
+ */
+export function termRegex(term: string): RegExp | null {
+  const t = term.trim();
+  if (t.length < 2 || (t.length < 3 && !/^[A-Z]{2}$/.test(t))) return null;
+  const body = t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/\s+/g, "\\s+");
+  return /^[A-Z]{2,4}$/.test(t) ? new RegExp(`\\b${body}\\b`) : new RegExp(`\\b${body}`, "i");
+}
+
 const numbersIn = (text: string): number[] => {
   const typed = typedNumericValues(text).map((t) => t.value);
   const bare = Array.from(text.matchAll(/\d[\d,]*(?:\.\d+)?/g)).map((m) => parseFloat(m[0].replace(/,/g, "")));
@@ -268,16 +391,29 @@ export function guessRetractedFields(info: Info, sellerMessage: string, ctx: { s
     .filter(([k, s]) => !k.startsWith("_") && s?.sessionId === ctx.sessionId && s.turn === ctx.turn - 1 && isLiveSellerKind(s.source))
     .map(([k]) => k);
   if (lastTurn.length === 0) return [];
-  const said = stems(sellerMessage);
+  // A correction ("I misspoke — it's 9 trucks") or a privacy request isn't a
+  // withdrawal of the previous answer (Northbeam: "sorry — I misspoke, it's 9
+  // trucks" withdrew the unrelated headcount the previous turn recorded).
+  if (detectCorrection(sellerMessage) || detectPrivacyRequest(sellerMessage)) return [];
+  // Shared words must be about the fact itself — not the vocabulary of
+  // withdrawing ("sorry", "numbers", "guess", "right").
+  const said = new Set(Array.from(stems(sellerMessage)).filter((w) => !WITHDRAWAL_VOCAB.has(w)));
+  const saidNums = numbersIn(sellerMessage);
   const matching = lastTurn.filter((k) => {
     const v = info[k];
     const text = `${k.replace(/([A-Z])/g, " $1")} ${typeof v === "string" ? v : JSON.stringify(v ?? "")}`;
-    return overlap(stems(text), said) > 0;
+    const factNums = numbersIn(text);
+    if (saidNums.some((n) => factNums.some((f) => Math.abs(n - f) <= Math.max(1e-9, Math.abs(f) * 0.01)))) return true;
+    return overlap(new Set(Array.from(stems(text)).filter((w) => !WITHDRAWAL_VOCAB.has(w))), said) > 0;
   });
   if (matching.length > 0) return matching;
   const words = (sellerMessage.trim().match(/\S+/g) ?? []).length;
   return lastTurn.length === 1 && words <= 20 ? lastTurn : [];
 }
+
+const WITHDRAWAL_VOCAB = new Set(
+  "sorry take back guess guessing guessed guesses scratch ignore misspoke misspeak wrong number numbers figure figures book said told earlier before meant mean real really actual actually right correct honest honestly wait part answer estimate estimates rough ballpark".split(" ").map((w) => w.slice(0, 5)),
+);
 
 /** Who the seller says holds the real answer: "Rob keeps the tooling list" → "Rob". */
 export function whoHoldsTheAnswer(sellerMessage: string): string {
@@ -307,7 +443,11 @@ const SPOKEN_MONTH_RE = new RegExp(
 const YEAR_RE = /\b(19\d{2}|20\d{2})\b/g;
 
 const FUTURE_RE = /\b(?:will|'ll|going to|gonna|plan(?:ning)? to|planned|planning|scheduled|expect(?:ing|ed)? to|next|upcoming|coming up|intend|hope to|aim(?:ing)? to|about to|set to|due (?:in|to))\b|\b(?:are|'re|is|'s|am|'m) \w+ing\b/i;
-const PAST_RE = /\b(?:was|were|did|had|got|went|came|made|last|ago|back in|already|just|used to|happened|\w+ed)\b/i;
+// Irregular past forms count too — "We sent it to collections in March" is
+// past; without "sent" the clause read as tenseless and a "we'll get most of
+// it back" in the next clause made it future (Ridgeline: March 2027).
+// (Forms that double as present — put, set, cut, let, hit, read — don't.)
+const PAST_RE = /\b(?:was|were|did|had|got|went|came|made|last|ago|back in|already|just|used to|happened|sent|took|paid|lost|sold|bought|built|began|left|won|gave|told|said|brought|caught|found|held|kept|knew|led|met|ran|saw|spent|stood|thought|wrote|became|broke|chose|drove|fell|felt|flew|forgot|grew|heard|hired|meant|rode|rose|sank|sat|spoke|stole|struck|taught|threw|wore|bid|hung|dug|fought|sought|shot|shut down|signed|opened|closed|\w+ed)\b/i;
 // "was expecting to…", "were planning…" — past, though FUTURE_RE matches the -ing.
 const PAST_PROGRESSIVE_RE = /\b(?:was|were) (?:\w+ing|going to|planning|expecting|hoping)\b/i;
 
@@ -326,12 +466,31 @@ export function tenseOf(sentence: string, cue?: string, wider?: string): Tense {
   const c = (cue ?? "").toLowerCase();
   if (c === "last" || c === "back in" || c === "since") return "past";
   if (c === "next" || c === "coming" || c === "come" || c === "by" || c === "until" || c === "til") return "future";
-  for (const text of [sentence, wider].filter((s): s is string => !!s)) {
-    if (PAST_PROGRESSIVE_RE.test(text)) return "past";
-    if (FUTURE_RE.test(text)) return "future";
-    if (PAST_RE.test(text)) return "past";
-  }
+  const own = clauseTense(sentence);
+  if (own !== "unknown") return own;
+  // The rest of the sentence decides only for a bare time phrase ("In March,
+  // we're moving the shop") — a clause with its own verb that doesn't say
+  // is left unknown (verified, never guessed) rather than borrowing another
+  // clause's tense ("We sent it to collections in March, honestly I think
+  // we'll get most of it back" is not a future March).
+  if (wider && isBareTimePhrase(sentence)) return clauseTense(wider);
   return "unknown";
+}
+
+function clauseTense(text: string): Tense {
+  if (PAST_PROGRESSIVE_RE.test(text)) return "past";
+  if (FUTURE_RE.test(text)) return "future";
+  if (PAST_RE.test(text)) return "past";
+  return "unknown";
+}
+
+const TIME_PHRASE_FILLER = new Set(
+  "in on by of the early mid late end beginning start back this last next sometime around about then so and but or come coming until til since from through".split(" "),
+);
+function isBareTimePhrase(clause: string): boolean {
+  const month = new RegExp(String.raw`^(?:${MONTH_ALT})$`, "i");
+  const words = (clause.toLowerCase().match(/[a-z]+/g) ?? []).filter((w) => !TIME_PHRASE_FILLER.has(w) && !month.test(w));
+  return words.length <= 1;
 }
 
 /**
@@ -364,14 +523,67 @@ export function resolveMonthYear(month: number, tense: Tense, today: Date): numb
   return null;
 }
 
+const SEASON_START: Record<string, number> = { spring: 2, summer: 5, fall: 8, autumn: 8, winter: 11 };
+const seasonOfMonth = (m: number): string => (m === 11 || m <= 1 ? "winter" : m <= 4 ? "spring" : m <= 7 ? "summer" : "fall");
+
+/**
+ * The year a relative season names, from today: in September 2026 "last
+ * fall" is fall 2025 (this fall is under way), "last spring" is spring 2026,
+ * "next spring" 2027. Winter straddles two years — null (not resolved).
+ */
+export function resolveSeasonYear(season: string, cue: "last" | "this" | "next", today: Date): number | null {
+  const s = season.toLowerCase() === "autumn" ? "fall" : season.toLowerCase();
+  if (s === "winter" || SEASON_START[s] === undefined) return null;
+  const y = today.getFullYear();
+  const m = today.getMonth();
+  const start = SEASON_START[s];
+  const current = seasonOfMonth(m) === s;
+  if (cue === "this") return y;
+  if (cue === "last") return current || start > m ? y - 1 : y;
+  return start > m ? y : y + 1;
+}
+
+export interface RelativeYearPhrase {
+  phrase: string;
+  year: number;
+  /** "year" for this/last/next year; the season's name for a season. */
+  unit: string;
+}
+
+/**
+ * Relative years the seller used, resolved against today: "this year",
+ * "last year", "next year", "the current year", "year to date", "last
+ * fall", "this past spring", "next summer".
+ */
+export function relativeYearPhrases(text: string, today: Date): RelativeYearPhrase[] {
+  const y = today.getFullYear();
+  const t = text.toLowerCase().replace(/[’‘]/g, "'");
+  const out: RelativeYearPhrase[] = [];
+  const add = (phrase: string, year: number | null, unit: string) => {
+    if (year !== null && !out.some((p) => p.phrase === phrase)) out.push({ phrase, year, unit });
+  };
+  for (const m of Array.from(t.matchAll(/\b(?:(this|the current|current|last|the previous|previous|next|the coming|coming)(?: fiscal)? year|year[- ]to[- ]date|ytd|a year ago)\b/g))) {
+    const w = m[1] ?? "";
+    const year = /last|previous/.test(w) || /a year ago/.test(m[0]) ? y - 1 : /next|coming/.test(w) ? y + 1 : y;
+    add(m[0], year, "year");
+  }
+  for (const m of Array.from(t.matchAll(/\b(this past|last|this|next|this coming)\s+(spring|summer|fall|autumn|winter)\b/g))) {
+    const cue = m[1] === "this past" ? "last" : m[1] === "this coming" ? "next" : (m[1] as "last" | "this" | "next");
+    add(m[0], resolveSeasonYear(m[2], cue, today), m[2] === "autumn" ? "fall" : m[2]);
+  }
+  return out;
+}
+
 /** Years a seller's relative wording points at: "last year", "three years ago", "in two years". */
 export function relativeYears(text: string, today: Date): number[] {
   const y = today.getFullYear();
-  const out: number[] = [];
+  const out: number[] = relativeYearPhrases(text, today).map((p) => p.year);
   const t = text.toLowerCase();
   if (/\blast year\b/.test(t)) out.push(y - 1);
   if (/\bthis year\b/.test(t)) out.push(y);
   if (/\bnext year\b/.test(t)) out.push(y + 1);
+  // Winter straddles the new year: "last winter" grounds both.
+  if (/\b(?:last|this past) winter\b/.test(t)) out.push(today.getMonth() >= 11 ? y : y - 1, today.getMonth() >= 11 ? y + 1 : y);
   const WORDN: Record<string, number> = { one: 1, a: 1, two: 2, couple: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, fifteen: 15, twenty: 20, thirty: 30 };
   for (const m of Array.from(t.matchAll(/\b(\d{1,2}|a|one|two|couple(?: of)?|three|four|five|six|seven|eight|nine|ten|eleven|twelve|fifteen|twenty|thirty)\s+(?:\w+\s+)?years?\b(\s+ago)?/g))) {
     const raw = m[1].replace(/ of$/, "");
@@ -424,6 +636,10 @@ export function applyDateFidelityGuard(
     prevAiMessage?: string;
     /** All text on file (facts as the interview sees them). */
     onFileText?: string;
+    /** The seller's earlier messages this session, oldest first (for a value written a turn later). */
+    sessionSellerMessages?: string[];
+    /** Keys already on file — a year-named key is renamed only onto a free key. */
+    existingKeys?: Iterable<string>;
     today?: Date;
   },
 ): DateFlag[] {
@@ -444,7 +660,7 @@ export function applyDateFidelityGuard(
 
   for (const change of changes) {
     if (change.source !== "seller_statement") continue;
-    if (!/\b(?:19|20)\d{2}\b/.test(change.newValue)) continue;
+    if (!/\b(?:19|20)\d{2}\b/.test(change.newValue) && !/(?:19|20)\d{2}$/.test(change.fieldName)) continue;
     const prior = String(change.previousValue ?? "");
     const priorYears = new Set<number>(Array.from(prior.matchAll(YEAR_RE)).map((m) => Number(m[1])));
     let value = change.newValue;
@@ -470,13 +686,41 @@ export function applyDateFidelityGuard(
       // context ("e-trucks on order for mid-2026") is not.
       const monthInSeller = Array.from(seller.matchAll(SPOKEN_MONTH_RE)).some((x) => monthIndex(x[2]) === month && !(/^may$/i.test(x[2]) && !x[1]));
       if (monthInSeller && new RegExp(String.raw`\b${year}\b`).test(seller)) { handledYearsAt.add(m.index ?? -1); continue; }
-      // Did the seller name this month on its own?
-      let spoken: RegExpExecArray | null = null;
-      for (const s of Array.from(seller.matchAll(SPOKEN_MONTH_RE))) {
-        if (monthIndex(s[2]) !== month || s[3]) continue;
-        if (/^may$/i.test(s[2]) && !s[1]) continue;
-        spoken = s as RegExpExecArray;
-        break;
+      // Did the seller name this month on its own — this turn, or (a value
+      // written a turn later from earlier context) in one of their last few
+      // messages this session? Ridgeline: "sent it to collections in March"
+      // on turn 12 became "March 2025" on turn 13 with no month said.
+      const bareMonthIn = (text: string): RegExpExecArray | null => {
+        for (const s of Array.from(text.matchAll(SPOKEN_MONTH_RE))) {
+          if (monthIndex(s[2]) !== month || s[3]) continue;
+          if (/^may$/i.test(s[2]) && !s[1]) continue;
+          return s as RegExpExecArray;
+        }
+        return null;
+      };
+      let spoken = bareMonthIn(seller);
+      let spokenIn = seller;
+      let ambiguousEarlier = false;
+      if (!spoken) {
+        // Only when no document or fact on file gives this month that year —
+        // a lease signed "March 2025" on file is grounded, whatever the
+        // seller said about another March.
+        const pairOnFile = new RegExp(String.raw`\b${MONTHS[month].slice(0, 3)}\w*\.?,?\s+(?:of\s+)?${year}\b`, "i").test(ctx.onFileText ?? "");
+        if (!pairOnFile) {
+          // Several earlier mentions of this month that point at different
+          // years ("sent it to collections in March" / "we expand in
+          // March") can't tell which one this is — the first one found is
+          // used for the wording, but the year is only verified.
+          const hits = (ctx.sessionSellerMessages ?? []).slice(-4).reverse()
+            .map((text) => ({ text, hit: bareMonthIn(text) }))
+            .filter((x): x is { text: string; hit: RegExpExecArray } => !!x.hit);
+          if (hits.length > 0) {
+            spoken = hits[0].hit;
+            spokenIn = hits[0].text;
+            const years = new Set(hits.map((x) => resolveMonthYear(month, tenseOf(clauseAround(x.text, x.hit.index ?? 0), x.hit[1], sentenceAround(x.text, x.hit.index ?? 0)), today)));
+            if (years.size > 1) ambiguousEarlier = true;
+          }
+        }
       }
       if (!spoken) {
         // The model re-dating a month this fact already holds with another
@@ -493,9 +737,12 @@ export function applyDateFidelityGuard(
         continue; // otherwise not a month the seller just gave — the bare-year check below decides
       }
       handledYearsAt.add(m.index ?? -1);
-      const tense = tenseOf(clauseAround(seller, spoken.index ?? 0), spoken[1], sentenceAround(seller, spoken.index ?? 0));
-      const resolved = resolveMonthYear(month, tense, today);
-      if (resolved === null) {
+      const tense = tenseOf(clauseAround(spokenIn, spoken.index ?? 0), spoken[1], sentenceAround(spokenIn, spoken.index ?? 0));
+      // "Last fall, effective October": a relative season the month sits
+      // in settles the year when the clause alone doesn't.
+      const seasonYear = relativeYearPhrases(spokenIn, today).find((p) => p.unit !== "year" && seasonOfMonth(month) === p.unit)?.year ?? null;
+      const resolved = tense === "unknown" && seasonYear !== null ? seasonYear : resolveMonthYear(month, tense, today);
+      if (resolved === null || ambiguousEarlier) {
         verify = true;
         reasons.push(`the seller said "${spoken[0].trim()}" without a year; "${m[0]}" can't be confirmed`);
         continue;
@@ -519,10 +766,105 @@ export function applyDateFidelityGuard(
       }
     }
 
+    // Relative years: "this year it's back over eight hundred" became
+    // "(current year, 2025)" on 25 Sep 2026 (Clearwater). A year the value
+    // labels as this / last / next year, or pins to a season the seller
+    // named relatively ("last fall" → "fall 2024"), is resolved from today.
+    const said = relativeYearPhrases(`${seller}`, today);
+    // (Calendar years only — a "current fiscal year" may carry another
+    // year's label, so fiscal wording is left alone.)
+    const labelled: Array<{ re: RegExp; year: number; what: string }> = [
+      { re: /\b(?:the )?(?:current|this) year\W{0,4}((?:19|20)\d{2})\b|\b((?:19|20)\d{2})\W{0,4}(?:the )?(?:current|this) year\b/gi, year: today.getFullYear(), what: "this year" },
+      { re: /\b(?:last|previous|prior) year\W{0,4}((?:19|20)\d{2})\b|\b((?:19|20)\d{2})\W{0,4}(?:last|previous|prior) year\b/gi, year: today.getFullYear() - 1, what: "last year" },
+      { re: /\bnext year\W{0,4}((?:19|20)\d{2})\b|\b((?:19|20)\d{2})\W{0,4}next year\b/gi, year: today.getFullYear() + 1, what: "next year" },
+    ];
+    // "(2025 year-to-date)" — year-to-date is this year only when the seller
+    // spoke of this year (a fiscal year can run on).
+    if (said.some((p) => p.unit === "year" && p.year === today.getFullYear())) {
+      labelled.push({
+        re: /\b((?:19|20)\d{2})\W{0,4}(?:year[- ]to[- ]date|ytd)\b|\b(?:year[- ]to[- ]date|ytd)\W{0,4}((?:19|20)\d{2})\b/gi,
+        year: today.getFullYear(),
+        what: "this year",
+      });
+    }
+    let yearFixedFrom: number | null = null;
+    let yearFixedTo: number | null = null;
+    const fixedYears = new Set<number>();
+    for (const l of labelled) {
+      value = value.replace(l.re, (whole: string, a?: string, b?: string) => {
+        const y = Number(a ?? b);
+        if (!y || y === l.year || (sellerYears.has(y) && new RegExp(`\\b${y}\\b`).test(seller))) return whole;
+        corrected = true;
+        fixedYears.add(y);
+        yearFixedFrom = y;
+        yearFixedTo = l.year;
+        reasons.push(`the seller said "${l.what}" — that's ${l.year}, the model wrote ${y}`);
+        return whole.replace(String(y), String(l.year));
+      });
+    }
+    for (const p of said.filter((x) => x.unit !== "year")) {
+      const re = new RegExp(String.raw`\b(${p.unit === "fall" ? "fall|autumn" : p.unit})\s+(?:of\s+)?((?:19|20)\d{2})\b`, "gi");
+      value = value.replace(re, (whole: string, word: string, yy: string) => {
+        const y = Number(yy);
+        if (y === p.year || new RegExp(`\\b${word}\\s+(?:of\\s+)?${y}\\b`, "i").test(seller)) return whole;
+        corrected = true;
+        fixedYears.add(y);
+        reasons.push(`the seller said "${p.phrase}" — that's ${word} ${p.year}, the model wrote ${y}`);
+        return `${word} ${p.year}`;
+      });
+    }
+    // A value dating something to one year when the seller only said "this
+    // year" / "last year" (and no year of their own): off by one from what
+    // they meant is the classic slip — verified, not silently kept.
+    // (A year the question itself named is the seller answering about that
+    // year — "your 2024 owner compensation?" → "…on last year's return".)
+    if (!corrected && said.some((p) => p.unit === "year")) {
+      const ys = Array.from(new Set(Array.from(value.matchAll(YEAR_RE)).map((m) => Number(m[1]))));
+      const meant = said.filter((p) => p.unit === "year").map((p) => p.year);
+      const asked = new RegExp(`\\b${ys[0]}\\b`).test(ctx.prevAiMessage ?? "");
+      const saidIt = new RegExp(`\\b${ys[0]}\\b`).test(seller);
+      if (ys.length === 1 && !asked && !saidIt && !meant.includes(ys[0]) && meant.some((r) => Math.abs(r - ys[0]) === 1) && !priorYears.has(ys[0])) {
+        verify = true;
+        reasons.push(`the seller said "${said.find((p) => p.unit === "year")!.phrase}" (${meant.join("/")}); the value says ${ys[0]}`);
+      }
+    }
+    // A key named for a year the seller only said as "this year" / "last
+    // year" — off by one, the classic slip ("setonRevenue2025" for "this
+    // year it's back over eight hundred", 25 Sep 2026).
+    const keyYear = Number(change.fieldName.match(/((?:19|20)\d{2})$/)?.[1] ?? NaN);
+    const meantYears = said.filter((p) => p.unit === "year");
+    if (
+      yearFixedFrom === null &&
+      !Number.isNaN(keyYear) &&
+      meantYears.length === 1 &&
+      Math.abs(keyYear - meantYears[0].year) === 1 &&
+      ![seller, ctx.prevAiMessage ?? "", value].some((t) => new RegExp(`\\b${keyYear}\\b`).test(t))
+    ) {
+      yearFixedFrom = keyYear;
+      yearFixedTo = meantYears[0].year;
+      corrected = true;
+      reasons.push(`the seller said "${meantYears[0].phrase}" — that's ${meantYears[0].year}, the key says ${keyYear}`);
+    }
+    // A key named for the wrong year follows the fix ("setonRevenue2025" →
+    // "setonRevenue2026"), when that key is free.
+    if (yearFixedFrom !== null && yearFixedTo !== null && new RegExp(`${yearFixedFrom}$`).test(change.fieldName)) {
+      const renamed = change.fieldName.replace(new RegExp(`${yearFixedFrom}$`), String(yearFixedTo));
+      const taken = new Set(Array.from(ctx.existingKeys ?? []));
+      if (!taken.has(renamed) && !changes.some((c) => c !== change && c.fieldName === renamed)) {
+        if (updatedConfidence[change.fieldName] !== undefined) {
+          updatedConfidence[renamed] = updatedConfidence[change.fieldName];
+          delete updatedConfidence[change.fieldName];
+        }
+        reasons.push(`key renamed ${change.fieldName} → ${renamed}`);
+        change.fieldName = renamed;
+      }
+    }
+
     // Bare years nobody gave.
     const invented: number[] = [];
     for (const m of Array.from(change.newValue.matchAll(YEAR_RE))) {
       const y = Number(m[1]);
+      if (fixedYears.has(y)) continue;
       const pairAt = Array.from(change.newValue.matchAll(MONTH_YEAR_RE)).find((p) => (p.index ?? 0) <= (m.index ?? 0) && (p.index ?? 0) + p[0].length >= (m.index ?? 0) + 4);
       if (pairAt && handledYearsAt.has(pairAt.index ?? -1)) continue;
       if (grounded.has(y) || priorYears.has(y) || onFile.has(y)) continue;

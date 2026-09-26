@@ -21,13 +21,14 @@ import {
   QUESTIONNAIRE_SCREEN_KEY,
   type QuestionnaireScreen,
 } from "./questionnaire-privacy";
-import { buildInterviewSystemBlocks } from "./system-prompt";
+import { buildInterviewSystemBlocks, type SystemBlock } from "./system-prompt";
 import type { InterviewResponse } from "./response-schema";
 import {
   callInterviewWithRecovery,
   governCompletion,
-  detectStopSignal,
   buildStopSignalNudge,
+  buildClosingAnswerNudge,
+  scrubClosingPromises,
   CRITICAL_SECTIONS,
   VALUATION_FISHING_RE,
   containsValuationFigures,
@@ -43,15 +44,25 @@ import {
   finalizeOpeningMessage,
 } from "./turn-guard";
 import {
-  detectRetraction,
+  quickIntent,
+  combineIntent,
+  classifySellerIntent,
+  sellerSpokenFacts,
+  planIntentEdits,
+  applyPartialEdits,
+  INTENT_TIMEOUT_MS,
+  type SellerIntent,
+  type StopLevel,
+} from "./seller-intent";
+import {
   applySellerRetractions,
   restatesWithdrawnValue,
-  guessRetractedFields,
   whoHoldsTheAnswer,
   applyDateFidelityGuard,
   applyLegalGroundingGuard,
   findLegalAssertions,
   discrepanciesSettledByRetraction,
+  termRegex,
   type RetractedValue,
 } from "./fact-guards";
 import {
@@ -787,6 +798,11 @@ export async function processTurn(
   const priorRetracted: RetractedValue[] = Array.isArray(sessionMeta._retracted)
     ? (sessionMeta._retracted as RetractedValue[]).filter((r) => r && typeof r.key === "string" && typeof r.value === "string")
     : [];
+  // Words of details the seller asked kept out of the book this session
+  // (seller-intent.ts privacy requests) — never written into a fact later.
+  const priorPrivateTerms: string[] = Array.isArray(sessionMeta._keptPrivateTerms)
+    ? (sessionMeta._keptPrivateTerms as unknown[]).filter((t): t is string => typeof t === "string" && !!termRegex(t))
+    : [];
 
   // Render the agent's own outstanding deferrals into the dynamic prompt block
   // so it can circle back — the model's context alone forgets them.
@@ -866,31 +882,68 @@ export async function processTurn(
     .filter((s) => (CRITICAL_SECTIONS.has(s.key) || s.importance === "critical") && s.status === "missing" && !ledgerAddressed(s.key))
     .map((s) => s.key);
 
-  // Seller stop signal — the first one permits at most ONE closing question;
-  // the second forces a goodbye (and turn-guard-style forced shouldEnd below).
-  // The previous agent message unlocks completion-acceptance detection
-  // ("anything else?" → "that covers it"), which chips-only sellers rely on.
+  // Seller stop signal — the first one permits ONE closing turn; a firm one
+  // ("please stop asking me questions") or a second in a row forces the
+  // goodbye (forcedEnd below). The previous agent message unlocks
+  // completion-acceptance detection ("anything else?" → "that covers it"),
+  // which chips-only sellers rely on.
   const prevAiMessage = [...existingMessages].reverse().find((m) => m.role === "ai")?.content;
-  const stopNow = detectStopSignal(sellerMessage, prevAiMessage);
+
+  // SELLER INTENT (seller-intent.ts): stop / wrap up, withdraw, correct, keep
+  // private. The supporting-model classifier starts NOW and runs alongside
+  // the interview call (it needs nothing that call produces); the instant
+  // patterns decide what goes into the first prompt, and stand in when the
+  // classifier fails or is late.
+  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
+  const sellerView = sellerInterviewView(existingExtracted, documents);
+  const quick = quickIntent(sellerMessage, prevAiMessage);
+  let modelIntent: SellerIntent | null | undefined; // undefined = not back yet
+  const intentPromise = classifySellerIntent({
+    sellerMessage,
+    prevAiMessage,
+    prevSellerMessage: [...existingMessages].reverse().find((m) => m.role === "user")?.content,
+    recentFacts: sellerSpokenFacts(sellerView as Record<string, unknown>),
+  }).then((m) => { modelIntent = m; return m; });
+  /** The turn's intent as known after waiting at most `waitMs` more for the classifier. */
+  const intentWithin = async (waitMs: number): Promise<SellerIntent> => {
+    if (modelIntent === undefined && waitMs > 0) {
+      await Promise.race([intentPromise, new Promise((r) => setTimeout(r, waitMs))]);
+    }
+    return combineIntent(quick, modelIntent ?? null);
+  };
+
+  let stopNow = quick.stop !== "none";
+  let stopLevel: StopLevel = quick.stop;
   // Consecutive-only escalation: a substantive non-stop turn resets the
   // counter, so two isolated false positives twenty turns apart can never
   // combine into a forced end. Genuine repeat stops ("I really have to go")
-  // re-match the stop patterns and still escalate back-to-back.
-  const stopSignalCount = stopNow ? priorStopCount + 1 : 0;
+  // escalate back-to-back.
+  let stopSignalCount = stopNow ? priorStopCount + 1 : 0;
+  // The turn after the one closing turn a stop allowed: unless the seller
+  // says they want to keep going, this turn ends the interview.
+  let closingAnswerTurn = !stopNow && priorStopCount > 0 && !quick.continueRequest;
+  // The closing turn is aimed at the single most important item still open:
+  // a missing critical section, else the open wrap-up items (critical
+  // checklist items in partly covered sections, seller-only topics…) —
+  // Beacon's stop came with five critical sections partial and none named.
+  const stopOpenItems = [...missingCritical, ...(kb.wrapUpBlockers ?? [])].slice(0, 4);
+  const stopNudge = (level: StopLevel, count: number, sellerQuestion = ""): SystemBlock => ({
+    type: "text",
+    text:
+      buildStopSignalNudge(count, stopOpenItems, declinedTopics, level === "firm" ? "firm" : "soft") +
+      (sellerQuestion ? `\nThe seller asked you: "${sellerQuestion.slice(0, 300)}" — answer it first.` : ""),
+  });
+  let stopNudgeLevel: StopLevel = "none";
   if (stopNow) {
     console.log(
-      `[session-manager] Seller stop signal #${stopSignalCount} detected on session ${sessionId}`,
+      `[session-manager] Seller stop signal #${stopSignalCount} (${stopLevel}, patterns) detected on session ${sessionId}`,
     );
-    systemBlocks.push({
-      type: "text",
-      // The one closing question (if any) goes to the most critical gap: a
-      // missing critical section, else the top open wrap-up item.
-      text: buildStopSignalNudge(
-        stopSignalCount,
-        missingCritical.length > 0 ? missingCritical : (kb.wrapUpBlockers ?? []).slice(0, 3),
-        declinedTopics,
-      ),
-    });
+    systemBlocks.push(stopNudge(stopLevel, stopSignalCount));
+    stopNudgeLevel = stopLevel;
+  } else if (closingAnswerTurn) {
+    // (A goodbye that asks nothing — it already fits a second stop too.)
+    systemBlocks.push({ type: "text", text: buildClosingAnswerNudge() });
+    stopNudgeLevel = "firm";
   }
 
   // Financial-core checkpoint: by mid-session the interview must have secured
@@ -973,6 +1026,8 @@ export async function processTurn(
     });
   }
 
+  // (`system` is swapped once if the classifier finds a stop the patterns
+  // missed — see INTENT RE-CALL below.)
   const callParams = {
     model: INTERVIEW_MODEL,
     maxTokens: agentConfig.api.maxTokens,
@@ -983,9 +1038,7 @@ export async function processTurn(
 
   // RE-ASK GUARD context: every earlier question the seller answered (all
   // sessions, in full, plus this transcript), the facts on file as the agent
-  // sees them, and the seller-visible sources.
-  const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
-  const sellerView = sellerInterviewView(existingExtracted, documents);
+  // sees them (sellerView, above), and the seller-visible sources.
   const reaskCtx: ReaskContext = {
     sellerMessage,
     info: sellerView as Record<string, unknown>,
@@ -1028,9 +1081,19 @@ export async function processTurn(
       );
   const valuationLeak = (text: string): boolean =>
     containsValuationFigures(text) || (valuationFishing && unsanctionedFigure(text));
-  // A seller withdrawing something this turn ("take those numbers back") —
-  // the retraction backstop below may rewrite the reply.
-  const retractionInMessage = detectRetraction(sellerMessage);
+  // The prompt no longer fits the turn's intent: the classifier found a stop
+  // the patterns missed (or a firm one where the prompt had a soft one), or
+  // the seller asked to carry on where the prompt had them closing. (The
+  // closing turn's goodbye counts as a firm stop's instruction.) The
+  // draft is then held and redone once with the right instruction (see
+  // INTENT RE-CALL below).
+  const promptMisfits = (i: SellerIntent): boolean =>
+    (i.stop !== "none" && (stopNudgeLevel === "none" || (i.stop === "firm" && stopNudgeLevel === "soft"))) ||
+    (closingAnswerTurn && i.stop === "none" && i.continueRequest);
+  // Only the patterns' reading of a withdrawal can bring the retraction
+  // re-call below (which rewrites the reply) — hold such a draft.
+  const retractionRecallPossible = (i: SellerIntent): boolean => i.via === "patterns" && i.retractions.length > 0;
+  let intentRecallPending = false;
 
   // Call Claude Opus — recovery-wrapped, so a malformed or truncated response
   // retries once and then degrades gracefully instead of dead-ending the seller.
@@ -1047,12 +1110,19 @@ export async function processTurn(
   let pendingFindings: ReaskFinding[] = [];
   const earlyFindings: ReaskFinding[] = [];
   const checkMessage = async (text: string): Promise<boolean> => {
-    if (stopNow || !/\?/.test(text)) return true; // shown when the turn is final
+    // The classifier started with this call and is normally back by now;
+    // a draft written for the wrong intent is stopped here, unseen.
+    const intentNow = await intentWithin(STREAM_INTENT_WAIT_MS);
+    if (promptMisfits(intentNow)) {
+      intentRecallPending = true;
+      return false;
+    }
+    if (stopNow || closingAnswerTurn || !/\?/.test(text)) return true; // shown when the turn is final
     // A draft a later guard will rewrite is held too (shown, fixed, when the
     // turn is final) — never released and then swapped on screen: a
     // valuation leak, the agent's machinery or a legal claim stated as fact
     // (see OUTPUT GUARDS), or a turn where the seller withdrew something.
-    if (heldForLaterGuards(text, { retractionInMessage, valuationLeak: valuationFishing && valuationLeak(text) })) return true;
+    if (heldForLaterGuards(text, { retractionInMessage: retractionRecallPossible(intentNow), valuationLeak: valuationFishing && valuationLeak(text) })) return true;
     let found = findReasks(text, reaskCtx);
     // After a rewrite only the sure findings count (a word-overlap candidate
     // never forces a second rewrite); on the first draft a candidate stops
@@ -1073,7 +1143,7 @@ export async function processTurn(
   };
   let conversation = [...apiMessages];
   let first = await callInterviewWithRecovery(anthropic, callParams, shown.streaming, shown.streaming ? checkMessage : undefined);
-  while (first.rejected) {
+  while (first.rejected && !intentRecallPending) {
     earlyFindings.push(...pendingFindings);
     console.warn(
       `[session-manager] Re-ask guard (before display): ${pendingFindings.map((f) => `${f.kind}(${f.detail.slice(0, 60)})`).join("; ")} — rewrite ${reaskAttempt + 1}`,
@@ -1088,11 +1158,52 @@ export async function processTurn(
   }
   let { response: aiResponse, degraded } = first;
 
+  // The turn's intent, final: the classifier's reading (it has been running
+  // since before the interview call), else the patterns'.
+  const intent = await intentWithin(INTENT_TIMEOUT_MS);
+  if (intent.via === "model" && (intent.stop !== "none" || intent.retractions.length || intent.corrections.length || intent.privacyRequests.length || intent.continueRequest)) {
+    console.log(
+      `[session-manager] Seller intent on session ${sessionId}: stop=${intent.stop}` +
+        (intent.continueRequest ? " continue" : "") +
+        (intent.retractions.length ? `; withdrew ${intent.retractions.map((r) => `"${r.what}"${r.fieldHint ? ` (${r.fieldHint})` : ""}`).join(", ")}` : "") +
+        (intent.corrections.length ? `; corrected ${intent.corrections.map((c) => `${c.fieldHint || "?"}: ${c.old} → ${c.new}`).join(", ")}` : "") +
+        (intent.privacyRequests.length ? `; keep private ${intent.privacyRequests.map((p) => `"${p.what}"`).join(", ")}` : ""),
+    );
+  } else if (intent.via === "patterns") {
+    console.warn(`[session-manager] Seller intent on session ${sessionId}: classifier unavailable — patterns only (stop=${intent.stop})`);
+  }
+  if (intent.stop !== "none" && !stopNow) {
+    stopNow = true;
+    stopSignalCount = priorStopCount + 1;
+    console.log(`[session-manager] Seller stop signal #${stopSignalCount} (${intent.stop}, classifier) detected on session ${sessionId}`);
+  }
+  if (stopNow) stopLevel = intent.stop === "firm" || stopLevel === "firm" ? "firm" : "soft";
+  if (stopNow || (closingAnswerTurn && intent.continueRequest)) closingAnswerTurn = false;
+
+  // INTENT RE-CALL: the draft was written for the wrong intent (a stop the
+  // patterns missed — "Please stop asking me questions.", "I'm exhausted,
+  // can we do this another time?" — or a seller who chose to carry on).
+  // It is redone once with the right instruction before anything is shown.
+  if ((intentRecallPending || promptMisfits(intent)) && !shown.released) {
+    const blocks = systemBlocks.filter(
+      (b) => !/^# (?:THE SELLER WANTS TO STOP|SELLER STOP|CLOSING|FINANCIAL-CORE CHECKPOINT|PACING|RECONCILE NOW)\b/.test(b.text),
+    );
+    if (stopNow) {
+      blocks.push(stopNudge(stopLevel, stopSignalCount, intent.sellerQuestion));
+      stopNudgeLevel = stopLevel;
+    }
+    callParams.system = blocks;
+    console.warn(`[session-manager] Intent re-call on session ${sessionId}: ${stopNow ? `seller stop (${stopLevel})` : "seller chose to continue"}`);
+    const redo = await callInterviewWithRecovery(anthropic, { ...callParams, messages: apiMessages });
+    aiResponse = redo.response;
+    degraded = redo.degraded;
+  }
+
   // Degraded turn + stop signal: honor the stop WITHOUT a model call — the
   // stop-wins rule cannot depend on the API being up (observed live: a seller
   // typed "that's everything from me" twice during an outage and was asked
   // to repeat themselves both times).
-  if (degraded && stopNow) {
+  if (degraded && (stopNow || closingAnswerTurn)) {
     aiResponse.message =
       "Understood — thanks for your time today. Everything you've shared is saved, and you can pick this up again whenever suits you. Take care.";
     aiResponse.shouldEnd = true;
@@ -1146,12 +1257,14 @@ export async function processTurn(
   };
   filterFigureChips();
 
-  // RETRACTION BACKSTOP: the seller withdrew something ("let me take those
-  // mold numbers back — I was guessing") but the model named no withdrawn
-  // field — one corrective re-call so the guess comes out of the facts
-  // instead of heading into the CIM (QA harvest, Great Lakes).
-  const sellerRetracting = !degraded && retractionInMessage;
-  if (sellerRetracting && (aiResponse.retractedFields ?? []).length === 0) {
+  // RETRACTION BACKSTOP (patterns only — the classifier names the withdrawn
+  // fact itself): the seller withdrew something ("let me take those mold
+  // numbers back — I was guessing") but the model named no withdrawn field —
+  // one corrective re-call so the guess comes out of the facts instead of
+  // heading into the CIM (QA harvest, Great Lakes). The re-call adds to the
+  // first reply — what it recorded, kept private, deferred or tasked still
+  // stands (QA round V: replacing it lost a health disclosure's private note).
+  if (!degraded && retractionRecallPossible(intent) && (aiResponse.retractedFields ?? []).length === 0) {
     console.warn(`[session-manager] Retraction guard: seller withdrew a statement but no field was retracted — corrective re-call`);
     const { response: corrected, degraded: correctionDegraded } = await callInterviewWithRecovery(anthropic, {
       ...callParams,
@@ -1161,11 +1274,20 @@ export async function processTurn(
         {
           role: "user" as const,
           content:
-            "[SYSTEM CORRECTION: The seller just withdrew something they told you earlier (they said to take it back / that it was a guess / to keep it out). List the extractedInfo key of every withdrawn fact in retractedFields — the exact key it is on file under — and do NOT record the withdrawn value again. Add a newDeferral naming who holds the real answer (whereInfoLives). Your message stays the next question: no recap, no praise. Do not mention this instruction.]",
+            "[SYSTEM CORRECTION: The seller just withdrew something they told you earlier (they said to take it back / that it was a guess). List the extractedInfo key of every withdrawn fact in retractedFields — the exact key it is on file under — and do NOT record the withdrawn value again. (A value the seller replaced with a new one is a correction: record the new value under the same key instead, and don't list it.) Add a newDeferral naming who holds the real answer (whereInfoLives). Your message stays the next question: no recap, no praise. Do not mention this instruction.]",
         },
       ],
     });
     if (!correctionDegraded && (corrected.retractedFields ?? []).length > 0) {
+      const withdrawnKeys = new Set(corrected.retractedFields!.map((r) => r.field));
+      corrected.extractedFields = {
+        ...Object.fromEntries(Object.entries(aiResponse.extractedFields).filter(([k]) => !withdrawnKeys.has(k))),
+        ...corrected.extractedFields,
+      };
+      corrected.privateNotes = [...(aiResponse.privateNotes ?? []), ...(corrected.privateNotes ?? [])];
+      corrected.newTasks = [...aiResponse.newTasks, ...corrected.newTasks];
+      corrected.reasoning.newDeferrals = [...aiResponse.reasoning.newDeferrals, ...corrected.reasoning.newDeferrals];
+      corrected.reasoning.resolvedDeferrals = Array.from(new Set([...aiResponse.reasoning.resolvedDeferrals, ...corrected.reasoning.resolvedDeferrals]));
       aiResponse = corrected;
       filterFigureChips();
     }
@@ -1181,7 +1303,14 @@ export async function processTurn(
   // (RECONCILE NOW). Runs after the retraction backstop so it checks the
   // reply that will actually go out; the OUTPUT GUARDS below (filler,
   // machinery, legal, no question) then apply to whatever it produced.
-  if (!degraded && !stopNow && !aiResponse.shouldEnd && !shown.released) {
+  // A stop's one closing question is checked too: at the door, re-asking
+  // something already answered is the worst possible question (Ridgeline:
+  // bonding, which the seller had said they never needed).
+  // FORCED END — ending is no longer model discretion when the seller has
+  // asked to stop twice in a row, asked for the questions to stop now (a
+  // firm stop), or has just answered the one closing turn a stop allowed.
+  const forcedEnd = (stopNow && (stopSignalCount >= 2 || stopLevel === "firm")) || closingAnswerTurn;
+  if (!degraded && !forcedEnd && (!stopNow || asksQuestion(aiResponse.message)) && !aiResponse.shouldEnd && !shown.released) {
     const guarded = await applyReaskGuard(anthropic, { ...callParams, messages: conversation }, aiResponse, reaskCtx);
     if (guarded.recalled) {
       console.warn(
@@ -1198,18 +1327,16 @@ export async function processTurn(
     }
   }
 
-  // FORCED END — the seller has now asked to stop more than once, so ending
-  // is no longer model discretion. This is the symmetric mirror of the
+  // FORCED END (see forcedEnd above). This is the symmetric mirror of the
   // governance shouldEnd=false override below: turn-guard can veto ends AND
   // (here) force them. Without this, a model that keeps sneaking in "one last
   // thing" leaves the seller trapped in a session only /end can close.
-  const forcedEnd = stopNow && stopSignalCount >= 2;
   if (forcedEnd && !aiResponse.shouldEnd) {
     console.warn(
-      `[session-manager] Forcing shouldEnd=true after ${stopSignalCount} seller stop signals (model returned shouldEnd=false)`,
+      `[session-manager] Forcing shouldEnd=true (${closingAnswerTurn ? "the seller answered the closing turn" : stopLevel === "firm" && stopSignalCount < 2 ? "firm stop" : `${stopSignalCount} seller stop signals`}; model returned shouldEnd=false)`,
     );
     aiResponse.shouldEnd = true;
-    aiResponse.endReason = aiResponse.endReason || "Seller asked to stop (repeated stop signals)";
+    aiResponse.endReason = aiResponse.endReason || "Seller asked to stop";
   }
   // A forced goodbye asks nothing — a question the model slipped in would be
   // left hanging on an ended interview.
@@ -1299,7 +1426,11 @@ export async function processTurn(
       // who then says they'd rather keep going ("let's continue", "I've got
       // a few more minutes") has withdrawn it; an older stop never counts
       // (QA harvest: Clearwater ended at 6 of 10 turns on a stale one).
-      sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage)),
+      sellerStopDetected: stopNow || (priorStopCount > 0 && !sellerDeclinedWrapUp(prevAiMessage, sellerMessage) && !intent.continueRequest),
+      // The model's own "seller asked to stop" corroborates only when the
+      // classifier gave no verdict — and never when the seller just said
+      // they want to keep going.
+      intentStop: intent.continueRequest ? "none" : intent.via === "model" ? (intent.stop !== "none" ? "stop" : "none") : "unavailable",
       // Critical checklist items, seller-only topics, critical conflicts and
       // flagged risks not yet discussed or deferred. (A very long interview
       // is no longer held open for them — the seller's patience wins.)
@@ -1625,28 +1756,57 @@ export async function processTurn(
     }
   }
 
-  // RETRACTIONS this turn — the fields the model named, or (backstop) the
-  // facts the seller's previous answer wrote that this withdrawal talks
-  // about. Applied to the saved facts under the lock below; nothing this turn
-  // re-records them, and the broker gets a deferral naming who holds the
-  // real answer.
-  let retractions = (aiResponse.retractedFields ?? []).map((r) => ({
-    field: canonicalFieldName(r.field, Object.keys(existingExtracted)),
-    reason: r.reason,
-  }));
-  if (sellerRetracting && retractions.length === 0) {
-    retractions = guessRetractedFields(existingExtracted, sellerMessage, { sessionId, turn: userTurnCount }).map((field) => ({
-      field,
-      reason: "the seller withdrew their previous answer",
-    }));
-    if (retractions.length > 0) {
-      console.warn(`[session-manager] Retraction guard: model named no field — withdrawing ${retractions.map((r) => r.field).join(", ")} from the seller's previous answer`);
+  // Details the seller asked kept out of the book earlier this session stay
+  // out: a later turn writing them into a fact from the transcript is dropped.
+  if (priorPrivateTerms.length > 0) {
+    const leaking = changes.filter((c) => priorPrivateTerms.some((t) => termRegex(t)!.test(c.newValue)));
+    if (leaking.length > 0) {
+      console.warn(`[session-manager] Privacy guard: dropped a value carrying a detail the seller asked kept private: ${leaking.map((c) => c.fieldName).join(", ")}`);
+      changes = changes.filter((c) => !leaking.includes(c));
+      for (const c of leaking) {
+        if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+        else delete updatedConfidence[c.fieldName];
+      }
     }
   }
-  if (retractions.length > 0) {
-    const keys = new Set(retractions.map((r) => r.field));
-    changes = changes.filter((c) => !keys.has(c.fieldName));
-    for (const k of Array.from(keys)) delete updatedConfidence[k];
+
+  // WITHDRAWALS, CORRECTIONS, PRIVACY REQUESTS this turn (seller-intent.ts):
+  // a correction's new value stands; a withdrawal takes out exactly the
+  // claim withdrawn (inside a fact that also holds true content, only that
+  // part); a privacy request moves the detail to the broker's private notes
+  // and never deletes anything else. Applied to the saved facts under the
+  // lock below; nothing this turn re-records a withdrawn claim, and the
+  // broker gets a deferral naming who holds the real answer.
+  const intentPlan = planIntentEdits({
+    intent,
+    info: existingExtracted,
+    changes,
+    modelRetracted: aiResponse.retractedFields ?? [],
+    modelPrivateNotes: aiResponse.privateNotes ?? [],
+    sellerMessage,
+    sessionId,
+    turn: userTurnCount,
+    confidenceLevels,
+  });
+  for (const line of intentPlan.log) console.log(`[session-manager] Seller intent: ${line}`);
+  {
+    const kept = new Set(intentPlan.changes);
+    for (const c of changes) {
+      if (kept.has(c)) continue;
+      if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
+      else delete updatedConfidence[c.fieldName];
+    }
+    for (const c of intentPlan.changes) if (!changes.includes(c)) updatedConfidence[c.fieldName] = c.newConfidence;
+    changes = intentPlan.changes;
+  }
+  const retractions = intentPlan.retractions;
+  const partialEdits = intentPlan.partialEdits;
+  if (intentPlan.privateNotes.length > 0) aiResponse.privateNotes = [...(aiResponse.privateNotes ?? []), ...intentPlan.privateNotes];
+  const newPrivateTerms = intent.privacyRequests.flatMap((p) => p.sensitiveTerms);
+  const withdrawnKeys = [...retractions.map((r) => r.field), ...partialEdits.filter((p) => p.kind === "withdrawn").map((p) => p.key)];
+  if (withdrawnKeys.length > 0 || intentPlan.unrecordedWithdrawals.length > 0) {
+    const keys = new Set(withdrawnKeys);
+    for (const k of Array.from(keys)) if (!changes.some((c) => c.fieldName === k)) delete updatedConfidence[k];
     const holder = whoHoldsTheAnswer(sellerMessage);
     const keyWords = (k: string) => new Set(k.replace(/([A-Z])/g, " $1").toLowerCase().split(/\s+/).filter((w) => w.length > 3).map((w) => w.slice(0, 5)));
     const missing = Array.from(keys).filter((k) => {
@@ -1655,10 +1815,13 @@ export async function processTurn(
         `${d.topic} ${d.whereInfoLives}`.toLowerCase().split(/[^a-z]+/).some((w) => w.length > 3 && kw.has(w.slice(0, 5))),
       );
     });
-    if (missing.length > 0) {
+    // A withdrawn claim no fact held still needs its real answer — unless
+    // the agent already deferred something this turn.
+    const unrecorded = aiResponse.reasoning.newDeferrals.length > 0 ? [] : intentPlan.unrecordedWithdrawals;
+    if (missing.length > 0 || unrecorded.length > 0) {
       ledger = updateDeferralLedger(
         ledger,
-        missing.map((k) => ({
+        [...missing, ...unrecorded.map((w) => `"${w.slice(0, 60)}"`)].map((k) => ({
           topic: `${k} (the seller withdrew an estimate)`,
           reason: `the seller took back what they said ("${sellerMessage.replace(/\s+/g, " ").slice(0, 140)}") — get the real answer, don't ask them to re-guess`,
           whereInfoLives: holder,
@@ -1678,11 +1841,14 @@ export async function processTurn(
     .filter(([k, v]) => !k.startsWith("_") && typeof v === "string")
     .map(([, v]) => v as string)
     .join(" ");
+  const sessionSellerMessages = existingMessages.filter((m) => m.role === "user").map((m) => m.content);
   const dateFlags = applyDateFidelityGuard(changes, updatedConfidence, {
     sellerMessage,
-    sessionSellerText: existingMessages.filter((m) => m.role === "user").map((m) => m.content).join("\n"),
+    sessionSellerText: sessionSellerMessages.join("\n"),
+    sessionSellerMessages,
     prevAiMessage,
     onFileText,
+    existingKeys: Object.keys(existingExtracted),
   });
   if (dateFlags.length > 0) {
     console.warn(
@@ -1830,6 +1996,17 @@ export async function processTurn(
         `[session-manager] Seller retraction on deal ${dealId}: removed ${r.removed.join(", ") || "—"}; document value restored for ${r.restoredFromDocument.join(", ") || "—"}; left alone (not the seller's words) ${r.skipped.join(", ") || "—"}`,
       );
     }
+    // A withdrawn claim inside a fact, or a private detail moved out of one
+    // (only where the fact is still the value it was planned against).
+    if (partialEdits.length > 0) {
+      const done = new Set(applyPartialEdits(toSave, partialEdits));
+      for (const e of partialEdits.filter((p) => done.has(p.key) && p.kind === "withdrawn")) {
+        withdrawnNow.push({ key: e.key, value: e.removed, turn: userTurnCount });
+      }
+      console.log(
+        `[session-manager] Seller intent on deal ${dealId}: ${partialEdits.map((e) => `${e.key} ${done.has(e.key) ? (e.kind === "private" ? "— private detail moved to the broker's notes" : `— withdrew "${e.removed.slice(0, 60)}"`) : "— changed meanwhile, left alone"}`).join("; ")}`,
+      );
+    }
     await storage.updateDeal(dealId, { extractedInfo: toSave });
   });
   // A conflict whose seller side the seller just withdrew no longer stands:
@@ -1927,6 +2104,16 @@ export async function processTurn(
     aiResponse.whyItMatters = undefined;
   }
 
+  // A goodbye (or a stop's closing turn) promises only what actually
+  // happens: "I'll follow up with Donna" becomes the broker's follow-up.
+  if (aiResponse.shouldEnd || stopNow) {
+    const scrubbed = scrubClosingPromises(aiResponse.message);
+    if (scrubbed !== aiResponse.message) {
+      console.log(`[session-manager] Closing promise reworded on session ${sessionId}`);
+      aiResponse.message = scrubbed;
+    }
+  }
+
   // Update session
   const storedUserMessage: ConversationMessage = {
     role: "user",
@@ -1975,7 +2162,18 @@ export async function processTurn(
         _degradedTurns: degraded ? priorDegradedTurns + 1 : 0,
         _lastChips: aiResponse.suggestedAnswers,
         _confidenceLevels: updatedConfidence,
-        ...(priorRetracted.length + withdrawnNow.length > 0 ? { _retracted: [...priorRetracted, ...withdrawnNow] } : {}),
+        ...(priorRetracted.length + withdrawnNow.length + intentPlan.unrecordedWithdrawals.length > 0
+          ? {
+              _retracted: [
+                ...priorRetracted,
+                ...withdrawnNow,
+                ...intentPlan.unrecordedWithdrawals.map((w) => ({ key: "(not on file)", value: w, turn: userTurnCount })),
+              ],
+            }
+          : {}),
+        ...(priorPrivateTerms.length + newPrivateTerms.length > 0
+          ? { _keptPrivateTerms: Array.from(new Set([...priorPrivateTerms, ...newPrivateTerms])).slice(-40) }
+          : {}),
         ...(droppedDocRequests.length ? { _droppedDocRequests: droppedDocRequests } : {}),
       },
       ...(aiResponse.shouldEnd ? { completedAt: new Date(), status: "completed" } : {}),
@@ -2535,6 +2733,12 @@ export function heldForLaterGuards(text: string, ctx: { retractionInMessage: boo
 }
 /** How long a streamed question waits for the answer check before it is shown anyway. */
 const STREAM_CHECK_TIMEOUT_MS = 4_000;
+/**
+ * How long a finished draft waits for the seller-intent classifier before
+ * it is judged on the patterns alone. The classifier started with the
+ * interview call and is normally back well before the draft is complete.
+ */
+const STREAM_INTENT_WAIT_MS = 5_000;
 /** Pause between released chunks of ~3 words (a 40-word question types out in ~0.4s). */
 const RELEASE_CHUNK_MS = 30;
 
