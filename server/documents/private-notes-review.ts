@@ -73,13 +73,15 @@ export interface ReviewGroup {
 }
 
 /** Bumped when the decision rules change: older reviews are redone from scratch. */
-export const REVIEW_VERSION = 2;
+export const REVIEW_VERSION = 3;
 
 export interface NotesReview {
   v: number;
   items: Record<string, NoteDecision>;
   groups: Record<string, ReviewGroup>;
   nextId: number;
+  /** The notes (group ids) the last fold was asked about. */
+  foldedFor?: string;
   at?: string;
 }
 
@@ -90,7 +92,11 @@ export function emptyReview(): NotesReview {
 export function readReview(raw: unknown): NotesReview {
   const r = raw as Partial<NotesReview> | null | undefined;
   if (!r || r.v !== REVIEW_VERSION || typeof r.items !== "object" || typeof r.groups !== "object") return emptyReview();
-  return { v: REVIEW_VERSION, items: { ...r.items }, groups: { ...r.groups }, nextId: Number(r.nextId) || 1, ...(r.at ? { at: r.at } : {}) };
+  return {
+    v: REVIEW_VERSION, items: { ...r.items }, groups: { ...r.groups }, nextId: Number(r.nextId) || 1,
+    ...(typeof r.foldedFor === "string" ? { foldedFor: r.foldedFor } : {}),
+    ...(r.at ? { at: r.at } : {}),
+  };
 }
 
 /** Note on a fact's source when it was moved out of the private notes. */
@@ -105,10 +111,55 @@ const PERSONAL_RE =
 const PROCESS_RE =
   /\b(?:broker\w*|advis(?:or|er)s?|referr\w*|referred|fees?|commission\w*|engag\w*|retainer|exclusiv\w*|listing|lead source|approach\w*|offers?|offered|lowball|insulting|pricing strategy|strategy|buyer universe|ask(?:ing)? (?:price )?\$)/i;
 
-/** True when a note may be moved into the facts (nothing personal, private, negotiated or about the broker's process). */
+/**
+ * Someone's stance, plan or wish ("Karen thinks $42M is low", "would carry
+ * some paper", "open to rolling 10-15%", "asked that no one be told"): a
+ * position, never a fact about the company.
+ */
+const STANCE_RE =
+  /\b(?:wants?|wanted|wanting|won'?t|will not|would(?:n'?t)?|willing|open to|prefers?|preferred|preference|thinks?|thought|believes?|feels?|hopes?|plans? to|intends?|considering|may (?:roll|see|consider|stay|want|sell|accept)|might|not ready|reluctant|flexible|acceptable|agreed|agrees|floated|says|said|told|tells|asked|asks|requested|requests|insists?|refuses?|doubtful|uncertain|concern(?:ed|s)?|views?|perspective|disagree\w*|dismissive|downplay\w*|biased|aligned|embarrass\w*|relief|joke\w*|push(?:es|ed|ing)? (?:to|for|hardest)|pushed hardest|on board|at (?:the )?(?:seller|owner|buyer)'?s? request|per the (?:seller|owner))\b/i;
+/** "… per Luis": someone's account (case-sensitive — "per share" is no one's). */
+const PER_PERSON_RE = /\bper [A-Z][a-z]+\b/;
+/**
+ * Deal terms, pricing, the sale process and who may know about it: the
+ * broker's and the seller's business, never the company's facts.
+ */
+const DEAL_RE =
+  /\b(?:vtb|vendor (?:take-?back|financing|note)|seller (?:note|financing|paper)|carry (?:some )?paper|earn-?outs?|roll(?:s|ing|ed)? (?:over|equity|\d)|rollover|asking|list(?:ing)? (?:at|price)|multiple|valuation|worth|fair (?:price|value)|price (?:talk|expectation|range|point)|deal (?:structure|process|owner|probability)|probability|nwc peg|peg|stay bonus\w*|retention bonus\w*|flight risk|iois?|lois?|qoe|data room|dd room|teaser|nda|cim|blind|codename|code name|for sale|(?:the )?sale process|know(?:s|n)? (?:about )?(?:the )?sale|(?:not|nobody|no one|no other)\b[^.;]{0,40}\b(?:know|told|aware)|to be told|out of (?:any|the)|not (?:appear|be (?:in|disclosed|mentioned))|keep\w* (?:it |this |[a-z]+'s name )?(?:out|quiet|private)|excluded buyers?|target buyers?|buyers? (?:will|would|may) (?:ask|want|pay)|timeline|timing|close by|closing date|transition (?:period|plan)|mandate)\b/i;
+
+/** True when a note may be moved into the facts: nothing personal, private, negotiated, no stance and nothing about the deal process. */
 export function isPromotableNote(text: string): boolean {
-  return !PERSONAL_RE.test(text) && !PROCESS_RE.test(text);
+  return !PERSONAL_RE.test(text) && !PROCESS_RE.test(text) && !STANCE_RE.test(text) && !PER_PERSON_RE.test(text) && !DEAL_RE.test(text);
 }
+
+/**
+ * The only facts a private note may become — standard disclosures a buyer's
+ * due diligence needs — each with the words the note must use. A note moves
+ * out only when the key is one of these and the note is about that subject.
+ */
+const FACT_CLASSES: Array<{ key: RegExp; subject: RegExp }> = [
+  { key: /^dividends?(?:Declared|Paid|History|ByYear)?$/, subject: /\bdividends?\b/i },
+  { key: /^(?:personalGuarantees?|guarantees?)$/, subject: /\bguarant(?:ee|or)\w*\b/i },
+  { key: /^relatedParty(?:Transactions?|Lease|Leases|Arrangements?)?$/, subject: /\brelated[- ]party\b|\b(?:owned|controlled) by\b[^.;]{0,60}\b(?:shareholder|owner|holdco|holding)|\bfamily member\b[^.;]{0,40}\bemployed\b/i },
+  { key: /^shareholders?(?:Agreement|Agreements|AgreementTerms|AgreementAmendments?)$/, subject: /\bshareholders?'? ?agreement\b|\busa\b|\bfirst refusal\b/i },
+  { key: /^(?:shareStructure|shareClasses|shareCapital|capitalStructure|directors|boardOfDirectors)$/, subject: /\b(?:class [a-z] (?:shares?|dividends?|structure)|shares? (?:issued|class)|share (?:structure|capital)|directors?|board of directors|board (?:resolution|approv\w*))\b/i },
+  { key: /^customer(?:NonRenewal|NonRenewals|Notice|Notices|Loss|Losses|Churn|Terminations?|Departures?)$/, subject: /\b(?:non-?renewal|notice|terminat\w*|cancel\w*|churn\w*|leaving|lost|lose|losing|not renew\w*)\b/i },
+  { key: /^(?:insurance|insurancePolicies|lifeInsurance|keyPersonInsurance|buySellInsurance|corporateLifeInsurance)$/, subject: /\binsurance\b|\bpolic(?:y|ies)\b/i },
+  { key: /^(?:auditStatus|financialStatementType|financialStatementBasis|reviewEngagement|assuranceLevel)$/, subject: /\b(?:audit\w*|unaudited|review engagement|compil\w*|notice to reader)\b/i },
+  { key: /^(?:excludedAssets?|assetsExcluded)$/, subject: /\bexclu(?:ded|des?|sion) from (?:the |any )?sale\b|\bnot (?:included|part of|in) (?:the )?sale\b|\bowner keeps\b/i },
+  { key: /^(?:litigation|legalProceedings|pendingLitigation|lawsuits?)$/, subject: /\b(?:litigation|lawsuit|sued|suing|court|claim filed|statement of claim)\b/i },
+  { key: /^(?:keyEmployeeContracts?|employmentContracts?|employmentAgreements?)$/, subject: /\bemployment (?:contract|agreement)s?\b/i },
+  { key: /^(?:shareholderLoans?|dueFromShareholders?|dueToShareholders?|dueFromRelatedParties|dueToRelatedParties)$/, subject: /\b(?:shareholder loans?|due (?:to|from) (?:shareholders?|holdco|related)|loans? (?:to|from) (?:the )?(?:shareholder|owner))\b/i },
+];
+
+/** True when `key` is a fact a private note may become and `text` is about it (and promotable at all). */
+export function isPromotableFact(key: string, text: string): boolean {
+  if (!isPromotableNote(text)) return false;
+  return FACT_CLASSES.some((c) => c.key.test(key) && c.subject.test(text));
+}
+
+/** The keys the model may move a note into (for its instructions). */
+export const PROMOTABLE_FACT_KEYS = "dividendsDeclared, personalGuarantees, relatedPartyTransactions, shareholdersAgreement, shareStructure, directors, customerNonRenewal, insurancePolicies, auditStatus, excludedAssets, litigation, keyEmployeeContracts, shareholderLoans";
 
 /** Substance about the company, the deal or its figures: a note naming it is never dropped as housekeeping. */
 const SUBSTANCE_RE =
@@ -191,6 +242,19 @@ export function missingDetails(text: string, members: string[], common: Set<stri
  */
 export function keepsEveryDetail(text: string, members: string[], common: Set<string> = new Set()): boolean {
   return missingDetails(text, members, common).length === 0;
+}
+
+/** The figures and names `text` states that none of `members` does ([] = it invents nothing). */
+export function inventedDetails(text: string, members: string[], common: Set<string> = new Set()): string[] {
+  const out: string[] = [];
+  const all = members.flatMap(numberValues);
+  for (const v of numberValues(text)) if (!hasValue(all, v)) out.push(String(v));
+  const pool = ` ${members.join(" ").toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+  for (const name of Array.from(noteContent(text).names)) {
+    if (common.has(name) || pool.includes(` ${name} `)) continue;
+    out.push(name);
+  }
+  return out;
 }
 
 // ─── Items: one per wording ──────────────────────────────────────────────────
@@ -322,7 +386,7 @@ function factCoversNote(value: unknown, note: string): boolean {
  * source. True when the note is now a fact (written, or already on file).
  */
 function applyPromotion(info: Info, key: string, value: string, note: string, src: { documentId: string; kind: string } | null): boolean {
-  if (!src || !isPromotableNote(note) || !/^[a-z][A-Za-z0-9]{2,48}$/.test(key) || isBrokerProcessKey(key)) return false;
+  if (!src || !isPromotableFact(key, note) || isBrokerProcessKey(key)) return false;
   if (isSuppressed(info, key)) return false;
   const cur = info[key];
   if (cur !== undefined && cur !== null && cur !== "") return factCoversNote(cur, note);
@@ -345,23 +409,58 @@ export interface AppliedReview {
   pending: NoteItem[];
 }
 
+/** For each note on file, the wordings (item keys) it holds — a wording in two notes counts in the first. */
+function wordingsByNote(notes: BrokerPrivateNote[]): string[][] {
+  const seen = new Set<string>();
+  return notes.map((n) => {
+    const keys: string[] = [];
+    for (const s of privateNoteSources(n)) {
+      const text = (s.wording ?? n.note).trim();
+      if (!text) continue;
+      const key = privateNoteText(text);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      keys.push(key);
+    }
+    return keys;
+  });
+}
+
 /**
  * Pure: the deal's notes (and facts) with the review's decisions applied.
- * Wordings without a decision stay as they are.
+ * Wordings without a decision stay as they are on file: a note none of
+ * whose wordings is decided is kept exactly as it is, and undecided
+ * wordings that share a note stay together — so a review the model couldn't
+ * make (no credits, an outage) never pulls folded notes apart.
  */
 export function applyNotesReview(info: Info, review: NotesReview, docs: Map<string, ReviewDoc>): AppliedReview {
   const notes = getPrivateNotes(info);
   const next: Info = { ...info };
   const items = collectNoteItems(info, docs);
+  const byKey = new Map(items.map((it) => [it.key, it]));
   const pending: NoteItem[] = [];
   const out: BrokerPrivateNote[] = [];
   const emitted = new Set<string>();
   const decision = (it: NoteItem) => review.items[it.key];
+  const noteKeys = wordingsByNote(notes);
+  const noteOf = new Map<string, number>();
+  noteKeys.forEach((keys, i) => keys.forEach((k) => noteOf.set(k, i)));
+  const pendingNotes = new Set<number>();
   for (const it of items) {
     const dec = decision(it);
     if (!dec) {
       pending.push(it);
-      out.push(buildNote(it.text, [it]));
+      const i = noteOf.get(it.key);
+      if (i === undefined || pendingNotes.has(i)) continue;
+      pendingNotes.add(i);
+      const keys = noteKeys[i];
+      const undecided = keys.map((k) => byKey.get(k)).filter((m): m is NoteItem => !!m && !decision(m));
+      // Nothing about this note is decided yet: it stays exactly as it is.
+      if (undecided.length === keys.length) out.push(notes[i]);
+      else {
+        const own = undecided.find((m) => m.key === privateNoteText(notes[i].note));
+        out.push(buildNote(own ? own.text : [...undecided].sort((x, y) => y.text.length - x.text.length)[0].text, undecided));
+      }
       continue;
     }
     if (dec.d === "drop" && isDroppableNote(it.text)) continue;
@@ -378,7 +477,7 @@ export function applyNotesReview(info: Info, review: NotesReview, docs: Map<stri
       // The consolidated words only while every source they were written from is still here.
       const text = g.origins.every((o) => present.has(o))
         ? g.text
-        : [...members].sort((a, b) => b.text.length - a.text.length)[0].text;
+        : [...members].sort((x, y) => y.text.length - x.text.length)[0].text;
       out.push(buildNote(text, members));
       continue;
     }
@@ -397,6 +496,43 @@ export function applyNotesReview(info: Info, review: NotesReview, docs: Map<stri
   const changed = JSON.stringify(out) !== JSON.stringify(notes) ||
     Object.keys(next).some((k) => k !== BROKER_PRIVATE_NOTES_KEY && JSON.stringify(next[k]) !== JSON.stringify(info[k]));
   return { info: next, changed, pending };
+}
+
+/**
+ * Pure: decisions for undecided wordings that were folded (addPrivateNote:
+ * the same content in other words — typically a source re-read in new
+ * words) into a note with a decided wording: they follow that wording into
+ * its note, or out of the notes with it when that is safe for their own
+ * words. Returns a new review; the model is asked only about the rest.
+ */
+export function adoptFoldedWordings(info: Info, review: NotesReview, docs: Map<string, ReviewDoc>): NotesReview {
+  const out: NotesReview = { ...review, items: { ...review.items }, groups: { ...review.groups } };
+  const items = new Map(collectNoteItems(info, docs).map((it) => [it.key, it]));
+  for (const keys of wordingsByNote(getPrivateNotes(info))) {
+    const decided = keys.map((k) => out.items[k]).filter((d): d is NoteDecision => !!d);
+    if (decided.length === 0) continue;
+    const group = decided.find((d): d is Extract<NoteDecision, { d: "group" }> => d.d === "group" && !!out.groups[d.g]);
+    const drop = decided.find((d) => d.d === "drop");
+    const fact = decided.find((d): d is Extract<NoteDecision, { d: "fact" }> => d.d === "fact");
+    for (const k of keys) {
+      if (out.items[k]) continue;
+      const it = items.get(k);
+      if (!it) continue;
+      if (group) {
+        out.items[k] = { d: "group", g: group.g };
+        continue;
+      }
+      if (drop && isDroppableNote(it.text)) {
+        out.items[k] = { d: "drop", why: "restates a note that is no note" };
+        continue;
+      }
+      const src = fact ? promotionSource(it, docs) : null;
+      if (fact && src && isPromotableFact(fact.key, it.text)) {
+        out.items[k] = { d: "fact", key: fact.key, value: fact.value, documentId: src.documentId, kind: src.kind, text: it.text };
+      }
+    }
+  }
+  return out;
 }
 
 // ─── The model's placements → decisions ─────────────────────────────────────
@@ -460,10 +596,10 @@ export function recordPlacements(
       placed.add(it.key);
       continue;
     }
-    if (nn.kind === "business_fact" && nn.factKey && isPromotableNote(it.text)) {
+    if (nn.kind === "business_fact" && nn.factKey) {
       const src = promotionSource(it, docs);
       const key = nn.factKey.replace(/[^A-Za-z0-9]/g, "").replace(/^[A-Z]/, (c) => c.toLowerCase());
-      if (src && /^[a-z][A-Za-z0-9]{2,48}$/.test(key) && !isBrokerProcessKey(key)) {
+      if (src && isPromotableFact(key, it.text) && !isBrokerProcessKey(key)) {
         const value = nn.factValue && nn.factValue.trim() && keepsEveryDetail(nn.factValue, [it.text], common) ? nn.factValue.trim() : it.text;
         out.items[it.key] = { d: "fact", key, value, documentId: src.documentId, kind: src.kind, text: it.text };
         placed.add(it.key);
@@ -496,10 +632,11 @@ export function recordPlacements(
 
 /**
  * Pure: settles rejected consolidations with the model's repaired texts
- * (`repaired[i]` for `rejects[i]`): a repaired text that keeps every detail
- * makes the note; otherwise existing notes stay as they were and each new
- * wording joins the first existing note when its text already covers it, or
- * stands alone.
+ * (`repaired[i]` for `rejects[i]`). The notes the model put together stay
+ * together — only the wording of the note is at stake, and every source's
+ * own words stay under it: a text that keeps every detail; else the notes'
+ * own words joined, while that stays a short note; else the model's words
+ * when they invent nothing; else the fullest single wording.
  */
 export function settleRejects(
   review: NotesReview,
@@ -511,33 +648,19 @@ export function settleRejects(
   const setGroup = groupSetter(out);
   rejects.forEach((r, i) => {
     const all = [...r.existing, ...r.fresh];
-    const text = (repaired[i] ?? "").replace(/\s+/g, " ").trim().slice(0, 700);
-    if (text && keepsEveryDetail(text, all.map((m) => m.text), common)) {
-      setGroup(r.targets[0], text, all);
+    const texts = all.map((m) => m.text);
+    const fixed = (repaired[i] ?? "").replace(/\s+/g, " ").trim().slice(0, 700);
+    if (fixed && keepsEveryDetail(fixed, texts, common)) {
+      setGroup(r.targets[0], fixed, all);
       return;
     }
-    // The model's words couldn't be made to keep every detail: the members'
-    // own words, joined — the fullest first, then each that adds a detail —
-    // while that stays a short note.
-    const joined = coverText(all.map((m) => m.text), common);
+    const joined = coverText(texts, common);
     if (joined.length <= MAX_JOINED) {
       setGroup(r.targets[0], joined, all);
       return;
     }
-    // Existing notes stay as they were; a new wording joins the first one
-    // only when that note's words already cover it, else it stands alone.
-    const target = r.targets[0];
-    const first = target ? out.groups[target] : undefined;
-    const inFirst = r.existing.filter((e) => {
-      const d = out.items[e.key];
-      return d?.d === "group" && d.g === target;
-    });
-    for (const m of r.fresh) {
-      if (first && target && keepsEveryDetail(first.text, [...inFirst.map((e) => e.text), m.text], common)) {
-        inFirst.push(m);
-        setGroup(target, first.text, inFirst);
-      } else setGroup(undefined, m.text, [m]);
-    }
+    const summary = [fixed, r.text].find((x) => !!x && inventedDetails(x, texts, common).length === 0);
+    setGroup(r.targets[0], summary ?? [...texts].sort((x, y) => y.length - x.length)[0], all);
   });
   return out;
 }
@@ -615,14 +738,15 @@ const REVIEW_TOOL: Anthropic.Tool = {
 };
 
 const SYSTEM = [
-  "You tidy a business broker's PRIVATE notes about one business for sale. The notes come from many sources (calls, emails, CRM notes, documents, the seller's interview) and repeat each other in different words; the broker wants ONE note per matter — a deal usually has 10 to 25 matters.",
+  "You tidy a business broker's PRIVATE notes about one business for sale. The notes come from many sources (calls, emails, CRM notes, documents, the seller's interview) and repeat each other in different words; the broker wants ONE note per matter — a deal usually has 8 to 18 matters, so most new notes belong in an existing note.",
   "A private note is: a personal matter of the owner, their family or staff (health, family, age, personal plans); the seller's negotiation position or expectations (price, terms, seller financing, rollover, timing, what they will or won't accept); the broker's own process and strategy (referral source, engagement and fees, earlier approaches and offers, pricing strategy, buyer universe, who knows about the sale); caveats about how reliable figures are; anything a source says must stay confidential.",
   "Notes marked [broker-only] come from the broker's own sources; merge them with [shared] notes about the same matter.",
   "Place every NEW note (N…) exactly once:",
   "1) Same matter as an existing note (G…) → list it under that id and rewrite that note's text to include what it adds. Same matter as other NEW notes → one new note. When two EXISTING notes are about one matter, fold them (id = one, merge = the others). Different wordings of one matter from different sources ARE one note (\"Gord had a cardiac episode last Oct\" = \"Seller had a cardiac event in October 2024 (stent placed); asked to keep it out of any brochure\"); so are all notes on the seller's financing terms, all on the broker's engagement, all on the grandchildren / relocation. Different matters stay separate: two different people's matters are two notes.",
   "2) Every note text keeps EVERY distinct detail of the notes it covers: every figure and date (as digits), every person's and place's name, every qualifier and every instruction to keep something private. Never generalise or drop a detail, never add one. Short and factual — no source names, no \"noted as\", no commentary.",
   "3) kind housekeeping: not a note at all — document mechanics or labels (\"sample document\", \"EIN is masked\", \"IDs only\", \"not a real company\"), who prepared or sent a document, scheduling and next steps (a call booked, documents to send), remarks that something is not mentioned in a source. Never housekeeping when it says anything personal, a negotiation position, a figure, a caveat or how the deal came to the broker.",
-  "4) kind business_fact: a material fact about the COMPANY a buyer's due diligence needs, that is not personal, not a negotiation position, not the broker's process and not marked private — a customer's notice of non-renewal or loss, a contract or shareholder-agreement term or amendment, share issues or transfers, directors, dividends declared, a related-party arrangement, an asset excluded from the sale, insurance policies, the audit / review / compilation status, a key employee without a contract, litigation about the business. Give a camelCase factKey and a factValue keeping every figure and date. When in doubt, keep it as a note.",
+  `4) kind business_fact: a material fact about the COMPANY a buyer's due diligence needs, that is not personal, not anyone's view, wish or position, not a deal term (price, financing, earn-out, rollover, timing), not the broker's process and not marked private — a customer's notice of non-renewal, a shareholder-agreement term or amendment, share classes, directors, dividends declared, a related-party arrangement, an asset excluded from the sale, insurance policies, the audit / review / compilation status, a key employee without an employment contract, litigation, shareholder loans. factKey must be one of: ${PROMOTABLE_FACT_KEYS}. factValue keeps every figure and date. When in doubt, keep it as a note.`,
+  "5) When there are no new notes, only fold existing notes that are about one matter; leave the others out of your answer.",
 ].join("\n");
 
 async function askModel(batch: NoteItem[], current: CurrentGroup[], facts: string): Promise<ModelPlacement> {
@@ -640,7 +764,7 @@ async function askModel(batch: NoteItem[], current: CurrentGroup[], facts: strin
       role: "user",
       content: [
         `EXISTING NOTES:\n${existing || "(none)"}`,
-        `\nNEW NOTES TO PLACE:\n${fresh}`,
+        batch.length > 0 ? `\nNEW NOTES TO PLACE:\n${fresh}` : "\nNEW NOTES TO PLACE: (none) — fold the existing notes that are about one matter (id + merge), with the whole note's text.",
         `\nFACT KEYS ALREADY ON FILE (do not move a note into one of these unless it says the same thing):\n${facts || "(none)"}`,
       ].join("\n"),
     }],
@@ -726,64 +850,99 @@ export function reviewPrivateNotes(dealId: string): Promise<ReviewResult> {
   return task;
 }
 
+/** Above this many notes, notes on file about one matter are folded together (once per set of notes). */
+const FOLD_ABOVE = 16;
+
+/** The set of notes a fold was last asked about: the same set is never asked about again. */
+function foldKey(groups: CurrentGroup[]): string {
+  return groups.map((g) => g.id).sort().join(",");
+}
+
+/** Places a batch of new wordings (or, with none, folds the notes on file); returns the review with the model's decisions. */
+async function placeBatch(
+  dealId: string,
+  review: NotesReview,
+  batch: NoteItem[],
+  current: CurrentGroup[],
+  facts: string,
+  docs: Map<string, ReviewDoc>,
+  common: Set<string>,
+): Promise<NotesReview> {
+  const placement = await askModel(batch, current, facts);
+  const placed = recordPlacements(review, placement, batch, current, docs, common);
+  let repaired: Array<string | undefined> = [];
+  if (placed.rejects.length > 0) {
+    repaired = await askRepair(placed.rejects).catch((err) => {
+      console.error(`[private-notes] repair failed for deal ${dealId}:`, (err as Error)?.message ?? err);
+      return [];
+    });
+  }
+  const repairedOk = placed.rejects.filter((r, k) => {
+    const text = repaired[k];
+    return !!text && keepsEveryDetail(text, [...r.existing, ...r.fresh].map((m) => m.text), common);
+  }).length;
+  console.log(`[private-notes] deal ${dealId}: ${batch.length} new wordings, ${current.length} notes → ${(placement.groups ?? []).length} notes proposed, ${(placement.notNotes ?? []).length} not notes; ${placed.rejects.length} lost a detail (${repairedOk} repaired)`);
+  return settleRejects(placed.review, placed.rejects, repaired, common);
+}
+
 async function reviewOnce(dealId: string): Promise<ReviewResult> {
   const deal = await storage.getDeal(dealId);
   if (!deal) return { before: 0, after: 0, askedModel: false, pending: 0 };
   const docs = new Map((await storage.getDocumentsByDeal(dealId)).map((d) => [d.id, d as ReviewDoc]));
   const info = (deal.extractedInfo as Info | null) || {};
-  let review = readReview((deal as { privateNotesReview?: unknown }).privateNotesReview);
-  const first = applyNotesReview(info, review, docs);
+  const stored = readReview((deal as { privateNotesReview?: unknown }).privateNotesReview);
+  // A source re-read in new words: its restatements follow the note they fold into.
+  let review = adoptFoldedWordings(info, stored, docs);
+  let first = applyNotesReview(info, review, docs);
   let askedModel = false;
-  if (first.pending.length > 0) {
-    const facts = Object.entries(first.info)
-      .filter(([k, v]) => !k.startsWith("_") && v !== null && v !== undefined && v !== "")
-      .slice(0, 160)
-      .map(([k, v]) => `- ${k}: ${String(typeof v === "object" ? JSON.stringify(v) : v).replace(/\s+/g, " ").slice(0, 100)}`)
-      .join("\n");
-    const allItems = collectNoteItems(first.info, docs);
-    const common = commonWordsOf(allItems.map((i) => i.text));
-    for (let i = 0; i < first.pending.length; i += BATCH) {
-      const batch = first.pending.slice(i, i + BATCH);
-      const current = currentGroups(allItems, review);
-      try {
-        const placement = await askModel(batch, current, facts);
-        askedModel = true;
-        const placed = recordPlacements(review, placement, batch, current, docs, common);
-        let repaired: Array<string | undefined> = [];
-        if (placed.rejects.length > 0) {
-          repaired = await askRepair(placed.rejects).catch((err) => {
-            console.error(`[private-notes] repair failed for deal ${dealId}:`, (err as Error)?.message ?? err);
-            return [];
-          });
-        }
-        review = settleRejects(placed.review, placed.rejects, repaired, common);
-        const repairedOk = placed.rejects.filter((r, k) => {
-          const t = repaired[k];
-          return !!t && keepsEveryDetail(t, [...r.existing, ...r.fresh].map((m) => m.text), common);
-        }).length;
-        console.log(`[private-notes] deal ${dealId}: ${batch.length} new wordings → ${(placement.groups ?? []).length} notes proposed, ${(placement.notNotes ?? []).length} not notes; ${placed.rejects.length} lost a detail (${repairedOk} repaired)`);
-      } catch (err) {
-        // The model unavailable: these wordings stay as they are and are reviewed next time.
-        console.error(`[private-notes] review failed for deal ${dealId}:`, (err as Error)?.message ?? err);
-        break;
-      }
+  let modelFailed = false;
+  const facts = () => Object.entries(first.info)
+    .filter(([k, v]) => !k.startsWith("_") && v !== null && v !== undefined && v !== "")
+    .slice(0, 160)
+    .map(([k, v]) => `- ${k}: ${String(typeof v === "object" ? JSON.stringify(v) : v).replace(/\s+/g, " ").slice(0, 100)}`)
+    .join("\n");
+  const allItems = collectNoteItems(info, docs);
+  const common = commonWordsOf(allItems.map((i) => i.text));
+  for (let i = 0; i < first.pending.length && !modelFailed; i += BATCH) {
+    const batch = first.pending.slice(i, i + BATCH);
+    try {
+      review = await placeBatch(dealId, review, batch, currentGroups(allItems, review), facts(), docs, common);
+      askedModel = true;
+    } catch (err) {
+      // The model unavailable: these wordings stay exactly as they are on file and are reviewed next time.
+      console.error(`[private-notes] review failed for deal ${dealId}:`, (err as Error)?.message ?? err);
+      modelFailed = true;
     }
   }
-  review.at = new Date().toISOString();
+  // Still many notes: fold the ones about one matter — asked once per set of notes.
+  first = applyNotesReview(info, review, docs);
+  const groups = currentGroups(allItems, review);
+  if (!modelFailed && first.pending.length === 0 && getPrivateNotes(first.info).length > FOLD_ABOVE && review.foldedFor !== foldKey(groups)) {
+    try {
+      review = await placeBatch(dealId, review, [], groups, facts(), docs, common);
+      review.foldedFor = foldKey(currentGroups(allItems, review));
+      askedModel = true;
+    } catch (err) {
+      console.error(`[private-notes] fold failed for deal ${dealId}:`, (err as Error)?.message ?? err);
+    }
+  }
+  const reviewChanged = JSON.stringify(review) !== JSON.stringify(stored);
+  if (reviewChanged) review.at = new Date().toISOString();
   return withDealFactsLock(dealId, async () => {
     const latest = await storage.getDeal(dealId);
     if (!latest) return { before: 0, after: 0, askedModel, pending: 0 };
     const now = (latest.extractedInfo as Info | null) || {};
     const before = getPrivateNotes(now).length;
     const applied = applyNotesReview(now, review, docs);
-    if (applied.changed || askedModel) {
+    if (applied.changed || reviewChanged) {
       await storage.updateDeal(dealId, {
         ...(applied.changed ? { extractedInfo: applied.info } : {}),
-        privateNotesReview: review,
+        ...(reviewChanged ? { privateNotesReview: review } : {}),
       } as any);
     }
     const after = getPrivateNotes(applied.info).length;
-    console.log(`[private-notes] deal ${dealId}: ${before} → ${after} notes${askedModel ? " (reviewed new wordings)" : " (no new wordings)"}`);
+    const how = modelFailed ? " (model unavailable — undecided notes left as they were)" : askedModel ? " (reviewed new wordings)" : " (no new wordings)";
+    console.log(`[private-notes] deal ${dealId}: ${before} → ${after} notes${how}`);
     return { before, after, askedModel, pending: applied.pending.length };
   });
 }

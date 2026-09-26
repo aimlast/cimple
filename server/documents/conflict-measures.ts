@@ -13,7 +13,9 @@
  *    depreciation) — the financial analysis reconciles those with context;
  *  - a part against the whole: one owner's salary against the total
  *    shareholder salaries, a salary against total compensation;
- *  - two periods: the FY2022 statements against an FY2024 figure.
+ *  - two periods: the FY2022 statements against an FY2024 figure;
+ *  - an option's notice window against the option's terms ("window opens
+ *    in 2028" vs "by notice 9-12 months before the June 30, 2029 expiry").
  * And two narrative values can disagree materially although no figure key
  * is involved: "medical is about a third of revenue" against "Medical 24% of
  * 2024 sales" (shareClaimsConflict).
@@ -258,6 +260,31 @@ export function shareClaimsConflict(a: string, b: string, yearA?: string, yearB?
 
 const periodYear = (p?: string) => (p && /^\d{4}/.test(p) ? p.slice(0, 4) : undefined);
 
+// ─── Notice windows ──────────────────────────────────────────────────────────
+
+const NOTICE_TERMS = /\bnotice\b[^.;]{0,120}\b(?:months?|days?)\b[^.;]{0,40}\b(?:prior|before|in advance)\b/i;
+const WINDOW_WORDS = /\b(?:window|notice|option|exercis\w*|renew\w*|extend\w*|extension)\b/i;
+const END_WORDS = /\b(?:expir\w*|ends?|ended|runs? (?:to|until|through|out)|terminat\w*)\b/i;
+const yearsOf = (v: string) => Array.from(new Set(v.match(/\b(?:19|20)\d{2}\b/g) ?? []));
+
+/**
+ * True when one value is when an option's notice window opens ("renewal
+ * option window opens in 2028") and the other states the option with its
+ * notice terms ("… by written notice not less than 9 months prior to the
+ * expiry" of a June 30, 2029 term): the window's year is the year before a
+ * date the other gives — the same terms, not a dispute.
+ */
+export function noticeWindowMatches(a: string, b: string): boolean {
+  for (const [x, y] of [[a, b], [b, a]]) {
+    if (!NOTICE_TERMS.test(y) || !WINDOW_WORDS.test(x) || END_WORDS.test(x)) continue;
+    const yx = yearsOf(x);
+    const yy = yearsOf(y);
+    const extra = yx.filter((v) => !yy.includes(v));
+    if (yx.length > 0 && extra.length > 0 && extra.every((v) => yy.includes(String(Number(v) + 1)))) return true;
+  }
+  return false;
+}
+
 /**
  * Why two differing values for `factKey` are NOT one fact disputed, or null
  * when they are a real conflict a broker must look at.
@@ -287,6 +314,8 @@ export function falseConflictReason(factKey: string, x: ConflictSideInfo, y: Con
   const ya = periodYear(x.period);
   const yb = periodYear(y.period);
   if (figures && ya && yb && ya !== yb && (x.kind === "document" || y.kind === "document")) return "figures for different fiscal years";
+  // An option's notice window against the option's own terms.
+  if (/renew|option|extension|lease/i.test(factKey) && noticeWindowMatches(a, b)) return "when the notice window opens against the option's own terms";
   // Owner pay: one owner vs all shareholders, salary vs total compensation.
   if (isOwnerPayKey(factKey) && figures) {
     const ca = currencies(a);

@@ -5,15 +5,16 @@
 import assert from "node:assert/strict";
 import { storage } from "../../server/storage";
 import { mergeExtractedData } from "../../server/documents/extractor";
+import { addPrivateNotes, refreshSourceNotes } from "../../server/documents/ingest";
 import { materiallyDifferent, settleConflicts, type MergeConflict } from "../../server/documents/merge-policy";
 import { falseConflictReason, shareClaimsConflict, sumOfPartsMatches } from "../../server/documents/conflict-measures";
 import {
-  discrepancyForConflict, planMergeRowSupersession, recordMergeConflicts, sameConflict, staleMergeRowReason,
+  discrepancyForConflict, factsFalseReason, planMergeRowSupersession, recordMergeConflicts, sameConflict, staleMergeRowReason,
 } from "../../server/documents/merge-conflicts";
 import { mergeDiscrepancyConflicts } from "../../server/interview/source-context";
 import {
-  applyNotesReview, collectNoteItems, currentGroups, emptyReview, isDroppableNote, isPromotableNote, keepsEveryDetail,
-  recordPlacements, settleRejects, MOVED_FROM_NOTES, type NotesReview, type ReviewDoc,
+  adoptFoldedWordings, applyNotesReview, collectNoteItems, currentGroups, emptyReview, inventedDetails, isDroppableNote, isPromotableFact,
+  isPromotableNote, keepsEveryDetail, recordPlacements, settleRejects, MOVED_FROM_NOTES, type NotesReview, type ReviewDoc,
 } from "../../server/documents/private-notes-review";
 import { addPrivateNote, getFieldSources, getPrivateNotes, removePrivateNoteSource } from "../../server/interview/info-merger";
 import { sellerInterviewView } from "../../server/interview/seller-view";
@@ -329,6 +330,212 @@ await (async () => {
   assert.ok(isDroppableNote("Broker fee/commission and engagement terms not disclosed in this email thread"), "a remark that something is absent");
   assert.ok(!isDroppableNote("Referral from Heather Kwan (Kwan & Brodeur, Leduc)"));
   ok("a lossy consolidation is repaired once, else made from the notes' own words; existing notes about one matter fold together");
+}
+
+// ── Round V-2: a restated conflict keeps its row true ────────────────────
+await (async () => {
+  rows.length = 0;
+  const docsList = [{ id: "CALL", name: "Intro call" }, { id: "LEASE", name: "Warehouse lease" }] as any[];
+  const docsMap = new Map(docsList.map((d) => [d.id, d]));
+  const src = (documentId: string, source: string) => ({ source, documentId }) as any;
+  const conflict = (callWords: string, leaseWords: string): MergeConflict => ({
+    factKey: "leaseTerms",
+    winner: { value: leaseWords, src: src("LEASE", "document") },
+    loser: { value: callWords, src: src("CALL", "call") },
+  });
+  const infoWith = (callWords: string, leaseWords: string): Info => ({
+    leaseTerms: leaseWords,
+    _fieldSources: { leaseTerms: { source: "document", documentId: "LEASE" } },
+    _fieldAlternates: { leaseTerms: [{ value: callWords, source: "call", documentId: "CALL" }] },
+  });
+  const c1 = ["Silvergate warehouse lease runs to 2027.", "Lease term to September 30, 2037; renewed 2022 for 15 years"] as const;
+  assert.equal(await recordMergeConflicts("D", [conflict(c1[0], c1[1])], docsList, infoWith(c1[0], c1[1])), 1);
+  // The call is re-read in new words: the open row takes them and still stands
+  const c2 = ["Silvergate warehouse lease runs to 2027; renewed last year (2024) for 15 years.", c1[1]] as const;
+  assert.equal(await recordMergeConflicts("D", [conflict(c2[0], c2[1])], docsList, infoWith(c2[0], c2[1])), 0, "no second row");
+  assert.equal(rows[0].interviewValue, c2[0], "the row shows the call's current words");
+  assert.deepEqual(planMergeRowSupersession(rows as any, infoWith(c2[0], c2[1]), docsList), [], "…and is not superseded");
+  // The lease is re-read in new words too
+  const c3 = [c2[0], "Triple-net lease to September 30, 2037; annual basic rent $1,897,500"] as const;
+  assert.equal(await recordMergeConflicts("D", [conflict(c3[0], c3[1])], docsList, infoWith(c3[0], c3[1])), 0);
+  assert.equal(rows[0].documentValue, c3[1]);
+  assert.deepEqual(planMergeRowSupersession(rows as any, infoWith(c3[0], c3[1]), docsList), []);
+  assert.equal(staleMergeRowReason(rows[0], infoWith(c3[0], c3[1]), docsMap), null);
+  // A row the broker routed to the seller, or settled, keeps what it showed
+  rows[0].status = "ask_seller";
+  const c4 = ["Lease to 2027 per the call", c3[1]] as const;
+  await recordMergeConflicts("D", [conflict(c4[0], c4[1])], docsList, infoWith(c4[0], c4[1]));
+  assert.equal(rows[0].interviewValue, c3[0], "a routed row is not reworded");
+  assert.equal(rows.length, 1);
+  ok("a restated conflict brings its open row to the current words — it never lapses for a cycle; routed rows keep theirs");
+})();
+
+// ── Round V-2: a row with the seller survives the seller's answer ────────
+{
+  const docsList = [{ id: "CALL", name: "Call" }, { id: "FS", name: "Statements" }] as any[];
+  const docsMap = new Map(docsList.map((d) => [d.id, d]));
+  const row: any = {
+    id: "E1", createdAt: new Date(1), source: "merge", status: "ask_seller", severity: "critical", category: "financial", field: "EBITDA",
+    factKey: "ebitda", factYear: null, interviewValue: "$7.5M", documentValue: "$5,274,900", documentId: "FS", resolvedValue: null,
+    sideSources: { interview: { kind: "call", documentId: "CALL" }, document: { kind: "document", documentId: "FS" } },
+  };
+  // The seller's interview answer moved the fact to a third value
+  const answered: Info = {
+    ebitda: "$6.1M",
+    _fieldSources: { ebitda: { source: "interview" } },
+    _fieldAlternates: { ebitda: [{ value: "$5,274,900", source: "document", documentId: "FS" }, { value: "$7.5M", source: "call", documentId: "CALL" }] },
+  };
+  assert.equal(staleMergeRowReason(row, answered, docsMap), null, "routed: stays until the interview hands it back");
+  assert.deepEqual(planMergeRowSupersession([row], answered, docsList), []);
+  assert.ok(staleMergeRowReason({ ...row, status: "open" }, answered, docsMap), "an open row whose fact moved on still lapses");
+  // …even when another row repeats it
+  const earlier: any = { ...row, id: "E0", createdAt: new Date(0), source: "financial_analysis", status: "open", factKey: null, field: "EBITDA" };
+  assert.deepEqual(planMergeRowSupersession([earlier, row], answered, docsList), []);
+  // …but a deleted source still takes it out (never put to the seller from a deleted transcript)
+  assert.ok(staleMergeRowReason(row, answered, new Map([["FS", docsMap.get("FS")]]) as any));
+  ok("a row routed to the seller is never superseded by the seller's own answer; a deleted source still retires it");
+}
+
+// ── Round V-2: the notes review without the model, and restatements ──────
+{
+  const docs = new Map<string, ReviewDoc>([
+    ["CALL", { id: "CALL", name: "Phone call", visibility: "shared", sourceKind: "call" } as any],
+    ["CRM", { id: "CRM", name: "CRM note", visibility: "broker_only", sourceKind: "crm" } as any],
+  ]);
+  const info: Info = {};
+  addPrivateNote(info, "Seller had a cardiac event in October 2024 (stent placed)", { documentId: "CALL" });
+  addPrivateNote(info, "Seller had heart episode October 2024, stent placed, back to work in 2 weeks", { documentId: "CALL" });
+  addPrivateNote(info, "Gord had cardiac episode last October - marked PRIVATE", { documentId: "CRM", brokerOnly: true });
+  addPrivateNote(info, "Grandkids in Kelowna", { documentId: "CRM", brokerOnly: true });
+  const notes = getPrivateNotes(info);
+  assert.ok(notes.some((x) => (x.alsoFrom ?? []).length > 0), "addPrivateNote folded a restatement");
+  // No decision at all (the model unavailable): every note stays exactly as it is
+  const none = applyNotesReview(info, emptyReview(), docs);
+  assert.equal(none.changed, false, "nothing is pulled apart");
+  assert.deepEqual(getPrivateNotes(none.info), notes);
+  assert.equal(none.pending.length, collectNoteItems(info, docs).length);
+  // Decided: the heart notes are one note (group); a reprocess then re-reads the call in new words
+  const items = collectNoteItems(info, docs);
+  const heartIds = items.map((it, i) => (/cardiac|heart/i.test(it.text) ? `N${i + 1}` : null)).filter((x): x is string => !!x);
+  const review = recordPlacements(emptyReview(), {
+    groups: [
+      { text: "Gord had a cardiac event in October 2024 (stent placed), back to work in 2 weeks; PRIVATE.", notes: heartIds },
+      { text: "Grandkids in Kelowna", notes: [`N${items.findIndex((it) => /Kelowna/.test(it.text)) + 1}`] },
+    ],
+    notNotes: [],
+  }, items, [], docs).review;
+  const applied = applyNotesReview(info, review, docs).info;
+  assert.equal(getPrivateNotes(applied).length, 2);
+  const reread: Info = { ...applied };
+  addPrivateNote(reread, "Seller had a heart episode in October 2024; a stent was placed and he was back at work in two weeks", { documentId: "CALL" });
+  addPrivateNote(reread, "Seller's wife Donna wants to move to Kelowna", { documentId: "CALL" });
+  const adopted = adoptFoldedWordings(reread, review, docs);
+  const again = applyNotesReview(reread, adopted, docs);
+  assert.equal(again.pending.length, 1, `only the new matter is left for the model: ${again.pending.map((p) => p.text)}`);
+  assert.match(again.pending[0].text, /Donna/);
+  const after = getPrivateNotes(again.info);
+  assert.equal(after.filter((x) => /cardiac|heart/i.test(x.note)).length, 1, "the restatement joined its note");
+  assert.equal(after.length, 3);
+  // …and the model unavailable for the new one: it stays as it was, the rest as decided
+  assert.equal(applyNotesReview(again.info, adopted, docs).changed, false, "stable");
+  ok("without the model nothing is pulled apart; restatements follow their note without asking the model");
+}
+
+// ── Round V-2: facts only from the closed list, never a stance or a deal term ─
+{
+  for (const t of [
+    "Gord McAllister: would carry some paper if it gets the deal done, 15-20%, three years, but wants most of it at closing",
+    "Karen thinks $42M asking price is low",
+    "Daniel does not yet know business is for sale",
+    "Helen explicitly requested this not appear in any sale document",
+    "Rob may roll 10-15% equity",
+    "Seller financing: up to 10% seller note, 5 years, subordinated.",
+    "Structure: $2,600,000 cash at close / $300,000 VTB 3 yrs @ 5% subordinated / $150,000 earnout",
+    "Kyle says $9.0M fair",
+    "Tom Brennan has known about sale process since January",
+    "Target close end of Q1 2026 - seller's timeline",
+    "Excluding Stillwater Ridge Molding at seller's request.",
+  ]) assert.ok(!isPromotableFact("shareholdersAgreement", t) && !isPromotableFact("excludedAssets", t) && !isPromotableFact("dividendsDeclared", t) && !isPromotableNote(t), `never a fact: ${t}`);
+  assert.ok(isPromotableFact("dividendsDeclared", "Class D dividend of $60,000 declared December 16, 2024 payable only to Gord McAllister"));
+  assert.ok(isPromotableFact("customerNonRenewal", "HV-1057 Himmelman & Sandhu Law gave 90-day non-renewal notice Feb 2025, will lose $2,470 MRR in June 2025"));
+  assert.ok(isPromotableFact("shareholdersAgreement", "Shareholder agreement amended November 2024: Luis's first refusal waived if Gord sells 100% to outside buyer, Luis gets same price per share as Gord"));
+  assert.ok(isPromotableFact("relatedPartyTransactions", "Premises owned by entity controlled by majority shareholder (related party)"));
+  assert.ok(!isPromotableFact("dividendsDeclared", "Financial statements are unaudited compilation only"), "the key must be what the note is about");
+  assert.ok(!isPromotableFact("marketPosition", "Financial statements are unaudited compilation only"), "only the closed list of disclosures");
+  // The model moving a negotiation note out is refused: it stays a note
+  const docs = new Map<string, ReviewDoc>([["EM", { id: "EM", name: "Email", visibility: "shared", sourceKind: "email" } as any]]);
+  const info: Info = {};
+  addPrivateNote(info, "Karen thinks $42M asking price is low", { documentId: "EM" });
+  const items = collectNoteItems(info, docs);
+  const review = recordPlacements(emptyReview(), { groups: [], notNotes: [{ note: "N1", kind: "business_fact", factKey: "shareholdersAgreement", factValue: "$42M" }] }, items, [], docs).review;
+  const out = applyNotesReview(info, review, docs);
+  assert.equal(out.info.shareholdersAgreement, undefined);
+  assert.equal(getPrivateNotes(out.info).length, 1);
+  ok("a note becomes a fact only as a listed disclosure it is about — never a stance, a deal term or who knows about the sale");
+}
+
+// ── Round V-2: what the model put together stays together ────────────────
+{
+  const mk = (text: string, i: number) => ({ key: text.toLowerCase(), text, sources: [{ documentId: `D${i}` }], shared: true });
+  const members = [
+    "Seller had heart episode October 2024, stent placed, back to work in 2 weeks, doctor advised to slow down - this is partial motivation for sale but NOT to be disclosed in any buyer materials",
+    "Gord had cardiac episode last October - marked PRIVATE, do not put in CIM",
+    "Seller stated 'don't want it in any brochure' regarding health episode",
+    "Seller had a cardiac event in October 2024 (stent placed), doctor advised him to slow down — this is the real trigger for the sale timeline. He explicitly asked this stay out of the CIM and any market",
+  ].map(mk);
+  const reject = { targets: [], existing: [], fresh: members, text: "Owner had a cardiac event in October 2024 (stent); doctor advised slowing down; keep out of all buyer materials", missing: ["2"] } as any;
+  const settled = settleRejects(emptyReview(), [reject], [undefined]);
+  const groupsUsed = new Set(members.map((m) => (settled.items[m.key] as any)?.g));
+  assert.equal(groupsUsed.size, 1, "one note, never split");
+  const g = settled.groups[Array.from(groupsUsed)[0] as string];
+  assert.ok(inventedDetails(g.text, members.map((m) => m.text)).length === 0, `invents nothing: ${g.text}`);
+  // A draft that invents a figure is never used
+  const bad = { ...reject, text: "Owner had a cardiac event in October 2024 (2 stents, $40,000 treatment)" };
+  const s2 = settleRejects(emptyReview(), [bad], ["Owner had a cardiac event (3 stents)"]);
+  const t2 = s2.groups[(s2.items[members[0].key] as any).g].text;
+  assert.ok(!/40,000|3 stents/.test(t2), t2);
+  ok("a consolidation that can't keep every detail keeps the notes together in words that invent nothing");
+}
+
+// ── Round V-2: a notice window and a debt's current portion are not disputes ─
+{
+  const doc = "One (1) option to extend for five (5) years (July 1, 2029 to June 30, 2034) by written notice delivered not less than nine (9) months and not more than twelve (12) months prior to the expiry of the Term";
+  assert.ok(falseConflictReason("leaseRenewalOptions", { value: "Renewal option window opens in 2028, not yet exercised", kind: "email" }, { value: doc, kind: "document" }));
+  assert.equal(falseConflictReason("leaseRenewalOptions", { value: "Lease expires in 2028", kind: "email" }, { value: doc, kind: "document" }), null, "an expiry year stays a dispute");
+  assert.equal(falseConflictReason("leaseTerms", { value: "Renewal option window opens in 2026", kind: "email" }, { value: doc, kind: "document" }), null, "a window years off stays a dispute");
+  const info: Info = { longTermDebt: "Total long-term debt $1,342,000 (current portion $274,000, long-term portion $1,068,000)." };
+  assert.ok(factsFalseReason("longTermDebtByYear", "$1,068,000", "$1,342,000", info));
+  assert.ok(factsFalseReason("longTermDebt", "$1,068,000", "$1,342,000", { currentPortionLongTermDebtByYear: { "2023": "$274,000" } }));
+  assert.equal(factsFalseReason("longTermDebtByYear", "$1,068,000", "$1,500,000", info), null);
+  assert.equal(factsFalseReason("annualRevenue", "$1,068,000", "$1,342,000", info), null, "debt only");
+  const row: any = {
+    id: "LTD", createdAt: new Date(1), source: "merge", status: "open", severity: "significant", category: "financial", field: "Long term debt (2023)",
+    factKey: "longTermDebtByYear", factYear: "2023", interviewValue: "$1,068,000", documentValue: "$1,342,000", documentId: null, resolvedValue: null, sideSources: {},
+  };
+  assert.ok(staleMergeRowReason(row, { ...info, longTermDebtByYear: { "2023": "$1,342,000" } }, new Map()), "an older row is superseded");
+  ok("an option's notice window and a debt total vs its long-term portion are not raised");
+}
+
+// ── Round V-2: re-reading a source leaves its notes where they are ───────
+{
+  const call = { id: "CALL", name: "Intro call", sourceKind: "call", visibility: "shared" } as any;
+  const crm = { id: "CRM", name: "CRM note", sourceKind: "crm", visibility: "broker_only" } as any;
+  const info: Info = {};
+  // A chain of restatements folded into one note in the order they arrived
+  addPrivateNotes(info, ["Owner Harjit Grewal is 67; had a cardiac stent procedure last year; wife wants to travel"], call);
+  addPrivateNotes(info, ["Founder (67) retiring after a 2024 heart procedure"], crm);
+  addPrivateNotes(info, ["Harjit had cardiac stent procedure last year (recovered, walking daily)", "Class D dividend of $60,000 declared December 16, 2024"], call);
+  const before = JSON.stringify(getPrivateNotes(info));
+  const data = { _privateNotes: ["Harjit had cardiac stent procedure last year (recovered, walking daily)"], dividendsDeclared: "Class D dividend of $60,000 declared December 16, 2024" };
+  refreshSourceNotes(info, call, data);
+  const once = getPrivateNotes(info);
+  assert.ok(!once.some((x) => /dividend/i.test(JSON.stringify(x))), "a note the source now records as a fact goes");
+  assert.ok(once.some((x) => [x.note, ...(x.alsoFrom ?? []).map((a) => a.wording)].some((w) => /wife wants to travel/.test(w ?? ""))), "an earlier wording the fresh run didn't repeat stays");
+  refreshSourceNotes(info, call, data);
+  refreshSourceNotes(info, crm, { _privateNotes: ["Founder (67) retiring after a 2024 heart procedure"] });
+  assert.equal(JSON.stringify(getPrivateNotes(info)), JSON.stringify(once), "re-reading again changes nothing");
+  assert.notEqual(before, JSON.stringify(once));
+  ok("a reprocess keeps each source's earlier wordings in place: no notes split or reordered, facts leave");
 }
 
 console.log(`\n${n} checks passed`);

@@ -1478,6 +1478,29 @@ export function removePrivateNoteSource(info: Record<string, unknown>, documentI
   return true;
 }
 
+/**
+ * Drops only the given wordings of `documentId` from the private notes
+ * (mutates): the source's other wordings stay exactly where they are. A note
+ * no other source states goes. Returns true when anything changed.
+ */
+export function removePrivateNoteWordings(info: Record<string, unknown>, documentId: string, wordings: string[]): boolean {
+  const drop = new Set(wordings.map(privateNoteText));
+  if (drop.size === 0 || !Array.isArray(info[BROKER_PRIVATE_NOTES_KEY])) return false;
+  let changed = false;
+  const kept: BrokerPrivateNote[] = [];
+  for (const n of getPrivateNotes(info)) {
+    const sources = privateNoteSources(n);
+    const surviving = sources.filter((s) => !(s.documentId === documentId && drop.has(privateNoteText(s.wording ?? n.note))));
+    if (surviving.length === sources.length) { kept.push(n); continue; }
+    changed = true;
+    if (surviving.length > 0) kept.push(withSources(n, surviving));
+  }
+  if (!changed) return false;
+  if (kept.length > 0) info[BROKER_PRIVATE_NOTES_KEY] = kept;
+  else delete info[BROKER_PRIVATE_NOTES_KEY];
+  return true;
+}
+
 function stripDocumentId(src: FieldSource): FieldSource {
   const { documentId: _d, ...rest } = src;
   return rest;

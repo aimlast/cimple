@@ -22,13 +22,15 @@
  * discrepancy check's, the financial analysis', open or settled), however
  * the rows name the fact or order the values (sameConflict). So
  * re-ingesting or reprocessing is quiet, and a conflict the broker resolved
- * is never re-opened.
+ * is never re-opened. A restated dispute brings its open row to the current
+ * wording (rewordPatch), so the row stays true instead of lapsing.
  *
  * Lifecycle (supersedeStaleMergeRows): an open merge row whose source was
  * deleted, whose values no source on the deal states any more, whose fact
  * moved on, which the rules above now clear, or which repeats another row
  * is superseded (never deleted) — so it neither blocks CIM generation nor
- * reaches the seller.
+ * reaches the seller. A row with the seller (ask_seller, seller_responded)
+ * lapses only when a source was deleted or the rules clear it.
  */
 import { storage } from "../storage";
 import type { Discrepancy, Document, DocumentSourceMeta, InsertDiscrepancy } from "@shared/schema";
@@ -303,6 +305,41 @@ export function mergeConflictFalseReason(c: MergeConflict, docs: Map<string, Con
   return falseConflictReason(c.factKey, side(c.winner), side(c.loser));
 }
 
+const DEBT_KEY = /debt|loan|borrowing/i;
+
+/** Every current-portion amount the deal states (its own keys, and "current portion $274,000" inside a debt value). */
+function currentPortions(info: Record<string, unknown>): number[] {
+  const out: number[] = [];
+  const add = (v: unknown) => {
+    const text = typeof v === "string" ? v : v && typeof v === "object" ? Object.values(v as Record<string, unknown>).map(String).join(" ") : "";
+    for (const t of typedNumericValues(text)) if (t.kind === "currency") out.push(t.value);
+  };
+  for (const [k, v] of Object.entries(info)) {
+    if (k.startsWith("_")) continue;
+    if (/currentPortion/i.test(k)) add(v);
+    else if (DEBT_KEY.test(k) && typeof v === "string") {
+      for (const m of Array.from(v.matchAll(/current portion[^$\d;]{0,20}(\$?\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|million)?)/gi))) add(m[1].startsWith("$") ? m[1] : `$${m[1]}`);
+    }
+  }
+  return out;
+}
+
+/**
+ * Why two debt figures are not one fact disputed given what else the deal
+ * states, or null: the gap between them is a current portion on file — one
+ * is the total debt, the other the long-term portion after the current
+ * portion ("$1,342,000" vs "$1,068,000" with "current portion $274,000").
+ */
+export function factsFalseReason(factKey: string, a: string, b: string, info: Record<string, unknown>): string | null {
+  if (!DEBT_KEY.test(factKey)) return null;
+  const x = typedNumericValues(a).find((t) => t.kind === "currency")?.value;
+  const y = typedNumericValues(b).find((t) => t.kind === "currency")?.value;
+  if (!x || !y || x === y) return null;
+  const gap = Math.abs(x - y);
+  if (currentPortions(info).some((p) => Math.abs(p - gap) <= Math.max(p, gap) * 0.005)) return "one is the total debt, the other the long-term portion after the current portion";
+  return null;
+}
+
 /** Rows a new conflict is weighed against: every row except merge rows already superseded (those may come back). */
 function comparableRows(rows: Discrepancy[]): Discrepancy[] {
   return rows.filter((d) => !(d.source === "merge" && d.status === "superseded"));
@@ -326,14 +363,61 @@ export async function recordMergeConflicts(
   const rows = comparableRows(await storage.getDiscrepanciesByDeal(dealId));
   const names = (id: string) => docs.get(id)?.name;
   let created = 0;
+  const refreshed = new Set<string>();
   for (const c of conflicts) {
     if (mergeConflictFalseReason(c, docs)) continue;
-    if (rows.some((r) => sameConflict(c.factKey, c.winner.value, c.loser.value, r))) continue;
+    if (finalInfo && factsFalseReason(c.factKey, c.winner.value, c.loser.value, finalInfo)) continue;
+    const matches = rows.filter((r) => sameConflict(c.factKey, c.winner.value, c.loser.value, r));
+    if (matches.length > 0) {
+      // The same dispute, re-read in new words (a re-extraction rewords a
+      // lease date or a narrative on almost every reprocess): an OPEN merge
+      // row takes the current wording, so the lifecycle below still finds
+      // its values on file and the dispute never vanishes for a cycle. A row
+      // the broker routed to the seller, or settled, keeps what it showed.
+      const draft = discrepancyForConflict(c, names);
+      for (const r of matches) {
+        if (r.source !== "merge" || r.status !== "open" || refreshed.has(r.id)) continue;
+        const patch = rewordPatch(r, draft, finalInfo, docs);
+        if (!patch) continue;
+        await storage.updateDiscrepancy(r.id, patch);
+        Object.assign(r, patch);
+        refreshed.add(r.id);
+      }
+      continue;
+    }
     const row = await storage.createDiscrepancy({ dealId, ...discrepancyForConflict(c, names) } as InsertDiscrepancy);
     rows.push(row);
     created++;
   }
   return created;
+}
+
+/**
+ * Pure: the update that brings an open merge row to a restated conflict's
+ * current wording, or null when the row's own values still stand (it is
+ * left exactly as it is) or nothing differs. Without the saved facts, any
+ * difference in wording is taken.
+ */
+export function rewordPatch(
+  row: Discrepancy,
+  draft: DiscrepancyDraft,
+  finalInfo: Record<string, unknown> | undefined,
+  docs: Map<string, ConflictDoc>,
+): Partial<InsertDiscrepancy> | null {
+  if (row.interviewValue === draft.interviewValue && row.documentValue === draft.documentValue) return null;
+  if (finalInfo && row.factKey && !staleMergeRowReason({ ...row, status: "open" }, finalInfo, docs)) return null;
+  return {
+    interviewValue: draft.interviewValue ?? null,
+    documentValue: draft.documentValue ?? null,
+    documentId: draft.documentId ?? null,
+    documentName: draft.documentName ?? null,
+    sideSources: draft.sideSources,
+    aiExplanation: draft.aiExplanation ?? null,
+    severity: draft.severity,
+    category: draft.category,
+    ...(draft.factKey && !row.factKey ? { factKey: draft.factKey } : {}),
+    ...(draft.factYear && !row.factYear ? { factYear: draft.factYear, field: draft.field } : {}),
+  } as Partial<InsertDiscrepancy>;
 }
 
 // ─── Lifecycle ───────────────────────────────────────────────────────────────
@@ -375,8 +459,8 @@ function sameValue(v: string, pool: string[]): boolean {
  *  - the fact is gone, or a side's value is no longer stated by any source
  *    on the deal (its source was re-read and says something else now);
  *  - the value on file is neither side (the broker or a newer source moved
- *    the fact on) — for a row the seller already answered, only the first
- *    two apply, so the seller's answer is never dropped.
+ *    the fact on) — for a row routed to the seller or answered by them,
+ *    only the first two apply, so the seller's answer is never dropped.
  */
 export function staleMergeRowReason(
   row: Discrepancy,
@@ -398,10 +482,14 @@ export function staleMergeRowReason(
     title: s?.documentId ? docTitle(docs.get(s.documentId)) : undefined,
     period: s?.documentId ? docPeriod(docs.get(s.documentId)) : undefined,
   });
-  const why = falseConflictReason(row.factKey, side(I, sides.interview), side(D, sides.document));
+  const why = falseConflictReason(row.factKey, side(I, sides.interview), side(D, sides.document)) ?? factsFalseReason(row.factKey, I, D, info);
   if (why) return why;
   if (I && D && !materiallyDifferent(row.factKey, I, D)) return "the two values agree";
-  if (row.status === "seller_responded") return null;
+  // Routed to the seller, or answered by them: the seller's answer moving
+  // the fact on is what the broker must review (the interview hands an
+  // ask_seller row back as seller_responded, which re-locks a critical one),
+  // never a reason to drop the row.
+  if (row.status === "seller_responded" || row.status === "ask_seller") return null;
   const { onFile, all } = statedValues(info, row.factKey, row.factYear);
   if (onFile.length === 0) return "the fact is no longer on file";
   if ((I && !sameValue(I, all)) || (D && !sameValue(D, all))) return "a value it compares is no longer stated by any source";
@@ -439,8 +527,8 @@ export function planMergeRowSupersession(rows: Discrepancy[], info: Record<strin
   for (const r of ordered) {
     if (r.source !== "merge" || !LIVE_STATUSES.has(r.status)) continue;
     if (staleMergeRowReason(r, info, docs)) { out.push(r.id); continue; }
-    // A row the seller already answered stays even when another row repeats it.
-    if (r.status !== "seller_responded" && r.factKey &&
+    // A row with the seller (routed or answered) stays even when another row repeats it.
+    if (r.status === "open" && r.factKey &&
         kept.some((o) => sameConflict(r.factKey!, r.interviewValue ?? "", r.documentValue ?? "", o))) {
       out.push(r.id);
       continue;
