@@ -191,7 +191,7 @@ export function isSurnameOccupation(w: string): boolean {
 const COMMON = `
 able about above access account accounting accredited acquisition across action active activity actual add addition additional address adjacent admin administration administrative adult advance advanced advantage advertising advice advisory affairs after afternoon age agency agreement ahead aid air airport alarm all allied almost alone along alternative always ambulatory american amount analysis analytics ancillary and animal annual answer any apartment apparel appliance application applied appointment approval approved approximately april architectural area around arrangement art arts asphalt assembly asset assist assistance assisted association assurance athletic atlantic audio audit august auto automated automation automotive autumn available average avenue award away
 baby back background bad bag bagel bakery bakeshop balance ball band bank banking banquet bar barbershop base based basement basic basin bath bathroom bay beach bean bear beauty bed bedroom beef beer before begin behavioural being bell below belt benefit best better beverage beyond bicycle big bike bill billing bin bird birth bistro black blade blend block blue board boat body boiler bond bonus book booking bookkeeping boot border both bottle bottom boutique bowl box boy branch brand bread break breakfast brewery brick bridge bright bring broad broadcast brook brother brown budget build builder building built bulk bus business busy button buy
-cabinet cable cafe cafeteria cake calendar call camera camp campus can canadian candle cannabis capacity capital car card cardiology care career cargo carpet carriage carry cart cash casino casual catalogue catering cattle cedar ceiling cell cellar cement center centre central ceramic certificate certification chain chair challenge chamber champion chance change channel chapter charge charity chart check chemical chest chicken chief child childcare childhood children chiropractic choice christian christmas church cinema circle circuit citizen city civic civil claim class classic clean cleaning clear clearance client clinic clinical clock close closed closing cloth clothing cloud club coast coastal coat code coffee cold collection college collision colour color column combined comfort commerce commercial common communication community companion company compensation competition competitive complete compliance component computer concept concierge concrete condition conditioning conference connection construction consulting consumer contact content continental continuing contract contracting control convenience cooking cool cooling copy core corner corporate cost cottage council counter country county couple course court cover coverage craft create creative credit crew crop cross cuisine culture cup current curriculum custom customer cut cutting cycle
+cabinet cable cafe cafeteria cake calendar call camera camp campus can canadian candle cannabis capacity capital car card cardiology care career cargo carpet carriage carry cart case cash casino casual catalogue catering cattle cedar ceiling cell cellar cement center centre central ceramic certificate certification chain chair challenge chamber champion chance change channel chapter charge charity chart check chemical chest chicken chief child childcare childhood children chiropractic choice christian christmas church cinema circle circuit citizen city civic civil claim class classic clean cleaning clear clearance client clinic clinical clock close closed closing cloth clothing cloud club coast coastal coat code coffee cold collection college collision colour color column combined comfort commerce commercial common communication community companion company compensation competition competitive complete compliance component computer concept concierge concrete condition conditioning conference connection construction consulting consumer contact content continental continuing contract contracting control convenience cooking cool cooling copy core corner corporate cost cottage council counter country county couple course court cover coverage craft create creative credit crew crop cross crown cuisine culture cup current curriculum custom customer cut cutting cycle
 daily dairy damage dance dark data date day daycare dead deal dealer dealership dear debt deck decor decorating deep defence delivery deli dental dentistry department deposit depot design desk dessert detail detailing development device diagnostic diagnostics diamond diesel diet digital dining dinner direct direction discount dispatch display distribution district diversity division dock document dog dollar domestic door double down downtown draft drain drainage dream dress drink drive drug dry drywall due duty
 each early earth east eastern easy eat eco economic economy edge education educational effect efficiency eight elder elderly electric electrical electronic electronics elementary elevator else emergency employment empty end energy engine engineering enterprise entertainment entrance entry environment environmental equipment estate estimate estimating europe evening event every exam excavation excellence exchange exercise exhibit existing exit expansion experience expert export express extended exterior external extra eye eyewear freelance remote onsite offsite virtual
 fabric fabrication face facial facilities facility factory fair faith fall family fan fancy farm farming fashion fast father feature federal fee feed feet fence fertility festival field file film final finance financial finishing fire firm first fiscal fish fishing fit fitness five fix fixed flat fleet flight floor flooring floral florist flow flower fly focus food foot football force forest forestry form formal formula fort forward foundation four frame franchise free freight fresh friday friend front frost frozen fruit fuel full fun fund funding funeral furnace furniture future
@@ -208,7 +208,7 @@ pacific pack package packaging page paint painting pair palace panel paper park 
 quality quarter quick quiet
 race radio rail rain ranch range rate raw reading ready real realty rear receivable reception record recovery recreation recruiting recycling red referral region regional regular rehab rehabilitation relations relief remodeling renewal rent rental repair report reporting research reservation residential resort resource restaurant restoration retail retirement return revenue review ridge right ring risk river road rock roof roofing room root rose round route routine royal rural
 safe safety sale salon salt sand sandwich saturday sauce savings school science screen sea seafood seal search season seasonal seat second secondary secure security seed select senior sense septic series service session set settlement seven shade shape share sharp sheet shelf shell shelter shield shift ship shipping shoe shop shore short show shower side sign silver simple single site six size skill skin sky sleep small smart smile smith smoke snow social soft software soil solar sole solid solution sound source south southern space spa special specialty speed sport spring square staff stage standard star start state station steel step stock stone storage store storm story strategic strategy street strength strong structure student studio study style success suite summer summit sun sunday sunrise sunset super supply support surface surgery surgical survey sustainable sweet swim system
-table take talent tank tax taxi tea teaching team tech technical technology telecom temple ten tenant term terminal test testing textile theatre therapy thermal third three thrift thursday tile timber time tire title today together tool top total tour tourism tower town toy track trade trading traffic trail trailer training transfer transit transport transportation travel treatment tree trend trial trip triple truck trucking trust tuesday turf twin two type
+table take talent tank target tax taxi tea teaching team tech technical technology telecom temple ten tenant term terminal test testing textile theatre therapy thermal third three thrift thursday tile timber time tire title today together tool top total tour tourism tower town toy track trade trading traffic trail trailer training transfer transit transport transportation travel treatment tree trend trial trip triple truck trucking trust tuesday turf twin two type
 union unit united unity universal university upper urban urgent used utility
 vacation valley value van vapor vape variety vehicle vending venture vet veterinary video view village vintage vision visit visual vital voice volume
 wage walk wall warehouse warm warranty wash waste watch water way wealth wear weather web website wedding wednesday week weekend weekly weight welcome well wellness west western wet wheel white whole wholesale wide wild wind window wine winery winter wire wise wood work workforce working workshop world worship
@@ -248,9 +248,10 @@ caterpillar cat deere kubota bobcat komatsu doosan hitachi jcb takeuchi genie sk
 lennox trane goodman amana daikin rheem ruud york bryant payne heil tempstar napoleon fujitsu mitsubishi lg samsung bosch navien rinnai viessmann honeywell ecobee nest
 microsoft google apple amazon adobe oracle intuit quickbooks sage xero freshbooks ceridian adp paychex dayforce wagepoint shopify square clover lightspeed toast moneris stripe paypal salesforce hubspot zoho
 samsara geotab motive keeptruckin omnitracs fleetio axon magaya mcleod trimble verizon
-sysco gfs costco walmart loblaw sobeys metro safeway kroger amazon homedepot lowes rona wolseley emco grainger fastenal uline staples
+sysco gfs costco walmart target loblaw sobeys metro safeway kroger amazon homedepot lowes rona wolseley emco grainger fastenal uline staples
 dentsply sirona schein straumann invisalign
 mckesson amerisourcebergen cencora
+connectwise kaseya datto ninjaone ninjarmm nable sentinelone crowdstrike sophos huntress fortinet sonicwall cisco meraki ubiquiti veeam barracuda mimecast proofpoint webroot pax8 ingram synnex itglue dell lenovo 3cx ringcentral zoom dropbox autodesk procore crown case
 `;
 const NATIONAL_BRANDS = new Set(NATIONAL_BRAND_LIST.split(/\s+/).filter(Boolean));
 
@@ -258,3 +259,38 @@ const NATIONAL_BRANDS = new Set(NATIONAL_BRAND_LIST.split(/\s+/).filter(Boolean)
 export function isNationalBrand(w: string): boolean {
   return NATIONAL_BRANDS.has(w.toLowerCase().replace(/[^a-z0-9]/g, ""));
 }
+
+/**
+ * Regions wider than one province or state ("the Midwest", "the Maritime
+ * provinces", "Atlantic Canada", "the Prairies", "the Pacific Northwest").
+ * A Blind CIM may name them, so a customer or supplier named after one
+ * ("Midwest Polymer", "Maritime Smiles") is caught by its full name, never by
+ * the region word alone. Folded, lowercase.
+ */
+const BROAD_REGION_WORDS = new Set(`
+midwest midwestern maritime maritimes atlantic pacific prairie prairies northeast northeastern northwest northwestern
+southeast southeastern southwest southwestern midatlantic gulf appalachia appalachian rockies cascadia heartland
+sunbelt lowcountry tristate panhandle interior northern southern eastern western central coastal canadian american
+`.split(/\s+/).filter(Boolean));
+
+/** A word naming a region wider than a province or state ("Midwest", "Maritime", "Mid-Atlantic"). */
+export function isBroadRegionWord(w: string): boolean {
+  const f = w.toLowerCase().normalize("NFKD").replace(/[^a-z]/g, "");
+  return BROAD_REGION_WORDS.has(f) || BROAD_REGION_WORDS.has(f.replace(/s$/, ""));
+}
+
+/**
+ * What a software product, a tool or a vendor service is — "NinjaOne RMM",
+ * "SentinelOne EDR", "Datto (on-site backup appliances)", "Fortinet
+ * (standard firewall)", "CareMAR eMAR interface". A tool the business runs
+ * on is used by thousands of others and names nothing (redaction rule 5
+ * keeps such brands). Read from the words right after a name in a supplier,
+ * vendor or contract fact — never in a customer fact. Folded, lowercase.
+ */
+export const TOOL_CATEGORY_WORDS = new Set(`
+rmm psa edr xdr mdr siem soc bcdr bdr erp crm pos ehr emr emar tms wms eld pms hris lms dms voip saas
+software platform app apps firewall firewalls antivirus ticketing documentation telematics dashcam dashcams
+backup backups scanner scanners dispensing packager packagers plugin
+`.split(/\s+/).filter(Boolean));
+/** Tool acronyms that are also everyday words in lowercase ("MAR" medication record vs "Mar 2026", "CAD"): capitals only. */
+export const TOOL_CATEGORY_ACRONYMS = new Set(["MAR", "CAD", "CAM", "MES", "CMMS"]);

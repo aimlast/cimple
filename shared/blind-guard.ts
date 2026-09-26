@@ -26,12 +26,17 @@
  *     - the organisations counterparty facts name — customers, landlord,
  *       suppliers, lenders, advisers ("Alderbrook", "Silvergate",
  *       "Westshore Commercial Bank") — never a national brand the business
- *       uses or sells ("Lexus", "authorized Lennox dealer");
+ *       uses or sells ("Lexus", "authorized Lennox dealer"), a tool it runs
+ *       on ("NinjaOne RMM", "Datto (backup appliances)"), a public agency
+ *       ("WCB-Alberta") or a region wider than a province on its own ("the
+ *       Midwest", "the Maritime provinces" — "Midwest Polymer" still counts);
  *     - registration, licence and permit numbers in the facts, matched on
  *       their digits in any format, and ANY labelled public identifier in
  *       the text checked ("USDOT 9318842", "MC-123456", "NSC BC 20-487-316").
  *   People named in passing in any other fact are read as prose (a title
- *   or a known given name: "VP Doug Fairweather").
+ *   or a known given name: "VP Doug Fairweather") — never a period ("Jan-May
+ *   YTD"), an institution ("Alberta College") or the province or state the
+ *   business is in ("…Leduc, Alberta T9E 6W3": Alberta is also a given name).
  *   A person in a people fact is read from its structure, whatever follows
  *   the name: "Carlos Reyes (12)", "Hygienists: Priya (7), Thomas (3)",
  *   "Chris Jones: 6 yrs", "Maria Teller (bookkeeper)", "Anita Patel 51%".
@@ -57,7 +62,7 @@
  * server (redaction, view room, Q&A, outreach) and the broker's preview.
  */
 import { blindIdentifiers } from "./blind-identifiers";
-import { REGION_NAMES, isRegionLabel, isRegionWord } from "./cim-media";
+import { REGION_NAMES, dealBlindRegion, isRegionLabel, isRegionWord } from "./cim-media";
 import { GIVEN_NAMES } from "./blind-given-names";
 import {
   EVERYDAY_NAME_WORDS,
@@ -65,8 +70,11 @@ import {
   isOccupationWord,
   isPluralRole,
   isRoleWord,
+  isBroadRegionWord,
   isNationalBrand,
   isSurnameOccupation,
+  TOOL_CATEGORY_ACRONYMS,
+  TOOL_CATEGORY_WORDS,
 } from "./blind-vocabulary";
 
 export type BlindTermKind = "name" | "person" | "place" | "contact" | "registry";
@@ -176,6 +184,9 @@ const NOT_NAME_WORDS = new Set([
   "if", "when", "after", "before", "since", "until", "while", "during", "only", "just", "mostly", "mainly",
   "willing", "open", "plans", "plan", "low", "high", "turnover", "tenure", "people", "person", "persons",
   "since", "joined", "hired", "left", "retired", "retiring", "remains", "stays", "staying", "leaving", "handles",
+  // the other side of a deal, as a noun ("Landlord (Merivale Crossing Holdings) consent required")
+  "landlord", "landlords", "tenant", "tenants", "lessor", "lessee", "lender", "lenders", "vendor", "vendors",
+  "supplier", "suppliers", "customer", "customers", "client", "clients",
   "vacant", "tbd", "tba", "pending", "hiring", "open", "position", "role", "contract", "contractor", "temp", "various",
 ]);
 
@@ -417,6 +428,21 @@ const GEO_WORDS = new Set([
   "village", "junction", "corner", "corners", "square", "gardens", "estates", "district", "region", "coast", "shore",
 ]);
 
+/**
+ * Words that make a given name before them an institution or a company:
+ * "Alberta College of Physiotherapists", "Victoria Hospital", "Virginia
+ * Tech", "Grace Church".
+ */
+const INSTITUTION_WORDS = new Set([
+  ...Array.from(ORG_WORDS),
+  "college", "university", "institute", "hospital", "school", "academy", "association", "society", "board", "council",
+  "church", "foundation", "commission", "ministry", "federation", "union", "chamber", "agency", "authority", "tech",
+]);
+const MONTH_WORDS = new Set([
+  "january", "february", "march", "april", "may", "june", "july", "august", "september", "october", "november", "december",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct", "nov", "dec",
+]);
+
 function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
   const runStart = run[0].start;
   const runEnd = run[run.length - 1].end;
@@ -439,6 +465,17 @@ function readRun(text: string, run: Tok[], out: string[], mode: ReadMode) {
     }
     if (mode === "titles") {
       i++;
+      continue;
+    }
+
+    // A month range is a period, never a person: "Jan-May YTD", "April-May".
+    if (t.key.includes(" ") && t.key.split(" ").every((p) => MONTH_WORDS.has(p))) {
+      i++;
+      continue;
+    }
+    // A given name before an institution word names the institution: "Alberta College", "Victoria Hospital".
+    if (isGiven(t) && !t.initial && run[i + 1] && INSTITUTION_WORDS.has(run[i + 1].key)) {
+      i += 2;
       continue;
     }
 
@@ -524,6 +561,9 @@ function personField(v: string): string[] {
   const clean = v.replace(/\b(?:Dr|Dre|Mr|Mrs|Ms|Miss|Mx|Prof)\.?\s+/gi, "").trim();
   const words = clean.split(/\s+/).filter(Boolean);
   if (words.length === 0 || words.length > 4 || /[\d@(),;:]/.test(clean)) return peopleInFact(v);
+  // A team or a duty in the name slot ("Shop supervision & QC", "Estimating &
+  // detailing"): written in sentence case or joined with "&" — no one's name.
+  if (/[&+]/.test(clean) || words.some((w) => /^[a-z]/.test(w) && !PARTICLES.has(w))) return peopleInFact(v, "prose");
   // A job or a placeholder in the name slot ("Office Manager", "Vacant", "TBD") is not a person.
   const toks = tokens(clean);
   if (/^(?:vacant|tbd|tba|none|unknown|n\/?a|open|hiring|pending|various)$/i.test(clean)) return [];
@@ -562,8 +602,10 @@ const PLATFORM_HOSTS = /^(?:gmail|googlemail|outlook|hotmail|live|msn|yahoo|iclo
  * read as a person, a street word or a town: every multi-word name
  * ("British Columbia", "New York") and a one-word name ("Ontario", "Texas")
  * standing on its own — not one inside a longer capitalised name ("Ontario
- * Plumbing", "Georgia Wells") or one that is also a given name. Same length,
- * so positions still line up with the original text.
+ * Plumbing", "Georgia Wells") or one that is also a given name, unless the
+ * words around it make it the place ("Leduc, Alberta T9E 6W3", "in
+ * Georgia", "Alberta-based"). Same length, so positions still line up with
+ * the original text.
  */
 const REGION_MASK_RE = new RegExp(
   `(?<![${LETTER}])(?:${[...REGION_NAMES]
@@ -577,11 +619,26 @@ export function maskRegionNames(text: string): string {
     if (!/\s/.test(m)) {
       const before = whole.slice(Math.max(0, offset - 40), offset);
       const after = whole.slice(offset + m.length, offset + m.length + 40);
+      // Plainly the place, whatever else the word could be: "Leduc, Alberta
+      // T9E 6W3", "in Alberta", "Alberta-based", "Georgia, USA".
+      if (regionUsedAsPlaceIn(before, after)) return "~".repeat(m.length);
       if (new RegExp(`[${UPPER}][${LETTER}'’.-]*[ \\t]+$`).test(before) || new RegExp(`^[ \\t]+[${UPPER}]`).test(after)) return m;
+      // A province or state that is also a given name ("Georgia", "Virginia",
+      // "Alberta") stays readable as a person.
       if (GIVEN_NAMES.has(foldForMatch(m))) return m;
     }
     return "~".repeat(m.length);
   });
+}
+
+/** Words right before a province/state that make it the place ("in", "across", "Province of"). */
+const REGION_PLACE_BEFORE = /(?:^|[^A-Za-zÀ-ÖØ-öø-ÿ])(?:in|across|throughout|within|into|from|outside|near|serving|of|northern|southern|eastern|western|central)[ \t]+$/i;
+/** …and right after it: a postal or ZIP code, the country, "-based" ("Calgary, Alberta T2P 0R4", "Georgia 30301", "Alberta, Canada"). */
+const REGION_PLACE_AFTER = new RegExp(
+  String.raw`^(?:[ \t]*,?[ \t]*(?:[ABCEGHJ-NPRSTVXY]\d[ABCEGHJ-NPRSTV-Z][ \t]?\d[ABCEGHJ-NPRSTV-Z]\d|\d{5}(?:-\d{4})?(?!\d)|Canada|CANADA|USA|U\.S\.A?\.?|United States)|-(?:based|headquartered|wide|registered|incorporated)(?![A-Za-z]))`,
+);
+function regionUsedAsPlaceIn(before: string, after: string): boolean {
+  return REGION_PLACE_BEFORE.test(before) || REGION_PLACE_AFTER.test(after);
 }
 
 /**
@@ -606,9 +663,15 @@ function placesIn(value: string, anyCase = false): { names: string[]; lines: str
     for (const seg of segs) {
       if (seg.length < 3 || isRegionLabel(seg) || UNIT_LINE.test(seg)) continue;
       if (/\d/.test(seg)) {
-        // A street line — the line itself, and its distinctive words.
+        // A street line — the line itself, and its distinctive words. In a
+        // label before it ("Warehouse and cross-dock facility: 19220 Campbell
+        // Ridge Drive", "Hillhurst clinic: …") an everyday word says what the
+        // site is, not where; a name ("Hillhurst") still counts.
         if (/[A-Za-z]{3,}/.test(seg)) lines.push(seg.replace(/^#?\s*/, ""));
+        const colon = seg.search(/:[^:\d]*\d/);
+        const label = colon > 0 && !/\d/.test(seg.slice(0, colon)) ? seg.slice(0, colon) : "";
         for (const w of seg.match(/[A-Za-zÀ-ÖØ-öø-ÿ]{5,}/g) || []) {
+          if (label && label.includes(w) && !seg.slice(label.length).includes(w) && isEverydayWord(foldForMatch(w))) continue;
           if (capital(w) && !GENERIC_STREET_WORDS.has(w.toLowerCase()) && !isRegionLabel(w) && !isRegionWord(w)) names.push(w);
         }
         continue;
@@ -673,10 +736,16 @@ function distinctiveCores(name: string): string[] {
     if (isRegionLabel(words.join(" "))) return;
     const folded = words.map((w) => foldForMatch(w)).filter(Boolean);
     if (folded.length === 0 || folded.every((f) => isEverydayWord(f))) return;
+    // Nor a region wider than a province on its own ("Maritime" of "Maritime Smiles Dental Group").
+    if (folded.length === 1 && isBroadRegionWord(folded[0])) return;
     if (folded.length === 1 && folded[0].length < 5) return;
     out.push(words.join(" "));
   };
   consider(trim(all));
+  // Company words dropped, everyday words kept: "Maritime Smiles Dental Group" → "Maritime Smiles".
+  const bareName = [...all];
+  while (bareName.length > 2 && ORG_WORDS.has(foldForMatch(bareName[bareName.length - 1]))) bareName.pop();
+  if (bareName.length >= 2 && bareName.some((w) => isBroadRegionWord(w))) consider(bareName);
   if (all.length >= 3) {
     const lead = trim(all.slice(0, -1));
     if (lead.length >= 2) consider(lead);
@@ -704,13 +773,17 @@ const REGISTRY_PATTERNS: RegExp[] = [
   new RegExp(String.raw`(?<![A-Za-z])(?:U\.?[ \t]?S\.?[ \t]?DOT|DOT|MC|MX|FF|NSC|CVOR|IFTA|IRP|SCAC|EIN|FEIN|TIN|BN|GST|HST|QST|PST|WSIB|WCB|DUNS|D-U-N-S|NPI|DEA|NABP|NCPDP|CLIA|CAGE|UEI|OCP|CPSO)(?:[ \t]*(?:#|No\.?|Number|number|Cert(?:ificate)?|certificate)\.?)?[ \t]*[:#]?[ \t]*(?:(?:BC|AB|SK|MB|ON|QC|NB|NS|PE|NL|YT|NT|NU)[ \t]+)?` + ID_BODY, "g"),
   // Word labels + "number / no. / #" ("Business Number 81234 5678 RC0001", "Licence No. 44721", "Permit #P-2231").
   new RegExp(String.raw`(?<![A-Za-z])(?:licen[cs]e|permit|registration|registry|certificate|cert|incorporation|corporation|corporate|company|business|entity|charter|accreditation|membership|member|dealer|vendor|carrier|operating authority|authority|tax|account|policy|file)[ \t]*(?:number|no\.?|num\.?|#|id)[ \t]*[:#.]?[ \t]*` + ID_BODY, "gi"),
-  // A certificate, licence, permit or registration followed straight by its number ("Safety Certificate BC 20-487-316").
-  new RegExp(String.raw`(?<![A-Za-z])(?:certificate|licen[cs]e|permit|registration)[ \t]+(?:(?:[A-Z]{2,3})[ \t]+)?#?[ \t]*(\d[\d-]{5,}\d)(?![\d])`, "gi"),
+  // A certificate, licence, permit or registration followed straight by its
+  // number, perhaps after a jurisdiction code ("Safety Certificate BC
+  // 20-487-316"). The code is capitals: "Permit on 2021-03-01" is a date.
+  new RegExp(String.raw`(?<![A-Za-z])(?:[Cc]ertificate|CERTIFICATE|[Ll]icen[cs]e|LICEN[CS]E|[Pp]ermit|PERMIT|[Rr]egistration|REGISTRATION)[ \t]+(?:[A-Z]{2,3}[ \t]+)?#?[ \t]*(\d[\d-]{5,}\d)(?![\d])`, "g"),
   // A CRA business number on its own ("81234 5678 RC0001", "812345678RT0001").
   /(?<![\dA-Za-z])(\d{5}[ \t]?\d{4}[ \t]?(?:RC|RT|RP|RR|RZ|RM)[ \t]?\d{4})(?![\dA-Za-z])/g,
 ];
 /** A year or a year range ("2019", "2019-2024") — never an identifier. */
 const YEARISH = /^(?:19|20)\d{2}(?:[ \t]*[-–][ \t]*(?:19|20)?\d{2})?$/;
+/** Years in a row ("2023 2024", "2022, 2023 and 2024") or a date ("2021-03-01", "03/31/2027") — never an identifier. */
+const YEARS_OR_DATE = /^(?:(?:19|20)\d{2}(?:[ \t,/&-]+(?:and[ \t]+)?(?:19|20)\d{2})+|(?:19|20)\d{2}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.](?:19|20)\d{2})$/;
 
 /** The digits of an identifier, separators dropped; its longest run is what identifies it. */
 function longestDigitRun(id: string): string {
@@ -729,7 +802,7 @@ export function registryIdsIn(text: string): string[] {
     re.lastIndex = 0;
     for (const m of Array.from(text.matchAll(re))) {
       const id = (m[1] ?? "").trim().replace(/[ \t./-]+$/, "");
-      if (YEARISH.test(id)) continue;
+      if (YEARISH.test(id) || YEARS_OR_DATE.test(id)) continue;
       const digits = id.replace(/\D/g, "");
       if (digits.length < 5 || longestDigitRun(id).length < 4) continue;
       out.push(m[0].trim().replace(/[ \t./-]+$/, ""));
@@ -758,6 +831,8 @@ const COUNTERPARTY_KEY = /(customer|client|account(?!ing|s?receivable|s?payable)
  * nothing is read from these as an identifier of the business.
  */
 const BROKER_KEY = /(broker|saleadvis|dealadvis|listing|intermediar|referr)/i;
+/** Facts about who pays the business or who it rents or borrows from — never a tool it uses. */
+const CUSTOMER_KEY = /(customer|client|account(?!ing)|payor|payer|tenant|landlord|lessor|lender|bank|creditor|loan)/i;
 /** Words right before a capitalised word that make it a place, not an organisation ("customers in Calgary"). */
 const PLACE_PREPOSITION = /(?:^|[^A-Za-z])(?:in|near|from|to|across|around|throughout|within|outside|into|between|via|serving)[ \t]+$/i;
 /** Titles that end an organisation's name when a person follows ("Alderbrook VP Doug Fairweather"). */
@@ -785,7 +860,30 @@ function distinctiveWord(t: Tok, lowerWords?: Set<string>): boolean {
   if (MONTH_OR_DAY.has(t.key) || isRegionLabel(t.text) || isRegionWord(t.text)) return false;
   // "leased Lexus RX", "authorized Lennox dealer": a national brand names nothing.
   if (isNationalBrand(t.key)) return false;
+  // "the Midwest", "the Maritime provinces": a region wider than a province may stay in a Blind CIM.
+  if (isBroadRegionWord(t.text)) return false;
+  // "WCB-Alberta", "BC-Hydro": an agency's acronym joined to a region or a word.
+  const parts = t.text.split(/-/);
+  if (parts.length > 1 && parts.every((p) => /^[A-Z]{2,5}$/.test(p) || isRegionLabel(p) || isRegionWord(p) || isBroadRegionWord(p) || isEverydayWord(foldForMatch(p)))) return false;
   return !NOT_A_NAME_ENDING.test(t.key);
+}
+
+/**
+ * A tool the business runs on or a brand it carries, not a counterparty: a
+ * product category or a dealer programme in the name ("NinjaOne RMM",
+ * "Nightwatch SOC Inc.", "Northaire Premier Dealer") or a product category
+ * in the first words after it ("Datto (on-site backup appliances …)",
+ * "Fortinet (standard firewall …)", "CareMAR electronic MAR"). Asked only of
+ * supplier, vendor and contract facts — a customer is never a tool.
+ */
+function namesATool(text: string, words: Tok[], end: number): boolean {
+  const isTool = (w: string) => TOOL_CATEGORY_WORDS.has(w.toLowerCase()) || TOOL_CATEGORY_ACRONYMS.has(w);
+  if (words.slice(1).some((t) => isTool(t.text))) return true;
+  // A brand's dealer programme ("Northaire Premier Dealer status"): what the business carries.
+  if (words.slice(1).some((t) => /^(?:dealer|dealers|dealership|authori[sz]ed|reseller|franchisee|licensee)$/.test(t.key))) return true;
+  const after = text.slice(end, end + 80).split(/[;\n]/)[0];
+  const next = (after.match(/[A-Za-z][A-Za-z0-9+/-]*/g) || []).slice(0, 4);
+  return next.some((w) => w.split(/[-/+]/).some(isTool));
 }
 
 /** The start of a sentence or a list entry ("… payroll. Leasehold improvements", "; Suppliers want…"). */
@@ -809,7 +907,7 @@ const CARRIED_BRAND = /^[ \t]*(?:[(,:–—-][^;)\n]{0,80})?\b(?:dealer|dealers|
  * a phrase of everyday words ("Master Service Agreement"), a month, an
  * acronym or a place after "in"/"from" ("customers in Calgary").
  */
-export function organisationsIn(text: string, lowerWords?: Set<string>): string[] {
+export function organisationsIn(text: string, lowerWords?: Set<string>, opts: { tools?: boolean } = {}): string[] {
   const out: string[] = [];
   const masked = maskRegionNames(text);
   for (const run of capitalRuns(masked)) {
@@ -825,6 +923,8 @@ export function organisationsIn(text: string, lowerWords?: Set<string>): string[
     const end = words[words.length - 1].end;
     if (PLACE_PREPOSITION.test(masked.slice(Math.max(0, start - 24), start))) continue;
     if (CARRIED_BRAND.test(masked.slice(end, end + 100).split(/[;\n]/)[0])) continue;
+    // In a supplier or contract fact, the software and tools the business uses.
+    if (opts.tools && namesATool(masked, words, end)) continue;
     const suffixed = words.length >= 2 && ORG_SUFFIX.has(words[words.length - 1].key);
     const distinctive = words.filter((t) => distinctiveWord(t, lowerWords));
     if (!suffixed && distinctive.length === 0) continue;
@@ -897,14 +997,23 @@ export function blindLeakTerms(
 ): BlindTerm[] {
   const info = isObj(deal.extractedInfo) ? deal.extractedInfo : {};
   const terms: Array<{ text: string; kind: BlindTermKind; common?: boolean; regionWord?: boolean; digits?: string }> = [];
+  // The province or state the business is in: every Blind CIM names it, so
+  // a lone given name that is that region ("Alberta" read from an address
+  // in an accountant fact) is the place here. A surname ("Joe Montana" of a
+  // Montana business) still counts wherever it means the person.
+  const homeRegion = foldForMatch((dealBlindRegion(info) ?? "").split(",")[0]);
   const add = (text: string, kind: BlindTermKind, common?: boolean) => {
     const t = text.replace(/\s+/g, " ").trim();
     if (t.length < 3 || t.length > 160) return;
+    if (kind === "person" && homeRegion && foldForMatch(t) === homeRegion && GIVEN_NAMES.has(homeRegion)) return;
     // A person's one-word name that is also a place ("Washington", "York",
     // "Wales" as a surname; "Georgia", "Victoria" as a given name) still
     // identifies them: kept, but not matched where the text means the
-    // place ("Washington State lanes", "customers in Georgia" — see
-    // `regionWord`). "Georgia runs the front office" is the person.
+    // place ("Washington State lanes", "customers in Georgia", "a
+    // Georgia-based carrier" — see `regionWord`). "Georgia runs the front
+    // office" is the person. A province or state written as the place in
+    // the facts ("Calgary, Alberta T2P 0R4") never becomes a person at all
+    // (maskRegionNames), nor does the business's own province (homeRegion).
     if (kind === "person" && !t.includes(" ") && (isRegionWord(t) || isRegionLabel(t))) {
       terms.push({ text: t, kind, common, regionWord: true });
       return;
@@ -966,7 +1075,8 @@ export function blindLeakTerms(
     }
     // Customers, landlord, suppliers, lenders, advisers: the organisations named.
     if (COUNTERPARTY_KEY.test(key) && !NOT_PEOPLE_KEY.test(key) && !aboutTheSale) {
-      for (const s of strings) for (const o of organisationsIn(s.text, lowerWords)) add(o, "name", !o.includes(" ") || undefined);
+      const tools = !CUSTOMER_KEY.test(key);
+      for (const s of strings) for (const o of organisationsIn(s.text, lowerWords, { tools })) add(o, "name", !o.includes(" ") || undefined);
     }
     // Registration, licence and permit numbers.
     for (const s of strings) for (const id of registryIdsIn(s.text)) addRegistry(id);
@@ -1219,8 +1329,8 @@ export function findBlindLeaks(texts: string | string[] | unknown, terms: BlindT
 const MULTI_WORD_REGIONS = REGION_NAMES.map((n) => foldForMatch(n)).filter((n) => n.includes(" "));
 /** A word right before a place that makes it the place: "in Montana", "across Washington". ("to" is not one: "reports to Washington".) */
 const PLACE_BEFORE = new Set(["in", "across", "throughout", "within", "into", "from", "outside", "northern", "southern", "eastern", "western", "central", "upstate", "downstate"]);
-/** What right after it names the place itself: "Washington State", "Washington DC", "Montana, USA". */
-const PLACE_AFTER = /^(?:state|province|dc|d c|usa|us|u s|u s a|canada|uk)(?: |$)/;
+/** What right after it names the place itself: "Washington State", "Washington DC", "Montana, USA", "Georgia-based". */
+const PLACE_AFTER = /^(?:state|province|dc|d c|usa|us|u s|u s a|canada|uk|based|headquartered|wide)(?: |$)/;
 
 /**
  * Is the region-word surname `f`, found at `at` (the space before it in

@@ -323,6 +323,8 @@ export function dealBlindRegion(extractedInfo: unknown): string | null {
     const has = (...w: string[]) => w.some((x) => words.includes(x));
     // Premises only: never "serviceArea", "markets", "customerLocations"…
     if (has("market", "markets", "served", "service", "customer", "customers", "supplier", "suppliers", "lanes", "area", "areas", "expansion", "target")) continue;
+    // A person's fact ("officeManager", "siteContact"), not the premises.
+    if (has("manager", "owner", "contact", "employee", "employees", "staff", "accountant", "lawyer", "person", "name")) continue;
     const premises = has("address", "headoffice", "office", "premises", "facility", "location", "headquarters", "hq", "site", "city");
     const regional = has("province", "state", "jurisdiction");
     if (!premises && !regional) continue;
