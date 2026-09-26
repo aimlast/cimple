@@ -27,8 +27,9 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
-import { groundedInSource, groundedValue, restates, SPOKEN_KINDS } from "./extraction-guard";
+import { classifyExtractionFailure, extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
+import type { DocumentSourceMeta } from "@shared/schema";
+import { groundedInSource, groundedValue, guardExtraction, restates, SPOKEN_KINDS } from "./extraction-guard";
 import { recordFactSpeakers } from "../interview/fact-guards";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import {
@@ -109,12 +110,68 @@ export interface ReprocessResult {
   removed: OverlayReport["dropped"];
   /** Values a source no longer yielded but still states word for word (kept). */
   keptFromText: OverlayReport["kept"];
+  /**
+   * Sources whose fresh read failed even after the retries — each keeps what
+   * it had, and can be read again on its own
+   * (POST /api/deals/:dealId/documents/:documentId/reprocess).
+   */
+  failedSources: FailedSource[];
+  /** Sources this run did not re-read (a run for chosen sources only). */
+  documentsSkipped: number;
+}
+
+/** A source whose re-read failed. */
+export interface FailedSource {
+  documentId: string;
+  name: string;
+  /** Why, in plain words ("the connection to the AI service dropped (ETIMEDOUT)"). */
+  reason: string;
+  attempts: number;
+}
+
+export interface ReprocessOptions {
+  /** Re-read only these sources; every other one keeps what it had (a retry of one failed source). */
+  onlyDocumentIds?: string[];
+}
+
+/** Waits before each retry of a transient extraction failure (ms): the first try plus three more. */
+let retryDelaysMs: number[] = [5_000, 20_000, 60_000];
+/** For tests: shorter waits. */
+export function _setReprocessRetryDelaysForTests(delays: number[] | null): void {
+  retryDelaysMs = delays ?? [5_000, 20_000, 60_000];
+}
+
+/**
+ * Runs an extraction and, while it comes back as a TRANSIENT failure stub (a
+ * dropped connection, a rate limit, an overloaded API — see
+ * classifyExtractionFailure), runs it again after each of `delays`. A
+ * permanent failure (a refused key, no credits) is not retried. Returns the
+ * last result and how many attempts were made.
+ */
+export async function extractWithRetries(
+  run: () => Promise<ExtractedDocumentData>,
+  delays: number[],
+  onRetry?: (attempt: number, waitMs: number, reason: string) => void,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<{ data: ExtractedDocumentData; attempts: number }> {
+  let data = await run();
+  let attempts = 1;
+  for (const wait of delays) {
+    if (data.summary !== "Extraction failed" || data._failure !== "transient") break;
+    onRetry?.(attempts, wait, String(data._failureReason ?? "transient failure"));
+    await sleep(wait);
+    data = await run();
+    attempts++;
+  }
+  return { data, attempts };
 }
 
 export async function reprocessDealDocuments(
   dealId: string,
   onProgress?: (p: ReprocessProgress) => void,
+  options: ReprocessOptions = {},
 ): Promise<ReprocessResult> {
+  const onlyIds = options.onlyDocumentIds && options.onlyDocumentIds.length > 0 ? new Set(options.onlyDocumentIds) : null;
   const deal = await storage.getDeal(dealId);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
 
@@ -134,7 +191,7 @@ export async function reprocessDealDocuments(
   // stale phrasing under every narrative field (merge appends on difference).
   const checklist = extractionChecklist(deal);
   /** The row's extraction, and the text when it was freshly re-read from it. */
-  type Read = { data: ExtractedDocumentData | null; freshText: string | null };
+  type Read = { data: ExtractedDocumentData | null; freshText: string | null; skipped?: boolean; failure?: { reason: string; attempts: number } };
   const extractForDoc = async (
     doc: (typeof documents)[number],
   ): Promise<Read> => {
@@ -145,6 +202,8 @@ export async function reprocessDealDocuments(
       doc.extractedData && typeof doc.extractedData === "object"
         ? normaliseExtraction(doc.extractedData as Record<string, unknown>, doc.extractedText ?? null, documentKind(doc))
         : null;
+    // A run for chosen sources: every other one keeps what it had.
+    if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
     const relative = (doc.fileUrl || "").replace(/^\/uploads\//, "");
@@ -160,15 +219,18 @@ export async function reprocessDealDocuments(
     // when the file only exists on another machine's volume.
     if (!text && doc.extractedText) text = doc.extractedText;
 
+    let failure: { reason: string; attempts: number } | undefined;
     if (text) {
       try {
-        let fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
-        // A dropped connection or an overloaded API gives the failure stub:
-        // one more try before the source falls back to what it had.
-        if (fresh.summary === "Extraction failed") {
-          await new Promise((r) => setTimeout(r, 3000));
-          fresh = await extractDocumentData(text, doc.category || "other", doc.subcategory, documentKind(doc), { checklist });
-        }
+        // A dropped connection, a rate limit or an overloaded API gives the
+        // failure stub: tried again with a growing wait (a multi-minute
+        // outage outlasts one quick retry) before the source keeps what it had.
+        const read = await extractWithRetries(
+          () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist }),
+          retryDelaysMs,
+          (attempt, wait, why) => console.warn(`[reprocess] re-read of doc ${doc.id} (${doc.name}) failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
+        );
+        const fresh = read.data;
         // extractDocumentData never throws — API failures come back as a
         // stub ({_confidence:"low", summary:"Extraction failed"} or
         // {_documentType:"unreadable"}). A stub must not overwrite the
@@ -177,7 +239,12 @@ export async function reprocessDealDocuments(
           (k) => !k.startsWith("_") && !(k === "summary" && fresh.summary === "Extraction failed"),
         );
         if (substantiveKeys.length === 0) {
-          console.error(`[reprocess] extraction returned no data for doc ${doc.id} (${doc.name}) — keeping stored extraction`);
+          // A failed call is a failure the broker should see (and can retry);
+          // a text too short to read is what it is — kept as before, quietly.
+          const failed = fresh.summary === "Extraction failed";
+          const reason = typeof fresh._failureReason === "string" ? fresh._failureReason : failed ? "the extraction returned nothing usable" : "no readable text";
+          if (failed) failure = { reason, attempts: read.attempts };
+          console.error(`[reprocess] extraction returned no data for doc ${doc.id} (${doc.name}) after ${read.attempts} attempt(s) (${reason}) — keeping stored extraction`);
         } else {
           await storage.updateDocument(doc.id, {
             status: "extracted",
@@ -190,17 +257,18 @@ export async function reprocessDealDocuments(
         }
       } catch (err) {
         console.error(`[reprocess] re-extraction failed for doc ${doc.id} (${doc.name}) — falling back to stored extraction:`, err);
+        failure = { reason: classifyExtractionFailure(err).reason, attempts: 1 };
       }
     } else {
       console.log(`[reprocess] no file or stored text for doc ${doc.id} (${doc.name}) — replaying stored extraction only`);
     }
-    return { data: stored, freshText: null };
+    return { data: stored, freshText: null, ...(failure ? { failure } : {}) };
   };
 
   // Claude calls run in bounded-parallel batches; merging happens afterwards
   // in stable document order so precedence stays deterministic.
   const BATCH_SIZE = 4;
-  const results: { doc: (typeof documents)[number]; data: ExtractedDocumentData | null; freshText: string | null }[] = [];
+  const results: Array<{ doc: (typeof documents)[number] } & Read> = [];
   onProgress?.({ phase: "reading", done: 0, total: documents.length });
   for (let i = 0; i < documents.length; i += BATCH_SIZE) {
     const batch = documents.slice(i, i + BATCH_SIZE);
@@ -241,11 +309,22 @@ export async function reprocessDealDocuments(
     const { period, dated, brokerOnly } = mergeSourceFor(doc, data);
     rows.set(doc.id, { text: freshText, kind: documentKind(doc), title: [doc.name, doc.subcategory, type].filter(Boolean).join(" · "), period, dated, brokerOnly });
   }
+  // Rows whose read failed keep what they had — except what today's guard rejects.
+  const failedRows = new Map<string, { text: string | null; kind: SourceKind }>();
+  for (const r of results) if (r.failure) failedRows.set(r.doc.id, { text: r.doc.extractedText ?? null, kind: documentKind(r.doc) });
   const report: OverlayReport = { dropped: [], kept: [] };
-  let rebuilt = overlayExistingFacts(docsMerged, existing, ctx, { rows, report });
+  let rebuilt = overlayExistingFacts(docsMerged, existing, ctx, { rows, report, failedRows });
   if (report.dropped.length > 0 || report.kept.length > 0) {
     // Keys only (values are the seller's business data).
     console.log(`[reprocess] ${dealId}: removed ${report.dropped.length} value(s) no source states any more (${report.dropped.map((d) => d.key).slice(0, 60).join(", ")}); kept ${report.kept.length} a source still states`);
+  }
+  // Facts stored under an older spelling join their canonical fact
+  // (grossMarginPercentByYear → grossMarginByYear, the statements' EBITDA
+  // line → ebitdaByYear, dividends → dividendsPaid…) before the headlines
+  // are lined up with their maps.
+  {
+    const folded = foldAliasedFacts(rebuilt, { lookup: ctx.lookup });
+    if (folded.length > 0) console.log(`[reprocess] ${dealId}: folded ${folded.length} fact(s) into their canonical names (${folded.join(", ")})`);
   }
   // Headlines follow their by-year maps; every source entry carries its
   // row's visibility. Broker process data the fresh extractions set aside
@@ -331,11 +410,32 @@ export async function reprocessDealDocuments(
     return {
       documentsReprocessed,
       fieldsAfter,
-      documentsKeptAsBefore: results.filter((r) => r.data && r.freshText === null).length,
+      documentsKeptAsBefore: results.filter((r) => r.data && r.freshText === null && !r.skipped).length,
       removed: report.dropped,
       keptFromText: report.kept,
+      failedSources: results
+        .filter((r) => r.failure)
+        .map((r) => ({ documentId: r.doc.id, name: r.doc.name, reason: r.failure!.reason, attempts: r.failure!.attempts })),
+      documentsSkipped: results.filter((r) => r.skipped).length,
     };
   });
+  // Each source says on its row whether its last re-read failed (the
+  // Information tab shows it, with "Read again"); a fresh read clears it.
+  for (const r of results) {
+    if (r.skipped) continue;
+    const meta = ((r.doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta;
+    if (r.failure) {
+      await storage.updateDocument(r.doc.id, { sourceMeta: { ...meta, rereadFailed: { at: new Date().toISOString(), reason: r.failure.reason } } } as any)
+        .catch((err) => console.error(`[reprocess] couldn't mark doc ${r.doc.id} as failed:`, err));
+    } else if (r.freshText !== null && meta.rereadFailed) {
+      const latest = await storage.getDocument(r.doc.id).catch(() => undefined);
+      const { rereadFailed: _f, ...rest } = ((latest?.sourceMeta as DocumentSourceMeta | null) ?? meta) as DocumentSourceMeta;
+      await storage.updateDocument(r.doc.id, { sourceMeta: rest } as any).catch(() => undefined);
+    }
+  }
+  if (result.failedSources.length > 0) {
+    console.warn(`[reprocess] ${dealId}: ${result.failedSources.length} source(s) couldn't be re-read and keep what they had: ${result.failedSources.map((f) => `${f.name} (${f.reason}, ${f.attempts} attempt(s))`).join("; ")}`);
+  }
   // The notes each source re-stated in new words, and what is no note at
   // all or a business fact, are consolidated by the supporting model (only
   // wordings it has never seen are asked about) — outside the facts lock.
@@ -344,6 +444,61 @@ export async function reprocessDealDocuments(
 }
 
 const isMap = (v: unknown): v is Record<string, unknown> => !!v && typeof v === "object" && !Array.isArray(v);
+
+/**
+ * Mutates `info`: every fact still on file under a spelling that now has a
+ * canonical name (canonicalFieldName — grossMarginPercentByYear,
+ * earningsBeforeInterestAmortizationAndIncomeTaxesByYear,
+ * retainedEarningsEndByYear, dividends…) is merged into the canonical fact —
+ * year by year for a by-year map, under the usual authority (a newer fiscal
+ * period, a stronger source), the losing value kept as another value — and
+ * the old spelling goes, with its other values and confirmations. A fresh
+ * extraction already files under the canonical name; this carries over what
+ * was stored before. Returns the keys folded.
+ */
+export function foldAliasedFacts(info: Record<string, unknown>, ctx: MergeContext = {}): string[] {
+  const folded: string[] = [];
+  for (const key of Object.keys(info)) {
+    if (key.startsWith("_")) continue;
+    const canon = canonicalFieldName(key);
+    if (canon === key) continue;
+    const value = repairCharIndexedValue(info[key]);
+    const src: FieldSource = getFieldSources(info)[key] ?? { source: "system", note: LEGACY_SOURCE_NOTE };
+    const empty = value === null || value === undefined || value === "";
+    // A map never goes onto a plain fact, nor a plain value onto a map key: left as it is.
+    if (!empty && isMap(value) !== isYearMapKey(canon)) continue;
+    if (!empty && isMap(value)) {
+      const years = resolvedYearSources(src, value, ctx.lookup);
+      for (const [y, v] of Object.entries(value)) {
+        if (v === null || v === undefined || v === "") continue;
+        mergeYearMapInto(info, canon, { [y]: String(v) }, years[y] ?? src, ctx);
+      }
+    } else if (!empty) {
+      mergeScalarInto(info, canon, value, src, ctx);
+    }
+    // Its other values and confirmations follow it ("key" and "key.2024").
+    for (const mapKey of [FIELD_ALTERNATES_KEY, FIELD_CORROBORATIONS_KEY]) {
+      const m = info[mapKey];
+      if (!isMap(m)) continue;
+      const next: Record<string, unknown> = { ...m };
+      for (const k of Object.keys(m)) {
+        if (k !== key && !k.startsWith(`${key}.`)) continue;
+        const target = `${canon}${k.slice(key.length)}`;
+        const seen = new Set((Array.isArray(next[target]) ? next[target] as unknown[] : []).map((x) => JSON.stringify(x)));
+        const moved = (Array.isArray(m[k]) ? m[k] as unknown[] : []).filter((x) => !seen.has(JSON.stringify(x)));
+        if (moved.length > 0) next[target] = [...(Array.isArray(next[target]) ? next[target] as unknown[] : []), ...moved];
+        delete next[k];
+      }
+      info[mapKey] = next;
+    }
+    delete info[key];
+    const sources = { ...getFieldSources(info) };
+    delete sources[key];
+    info[FIELD_SOURCES_KEY] = sources;
+    folded.push(key);
+  }
+  return folded;
+}
 /** A source's own notes (summary, red flags, "… notes"): what it says in passing, not a fact filed under a name. */
 const NOTE_LIKE_KEY = /Notes$|^(?:summary|keyFacts|redFlags)$/;
 
@@ -413,6 +568,13 @@ export interface OverlayOptions {
    */
   rows?: ReadonlyMap<string, RereadRow>;
   report?: OverlayReport;
+  /**
+   * Rows whose re-read FAILED, with the text stored on them: what they had
+   * stays, except a value today's extraction guard rejects (a placeholder
+   * like "To be calculated by accountant Heather", a worked-out figure) —
+   * the row's stored extraction, replayed, drops it too.
+   */
+  failedRows?: ReadonlyMap<string, { text: string | null; kind: SourceKind }>;
 }
 
 /**
@@ -466,6 +628,16 @@ export function overlayExistingFacts(
 
   /** The row was re-read in this run (a failed re-read keeps what it had). */
   const reread = (docId: string) => !opts.rows || opts.rows.has(docId);
+  /** A failed row's value today's extraction guard rejects (checked against the row's stored text). */
+  const rejectedToday = (docId: string, key: string, value: unknown): boolean => {
+    const row = opts.failedRows?.get(docId);
+    if (!row?.text) return false;
+    const input = { [key]: typeof value === "number" ? String(value) : value } as Record<string, unknown>;
+    const out = guardExtraction(input, row.text, { spoken: SPOKEN_KINDS.has(row.kind) }).data[key];
+    if (out === undefined || out === null || out === "") return true;
+    if (isMap(value) && isMap(out)) return Object.keys(value).some((y) => out[y] === undefined);
+    return false;
+  };
   /** The row's fresh read yields this fact (or this year of it): on file, as another value or as a confirmation. */
   const yielded = (docId: string, key: string, sub?: string): boolean => {
     const k = sub === undefined ? key : `${key}.${sub}`;
@@ -629,7 +801,9 @@ export function overlayExistingFacts(
           const docId = ys.documentId!;
           if (yielded(docId, key, y)) continue; // the row's fresh figure replaces it
           if (!reread(docId)) {
-            // Its re-read failed: the year stays — beside a fresh figure when there is one.
+            // Its re-read failed: the year stays — beside a fresh figure when
+            // there is one — unless today's guard rejects it.
+            if (rejectedToday(docId, key, { [y]: v })) { note("dropped", `${key}.${y}`, v, docId); continue; }
             if (out[y] === undefined) { out[y] = v; outYears[y] = ys; }
             else if (String(out[y]) !== String(v)) recordAlternate(rebuilt, `${key}.${y}`, v, ys);
             continue;
@@ -694,7 +868,9 @@ export function overlayExistingFacts(
       const docId = src!.documentId!;
       if (yielded(docId, key)) continue; // the row's fresh read replaces it
       if (!reread(docId)) {
-        // Its re-read failed: what it had stays (weighed against any fresh value).
+        // Its re-read failed: what it had stays (weighed against any fresh
+        // value) — unless today's guard rejects it (a placeholder, a sum).
+        if (rejectedToday(docId, key, value)) { note("dropped", key, value, docId); continue; }
         if (fresh === undefined) {
           rebuilt[key] = value;
           setFieldSource(rebuilt, key, src!);

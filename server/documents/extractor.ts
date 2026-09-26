@@ -667,8 +667,34 @@ export async function extractDocumentData(
     return normaliseExtraction(block.input as Record<string, unknown>, text, kind);
   } catch (err) {
     console.error("[extractor] Claude extraction failed:", err);
-    return { _documentType: category, _confidence: "low", summary: "Extraction failed" };
+    const failure = classifyExtractionFailure(err);
+    return { _documentType: category, _confidence: "low", summary: "Extraction failed", _failure: failure.kind, _failureReason: failure.reason };
   }
+}
+
+/**
+ * Whether a failed extraction is worth trying again: a dropped or timed-out
+ * connection, a rate limit or an overloaded / erroring API ("transient"), or
+ * a request the API will refuse however often it is sent ("permanent" — a
+ * bad request, no credits, a bad key). `reason` is a short, broker-readable
+ * description (never the request or any key).
+ */
+export function classifyExtractionFailure(err: unknown): { kind: "transient" | "permanent"; reason: string } {
+  const e = err as { status?: number; name?: string; message?: string; code?: string; cause?: { code?: string; message?: string } } | null;
+  const status = typeof e?.status === "number" ? e.status : undefined;
+  const code = e?.code ?? e?.cause?.code;
+  const text = `${e?.name ?? ""} ${e?.message ?? ""} ${e?.cause?.message ?? ""}`;
+  if (status === 429) return { kind: "transient", reason: "the AI service was busy (rate limit)" };
+  if (status === 529 || /overloaded/i.test(text)) return { kind: "transient", reason: "the AI service was overloaded" };
+  if (status !== undefined && status >= 500) return { kind: "transient", reason: `the AI service had an error (${status})` };
+  if (status === 408 || status === 409) return { kind: "transient", reason: "the AI service timed out" };
+  if (/APIConnection|Connection error|timed? ?out|socket hang up|network/i.test(text) || /^(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND|EPIPE|UND_ERR\w*)$/.test(code ?? "")) {
+    return { kind: "transient", reason: "the connection to the AI service dropped" };
+  }
+  if (status === 401 || status === 403) return { kind: "permanent", reason: "the AI service refused the key" };
+  if (status === 400 && /credit|billing|balance/i.test(text)) return { kind: "permanent", reason: "the AI account is out of credits" };
+  if (status !== undefined) return { kind: "permanent", reason: `the AI service refused the request (${status})` };
+  return { kind: "permanent", reason: "the extraction returned nothing usable" };
 }
 
 /**

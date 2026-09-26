@@ -40,10 +40,11 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { storage } from "../storage";
 import type { Document } from "@shared/schema";
-import { noteContent } from "@shared/private-notes";
+import { noteContent, isHousekeepingNote, sameNoteContent } from "@shared/private-notes";
 import { agentConfig } from "../interview/config/load-config";
 import {
   BROKER_PRIVATE_NOTES_KEY,
+  BROKER_SUPPRESSED_KEY,
   getPrivateNotes,
   privateNoteSources,
   privateNoteText,
@@ -51,12 +52,25 @@ import {
   isSuppressed,
   setFieldSource,
   getFieldSources,
+  getFieldAlternates,
+  isFactKey,
   type BrokerPrivateNote,
   type FieldSource,
   type PrivateNoteSource,
 } from "../interview/info-merger";
 import { isBrokerProcessKey } from "./merge-policy";
 import { withDealFactsLock } from "./facts-lock";
+import {
+  AGE_PHRASE_RE,
+  COVER_FILLER,
+  COVER_SYNONYMS,
+  GENERIC_TIE_WORDS,
+  chatterReason,
+  isSensitiveNote,
+  multiplesOf,
+  stripNoteCommentary,
+  withoutDocLabels,
+} from "./private-notes-classify";
 
 type Info = Record<string, unknown>;
 export type ReviewDoc = Pick<Document, "id" | "name" | "visibility" | "sourceKind">;
@@ -138,29 +152,54 @@ export function isPromotableNote(text: string): boolean {
  * due diligence needs — each with the words the note must use. A note moves
  * out only when the key is one of these and the note is about that subject.
  */
-const FACT_CLASSES: Array<{ key: RegExp; subject: RegExp }> = [
-  { key: /^dividends?(?:Declared|Paid|History|ByYear)?$/, subject: /\bdividends?\b/i },
-  { key: /^(?:personalGuarantees?|guarantees?)$/, subject: /\bguarant(?:ee|or)\w*\b/i },
-  { key: /^relatedParty(?:Transactions?|Lease|Leases|Arrangements?)?$/, subject: /\brelated[- ]party\b|\b(?:owned|controlled) by\b[^.;]{0,60}\b(?:shareholder|owner|holdco|holding)|\bfamily member\b[^.;]{0,40}\bemployed\b/i },
-  { key: /^shareholders?(?:Agreement|Agreements|AgreementTerms|AgreementAmendments?)$/, subject: /\bshareholders?'? ?agreement\b|\busa\b|\bfirst refusal\b/i },
-  { key: /^(?:shareStructure|shareClasses|shareCapital|capitalStructure|directors|boardOfDirectors)$/, subject: /\b(?:class [a-z] (?:shares?|dividends?|structure)|shares? (?:issued|class)|share (?:structure|capital)|directors?|board of directors|board (?:resolution|approv\w*))\b/i },
-  { key: /^customer(?:NonRenewal|NonRenewals|Notice|Notices|Loss|Losses|Churn|Terminations?|Departures?)$/, subject: /\b(?:non-?renewal|notice|terminat\w*|cancel\w*|churn\w*|leaving|lost|lose|losing|not renew\w*)\b/i },
-  { key: /^(?:insurance|insurancePolicies|lifeInsurance|keyPersonInsurance|buySellInsurance|corporateLifeInsurance)$/, subject: /\binsurance\b|\bpolic(?:y|ies)\b/i },
-  { key: /^(?:auditStatus|financialStatementType|financialStatementBasis|reviewEngagement|assuranceLevel)$/, subject: /\b(?:audit\w*|unaudited|review engagement|compil\w*|notice to reader)\b/i },
-  { key: /^(?:excludedAssets?|assetsExcluded)$/, subject: /\bexclu(?:ded|des?|sion) from (?:the |any )?sale\b|\bnot (?:included|part of|in) (?:the )?sale\b|\bowner keeps\b/i },
-  { key: /^(?:litigation|legalProceedings|pendingLitigation|lawsuits?)$/, subject: /\b(?:litigation|lawsuit|sued|suing|court|claim filed|statement of claim)\b/i },
-  { key: /^(?:keyEmployeeContracts?|employmentContracts?|employmentAgreements?)$/, subject: /\bemployment (?:contract|agreement)s?\b/i },
-  { key: /^(?:shareholderLoans?|dueFromShareholders?|dueToShareholders?|dueFromRelatedParties|dueToRelatedParties)$/, subject: /\b(?:shareholder loans?|due (?:to|from) (?:shareholders?|holdco|related)|loans? (?:to|from) (?:the )?(?:shareholder|owner))\b/i },
+const FACT_CLASSES: Array<{
+  key: RegExp;
+  subject: RegExp;
+  /** The keys the final pass writes a note of this class under — the first one free. */
+  keys: string[];
+  /**
+   * The class's own vocabulary that reads as a stance anywhere else: a
+   * shareholders' agreement "waives" and "agrees", an age is "years old".
+   * Taken out before the promotable screens, for this class only.
+   */
+  allow?: RegExp;
+}> = [
+  { key: /^dividends?(?:Declared|Paid|History|ByYear)?$/, subject: /\bdividends?\b/i, keys: ["dividendsDeclared", "dividendHistory"] },
+  { key: /^(?:personalGuarantees?|guarantees?)$/, subject: /\bguarant(?:ee|or)\w*\b/i, keys: ["personalGuarantees"] },
+  { key: /^relatedParty(?:Transactions?|Lease|Leases|Arrangements?)?$/, subject: /\brelated[- ]party\b|\b(?:owned|controlled) by\b[^.;]{0,60}\b(?:shareholder|owner|holdco|holding)|\bfamily member\b[^.;]{0,40}\bemployed\b/i, keys: ["relatedPartyTransactions"] },
+  {
+    key: /^shareholders?(?:Agreement|Agreements|AgreementTerms|AgreementAmendments?)$/,
+    subject: /\bshareholders?'? ?agreement\b|\busa\b|\bfirst refusal\b/i,
+    keys: ["shareholdersAgreement", "shareholdersAgreementAmendments"],
+    allow: /\b(?:agrees?|agreed|waives?|waived|consents?|consented|forces?|forced|drag[- ]along|tag[- ]along)\b/gi,
+  },
+  { key: /^(?:shareStructure|shareClasses|shareCapital|capitalStructure|directors|boardOfDirectors)$/, subject: /\b(?:class [a-z] (?:shares?|dividends?|structure)|shares? (?:issued|class)|share (?:structure|capital)|directors?|board of directors|board (?:resolution|approv\w*))\b/i, keys: ["shareStructure", "shareClasses"] },
+  {
+    key: /^(?:ownershipStructure|ownership)$/,
+    subject: /\bowns?\b[^.;]{0,30}?\d+(?:\.\d+)?\s?%|\b\d+(?:\.\d+)?\s?%\s+(?:of (?:the )?)?(?:voting |common |non-voting |class [a-z] )*(?:shares|equity|ownership|stake|interest)\b/i,
+    keys: ["ownershipStructure"],
+  },
+  { key: /^customer(?:NonRenewal|NonRenewals|Notice|Notices|Loss|Losses|Churn|Terminations?|Departures?)$/, subject: /\b(?:non-?renewal|notice|terminat\w*|cancel\w*|churn\w*|leaving|lost|lose|losing|not renew\w*)\b/i, keys: ["customerNonRenewal"] },
+  { key: /^(?:insurance|insuranceCoverage|insurancePolicies|lifeInsurance|keyPersonInsurance|buySellInsurance|corporateLifeInsurance)$/, subject: /\binsurance\b|\bpolic(?:y|ies)\b/i, keys: ["insuranceCoverage", "buySellInsurance"] },
+  { key: /^(?:auditStatus|financialStatementType|financialStatementBasis|reviewEngagement|assuranceLevel)$/, subject: /\b(?:audit\w*|unaudited|review engagement|compil\w*|notice to reader)\b/i, keys: ["auditStatus", "financialStatementType"] },
+  { key: /^(?:excludedAssets?|assetsExcluded)$/, subject: /\bexclu(?:ded|des?|sion) from (?:the |any )?sale\b|\bnot (?:included|part of|in) (?:the )?sale\b|\bowner keeps\b/i, keys: ["excludedAssets"] },
+  { key: /^(?:litigation|legalProceedings|pendingLitigation|lawsuits?)$/, subject: /\b(?:litigation|lawsuit|sued|suing|court|claim filed|statement of claim)\b/i, keys: ["litigation"] },
+  { key: /^(?:keyEmployeeContracts?|employmentContracts?|employmentAgreements?)$/, subject: /\bemployment (?:contract|agreement)s?\b/i, keys: ["keyEmployeeContracts"] },
+  { key: /^(?:shareholderLoans?|dueFromShareholders?|dueToShareholders?|dueFromRelatedParties|dueToRelatedParties)$/, subject: /\b(?:shareholder loans?|due (?:to|from) (?:shareholders?|holdco|related)|loans? (?:to|from) (?:the )?(?:shareholder|owner))\b/i, keys: ["shareholderLoans"] },
+  { key: /^(?:marketRentOpinion|marketRent|rentAppraisal)$/, subject: /\bmarket (?:net )?rent\b|\brent(?:al)? (?:opinion|appraisal)\b/i, keys: ["marketRentOpinion"] },
+  { key: /^associatedCorporations?$/, subject: /\bassociated (?:with|corporations?|compan(?:y|ies))\b/i, keys: ["associatedCorporations"] },
+  // The owner's age said on its own ("Seller is 64 years old"). Anything
+  // else personal in the note keeps it a note.
+  { key: /^(?:ownerAge|sellerAge)$/, subject: AGE_PHRASE_RE, keys: ["ownerAge"], allow: new RegExp(AGE_PHRASE_RE.source, "gi") },
 ];
 
 /** True when `key` is a fact a private note may become and `text` is about it (and promotable at all). */
 export function isPromotableFact(key: string, text: string): boolean {
-  if (!isPromotableNote(text)) return false;
-  return FACT_CLASSES.some((c) => c.key.test(key) && c.subject.test(text));
+  return FACT_CLASSES.some((c) => c.key.test(key) && c.subject.test(text) && isPromotableNote(c.allow ? text.replace(c.allow, " ") : text));
 }
 
 /** The keys the model may move a note into (for its instructions). */
-export const PROMOTABLE_FACT_KEYS = "dividendsDeclared, personalGuarantees, relatedPartyTransactions, shareholdersAgreement, shareStructure, directors, customerNonRenewal, insurancePolicies, auditStatus, excludedAssets, litigation, keyEmployeeContracts, shareholderLoans";
+export const PROMOTABLE_FACT_KEYS = "dividendsDeclared, personalGuarantees, relatedPartyTransactions, shareholdersAgreement, shareStructure, ownershipStructure, directors, customerNonRenewal, insuranceCoverage, auditStatus, excludedAssets, litigation, keyEmployeeContracts, shareholderLoans, marketRentOpinion, associatedCorporations, ownerAge";
 
 /** Substance about the company, the deal or its figures: a note naming it is never dropped as housekeeping. */
 const SUBSTANCE_RE =
@@ -450,6 +489,8 @@ export interface AppliedReview {
   changed: boolean;
   /** Wordings no decision covers yet (for the model). */
   pending: NoteItem[];
+  /** What the final deterministic pass did. */
+  final?: FinalPassReport;
 }
 
 /** For each note on file, the wordings (item keys) it holds — a wording in two notes counts in the first. */
@@ -536,9 +577,353 @@ export function applyNotesReview(info: Info, review: NotesReview, docs: Map<stri
   }
   if (out.length > 0) next[BROKER_PRIVATE_NOTES_KEY] = out;
   else delete next[BROKER_PRIVATE_NOTES_KEY];
-  const changed = JSON.stringify(out) !== JSON.stringify(notes) ||
-    Object.keys(next).some((k) => k !== BROKER_PRIVATE_NOTES_KEY && JSON.stringify(next[k]) !== JSON.stringify(info[k]));
-  return { info: next, changed, pending };
+  // Last, across every pass: chatter out, facts out, twins together.
+  const { info: final, report } = finalizeNotes(next, docs);
+  const finalNotes = getPrivateNotes(final);
+  const changed = JSON.stringify(finalNotes) !== JSON.stringify(notes) ||
+    Array.from(new Set([...Object.keys(final), ...Object.keys(info)]))
+      .some((k) => k !== BROKER_PRIVATE_NOTES_KEY && JSON.stringify(final[k]) !== JSON.stringify(info[k]));
+  return { info: final, changed, pending, final: report };
+}
+
+// ─── The final pass (deterministic) ─────────────────────────────────────────
+
+export interface FinalPassReport {
+  /** Notes that were no note at all (process chatter, document mechanics…), with why. */
+  chatter: Array<{ note: string; why: string }>;
+  /** Notes a fact on file already states (key). */
+  covered: Array<{ note: string; key: string }>;
+  /** Notes moved into the facts (key). */
+  promoted: Array<{ note: string; key: string }>;
+  /** Notes folded into another note about the same matter. */
+  merged: number;
+}
+
+/** Every text a note holds: its own, and each source's words. */
+function noteTexts(n: BrokerPrivateNote): string[] {
+  const out: string[] = [];
+  for (const t of [n.note, ...privateNoteSources(n).map((s) => s.wording ?? "")]) {
+    const v = (t ?? "").trim();
+    if (v && !out.some((o) => privateNoteText(o) === privateNoteText(v))) out.push(v);
+  }
+  return out;
+}
+
+/** A value as text (a by-year map as "2024: $…; 2023: $…"). */
+function factText(v: unknown): string {
+  if (typeof v === "string") return v;
+  if (typeof v === "number") return String(v);
+  if (v && typeof v === "object" && !Array.isArray(v)) return Object.entries(v as Record<string, unknown>).map(([k, x]) => `${k}: ${factText(x)}`).join("; ");
+  if (Array.isArray(v)) return v.map(factText).join("; ");
+  return "";
+}
+
+/** A note's words for comparing with a fact: stemmed, with the coverage synonyms, no filler. */
+function coverWords(text: string, lower = false): Set<string> {
+  const c = noteContent(lower ? text.toLowerCase() : text);
+  const out = new Set<string>();
+  for (const w of Array.from(c.words)) {
+    const syn = COVER_SYNONYMS[w] ?? COVER_SYNONYMS[w.replace(/(?:ed|ing|ation|s)$/, "")] ?? w;
+    if (!COVER_FILLER.has(syn)) out.add(syn);
+  }
+  return out;
+}
+
+/** "64 years old" / "aged 64" read as "age 64" (so it meets an ownerAge fact). */
+function normaliseAge(text: string): string {
+  return text.replace(new RegExp(AGE_PHRASE_RE.source, "gi"), (_m, a, b) => ` age ${a ?? b} `);
+}
+
+/** A note's text as compared with the facts: no commentary, no source labels. */
+function coverNoteText(raw: string): string {
+  return normaliseAge(withoutDocLabels(stripNoteCommentary(raw).text));
+}
+
+type FactEntry = { key: string; text: string; lower: string; numbers: number[]; words: Set<string> };
+
+function factEntries(info: Info): FactEntry[] {
+  const out: FactEntry[] = [];
+  for (const [key, v] of Object.entries(info)) {
+    if (!isFactKey(key) || v === null || v === undefined || v === "") continue;
+    const text = factText(v);
+    if (!text.trim()) continue;
+    const keyWords = key.replace(/([a-z])([A-Z])/g, "$1 $2").replace(/ByYear$/, "").toLowerCase();
+    const words = coverWords(`x ${text} ${keyWords}`, true);
+    out.push({ key, text, lower: ` ${text.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `, numbers: numberValues(text), words });
+  }
+  return out;
+}
+
+/**
+ * The fact on file that already says what a note's text says, or null: one
+ * fact holds every figure and every name of the note and at least half of
+ * its words. A note too thin to judge (no figure, no name, under three
+ * words) is never covered.
+ */
+function coveringFact(raw: string, facts: FactEntry[], common: Set<string>): string | null {
+  const text = coverNoteText(raw);
+  if (!text) return null;
+  const nums = numberValues(text);
+  const names = Array.from(properNames(text, common));
+  const words = Array.from(coverWords(text)).filter((w) => !names.includes(w));
+  if (nums.length === 0 && names.length === 0 && words.length < 3) return null;
+  // Someone named with a figure, both in the fact ("Luis Ortega … 15%"):
+  // a third of the other words is enough.
+  const anchored = names.length > 0 && nums.some((n) => !(Number.isInteger(n) && n >= 1900 && n <= 2100));
+  for (const f of facts) {
+    if (!nums.every((n) => hasValue(f.numbers, n))) continue;
+    if (!names.every((n) => f.lower.includes(` ${n} `))) continue;
+    const hit = words.filter((w) => f.words.has(w)).length;
+    if (words.length === 0 || hit / words.length >= (anchored ? 1 / 3 : 0.5)) return f.key;
+  }
+  return null;
+}
+
+/** Capitalised words that are nobody's name. */
+const NOT_NAMES = new Set(["seller", "owner", "broker", "buyer", "buyers", "the", "this", "that", "class", "note", "notes", "private", "confidential", "cim", "email", "call", "fy", "ltd", "inc", "llp", "corp"]);
+
+/**
+ * People, places and companies a text names: capitalised words (McAllister
+ * too) the deal's notes never use in lower case — wherever they stand, the
+ * start of a clause included ("Acquisition interest: Jackpine …").
+ */
+function properNames(text: string, common: Set<string>): Set<string> {
+  const out = new Set<string>();
+  for (const m of Array.from(text.matchAll(/\b[A-Z][A-Za-z'’-]{2,}\b/g))) {
+    const w = m[0].toLowerCase().replace(/['’]s$/, "");
+    if (!common.has(w) && !NOT_NAMES.has(w)) out.add(w);
+  }
+  return out;
+}
+
+/**
+ * A wording a fact on file may stand in for: nothing sensitive and nothing
+ * personal, negotiated, process-related or anyone's stance — the same screen
+ * a note passes before it may become a fact (an age said on its own
+ * excepted). "Luis confirmed 15% ownership stake" may; "…but wants to sell
+ * it" may not, whatever the fact says.
+ */
+function coverable(text: string): boolean {
+  const t = withoutDocLabels(stripNoteCommentary(text).text);
+  if (!t || isSensitiveNote(t)) return false;
+  return isPromotableNote(t.replace(new RegExp(AGE_PHRASE_RE.source, "gi"), " "));
+}
+
+/** The note's shared (seller-visible) document / email / call sources, with their words. */
+function sharedPromotionSources(n: BrokerPrivateNote, docs: Map<string, ReviewDoc>): Array<{ documentId: string; kind: string; text: string }> {
+  const out: Array<{ documentId: string; kind: string; text: string }> = [];
+  for (const s of privateNoteSources(n)) {
+    const src = promotionSource({ sources: [s] }, docs);
+    if (src) out.push({ ...src, text: (s.wording ?? n.note).trim() });
+  }
+  return out;
+}
+
+/** The first free key of the class `text` is about, when the text may be that fact. */
+function promotionKey(info: Info, text: string): string | null {
+  const classes = FACT_CLASSES.filter((c) => c.subject.test(text));
+  // The broker deleted a fact of this kind: nothing like it is written back under another name.
+  const suppressed = Array.isArray(info[BROKER_SUPPRESSED_KEY]) ? (info[BROKER_SUPPRESSED_KEY] as unknown[]).map(String) : [];
+  if (classes.some((c) => suppressed.some((k) => c.key.test(k) || c.keys.includes(k)))) return null;
+  for (const c of classes) {
+    for (const key of c.keys) {
+      if (isBrokerProcessKey(key) || isSuppressed(info, key)) continue;
+      const cur = info[key];
+      if (cur !== undefined && cur !== null && cur !== "") continue;
+      if (isPromotableFact(key, text)) return key;
+    }
+  }
+  return null;
+}
+
+/** Texts joined into one note that keeps every figure, name and most words of each (restatements add nothing). */
+function joinNoteTexts(texts: string[]): string {
+  const sorted = Array.from(new Set(texts.map((t) => t.trim()).filter(Boolean))).sort((a, b) => b.length - a.length || a.localeCompare(b));
+  const kept: string[] = [];
+  for (const t of sorted) {
+    if (kept.length > 0) {
+      const pool = kept.join(" ");
+      const nums = numberValues(t);
+      const poolNums = numberValues(pool);
+      const c = noteContent(t);
+      const pc = noteContent(pool);
+      const lower = ` ${pool.toLowerCase().replace(/[^a-z0-9]+/g, " ")} `;
+      const names = Array.from(c.names).every((nm) => lower.includes(` ${nm} `));
+      const words = Array.from(c.words);
+      const covered = words.filter((w) => pc.words.has(w) || lower.includes(` ${w} `)).length;
+      if (nums.every((v) => hasValue(poolNums, v)) && names && (words.length === 0 || covered / words.length >= 0.8)) continue;
+    }
+    kept.push(t.replace(/[.;\s]+$/, ""));
+  }
+  return kept.join("; ");
+}
+
+/** One note from a group of notes about one matter: every source keeps its own words. */
+function mergeNoteGroup(group: BrokerPrivateNote[]): BrokerPrivateNote {
+  const text = joinNoteTexts(group.map((n) => n.note));
+  const seen = new Set<string>();
+  const list: PrivateNoteSource[] = [];
+  for (const n of group) {
+    for (const s of privateNoteSources(n)) {
+      const words = (s.wording ?? n.note).trim();
+      const id = `${originId(s)}|${privateNoteText(words)}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      list.push(privateNoteText(words) === privateNoteText(text) ? bare(s) : { ...bare(s), wording: words });
+    }
+  }
+  list.sort((a, b) => Number(!!a.wording) - Number(!!b.wording));
+  return { note: text, ...list[0], ...(list.length > 1 ? { alsoFrom: list.slice(1) } : {}) };
+}
+
+/** Figures a note's words tie it to another note by (no years; multiples like "3x" count). */
+function tieFigures(texts: string[]): number[] {
+  const out: number[] = [];
+  for (const t of texts) {
+    for (const n of [...numberValues(t), ...multiplesOf(t)]) if (!(Number.isInteger(n) && n >= 1900 && n <= 2100)) out.push(n);
+  }
+  return out;
+}
+
+/**
+ * True when two notes are about one matter: two of their texts say the same
+ * thing (sameNoteContent), or both name someone or something no other note
+ * names and share a figure or a good part of their words ("Grandkids in
+ * Kelowna" and "wants to spend time with grandkids in Kelowna"; the Jackpine
+ * approach at ~3x in two notes).
+ */
+function sameMatter(a: string[], b: string[], rare: Set<string>, common: Set<string>): boolean {
+  for (const x of a) for (const y of b) if (sameNoteContent(x, y)) return true;
+  const namesA = new Set(a.flatMap((t) => Array.from(properNames(t, common))));
+  const namesB = new Set(b.flatMap((t) => Array.from(properNames(t, common))));
+  if (!Array.from(namesA).some((n) => namesB.has(n) && rare.has(n))) return false;
+  const fa = tieFigures(a);
+  const fb = tieFigures(b);
+  if (fa.some((v) => hasValue(fb, v))) return true;
+  const words = (ts: string[]) => new Set(ts.flatMap((t) => Array.from(noteContent(t).words)).filter((w) => !GENERIC_TIE_WORDS.has(w)));
+  const wa = words(a);
+  const wb = words(b);
+  const [small, large] = wa.size <= wb.size ? [wa, wb] : [wb, wa];
+  if (small.size === 0) return false;
+  const hit = Array.from(small).filter((w) => large.has(w)).length;
+  return hit >= 1 && hit / small.size >= 0.3;
+}
+
+/** At most this many notes fold into one. */
+const MAX_FOLD = 3;
+
+/**
+ * Pure and idempotent: the deal's notes after one deterministic look across
+ * every pass — the step the model's per-wording review can't take, since it
+ * never sees the earlier pass's notes again.
+ *  1. A note that is no note at all goes: process chatter, a document's
+ *     mechanics, logistics, the broker's engagement status, a request for a
+ *     document the deal now has (private-notes-classify.ts chatterReason).
+ *  2. A note a fact on file already states goes (every figure, every name,
+ *     half its words, in one fact).
+ *  3. A business fact hiding in a note from a shared document, email or
+ *     call (a declared dividend, a shareholders' agreement term, the market
+ *     rent opinion, an associated corporation, the owner's age) moves into
+ *     the facts under the first free key of its class, credited to that
+ *     source — only when every other source's words on the note say no
+ *     more than the fact.
+ *  4. Notes about one matter fold together, every figure and name kept and
+ *     every source's own words on the note.
+ * Nothing sensitive (health, family, a privacy instruction, a negotiation
+ * position, a worry) is ever dropped by 1 or 2, and every rule applies to
+ * EVERY wording a note holds — a note goes only when all of them do.
+ */
+export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info: Info; report: FinalPassReport } {
+  const report: FinalPassReport = { chatter: [], covered: [], promoted: [], merged: 0 };
+  const notes = getPrivateNotes(info);
+  if (notes.length === 0) return { info, report };
+  const next: Info = { ...info };
+  const common = commonWordsOf(notes.flatMap(noteTexts));
+  let facts = factEntries(next);
+  // Figures on record: the facts and every other value a source gave for them.
+  const onRecord: number[] = facts.flatMap((f) => f.numbers);
+  for (const list of Object.values(getFieldAlternates(next))) for (const a of list) onRecord.push(...numberValues(String(a?.value ?? "")));
+  const ctx = {
+    docNames: Array.from(docs.values()).map((d) => d.name),
+    figureOnRecord: (n: number) => onRecord.some((p) => Math.abs(p - n) <= Math.max(Math.abs(p), Math.abs(n)) * 0.06),
+    figuresOf: (t: string) => numberValues(t).filter((n) => !(Number.isInteger(n) && n >= 1900 && n <= 2100)),
+    substantive: (t: string) => SUBSTANCE_RE.test(t),
+  };
+  const kept: BrokerPrivateNote[] = [];
+  for (const n of notes) {
+    const texts = noteTexts(n);
+    // 1–2: every wording is chatter or already a fact.
+    const verdicts = texts.map((t) => {
+      const why = chatterReason(t, ctx, isHousekeepingNote);
+      if (why) return { chatter: why };
+      const key = coverable(t) ? coveringFact(t, facts, common) : null;
+      return key ? { key } : null;
+    });
+    if (verdicts.every((v) => v !== null)) {
+      const key = verdicts.find((v) => v && "key" in v) as { key: string } | undefined;
+      if (key) report.covered.push({ note: n.note, key: key.key });
+      else report.chatter.push({ note: n.note, why: (verdicts[0] as { chatter: string }).chatter });
+      continue;
+    }
+    // 3: a business fact from a shared source.
+    let promoted = false;
+    for (const src of sharedPromotionSources(n, docs)) {
+      const value = withoutDocLabels(stripNoteCommentary(src.text).text);
+      if (!value || isSensitiveNote(value)) continue;
+      const key = promotionKey(next, value);
+      if (!key) continue;
+      // An age is written as the age ("64 years old"), not as the sentence around it.
+      const age = key === "ownerAge" ? value.match(AGE_PHRASE_RE) : null;
+      const factValue = age ? `${age[1] ?? age[2]} years old` : value;
+      const trial = factEntries({ [key]: factValue });
+      const rest = texts.every((t) => privateNoteText(t) === privateNoteText(src.text) || chatterReason(t, ctx, isHousekeepingNote) !== null ||
+        (coverable(t) && (coveringFact(t, trial, common) !== null || coveringFact(t, facts, common) !== null)));
+      if (!rest) continue;
+      if (!applyPromotion(next, key, factValue, value, { documentId: src.documentId, kind: src.kind })) continue;
+      report.promoted.push({ note: n.note, key });
+      facts = factEntries(next);
+      promoted = true;
+      break;
+    }
+    if (!promoted) kept.push(n);
+  }
+  // 4: notes about one matter fold together.
+  const textsOf = kept.map(noteTexts);
+  const nameCount = new Map<string, number>();
+  for (const ts of textsOf) {
+    for (const nm of Array.from(new Set(ts.flatMap((t) => Array.from(properNames(t, common)))))) nameCount.set(nm, (nameCount.get(nm) ?? 0) + 1);
+  }
+  const rare = new Set(Array.from(nameCount.entries()).filter(([, c]) => c === 2).map(([nm]) => nm));
+  const groupOf = kept.map((_, i) => i);
+  const find = (i: number): number => (groupOf[i] === i ? i : (groupOf[i] = find(groupOf[i])));
+  const size = new Map<number, number>();
+  for (let i = 0; i < kept.length; i++) size.set(i, 1);
+  for (let i = 0; i < kept.length; i++) {
+    for (let j = i + 1; j < kept.length; j++) {
+      const a = find(i);
+      const b = find(j);
+      if (a === b || (size.get(a) ?? 1) + (size.get(b) ?? 1) > MAX_FOLD) continue;
+      if (!sameMatter(textsOf[i], textsOf[j], rare, common)) continue;
+      groupOf[b] = a;
+      size.set(a, (size.get(a) ?? 1) + (size.get(b) ?? 1));
+    }
+  }
+  const out: BrokerPrivateNote[] = [];
+  const emitted = new Set<number>();
+  for (let i = 0; i < kept.length; i++) {
+    const g = find(i);
+    if (emitted.has(g)) continue;
+    emitted.add(g);
+    const members = kept.filter((_, k) => find(k) === g);
+    if (members.length === 1) out.push(members[0]);
+    else {
+      out.push(mergeNoteGroup(members));
+      report.merged += members.length - 1;
+    }
+  }
+  if (out.length > 0) next[BROKER_PRIVATE_NOTES_KEY] = out;
+  else delete next[BROKER_PRIVATE_NOTES_KEY];
+  return { info: next, report };
 }
 
 /**
@@ -990,7 +1375,11 @@ async function reviewOnce(dealId: string): Promise<ReviewResult> {
     }
     const after = getPrivateNotes(applied.info).length;
     const how = modelFailed ? " (model unavailable — undecided notes left as they were)" : askedModel ? " (reviewed new wordings)" : " (no new wordings)";
-    console.log(`[private-notes] deal ${dealId}: ${before} → ${after} notes${how}`);
+    const f = applied.final;
+    const last = f && (f.chatter.length || f.covered.length || f.promoted.length || f.merged)
+      ? `; final pass: ${f.chatter.length} not notes, ${f.covered.length} already facts, ${f.promoted.length} moved to facts (${f.promoted.map((p) => p.key).join(", ")}), ${f.merged} folded`
+      : "";
+    console.log(`[private-notes] deal ${dealId}: ${before} → ${after} notes${how}${last}`);
     return { before, after, askedModel, pending: applied.pending.length };
   });
 }

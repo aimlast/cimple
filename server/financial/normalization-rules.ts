@@ -755,6 +755,30 @@ export interface EarningsMismatch {
   year: string;
   stated: number;
   expected: number;
+  /**
+   * The figure is the computed value of ANOTHER metric for that year (an
+   * adjusted EBITDA called "SDE"): where the sentence names the metric, and
+   * the right name.
+   */
+  relabel?: { sentence: string; at: number; from: string; to: string };
+}
+
+/** The text with each mislabelled metric renamed (EarningsMismatch.relabel), sentence by sentence. */
+export function applyRelabels(text: string, found: Array<Pick<EarningsMismatch, "relabel">>): string {
+  let out = text;
+  const bySentence = new Map<string, Array<NonNullable<EarningsMismatch["relabel"]>>>();
+  for (const f of found) if (f.relabel) bySentence.set(f.relabel.sentence, [...(bySentence.get(f.relabel.sentence) ?? []), f.relabel]);
+  bySentence.forEach((list, sentence) => {
+    let fixed = sentence;
+    for (const r of Array.from(new Map(list.map((x) => [x.at, x])).values()).sort((a, b) => b.at - a.at)) {
+      if (fixed.slice(r.at, r.at + r.from.length) !== r.from) continue;
+      // Keep a leading capital ("SDE of …" at the start stays capitalised as "Adjusted EBITDA").
+      const to = r.at === 0 && /^[a-z]/.test(r.to) ? r.to.charAt(0).toUpperCase() + r.to.slice(1) : r.to;
+      fixed = fixed.slice(0, r.at) + to + fixed.slice(r.at + r.from.length);
+    }
+    out = out.replace(sentence, fixed);
+  });
+  return out;
 }
 
 const METRIC_RE = /\b(adjusted\s+|normali[sz]ed\s+|reported\s+|unadjusted\s+)?(ebitda|sde)\b/gi;
@@ -842,6 +866,8 @@ interface StatedFigure {
   year: string | null;
   /** Where attribution is judged ("as claimed by the seller"): the words up to and just after the figure. */
   attributionText: string;
+  /** Where this sentence names the metric (its own words, not a carried-over subject). */
+  metricAt?: { index: number; text: string };
 }
 
 function metricOf(m: RegExpMatchArray): { metric: "EBITDA" | "SDE"; qualifier: string } {
@@ -905,6 +931,7 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
       const clauseYears = yearsIn(sentence.slice(chainStart, p));
       out.push({
         ...metricOf(subject),
+        ...(ownSubject ? { metricAt: { index: subject.index!, text: subject[0] } } : {}),
         amount: result,
         hedged: sentence[p] === "≈" || /\S/.test(between),
         year: clauseYears.length > 0 ? clauseYears[clauseYears.length - 1] : onlyYear,
@@ -934,6 +961,7 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
       const leading = sentence.slice(Math.max(0, m.index! - 12), m.index!).match(/\b(?:FY\s?)?((?:19|20)\d{2})\s*$/i)?.[1];
       out.push({
         metric, qualifier, amount, hedged,
+        metricAt: { index: m.index!, text: m[0] },
         year: ty ? ty[1] ?? ty[2] : contextYears.length > 0 ? contextYears[contextYears.length - 1] : leading ?? onlyYear,
         attributionText: sentence.slice(0, amount.end) + after(amount),
       });
@@ -1009,7 +1037,15 @@ export function findEarningsMismatches(text: string, computed: CanonicalEarnings
       const expected = candidatesFor(y)[0];
       if (typeof expected !== "number") continue;
       const label = metric === "SDE" ? "SDE" : adjusted ? "adjusted EBITDA" : qualifier ? "reported EBITDA" : "EBITDA";
-      out.push({ metric, label, year: y, stated: value, expected });
+      // The figure is right but named for the other metric (Ridgeline: "2024
+      // SDE $1,552,000" — that is the adjusted EBITDA; SDE is $1,717,000):
+      // the name is corrected, not the figure questioned.
+      const close = (c: number | undefined) => typeof c === "number" && Math.abs(c - value) <= allowedDifference(f.amount.raw, c, f.hedged);
+      const rightName = metric === "SDE"
+        ? close(computed.adjustedEbitda[y]) ? "adjusted EBITDA" : close(computed.reportedEbitda[y]) ? "EBITDA" : null
+        : close(computed.sde[y]) ? "SDE" : adjusted && close(computed.reportedEbitda[y]) ? "EBITDA" : !adjusted && close(computed.adjustedEbitda[y]) ? "adjusted EBITDA" : null;
+      const relabel = rightName && f.metricAt ? { sentence, at: f.metricAt.index, from: f.metricAt.text, to: rightName } : undefined;
+      out.push({ metric, label, year: y, stated: value, expected, ...(relabel ? { relabel } : {}) });
     }
   }
   return out;
@@ -1033,8 +1069,14 @@ export function flagEarningsStatements(
       const found = findEarningsMismatches(`${i.title}. ${i.detail}`, computed);
       if (found.length === 0) return i;
       found.forEach((f) => mismatches.push({ ...f, where: `Insight "${i.title}"` }));
-      const check = found.map((f) => `the normalization computes ${f.year} ${f.label} as ${fmt(f.expected)}, not ${fmt(f.stated)}`).join("; ");
-      const flagged: UiInsight & { flag?: string } = { ...i, detail: `${i.detail} (Check: ${check}.)`, flag: check };
+      // A right figure under the wrong name: the name is corrected in place.
+      const renamed = found.filter((f) => f.relabel);
+      const rest = found.filter((f) => !f.relabel);
+      const detail = renamed.length > 0 ? applyRelabels(i.detail, renamed) : i.detail;
+      const title = renamed.length > 0 ? applyRelabels(i.title, renamed) : i.title;
+      if (rest.length === 0) return { ...i, title, detail };
+      const check = rest.map((f) => `the normalization computes ${f.year} ${f.label} as ${fmt(f.expected)}, not ${fmt(f.stated)}`).join("; ");
+      const flagged: UiInsight & { flag?: string } = { ...i, title, detail: `${detail} (Check: ${check}.)`, flag: check };
       return flagged;
     });
   return {
@@ -1049,9 +1091,12 @@ export function flagEarningsNotes(normalization: UiNormalization | null): UiNorm
   if (!normalization || !computed) return normalization;
   const notes: string[] = [];
   for (const note of normalization.notes ?? []) {
-    notes.push(note);
-    if (/^Check:/.test(note)) continue;
-    for (const f of findEarningsMismatches(note, computed)) {
+    if (/^Check:/.test(note)) { notes.push(note); continue; }
+    const found = findEarningsMismatches(note, computed);
+    // A right figure under the other metric's name is renamed in the note itself.
+    notes.push(applyRelabels(note, found));
+    for (const f of found) {
+      if (f.relabel) continue;
       notes.push(`Check: the note above states ${f.year} ${f.label} as ${fmt(f.stated)}; the add-backs listed here compute ${fmt(f.expected)}.`);
     }
   }

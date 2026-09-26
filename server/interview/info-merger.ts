@@ -98,6 +98,42 @@ const FIELD_ALIASES: Record<string, string> = {
   currentBacklog: "backlog",
   orderBacklog: "backlog",
   signedBacklog: "backlog",
+  // One figure, several spellings (Ridgeline, 2026-09-26): the statements'
+  // EBITDA sat in earningsBeforeInterestAmortizationAndIncomeTaxesByYear while
+  // ebitdaByYear held only a call's figure; gross margin and retained
+  // earnings split across three keys each; a FY2022 "dividends" line
+  // outlived the FY2024 dividendsPaid. (Opening retained earnings —
+  // retainedEarningsBeginning — is a different measure and stays apart.)
+  grossMarginPercent: "grossMargin",
+  grossMarginPercentage: "grossMargin",
+  grossMarginPct: "grossMargin",
+  grossProfitMargin: "grossMargin",
+  grossProfitMarginPercent: "grossMargin",
+  grossMarginPercentByYear: "grossMarginByYear",
+  grossMarginPercentageByYear: "grossMarginByYear",
+  grossMarginPctByYear: "grossMarginByYear",
+  grossProfitMarginByYear: "grossMarginByYear",
+  grossProfitMarginPercentByYear: "grossMarginByYear",
+  earningsBeforeInterestAmortizationAndIncomeTaxes: "ebitda",
+  earningsBeforeInterestAmortizationAndTaxes: "ebitda",
+  earningsBeforeInterestTaxesDepreciationAndAmortization: "ebitda",
+  earningsBeforeInterestTaxesDepreciationAmortization: "ebitda",
+  earningsBeforeInterestDepreciationAmortizationAndTaxes: "ebitda",
+  earningsBeforeInterestAmortizationAndIncomeTaxesByYear: "ebitdaByYear",
+  earningsBeforeInterestAmortizationAndTaxesByYear: "ebitdaByYear",
+  earningsBeforeInterestTaxesDepreciationAndAmortizationByYear: "ebitdaByYear",
+  earningsBeforeInterestTaxesDepreciationAmortizationByYear: "ebitdaByYear",
+  earningsBeforeInterestDepreciationAmortizationAndTaxesByYear: "ebitdaByYear",
+  retainedEarningsEnd: "retainedEarnings",
+  retainedEarningsEnding: "retainedEarnings",
+  retainedEarningsEndOfYear: "retainedEarnings",
+  retainedEarningsClosing: "retainedEarnings",
+  retainedEarningsEndByYear: "retainedEarningsByYear",
+  retainedEarningsEndingByYear: "retainedEarningsByYear",
+  retainedEarningsEndOfYearByYear: "retainedEarningsByYear",
+  retainedEarningsClosingByYear: "retainedEarningsByYear",
+  dividends: "dividendsPaid",
+  dividendsByYear: "dividendsPaidByYear",
 };
 
 // Case-insensitive alias lookup — "ATMrevenue" and "atmRevenue" must resolve

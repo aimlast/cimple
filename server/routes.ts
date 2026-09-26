@@ -2497,6 +2497,24 @@ Return JSON only.`,
     }
   });
 
+  // Re-read ONE source (a source whose re-read failed — the job's
+  // failedSources, or "Read again" on the Information tab): every other
+  // source keeps what it had. Same background job and polling as above.
+  app.post("/api/deals/:dealId/documents/:documentId/reprocess", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const doc = await storage.getDocument(req.params.documentId);
+      if (!doc || doc.dealId !== deal.id) return res.status(404).json({ error: "Source not found" });
+      const { startReprocessJob } = await import("./documents/reprocess-jobs");
+      const { job, started } = startReprocessJob(deal.id, undefined, undefined, { onlyDocumentIds: [doc.id] });
+      res.status(started ? 202 : 409).json(job);
+    } catch (error: any) {
+      console.error("Reprocess source error:", error);
+      res.status(500).json({ error: error.message || "Failed to re-read the source" });
+    }
+  });
+
   app.get("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
     try {
       const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);

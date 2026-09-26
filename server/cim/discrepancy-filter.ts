@@ -28,7 +28,7 @@ export interface DiscrepancyCandidateLike {
   relation?: FindingRelation | string | null;
 }
 
-export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "proposed_vs_current" | "not_a_conflict";
+export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "proposed_vs_current" | "not_a_conflict" | "different_periods" | "different_measures";
 
 export interface FilterResult<T> {
   kept: T[];
@@ -270,11 +270,172 @@ export function selfDeclaredNonConflict(item: DiscrepancyCandidateLike): boolean
   return !!s && !WALK_BACK_RE.test(suggestion.slice(s[0].length));
 }
 
+// ─── Two periods, two measures ───────────────────────────────────────────────
+//
+// Ridgeline's one check run raised two rows, both false: "Top 3 customers =
+// 41% of 2024 revenue" against the concentration schedule's "FY2022: Top 3
+// customers 35.0%" (the schedule's FY2024 line says 41.0% — the seller is
+// right), and "~$180k replacement cost" for the old press brake against the
+// fixed-asset list's "$96,000 original cost, NBV $29,700, Est. FMV $38,000".
+// A figure for one fiscal year is not disputed by another year's, and a
+// replacement cost is not disputed by a book or market value.
+
+/** A value without the " — source" label the financial analysis appends (only when the tail IS a source label). */
+function withoutSourceLabel(v: string): string {
+  const idx = v.lastIndexOf(" — ");
+  if (idx <= 0) return v;
+  const tail = v.slice(idx + 3);
+  const label = /\b(?:interview|call|e-?mail|questionnaire|statements?|returns?|report|list|transcript|workbook|knowledge base|seller|document|t[245]|p&l|ledger|notes?|schedule|summary|analysis|filing|minutes?|agreement|lease)\b/i;
+  return tail.length <= 160 && label.test(tail) && !/\$\s?\d|\d\s?%/.test(tail) ? v.slice(0, idx) : v;
+}
+
+const PERIOD_NOUNS = String.raw`(?:revenues?|sales|ebitda|sde|net income|earnings|gross (?:margin|profit)|profit|results|financials|payroll|wages|fiscal(?: year)?|year[- ]end|statements?|volume|billings?|turnover)`;
+/** Year references that say what period a figure is FOR: "FY2022", "of 2024 revenue", "41% (2024)", "2024: 41%", "41% in 2024". */
+const PERIOD_YEAR_RES: RegExp[] = [
+  /\bFY\s?'?((?:19|20)\d{2}|\d{2})\b/gi,
+  new RegExp(String.raw`\b((?:19|20)\d{2})\s+${PERIOD_NOUNS}\b`, "gi"),
+  /[\d%]\s*\(\s*(?:fy\s?)?((?:19|20)\d{2})\s*\)/gi,
+  /(?:^|[;,(|]\s*)((?:19|20)\d{2})\s*[:–]\s*(?:[a-z ]{0,30})?\$?\d/gi,
+  /\d(?:\.\d+)?\s?%?\s+(?:of (?:revenue|sales) )?(?:in|for|during)\s+(?:fiscal\s+|fy\s?)?((?:19|20)\d{2})\b/gi,
+];
+
+function fullYear(y: string): string {
+  return y.length === 2 ? `20${y}` : y;
+}
+
+/** The fiscal years a text's figures are for (dates like "expires 2029" are not periods). */
+export function periodYears(text: string): Set<string> {
+  const out = new Set<string>();
+  for (const re of PERIOD_YEAR_RES) for (const m of Array.from(text.matchAll(re))) out.add(fullYear(m[1]));
+  return out;
+}
+
+/** Clauses of a value: at ";", "|", ", " (never inside a number), brackets and sentence ends. */
+function periodClauses(text: string): string[] {
+  return text.split(/;\s*|\s*\|\s*|,\s+|\n|\(|\)|(?<=[.!?])\s+/).map((c) => c.trim()).filter(Boolean);
+}
+
+/** The figure a side is about: its first share or money figure, else its first quantity. */
+function principal(tokens: NumTok[]): NumTok | undefined {
+  const q = tokens.filter((t) => !t.year);
+  return q.find((t) => t.pct || /\$/.test(t.raw) || /[km]\b|million|thousand/i.test(t.raw)) ?? q[0];
+}
+
+/**
+ * How two sides' figures line up by fiscal year: "same" when the evidence's
+ * figure for the claim's year agrees with the claim (it was another year's
+ * line that differed), "different_periods" when the evidence speaks only of
+ * other years, else null (one period, or no period words — decided
+ * elsewhere). Date-like facts (a lease's expiry) never get here: their years
+ * are the value, not a period.
+ */
+export function periodAlignment(claim: string, evidence: string): "same" | "different_periods" | null {
+  const c = withoutSourceLabel(claim);
+  const e = withoutSourceLabel(evidence);
+  const cy = periodYears(c);
+  if (cy.size !== 1) return null;
+  const year = Array.from(cy)[0];
+  const cp = principal(numberTokens(c, { keepSourceLabel: true }));
+  if (!cp) return null;
+  const ey = periodYears(e);
+  if (ey.size === 0) return null;
+  // The evidence's figures, clause by clause, for the one year each clause names.
+  const forYear: NumTok[] = [];
+  for (const clause of periodClauses(e)) {
+    const ys = periodYears(clause);
+    if (ys.size === 1 && ys.has(year)) forYear.push(...numberTokens(clause, { keepSourceLabel: true }).filter((t) => !t.year));
+  }
+  if (forYear.length > 0) return forYear.some((t) => tokensMatch(cp, t)) ? "same" : null;
+  return ey.has(year) ? null : "different_periods";
+}
+
+/** What kind of value a money figure is, by the words next to it. */
+const MEASURE_BASES: Array<[string, RegExp]> = [
+  ["book", /\b(?:nbv|net book(?: value)?|book value|original cost|historical cost|cost basis|undepreciated(?: capital cost)?|ucc|carrying (?:value|amount)|depreciated value|purchase(?:d)? (?:price|for))\b/gi],
+  ["market", /\b(?:fmv|fair market(?: value)?|market value|appraised(?: value)?|appraisal|resale(?: value)?|liquidation value|auction value|trade-?in value)\b/gi],
+  ["insured", /\b(?:insured (?:value|for)|insurance value|replacement value for insurance)\b/gi],
+  ["assessed", /\b(?:assessed value|tax assessment|municipal assessment)\b/gi],
+  ["replacement", /\b(?:replacement cost|cost to replace|replac\w*|(?:a |buy(?:ing)? )?new (?:one|unit|machine|press|truck)|quote for (?:a )?new)\b/gi],
+];
+
+/**
+ * The measure behind each money figure of a text ("book", "market",
+ * "replacement"…), or null for a figure with no such words near it. A
+ * valuation word (NBV, FMV, original cost) next to the figure outranks a
+ * condition word ("due for replacement") nearby.
+ */
+export function moneyMeasures(text: string): Array<string | null> {
+  const t = withoutSourceLabel(text);
+  const lower = t.toLowerCase();
+  const hits: Array<{ base: string; start: number; end: number }> = [];
+  for (const [base, re] of MEASURE_BASES) for (const m of Array.from(lower.matchAll(re))) hits.push({ base, start: m.index ?? 0, end: (m.index ?? 0) + m[0].length });
+  const out: Array<string | null> = [];
+  for (const m of Array.from(lower.matchAll(/\$\s?\d[\d,]*(?:\.\d+)?\s?(?:k|m|mm|million|thousand)?\b/g))) {
+    const s = m.index ?? 0;
+    const e = s + m[0].length;
+    const near = hits
+      .map((h) => ({ ...h, dist: h.end <= s ? s - h.end : h.start >= e ? h.start - e : 0 }))
+      .filter((h) => h.dist <= 40 && !/[;|]/.test(lower.slice(Math.min(h.end, e), Math.max(h.start, s))));
+    const valuation = near.filter((h) => h.base !== "replacement").sort((a, b) => a.dist - b.dist)[0];
+    const pick = valuation ?? near.sort((a, b) => a.dist - b.dist)[0];
+    out.push(pick ? pick.base : null);
+  }
+  return out;
+}
+
+/** True when every money figure on each side names its measure and the two sides share none (replacement cost vs NBV / FMV). */
+export function differentMoneyMeasures(a: string, b: string): boolean {
+  const ma = moneyMeasures(a);
+  const mb = moneyMeasures(b);
+  if (ma.length === 0 || mb.length === 0 || ma.some((x) => !x) || mb.some((x) => !x)) return false;
+  const sa = new Set(ma as string[]);
+  return !(mb as string[]).some((x) => sa.has(x));
+}
+
+const DATE_LIKE_FIELD_RE = /\b(?:lease|expir\w*|term|renew\w*|option|matur\w*|deadline|dates?|closing|founded|established|since|anniversary)\b/i;
+
+// The model's own reasoning that the two sides are not one disputed fact:
+// the document "does not provide a replacement cost estimate", or it
+// "confirms this for 2024" and differs only for another year.
+const DOC_LACKS_MEASURE_RE =
+  /\b(?:does not|doesn'?t|do not|don'?t)\s+(?:provide|include|state|give|contain|list|specify|show|mention|have)\b[^.;]{0,20}?\b(?:a|an|any)\s+(?:[a-z-]+\s+){0,3}(?:estimate|figure|value|amount|number|cost|price|rate)\b/i;
+const DOC_CONFIRMS_FOR_YEAR_RE =
+  /\b(?<!not |n't )(?:confirms?|matches|agrees with|supports)\s+(?:this|that|it|the (?:seller'?s?\s+)?(?:claim|figure|statement|value|number))\s+for\s+(?:fy\s?)?((?:19|20)\d{2})\b/i;
+
+/** The model reasoned, in its own words, that the evidence lacks this measure or confirms the claim for its own year. */
+export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean {
+  if ((item.severity ?? "").toLowerCase() === "critical") return false;
+  const text = item.explanation ?? item.aiExplanation ?? "";
+  if (!text) return false;
+  const claim = withoutSourceLabel(item.interviewValue ?? "");
+  const evidence = withoutSourceLabel(item.documentValue ?? "");
+  const confirms = text.match(DOC_CONFIRMS_FOR_YEAR_RE);
+  if (confirms) {
+    const ey = periodYears(evidence);
+    if (ey.size > 0 && !ey.has(confirms[1])) return true;
+  }
+  if (DOC_LACKS_MEASURE_RE.test(text)) {
+    // …and the claim's own figure is nowhere on the evidence side.
+    const cp = principal(numberTokens(claim, { keepSourceLabel: true }));
+    if (cp && !numberTokens(evidence, { keepSourceLabel: true }).some((t) => tokensMatch(cp, t))) return true;
+  }
+  return false;
+}
+
 /** Why a finding should be dropped, or null to keep it. */
 export function dropReason(item: DiscrepancyCandidateLike, today: Date = new Date()): DropReason | null {
   if (isMissingSide(item.interviewValue) || isMissingSide(item.documentValue)) return "missing_side";
   if (sidesEquivalent(item.interviewValue ?? "", item.documentValue ?? "", today)) return "equal";
   if (isAdjustedVsReported(item)) return "adjusted_vs_reported";
+  const claim = item.interviewValue ?? "";
+  const evidence = item.documentValue ?? "";
+  if (!DATE_LIKE_FIELD_RE.test(item.field ?? "")) {
+    const aligned = periodAlignment(claim, evidence) ?? periodAlignment(evidence, claim);
+    if (aligned === "same") return "equal";
+    if (aligned === "different_periods") return "different_periods";
+  }
+  if (differentMoneyMeasures(claim, evidence)) return "different_measures";
+  if (modelReasonedNoConflict(item)) return "not_a_conflict";
   // The model's own verdict (the check asks for it; the financial analysis doesn't).
   if (item.relation === "proposed_vs_current") return "proposed_vs_current";
   if (item.relation === "same_value" || item.relation === "different_things") return "not_a_conflict";
