@@ -306,6 +306,7 @@ export function statementEarnings(
   info: Record<string, unknown>,
   sourceOf: (key: string) => string | undefined,
 ): StatementEarnings | null {
+  const latest = latestFiscalYearOnFile(info);
   for (const [re, label] of STATEMENT_EARNINGS_KEYS) {
     const key = Object.keys(info).find((k) => re.test(k));
     if (!key) continue;
@@ -320,10 +321,38 @@ export function statementEarnings(
     const amounts = moneyAmounts(fig[0]);
     if (amounts.length === 0) continue;
     const period = head.match(/\bFY\s?'?(?:20)?\d{2}\b|\b(?:19|20)\d{2}\b/i)?.[0].replace(/\s+/g, "") ?? null;
+    // Only a figure named with the latest fiscal year on file: an undated
+    // value can be an older year's (live: FY2022 pre-tax income was quoted
+    // to the seller as what "the statements on file report").
+    const year = periodYear(period);
+    if (year === null || (latest !== null && year !== latest)) continue;
     const basis = /\bafter[- ]tax/i.test(head) ? "after tax" : /\bbefore[- ]tax|\bpre-?tax/i.test(head) ? "before tax" : null;
     return { label, amount: amounts[0], shown: fig[0].replace(/\s+/g, ""), period, basis };
   }
   return null;
+}
+
+/** "FY2024" / "FY24" / "2024" → 2024 (null when there is no year). */
+function periodYear(period: string | null): number | null {
+  if (!period) return null;
+  const d = period.match(/(\d{2,4})$/)?.[1];
+  if (!d) return null;
+  const n = Number(d.length === 2 ? `20${d}` : d);
+  return Number.isFinite(n) ? n : null;
+}
+
+/** The latest fiscal year any by-year figure on file covers (revenueByYear, ebitdaByYear…), or null. */
+function latestFiscalYearOnFile(info: Record<string, unknown>): number | null {
+  let latest: number | null = null;
+  for (const [key, value] of Object.entries(info)) {
+    if (key.startsWith("_") || !/ByYear$/.test(key) || !value || typeof value !== "object" || Array.isArray(value)) continue;
+    for (const y of Object.keys(value as Record<string, unknown>)) {
+      if (!/^(?:19|20)\d{2}$/.test(y)) continue;
+      const n = Number(y);
+      if (latest === null || n > latest) latest = n;
+    }
+  }
+  return latest;
 }
 
 // ═══════════════════════ The hand-off ═══════════════════════
@@ -332,7 +361,7 @@ export function statementEarnings(
 const BROKER_RE = /\b(?:your broker|the broker|broker'?s)\b/i;
 const NAME_RE = /(?<=\S\s+)(?!(?:The|This|That|These|Those|Your|For|On|In|If|And|But|So|It|I|We|You|They|He|She|What|When|How|Why|Is|Are|FY)\b)[A-Z][a-z]{2,}(?:'s)?\b/;
 const HANDOFF_VERB_RE =
-  /\b(?:walk(?:s|ing)? you through|go(?:es|ing)? (?:over|through)|take(?:s)? you through|confirm(?:s)?|finali[sz]e(?:s)?|decide(?:s)?|explain(?:s)?|discuss|review(?:s)?|work(?:s)? (?:it )?out|conversation (?:to have )?with|question for|(?:call|one) to make|to answer|sets?)\b/i;
+  /\b(?:walk(?:s|ing)? you through|go(?:es|ing)? (?:over|through)|take(?:s)? you through|confirm(?:s)?|finali[sz]e(?:s)?|decide(?:s)?|explain(?:s)?|discuss|review(?:s)?|work(?:s|ed|ing)? (?:it )?out|conversation (?:to have )?with|question for|(?:call|one) to make|to answer|sets?)\b|'s (?:call|decision)\b|\b(?:is|are) (?:up to|for) (?:your broker|the broker|them|her|him)\b/i;
 const HANDED_OFF_TOPIC_RE = /\b(?:sde|earnings|cash ?flow|ebitda|add[- ]?backs?|added back|number|figure|normali[sz]\w*|recast|multiple)\b/i;
 
 /** Does the reply hand the earnings question to the broker? */

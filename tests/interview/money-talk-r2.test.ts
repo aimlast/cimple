@@ -294,3 +294,28 @@ const ctxFor = (sellerMessage: string | null, extra: Partial<PolishContext> = {}
 }
 
 process.stdout.write(`\n${n} groups passed\n`);
+
+// ── Re-check (live): an undated or older-year figure is never "what the statements report"; the model's own hand-off is recognised ──
+{
+  const info = {
+    netIncomeBeforeTaxes: "$439,000",
+    revenueByYear: { "2022": "$4.1M", "2023": "$4.4M", "2024": "$4.8M" },
+  };
+  assert.equal(statementEarnings(info, () => "document"), null, "an undated figure is never quoted");
+  assert.equal(
+    statementEarnings({ ...info, netIncomeBeforeTaxes: "$439,000 (FY2022)" }, () => "document"),
+    null,
+    "an older year is never quoted as the statements' figure",
+  );
+  const s = statementEarnings({ ...info, netIncomeBeforeTaxes: "$665,000 before tax (FY2024)" }, () => "document");
+  assert.deepEqual(s, { label: "income before tax", amount: 665_000, shown: "$665,000", period: "FY2024", basis: "before tax" });
+  // The live reply's own hand-off: no second one stacked on it.
+  const own = "The earnings figure that goes in the CIM is your broker Morgan's call, worked out against your actual statements.";
+  assert.ok(handsOffEarnings(own));
+  const out = ensureEarningsAcknowledged(`${own} Who runs dispatch?`, {
+    sellerMessage: "Morgan's gonna put a million-five in the book or not?",
+    priorAiText: "On the $1.5M: the earnings figure that goes in the book is your broker's to walk you through, against your statements.",
+  });
+  assert.equal(out.added, false);
+  ok("statements note only quotes the latest year on file; the model's own broker hand-off is not doubled");
+}
