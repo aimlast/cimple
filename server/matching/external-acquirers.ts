@@ -512,7 +512,8 @@ async function checkClaimBatch(
       }, { ...(withFetch ? FETCH_HEADERS : {}), timeout: Math.max(20_000, deadline - Date.now()) });
     } catch (err: any) {
       // Page fetching unavailable for this key/model: check against the excerpts alone.
-      if (withFetch && err?.status === 400 && turn === 0) {
+      // Only a complaint about the tool itself — a billing or other 400 would fail the same way again.
+      if (withFetch && err?.status === 400 && turn === 0 && /web_fetch|tool|beta|allowed_domains|not supported/i.test(String(err?.message ?? ""))) {
         console.warn("[external-acquirers] claim check without page fetch:", err?.message);
         withFetch = false;
         turn--;

@@ -79,6 +79,8 @@ interface SuggestedBuyer {
   /** Rules out this deal’s industry — listed apart, never selectable. */
   excluded?: boolean;
   excludedBy?: string | null;
+  /** One of the buyer's exclusions may cover this business (a market it serves, or a narrower slice) — still suggestible. */
+  exclusionCaution?: string | null;
   rankScore?: number;
   aiCheck?: {
     verdict: "strong" | "good" | "possible" | "unlikely";
@@ -749,6 +751,14 @@ function BuyerRow({
             {buyer.aiCheck.watchOuts.length > 0 && (
               <div className="text-2xs text-amber-400/90 pl-1">Watch: {buyer.aiCheck.watchOuts.join(" · ")}</div>
             )}
+          </div>
+        )}
+
+        {/* An exclusion that might apply: the broker decides, the buyer stays selectable. */}
+        {buyer.exclusionCaution && (
+          <div className="flex items-start gap-1 text-2xs text-amber-400/90 leading-snug" data-testid={`exclusion-caution-${buyer.buyerUserId}`}>
+            <AlertCircle className="h-2.5 w-2.5 mt-[2px] shrink-0" />
+            <span>{buyer.exclusionCaution}</span>
           </div>
         )}
 

@@ -817,6 +817,8 @@ export async function registerRoutes(app: Express): Promise<Server> {
           passesFirstPass: passesFirstPass(s),
           excluded,
           excludedBy: excluded ? (breakdown?.excludedBy ?? null) : null,
+          // An exclusion that may not apply (a market the business serves, a narrower slice): the broker checks.
+          exclusionCaution: !excluded ? (breakdown?.exclusionCaution?.note ?? null) : null,
           match: breakdown ? {
             criteriaMatched: breakdown.criteriaMatched,
             criteriaTested: breakdown.criteriaTested,

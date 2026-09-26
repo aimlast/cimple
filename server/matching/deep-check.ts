@@ -72,6 +72,8 @@ function buyerCard(s: ScoredBuyer): Record<string, unknown> {
     brokerCrmSummary: crm?.background || null,
     listingsTheyAskedAbout: (crm?.inquiries || []).slice(0, 8).map((q) => q.title),
     ruleBasedMatch: s.breakdown ? `${s.breakdown.criteriaMatched}/${s.breakdown.criteriaTested} criteria met` : "not testable",
+    // An exclusion the rules couldn't settle (a market the business only serves, or a narrower slice) — the AI judges it.
+    ...(s.breakdown?.exclusionCaution ? { exclusionToJudge: `Buyer rules out "${s.breakdown.exclusionCaution.by}"; ${s.breakdown.exclusionCaution.why === "market" ? "the business names it only as a market it serves" : "that may be narrower than this business"} — decide whether the exclusion applies.` } : {}),
   };
 }
 

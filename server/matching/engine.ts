@@ -17,7 +17,8 @@
 import { effectiveAskingPrice } from "../information/deal-mirror";
 import Anthropic from "@anthropic-ai/sdk";
 import { agentConfig } from "../interview/config/load-config";
-import { parseHeadcount } from "./fact-numbers";
+import { firstMoney, parseHeadcount } from "./fact-numbers";
+import { regionInText } from "./regions";
 
 const asFactText = (v: unknown): string | number | null =>
   typeof v === "string" || typeof v === "number" ? v : v && typeof v === "object" && "value" in (v as any) ? asFactText((v as any).value) : null;
@@ -125,6 +126,8 @@ export interface MatchBreakdown {
   excludedIndustry?: boolean;
   /** Which of the buyer's exclusions ruled it out ("Trucking"). */
   excludedBy?: string | null;
+  /** An exclusion that may not apply (a narrower slice, or a market the business only serves): shown to the broker, never hides the buyer. */
+  exclusionCaution?: { by: string; why: "narrower" | "market"; note: string } | null;
 }
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -143,8 +146,14 @@ function firstNumber(val: string | number | undefined | null): number | null {
   else if (suffix === "k") num *= 1_000;
   return num;
 }
+// A money fact is often prose ("2024 net sales: $58,241,630, up 6.5%…"): the
+// first "$" or unit amount is the figure, never the year in front of it.
 function parseCurrency(val: string | undefined | null): number | null {
-  return firstNumber(val);
+  const money = firstMoney(val);
+  if (money !== null) return money;
+  const n = firstNumber(val);
+  if (n !== null && /^(?:19|20)\d{2}$/.test(String(n)) && /[a-z]/i.test(String(val ?? ""))) return null;
+  return n;
 }
 
 function parsePercent(val: string | undefined | null): number | null {
@@ -296,7 +305,8 @@ export function industryMatches(dealText: string, targets: string[]): boolean {
 // construction", "pure-play retail") — dropped before the all-words test.
 const EXCLUSION_QUALIFIERS = new Set([
   "new", "build", "built", "newbuild", "ground", "up", "only", "pure", "play", "primarily", "mainly", "mostly",
-  "heavy", "focused", "focus", "based", "type", "style", "commercial-only", "residential-only",
+  "heavy", "light", "focused", "focus", "based", "type", "style", "commercial-only", "residential-only",
+  "project", "upstream", "downstream", "industrial", "commercial", "residential",
 ]);
 
 /**
@@ -314,9 +324,10 @@ const SECTOR_NAMES: Record<string, string[]> = {
   "food service": ["food", "food service", "food beverage", "f b", "hospitality", "restaurant food"],
   "professional services": ["professional", "professional services"],
   manufacturing: ["manufacturing", "manufacturer", "manufacturers"],
-  retail: ["retail", "retailer", "retailers", "retail trade"],
+  retail: ["retail", "retailer", "retailers", "retail trade", "consumer retail", "retail stores", "brick mortar retail"],
   automotive: ["automotive", "auto"],
   "business services": ["business services", "b2b", "b2b services"],
+  technology: ["technology", "tech", "high tech", "information technology", "it", "technology services"],
 };
 
 /**
@@ -327,8 +338,13 @@ const SECTOR_NAMES: Record<string, string[]> = {
  * plumbing service company.
  */
 const CONSTRUCTION_FOR_EXCLUSION = ["construction", "contractor", "contracting", "general contractor", "homebuild", "home builder", "excavat", "paving", "concrete", "framing", "drywall"];
+// Technology, for exclusions only: read from the deal's industry label, never
+// from descriptions (where "our booking software" doesn't make a clinic a tech
+// company), so target matching doesn't use it.
+const TECHNOLOGY_FOR_EXCLUSION = ["technology", "information technology", "it services", "it solutions", "managed it", "managed services", "managed service provider", "msp", "software", "saas", "cybersecurity"];
 function exclusionFamiliesOf(text: string): Set<string> {
   const out = familiesOf(text);
+  if (TECHNOLOGY_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("technology");
   out.delete("construction");
   if (CONSTRUCTION_FOR_EXCLUSION.some((m) => containsTerm(text, m))) out.add("construction");
   return out;
@@ -346,28 +362,120 @@ function bareSector(phrase: string): string | null {
 }
 
 /**
- * Does a buyer's EXCLUDED industry rule this deal out? Stricter than
- * `industryMatches` (which suits targets): the whole exclusion phrase must
- * appear in the deal's industry label, or every one of its meaningful words
- * must — qualifiers like "new"/"build" ignored. Industry-family widening
- * applies only when the exclusion is just a sector's name. "New-build
- * construction" does not exclude a residential HVAC service business;
- * "construction" excludes a general contractor; "Healthcare" excludes a
- * pharmacy; "Home services" excludes an HVAC business.
+ * What a deal's industry label says the business IS, apart from who it sells
+ * to. Sub-industries often name the customers' industries: "Managed service
+ * provider (MSP) for dental, legal and accounting practices", "metal
+ * fabrication and welding (oil & gas, agriculture, commercial construction)",
+ * "Custom injection molding — automotive Tier-2 and medical device
+ * components". Those end markets are not the deal's industry: an IT buyer who
+ * rules out healthcare still wants an MSP whose clients are dentists.
+ *   - `own`: the activity — the text before "for / serving / to / —" and
+ *     short acronyms in brackets ("(MSP)", "(3PL)");
+ *   - `context`: everything else — bracketed detail and the end markets.
  */
-export function excludedIndustryMatches(dealIndustryText: string, exclusions: string[]): boolean {
-  const hay = dealIndustryText.toLowerCase();
-  if (!hay.trim()) return false;
-  let dealFamilies: Set<string> | null = null;
-  return exclusions.some((raw) => {
-    const phrase = String(raw || "").toLowerCase().trim();
-    if (!phrase) return false;
-    if (new RegExp(`\\b${escapeRegex(phrase)}\\b`).test(hay)) return true;
-    const sector = bareSector(phrase);
-    if (sector && (dealFamilies ??= exclusionFamiliesOf(hay)).has(sector)) return true;
-    const meaningful = words(phrase).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w) && !EXCLUSION_QUALIFIERS.has(w));
-    return meaningful.length > 0 && meaningful.every((w) => containsTerm(hay, w));
-  });
+export function splitIndustryLabel(...labels: Array<string | null | undefined>): { own: string; context: string } {
+  const own: string[] = [], context: string[] = [];
+  for (const raw of labels) {
+    let text = String(raw || "").replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    text = text.replace(/\(([^)]*)\)/g, (_m, inner: string) => {
+      const t = inner.trim();
+      // An acronym for the activity itself stays with it; anything else in brackets is detail.
+      if (/^[A-Z0-9][A-Za-z0-9&./-]{1,9}$/.test(t) && /[A-Z]/.test(t)) return ` ${t} `;
+      if (t) context.push(t);
+      return " ";
+    }).replace(/\s+/g, " ").replace(/\s+([,.])/g, "$1").trim();
+    const cut = text.search(/\s(?:for|serving|servicing|supplying|supplier to|to|used by|used in|customers?|clients?|end[- ]markets?)\s|\s[—–-]\s|[—–:;]/i);
+    if (cut > 0) {
+      context.push(text.slice(cut).replace(/^[\s—–:;-]+/, ""));
+      text = text.slice(0, cut);
+    }
+    text = text.replace(/[\s,]+$/, "").trim();
+    if (text) own.push(text);
+  }
+  return { own: own.join(" · "), context: context.filter(Boolean).join(" · ") };
+}
+
+/**
+ * How one exclusion phrase meets a text: "certain" when the phrase, its
+ * sector (bare sector names only) or all of its words are there; "narrower"
+ * when only the words left after dropping narrowing qualifiers are there
+ * ("Heavy manufacturing" vs a manufacturer — maybe not heavy).
+ */
+function exclusionHitIn(text: string, phrase: string): "certain" | "narrower" | null {
+  const hay = text.toLowerCase();
+  if (!hay.trim()) return null;
+  if (new RegExp(`\\b${escapeRegex(phrase)}\\b`).test(hay)) return "certain";
+  const sector = bareSector(phrase);
+  if (sector && exclusionFamiliesOf(hay).has(sector)) return "certain";
+  const meaningful = words(phrase).filter((w) => w.length >= 3 && !INDUSTRY_FILLER.has(w));
+  if (meaningful.length && meaningful.every((w) => containsTerm(hay, w))) return "certain";
+  const core = meaningful.filter((w) => !EXCLUSION_QUALIFIERS.has(w));
+  if (core.length && core.length < meaningful.length && core.every((w) => containsTerm(hay, w))) return "narrower";
+  return null;
+}
+
+export interface IndustryExclusion {
+  /** The buyer's exclusion as they wrote it ("Healthcare"). */
+  by: string;
+  /** Certain: the business is in that industry — never suggested. Otherwise the broker should check. */
+  certain: boolean;
+  /** "industry": the deal's own activity; "narrower": the exclusion is a narrower slice
+   *  ("Heavy manufacturing") the deal may or may not be in; "market": named only as a
+   *  market the business serves. */
+  why: "industry" | "narrower" | "market";
+}
+
+/**
+ * Does a buyer's EXCLUDED industry rule this deal out? Stricter than
+ * `industryMatches` (which suits targets). Only what the business itself does
+ * can rule it out for certain: the whole exclusion phrase or all of its
+ * meaningful words in the deal's own activity, or — for an exclusion that is
+ * just a sector's name — the activity belonging to that sector. "Healthcare"
+ * excludes a pharmacy; "Home services" an HVAC business; "construction" a
+ * general contractor; "New-build construction" never a residential HVAC
+ * service company.
+ *
+ * A hit on a narrower slice ("New-build construction" vs a general
+ * contractor) or on an end market ("Healthcare" vs an MSP for dental
+ * practices, "Construction" vs a fabricator whose customers include
+ * contractors) is NOT an exclusion: the broker gets a caution instead and the
+ * buyer stays suggestible — hiding a best-fit buyer is the worse mistake.
+ */
+export function industryExclusion(
+  industry: string | null | undefined,
+  subIndustry: string | null | undefined,
+  exclusions: string[] | null | undefined,
+): IndustryExclusion | null {
+  const { own, context } = splitIndustryLabel(industry, subIndustry);
+  let possible: IndustryExclusion | null = null;
+  for (const raw of exclusions || []) {
+    const by = String(raw || "").trim();
+    const phrase = by.toLowerCase();
+    if (!phrase) continue;
+    const onOwn = exclusionHitIn(own, phrase);
+    if (onOwn === "certain") return { by, certain: true, why: "industry" };
+    if (possible) continue;
+    if (onOwn === "narrower") possible = { by, certain: false, why: "narrower" };
+    else if (exclusionHitIn(context, phrase)) possible = { by, certain: false, why: "market" };
+  }
+  return possible;
+}
+
+/** Broker-facing caution for an exclusion that may not apply. */
+export function exclusionCautionNote(ex: IndustryExclusion): string {
+  return ex.why === "market"
+    ? `Rules out “${ex.by}”. This business serves that market but isn't part of it — worth checking before you reach out.`
+    : `Rules out “${ex.by}”. That may or may not describe this business — worth checking before you reach out.`;
+}
+
+/**
+ * True when the exclusions rule out, for certain, a deal whose label is
+ * "Industry · Sub-industry" (the label's first part is the industry).
+ */
+export function excludedIndustryMatches(dealIndustryLabel: string, exclusions: string[]): boolean {
+  const [industry, ...rest] = String(dealIndustryLabel || "").split(" · ");
+  return industryExclusion(industry, rest.join(" · "), exclusions)?.certain === true;
 }
 
 // ── AI qualitative scoring ─────────────────────────────────────────────────
@@ -470,6 +578,9 @@ export function locationMatches(dealLocation: string, targets: string[]): boolea
   for (const [abbr, name] of Object.entries(CA_PROVINCES)) {
     if (new RegExp(`\\b${abbr}\\b`).test(hay)) hay += ` ${name} `;
   }
+  // US state codes and well-known cities too ("Toledo, OH" → Ohio, United States).
+  const region = regionInText(dealLocation);
+  if (region) hay += ` ${region.region.toLowerCase()} ${region.country.toLowerCase()} `;
   if (textMatchesAny(hay, targets)) return true;
   const isCanada = hay.includes("canada") || Object.values(CA_PROVINCES).some((p) => hay.includes(p));
   const isUS = /\b(usa|united states)\b/.test(hay) || US_STATES.some((st) => hay.includes(` ${st} `) || hay.includes(` ${st}`));
@@ -644,12 +755,16 @@ export async function matchBuyerToDeal(
       : { score: 0, max: 100, note: `${dealIndustry} — not in target list` };
   }
 
+  // Only the business's own activity rules it out; a narrower slice or an end
+  // market it serves is a caution for the broker, not an exclusion.
+  let exclusionCaution: MatchBreakdown["exclusionCaution"] = null;
   if (criteria.excludedIndustries && criteria.excludedIndustries.length > 0) {
-    const label = [dealIndustry, deal.subIndustry].filter(Boolean).join(" · ");
-    const hit = criteria.excludedIndustries.find((e) => excludedIndustryMatches(label, [e]));
-    if (hit) {
-      excludedBy = String(hit).trim();
+    const ex = industryExclusion(dealIndustry, deal.subIndustry, criteria.excludedIndustries);
+    if (ex?.certain) {
+      excludedBy = ex.by;
       industryDetails.excluded = { score: 0, max: 100, note: `${dealIndustry} — EXCLUDED industry` };
+    } else if (ex) {
+      exclusionCaution = { by: ex.by, why: ex.why as "narrower" | "market", note: exclusionCautionNote(ex) };
     }
   }
 
@@ -884,5 +999,6 @@ ${buyerProfile}`,
     criteriaTested,
     dataCompleteness,
     ...(excludedBy ? { excludedIndustry: true, excludedBy } : {}),
+    ...(exclusionCaution ? { exclusionCaution } : {}),
   };
 }
