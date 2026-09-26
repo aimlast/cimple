@@ -420,6 +420,20 @@ const modelIntent = (x: Partial<SellerIntent>): SellerIntent => ({
     assert.doesNotMatch(end.message, /\?/);
     assert.match(h.systems[2], /# CLOSING/);
   }
+  // (b2) …but a seller who comes back hours later to the same session is
+  // starting again, not answering the closing turn.
+  {
+    const old = new Date(Date.now() - 3 * 3600_000).toISOString();
+    const h = installHarness(leaseDeal(), {
+      messages: [...history, seller("I'm wiped, can we pick this up tomorrow?"), ai("Of course — a quick answer on the asking price now, or shall we start there next time?", { timestamp: old })],
+      sessionMeta: { _stopSignalCount: 1 },
+    });
+    h.intents.push({});
+    h.script.push({ message: "Welcome back — what's the asking price you have in mind?" });
+    const r = await processTurn("deal-1", "sess-1", "Hi, I'm back. Around $2.4M.");
+    assert.equal(r.shouldEnd, false);
+    assert.doesNotMatch(h.systems[0], /# CLOSING/);
+  }
   // (c) "we can finish the install next week" is an answer — the model can't end on it.
   {
     const h = installHarness(leaseDeal(), { messages: [...history] });

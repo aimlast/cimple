@@ -787,8 +787,16 @@ export async function processTurn(
   );
   applyLedgerToKb(kb, priorLedger);
   kb.droppedDocRequests = Array.isArray(sessionMeta._droppedDocRequests) ? (sessionMeta._droppedDocRequests as string[]).slice(-8) : [];
+  // A stop only carries over to the very next message: a seller who asked to
+  // stop, left, and comes back to the same session hours later is starting
+  // again — their first message back must not be taken as the answer to the
+  // closing turn and end the interview.
+  const lastAiAt = Date.parse(
+    String([...(session.messages as ConversationMessage[])].reverse().find((m) => m.role === "ai")?.timestamp ?? ""),
+  );
+  const stopStale = !Number.isNaN(lastAiAt) && Date.now() - lastAiAt > STOP_CARRY_MS;
   const priorStopCount =
-    typeof sessionMeta._stopSignalCount === "number" ? sessionMeta._stopSignalCount : 0;
+    typeof sessionMeta._stopSignalCount === "number" && !stopStale ? sessionMeta._stopSignalCount : 0;
   const priorCheckpointStreak =
     typeof sessionMeta._checkpointStreak === "number" ? sessionMeta._checkpointStreak : 0;
   const priorDegradedTurns =
@@ -2739,6 +2747,8 @@ const STREAM_CHECK_TIMEOUT_MS = 4_000;
  * interview call and is normally back well before the draft is complete.
  */
 const STREAM_INTENT_WAIT_MS = 5_000;
+/** How long after a stop's closing turn the seller's next message still answers it. */
+const STOP_CARRY_MS = 30 * 60_000;
 /** Pause between released chunks of ~3 words (a 40-word question types out in ~0.4s). */
 const RELEASE_CHUNK_MS = 30;
 

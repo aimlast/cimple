@@ -296,7 +296,8 @@ export async function classifySellerIntent(input: IntentInput, timeoutMs = INTEN
     temperature: 0,
     tools: [INTENT_TOOL],
     tool_choice: { type: "tool", name: "seller_intent" },
-    system: INTENT_SYSTEM,
+    // (The same instructions every turn — served from the prompt cache.)
+    system: [{ type: "text", text: INTENT_SYSTEM, cache_control: { type: "ephemeral" } }],
     messages: [{ role: "user", content: intentPrompt(input) }],
   });
   call.catch(() => {}); // a late failure after the timeout is not an unhandled rejection
