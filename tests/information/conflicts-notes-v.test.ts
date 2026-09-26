@@ -328,7 +328,7 @@ await (async () => {
   assert.ok(!isDroppableNote("Financial statements are unaudited compilation only"), "audit status is substance");
   assert.ok(isDroppableNote("Broker fee/commission and engagement terms not disclosed in this email thread"), "a remark that something is absent");
   assert.ok(!isDroppableNote("Referral from Heather Kwan (Kwan & Brodeur, Leduc)"));
-  ok("a lossy consolidation is repaired once or not made; existing notes about one matter fold together");
+  ok("a lossy consolidation is repaired once, else made from the notes' own words; existing notes about one matter fold together");
 }
 
 console.log(`\n${n} checks passed`);

@@ -794,8 +794,10 @@ const timers = new Map<string, ReturnType<typeof setTimeout>>();
 export function scheduleNotesReview(dealId: string, delayMs = 8000): void {
   const t = timers.get(dealId);
   if (t) clearTimeout(t);
-  timers.set(dealId, setTimeout(() => {
+  const timer = setTimeout(() => {
     timers.delete(dealId);
     reviewPrivateNotes(dealId).catch((err) => console.error(`[private-notes] review failed for ${dealId}:`, err));
-  }, delayMs));
+  }, delayMs);
+  timer.unref?.(); // never keeps a script or test process alive
+  timers.set(dealId, timer);
 }
