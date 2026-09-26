@@ -25,7 +25,7 @@
  */
 import Anthropic from "@anthropic-ai/sdk";
 import { blindIdentifiers } from "@shared/blind-identifiers";
-import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks, honorificNames } from "@shared/blind-guard";
+import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks, honorificNames, mapStrings } from "@shared/blind-guard";
 import type { CimSection } from "@shared/schema";
 import { dealBlindRegion, isMediaLayout, mediaTextSkeleton, type MediaLayoutKey } from "@shared/cim-media";
 import { neutralOrgChartIds } from "@shared/cim-layouts";
@@ -44,6 +44,8 @@ type RedactionDeal = {
   businessName: string;
   industry?: string | null;
   extractedInfo?: Record<string, any> | null;
+  /** The staff list — every name on it is identifying too. */
+  employeeChart?: unknown;
 };
 
 /** One model reply: the text and why it stopped (anything but end_turn = incomplete). */
@@ -108,7 +110,7 @@ export async function generateBlindOverrides(
     codename?: string | null;
   } = {},
 ): Promise<{ codename: string; overrides: RedactionResult[]; failures: { cimSectionId: string; error: string }[] }> {
-  const codename = options.codename || (await import("./codenames")).pickCodename(new Set());
+  const codename = options.codename || (await import("./codenames")).pickCodename(new Set(), deal);
 
   const overrides: RedactionResult[] = [];
   const failures: { cimSectionId: string; error: string }[] = [];
@@ -218,10 +220,13 @@ export async function redactOneSection(
   const termNote = new Map<string, string>();
   for (const t of terms) {
     if (t.titled) termNote.set(t.text, " (this surname after any title, or as a family name — the ordinary word is fine)");
-    else if (t.regionWord) termNote.set(t.text, " (as this person's surname — the province, state or country of that name is fine)");
+    else if (t.regionWord) termNote.set(t.text, " (as this person's name — the province, state or country of that name is fine)");
+    else if (t.codename) termNote.set(t.text, ` (anywhere except inside the codename "${codename}")`);
+    else if (t.kind === "registry") termNote.set(t.text, " (this number in any format — keep the credential, drop the number)");
     else if (t.common) termNote.set(t.text, " (as a name — the ordinary lowercase word is fine)");
   }
-  const watchList = Array.from(new Set([...knownIdentifiers, ...terms.map((t) => t.text)]));
+  // The built-in "any labelled identifier" check is a rule (7 below), not a word to list.
+  const watchList = Array.from(new Set([...knownIdentifiers, ...terms.filter((t) => !t.anyRegistryId).map((t) => t.text)]));
 
   // Deterministic net on the model's output: known names → codename
   // (longest first; an empty pattern would match everywhere — guard it).
@@ -244,12 +249,13 @@ export async function redactOneSection(
    A LOCAL service area — the towns around the business's own city — would point to that city: describe it generally ("the surrounding communities", "a regional service area within ${region || "the region"}") and never name a metro area such as "Greater Toronto Area".
 3. Replace every person's name (owner, employees, associates, advisors) with a role-based identifier (e.g. "the Owner", "Operations Manager" — not "John Smith" or "Dr. Smith")
 4. Replace customer names with "Customer A", "Customer B", etc.
-5. Replace vendor/supplier names with "Supplier A", "Supplier B", etc.
+5. Replace vendor/supplier names with "Supplier A", "Supplier B", etc. (Well-known national brands the business sells, installs or uses — vehicle makes, equipment manufacturers, software — identify nothing and may stay.)
 6. Replace specific addresses and phone numbers with "[Address Withheld]" and "[Contact Info Withheld]". These two are the ONLY bracketed stand-ins allowed — never write template placeholders such as "[Province]", "[State]", "[City]" or "[Name]"; write real words instead.
-7. KEEP all financial figures, percentages, years, metrics, and industry terminology intact
-8. KEEP the same JSON structure for layoutData — only change string values that contain identifying info${bodyIsContent ? `\n   (layoutData.body is "${SAME_AS_CONTENT}" — return it exactly like that; that text is the "Content text" below)` : ""}
-9. Be thorough — buyers should not be able to identify the business from the blind version
-10. Redact the section title too, keeping it a natural heading (return it unchanged if it holds nothing identifying)
+7. Remove every registration, licence, permit, certificate or account NUMBER — USDOT, MC, NSC, CVOR, business/tax/GST numbers, incorporation numbers, licence and permit numbers, policy numbers. One public lookup of any of them names the company. Keep the credential itself without its number (e.g. "holds a USDOT number for cross-border lanes", "National Safety Code certificate with a Satisfactory rating").
+8. KEEP all financial figures, percentages, years, metrics, and industry terminology intact
+9. KEEP the same JSON structure for layoutData — only change string values that contain identifying info${bodyIsContent ? `\n   (layoutData.body is "${SAME_AS_CONTENT}" — return it exactly like that; that text is the "Content text" below)` : ""}
+10. Be thorough — buyers should not be able to identify the business from the blind version
+11. Redact the section title too, keeping it a natural heading (return it unchanged if it holds nothing identifying)
 
 ## Known identifiers — none of these may appear in your output:
 ${watchList.map((id) => `- "${id}"${termNote.get(id) ?? ""}`).join("\n") || "- (none on file)"}
@@ -305,7 +311,7 @@ Respond with ONLY a JSON object (no markdown, no explanation):
       continue;
     }
     const contentOverride = scrub(typeof parsed.contentOverride === "string" ? parsed.contentOverride : "");
-    let redactedData: Record<string, any> = hasLayoutData ? JSON.parse(scrub(JSON.stringify(parsed.layoutData))) : {};
+    let redactedData: Record<string, any> = hasLayoutData ? mapStrings(parsed.layoutData as Record<string, any>, scrub) : {};
     if (bodyIsContent) redactedData = { ...redactedData, body: contentOverride };
     if (orgChart) redactedData = neutralOrgChartIds(redactedData);
     if (section.layoutType === "cover_page") {

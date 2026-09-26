@@ -18,6 +18,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
+import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
 
 interface HBarDataPoint {
   name: string;
@@ -71,9 +72,12 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
 
   const primaryColor = theme.chart[0];
 
+  // Values written as text ("$13,560,000") are read as numbers — parseFloat
+  // gave NaN for them and drew every bar at zero.
+  const scale = unitScale(data.unit);
   const normalized = chartData.map((d) => ({
     ...d,
-    value: typeof d.value === "string" ? parseFloat(d.value) || 0 : d.value,
+    value: parseChartNumber(d.value, scale) ?? 0,
   }));
 
   // Percent labels are shares of the TOTAL (a 50/30/20 revenue split reads
