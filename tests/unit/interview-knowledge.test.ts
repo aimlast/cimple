@@ -13,7 +13,7 @@
 // Run: DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused npx tsx tests/unit/interview-knowledge.test.ts
 import assert from "node:assert/strict";
 import { assembleKnowledgeBase, renderKnowledgeBaseForPrompt } from "../../server/interview/knowledge-base";
-import { findReasks, applyReaskGuard, keyTokens } from "../../server/interview/reask-guard";
+import { findReasks, applyReaskGuard, keyTokens, sureFindings } from "../../server/interview/reask-guard";
 import { detectAlternateConflicts, valuesMateriallyDiffer, buildFlaggedRisks, searchSourcesFor, buildPriorExchanges, splitList, crossSourceFigureConflicts } from "../../server/interview/source-context";
 import { validateReviewConflicts } from "../../server/interview/source-review";
 import { completionBlockers } from "../../server/interview/completion-gaps";
@@ -57,8 +57,8 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
     const priorQA = [{ question: "How is the business split between EV and ICE programs?", answer: "About 70% EV platforms and 30% ICE now", where: "in session 1" }];
     const findings = findReasks("What's your EV vs ICE split?", { sellerMessage: "We run two shifts.", info, documents: [], priorQA });
     assert.ok(findings.some((f) => f.kind === "fact" && /evVsIceSplit/.test(f.detail)), "the on-file fact is named");
-    // A delta question is not a re-ask.
-    assert.equal(findReasks("Has the EV vs ICE split shifted this year?", { sellerMessage: "ok", info, documents: [], priorQA }).filter((f) => f.kind === "fact").length, 0);
+    // A delta question is never a sure re-ask (its candidates go to the answer check, round V r2).
+    assert.equal(sureFindings(findReasks("Has the EV vs ICE split shifted this year?", { sellerMessage: "ok", info, documents: [], priorQA })).filter((f) => f.kind === "fact").length, 0);
 
     const calls: any[] = [];
     const fake: any = { messages: { create: async (p: any) => { calls.push(p); return toolResponse(reply("Which resin grades are hardest to source right now?")); } } };
@@ -367,7 +367,15 @@ const reply = (message: string, extra: Record<string, unknown> = {}) => ({
       existing: [{ id: "a", type: "follow_up", title: "Confirm lease expiry", relatedField: "leaseExpiry", description: "", status: "pending", createdBy: "ai_interview" }, ...existing.map((e) => ({ ...e, createdBy: "ai_interview" }))],
       resolvedTopics: ["Larkspur MSA change-of-control clause"],
     });
-    assert.deepEqual(closing.close.sort(), ["a", "t1"]);
+    // (A document request stays open when a topic resolves — the document
+    // hasn't arrived; only the agent naming that very request closes it.)
+    assert.deepEqual(closing.close.sort(), ["a"]);
+    const named = planTaskWrites({
+      newTasks: [], documents: [], sellerMessage: "x", answeredKeys: new Set(),
+      existing: existing.map((e) => ({ ...e, createdBy: "ai_interview" })),
+      resolvedTopics: ["Get Larkspur MSA change-of-control clause language"],
+    });
+    assert.deepEqual(named.close, ["t1"]);
     // Duplicates earlier turns created are removed (the oldest stays); a
     // request closes when its document arrives, not when the field has a value.
     const dupes: any[] = [0, 1, 2].map((i) => ({ id: `d${i}`, type: "document_request", title: "Get complete tooling list from Rob Kline", description: "", relatedField: "toolingOwnership", status: "pending", createdBy: "ai_interview", createdAt: new Date(2026, 8, 1 + i) }));

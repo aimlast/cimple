@@ -4,7 +4,7 @@ import { CIM_SECTIONS } from "@shared/schema";
 import type { SectionImportanceLevel, SectionImportanceMap } from "@shared/schema";
 import { getSectionImportance, renderSectionImportanceForPrompt } from "./section-importance";
 import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
-import { coverageAdjustmentsForDeal } from "./interview-plan";
+import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
 import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
@@ -26,6 +26,8 @@ import {
 import { reviewConflictsForDeal } from "./source-review";
 import { scrubBrokerWorkItems, isBrokerWorkText, BROKER_WORK_KEY_RE, sameResolvedValue, screenBrokerWork } from "./source-privacy";
 import { claimConflicts } from "./claim-conflicts";
+import { onFileItems, type EvidenceTarget, type OnFileItem } from "./on-file-evidence";
+import { openSellerOnlyTopics } from "./completion-gaps";
 
 // =====================
 // Types
@@ -130,6 +132,20 @@ export interface KnowledgeBase {
   wrapUpBlockers?: string[];
   // Document requests the server dropped because the document is on file.
   droppedDocRequests?: string[];
+  // Open items (checklist fields, flagged risks, source conflicts,
+  // seller-only topics) the file already answers — fully or partly — with
+  // the source (see on-file-evidence.ts). Answered risks and conflicts are
+  // taken off the agenda lists above; answered fields show as on file.
+  onFile?: OnFileItem[];
+  // Every item the interview would otherwise treat as open (before the
+  // evidence above is applied) — what the evidence build checks.
+  evidenceTargets?: EvidenceTarget[];
+  // Seller-only topics the seller already gave their account of on file.
+  onFileTopics?: string[];
+  // Coverage from recorded facts only — what the CIM writer and the quality
+  // score see. Screens show this one (so every screen agrees); the agent is
+  // steered by sectionCoverage, which also counts what the sources answer.
+  recordedCoverage?: SectionCoverage[];
 }
 
 /** A settled discrepancy as the interview sees it (resolvedPrivately: the final value is withheld — it came from the broker's own material). */
@@ -184,6 +200,10 @@ export interface SectionCoverage {
     confidence: "confirmed" | "inferred" | "approximate" | "unknown";
     /** On file only from a lead (CRM note, website, social) the broker hasn't accepted. */
     unverified?: boolean;
+    /** The value is what a source (or an earlier session) states — not yet a recorded fact: the source's label. */
+    onFile?: string;
+    /** Part of the answer is on file (value stays null): what it says, where, and what is still missing. */
+    partlyOnFile?: { answer: string; source: string; missing: string };
   }>;
   /** Checklist/generic items the section asks for. */
   totalItems?: number;
@@ -203,6 +223,8 @@ export interface SectionCoverage {
 export interface CoverageFieldAdjustments {
   add?: Record<string, { key: string; label: string; critical?: boolean; alias?: string | null }[]>;
   remove?: ReadonlySet<string>;
+  /** Fields a source or an earlier session already answers (see on-file-evidence.ts), by field key. */
+  onFile?: Record<string, { answer: string; source: string; partial?: boolean; missing?: string }>;
 }
 
 export interface IndustryContext {
@@ -564,6 +586,42 @@ export function assembleKnowledgeBase(
   const sectionImportance = getSectionImportance(deal);
   const outline = getInterviewOutline(deal);
 
+  // What the file already answers among the items the interview would
+  // otherwise treat as open (on-file-evidence.ts): answered checklist fields
+  // show as on file, answered risks and conflicts leave the agenda, and the
+  // seller-only topics the seller already spoke to stop blocking a wrap-up.
+  // (Without this the prompt said "robotAutomationLevel: NOT YET CAPTURED"
+  // next to robotCount "21 robots", and STILL NEEDED ordered it asked.)
+  // (No risk framed as the broker's normalisation work — see sourceDigests below.)
+  const flaggedRisksAll = buildFlaggedRisks(documents).filter((r) => !isBrokerWorkText(r.text));
+  const priorExchanges = extras.sessions ? buildPriorExchanges(extras.sessions, currentSessionId) : [];
+  const baseAdjustments = coverageAdjustmentsForDeal(deal);
+  // (A fact the broker settled but the interview can't see is on file, not
+  // a gap to ask about — and not an item for the evidence build either.)
+  const coverageView = withHeldFacts(extractedInfo as Record<string, unknown>) as Partial<ExtractedInfo>;
+  const rawCoverage = buildSectionCoverage(coverageView, confidenceLevels, sectionImportance, outline.excludedSections, baseAdjustments);
+  const evidenceTargets = buildEvidenceTargets(
+    rawCoverage,
+    flaggedRisksAll,
+    sourceConflicts,
+    openSellerOnlyTopics(extractedInfo as Record<string, unknown>, priorExchanges),
+    // A risk a DOCUMENT flags isn't explained by that document's own flag.
+    new Set(documents.filter((d) => String(d.sourceKind || "document") === "document").map((d) => d.name)),
+  );
+  const onFile = onFileItems(deal as Deal & { interviewEvidence?: unknown }, evidenceTargets, {
+    documents,
+    view: extractedInfo as Record<string, unknown>,
+    ...(extras.sessions ? { sessionIds: extras.sessions.map((x) => x.id) } : {}),
+  });
+  const fieldsOnFile: NonNullable<CoverageFieldAdjustments["onFile"]> = {};
+  for (const it of onFile) {
+    if (it.kind === "field") fieldsOnFile[it.key] = { answer: it.answer, source: it.source, ...(it.partial ? { partial: true, missing: it.missing } : {}) };
+  }
+  const sectionCoverage = Object.keys(fieldsOnFile).length > 0
+    ? buildSectionCoverage(coverageView, confidenceLevels, sectionImportance, outline.excludedSections, { ...baseAdjustments, onFile: fieldsOnFile })
+    : rawCoverage;
+  const answeredIds = new Set(onFile.filter((i) => !i.partial).map((i) => i.id));
+
   return {
     business: {
       name: deal.businessName,
@@ -573,8 +631,8 @@ export function assembleKnowledgeBase(
       location: parseLocation(deal, questionnaireData, baseExtractedInfo),
     },
     // (A fact the broker settled but the interview can't see is on file,
-    // not a gap to ask about.)
-    sectionCoverage: buildSectionCoverage(withHeldFacts(extractedInfo as Record<string, unknown>) as Partial<ExtractedInfo>, confidenceLevels, sectionImportance, outline.excludedSections, coverageAdjustmentsForDeal(deal)),
+    // not a gap to ask about — see rawCoverage above.)
+    sectionCoverage,
     sectionImportance,
     outline,
     conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
@@ -608,15 +666,62 @@ export function assembleKnowledgeBase(
       summary: scrubBrokerWorkItems(d.summary),
       keyFacts: scrubBrokerWorkItems(d.keyFacts),
     })),
-    flaggedRisks: buildFlaggedRisks(documents).filter((r) => !isBrokerWorkText(r.text)),
-    sourceConflicts,
-    priorExchanges: extras.sessions ? buildPriorExchanges(extras.sessions, currentSessionId) : [],
+    flaggedRisks: flaggedRisksAll.filter((r) => !answeredIds.has(`risk:${r.label}`)),
+    sourceConflicts: sourceConflicts.filter((c) => !answeredIds.has(`conflict:${c.key}`)),
+    priorExchanges,
     resolvedValues,
     heldByBroker: heldByBroker(baseExtractedInfo as Record<string, unknown>).filter(
       // (A settled discrepancy already says the same for its key.)
       (h) => !resolvedValues.some((n) => n.resolvedPrivately && n.factKey && (h === n.factKey || h.startsWith(`${n.factKey} (`))),
     ),
+    onFile,
+    evidenceTargets,
+    onFileTopics: onFile.filter((i) => i.kind === "topic" && !i.partial).map((i) => i.key),
+    recordedCoverage: rawCoverage,
   };
+}
+
+/**
+ * Every item the interview would treat as open before the evidence is
+ * applied — checklist and generic fields with no verified value (critical
+ * and industry items first), flagged risks, source conflicts and the
+ * seller-only topics nobody has spoken to. Pure.
+ */
+export function buildEvidenceTargets(
+  coverage: SectionCoverage[],
+  risks: FlaggedRisk[],
+  conflicts: SourceConflict[],
+  sellerTopics: string[],
+  /** Names of the deal's documents (not calls or emails). */
+  documentNames: ReadonlySet<string> = new Set(),
+): EvidenceTarget[] {
+  const fields: { t: EvidenceTarget; rank: number }[] = [];
+  const seen = new Set<string>();
+  for (const s of coverage) {
+    for (const f of s.fields) {
+      if (f.value !== null && !f.unverified) continue;
+      if (seen.has(f.fieldName)) continue;
+      seen.add(f.fieldName);
+      const rank = (f.critical ? 0 : f.industrySpecific ? 1 : s.importance === "critical" ? 2 : 3);
+      fields.push({
+        rank,
+        t: { id: `field:${f.fieldName}`, kind: "field", key: f.fieldName, label: `${f.label ?? fieldLabel(f.fieldName)} (${s.title})`, sellerAccount: false },
+      });
+    }
+  }
+  fields.sort((a, b) => a.rank - b.rank);
+  return [
+    ...conflicts.slice(0, 8).map((c): EvidenceTarget => ({
+      id: `conflict:${c.key}`, kind: "conflict", key: c.key,
+      label: `${c.topic}: ${c.values.map((v) => `"${v.value}" (${v.source})`).join(" vs ")}`, sellerAccount: true,
+    })),
+    ...risks.slice(0, 12).map((r): EvidenceTarget => ({
+      id: `risk:${r.label}`, kind: "risk", key: r.label, label: r.text, sellerAccount: false,
+      excludeSources: r.sources.filter((n) => documentNames.has(n)),
+    })),
+    ...sellerTopics.map((t): EvidenceTarget => ({ id: `topic:${t}`, kind: "topic", key: t, label: t, sellerAccount: true })),
+    ...fields.map((f) => f.t),
+  ];
 }
 
 /** Recorded side of a discrepancy (discrepancies.side_sources). */
@@ -954,6 +1059,35 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
     }
   }
 
+  // What the sources and earlier sessions already answer beyond the facts
+  // list: document tables never extracted into facts, checklist items stored
+  // under another key, risks the seller already explained on a call.
+  const onFile = kb.onFile ?? [];
+  if (onFile.length > 0) {
+    const full = onFile.filter((i) => !i.partial);
+    const part = onFile.filter((i) => i.partial);
+    const what = (i: OnFileItem) =>
+      i.kind === "field" ? `${i.key} (${i.label})`
+      : i.kind === "risk" ? `risk: ${i.key}`
+      : i.kind === "conflict" ? `reconcile ${i.key}`
+      : `the seller's own account of ${i.key}`;
+    parts.push(`## ⛔ ALSO ALREADY ON FILE — in the sources and earlier conversations (DO NOT RE-ASK)`);
+    parts.push(`These are answered in a document, a call or email transcript, or an earlier session — not yet recorded under their own key. Treat them exactly like the list above: don't ask for them, don't ask the seller to confirm them; cite one only to ask something genuinely new about it. Risks listed here were already explained by the seller — don't raise them again unless the seller does. When the seller restates or updates one, record it under the key shown.`);
+    // (An SDE / add-back item a seller-side source answers is on file like
+    // such a fact above: it stops a re-ask — never something to tell the
+    // seller about.)
+    const workNote = (i: OnFileItem) =>
+      i.kind === "field" && (BROKER_WORK_KEY_RE.test(i.key.split(".")[0]) || isBrokerWorkText(i.answer))
+        ? " — on file so you don't re-ask; never tell the seller what is added back or what earnings come to after adjustments"
+        : "";
+    for (const i of full) parts.push(`- ${what(i)}: ${i.answer}  [${i.source}]${workNote(i)}`);
+    if (part.length > 0) {
+      parts.push(`Partly on file — ask ONLY for the missing part, citing what's on file:`);
+      for (const i of part) parts.push(`- ${what(i)}: ${i.answer}  [${i.source}] — still missing: ${i.missing}${workNote(i)}`);
+    }
+    parts.push(``);
+  }
+
   // Values the broker settled — final. Anything else on file that repeats
   // a replaced value is outdated.
   if ((kb.resolvedValues ?? []).length > 0 || (kb.heldByBroker ?? []).length > 0) {
@@ -996,6 +1130,9 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
   const shownAbove = [
     ...(kb.sourceConflicts ?? []).map((c) => `reconcile ${c.key}`.toLowerCase()),
     ...(kb.flaggedRisks ?? []).map((r) => `risk: ${r.label}`.toLowerCase()),
+    // Agenda items the seller already explained (listed as on file above).
+    ...(kb.onFile ?? []).filter((i) => !i.partial && (i.kind === "risk" || i.kind === "conflict"))
+      .map((i) => (i.kind === "risk" ? `risk: ${i.key}` : `reconcile ${i.key}`).toLowerCase()),
   ];
   const ledgerItems = (kb.openDeferrals ?? []).filter((d) => !shownAbove.includes(d.topic.toLowerCase()));
   if (ledgerItems.length > 0) {
@@ -1155,8 +1292,15 @@ export function renderKnowledgeBaseForPrompt(kb: KnowledgeBase): string {
 
     for (const field of section.fields) {
       const name = field.label ? `${field.fieldName} (${field.label}${field.critical ? " — CRITICAL for this industry" : ""})` : field.fieldName;
-      if (field.value) {
-        parts.push(`  - ${name}: ${field.value} (${field.unverified ? "unverified lead — confirm with the seller" : field.confidence})`);
+      // (Values are shortened here — each is in full in the lists above; this
+      // block is about what's covered, and repeating every value doubled the prompt.)
+      const short = (v: string) => (v.length > 60 ? `${v.slice(0, 60).trimEnd()}…` : v);
+      if (field.value && field.onFile) {
+        parts.push(`  - ${name}: ${short(field.value)} (ON FILE — ${field.onFile}; don't ask it)`);
+      } else if (field.value) {
+        parts.push(`  - ${name}: ${short(field.value)} (${field.unverified ? "unverified lead — confirm with the seller" : field.confidence})`);
+      } else if (field.partlyOnFile) {
+        parts.push(`  - ${name}: PARTLY ON FILE (${field.partlyOnFile.source}) — ask ONLY for: ${field.partlyOnFile.missing}`);
       } else {
         parts.push(`  - ${name}: NOT YET CAPTURED`);
       }
@@ -1302,9 +1446,13 @@ export function buildSectionCoverage(
       const usesAlias = !isSubstantiveValue(own) && !!alias;
       const raw = usesAlias ? (extractedInfo[alias as keyof ExtractedInfo] ?? null) : own;
       // Quality gate: junk placeholders don't count as answers
-      const value = isSubstantiveValue(raw) ? stringifyCoverageValue(raw) : null;
+      const recorded = isSubstantiveValue(raw) ? stringifyCoverageValue(raw) : null;
+      // Nothing recorded, but a source or an earlier session answers it:
+      // on file (the interview must not ask it as if it were missing).
+      const evidence = recorded === null ? adjustments?.onFile?.[fieldName] : undefined;
+      const value = recorded ?? (evidence && !evidence.partial ? evidence.answer : null);
       const valueKey = usesAlias ? alias! : fieldName;
-      const unverified = value !== null && isLead(valueKey);
+      const unverified = recorded !== null && isLead(valueKey);
       const sessionConf = confidenceLevels?.[fieldName];
       const confidence: "confirmed" | "inferred" | "approximate" | "unknown" =
         !value ? "unknown"
@@ -1318,6 +1466,8 @@ export function buildSectionCoverage(
         ...(label ? { label } : {}),
         ...(extra ? { industrySpecific: true, critical } : {}),
         ...(unverified ? { unverified: true } : {}),
+        ...(evidence && !evidence.partial ? { onFile: evidence.source } : {}),
+        ...(evidence?.partial ? { partlyOnFile: { answer: evidence.answer, source: evidence.source, missing: evidence.missing ?? "" } } : {}),
         _seller: sellerSourced,
         _documented: value !== null && !unverified && ["document", "broker"].includes(String(sources[valueKey]?.source ?? "")),
       };

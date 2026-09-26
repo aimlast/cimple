@@ -114,6 +114,17 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
     if (!next) throw new Error("harness: no scripted reply left");
     return { content: [{ type: "tool_use", id: "t", name: "interview_response", input: toolInput(next) }], stop_reason: "tool_use" };
   };
+  // Streamed supporting calls (the on-file evidence build, started in the
+  // background when a session ends) fail the way an unavailable API does:
+  // their finalMessage rejects and the caller's own error handling runs.
+  const realStream = proto.stream;
+  proto.stream = function (params: any, options?: any) {
+    if (params?.tools?.[0]?.name === "interview_response") return realStream.call(this, params, options);
+    const result: Promise<any> = Promise.resolve().then(() => proto.create.call(this, params));
+    result.catch(() => {});
+    const fake: any = { on: () => fake, finalMessage: () => result, abort: () => {} };
+    return fake;
+  };
 
   // ── storage ──
   const s = storage as any;

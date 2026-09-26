@@ -15,6 +15,8 @@ import { getSectionImportance, computeSectionImportance } from "./interview/sect
 import { getInterviewOutline, proposeOutlineChanges, applyOutlineProposal, patchOutline } from "./interview/outline.js";
 import { coverageAdjustmentsForDeal, ensureInterviewPlan, getInterviewPlan, isPlanBuilding, fieldLabel, planSubIndustry } from "./interview/interview-plan.js";
 import { ensureSourceReview } from "./interview/source-review.js";
+import { storedEvidence, isEvidenceBuilding } from "./interview/on-file-evidence.js";
+import { startOnFileEvidenceBuild } from "./interview/on-file-refresh.js";
 import { buildSectionCoverage as buildCoverageForOutline, SECTION_FIELD_MAP } from "./interview/knowledge-base.js";
 import { isDeepgramConfigured, createTemporaryKey } from "./calls/deepgram.js";
 import { isDailyConfigured, createRoom, createMeetingToken, deleteRoom } from "./calls/daily.js";
@@ -4270,16 +4272,21 @@ Return JSON only.`,
       // (the seller-safe knowledge base: nothing a broker-only source
       // asserted, not the broker's listed price, the session's confidence
       // labels, resolved discrepancies), so the seller never sees two
-      // different quality labels.
+      // different quality labels. The RECORDED coverage, as the interview
+      // header shows it: what the file merely states somewhere (on-file
+      // evidence) steers the interview's questions but is not a recorded
+      // fact — counting it here showed "Buyer-ready 94" beside the
+      // header's "Solid 60".
       const { assembleKnowledgeBase } = await import("./interview/knowledge-base");
       const kbDocuments = await storage.getDocumentsByDeal(deal.id);
-      const sectionCoverage = assembleKnowledgeBase(
+      const progressKb = assembleKnowledgeBase(
         deal,
         kbDocuments,
         await storage.getTasksByDeal(deal.id),
         sessions[0] ?? null,
         await storage.getResolvedDiscrepancies(deal.id),
-      ).sectionCoverage;
+      );
+      const sectionCoverage = progressKb.recordedCoverage ?? progressKb.sectionCoverage;
       const readiness = computeCimReadiness(sectionCoverage);
       const wellCovered = sectionCoverage.filter((s) => s.status === "well_covered").length;
       const partial = sectionCoverage.filter((s) => s.status === "partial").length;
@@ -6427,7 +6434,7 @@ Return JSON only.`,
   });
 
   // ── Interview outline — what the interview will cover, editable in plain language ──
-  const outlineView = (deal: any) => {
+  const outlineView = (deal: any, extra: { evidenceBuilding?: boolean } = {}) => {
     const outline = getInterviewOutline(deal);
     const importance = getSectionImportance(deal);
     // Kick off the industry checklist if it's missing (background, ~20–40s).
@@ -6441,7 +6448,13 @@ Return JSON only.`,
     // Data points per section with on-file status — the same coverage the
     // interview and the quality score use (excluded sections kept here so a
     // removed section still shows what it would have covered).
-    const adjustments = coverageAdjustmentsForDeal(deal);
+    // (Items a source or an earlier session already answers show as on file,
+    // with where — the interview won't ask them.)
+    const onFile: Record<string, { answer: string; source: string; partial?: boolean; missing?: string }> = {};
+    for (const [id, e] of Object.entries(storedEvidence(deal)?.entries ?? {})) {
+      if (id.startsWith("field:")) onFile[id.slice(6)] = { answer: e.answer, source: e.source, ...(e.partial ? { partial: true, missing: e.missing } : {}) };
+    }
+    const adjustments = { ...coverageAdjustmentsForDeal(deal), onFile };
     const coverage = buildCoverageForOutline((deal.extractedInfo || {}) as any, undefined, importance, [], adjustments);
     const byKey = new Map(coverage.map((c) => [c.key, c]));
     // Every key that belongs to a section (generic + industry + broker-added),
@@ -6457,6 +6470,14 @@ Return JSON only.`,
         // The playbook it came from ("Landscaping and snow…" rather than "Home Services").
         industry: plan ? (plan.subIndustry || plan.industry) : deal.industry ?? null,
         itemCount: plan?.items.length ?? 0,
+        // A change to the checklist no broker made (new checklist rules).
+        revision: plan?.revision ?? null,
+      },
+      // The file being read for answers already on file: the "on file"
+      // count changes when it lands — said on the card, not a silent shift.
+      evidence: {
+        status: extra.evidenceBuilding || isEvidenceBuilding(deal.id) ? "building" : storedEvidence(deal) ? "ready" : "none",
+        checkedAt: storedEvidence(deal)?.computedAt ?? null,
       },
       sections: CIM_SECTIONS.map((s) => ({
         key: s.key,
@@ -6471,6 +6492,7 @@ Return JSON only.`,
           label: f.label ?? fieldLabel(f.fieldName),
           onFile: f.value !== null,
           value: f.value ? String(f.value).slice(0, 140) : null,
+          onFileIn: f.onFile ?? null,
           industrySpecific: !!f.industrySpecific,
           critical: !!f.critical,
           addedByBroker: (outline.addedItems ?? []).some((a) => a.key === f.fieldName),
@@ -6491,7 +6513,12 @@ Return JSON only.`,
       // the current sources; a source added since gets reviewed now, before
       // the seller's next session.
       storage.getDocumentsByDeal(deal.id).then((docs) => ensureSourceReview(deal, docs)).catch(() => {});
-      res.json(outlineView(deal));
+      // …and what the file already answers among the interview's open items,
+      // so the seller's next session never asks it (background; a no-op
+      // while current). Started before the reply, so the card can say it is
+      // reading the file (and poll) instead of its count shifting later.
+      const evidenceRun = await startOnFileEvidenceBuild(deal.id).catch(() => null);
+      res.json(outlineView(deal, { evidenceBuilding: !!evidenceRun }));
     } catch (error: any) {
       res.status(500).json({ error: "Failed to load interview outline" });
     }

@@ -236,12 +236,21 @@ const inflight = new Map<string, Promise<InterviewPlan | null>>();
 export async function computeInterviewPlan(
   deal: Pick<Deal, "id" | "industry" | "businessName" | "description" | "extractedInfo"> & { subIndustry?: string | null },
   context?: { subIndustry?: string | null },
+  /**
+   * A rebuild of a checklist already in use (new checklist rules — no broker
+   * action): the broker has seen its items, so they keep their keys, labels
+   * and the industry label; only items whose condition doesn't hold for this
+   * business drop out, and a missing critical probe may join. The change is
+   * recorded (plan.revision) and shown on the outline.
+   */
+  stableFrom?: InterviewPlan,
 ): Promise<InterviewPlan | null> {
   const industry = (deal.industry || "").trim();
   if (!industry) return null;
-  const target = planSubIndustry(deal, context?.subIndustry);
+  const target = planSubIndustry(deal, stableFrom?.subIndustry ?? context?.subIndustry);
   if (!target.matched) return null;
-  const subIndustry = target.subIndustry;
+  // (The label the broker already saw stays: the rebuilt checklist is the same playbook.)
+  const subIndustry = stableFrom && stableFrom.subIndustry !== undefined ? (stableFrom.subIndustry ?? null) : target.subIndustry;
   const dealSubIndustry = deal.subIndustry === undefined ? undefined : (deal.subIndustry ?? null);
   const existing = inflight.get(deal.id);
   if (existing) return existing;
@@ -281,6 +290,9 @@ export async function computeInterviewPlan(
             deal.description ? `Description: ${String(deal.description).slice(0, 400)}` : "",
             `\nCIM sections:\n${sections}`,
             `\nFACTS ALREADY ON FILE (key: value):\n${onFile || "(none yet)"}`,
+            stableFrom
+              ? `\nCURRENT CHECKLIST — the broker already works from it. Return every item that still applies with EXACTLY the same sectionKey, key and label. Leave an item out only when its condition clearly doesn't hold for this business (a conditional probe for another kind of business). Add an item only if it is a [CRITICAL] field or MANDATORY PROBE of the playbook that the list lacks (at most 3):\n${stableFrom.items.map((i) => `- ${i.sectionKey} | ${i.key} | ${i.label}${i.critical ? " | critical" : ""}`).join("\n")}`
+              : "",
             `\nIndustry playbook:\n${playbook}`,
           ].filter(Boolean).join("\n"),
         }],
@@ -306,10 +318,18 @@ export async function computeInterviewPlan(
         items.push({ key, label: r.label.trim().slice(0, 90), sectionKey: r.sectionKey!, critical: r.critical === true, answeredByKey: alias });
       }
       if (items.length === 0) throw new Error("checklist came back empty");
+      let revision: InterviewPlan["revision"] | undefined;
+      if (stableFrom) {
+        const stable = stabilisePlanItems(stableFrom.items, items);
+        items.splice(0, items.length, ...stable.items);
+        revision = stable.removed.length + stable.added.length > 0
+          ? { at: new Date().toISOString(), reason: "rules", previousItemCount: stableFrom.items.length, removed: stable.removed, added: stable.added }
+          : stableFrom.revision;
+      }
       const matched = items.filter((i) => i.answeredByKey);
       const verdicts = await verifyMatches(matched.map((i) => ({ label: i.label, value: String(info[i.answeredByKey!]) })));
       matched.forEach((item, idx) => { if (!verdicts[idx]) item.answeredByKey = null; });
-      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), rulesVersion: PLAN_RULES_VERSION, computedAt: new Date().toISOString(), status: "ready", items };
+      const plan: InterviewPlan = { industry, subIndustry, ...(dealSubIndustry !== undefined ? { dealSubIndustry } : {}), rulesVersion: PLAN_RULES_VERSION, computedAt: new Date().toISOString(), status: "ready", items, ...(revision ? { revision } : {}) };
       await storage.updateDeal(deal.id, { interviewPlan: plan } as any);
       console.log(`[interview-plan] ${items.length} industry data points for deal ${deal.id} (${industry})`);
       return plan;
@@ -328,6 +348,38 @@ export async function computeInterviewPlan(
   })();
   inflight.set(deal.id, task);
   return task;
+}
+
+/**
+ * A rebuilt checklist held to the one the broker already saw: every item
+ * that still applies keeps its key, label, section and critical flag; at
+ * most three new CRITICAL items join; an item drops out only when the new
+ * build leaves it out. A build that would drop more than a quarter of the
+ * list (at least 6) is not a rules refinement but a different checklist —
+ * the old items all stay. Pure.
+ */
+export function stabilisePlanItems(
+  previous: InterviewPlanItem[],
+  rebuilt: InterviewPlanItem[],
+): { items: InterviewPlanItem[]; removed: string[]; added: string[] } {
+  const byKey = new Map(rebuilt.map((i) => [i.key.toLowerCase(), i]));
+  const kept = previous.filter((p) => byKey.has(p.key.toLowerCase()));
+  const removed = previous.filter((p) => !byKey.has(p.key.toLowerCase())).map((p) => p.label);
+  const limit = Math.max(6, Math.ceil(previous.length * 0.25));
+  const prevKeys = new Set(previous.map((p) => p.key.toLowerCase()));
+  const added = rebuilt.filter((i) => !prevKeys.has(i.key.toLowerCase()) && i.critical).slice(0, 3);
+  if (removed.length > limit) {
+    // Too different to be the same checklist refined — keep what the broker saw.
+    return { items: previous.map((p) => ({ ...p, answeredByKey: byKey.get(p.key.toLowerCase())?.answeredByKey ?? p.answeredByKey ?? null })), removed: [], added: [] };
+  }
+  return {
+    items: [
+      ...kept.map((p) => ({ ...p, answeredByKey: byKey.get(p.key.toLowerCase())?.answeredByKey ?? null })),
+      ...added,
+    ],
+    removed,
+    added: added.map((a) => a.label),
+  };
 }
 
 /** True while a build for this deal is running. */
@@ -355,7 +407,9 @@ export function ensureInterviewPlan(
     if ((current.rulesVersion ?? 1) >= PLAN_RULES_VERSION) return;
     const lastTry = (current as InterviewPlan & { failedRebuildAt?: string }).failedRebuildAt;
     if (lastTry && Date.now() - new Date(lastTry).getTime() < 60 * 60 * 1000) return;
-    void computeInterviewPlan(deal, context);
+    // The broker may already have seen this checklist: rebuilt stable (same
+    // items and labels, only inapplicable ones out), with the change shown.
+    void computeInterviewPlan(deal, context, current);
     return;
   }
   // Don't hammer a failing build: retry at most once an hour.
