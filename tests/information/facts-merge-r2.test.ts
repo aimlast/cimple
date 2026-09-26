@@ -141,7 +141,11 @@ const doc = (documentId: string, extra: Record<string, unknown> = {}) => ({ docu
   let est: Info = mergeExtractedData({}, { revenue: "$3,318,600", revenueByYear: { "2024": "$3,318,600" }, periodEnd: "2024-12-31" } as any, doc("FS24", { title: "Compiled financial statements FY2024" }));
   est = mergeExtractedData(est, { revenueByYear: { "2025": "$3,450,000 to $3,460,000 (unaudited management estimate, pending compilation)" } } as any, { documentId: "ZOOM", source: "video_call" });
   assert.equal(est.annualRevenue, "$3,318,600");
-  assert.match(String((est.revenueByYear as any)["2025"]), /estimate/);
+  // An unreviewed management estimate is not the year's figure: never on the map, kept as that
+  // year's other value (never a note the CIM would read).
+  assert.equal((est.revenueByYear as any)["2025"], undefined);
+  assert.ok((getFieldAlternates(est)["revenueByYear.2025"] ?? []).some((a) => /estimate/.test(String(a.value)) && /Unreviewed/.test(String(a.note))));
+  assert.doesNotMatch(String(est.keyFinancialNotes ?? ""), /estimate/);
   // …but with nothing final, the seller's figure for the year is the headline (Maple: "about $520,000")
   const only = mergeExtractedData({}, { revenueByYear: { "2025": "about $520,000" } } as any, { documentId: "CALL", source: "call" });
   assert.equal(only.annualRevenue, "about $520,000");

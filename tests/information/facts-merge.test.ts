@@ -16,7 +16,7 @@ import { useAlternate } from "../../server/information/facts";
 import { dealHeadlineFigures } from "../../server/routes/deal-list";
 import { buildInformationView } from "../../server/information/view";
 import { sellerInterviewView } from "../../server/interview/seller-view";
-import { sourceCountText, sourceContributionText } from "../../shared/information";
+import { sourceCountText, sourceContributionText, sourceFoundNothing } from "../../shared/information";
 
 type Info = Record<string, unknown>;
 let n = 0;
@@ -291,9 +291,18 @@ const doc = (documentId: string, extra: Record<string, unknown> = {}) => ({ docu
   const kindSum = Object.values(view.counts).reduce((a, b) => a + (b ?? 0), 0);
   assert.equal(kindSum, view.totalFacts, "kind counts add up to the total");
   // Header and panel share one wording
-  const eight = Array.from({ length: 8 }, (_, i) => ({ factCount: i < 6 ? 3 : 0 }));
-  assert.equal(sourceCountText(eight), "8 sources · 6 contributed facts");
-  assert.equal(sourceCountText([{ factCount: 1 }]), "1 source");
+  // Six gave facts, one only other values (it contributed — not "nothing found"), one gave nothing.
+  const eight = Array.from({ length: 8 }, (_, i) => ({
+    kind: "document" as const, status: "extracted", factCount: i < 6 ? 3 : 0, alternateCount: i === 6 ? 7 : 0,
+  }));
+  assert.equal(sourceCountText(eight), "8 sources · 1 with nothing found");
+  assert.doesNotMatch(sourceCountText(eight), /contributed facts/, "never a source count next to the word 'facts'");
+  assert.ok(!sourceFoundNothing(eight[6]), "a source with other values found something");
+  assert.ok(sourceFoundNothing(eight[7]));
+  assert.ok(!sourceFoundNothing(eight[7], 3), "untraced earlier facts may be its own");
+  assert.ok(!sourceFoundNothing({ ...eight[7], status: "parsing" }), "still being read");
+  assert.equal(sourceCountText(eight, 3), "8 sources");
+  assert.equal(sourceCountText([{ kind: "document", factCount: 1 }]), "1 source");
   ok("Information counts: one wording; corroborating / alternate-only sources aren't '0 facts'");
 }
 

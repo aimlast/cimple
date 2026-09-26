@@ -139,9 +139,9 @@ export function InformationTab() {
   };
 
   const readiness = view.readiness;
-  // One wording with the Sources panel: "8 sources · 6 contributed facts".
-  const sourcesText = sourceCountText(view.sources);
   const untracked = view.counts.unknown ?? 0;
+  // One wording with the Sources panel: "24 sources · 1 with nothing found".
+  const sourcesText = sourceCountText(view.sources, untracked);
   const inferredFacts = view.inferredFacts ?? 0;
   const activeSource = sourceFilter ? view.sources.find((s) => s.id === sourceFilter) : null;
 
@@ -178,7 +178,7 @@ export function InformationTab() {
             <h2 className="text-lg font-semibold tracking-tight">Collected information</h2>
             <p className="text-sm text-muted-foreground mt-1">{readiness.summary}</p>
             <p className="text-xs text-muted-foreground/80 mt-2 tabular-nums">
-              {/* "64 facts · 8 sources · 6 contributed facts · 35 earlier records" */}
+              {/* "64 facts · 8 sources · 1 with nothing found · 35 earlier records" */}
               {view.totalFacts} fact{view.totalFacts === 1 ? "" : "s"}
               {view.sources.length > 0 && <>{" · "}{sourcesText}</>}
               {untracked > 0 && <>{" · "}{untracked} earlier record{untracked === 1 ? "" : "s"}</>}

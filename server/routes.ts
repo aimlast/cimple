@@ -2418,30 +2418,37 @@ Return JSON only.`,
   });
 
   // ── Re-run document extraction with the current pipeline ──
-  // Replays stored extractions through the canonicalising merge and, where
-  // the files are on disk, re-extracts with the expanded CIM vocabulary.
-  // Fixes deals whose documents were ingested before the coverage fix.
+  // Re-reads every source with the current prompt and rebuilds the facts
+  // (see reprocess.ts). A deal with many sources takes 10–15 minutes, so it
+  // runs as a background job: POST starts it (202, or 409 with the running
+  // job), GET reports its progress and, when done, what changed.
   app.post("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
     try {
       const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      // Re-extraction calls Claude per document — allow up to 10 minutes.
-      req.setTimeout(10 * 60 * 1000);
-      res.setTimeout(10 * 60 * 1000);
-      const { reprocessDealDocuments } = await import("./documents/reprocess");
-      const result = await reprocessDealDocuments(deal.id);
-      // Intake answers are re-seeded too — split for privacy, so an answer
-      // seeded before the split existed loses its personal detail.
-      try {
+      const { startReprocessJob } = await import("./documents/reprocess-jobs");
+      const { job, started } = startReprocessJob(deal.id, async (dealId) => {
+        // Intake answers are re-seeded too — split for privacy, so an answer
+        // seeded before the split existed loses its personal detail.
         const { seedQuestionnaireFacts } = await import("./interview/session-manager");
-        await seedQuestionnaireFacts(deal.id);
-      } catch (e) {
-        console.warn("[reprocess] questionnaire re-seeding failed:", e);
-      }
-      res.json(result);
+        await seedQuestionnaireFacts(dealId);
+      });
+      res.status(started ? 202 : 409).json(job);
     } catch (error: any) {
       console.error("Reprocess error:", error);
       res.status(500).json({ error: error.message || "Failed to reprocess documents" });
+    }
+  });
+
+  app.get("/api/deals/:dealId/documents/reprocess", requireBroker, async (req, res) => {
+    try {
+      const deal = await getOwnedDeal(req.params.dealId, req.session.brokerId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { reprocessJobFor } = await import("./documents/reprocess-jobs");
+      res.json(reprocessJobFor(deal.id) ?? { dealId: deal.id, status: "idle" });
+    } catch (error: any) {
+      console.error("Reprocess status error:", error);
+      res.status(500).json({ error: "Failed to read reprocess status" });
     }
   });
 

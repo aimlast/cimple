@@ -92,6 +92,12 @@ const FIELD_ALIASES: Record<string, string> = {
   insurancePolicies: "insuranceCoverage",
   clients: "customerBase",
   customers: "customerBase",
+  // One contract backlog, whoever names it (the WIP report, the seller on a call).
+  backlogValue: "backlog",
+  contractBacklog: "backlog",
+  currentBacklog: "backlog",
+  orderBacklog: "backlog",
+  signedBacklog: "backlog",
 };
 
 // Case-insensitive alias lookup — "ATMrevenue" and "atmRevenue" must resolve

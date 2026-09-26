@@ -169,16 +169,40 @@ export interface InformationView {
   } | null;
 }
 
+/** Source kinds whose reading should yield facts (a scan or a photo may yield none). */
+const READABLE_KINDS: ReadonlySet<string> = new Set(["document", "call", "video_call", "email"]);
+
+/**
+ * True when a source was read and gave nothing at all — no fact on file, no
+ * confirmation of one, no other value (a scanned org chart, a photo of a
+ * list): the broker should open it. Never while it is still being read or
+ * failed, and never while earlier facts can't be traced to any source
+ * (`untrackedFacts` — one of those may be this source's).
+ */
+export function sourceFoundNothing(
+  s: Pick<InformationSource, "kind" | "status" | "factCount" | "corroboratedCount" | "alternateCount">,
+  untrackedFacts = 0,
+): boolean {
+  if (untrackedFacts > 0 || !READABLE_KINDS.has(s.kind)) return false;
+  if (s.status === "pending" || s.status === "parsing" || s.status === "failed") return false;
+  return s.factCount === 0 && (s.corroboratedCount ?? 0) === 0 && (s.alternateCount ?? 0) === 0;
+}
+
 /**
  * The one wording for "how many sources" — the Information tab header and
- * the Sources panel both use it, so they never disagree:
- * "8 sources · 6 contributed facts" (or "8 sources" when all did).
+ * the Sources panel both use it, so they never disagree: "24 sources", or
+ * "24 sources · 1 with nothing found" when some were read and gave nothing
+ * (the ones marked "No facts found" in the panel). It never puts a number
+ * next to the word "facts" that isn't a count of facts.
  */
-export function sourceCountText(sources: ReadonlyArray<Pick<InformationSource, "factCount">>): string {
+export function sourceCountText(
+  sources: ReadonlyArray<Pick<InformationSource, "kind" | "status" | "factCount" | "corroboratedCount" | "alternateCount">>,
+  untrackedFacts = 0,
+): string {
   const total = sources.length;
-  const contributing = sources.filter((s) => s.factCount > 0).length;
+  const empty = sources.filter((s) => sourceFoundNothing(s, untrackedFacts)).length;
   const base = `${total} source${total === 1 ? "" : "s"}`;
-  return contributing === total ? base : `${base} · ${contributing} contributed facts`;
+  return empty === 0 ? base : `${base} · ${empty} with nothing found`;
 }
 
 /**

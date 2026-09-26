@@ -71,7 +71,7 @@ const LEGACY: FieldSource = { source: "system", note: LEGACY_SOURCE_NOTE };
 export const DOCUMENT_AUTHORITY_RANK = 5.5;
 
 const DOC_AUTHORITATIVE_FIELD =
-  /^(?:annualRevenue|revenue|grossProfit|grossMargin|netIncome|netProfit|operatingIncome|operatingExpenses|total(?:Assets|Liabilities|Expenses|Revenue)|cogs|costOfGoodsSold|costOfSales|accountsReceivable|accountsPayable|cash|cashAndEquivalents|currentAssets|otherCurrentAssets|currentLiabilities|longTermDebt|bankIndebtedness|debt|debtObligations|shareholderLoans?|retainedEarnings|shareholdersEquity|depreciation|amortization|interestExpense|incomeTaxes?|fixedAssets|workingCapital|customerConcentration|topCustomers?|largestCustomer|lease(?:Address|Expiry|ExpiryDate|StartDate|Term|Sqft|RenewalOptions|Details)?|monthlyRent|annualRent|rent|landlord|shareholders?|shareholding|ownershipSplit|ownershipPercent(?:age)?s?|directors?|officers?|incorporationDate|incorporat(?:ed|ion)(?:Jurisdiction|Year)?|entityType|legalName|corporat(?:e|ion)Number|businessNumber|registrationNumber|licen[cs]eNumbers?)$/;
+  /^(?:annualRevenue|revenue|grossProfit|grossMargin|netIncome|netProfit|operatingIncome|operatingExpenses|total(?:Assets|Liabilities|Expenses|Revenue)|cogs|costOfGoodsSold|costOfSales|accountsReceivable|accountsPayable|cash|cashAndEquivalents|currentAssets|otherCurrentAssets|currentLiabilities|longTermDebt|bankIndebtedness|debt|debtObligations|shareholderLoans?|retainedEarnings|shareholdersEquity|depreciation|amortization|interestExpense|incomeTaxes?|fixedAssets|workingCapital|netWorkingCapital|inventor(?:y|ies)|prepaid\w*|accrued\w*|deferredRevenue|customerDeposits|owner(?:Salary|Compensation|Wages|Remuneration)|officer(?:Salary|Compensation)|shareholder(?:Salar(?:y|ies)|Remuneration|Compensation)|managementSalar(?:y|ies)|backlog(?:Value)?|contractBacklog|workInProgress|customerConcentration|topCustomers?|largestCustomer|receivablesConcentration|receivablesAccountCount|lease(?:Address|Expiry|ExpiryDate|StartDate|Term|Sqft|RenewalOptions|Details)?|monthlyRent|annualRent|rent|landlord|shareholders?|shareholding|ownershipSplit|ownershipPercent(?:age)?s?|directors?|officers?|incorporationDate|incorporat(?:ed|ion)(?:Jurisdiction|Year)?|entityType|legalName|corporat(?:e|ion)Number|businessNumber|registrationNumber|licen[cs]eNumbers?)$/;
 
 /**
  * True for facts a document is the authority on: closed-year statement
@@ -81,6 +81,17 @@ const DOC_AUTHORITATIVE_FIELD =
 export function isDocumentAuthoritativeField(key: string): boolean {
   const base = key.replace(/ByYear$/, "");
   return base === "revenue" || DOC_AUTHORITATIVE_FIELD.test(key) || DOC_AUTHORITATIVE_FIELD.test(base);
+}
+
+/**
+ * Balances as at a date (balance-sheet lines, working-capital lines, debt,
+ * contract backlog): a newer statement of the balance replaces an older one
+ * — it is not a different fiscal year's figure (those live in *ByYear maps).
+ */
+const POINT_IN_TIME_FIELD =
+  /^(?:cash|cashAndEquivalents|accountsReceivable|accountsPayable|inventor(?:y|ies)|prepaid\w*|accrued\w*|deferredRevenue|customerDeposits|currentAssets|otherCurrentAssets|currentLiabilities|totalAssets|totalLiabilities|longTermDebt|bankIndebtedness|debt|debtObligations|shareholderLoans?|retainedEarnings|shareholdersEquity|fixedAssets|workingCapital|netWorkingCapital|backlog(?:Value)?|contractBacklog|workInProgress|receivablesConcentration|receivablesAccountCount)$/;
+export function isPointInTimeField(key: string): boolean {
+  return POINT_IN_TIME_FIELD.test(key);
 }
 
 /** Facts whose value belongs to one fiscal period (a different period is not a conflict). */
@@ -121,8 +132,12 @@ function isStatementsTitle(title: string): boolean {
 const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]> = [
   // Book figures: the financial statements, not a tax return's version of them
   // and not a management report that happens to contain a P&L.
-  [/^(annualRevenue|revenueByYear|grossProfit\w*|grossMargin|netIncome\w*|netProfit|operatingIncome|operatingExpenses|cogs|costOfGoodsSold|costOfSales|ebitda\w*|accountsReceivable\w*|accountsPayable\w*|inventor\w*|totalAssets\w*|totalLiabilities\w*|currentAssets\w*|otherCurrentAssets\w*|currentLiabilities\w*|longTermDebt\w*|retainedEarnings\w*|shareholdersEquity\w*|depreciation\w*|cash\w*)$/,
+  [/^(annualRevenue|revenueByYear|grossProfit\w*|grossMargin|netIncome\w*|netProfit|operatingIncome|operatingExpenses\w*|totalExpenses\w*|cogs|costOfGoodsSold|costOfSales|ebitda\w*|accountsReceivable\w*|accountsPayable\w*|inventor\w*|totalAssets\w*|totalLiabilities\w*|currentAssets\w*|otherCurrentAssets\w*|currentLiabilities\w*|longTermDebt\w*|bankIndebtedness\w*|shareholderLoans?\w*|retainedEarnings\w*|shareholdersEquity\w*|depreciation\w*|amortization\w*|interestExpense\w*|fixedAssets\w*|prepaid\w*|accrued\w*|cash\w*)$/,
     isStatementsTitle],
+  // Contract backlog: the WIP / backlog report, not what the owner remembers.
+  [/^(backlog\w*|contractBacklog|workInProgress\w*|wip\w*)$/, /\bwip\b|work[- ]in[- ]progress|backlog|job (?:list|schedule|status)|contract schedule/i],
+  // What customers owe (and who owes most) — the receivables aging.
+  [/^(accountsReceivable\w*|receivablesConcentration|receivablesAccountCount)$/, /a\/?r aging|receivables? aging|aged receivables/i],
   // Tax items: the tax return.
   [/^(taxableIncome\w*|incomeTax\w*|taxesPaid|taxBalance\w*|grossReceipts\w*|totalDeductions\w*|ordinaryBusinessIncome\w*|otherDeductions\w*)$/,
     /\bt2\b|1120|tax return|notice of assessment/i],
@@ -134,8 +149,11 @@ const SPECIALIST_SOURCES: Array<[RegExp, RegExp | ((title: string) => boolean)]>
     /certif|quality (?:manual|summary|system|performance)|\biso\b|accredit|licen[cs]e/i],
   [/^(assetsIncluded|equipment|equipmentList|fleet|machinery|presses|pressList|vehicles)$/,
     /equipment|asset (?:list|register)|fixed assets?|fleet list|fleet\b|press list|machine list|vehicle list/i],
+  // Revenue concentration: the customer sales / concentration analysis. An
+  // A/R aging measures who OWES the business most, not who buys the most —
+  // its figures are receivables measures (see receivablesMeasureKey).
   [/^(customerConcentration|topCustomers?|largestCustomer|customerBase|customerList)$/,
-    /customer (?:list|sales|revenue|concentration)|sales by customer|revenue by customer|a\/?r aging|receivables? aging/i],
+    /customer (?:list|sales|revenue|concentration|analysis)|top (?:\d+ )?customers|sales by customer|revenue by customer|concentration/i],
   [/^(lease\w*|monthlyRent|annualRent|rent|landlord|propertyInfo)$/, /\blease\b/i],
   [/^(shareholders?|shareholding|ownershipSplit|directors?|officers?|incorporat\w*|entityType|legalName)$/,
     /minute book|articles|shareholders'? agreement|operating agreement|corporate (?:profile|registry|search)|certificate of (?:incorporation|status)/i],
@@ -210,6 +228,13 @@ export function outranksFor(
   if (!current || isUntrackedSource(current)) return sourceRank(incoming.source) >= SOURCE_RANK.interview;
   if (incoming.valueInferred && !current.valueInferred) return false;
   if (current.valueInferred && !incoming.valueInferred) return true;
+  // A balance on a date (cash, debt, receivables, backlog): between two
+  // documents the one for the NEWER date wins, whichever is the specialist —
+  // the June 2025 loan statement's balance over the FY2023 statements'.
+  if (isPointInTimeField(key) && incoming.source === "document" && current.source === "document") {
+    const byDate = newer(incoming.period, current.period);
+    if (byDate !== 0) return byDate > 0;
+  }
   const a = effectiveRank(key, incoming);
   const b = effectiveRank(key, current);
   if (a !== b) return a > b;
@@ -221,7 +246,7 @@ export function outranksFor(
 // ─── Value hygiene ───────────────────────────────────────────────────────────
 
 const PLACEHOLDER_PHRASE =
-  /\b(?:not|never)\s+(?:been\s+|yet\s+|explicitly\s+|clearly\s+)?(?:stated|specified|provided|mentioned|disclosed|given|discussed|confirmed|available|known|clear|listed|included|identified|named)\b|\bunknown\b|\bunspecified\b|\bundisclosed\b|\btbd\b|\btba\b|\bn\/a\b|\bnot applicable\b|\bno (?:details|information|specifics|figures?|amounts?|data) (?:given|provided|stated|available)\b/i;
+  /\b(?:not|never)\s+(?:been\s+|yet\s+|explicitly\s+|clearly\s+)?(?:stated|specified|provided|mentioned|disclosed|given|discussed|confirmed|available|known|clear|listed|included|identified|named)\b|\bunknown\b|\bunspecified\b|\bundisclosed\b|\btbd\b|\btba\b|\btbc\b|\bto be (?:confirmed|determined|verified|advised)\b|\bn\/a\b|\bnot applicable\b|\bno (?:details|information|specifics|figures?|amounts?|data) (?:given|provided|stated|available)\b/i;
 
 /** Words that carry no fact on their own ("specific address", "terms", "amounts"). */
 const FILLER_WORDS = new Set([
@@ -293,8 +318,54 @@ export function isPlaceholderValue(v: unknown): boolean {
 const BROKER_PROCESS_KEY =
   /^(?:referral(?:Source|From|Details|Contact)?|referredBy|referrer|leadSource|lead(?:Origin|Channel|Status)|broker(?:Fee|Commission|Engagement|EngagementDate|Name|Firm)?|commission(?:Rate)?|successFee|listingAgreement|listing(?:Terms|Fee|Date)|engagement(?:Letter|Terms|Date|Fee)|retainer(?:Fee)?|saleAdvisor|sellSideAdvisor|advisor(?:Engaged|Engagement)|priorApproaches|previousApproaches|priorOffers?|sellerFloor|walkAwayPrice|lowestAcceptablePrice)$/i;
 
+/** Key words: "acquisitionInterest" → ["acquisition", "interest"], "priorOffers2023" → ["prior", "offers", "2023"]. */
+function processKeyWords(key: string): string[] {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/([A-Z]+)([A-Z][a-z])/g, "$1 $2")
+    .replace(/([a-zA-Z])(\d)/g, "$1 $2")
+    .replace(/[_\-.]+/g, " ")
+    .toLowerCase()
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+const APPROACH_WORDS = new Set(["approach", "approaches", "approached", "offer", "offers", "bid", "bids", "loi", "lois", "interest", "inquiry", "inquiries", "enquiry", "enquiries", "overture", "overtures"]);
+const APPROACH_QUALIFIERS = new Set(["prior", "previous", "past", "earlier", "historical", "unsolicited", "inbound", "acquisition", "acquirer", "buyer", "buyers", "competitor", "strategic", "purchase", "takeover", "outside"]);
+const MULTIPLE_QUALIFIERS = new Set(["implied", "asking", "target", "valuation", "ev", "price", "pricing", "deal", "listing", "offer"]);
+const ENGAGEMENT_DETAIL = new Set(["letter", "terms", "date", "fee", "fees", "signed", "signing", "start", "started", "agreement", "status"]);
+
+/**
+ * Broker process data, recognised by what the key MEANS rather than its
+ * exact name — the extractor names the same thing many ways
+ * ("acquisitionInterest", "priorApproachDetails", "impliedMultiple",
+ * "engagementSigned"): how the deal reached the broker, the broker's terms
+ * and pricing arithmetic, and earlier approaches or offers from would-be
+ * buyers (confidential negotiation history — never CIM content). A business
+ * fact that only shares a word ("customerEngagementRate", "acquisitionHistory"
+ * — the company's own acquisitions, "priceIncreases") is not.
+ */
 export function isBrokerProcessKey(key: string): boolean {
-  return BROKER_PROCESS_KEY.test(key);
+  if (BROKER_PROCESS_KEY.test(key)) return true;
+  const w = processKeyWords(key);
+  const has = (s: string) => w.includes(s);
+  // (Referrals stay by exact name above: "patientReferrals", "referralSources"
+  // of a physio clinic are how the BUSINESS gets its customers.)
+  if (w[0] === "referral" && w.some((x) => x === "fee" || x === "fees")) return true;
+  // The broker's own engagement, fees and listing terms.
+  // ("insuranceBroker", "customsBroker", "salesCommission" are the business's own.)
+  if (w[0] === "broker" || w[0] === "retainer" || (w[0] === "sell" && has("side"))) return true;
+  if (w[0] === "engagement" && w.slice(1).some((x) => ENGAGEMENT_DETAIL.has(x))) return true;
+  if (w[0] === "listing" && w.slice(1).some((x) => ENGAGEMENT_DETAIL.has(x) || x === "price")) return true;
+  if ((has("success") || has("finder") || has("finders")) && (has("fee") || has("fees"))) return true;
+  // Pricing arithmetic: the multiple the price implies.
+  if (w.some((x) => x === "multiple" || x === "multiples") && w.some((x) => MULTIPLE_QUALIFIERS.has(x))) return true;
+  // Earlier approaches and offers from would-be buyers.
+  if (w.some((x) => APPROACH_WORDS.has(x)) && w.some((x) => APPROACH_QUALIFIERS.has(x))) return true;
+  if (has("approached")) return true;
+  // The seller's private floor.
+  if ((has("walk") && has("away")) || ((has("lowest") || has("minimum")) && (has("acceptable") || has("price")))) return true;
+  return false;
 }
 
 // ─── Years ───────────────────────────────────────────────────────────────────
@@ -348,6 +419,17 @@ export function isNotFiscalYearFigure(value: string): boolean {
   return /\b(?:budget(?:ed)?|projected|projection|forecast|target|run[- ]?rate|arr|mrr|expected|plan(?:ned)?|pro ?forma|ytd|year[- ]to[- ]date|to date|annuali[sz](?:ed|ing)|trailing|ttm|ltm|interim|partial|stub|q[1-4]|quarter(?:ly)?|first half|h[12]|\d+ months?|monthly)\b/i.test(value);
 }
 
+/**
+ * A year's figure its source says is not yet a reviewed figure for that year
+ * ("about $31.8M (management numbers, not reviewed)", "$3.45M (unaudited
+ * management estimate, pending compilation)"): it is not the year's figure
+ * until the statements are out. (Plain "unaudited" is not it — compiled and
+ * review-engagement statements are unaudited.)
+ */
+export function isUnreviewedFigure(value: string): boolean {
+  return /\b(?:unreviewed|not (?:yet )?(?:been )?reviewed|un-reviewed|management (?:numbers|estimates?)|mgmt (?:numbers|figures|estimates?)|unaudited management|preliminary|provisional|pending (?:compilation|review|audit|year[- ]end|completion|statements?)|not (?:yet )?final(?:i[sz]ed)?|before year[- ]end)\b/i.test(value);
+}
+
 /** Part of the business ("$6.8M (Alderbrook only)") — not the year's total. */
 export function isSubsetFigure(value: string): boolean {
   return /\b(?:only|alone|segment|division|client|customer)\b/i.test(value);
@@ -360,7 +442,26 @@ export interface CleanYearMap {
   map: Record<string, string>;
   /** Entries that aren't this metric's figure for a fiscal year — kept as notes, never as figures. */
   rejected: string[];
+  /**
+   * Entries that ARE this metric's figure, just not a fiscal year's reported
+   * one: a part-year / run-rate figure (no note — it goes on the metric's
+   * interim fact, keyed by the period as written), a forecast or an
+   * unreviewed management number (with the note it is kept under as that
+   * year's other value). Never a note in the CIM's facts.
+   */
+  setAside: SetAsideYear[];
 }
+
+export interface SetAsideYear {
+  /** The fiscal year ("2025"), or the period as written for a part-year figure ("Q1 2025"). */
+  period: string;
+  value: string;
+  /** FORECAST_YEAR_NOTE / UNREVIEWED_YEAR_NOTE; absent for a part-year figure. */
+  note?: string;
+}
+
+/** A period key that is part of a year ("Q1 2025", "YTD May 2025", "TTM Sep 2025", "H1 2024"). */
+const PART_YEAR_PERIOD = /\b(?:ttm|ltm|ytd|trailing|q[1-4]|h[12]|to date|\d+ months?|run[- ]?rate|annuali[sz]ed)\b/i;
 
 /**
  * Cleans one by-year map from an extraction: year keys normalised (one key
@@ -373,6 +474,7 @@ export function cleanYearMap(metric: string, raw: Record<string, unknown>): Clea
   const map: Record<string, string> = {};
   const plain = new Set<string>();
   const rejected: string[] = [];
+  const setAside: SetAsideYear[] = [];
   const family = metricFamily(metric);
   for (const [rawKey, rawValue] of Object.entries(raw)) {
     if (rawValue === null || rawValue === undefined || rawValue === "") continue;
@@ -380,13 +482,30 @@ export function cleanYearMap(metric: string, raw: Record<string, unknown>): Clea
     const year = normaliseYearKey(rawKey);
     const clean = cleanExtractedValue(value);
     const otherMetric = METRIC_WORDS.find(([f, re]) => f !== family && re.test(value));
-    // A budget, forecast or run-rate is not that year's figure.
-    const notActual = isNotFiscalYearFigure(value);
+    // A budget, forecast or run-rate is not that year's figure, nor is an
+    // unreviewed management number for a year not yet closed.
+    const notActual = isNotFiscalYearFigure(value) || isUnreviewedFigure(value);
     // Part of the business ("$6.8M (Alderbrook only)") is not the year's total.
     const subset = isSubsetFigure(value);
     // A figure the reader worked out ("implied from 6.5% growth") is never a year's figure.
     // A money metric needs an amount ("trending up 2-3%" is not a year's revenue).
     const noAmount = MONEY_METRIC.test(metric) && !typedNumericValues(value).some((t) => t.kind === "currency");
+    // This metric's own figure, stated — just not a fiscal year's reported one:
+    // set aside as what it is (interim / forecast / unreviewed), never a note.
+    const ownFigure = clean.value !== null && !clean.inferred && /\d/.test(value) && !noAmount && !otherMetric && !subset;
+    const hasYear = /(?:19|20)\d{2}/.test(rawKey);
+    if (ownFigure && (FORECAST_FIGURE.test(value) || FORECAST_FIGURE.test(rawKey)) && (year || hasYear)) {
+      setAside.push({ period: year ?? rawKey.match(/(?:19|20)\d{2}/)![0], value: clean.value!, note: FORECAST_YEAR_NOTE });
+      continue;
+    }
+    if (ownFigure && year && isUnreviewedFigure(value) && !isPartYearFigure(value)) {
+      setAside.push({ period: year, value: clean.value!, note: UNREVIEWED_YEAR_NOTE });
+      continue;
+    }
+    if (ownFigure && hasYear && ((year && isPartYearFigure(value)) || (!year && PART_YEAR_PERIOD.test(rawKey)))) {
+      setAside.push({ period: rawKey.trim(), value: clean.value! });
+      continue;
+    }
     if (!year || clean.value === null || clean.inferred || !/\d/.test(value) || noAmount || otherMetric || notActual || subset) {
       rejected.push(`${rawKey}: ${value}`);
       continue;
@@ -404,7 +523,7 @@ export function cleanYearMap(metric: string, raw: Record<string, unknown>): Clea
     map[year] = clean.value;
     if (isPlain) plain.add(year);
   }
-  return { map, rejected };
+  return { map, rejected, setAside };
 }
 
 /** Words that may lead a year inside a period tag: "year ended December 31, ", "fiscal ", "FYE ". */
@@ -972,8 +1091,19 @@ export function headlineYearOnFile(
  * Also keeps yearsOfData in step with the fiscal years the documents cover.
  */
 export function reconcileHeadlines(info: Info, ctx: MergeContext = {}): void {
-  for (const { head, map: mapKey } of HEADLINE_MAPS) {
+  // Part-year, run-rate and unreviewed entries are never a year of the map.
+  relocateInterimYears(info, ctx);
+  // The last fiscal year the business's own statements cover (any figure).
+  const statementsYear = lastStatementsYear(info, ctx);
+  for (const { head, map: mapKey, lineItem } of headlinePairs(info)) {
     if (isSuppressed(info, head)) continue;
+    // A line item (operating expenses, interest…) only lines an existing
+    // figure up with its map — it never creates one.
+    if (lineItem && (info[head] === null || info[head] === undefined || info[head] === "")) continue;
+    // The figure's own year is a year of its map, weighed there like any
+    // other source's figure for that year: the statements' FY2024 owner
+    // salary against an email's 2024 figure on the map.
+    syncFigureIntoMap(info, head, mapKey, ctx);
     const sources = getFieldSources(info);
     const map = repairCharIndexedValue(info[mapKey]);
     if (!isMap(map)) continue;
@@ -1001,10 +1131,14 @@ export function reconcileHeadlines(info: Info, ctx: MergeContext = {}): void {
     // The last year the statements (or the seller live, or the broker) give
     // is the headline; a spoken figure for the year after it (statements not
     // out yet — "2025 came in around $31.8M") stays that year's figure. A
-    // spoken figure two or more years newer than any statement stands.
+    // spoken figure two or more years newer than any statement stands, and
+    // so does one for a year the business's statements already cover (they
+    // just don't give this line: the owner's 2024 salary in an email, with
+    // the FY2024 statements on file).
     const sorted = [...pool].sort(compareYearKeysDesc);
     const closedYear = sorted.find((y) => isClosedYearSource(head, ys[y]));
-    const year = closedYear && Number(sorted[0]) - Number(closedYear) <= 1 ? closedYear : sorted[0];
+    const statementsCoverIt = !!statementsYear && sorted[0] <= statementsYear;
+    const year = closedYear && Number(sorted[0]) - Number(closedYear) <= 1 && !statementsCoverIt ? closedYear : sorted[0];
     const value = map[year] as string;
     const fye = Object.values(ys).find((s) => s.period && /^\d{4}-\d{2}-\d{2}$/.test(s.period))?.period;
     const bestSrc = headlineSourceForYear(info, mapKey, year, value, ys[year], periodForYear(year, fye));
@@ -1041,14 +1175,15 @@ export function reconcileHeadlines(info: Info, ctx: MergeContext = {}): void {
     }
     // The same year, or the headline's year unknown: authority decides.
     const curSide: ConflictSide = { value: serial(current), src: { ...(curSrc ?? LEGACY), period: curSrc?.period ?? `${year}-12-31` } };
+    const pairCtx: MergeContext = lineItem ? {} : ctx;
     if (outranksFor(head, bestSrc, curSrc)) {
       recordAlternate(info, head, current, curSrc ?? LEGACY);
       info[head] = value;
       setFieldSource(info, head, bestSrc);
       displaceCorroborations(info, head, value);
-      noteConflict(ctx, head, year, { value, src: bestSrc }, curSide);
+      noteConflict(pairCtx, head, year, { value, src: bestSrc }, curSide);
     } else {
-      noteConflict(ctx, head, year, curSide, { value, src: bestSrc });
+      noteConflict(pairCtx, head, year, curSide, { value, src: bestSrc });
     }
   }
   reconcileYearsOfData(info, ctx);
@@ -1199,6 +1334,398 @@ export function stampSourceDetails(
     out[k] = next;
   }
   return out;
+}
+
+// ─── Line items, interim periods, receivables measures (f-merge) ─────────────
+
+/**
+ * Every figure ↔ by-year map pair to line up: the headline pairs, plus any
+ * other money line item filed both ways (operatingExpenses ↔
+ * operatingExpensesByYear, interestExpense ↔ interestExpenseByYear), so a
+ * line item never reads one figure while its own history says another for
+ * the same latest year.
+ */
+function headlinePairs(info: Info): Array<{ head: string; map: string; lineItem?: boolean }> {
+  const pairs: Array<{ head: string; map: string; lineItem?: boolean }> = [...HEADLINE_MAPS];
+  const taken = new Set(HEADLINE_MAPS.map((p) => p.map));
+  for (const mapKey of Object.keys(info)) {
+    if (mapKey.startsWith("_") || taken.has(mapKey) || !/ByYear$/.test(mapKey)) continue;
+    const head = mapKey.replace(/ByYear$/, "");
+    if (!head || NARRATIVE_KEY.test(head) || HEADLINE_MAPS.some((p) => p.head === head)) continue;
+    // A money line item by its name, or any figure whose history is kept in
+    // money (owner salary, donations, community prescriptions…).
+    if (!(isPeriodFigure(head) && MONEY_METRIC.test(head)) && !isMoneyMap(repairCharIndexedValue(info[mapKey]))) continue;
+    pairs.push({ head, map: mapKey, lineItem: true });
+  }
+  return pairs;
+}
+
+/** A by-year map of money figures (most of its years state an amount). */
+function isMoneyMap(map: unknown): boolean {
+  if (!isMap(map)) return false;
+  const values = Object.entries(map).filter(([y]) => isYearKey(y)).map(([, v]) => v);
+  const money = values.filter((v) => firstCurrency(v) !== undefined).length;
+  return money > 0 && money * 2 >= values.length;
+}
+
+/**
+ * The last fiscal year the business's own written records cover — the
+ * latest year any money by-year map holds from a shared document, counting
+ * only fiscal years (a year whose period ends on the business's usual
+ * year-end; an A/R aging as of May 31, 2025 is not FY2025) — and that
+ * year-end. Undefined when no document gives a year.
+ */
+export function lastStatementsYear(info: Info, ctx: MergeContext = {}): string | undefined {
+  return statementsCoverage(info, ctx).year;
+}
+
+function statementsCoverage(info: Info, ctx: MergeContext): { year?: string; fyePeriod?: string } {
+  const md = (p?: string) => (p && /^\d{4}-\d{2}-\d{2}$/.test(p) ? p.slice(5) : undefined);
+  const found: Array<{ y: string; period?: string }> = [];
+  for (const [mapKey, raw] of Object.entries(info)) {
+    if (mapKey.startsWith("_") || !/ByYear$/.test(mapKey)) continue;
+    const m = repairCharIndexedValue(raw);
+    const rec = getFieldSources(info)[mapKey];
+    if (!isMap(m) || !rec) continue;
+    for (const [y, s] of Object.entries(resolvedYearSources(rec, m, ctx.lookup))) {
+      if (!isYearKey(y) || s.source !== "document" || s.brokerOnly) continue;
+      const v = m[y];
+      if (typeof v !== "string" || firstCurrency(v) === undefined || isNotFiscalYearFigure(v)) continue;
+      found.push({ y, period: s.period });
+    }
+  }
+  if (found.length === 0) return {};
+  const counts = new Map<string, number>();
+  for (const f of found) { const k = md(f.period); if (k) counts.set(k, (counts.get(k) ?? 0) + 1); }
+  const fye = Array.from(counts.entries()).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const fiscal = found.filter((f) => !fye || !md(f.period) || md(f.period) === fye).map((f) => f.y).sort();
+  const year = fiscal[fiscal.length - 1];
+  return { year, fyePeriod: year && fye ? `${year}-${fye}` : undefined };
+}
+
+/** The figure a stand-alone value gives for its year ("$180,000 paid to the majority shareholder" → "$180,000"). */
+function yearFigureOf(text: string): string | undefined {
+  const t = stripYearTag(text).value.trim();
+  if (/^\d[\d,]*(?:\.\d+)?$/.test(t)) return t; // a bare number ("10,000") as the source printed it
+  const amounts = Array.from(new Set((t.match(/\$\s*\d[\d,]*(?:\.\d+)?\s*(?:k|m|mm|million|thousand|b|billion)?\b/gi) ?? []).map((a) => a.trim())));
+  if (amounts.length !== 1) return undefined;
+  if (t.length <= 24 && !/[;:]/.test(t)) return t;
+  const escaped = amounts[0].replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const hedge = new RegExp(`(?:^|[^A-Za-z])(about|approximately|approx\\.?|roughly|around|~)\\s*${escaped}`, "i").exec(t)?.[1];
+  return hedge ? `${hedge} ${amounts[0]}` : amounts[0];
+}
+
+/**
+ * Puts a stand-alone figure's own year onto its by-year map (mutates): the
+ * value's year (its source's period, else a year its words name) is merged
+ * into the map as that source's figure for the year, so authority decides
+ * between it and whatever the map holds for the year — the statements'
+ * FY2024 owner salary over an email's 2024 entry (the email's kept as the
+ * year's other value, the difference raised). Only a firm, full-year
+ * figure with one amount; never a lead, a worked-out value or an untracked
+ * one; nothing when the map already has the same amount for the year.
+ */
+function syncFigureIntoMap(info: Info, head: string, mapKey: string, ctx: MergeContext): void {
+  if (isSuppressed(info, mapKey)) return;
+  const raw = info[head];
+  if (typeof raw !== "string" && typeof raw !== "number") return;
+  const text = String(raw).trim();
+  const map = repairCharIndexedValue(info[mapKey]);
+  if (!text || !isMap(map)) return;
+  const src = getFieldSources(info)[head];
+  if (!src || isUntrackedSource(src) || src.valueInferred || isLeadSource(src)) return;
+  const { years: _ys, ...ownSrc } = src;
+  const amountOf = (v: unknown) => firstCurrency(v) ?? (typeof v === "string" && /^\s*\d[\d,]*(?:\.\d+)?\s*$/.test(v) ? parseFloat(v.replace(/,/g, "")) : undefined);
+  const sameAmount = (a: unknown, b: unknown) => {
+    const x = amountOf(a);
+    const y = amountOf(b);
+    return x !== undefined && y !== undefined && Math.abs(x - y) < 0.5;
+  };
+  // A figure that lists its years ("$4,760,000 (2023); $5,420,000 (2022)"): each year onto the map.
+  const multi = splitMultiYearValue(text);
+  if (multi) {
+    const { map: clean } = cleanYearMap(head, multi);
+    const missing = Object.fromEntries(Object.entries(clean).filter(([y, v]) => !sameAmount(map[y], v)));
+    if (Object.keys(missing).length > 0) mergeYearMapInto(info, mapKey, missing, ownSrc, ctx);
+    return;
+  }
+  // A balance or figure for a date that isn't the business's fiscal year-end
+  // (an A/R aging as of May 31, 2025) is not a fiscal year's figure.
+  const recorded = getFieldSources(info)[mapKey];
+  if (recorded && src.period && /^\d{4}-\d{2}-\d{2}$/.test(src.period)) {
+    const ends = Object.values(resolvedYearSources(recorded, map, ctx.lookup)).map((s) => s.period).filter((p): p is string => !!p && /^\d{4}-\d{2}-\d{2}$/.test(p));
+    if (ends.length > 0 && !ends.some((p) => p.slice(5) === src.period!.slice(5))) return;
+  }
+  const year = periodYear(src.period) ?? valueYear(text);
+  if (!year || !isYearKey(year)) return;
+  if (isNotFiscalYearFigure(text) || isUnreviewedFigure(text) || isSubsetFigure(text) || FORECAST_FIGURE.test(text) ||
+      PRELIMINARY_FIGURE.test(text) || cleanExtractedValue(text).value === null) return;
+  const bare = yearFigureOf(text);
+  if (!bare) return;
+  // A bare number ("180,000" off a tax return) on a map of dollar figures is written like its neighbours.
+  const figure = /^\d/.test(bare) && isMoneyMap(map) && Object.values(map).some((v) => typeof v === "string" && v.trim().startsWith("$")) ? `$${bare}` : bare;
+  if (map[year] !== undefined && sameAmount(map[year], figure)) return; // the map already says it
+  mergeYearMapInto(info, mapKey, { [year]: figure }, { ...ownSrc, period: periodForYear(year, src.period) }, ctx);
+}
+
+/** revenueByYear → interimRevenue; adjustedEbitdaByYear → interimAdjustedEbitda. */
+export function interimKeyFor(mapKey: string): string {
+  const base = mapKey.replace(/ByYear$/, "");
+  return `interim${base.charAt(0).toUpperCase()}${base.slice(1)}`;
+}
+
+/** Note on a year's figure moved out of the by-year map because it isn't reviewed yet. */
+export const UNREVIEWED_YEAR_NOTE = "Unreviewed figure — not the year's reported figure";
+/** Note on a year's figure a source gave before that year had ended (a part of it, or a guess at it). */
+export const EARLY_YEAR_NOTE = "Given before the year ended — not the year's figure";
+/** Note on a budget / forecast moved out of the by-year map. */
+export const FORECAST_YEAR_NOTE = "Forecast or budget — not a reported figure";
+/** A figure its source gives as a round remark, not the number ("~$31.8M", "about $4 million", "probably around $4M", "just under $4.1M"). */
+const APPROXIMATE_FIGURE = /(?:^|[\s(])~\s*\$?\d|\b(?:about|approximately|approx\.?|roughly|around|circa|ballpark|probably|maybe|give or take|call it|just (?:under|over|shy of)|a (?:bit|little) (?:under|over)|or so|somewhere around|in the (?:range|neighbou?rhood) of)\b/i;
+const FORECAST_FIGURE = /\b(?:budget(?:ed)?|projected|projections?|forecast|target|expected|plan(?:ned)?|pro ?forma)\b/i;
+/** A part-year / run-rate figure — not "12 months ended …", which is a full year. */
+export function isPartYearFigure(v: string): boolean {
+  return isNotFiscalYearFigure(v) && !/\b(?:12|twelve) months\b/i.test(v);
+}
+/** Sources that SAY a year's figure (not the business's statements, the seller live, or the broker). */
+const SECOND_HAND_YEAR_KINDS: ReadonlySet<string> = new Set(["call", "video_call", "email", "questionnaire", "crm", "website", "social"]);
+
+/**
+ * Merges one entry of a keyed map fact that is not a by-year map (the
+ * interim figures — `interimRevenue` {"Q1 2025": "$1,628,000"}): each entry
+ * keeps its own source; a different value for the same entry follows the
+ * usual authority (the loser is kept as an alternate). Mutates `info`.
+ */
+export function mergeMapEntryInto(info: Info, key: string, period: string, value: string, src: FieldSource, ctx: MergeContext = {}): void {
+  if (isSuppressed(info, key)) {
+    recordAlternate(info, `${key}.${period}`, value, src);
+    return;
+  }
+  const raw = repairCharIndexedValue(info[key]);
+  const recorded = getFieldSources(info)[key];
+  if (raw !== undefined && raw !== null && raw !== "" && !isMap(raw)) recordAlternate(info, key, raw, recorded ?? LEGACY);
+  const map: Record<string, unknown> = isMap(raw) ? { ...raw } : {};
+  const years: Record<string, FieldSource> = isMap(raw) && recorded
+    ? resolvedYearSources(recorded, map, ctx.lookup)
+    : Object.fromEntries(Object.keys(map).map((p) => [p, LEGACY]));
+  const cur = map[period];
+  if (cur === undefined || cur === null || cur === "") {
+    map[period] = value;
+    years[period] = src;
+  } else if (String(cur) === value) {
+    noteSameValue(info, `${key}.${period}`, src, { current: cur, recorded: isUntrackedSource(years[period]) ? null : years[period], setRecorded: (s) => { years[period] = s; }, outranks: strongerFor(key) });
+  } else if (outranksFor(key, src, years[period])) {
+    recordAlternate(info, `${key}.${period}`, cur, years[period] ?? LEGACY);
+    map[period] = value;
+    years[period] = src;
+  } else {
+    recordAlternate(info, `${key}.${period}`, value, src);
+  }
+  info[key] = map;
+  const summary = Object.values(years).every((s) => isUntrackedSource(s)) ? null : summariseMapSource(years);
+  if (summary) setFieldSource(info, key, summary);
+}
+
+/**
+ * Takes every entry out of the money by-year maps that is not a fiscal
+ * year's reported figure, from ANY source (a broker entry, the interview, a
+ * document): a period key that isn't a fiscal year ("Q1 2025", "YTD"), a
+ * part-year / run-rate / ARR figure → the labelled interim fact
+ * (interimKeyFor); a budget or forecast, or an unreviewed management number
+ * for a year → kept as that year's other value (FORECAST_YEAR_NOTE /
+ * UNREVIEWED_YEAR_NOTE), never the year. Mutates.
+ */
+export function relocateInterimYears(info: Info, ctx: MergeContext = {}): void {
+  // The last fiscal year the business's own statements (a shared document)
+  // cover, across every money map: a figure said on a call, in an email or on
+  // the intake form for a LATER year, within months of that year's end, is a
+  // management number the statements haven't reviewed yet.
+  const { year: lastWrittenYear, fyePeriod } = statementsCoverage(info, ctx);
+  /**
+   * Said (not written) for a year after the statements: within six months of
+   * its end, or — for the year right after the last statements — in words
+   * that say it is not the final figure ("~$31.8M", "about $4 million",
+   * "probably around …"): however long after that year the source is dated,
+   * a round remark about the year the statements don't cover yet is the
+   * management number, not the year's figure. (A figure two or more years
+   * past the last statements is the only word on that year — it stands.)
+   */
+  const saidBeforeStatements = (year: string | undefined, s: Partial<FieldSource> | undefined, value?: string): boolean => {
+    if (!lastWrittenYear || !year || !isYearKey(year) || year <= lastWrittenYear || !SECOND_HAND_YEAR_KINDS.has(String(s?.source))) return false;
+    if (value && APPROXIMATE_FIGURE.test(value) && Number(year) === Number(lastWrittenYear) + 1) return true;
+    const when = normalisePeriod(s?.dated); // the source's own date (never when it was recorded)
+    if (!when) return false;
+    const end = Date.parse(periodForYear(year, fyePeriod));
+    const t = Date.parse(when);
+    return !Number.isNaN(end) && !Number.isNaN(t) && t > end && t - end <= 183 * 86_400_000;
+  };
+
+  /**
+   * Said (a call, an email, the intake form, a CRM note) before the year it
+   * is for had even ended — "2025: $1,628,000" on a May 2025 call is part of
+   * the year, or a guess at it, never the year's figure. (A statement or a
+   * tax return is for a closed period by nature; the seller live and the
+   * broker are their own call. With no written records at all, the seller's
+   * word is all there is and stands.)
+   */
+  const saidBeforeYearEnd = (year: string | undefined, s: Partial<FieldSource> | undefined): boolean => {
+    if (!lastWrittenYear || !year || !isYearKey(year) || !SECOND_HAND_YEAR_KINDS.has(String(s?.source))) return false;
+    const when = normalisePeriod(s?.dated);
+    if (!when) return false;
+    const end = Date.parse(periodForYear(year, fyePeriod));
+    const t = Date.parse(when);
+    return !Number.isNaN(end) && !Number.isNaN(t) && t < end;
+  };
+  // A figure set aside as "said before the statements" for a year the
+  // statements now cover (they arrived after it — order must not matter): it
+  // was the seller's word on a closed year after all, and goes back on its
+  // map, where authority decides. (A figure its own words call unreviewed
+  // stays set aside.)
+  if (lastWrittenYear) {
+    const alts = getFieldAlternates(info);
+    for (const [altKey, list] of Object.entries(alts)) {
+      const dot = altKey.lastIndexOf(".");
+      const mapKey = dot > 0 ? altKey.slice(0, dot) : altKey;
+      const year = dot > 0 ? altKey.slice(dot + 1) : undefined;
+      const isHead = dot < 0 && HEADLINE_MAPS.some((p) => p.head === altKey);
+      if (!(isHead || (year && isYearKey(year) && /ByYear$/.test(mapKey)))) continue;
+      const back = (list ?? []).filter((a) => a && a.note === UNREVIEWED_YEAR_NOTE && SECOND_HAND_YEAR_KINDS.has(String(a.source)) &&
+        typeof a.value === "string" && !isUnreviewedFigure(a.value) && !FORECAST_FIGURE.test(a.value) && !isPartYearFigure(a.value) &&
+        (periodYear(a.period) ?? year ?? "9999") <= lastWrittenYear);
+      if (back.length === 0) continue;
+      const next = { ...getFieldAlternates(info) };
+      const kept = (next[altKey] ?? []).filter((a) => !back.includes(a));
+      if (kept.length > 0) next[altKey] = kept; else delete next[altKey];
+      info[FIELD_ALTERNATES_KEY] = next;
+      for (const a of back) {
+        const { value, note: _n, ...src } = a;
+        if (isHead) recordAlternate(info, altKey, value, src as FieldSource); // the headline follows its map
+        else mergeYearMapInto(info, mapKey, { [year!]: String(value) }, src as FieldSource, ctx);
+      }
+    }
+  }
+  // A headline that is itself a part-year, run-rate, unreviewed or forecast
+  // figure is never the headline: it is kept as another value, and the
+  // headline is taken from the map's latest full year (reconcileHeadlines).
+  for (const { head } of HEADLINE_MAPS) {
+    const v = info[head];
+    if (typeof v !== "string" || isSuppressed(info, head)) continue;
+    const src = getFieldSources(info)[head];
+    const note = FORECAST_FIGURE.test(v) ? FORECAST_YEAR_NOTE
+      : isPartYearFigure(v) ? "Part-year / run-rate figure"
+      : isUnreviewedFigure(v) || saidBeforeStatements(periodYear(src?.period) ?? valueYear(v), src, v) ? UNREVIEWED_YEAR_NOTE
+      : saidBeforeYearEnd(periodYear(src?.period) ?? valueYear(v), src) ? EARLY_YEAR_NOTE : null;
+    if (!note) continue;
+    // The broker's own headline stays — it is their call.
+    if (src?.source === "broker") continue;
+    recordAlternate(info, head, v, { ...(src ?? LEGACY), note });
+    delete info[head];
+    const s = { ...getFieldSources(info) };
+    delete s[head];
+    info[FIELD_SOURCES_KEY] = s;
+  }
+  for (const mapKey of Object.keys(info)) {
+    if (mapKey.startsWith("_") || !/ByYear$/.test(mapKey)) continue;
+    const base = mapKey.replace(/ByYear$/, "");
+    if (!isPeriodFigure(base) || !MONEY_METRIC.test(base)) continue;
+    const repaired = repairCharIndexedValue(info[mapKey]);
+    if (!isMap(repaired)) continue;
+    const map: Record<string, unknown> = { ...repaired };
+    let glued = false;
+    const recorded = getFieldSources(info)[mapKey];
+    const ys = recorded ? resolvedYearSources(recorded, map, ctx.lookup) : {};
+    const moves: Array<{ period: string; value: string; note?: string }> = [];
+    for (const [period, raw] of Object.entries(map)) {
+      if (typeof raw !== "string" && typeof raw !== "number") continue;
+      let value = String(raw).trim();
+      if (!value) continue;
+      // Two sources' figures glued into one year ("just under $4.1 million
+      // (per seller email); $3.9 million (per broker normalization)"): the
+      // year keeps the first, each other one is kept as another value.
+      const parts = value.split(/;\s+/).map((p) => p.trim()).filter(Boolean);
+      if (parts.length >= 2 && parts.every((p) => firstCurrency(p) !== undefined) &&
+          parts.filter((p) => /\b(?:per|according to|says|said|from the)\b/i.test(p)).length >= 2) {
+        value = parts[0];
+        map[period] = value;
+        glued = true;
+        for (const other of parts.slice(1)) recordAlternate(info, `${mapKey}.${period}`, other, { ...(ys[period] ?? LEGACY), note: "Another figure given for this year" });
+      }
+      const fiscalKey = normaliseYearKey(period) !== null;
+      // A figure said (a call, an email) for a year after the last statements,
+      // within months of that year's end: the unreviewed management number.
+      const saidNotWritten = saidBeforeStatements(period, ys[period], value);
+      if (FORECAST_FIGURE.test(value) || FORECAST_FIGURE.test(period)) moves.push({ period, value, note: FORECAST_YEAR_NOTE });
+      else if (!fiscalKey || isPartYearFigure(value)) moves.push({ period, value });
+      else if (isUnreviewedFigure(value) || saidNotWritten) moves.push({ period, value, note: UNREVIEWED_YEAR_NOTE });
+      else if (saidBeforeYearEnd(period, ys[period])) moves.push({ period, value, note: EARLY_YEAR_NOTE });
+    }
+    if (moves.length === 0) {
+      if (glued) info[mapKey] = map;
+      continue;
+    }
+    const kept: Record<string, unknown> = { ...map };
+    const keptYears: Record<string, FieldSource> = { ...ys };
+    for (const { period, value, note } of moves) {
+      const src = ys[period] ?? LEGACY;
+      delete kept[period];
+      delete keptYears[period];
+      // Not a figure for the year yet (unreviewed, a forecast): the year's other value.
+      if (note) recordAlternate(info, `${mapKey}.${period}`, value, { ...src, note });
+      // A part-year / run-rate figure ("Q1 2025: $1,628,000", "2025: $4.7M
+      // ARR") goes on its own labelled fact — interimRevenue for revenueByYear
+      // — keyed by the period as written: the CIM can state it as what it is,
+      // never as a fiscal year.
+      else mergeMapEntryInto(info, interimKeyFor(mapKey), period, value, src, ctx);
+    }
+    if (Object.keys(kept).length === 0) {
+      delete info[mapKey];
+      const s = { ...getFieldSources(info) };
+      delete s[mapKey];
+      info[FIELD_SOURCES_KEY] = s;
+      continue;
+    }
+    info[mapKey] = kept;
+    if (recorded) {
+      const summary = Object.values(keptYears).every((s) => isUntrackedSource(s)) ? null : summariseMapSource(keptYears);
+      if (summary) setFieldSource(info, mapKey, summary);
+    }
+  }
+}
+
+/** Customer facts an A/R aging states — about receivables, not sales. */
+const RECEIVABLES_MEASURE: Record<string, string> = {
+  customerConcentration: "receivablesConcentration",
+  largestCustomer: "receivablesConcentration",
+  topCustomers: "receivablesConcentration",
+  topCustomer: "receivablesConcentration",
+  customerCount: "receivablesAccountCount",
+  numberOfCustomers: "receivablesAccountCount",
+  activeCustomers: "receivablesAccountCount",
+};
+const AR_AGING_TITLE = /a\/?r aging|receivables? aging|aged receivables|aged (?:debtors|trial balance)/i;
+/** A value measured against receivables ("$461,000 of $1,530,400 total AR", "38% of receivables"), not revenue. */
+const RECEIVABLES_WORDING = /\b(?:a\/?r|receivables?)\b/i;
+const SALES_WORDING = /\b(?:revenue|sales|billings|of (?:total )?(?:business|volume))\b/i;
+
+/**
+ * The fact a customer figure really is: an A/R aging's "largest customer"
+ * and "customer count" measure who owes the business money (a share of
+ * receivables, the accounts with a balance), not who buys the most — a
+ * different measure from revenue concentration, so it goes on its own key
+ * (receivablesConcentration / receivablesAccountCount) instead of competing
+ * with the customer concentration analysis or the financial statements'
+ * note. Same key otherwise.
+ */
+export function receivablesMeasureKey(key: string, value: unknown, sourceTitle: string | null | undefined): string {
+  const target = RECEIVABLES_MEASURE[key];
+  if (!target) return key;
+  const text = typeof value === "string" ? value : "";
+  const receivables = RECEIVABLES_WORDING.test(text);
+  const sales = SALES_WORDING.test(text);
+  if (sales && !receivables) return key; // the aging's note on sales stays a sales fact
+  if (sourceTitle && AR_AGING_TITLE.test(sourceTitle)) return target;
+  // Elsewhere only a concentration figure that says it is a share of receivables.
+  return target === "receivablesConcentration" && receivables && !sales ? target : key;
 }
 
 /** Kind of a source entry, for callers that only need the kind. */
