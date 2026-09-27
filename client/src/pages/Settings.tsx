@@ -7,6 +7,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { BuyerNdaTermsCard } from "@/components/deal/BuyerNdaTermsCard";
 import { Badge } from "@/components/ui/badge";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { 
@@ -458,8 +459,8 @@ export default function Settings() {
                 Email Notifications
               </CardTitle>
               <CardDescription>
-                Choose which deal events email you. These apply on every deal where you're on the
-                broker team
+                Choose which deal events email you. These apply on every deal you own or where
+                you're on the broker team
                 {accountEmail ? (
                   <> and go to <span className="font-medium text-foreground">{accountEmail}</span>.</>
                 ) : (
@@ -594,6 +595,9 @@ export default function Settings() {
               {saveSettings.isPending ? "Saving..." : "Save Default Settings"}
             </Button>
           </div>
+
+          {/* Saved on its own (its own Save button in the editor). */}
+          <BuyerNdaTermsCard scope="brokerage" />
         </TabsContent>
 
         <TabsContent value="integrations" className="mt-6">

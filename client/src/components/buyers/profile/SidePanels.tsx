@@ -293,7 +293,7 @@ export function NdaAnswersCard({ answers }: { answers: BuyerProfileResponse["nda
               <button type="button" className="flex w-full items-start justify-between gap-2 p-3 text-left" onClick={() => setOpen(isOpen ? null : a.dealId)}>
                 <div className="min-w-0">
                   <p className="text-sm font-medium text-foreground truncate">{a.businessName}</p>
-                  <p className="text-2xs text-muted-foreground">Signed {shortDate(a.signedAt)}{a.summary ? ` · ${a.summary}` : ""}</p>
+                  <p className="text-2xs text-muted-foreground">Signed {shortDate(a.signedAt)}{a.signedBy ? ` by ${a.signedBy}` : ""}{a.summary ? ` · ${a.summary}` : ""}</p>
                 </div>
                 <ChevronDown className={`mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${isOpen ? "rotate-180" : ""}`} />
               </button>

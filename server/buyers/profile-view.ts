@@ -199,11 +199,14 @@ function ndaAnswerRows(ctx: Ctx) {
   return ctx.accesses
     .filter((a) => a.ndaProfile)
     .map((a) => {
-      const p = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string };
+      // The signature record (typed name + the full agreement text) is not
+      // an "answer": report who signed, and keep the text out of the payload.
+      const { signature, ...p } = a.ndaProfile as NdaBuyerProfile & { submittedAt?: string; signature?: { signerName?: string } };
       return {
         dealId: a.dealId,
         businessName: ctx.dealById.get(a.dealId)?.businessName ?? "Deal",
         signedAt: a.ndaSignedAt ?? (p.submittedAt ? new Date(p.submittedAt) : null),
+        signedBy: signature?.signerName ?? null,
         summary: ndaAnswersSummary(p),
         answers: p,
       };

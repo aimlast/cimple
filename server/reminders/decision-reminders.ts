@@ -24,7 +24,8 @@
  *     business's name by email: the project codename, or neutral wording.
  */
 import { storage } from "../storage";
-import { notify } from "../notifications/service";
+import { notify, escapeHtml as escapeEmailHtml } from "../notifications/service";
+import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import type { BuyerAccess, Deal } from "@shared/schema";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 
@@ -233,6 +234,11 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   if (action === "none") return action;
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
+  // A buyer who hasn't signed a required NDA has never seen the CIM or the
+  // decision panel — they can't be told they "reviewed" it, or lapsed.
+  // (The view room no longer starts the clock at the gate; this also covers
+  // rows stamped before it stopped.)
+  if (ndaBlocksBuyer(deal, access)) return "none";
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
 
@@ -278,7 +284,8 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
     : access.buyerEmail;
   await notify(deal.id, "buyer_decision_lapsed", {
     title: `${buyerLabel} — opportunity lapsed (no response)`,
-    body: `${buyerLabel} reviewed the ${deal.businessName} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
+    // The buyer typed their own name/company at the NDA: escaped.
+    body: `${escapeEmailHtml(buyerLabel)} reviewed the ${escapeEmailHtml(deal.businessName)} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
     actionUrl: `/deal/${deal.id}`,
     businessName: deal.businessName,
     metadata: {
