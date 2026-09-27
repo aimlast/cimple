@@ -24,7 +24,6 @@
  * The broker's endpoint runs it as a background job (reprocess-jobs.ts).
  */
 import fs from "fs";
-import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
 import { classifyExtractionFailure, extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
@@ -61,6 +60,7 @@ import {
   type SourceKind,
   type SourceRowLookup,
 } from "../interview/info-merger";
+import { resolveDocumentPath } from "./document-path";
 import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, rememberPeriodEnd } from "./ingest";
 import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
@@ -178,10 +178,7 @@ export async function reprocessDealDocuments(
 
   const documents = await storage.getDocumentsByDeal(dealId);
 
-  // Same resolution as parseDocumentAsync / /api/documents/:id/parse in
-  // server/routes.ts: fileUrl is "/uploads/docs/<name>" relative to uploadsDir.
-  const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
-
+  // Files resolve exactly as ingest does (resolveDocumentPath below).
   let docsMerged: Record<string, unknown> = {};
   let documentsReprocessed = 0;
 
@@ -207,8 +204,9 @@ export async function reprocessDealDocuments(
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
-    const relative = (doc.fileUrl || "").replace(/^\/uploads\//, "");
-    const filePath = relative ? path.join(uploadsDir, relative) : null;
+    // The shared resolver: only "/uploads/docs/<name>", never outside the
+    // docs folder (a broker-set fileUrl once read /proc/self/environ).
+    const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
         text = await extractTextFromFile(filePath, doc.mimeType);

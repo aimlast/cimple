@@ -7,13 +7,11 @@
  * since a seller has no other way to get a mistaken upload off the deal.
  */
 import fs from "fs";
-import path from "path";
 import { storage } from "../storage";
 import { removeDocumentFields } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 import { settleMergeRowsQuietly } from "./merge-conflicts";
-
-const uploadsDir = process.env.UPLOADS_DIR || path.join(process.cwd(), "public", "uploads");
+import { resolveDocumentPath } from "./document-path";
 
 /**
  * Takes a deleted source's facts off its deal (re-read under the deal's
@@ -50,10 +48,8 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
   }
 
   // Best-effort file removal — only inside the docs directory.
-  const filename = doc.fileUrl?.startsWith("/uploads/docs/") ? doc.fileUrl.slice("/uploads/docs/".length) : "";
-  if (filename && !filename.includes("..") && !filename.includes("/")) {
-    fs.unlink(path.join(uploadsDir, "docs", filename), () => {});
-  }
+  const filePath = resolveDocumentPath(doc);
+  if (filePath) fs.unlink(filePath, () => {});
 
   return removed;
 }
