@@ -96,6 +96,7 @@ export function ExpandableSection({
   branding,
   brokerMode = false,
   onToggle,
+  onFinancialToggle,
 }: ExpandableSectionProps) {
   const config = getExpandableConfig(section);
   const [expanded, setExpanded] = useState(!config.isExpandable);
@@ -148,11 +149,24 @@ export function ExpandableSection({
     <div className="cim-expandable-section">
       {/* Always render the full section (controls visibility via CSS) */}
       <div className={expanded ? "" : "hidden print:block"}>
-        <CimSectionRenderer
-          section={section}
-          branding={branding}
-          brokerMode={brokerMode}
-        />
+        {/* A long income statement is exactly the table that is marked
+            expandable AND carries normalizedRows: its As Reported /
+            Normalized switch must be here too, or the normalized figures
+            never show. */}
+        {section.layoutType === "financial_table" ? (
+          <FinancialToggle
+            section={section}
+            branding={branding}
+            brokerMode={brokerMode}
+            onToggle={onFinancialToggle}
+          />
+        ) : (
+          <CimSectionRenderer
+            section={section}
+            branding={branding}
+            brokerMode={brokerMode}
+          />
+        )}
       </div>
 
       {/* Summary view (shown when collapsed) — same theme-locked paper scope */}

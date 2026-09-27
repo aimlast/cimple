@@ -1,0 +1,1445 @@
+{
+ "id": "9fd5343c-abe5-4e82-a9ca-9e80155492f2",
+ "dealId": "7b409199-2b54-4a0a-b967-503f1cb0d345",
+ "version": 2,
+ "status": "completed",
+ "reclassifiedPnl": {
+  "rows": [
+   {
+    "id": "row_muj046cp_1",
+    "name": "Contract & fabrication revenue",
+    "values": {
+     "2021": 7680000,
+     "2022": 8420000,
+     "2023": 9160000,
+     "2024": 9815000
+    },
+    "category": "Revenue"
+   },
+   {
+    "id": "row_muj046cp_2",
+    "name": "Materials \u2014 steel, plate & purchased components",
+    "values": {
+     "2021": 2607000,
+     "2022": 2840000,
+     "2023": 3046000,
+     "2024": 3228000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_3",
+    "name": "Direct labour \u2014 shop wages & benefits",
+    "values": {
+     "2021": 2190000,
+     "2022": 2380000,
+     "2023": 2560000,
+     "2024": 2720000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_4",
+    "name": "Subcontract services (galvanizing, blasting, coating)",
+    "values": {
+     "2021": 301000,
+     "2022": 331000,
+     "2023": 364000,
+     "2024": 392000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_5",
+    "name": "Shop supplies, gases & consumables",
+    "values": {
+     "2021": 188000,
+     "2022": 206000,
+     "2023": 221000,
+     "2024": 236000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_6",
+    "name": "Equipment repairs & maintenance (recurring)",
+    "values": {
+     "2021": 101000,
+     "2022": 109000,
+     "2023": 118000,
+     "2024": 120000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_7",
+    "name": "Crane rebuild (both 10-ton cranes, one-time)",
+    "values": {
+     "2024": 64000
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_muj046cp_8",
+    "name": "Freight in & delivery",
+    "values": {
+     "2021": 86000,
+     "2022": 94000,
+     "2023": 101000,
+     "2024": 108000
+    },
+    "category": "COGS"
+   },
+   {
+    "id": "row_muj046cp_9",
+    "name": "Salaries \u2014 office, estimating & project management",
+    "values": {
+     "2021": 471000,
+     "2022": 498000,
+     "2023": 538000,
+     "2024": 560000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_10",
+    "name": "Management salary \u2014 shareholder (Gord McAllister)",
+    "values": {
+     "2021": 180000,
+     "2022": 180000,
+     "2023": 180000,
+     "2024": 180000
+    },
+    "category": "Owner Compensation"
+   },
+   {
+    "id": "row_muj046cp_11",
+    "name": "Rent \u2014 related party (McAllister Properties Ltd.)",
+    "values": {
+     "2021": 310000,
+     "2022": 322000,
+     "2023": 322000,
+     "2024": 336000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_12",
+    "name": "Property taxes",
+    "values": {
+     "2021": 53000,
+     "2022": 55000,
+     "2023": 58000,
+     "2024": 61000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_13",
+    "name": "Insurance",
+    "values": {
+     "2021": 76000,
+     "2022": 81000,
+     "2023": 88000,
+     "2024": 94000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_14",
+    "name": "Utilities",
+    "values": {
+     "2021": 64000,
+     "2022": 78000,
+     "2023": 71000,
+     "2024": 74000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_15",
+    "name": "Vehicle expenses (excluding owner's truck)",
+    "values": {
+     "2021": 54000,
+     "2022": 58000,
+     "2023": 60000,
+     "2024": 35000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_16",
+    "name": "Owner's truck & personal expenses",
+    "values": {
+     "2024": 28000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_17",
+    "name": "Office & general",
+    "values": {
+     "2021": 34000,
+     "2022": 36000,
+     "2023": 38000,
+     "2024": 40000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_18",
+    "name": "Computer & software",
+    "values": {
+     "2021": 26000,
+     "2022": 29000,
+     "2023": 33000,
+     "2024": 36000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_19",
+    "name": "Professional fees (recurring)",
+    "values": {
+     "2021": 23000,
+     "2022": 24000,
+     "2023": 26000,
+     "2024": 26000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_20",
+    "name": "Legal fees \u2014 shareholder agreement amendment (one-time)",
+    "values": {
+     "2024": 18000
+    },
+    "category": "Non-Recurring"
+   },
+   {
+    "id": "row_muj046cp_21",
+    "name": "Advertising, promotion & sponsorships (excluding hockey)",
+    "values": {
+     "2021": 20000,
+     "2022": 21000,
+     "2023": 24000,
+     "2024": 14000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_22",
+    "name": "Hockey sponsorship (Leduc junior team, discretionary)",
+    "values": {
+     "2024": 12000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_23",
+    "name": "Travel & meals",
+    "values": {
+     "2021": 8000,
+     "2022": 10000,
+     "2023": 13000,
+     "2024": 14000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_24",
+    "name": "Bad debts (recurring)",
+    "values": {
+     "2021": 6000,
+     "2022": 22000,
+     "2023": 9000,
+     "2024": 12000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_25",
+    "name": "Bank charges",
+    "values": {
+     "2021": 7000,
+     "2022": 8000,
+     "2023": 8000,
+     "2024": 9000
+    },
+    "category": "Operating Expenses"
+   },
+   {
+    "id": "row_muj046cp_26",
+    "name": "Amortization of property and equipment",
+    "values": {
+     "2021": 251000,
+     "2022": 268000,
+     "2023": 286000,
+     "2024": 312000
+    },
+    "category": "Depreciation"
+   },
+   {
+    "id": "row_muj046cp_27",
+    "name": "Interest on long-term debt",
+    "values": {
+     "2021": 79000,
+     "2022": 71000,
+     "2023": 66000,
+     "2024": 58000
+    },
+    "category": "Interest"
+   },
+   {
+    "id": "row_muj046cp_28",
+    "name": "Income taxes \u2014 current",
+    "values": {
+     "2021": 60750,
+     "2022": 97090,
+     "2023": 150910,
+     "2024": 131590
+    },
+    "category": "Taxes"
+   }
+  ],
+  "notes": [
+   "Revenue recognition: percentage-of-completion (cost-to-cost) on fixed-price contracts over $50,000; smaller jobs recognized on completion.",
+   "COGS: Equipment repairs & maintenance in 2024 includes $64,000 one-time crane rebuild (both 10-ton cranes: new hoists, end trucks, pendants). Recurring repairs & maintenance estimated at $120,000 for 2024 (2023: $118,000).",
+   "Operating expenses: Professional fees in 2024 include $18,000 one-time legal fees for shareholder agreement amendment (November 2024). Recurring professional fees estimated at $26,000 for 2024 (2023: $26,000).",
+   "Operating expenses: Advertising & sponsorships in 2024 include $12,000 discretionary hockey sponsorship (Leduc junior team). Recurring advertising estimated at $14,000 for 2024 (2023: $24,000).",
+   "Operating expenses: Vehicle expenses in 2024 include $28,000 for owner's truck and personal expenses (fuel, insurance, meals, cell, season tickets). Recurring vehicle expenses estimated at $35,000 for 2024 (2023: $60,000).",
+   "Owner compensation: Management salary of $180,000 per year paid to majority shareholder Gord McAllister (T4 employment income). Office salaries include Donna McAllister's wages ($62,000 in 2024, $58,000 in 2023).",
+   "Related-party rent: Paid to McAllister Properties Ltd. at $12.00/sq ft net in 2024 ($336,000/year), $11.50/sq ft in 2022-2023 ($322,000/year). Lease rate set from independent market rent letter December 2021.",
+   "Bad debts: 2022 amount of $22,000 was single customer (Silverthorn Energy Services) receivership in September 2022. 2023 and 2024 amounts are ordinary small write-offs.",
+   "Depreciation: Book amortization differs from CCA claimed for tax purposes. CCA claimed: 2024 $528,000, 2023 $318,000, 2022 $301,000.",
+   "All figures tie to compiled financial statements and T2 corporate tax returns for fiscal years ending December 31.",
+   "Owner's truck & personal expenses, Hockey sponsorship (Leduc junior team, discretionary) were taken out of their parent lines and shown under Excluded, so nothing deducted them and net income came out high by 40,000 in 2024. They are counted as operating expenses again; the normalization still adds back what it lists."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ]
+ },
+ "reclassifiedBalanceSheet": {
+  "rows": [
+   {
+    "id": "row_muj046cp_29",
+    "name": "Cash and deposits",
+    "values": {
+     "2021": 125720,
+     "2022": 164630,
+     "2023": 431720,
+     "2024": 642130
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muj046cp_30",
+    "name": "Accounts receivable (including holdbacks)",
+    "values": {
+     "2021": 1104000,
+     "2022": 1268000,
+     "2023": 1392000,
+     "2024": 1486000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muj046cp_31",
+    "name": "Contract assets \u2014 costs and earnings in excess of billings",
+    "values": {
+     "2021": 142000,
+     "2022": 171000,
+     "2023": 196000,
+     "2024": 238000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muj046cp_32",
+    "name": "Inventory \u2014 steel, components & consumables",
+    "values": {
+     "2021": 441000,
+     "2022": 486000,
+     "2023": 512000,
+     "2024": 544000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muj046cp_33",
+    "name": "Prepaid expenses & deposits",
+    "values": {
+     "2021": 35000,
+     "2022": 38000,
+     "2023": 41000,
+     "2024": 46000
+    },
+    "category": "Current Assets"
+   },
+   {
+    "id": "row_muj046cp_34",
+    "name": "Property and equipment (net)",
+    "values": {
+     "2021": 1812000,
+     "2022": 1948000,
+     "2023": 2066000,
+     "2024": 2184000
+    },
+    "category": "Fixed Assets"
+   },
+   {
+    "id": "row_muj046cp_35",
+    "name": "Accounts payable & accrued liabilities",
+    "values": {
+     "2021": 648000,
+     "2022": 712000,
+     "2023": 781000,
+     "2024": 842000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muj046cp_36",
+    "name": "Contract liabilities \u2014 billings in excess of costs and earnings",
+    "values": {
+     "2021": 96000,
+     "2022": 118000,
+     "2023": 142000,
+     "2024": 164000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muj046cp_37",
+    "name": "Income taxes payable",
+    "values": {
+     "2021": 12000,
+     "2022": 21000,
+     "2023": 29000,
+     "2024": 38000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muj046cp_38",
+    "name": "Government remittances payable",
+    "values": {
+     "2021": 54000,
+     "2022": 61000,
+     "2023": 66000,
+     "2024": 71000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muj046cp_39",
+    "name": "Current portion of long-term debt",
+    "values": {
+     "2021": 248000,
+     "2022": 262000,
+     "2023": 274000,
+     "2024": 286000
+    },
+    "category": "Current Liabilities"
+   },
+   {
+    "id": "row_muj046cp_40",
+    "name": "Long-term debt",
+    "values": {
+     "2021": 1604000,
+     "2022": 1342000,
+     "2023": 1068000,
+     "2024": 624000
+    },
+    "category": "Long-Term Liabilities"
+   },
+   {
+    "id": "row_muj046cp_41",
+    "name": "Share capital",
+    "values": {
+     "2021": 150950,
+     "2022": 150950,
+     "2023": 150950,
+     "2024": 150950
+    },
+    "category": "Equity"
+   },
+   {
+    "id": "row_muj046cp_42",
+    "name": "Retained earnings",
+    "values": {
+     "2021": 846770,
+     "2022": 1408680,
+     "2023": 2127770,
+     "2024": 2964180
+    },
+    "category": "Equity"
+   }
+  ],
+  "notes": [
+   "Accounts receivable includes statutory 10% holdbacks on commercial construction contracts per Alberta Prompt Payment and Construction Lien Act. Holdbacks: $118,000 at Dec 31, 2024 ($104,000 in 2023).",
+   "Accounts receivable aging as of May 31, 2025: Current (0-30 days) $972,600 (63.6%), 31-60 days $344,800 (22.5%), 61-90 days $42,500 (2.8%), Over 90 days $47,600 (3.1%), Holdback $122,900 (8.0%). Total AR $1,530,400.",
+   "Disputed receivables: Coldbrook Oilfield Rentals Ltd. $38,700 over 90 days (claims late delivery on Oct 2024 job, sent to collections Mar 2025, no allowance booked). Castleford Builders Ltd. disputed back-charge $12,800 in 61-90 day bucket.",
+   "Contract assets/liabilities: Percentage-of-completion accounting based on cost-to-cost method. At Dec 31, 2024: contract assets (under-billings) $238,000, contract liabilities (over-billings) $164,000, net under-billed $74,000.",
+   "Property and equipment: Net book value $2,184,000 at Dec 31, 2024 (gross $6,524,000 less accumulated amortization $4,340,000). Major additions in 2024: CNC high-definition plasma cutting table $468,000 (includes $140,000 deposit paid Nov 2023).",
+   "Long-term debt: Northreach Commercial Bank equipment term loan $1,058,000 at Dec 31, 2023 (4.25% fixed, matures Nov 2027, secured by general security agreement and limited personal guarantee); vehicle and equipment loans $284,000 (4.9%-6.9%, secured by specific assets, maturing 2026-2028). Voluntary prepayment of $158,000 on equipment term loan in 2024.",
+   "Dividends: Class D dividends of $60,000 paid in each of 2022, 2023, and 2024 (discretionary, non-proportional to Class A shares, paid to Gord McAllister as sole Class D shareholder).",
+   "Working capital: Cash-free, debt-free net working capital calculated as current assets (excluding cash) less current liabilities (excluding current portion of long-term debt and income taxes payable).",
+   "All figures tie to compiled financial statements and T2 corporate tax returns for fiscal years ending December 31."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ]
+ },
+ "reclassifiedCashFlow": {
+  "rows": [
+   {
+    "id": "row_muj046cp_43",
+    "name": "Net income",
+    "values": {
+     "2021": 484250,
+     "2022": 601910,
+     "2023": 779090,
+     "2024": 896410
+    },
+    "category": "Operating"
+   },
+   {
+    "id": "row_muj046cp_44",
+    "name": "Amortization",
+    "values": {
+     "2021": 251000,
+     "2022": 268000,
+     "2023": 286000,
+     "2024": 312000
+    },
+    "category": "Operating"
+   },
+   {
+    "id": "row_muj046cp_45",
+    "name": "Changes in non-cash working capital",
+    "values": {
+     "2021": -83000,
+     "2022": -138000,
+     "2023": -72000,
+     "2024": -76000
+    },
+    "category": "Operating"
+   },
+   {
+    "id": "row_muj046cp_46",
+    "name": "Cash from operating activities",
+    "values": {
+     "2021": 652250,
+     "2022": 730910,
+     "2023": 993090,
+     "2024": 1132410
+    },
+    "category": "Operating"
+   },
+   {
+    "id": "row_muj046cp_47",
+    "name": "Purchase of property and equipment",
+    "values": {
+     "2021": -362000,
+     "2022": -404000,
+     "2023": -404000,
+     "2024": -430000
+    },
+    "category": "Investing"
+   },
+   {
+    "id": "row_muj046cp_48",
+    "name": "Repayment of long-term debt",
+    "values": {
+     "2021": -236000,
+     "2022": -248000,
+     "2023": -262000,
+     "2024": -432000
+    },
+    "category": "Financing"
+   },
+   {
+    "id": "row_muj046cp_49",
+    "name": "Dividends paid",
+    "values": {
+     "2021": -40000,
+     "2022": -40000,
+     "2023": -60000,
+     "2024": -60000
+    },
+    "category": "Financing"
+   },
+   {
+    "id": "row_muj046cp_50",
+    "name": "Net increase in cash",
+    "values": {
+     "2021": 14250,
+     "2022": 38910,
+     "2023": 267090,
+     "2024": 210410
+    },
+    "category": "Operating"
+   }
+  ],
+  "notes": [
+   "Cash from operating activities: Strong and growing, from $652,250 in 2021 to $1,132,410 in 2024, reflecting improving profitability and working capital management.",
+   "Capital expenditures: Consistent annual capex of $362,000-$430,000 for equipment replacement and upgrades. Major 2024 addition: CNC high-definition plasma cutting table $468,000 (includes $140,000 deposit paid Nov 2023).",
+   "Debt repayment: Accelerated in 2024 with $432,000 repayment (2023: $262,000), including voluntary prepayment of $158,000 on equipment term loan. Total long-term debt reduced from $1,604,000 at end of 2021 to $624,000 at end of 2024.",
+   "Dividends: Class D dividends paid to majority shareholder Gord McAllister: $40,000 in 2021-2022, $60,000 in 2023-2024. These are distributions of after-tax profit and are not add-backs to EBITDA or SDE.",
+   "Cash position: Grew from $125,720 at end of 2021 to $642,130 at end of 2024, providing strong liquidity.",
+   "All figures tie to compiled financial statements for fiscal years ending December 31."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ]
+ },
+ "arAging": {
+  "notes": [
+   "AR aging schedule for Ridgeline Metal Fabrication Inc. as of May 31, 2025",
+   "Prepared by D. McAllister from accounting system",
+   "Sample document \u2014 fictional business for demonstration",
+   "Currency assumed CAD based on Alberta jurisdiction (Prompt Payment and Construction Lien Act, Alberta)",
+   "Days sales outstanding: 55 days (based on trailing 12 months revenue approx. $10.1M)",
+   "Allowance for doubtful accounts booked: $0",
+   "Holdbacks are statutory 10% holdbacks on commercial construction contracts per Alberta law",
+   "One disputed account (Coldbrook Oilfield Rentals Ltd.) for $38,700 sent to collections in March 2025 with no allowance booked",
+   "One disputed back-charge (Castleford Builders Ltd.) for $12,800 in 61-90 day bucket",
+   "Total AR: $1,530,400 with breakdown: Current (63.6%), 31-60 days (22.5%), 61-90 days (2.8%), Over 90 days (3.1%), Holdback (8.0%)"
+  ],
+  "periods": [
+   "2025-05-31"
+  ],
+  "currency": "CAD",
+  "lineItems": [
+   {
+    "label": "Larkspur Midstream Services Ltd.",
+    "notes": "Net 45 terms; MSA; pays reliably on day 40-45",
+    "amounts": {
+     "2025-05-31_31_60": 148600,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 461000,
+     "2025-05-31_current": 312400,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Prairie Crest Grain Co-operative",
+    "notes": "Net 30 terms; 61-90 is a change-order invoice awaiting sign-off",
+    "amounts": {
+     "2025-05-31_31_60": 41200,
+     "2025-05-31_61_90": 18500,
+     "2025-05-31_total": 156500,
+     "2025-05-31_current": 96800,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Bowline Construction Group Inc.",
+    "notes": "Net 30 + holdback terms; Holdback released 60 days after substantial completion",
+    "amounts": {
+     "2025-05-31_31_60": 62100,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 225000,
+     "2025-05-31_current": 88300,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 74600
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Halvorsen Process Systems Ltd.",
+    "notes": "Net 30 terms",
+    "amounts": {
+     "2025-05-31_31_60": 22400,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 94300,
+     "2025-05-31_current": 71900,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Castleford Builders Ltd.",
+    "notes": "Net 30 + holdback terms; School project; 61-90 disputed back-charge $12.8K",
+    "amounts": {
+     "2025-05-31_31_60": 0,
+     "2025-05-31_61_90": 12800,
+     "2025-05-31_total": 80400,
+     "2025-05-31_current": 38200,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 29400
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Whitemud Ag Equipment Ltd.",
+    "notes": "Net 30 terms",
+    "amounts": {
+     "2025-05-31_31_60": 0,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 44600,
+     "2025-05-31_current": 44600,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Sandhill Energy Services Ltd.",
+    "notes": "Net 30 terms",
+    "amounts": {
+     "2025-05-31_31_60": 9800,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 41500,
+     "2025-05-31_current": 31700,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Corwin Mechanical Contractors Ltd.",
+    "notes": "Net 30 + holdback terms",
+    "amounts": {
+     "2025-05-31_31_60": 0,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 46200,
+     "2025-05-31_current": 27300,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 18900
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Ironvale Pipeline Construction Ltd.",
+    "notes": "Net 30 terms",
+    "amounts": {
+     "2025-05-31_31_60": 0,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 22800,
+     "2025-05-31_current": 22800,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Birchfield Colony Farming Co. Ltd.",
+    "notes": "Net 30 terms",
+    "amounts": {
+     "2025-05-31_31_60": 16400,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 16400,
+     "2025-05-31_current": 0,
+     "2025-05-31_over_90": 0,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "Coldbrook Oilfield Rentals Ltd.",
+    "notes": "Net 30 terms; DISPUTED \u2014 customer claims late delivery (Oct 2024 job). Sent to collections Mar 2025. No allowance booked.",
+    "amounts": {
+     "2025-05-31_31_60": 0,
+     "2025-05-31_61_90": 0,
+     "2025-05-31_total": 38700,
+     "2025-05-31_current": 0,
+     "2025-05-31_over_90": 38700,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "All other customers (41 accounts)",
+    "notes": "Various terms; aggregated 41 accounts",
+    "amounts": {
+     "2025-05-31_31_60": 44300,
+     "2025-05-31_61_90": 11200,
+     "2025-05-31_total": 303000,
+     "2025-05-31_current": 238600,
+     "2025-05-31_over_90": 8900,
+     "2025-05-31_holdback": 0
+    },
+    "isTotal": false,
+    "category": "customer_detail",
+    "isSubtotal": false,
+    "subcategory": "customer_receivable"
+   },
+   {
+    "label": "TOTAL",
+    "notes": "Total accounts receivable as of May 31, 2025",
+    "amounts": {
+     "2025-05-31_31_60": 344800,
+     "2025-05-31_61_90": 42500,
+     "2025-05-31_total": 1530400,
+     "2025-05-31_current": 972600,
+     "2025-05-31_over_90": 47600,
+     "2025-05-31_holdback": 122900
+    },
+    "isTotal": true,
+    "category": "total",
+    "isSubtotal": false,
+    "subcategory": "total_receivables"
+   }
+  ],
+  "confidence": 0.98,
+  "statementType": "ar_aging",
+  "sourceDocumentId": "29b85059-cc59-4764-94be-92a4d6b29694",
+  "basisOfAccounting": "accrual",
+  "sourceDocumentName": "AR aging as of May 31, 2025"
+ },
+ "normalization": {
+  "notes": [
+   "Adjusted EBITDA calculation: Net income + Amortization + Interest + Taxes + One-time expenses (crane rebuild, legal fees, Silverthorn bad debt excess) + Discretionary expenses (Donna salary above market, owner's truck & personal, hockey sponsorship).",
+   "SDE calculation: Adjusted EBITDA + Owner's full compensation (management salary $180,000). The market salary of $165,000 is already included in adjusted EBITDA (only the $15,000 excess is added back), so SDE = Adjusted EBITDA + $165,000.",
+   "2024 Adjusted EBITDA: $896,410 (net income) + $312,000 (D&A) + $58,000 (interest) + $131,590 (taxes) + $64,000 (crane) + $18,000 (legal) + $12,000 (hockey) + $28,000 (truck) + $17,000 (Donna excess) = $1,537,000.",
+   "Check: the note above states 2024 adjusted EBITDA as $1,537,000; the add-backs listed here compute $1,552,000.",
+   "2024 SDE: $1,537,000 (adjusted EBITDA) + $165,000 (market GM salary) = $1,702,000.",
+   "Check: the note above states 2024 SDE as $1,702,000; the add-backs listed here compute $1,717,000.",
+   "Seller's claimed adjusted EBITDA of 'close to 1.8' ($1,800,000) includes the owner's full $180,000 salary, which is only partially an add-back to adjusted EBITDA ($15,000 above market). The seller's figure is closer to SDE ($1,702,000) than adjusted EBITDA ($1,537,000).",
+   "Dividends: Class D dividends of $60,000 paid in 2024 (and 2023) are distributions of after-tax profit from retained earnings. They do not appear on the P&L and are not add-backs to EBITDA or SDE.",
+   "Owner's total compensation: The seller's add-back list claims $260,000 total owner compensation, which appears to include salary ($180,000 T4) + dividends ($60,000 T5) + personal expenses ($28,000) = $268,000. However, only the salary ($180,000) is an expense on the P&L and thus an add-back. Dividends are not an add-back. Personal expenses ($28,000) are a separate discretionary add-back.",
+   "Market salary estimate: A general manager for a $10M industrial fabrication shop in Alberta with 42 employees, CWB Division 2 certification, and customer relationship management responsibilities would command approximately $165,000 in total compensation (base salary + benefits). This is a conservative estimate; some buyers may use a lower replacement cost.",
+   "Donna McAllister: Paid $62,000 in 2024 for part-time bookkeeping (office management per T4 summary). Market rate for a part-time bookkeeper in Leduc/Nisku area is estimated at $45,000. The $17,000 excess is treated as a discretionary add-back (family member above-market compensation).",
+   "One-time expenses: Crane rebuild ($64,000) and legal fees for shareholder agreement amendment ($18,000) are clearly one-time and supported by financial statements. Seller states crane rebuild won't recur for 20 years.",
+   "Discretionary expenses: Hockey sponsorship ($12,000) and owner's truck & personal expenses ($28,000) are discretionary and supported by seller's add-back list. These are typical owner perks in a closely-held business.",
+   "Bad debts: The 2022 bad debt of $22,000 (Silverthorn Energy receivership) is significantly higher than 2023 ($9,000) and 2024 ($12,000). The excess of $11,500 above the average of $10,500 is treated as non-recurring. Ongoing bad debt expense of approximately $10,000-$12,000 per year is normal for this business.",
+   "Interest expense: Declining from $79,000 in 2021 to $58,000 in 2024 as long-term debt is paid down. A buyer may have different financing costs.",
+   "Taxes: Current income taxes on taxes payable method. CCA claimed for tax purposes exceeds book amortization in all years, creating a timing difference but no deferred tax liability is recorded (compilation engagement).",
+   "Growth trajectory: Adjusted EBITDA has grown from $875,000 in 2021 to $1,537,000 in 2024 (76% growth over 3 years), driven by revenue growth (29% over same period) and improving margins.",
+   "Margin analysis: Adjusted EBITDA margin improved from 11.4% in 2021 to 15.7% in 2024. SDE margin improved from 13.5% in 2021 to 17.3% in 2024.",
+   "Working capital: The business generates strong operating cash flow ($1,132,410 in 2024) and has minimal working capital requirements relative to revenue. Cash conversion is excellent.",
+   "Buyer considerations: A buyer may have different financing costs (interest), tax rates, and depreciation schedules. A buyer may also have different discretionary expenses (no hockey sponsorship, different vehicle policy). The normalized EBITDA and SDE figures provide a baseline for valuation and comparison.",
+   "Income Statement net income now ties to the reported net income used here (Owner's truck & personal expenses, Hockey sponsorship (Leduc junior team, discretionary) counted as expenses again on the Income Statement)."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "metric": "sde",
+  "addbacks": [
+   {
+    "id": "ab_muj046cq_51",
+    "type": "ebitda",
+    "label": "Owner compensation (President \u2014 Gord McAllister)",
+    "amounts": {
+     "2021": 15000,
+     "2022": 15000,
+     "2023": 15000,
+     "2024": 15000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "Owner's pay $180,000 (2024) less a $165,000 market salary for the role: the difference counts for EBITDA and SDE; the market salary is added back for SDE only. Management salary paid to majority shareholder Gord McAllister per T4. A general manager for this role would cost approximately $165,000 (market salary for operations-focused GM in Alberta industrial fabrication sector).",
+    "marketSalary": 165000,
+    "ownerCompPart": "excess",
+    "ownerActualComp": {
+     "2021": 180000,
+     "2022": 180000,
+     "2023": 180000,
+     "2024": 180000
+    }
+   },
+   {
+    "id": "ab_muj046cq_51_market",
+    "type": "sde",
+    "label": "Owner compensation (President \u2014 Gord McAllister) \u2014 market salary",
+    "amounts": {
+     "2021": 165000,
+     "2022": 165000,
+     "2023": 165000,
+     "2024": 165000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "SDE adds back the owner's full pay; this is the market-salary part. A buyer who hires someone for the role pays it, so it is not added back to EBITDA.",
+    "ownerCompPart": "market"
+   },
+   {
+    "id": "ab_muj046cq_52",
+    "label": "Donna McAllister salary above market (bookkeeper)",
+    "amounts": {
+     "2023": 13000,
+     "2024": 17000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Donna McAllister (owner's wife) paid $62,000 in 2024 ($58,000 in 2023) for part-time bookkeeping. Market rate for part-time bookkeeper estimated at $45,000. Excess above market: $17,000 in 2024, $13,000 in 2023."
+   },
+   {
+    "id": "ab_muj046cq_53",
+    "label": "Owner's truck & personal expenses",
+    "amounts": {
+     "2024": 28000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Owner's truck on company (fuel, insurance), personal meals, cell phone, season tickets. Per seller's add-back list."
+   },
+   {
+    "id": "ab_muj046cq_54",
+    "label": "Crane rebuild (both 10-ton cranes, one-time)",
+    "amounts": {
+     "2024": 64000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Rebuild of both 10-ton overhead cranes in summer 2024: new hoists, end trucks, pendants. Deducted as current expense. Won't recur for 20 years per seller."
+   },
+   {
+    "id": "ab_muj046cq_55",
+    "label": "Legal fees \u2014 shareholder agreement amendment (one-time)",
+    "amounts": {
+     "2024": 18000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Legal fees for unanimous shareholder agreement amendment in November 2024 to facilitate sale. One-time expense."
+   },
+   {
+    "id": "ab_muj046cq_56",
+    "label": "Hockey sponsorship (Leduc junior team, discretionary)",
+    "amounts": {
+     "2024": 12000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Discretionary sponsorship of Leduc junior hockey team. Per seller's add-back list."
+   },
+   {
+    "id": "ab_muj046cq_57",
+    "label": "Amortization of property and equipment",
+    "amounts": {
+     "2021": 251000,
+     "2022": 268000,
+     "2023": 286000,
+     "2024": 312000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Non-cash depreciation expense. Book amortization differs from CCA claimed for tax purposes."
+   },
+   {
+    "id": "ab_muj046cq_58",
+    "label": "Interest on long-term debt",
+    "amounts": {
+     "2021": 79000,
+     "2022": 71000,
+     "2023": 66000,
+     "2024": 58000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Interest expense on equipment term loan and vehicle/equipment loans. Declining as debt is paid down."
+   },
+   {
+    "id": "ab_muj046cq_59",
+    "label": "Income taxes \u2014 current",
+    "amounts": {
+     "2021": 60750,
+     "2022": 97090,
+     "2023": 150910,
+     "2024": 131590
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Current income taxes on taxes payable method (no deferred taxes recorded). CCA exceeds book amortization in all years."
+   },
+   {
+    "id": "ab_muj046cq_60",
+    "label": "Silverthorn Energy receivership bad debt (one-time)",
+    "amounts": {
+     "2022": 11500
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2022 bad debt of $22,000 was single customer (Silverthorn Energy Services) which went into receivership in September 2022. 2023 and 2024 bad debts ($9,000 and $12,000) are ordinary small write-offs. The $22,000 is treated as non-recurring; the $16,000 excess above the 2023-2024 average of $10,500 is added back."
+   }
+  ],
+  "computed": {
+   "sde": {
+    "2021": 1055000,
+    "2022": 1229500,
+    "2023": 1475000,
+    "2024": 1717000
+   },
+   "latestYear": "2024",
+   "adjustedEbitda": {
+    "2021": 890000,
+    "2022": 1064500,
+    "2023": 1310000,
+    "2024": 1552000
+   },
+   "reportedEbitda": {
+    "2021": 875000,
+    "2022": 1038000,
+    "2023": 1282000,
+    "2024": 1398000
+   }
+  },
+  "netIncome": {
+   "2021": 484250,
+   "2022": 601910,
+   "2023": 779090,
+   "2024": 896410
+  },
+  "adjustedSde": 1717000,
+  "adjustedEbitda": 1552000
+ },
+ "workingCapital": {
+  "notes": [
+   "Working capital is calculated on a cash-free, debt-free basis: current assets (excluding cash) less current liabilities (excluding current portion of long-term debt and income taxes payable).",
+   "Working capital as % of revenue: 12.6% in 2024 (2023: 12.5%, 2022: 11.3%, 2021: 10.8%). Relatively stable and consistent.",
+   "Accounts receivable: Includes statutory 10% holdbacks on commercial construction contracts ($118,000 at Dec 31, 2024). Days sales outstanding approximately 55 days based on trailing 12 months revenue.",
+   "Disputed receivables: Coldbrook Oilfield Rentals Ltd. $38,700 over 90 days (sent to collections Mar 2025, no allowance booked). Castleford Builders Ltd. disputed back-charge $12,800 in 61-90 day bucket. Total disputed: $51,500 (3.5% of AR).",
+   "Contract assets/liabilities: Net under-billed position of $74,000 at Dec 31, 2024 (contract assets $238,000 less contract liabilities $164,000). This represents work performed but not yet billed on percentage-of-completion contracts.",
+   "Inventory: Steel, components, and consumables. Inventory turns approximately 6.3x per year (COGS $6,868,000 / average inventory $528,000). Relatively lean inventory management.",
+   "Accounts payable: Includes trade payables to steel suppliers and subcontractors. Payment terms typically net 30 days.",
+   "Government remittances: Payroll source deductions (CPP, EI, income tax withholdings) and GST/HST payable. Remitted monthly.",
+   "Buyer considerations: A buyer should review the AR aging and disputed receivables closely. The Coldbrook receivable ($38,700) may not be collectible. Contract assets/liabilities should be validated against the WIP report and job costing system. Inventory should be physically verified and obsolete/slow-moving items identified.",
+   "Suggested peg $1,096,250: the average of year-end net working capital (2021 $924,000, 2022 $1,072,000, 2023 $1,152,000, 2024 $1,237,000), on the same cash-free, debt-free basis. Monthly balance sheets would allow a trailing-twelve-month average; any allowance for growth or seasonality is yours to negotiate."
+  ],
+  "history": {
+   "2021": 924000,
+   "2022": 1072000,
+   "2023": 1152000,
+   "2024": 1237000
+  },
+  "pegBasis": "Average of year-end net working capital, 2021\u20132024 (4 balance sheets)",
+  "pegAmount": 1096250,
+  "targetNwc": 1096250,
+  "asOfPeriod": "2024-12-31",
+  "currentAssets": [
+   {
+    "name": "Accounts receivable (including holdbacks)",
+    "amount": 1486000
+   },
+   {
+    "name": "Contract assets \u2014 costs and earnings in excess of billings",
+    "amount": 238000
+   },
+   {
+    "name": "Inventory \u2014 steel, components & consumables",
+    "amount": 544000
+   },
+   {
+    "name": "Prepaid expenses & deposits",
+    "amount": 46000
+   }
+  ],
+  "netWorkingCapital": 1237000,
+  "currentLiabilities": [
+   {
+    "name": "Accounts payable & accrued liabilities",
+    "amount": 842000
+   },
+   {
+    "name": "Contract liabilities \u2014 billings in excess of costs and earnings",
+    "amount": 164000
+   },
+   {
+    "name": "Government remittances payable",
+    "amount": 71000
+   }
+  ]
+ },
+ "comps": {
+  "dataSource": "manual",
+  "comparables": [],
+  "generatedAt": "2026-09-26T23:08:52.450Z",
+  "impliedValuation": {
+   "bySde": null,
+   "byEbitda": null,
+   "byRevenue": null
+  },
+  "medianSdeMultiple": null,
+  "medianEbitdaMultiple": null,
+  "medianRevenueMultiple": null
+ },
+ "insights": {
+  "neutral": [
+   {
+    "id": "in_muj046cr_83",
+    "type": "neutral",
+    "title": "Stable gross margin in 28-30% range",
+    "detail": "Gross margin: 28.7% (2021), 29.2% (2022), 30.0% (2023), 30.0% (2024). Consistent and stable, indicating disciplined pricing and cost control. Job-level margins vary by segment: O&G 23-28%, Commercial 21-24%, Ag 25-28%, Small jobs 29%.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_84",
+    "type": "neutral",
+    "title": "Working capital as % of revenue stable at 11-13%",
+    "detail": "Net working capital as % of revenue: 10.8% (2021), 11.3% (2022), 12.5% (2023), 12.6% (2024). Relatively stable and consistent. Working capital peg will be set at average of year-end NWC (~$1.04M).",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_85",
+    "type": "neutral",
+    "title": "Seasonal revenue pattern with Q1 slowest, summer busiest",
+    "detail": "Q1 slowest due to winter weather and customer budget cycles. Summer busiest (ag customers want delivery before harvest, commercial building season). Oil and gas work is year-round. 2024 revenue by quarter: Q1 $2.16M, Q2 $2.65M, Q3 $2.75M, Q4 $2.26M.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_86",
+    "type": "neutral",
+    "title": "Related-party rent at market rate",
+    "detail": "Rent paid to McAllister Properties Ltd. (seller's holdco) at $12.00/sq ft net in 2024 ($336,000/year), $11.50/sq ft in 2022-2023 ($322,000/year). Lease rate set from independent market rent letter December 2021. Appraiser's market rent range $12.00-$12.75/sq ft.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_87",
+    "type": "neutral",
+    "title": "Minority shareholder (Luis Ortega) holds 15% and wants to stay",
+    "detail": "Luis Ortega owns 15% of Class A voting shares (Gord McAllister 85%). Shareholder agreement amended Nov 2024 to waive Luis's right of first refusal for 100% sale to arm's-length buyer (closing by Nov 18, 2026). Luis gets same price per share (tag-along) and option to roll equity if buyer agrees. 80% drag-along provision exists.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_88",
+    "type": "neutral",
+    "title": "Compilation engagement (unaudited financials)",
+    "detail": "Financial statements are compiled by Kwan & Brodeur LLP under CSRS 4200 (compilation engagement). Not audited or reviewed. Buyer should conduct financial due diligence and may request review or audit.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_89",
+    "type": "neutral",
+    "title": "Income taxes on taxes payable method (no deferred taxes)",
+    "detail": "Current income taxes only; no deferred tax assets or liabilities recorded. CCA claimed for tax purposes exceeds book amortization in all years, creating timing differences. Buyer's tax position may differ.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_90",
+    "type": "neutral",
+    "title": "Dividends paid to owner are not add-backs",
+    "detail": "Class D dividends of $60,000 paid in 2024 (and 2023) to Gord McAllister are distributions of after-tax profit from retained earnings. They do not appear on the P&L and are not add-backs to EBITDA or SDE. Seller's claimed owner compensation of $260,000 appears to include dividends, but only the salary ($180,000) is an add-back.",
+    "cimSection": "financialOverview"
+   }
+  ],
+  "negative": [
+   {
+    "id": "in_muj046cr_73",
+    "type": "negative",
+    "title": "Customer concentration risk \u2014 Larkspur vendor consolidation",
+    "detail": "Larkspur (18% of revenue, 20-year customer) is consolidating vendors in 2026 from 8 to 3 approved fabricators. MSA will be re-bid. Seller is confident Ridgeline will make the short list based on track record, but there is execution risk. Loss of Larkspur would be material.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_74",
+    "type": "negative",
+    "title": "Top 3 customers represent 41% of revenue",
+    "detail": "Larkspur 18%, Prairie Crest 13%, Bowline 10%. Top 10 customers represent 68% of revenue. Customer concentration has increased from 35% (top 3) in 2022 to 41% in 2024. Loss of any top customer would impact revenue and profitability.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_75",
+    "type": "negative",
+    "title": "Key person risk \u2014 Devin (estimator)",
+    "detail": "Devin has 13 years experience, prices all jobs over $50K, knows shop rates and fabrication times, and has no employment contract or non-compete. Identified as flight risk (other shops call him). Losing Devin would slow bid pipeline and hurt competitiveness. Retention bonus recommended.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_76",
+    "type": "negative",
+    "title": "Owner-dependent sales and customer relationships",
+    "detail": "Gord McAllister (owner) is the sole sales department with VP-level customer relationships built over 29 years. No formal sales team or CRM system. Transition risk if key customers don't accept new ownership. Gord committed to 12-month full-time transition, then 12 months part-time consulting.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_77",
+    "type": "negative",
+    "title": "Disputed receivables and collection risk",
+    "detail": "Coldbrook Oilfield Rentals $38,700 over 90 days (claims late delivery, sent to collections Mar 2025, no allowance booked). Castleford Builders disputed back-charge $12,800. Total disputed $51,500 (3.5% of AR). Collectability uncertain.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_78",
+    "type": "negative",
+    "title": "Lease expiry and real estate uncertainty",
+    "detail": "Current lease expires Dec 31, 2026 (19 months from closing). Seller offers new 10-year lease at $12.50/sq ft or building purchase at $4.1M, but buyer must decide. Relocation would be costly and disruptive. Lease renewal terms must be negotiated pre-closing.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_79",
+    "type": "negative",
+    "title": "Equipment replacement needs",
+    "detail": "110-ton press brake due for replacement within 2 years (~$180K). Secondary CNC plasma table needs replacement within 2 years (~$200K). 8,000 lb forklift fair condition, replacement within 2-3 years (~$50K). Total near-term capex ~$430K.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_80",
+    "type": "negative",
+    "title": "Tight labor market and journeyman hiring difficulty",
+    "detail": "Very difficult to hire journeyman welders and fitters in Nisku market. Two senior journeymen (Walt and Henry) retiring in 2-3 years. Apprenticeship program helps but takes 4 years to develop a journeyman. Wage pressure and retention risk.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_81",
+    "type": "negative",
+    "title": "No bonding capacity",
+    "detail": "No bonding facility in place. Not required for current customer base (O&G and ag don't require, GCs bond at general contract level). Walked away from one government bid ~10 years ago due to bonding cost. Buyer would need to establish bonding line to pursue prime contractor or public sector work.",
+    "cimSection": "riskFactors"
+   },
+   {
+    "id": "in_muj046cr_82",
+    "type": "negative",
+    "title": "Backlog discrepancy and Westlock PO uncertainty",
+    "detail": "Seller stated $4.2M backlog as of end of May 2025, but WIP report shows $3.1M signed backlog. Discrepancy of $1.1M appears to be Prairie Crest Westlock terminal project (verbal award May 22, 2025, PO not yet issued, board approval pending end of June). If PO is not received, backlog is overstated.",
+    "cimSection": "riskFactors"
+   }
+  ],
+  "positive": [
+   {
+    "id": "in_muj046cr_61",
+    "type": "positive",
+    "title": "Strong revenue growth trajectory",
+    "detail": "Revenue grew 29% from $7.68M in 2021 to $9.82M in 2024, with consistent year-over-year increases (9.6% in 2022, 8.8% in 2023, 7.2% in 2024). YTD Jan-May 2025 revenue is $4.18M, up 8% vs prior year, indicating continued momentum.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_62",
+    "flag": "the normalization computes 2024 adjusted EBITDA as $1,552,000, not $1,537,000",
+    "type": "positive",
+    "title": "Improving profitability and margins",
+    "detail": "EBITDA grew 76% from $875,000 in 2021 to $1,537,000 in 2024. Adjusted EBITDA margin improved from 11.4% to 15.7%. SDE margin improved from 13.5% to 17.3%. Gross margin stable at 28.7%-30.0%. (Check: the normalization computes 2024 adjusted EBITDA as $1,552,000, not $1,537,000.)",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_63",
+    "type": "positive",
+    "title": "Strong cash generation and balance sheet",
+    "detail": "Cash from operations grew from $652,000 in 2021 to $1,132,000 in 2024. Cash position increased from $126,000 to $642,000. Long-term debt reduced from $1,604,000 to $624,000 (61% reduction). Debt-to-equity ratio improved from 1.85x to 0.33x.",
+    "cimSection": "financialOverview"
+   },
+   {
+    "id": "in_muj046cr_64",
+    "type": "positive",
+    "title": "Diversified revenue base across three sectors",
+    "detail": "Revenue mix: Oil & gas 45%, Commercial construction 26%, Agriculture 22%, Repair & field service 7%. No single industry segment dominates, providing resilience through commodity and construction cycles.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_65",
+    "type": "positive",
+    "title": "Long-tenured customer relationships",
+    "detail": "Top customer Larkspur (18% of revenue) has been a customer since 2005 (20 years). Many top 10 customers have 5-10+ year relationships. Repeat customer work generates higher margins.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_66",
+    "type": "positive",
+    "title": "CWB Division 2 certification and quality reputation",
+    "detail": "CWB Division 2 certified since 2011 with 40+ approved weld procedures. Annual CWB audits with no major findings. Customer audits (Larkspur, Halvorsen) with strong track record. 100% on-time delivery to Larkspur over 20 years.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_67",
+    "type": "positive",
+    "title": "Modern equipment and recent capital investment",
+    "detail": "New CNC high-definition plasma table ($468,000, 2024), CNC beam drill & saw line ($486,000, 2021), CNC press brake ($312,000, 2019). Two 10-ton cranes rebuilt in 2024 ($64,000). Total equipment NBV $2,184,000, FMV estimated at $2,441,000.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_68",
+    "type": "positive",
+    "title": "Stable, long-tenured workforce",
+    "detail": "42 employees with journeymen averaging ~9 years tenure. Low turnover (haven't lost a good journeyman to another shop in 5 years). Red Seal welders, CWB-certified welding supervisors. Apprenticeship program with two fourth-year apprentices ready to replace retiring journeymen.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_69",
+    "type": "positive",
+    "title": "Strong safety record",
+    "detail": "No lost-time accidents since 2021. COR certified since 2010. TRIF 1.1 in 2024. WCB rate decreased in 2024. Daily hazard assessments and weekly toolbox talks.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_70",
+    "type": "positive",
+    "title": "Solid backlog and pipeline",
+    "detail": "Signed backlog of $3.1M as of May 31, 2025 (WIP report). Open quotes of $2.2M including $1.1M Prairie Crest Westlock terminal (verbal award pending PO). Historical quote win rate ~35%.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_71",
+    "type": "positive",
+    "title": "Experienced operations manager committed to staying",
+    "detail": "Luis Ortega (15% shareholder, VP Operations) has been with the company since 2004, holds Red Seal and CWB welding supervisor ticket, and wants to stay post-sale. Shareholder agreement amended Nov 2024 to facilitate sale with Luis's tag-along rights and option to roll equity.",
+    "cimSection": "businessOverview"
+   },
+   {
+    "id": "in_muj046cr_72",
+    "type": "positive",
+    "title": "Real estate optionality",
+    "detail": "28,000 sq ft purpose-built facility on 3.1 acres in Nisku Industrial Business Park. Building owned by seller's holdco, appraised at $4.1M (Nov 2024). Buyer can purchase building or sign new 10-year lease at $12.50/sq ft net (market rate per independent appraisal).",
+    "cimSection": "businessOverview"
+   }
+  ]
+ },
+ "clarifyingQuestions": [
+  {
+   "id": "q_muj046cr_0",
+   "status": "pending",
+   "context": "Needed to accurately normalize owner compensation. Dividends are not an expense on the P&L and cannot be added back to EBITDA or SDE. Only the salary ($180,000) is an add-back. Personal expenses ($28,000) are a separate discretionary add-back. We want to ensure we're presenting the correct adjusted EBITDA and SDE figures.",
+   "question": "Can you confirm the exact composition of the $260,000 owner compensation figure you provided in your add-back list? The T4 shows $180,000 salary, the T5 shows $60,000 dividends, and you mentioned $28,000 in personal expenses (truck, etc.). Are you including all three in the $260,000, or is it salary + dividends only?",
+   "severity": "high"
+  },
+  {
+   "id": "q_muj046cr_1",
+   "status": "pending",
+   "context": "Critical for understanding the true backlog and revenue visibility. If the Westlock PO is not received, the backlog is $3.1M, not $4.2M. This affects the business's near-term revenue outlook and valuation. We need to present an accurate backlog figure to buyers.",
+   "question": "Your backlog figure of $4.2M as of end of May 2025 differs from the WIP report signed backlog of $3.1M. Does the $4.2M include the Prairie Crest Westlock terminal project ($1.1M verbal award, PO pending)? If so, what is the status of the PO and when do you expect it to be issued?",
+   "severity": "high",
+   "privateFigures": [
+    "$4.2m"
+   ]
+  },
+  {
+   "id": "q_muj046cr_2",
+   "status": "pending",
+   "context": "Larkspur is 18% of revenue and the vendor consolidation is a material risk. Buyers will want to understand the selection criteria, timeline, and Ridgeline's competitive position. This will inform their risk assessment and valuation.",
+   "question": "Can you provide more detail on the Larkspur vendor consolidation program and re-bid process? What are the criteria for making the short list? When will the decision be announced? What is your assessment of the likelihood that Ridgeline will be selected as one of the 3 approved fabricators?",
+   "severity": "high"
+  },
+  {
+   "id": "q_muj046cr_3",
+   "status": "pending",
+   "context": "This is 2.5% of total AR and may not be collectible. Buyers will want to know the collection status and may request a reserve or adjustment to the purchase price. We need to understand the collectability risk.",
+   "question": "What is the status of the Coldbrook Oilfield Rentals receivable ($38,700 over 90 days, sent to collections in March 2025)? Have you received any payment or settlement offer? What is your assessment of the likelihood of collection?",
+   "severity": "medium"
+  },
+  {
+   "id": "q_muj046cr_4",
+   "status": "pending",
+   "context": "Devin is identified as a key person risk and flight risk. Buyers will want to understand his compensation, motivations, and retention plan. A retention bonus is recommended, but we need to understand what it would take to keep him.",
+   "question": "Can you provide more detail on Devin's (estimator) compensation, tenure, and likelihood of staying post-sale? Would he be open to an employment contract or retention bonus? What would it take to retain him?",
+   "severity": "high"
+  },
+  {
+   "id": "q_muj046cr_5",
+   "status": "pending",
+   "context": "The current lease expires Dec 31, 2026 (19 months from closing). Buyers will want clarity on real estate options before making an offer. We need to present clear options in the CIM.",
+   "question": "What is your preference on the building: sell to the buyer at $4.1M or offer a new 10-year lease at $12.50/sq ft? Are you willing to do either, or do you have a strong preference? If lease, what are the proposed renewal terms?",
+   "severity": "high"
+  },
+  {
+   "id": "q_muj046cr_6",
+   "status": "pending",
+   "context": "Buyers will scrutinize discretionary add-backs. A detailed breakdown will support the add-back and make it more credible. We want to ensure the add-back is defensible.",
+   "question": "Can you provide a breakdown of the $28,000 in personal expenses (owner's truck, fuel, insurance, meals, cell, season tickets) by category? This will help buyers understand what is truly discretionary vs. business-related.",
+   "severity": "medium"
+  },
+  {
+   "id": "q_muj046cr_7",
+   "status": "pending",
+   "context": "The market salary for a replacement GM is a key input to the SDE calculation. Buyers will have their own views, but we want to ensure our estimate is reasonable and defensible. $165,000 is our estimate for a GM in Alberta industrial fabrication, but we want to confirm it aligns with your view.",
+   "question": "What is the market salary for a general manager to replace you in this business? You mentioned $165,000 in our discussion, but can you confirm this is a reasonable estimate based on your knowledge of the market?",
+   "severity": "medium",
+   "privateFigures": [
+    "$165,000"
+   ]
+  },
+  {
+   "id": "q_muj046cr_8",
+   "status": "pending",
+   "context": "Loss of experienced journeymen is a risk, especially in a tight labor market. Buyers will want to understand the succession plan and whether the two fourth-year apprentices are adequate replacements. We need to assess the workforce transition risk.",
+   "question": "Can you provide more detail on the two senior journeymen (Walt and Henry) who are retiring in 2-3 years? What are their roles, skills, and approximate retirement timelines? How will you replace them?",
+   "severity": "medium"
+  },
+  {
+   "id": "q_muj046cr_9",
+   "status": "pending",
+   "context": "This is a critical legal issue. If the MSA requires Larkspur's consent for a change of control, it could delay or derail the transaction. We need written confirmation or a copy of the MSA to verify your statement.",
+   "question": "What is the status of the Larkspur MSA change-of-control clause? You mentioned after reviewing the document that there is no consent requirement, but we have not received a copy of the MSA to verify. Can you provide a copy of the MSA or confirm in writing that there is no change-of-control consent clause?",
+   "severity": "high"
+  }
+ ],
+ "sourceDocumentIds": [
+  "af83039b-837c-4bfb-ba2f-302845adce72",
+  "29b85059-cc59-4764-94be-92a4d6b29694",
+  "f0341eb1-a29b-463a-ac62-189e6171a7d5",
+  "28c17be8-1f78-47b0-b8ad-423f6a6df20b",
+  "3796d897-770d-4ea8-add3-7c3aafdf1c7a",
+  "e7ef39ab-27a5-4083-a630-bacb38b8eedf",
+  "f9e44562-4dff-42c6-9acd-ff95f97d3346",
+  "18c7ba55-6c60-4c04-bfe4-f4262ba9a5a1",
+  "13505a4b-d237-4494-b789-004363db127d",
+  "f7b0a39e-f54e-4380-990d-d683f2947f2d",
+  "9479e29b-2d19-4f4b-b163-c83842f0d9ba",
+  "6c8fcf9d-f386-4466-a2ab-c027ef10d070",
+  "ba6b91e7-062b-4a41-85d4-19fe1018b473",
+  "36dbcbf0-8d26-4bc2-b4af-59dcdcea31c7",
+  "40e1a5c2-7566-4638-af05-6ed909a858c2",
+  "4550cf15-6cee-4f01-8607-20570861ebdd",
+  "72d51087-8c9c-4bb7-94e5-6477c6cc0f8e",
+  "63578b84-21a7-4a5c-9337-a6f2f7ba1b53",
+  "7ac3fd91-caed-481d-b3af-c6bbd6363094",
+  "8f40cee9-cdf0-46bd-90c8-8e6fc8e6d551",
+  "ea4f537f-637e-4a4e-8d0b-4a4390e94a7b"
+ ],
+ "aiReasoning": "This analysis is based on a comprehensive review of all available sources: T2 corporate tax returns (2022-2024), compiled financial statements (2021-2024), AR aging, WIP & backlog report, equipment list, customer concentration data, email threads, call transcripts, minute book extract, lease agreement, website text, CRM notes, seller questionnaire, and confirmed facts. The tax returns and compiled financial statements are the most authoritative sources for financial data and were used as the primary basis for the reclassified P&L, balance sheet, and cash flow statements. The accountant's emails (Heather Kwan at Kwan & Brodeur LLP) provided critical context on accounting policies, contract assets/liabilities, bad debts, and related-party transactions. The seller's interview, call transcripts, and email threads provided operational context, add-back justifications, and strategic insights. The WIP & backlog report and customer concentration data were used to assess revenue visibility and customer concentration risk. The confirmed facts were treated as authoritative and used to resolve conflicts in other sources. Key assumptions: (1) Market salary for a replacement GM is estimated at $165,000 based on Alberta industrial fabrication market norms. (2) Donna McAllister's market salary for part-time bookkeeping is estimated at $45,000, with the $17,000 excess treated as a discretionary add-back. (3) The Westlock project ($1.1M) is excluded from signed backlog because there is no PO, despite the seller's verbal award claim. (4) Dividends ($60,000 per year) are not add-backs because they are distributions of after-tax profit, not expenses on the P&L. (5) The seller's claimed owner compensation of $260,000 is incorrect because it includes dividends; the correct add-back is $180,000 (T4 salary only). Data quality concerns: (1) The backlog discrepancy ($4.2M claimed vs $3.1M signed) is critical and must be resolved. (2) The Larkspur MSA change-of-control clause needs written verification. (3) The Coldbrook receivable ($38,700) may not be collectible and should be reserved or adjusted. (4) The seller's add-back list includes dividends, which is incorrect and needs to be corrected. (5) The customer concentration risk (top 3 customers 41% of revenue, Larkspur vendor consolidation 2026) is material and must be disclosed. (6) Key person risk (Devin estimator, owner-dependent sales) is significant and needs a retention plan. Overall, the financial data is reliable and well-documented, but there are several operational and strategic risks that buyers will need to assess carefully. The normalized EBITDA and SDE figures provide a solid baseline for valuation, but the backlog discrepancy, customer concentration, and key person risks will affect buyer perception and pricing.\n\nFigures checked in code: Insight \"Improving profitability and margins\" states 2021 adjusted EBITDA 875,000; computed 890,000; Insight \"Improving profitability and margins\" states 2024 adjusted EBITDA 1,537,000; computed 1,552,000.",
+ "brokerNotes": null,
+ "brokerReviewedAt": null,
+ "createdAt": "2026-09-26T23:01:53.550Z",
+ "updatedAt": "2026-09-26T23:08:52.450Z"
+}

@@ -254,8 +254,8 @@ export function CoverPageRenderer({ layoutData, content, branding, section }: Re
             This document is strictly confidential and intended solely for the named recipient.
           </p>
         </div>
-        {/* Accent mark */}
-        {!light && <div className="hidden sm:block w-8 h-8 shrink-0 rounded-full border-2 opacity-25" style={{ borderColor: accent }} />}
+        {/* (No decorative mark here: an empty outline circle read as a
+            missing logo on every cover without a brand logo.) */}
       </div>
 
       {/* Bottom accent line */}

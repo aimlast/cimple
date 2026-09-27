@@ -42,6 +42,8 @@ import { buildBranding } from "@/components/cim/CimBrandingContext";
 import type { BrandingSettings, CimSectionOverride, Deal } from "@shared/schema";
 import { cn } from "@/lib/utils";
 import { useCimBuilder } from "@/components/cim-builder/useCimBuilder";
+import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
+import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { SectionList } from "@/components/cim-builder/SectionList";
 import { SectionInspector } from "@/components/cim-builder/SectionInspector";
@@ -74,7 +76,8 @@ export default function CIMDesigner() {
   const { toast } = useToast();
   const qc = useQueryClient();
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?section=<id> opens the builder on that section (links from the CIM tab's review panel).
+  const [selectedId, setSelectedId] = useState<string | null>(() => new URLSearchParams(window.location.search).get("section"));
   // ?preview=teaser|full|loi|due_diligence opens straight into a buyer preview
   // (the CIM tab's version cards link here).
   const [previewAs, setPreviewAs] = useState<PreviewAs>(() => {
@@ -138,6 +141,12 @@ export default function CIMDesigner() {
   const branding = buildBranding(brandingSettings as any, deal ?? null);
   const selected = sections.find((s) => s.id === selectedId) ?? null;
   const approvedCount = sections.filter((s) => s.brokerApproved).length;
+  // What "Regenerate all" does to buyers who can open the CIM now.
+  const regenImpact = regenerateBuyerImpact({
+    isLive: state?.deal.isLive,
+    openBuyers: state?.buyers.total,
+    approved: !!(deal?.contentApprovedByBroker || deal?.contentApprovedBySeller || deal?.designApprovedByBroker || deal?.designApprovedBySeller),
+  });
   const hiddenCount = sections.filter((s) => s.isVisible === false).length;
   const lockedCount = sections.filter((s) => s.accessTier === "full").length;
   const readOnly = previewAs !== "editor";
@@ -524,6 +533,19 @@ export default function CIMDesigner() {
         )}
       </div>
 
+      {/* What to review before publishing: the last run's notes, placeholders,
+          a hold from buyers, facts changed since it was written. */}
+      {state?.review && (
+        <CimReviewPanel
+          dealId={dealId}
+          review={state.review}
+          sections={sections}
+          compact
+          onOpenSection={(id) => select(id, "list")}
+          className="mx-2 sm:mx-3 my-2 shrink-0"
+        />
+      )}
+
       {/* ── Body ── */}
       <div className="flex-1 min-h-0 lg:grid lg:grid-cols-[280px_minmax(0,1fr)_360px]">
         <div className={cn("h-full min-h-0 lg:border-r border-border", pane === "sections" ? "block" : "hidden lg:block")}>{listPane}</div>
@@ -647,6 +669,7 @@ export default function CIMDesigner() {
                   <li>The blind and due-diligence versions</li>
                 </ul>
                 <p>To redo one section, select it and choose “Regenerate from the deal's information”.</p>
+                {regenImpact && <p className="text-foreground" data-testid="text-regenerate-buyer-impact">{regenImpact}</p>}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

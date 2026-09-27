@@ -14,13 +14,14 @@ import rateLimit from "express-rate-limit";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { cimSections, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
+import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
 import {
   BUYER_ACCESS_LEVELS,
   canAiRewriteLayout,
   canAiWriteLayout,
   defaultLayoutData,
   getCimLayout,
+  isCimFallbackSection,
   isCimLayoutKey,
   sameLayoutFamily,
   sectionTier,
@@ -57,6 +58,8 @@ import {
 import { REWRITE_TONES } from "../cim/layout-engine";
 import { refreshSectionDd } from "../cim/dd-enrichment";
 import { dealStreetAddress } from "@shared/cim-media";
+import { lastGenerationFacts } from "../cim/generation-jobs";
+import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -137,6 +140,8 @@ function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: b
     ddStatus: ddStatusOf(s, dd.generated, dd.has),
     /** Figures/names the check couldn't trace to the deal's data (empty = clean). */
     figureWarnings: Array.isArray(s.figureWarnings) ? s.figureWarnings : [],
+    /** A section the AI couldn't write: a hidden placeholder, never served to buyers. */
+    placeholder: isCimFallbackSection(s),
   };
 }
 
@@ -144,6 +149,13 @@ function sendTaskError(res: Response, err: unknown) {
   if (err instanceof SectionTaskRunningError) return res.status(409).json({ error: err.message });
   console.error("[cim-builder] task start failed:", err);
   return res.status(500).json({ error: "Couldn't start the AI. Please try again." });
+}
+
+/** A fact value short enough for a banner line. */
+function clip(v: string | null): string | null {
+  if (!v) return v;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t.length > 90 ? `${t.slice(0, 87)}…` : t;
 }
 
 const TITLE_MAX = 200;
@@ -178,7 +190,22 @@ export function registerCimBuilderRoutes(app: Express): void {
           for (const id of check.leaked) withOverride.delete(id);
         }
       }
-      const rows = sections.map((s) => toBuilderSection(s, blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }));
+      // Facts changed since the CIM was written: which sections still show an
+      // old value (cim-staleness.ts). Best-effort — never blocks the builder.
+      const factsThen = lastGenerationFacts(deal);
+      const staleness = factsThen
+        ? await writerFactsSnapshot(deal).then((now) => cimStaleness(factsThen, now, sections)).catch((err) => {
+            console.warn("[cim-builder] staleness check failed:", err);
+            return null;
+          })
+        : null;
+      const staleBy = new Map((staleness?.sections ?? []).map((x) => [x.id, x.facts]));
+      const rows = sections.map((s) => ({
+        ...toBuilderSection(s, blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
+        /** Changed facts whose old value this section still shows. */
+        factsChanged: staleBy.get(s.id) ?? [],
+      }));
+      const generation = deal.cimGeneration as CimGenerationStatus | null | undefined;
       const active = buyers.filter((b) => !b.revokedAt);
       const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
       for (const b of active) byLevel[b.accessLevel || "teaser"] = (byLevel[b.accessLevel || "teaser"] ?? 0) + 1;
@@ -203,6 +230,22 @@ export function registerCimBuilderRoutes(app: Express): void {
         },
         buyers: { total: active.length, byLevel },
         deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
+        // What the broker must look at before publishing: the last run's
+        // notes, placeholders, a hold from buyers, facts changed since.
+        review: {
+          heldFromBuyers: generation?.buyerHold ?? null,
+          warnings: generation?.status === "done" ? generation.warnings ?? [] : [],
+          warningsAt: generation?.status === "done" ? generation.finishedAt ?? null : null,
+          placeholders: rows.filter((r) => r.placeholder).length,
+          facts: staleness && (staleness.changes.length > 0 || staleness.notesChanged)
+            ? {
+                changes: staleness.changes.slice(0, 12).map((c) => ({ label: c.label, before: clip(c.before), after: clip(c.after) })),
+                more: Math.max(0, staleness.changes.length - 12),
+                sections: staleness.sections.length,
+                notesChanged: staleness.notesChanged,
+              }
+            : null,
+        },
       });
     } catch (err) {
       console.error("[cim-builder] state failed:", err);

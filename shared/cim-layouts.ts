@@ -217,7 +217,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "series",
     planner: true,
-    aiSpec: "horizontal_bar_chart: { data: [{name, value, unit?}], yLabel?, unit?, title?, showPercentages? }",
+    aiSpec: "horizontal_bar_chart: { data: [{name, value, unit?}], yLabel?, unit?, title?, showPercentages?, total? } — showPercentages labels each bar with its share only when the values are in % or add up to a stated total (the whole they are parts of, copied from the knowledge base — never a sum you work out)",
     aiUse: "— Use for: revenue by customer, revenue by product line, time allocation, % breakdowns where labels are long",
     defaultData: () => ({
       data: [{ name: "Item A", value: 50 }, { name: "Item B", value: 30 }, { name: "Item C", value: 20 }],
@@ -251,7 +251,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "slices",
     planner: true,
-    aiSpec: "pie_chart: { data: [{name, value, color?}], totalLabel?, unit?, title? }",
+    aiSpec: "pie_chart: { data: [{name, value, color?}], totalLabel?, total?, unit?, title? } — slices must be the parts of one whole: shares in % that sum to 100, or amounts that add up to total (the whole as the knowledge base states it; totalLabel names it). Percentages that are not parts of one whole (a top customer and the top five) are drawn as bars",
     aiUse: "— Use for: ownership breakdown, customer concentration, revenue mix (when ≤6 categories)",
     defaultData: () => ({ data: [{ name: "Category A", value: 60 }, { name: "Category B", value: 40 }] }),
   },
@@ -265,7 +265,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "slices",
     planner: true,
-    aiSpec: "donut_chart: { data: [{name, value, color?}], totalLabel?, unit?, title?, centerLabel?, centerValue? }",
+    aiSpec: "donut_chart: { data: [{name, value, color?}], totalLabel?, total?, unit?, title?, centerLabel?, centerValue? } — same rules as pie_chart",
     aiUse: "— Use for: same as pie_chart but when you want to show a central metric",
     defaultData: () => ({
       data: [{ name: "Category A", value: 60 }, { name: "Category B", value: 40 }],
@@ -457,7 +457,7 @@ const LAYOUTS = [
     blind: "redact",
     family: "location_card",
     planner: true,
-    aiSpec: "location_card: { locations: [{label?, address?, sqft?, leaseType?, leaseExpiry?, monthlyRent?, annualRent?, renewalOptions?, notes?}], totalSqft?, title? }",
+    aiSpec: "location_card: { locations: [{label?, address?, sqft?, leaseType?, leaseTerms?, leaseExpiry?, monthlyRent?, annualRent?, renewalOptions?, notes?}], totalSqft?, title? } — leaseType is a short badge (at most 4 words: \"Triple-net lease\", \"Owned\", \"Month-to-month\"); what the lease covers goes in leaseTerms. annualRent / monthlyRent hold only an amount for that period; a per-square-foot rate is written with its unit (\"$12.00 per sq ft\") and is shown as base rent",
     aiUse: "— Use for: physical location details, lease terms, real estate included in sale",
     defaultData: () => ({ locations: [{ label: "Main location", address: "", leaseType: "leased" }] }),
   },
@@ -649,6 +649,19 @@ export function cimModeForAccessLevel(level: string | null | undefined): "blind"
   if (level === "due_diligence") return "dd";
   if (level === "loi") return "normal";
   return "blind"; // teaser, full (and anything unknown) → blind
+}
+
+/**
+ * aiLayoutReasoning of a section the AI couldn't write during a generation:
+ * an editable placeholder (its body is an instruction to the broker and the
+ * planner's internal brief). Saved hidden, never served to a buyer, and
+ * publishing waits until each is regenerated, rewritten or deleted. Writing
+ * or regenerating the section clears the marker.
+ */
+export const CIM_FALLBACK_REASONING = "Fallback: automatic generation failed for this section.";
+
+export function isCimFallbackSection(s: { aiLayoutReasoning?: string | null }): boolean {
+  return s.aiLayoutReasoning === CIM_FALLBACK_REASONING;
 }
 
 /** Layout type the view room uses for a section a buyer can't open yet. */

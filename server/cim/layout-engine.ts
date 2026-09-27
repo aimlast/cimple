@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import type { CimLayoutSection, CimDocument, LayoutType } from "./layout-types.js";
 import {
+  CIM_FALLBACK_REASONING,
   getCimLayout,
   layoutDataProblems,
   layoutSpecsForPrompt,
@@ -15,8 +16,8 @@ import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "
 import { normalizeLocationMap, normText } from "@shared/cim-media";
 import type { CimSectionOutline } from "@shared/cim-theme";
 import { renderResolvedBlock, type ResolvedDiscrepancyNote } from "./resolved-block";
-import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, restatementWarnings, type CimFinancials, type CimGrowth } from "./cim-financials";
-import { checkSectionFigures, figureWarningText, knownFiguresFrom, parseFigures, type KnownFigures } from "./figure-check";
+import { analysisHeadlines, cimGrowth, knownBridges, renderCimFinancialsBlock, restatementWarnings, withReclassificationNote, type CimFinancials, type CimGrowth } from "./cim-financials";
+import { checkSectionFigures, figureWarningText, isUntracedIssue, knownFiguresFrom, parseFigures, withoutUntracedFigures, type KnownFigures } from "./figure-check";
 import {
   keepOutFromNotes,
   mentionsHeldName,
@@ -310,7 +311,8 @@ export async function generateCimLayout(
     sectionTitle: s.sectionTitle || `Section ${i + 1}`,
     order: s.order ?? i + 1,
     layoutType: normalizeLayoutType(s.layoutType) as LayoutType,
-    layoutData: finalizeLayoutData(normalizeLayoutType(s.layoutType), (s.layoutData || {}) as Record<string, unknown>, sharedSystem.today) as CimLayoutSection["layoutData"],
+    // A table of the analysis's reclassified lines says so (known-4: it was labelled as the statements).
+    layoutData: withReclassificationNote(normalizeLayoutType(s.layoutType), finalizeLayoutData(normalizeLayoutType(s.layoutType), (s.layoutData || {}) as Record<string, unknown>, sharedSystem.today), params.financials) as CimLayoutSection["layoutData"],
     aiDraftContent: s.aiDraftContent,
     aiLayoutReasoning: s.aiLayoutReasoning || "",
     tags: Array.isArray(s.tags) ? s.tags : [],
@@ -454,6 +456,34 @@ async function checkAndRepairFigures(
             }
           }
         }
+        // Figures with no source never reach a buyer: after the one rewrite,
+        // the sentence, cell or bar that still states one is taken out; a
+        // section that would still show one (a bridge step, a headline
+        // figure), or would have nothing left, is held back as written —
+        // flagged, for the broker to correct.
+        if (final.some(isUntracedIssue)) {
+          const repaired = withoutUntracedFigures(sections[i], final);
+          const cover = sections[i].layoutType === "cover_page";
+          if (repaired && !cover && nothingLeft(repaired.section)) {
+            sections[i] = { ...sections[i], isVisible: false };
+            warnings.push(`"${section.sectionTitle}" is hidden from buyers: none of its figures has a source on file. Correct them in the CIM builder (or add them to the facts and regenerate), then show the section.`);
+          } else {
+            if (repaired) {
+              const after = checkSectionFigures(repaired.section, sharedSystem.known);
+              if (after.filter(isUntracedIssue).length < final.filter(isUntracedIssue).length && after.length <= final.length) {
+                sections[i] = repaired.section;
+                final = after;
+                warnings.push(
+                  `Taken out of "${section.sectionTitle}" because no source on file has the figure: ${repaired.removed.slice(0, 4).map((r) => `"${r.length > 140 ? `${r.slice(0, 137)}…` : r}"`).join("; ")}${repaired.removed.length > 4 ? ` and ${repaired.removed.length - 4} more` : ""}. Add the figure to the facts and regenerate the section if it should be there.`,
+                );
+              }
+            }
+            if (!cover && final.some(isUntracedIssue)) {
+              sections[i] = { ...sections[i], isVisible: false };
+              warnings.push(`"${section.sectionTitle}" is hidden from buyers: it still shows figures with no source on file. Correct them in the CIM builder, then show the section.`);
+            }
+          }
+        }
         if (final.length > 0) {
           sections[i] = { ...sections[i], figureWarnings: final };
           warnings.push(figureWarningText(section.sectionTitle, final));
@@ -461,6 +491,16 @@ async function checkAndRepairFigures(
       }),
     );
   }
+}
+
+/** A table, chart or key-number grid left with nothing to show (every figure in it was untraced). */
+function nothingLeft(s: CimLayoutSection): boolean {
+  const d = (s.layoutData ?? {}) as Record<string, unknown>;
+  const empty = (k: string) => Array.isArray(d[k]) && (d[k] as unknown[]).length === 0;
+  if (s.layoutType === "financial_table") return empty("rows");
+  if (["bar_chart", "horizontal_bar_chart", "pie_chart", "donut_chart", "line_chart"].includes(s.layoutType)) return empty("data");
+  if (s.layoutType === "metric_grid") return empty("metrics");
+  return false;
 }
 
 function isFallback(s: CimLayoutSection): boolean {
@@ -573,7 +613,7 @@ export async function writeOneSection(
   await checkAndRepairFigures(sharedSystem, manifest, checked, []);
   const scrubbed = scrubHeldNames(checked[0], sharedSystem.heldNames);
   const out = scrubbed ? { ...checked[0], layoutData: scrubbed.layoutData as CimLayoutSection["layoutData"], aiDraftContent: scrubbed.aiDraftContent } : checked[0];
-  return { ...out, layoutData: finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today) as any };
+  return { ...out, layoutData: withReclassificationNote(out.layoutType, finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today), params.financials) as any };
 }
 
 /** Arrays whose entries are columns (financial_table headers / row values): position is meaning. */
@@ -585,7 +625,7 @@ const POSITIONAL_KEYS: ReadonlySet<string> = new Set(["headers", "values", "cell
  * stays, so the columns keep their years). Null when there was nothing to remove.
  */
 export function scrubHeldNames(
-  section: { layoutData: unknown; aiDraftContent?: string },
+  section: { layoutData: unknown; aiDraftContent?: string; layoutType?: string },
   heldNames: readonly string[],
 ): { layoutData: Record<string, unknown>; aiDraftContent?: string; names: string[] } | null {
   if (heldNames.length === 0) return null;
@@ -597,6 +637,18 @@ export function scrubHeldNames(
   };
   const walk = (v: unknown, key?: string): unknown => {
     if (typeof v === "string") return note(v) ? screenConfidentialText(v, heldNames) : v;
+    // A bridge's steps are positional too: dropping the add-back that names
+    // the person ("Salary paid to Maria Chen +62,000") leaves a bridge that
+    // no longer reaches its stated total. The step stays, under a label
+    // without the name.
+    if (Array.isArray(v) && key === "items" && section.layoutType === "waterfall_chart") {
+      return v.map((x) => {
+        if (!x || typeof x !== "object" || !note(JSON.stringify(x))) return x;
+        const it = x as Record<string, unknown>;
+        const out = walk(it) as Record<string, unknown>;
+        return { ...out, label: neutralBridgeLabel(String(it.label ?? ""), heldNames, String(it.type ?? "")) };
+      });
+    }
     if (Array.isArray(v)) {
       // A table's headers / values are columns: a cell is scrubbed in place
       // ("" when nothing is left) and nothing moves — dropping a "" would
@@ -624,6 +676,34 @@ export function scrubHeldNames(
   const layoutData = walk(section.layoutData ?? {}) as Record<string, unknown>;
   const aiDraftContent = typeof section.aiDraftContent === "string" && note(section.aiDraftContent) ? screenConfidentialText(section.aiDraftContent, heldNames) : section.aiDraftContent;
   return names.size > 0 ? { layoutData, aiDraftContent, names: Array.from(names) } : null;
+}
+
+/**
+ * A bridge step's label without the confidential name: the name and the
+ * words that only pointed at it go ("Salary paid to Maria Chen" → "Salary
+ * paid"; "Maria Chen — owner's spouse wages" → "Owner's spouse wages").
+ * When nothing descriptive is left: "Other add-back" / "Other deduction".
+ */
+export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
+  let t = label;
+  for (const name of heldNames) {
+    const words = name.trim().split(/\s+/).map(escapeRegExp).join(String.raw`\s+`);
+    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
+  }
+  t = t
+    .replace(/\(\s*\)/g, " ")
+    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
+    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  // Trailing connectors can stack ("paid to" after "for").
+  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
+  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
+
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
 /**
@@ -791,7 +871,7 @@ ${def.aiSpec}
     callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\n${guide}\n\nWrite the rewritten section now.`),
   );
   if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
-  const scrubbed = scrubHeldNames(result, sharedSystem.heldNames);
+  const scrubbed = scrubHeldNames({ ...result, layoutType }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
   return { ...final, layoutData: finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today) };
 }
@@ -826,7 +906,7 @@ Rules:
     callBuilderTool(sharedSystem, task, `${describeCurrent(section)}\n\nConvert this section to ${target} now.`),
   );
   if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
-  const scrubbed = scrubHeldNames(result, sharedSystem.heldNames);
+  const scrubbed = scrubHeldNames({ ...result, layoutType: target }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
   return { ...final, layoutData: finalizeLayoutData(target, final.layoutData, sharedSystem.today) };
 }
@@ -976,7 +1056,7 @@ const SECTION_TOOL = {
   },
 } as const;
 
-const FALLBACK_REASONING = "Fallback: automatic generation failed for this section.";
+const FALLBACK_REASONING = CIM_FALLBACK_REASONING;
 
 /**
  * One section's content from the model (one retry on an invalid or
@@ -1062,19 +1142,20 @@ async function generateSection(
   if (!result) {
     // Never silently drop a planned section — degrade to prose the broker
     // can edit, and surface a warning so the UI can say so.
-    warnings.push(`Section "${entry.sectionTitle}" could not be generated and was replaced with an editable placeholder.`);
+    warnings.push(`Section "${entry.sectionTitle}" could not be generated. It was saved as a hidden placeholder — regenerate it, write it yourself or delete it in the CIM builder before publishing.`);
     return {
       sectionKey: entry.sectionKey,
       sectionTitle: entry.sectionTitle,
       order: entry.order,
       layoutType: "prose_highlight" as LayoutType,
       layoutData: {
-        body: `This section (${entry.contentBrief}) could not be generated automatically. Edit this placeholder or regenerate the section from the CIM Designer.`,
+        body: `This section (${entry.contentBrief}) could not be generated automatically. Regenerate it, or replace this text with your own, in the CIM builder. Buyers never see this placeholder.`,
       },
       aiDraftContent: undefined,
       aiLayoutReasoning: FALLBACK_REASONING,
       tags: entry.tags ?? [],
-      isVisible: true,
+      // Hidden: its text is an instruction to the broker, not CIM content.
+      isVisible: false,
       brokerApproved: false,
       brokerEditedContent: undefined,
       layoutOverride: undefined,

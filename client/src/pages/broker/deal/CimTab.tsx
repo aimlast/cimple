@@ -33,6 +33,8 @@ import { BUYER_ACCESS_LEVELS } from "@shared/cim-layouts";
 import { useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { useAiGate } from "@/components/cim-builder/useAiGate";
 import { builderRequest, errorText } from "@/components/cim-builder/api";
+import { CimReviewPanel } from "@/components/cim-builder/CimReviewPanel";
+import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { cn } from "@/lib/utils";
 import { CimDesignCard } from "@/components/cim-design/CimDesignCard";
 import type { CimSection } from "@shared/schema";
@@ -107,6 +109,12 @@ export function CimTab() {
   const fullOnly = sections.filter((s) => s.accessTier === "full" && s.isVisible !== false);
   const running = generation.isRunning || generate.isPending;
   const openBuilder = (preview?: string) => navigate(`/deal/${dealId}/design${preview ? `?preview=${preview}` : ""}`);
+  // What "Regenerate all" does to buyers who can open the CIM now.
+  const regenImpact = regenerateBuyerImpact({
+    isLive: deal.isLive,
+    openBuyers: data.buyers.total,
+    approved: !!(deal.contentApprovedByBroker || deal.contentApprovedBySeller || deal.designApprovedByBroker || deal.designApprovedBySeller),
+  });
 
   return (
     <div className="max-w-4xl mx-auto px-4 sm:px-6 py-6 space-y-6">
@@ -138,6 +146,14 @@ export function CimTab() {
       </div>
 
       {(generation.isRunning || generation.job?.status === "failed") && <CimGenerationProgress view={generation} />}
+      {hasSections && !generation.isRunning && (
+        <CimReviewPanel
+          dealId={dealId}
+          review={data.review}
+          sections={sections}
+          onOpenSection={(id) => navigate(`/deal/${dealId}/design?section=${id}`)}
+        />
+      )}
       {gate.blockedReason && (
         <div className="space-y-3">
           <p className="text-xs text-red-400 flex items-center gap-1.5"><AlertTriangle className="h-3.5 w-3.5" /> {gate.blockedReason}</p>
@@ -272,6 +288,7 @@ export function CimTab() {
                   <li>The blind and due-diligence versions</li>
                 </ul>
                 <p>To redo one section, open the builder and regenerate just that section.</p>
+                {regenImpact && <p className="text-foreground" data-testid="text-regenerate-buyer-impact">{regenImpact}</p>}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

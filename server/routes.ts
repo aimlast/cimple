@@ -27,12 +27,12 @@ import { computeCimReadiness } from "@shared/cim-readiness";
 import { DEAL_PHASES, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
-import { buildBuyerCim, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
+import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
 import { askerScope } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
-import { cimModeForAccessLevel, isBuyerAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
@@ -2663,6 +2663,17 @@ Return JSON only.`,
             missing,
           });
         }
+        // A section the AI couldn't write is a placeholder of instructions to
+        // the broker: it is never served, and the CIM doesn't go live with a
+        // hole in it until each one is written, regenerated or deleted.
+        const placeholders = (await storage.getCimSectionsByDeal(req.params.id)).filter(isCimFallbackSection);
+        if (placeholders.length > 0) {
+          return res.status(409).json({
+            error: `${placeholders.length === 1 ? "One section" : `${placeholders.length} sections`} couldn't be written by the AI (${placeholders.slice(0, 3).map((p) => `"${p.sectionTitle}"`).join(", ")}). Regenerate, write or delete ${placeholders.length === 1 ? "it" : "them"} in the CIM builder before publishing.`,
+            code: "cim_placeholders",
+            sections: placeholders.map((p) => ({ id: p.id, title: p.sectionTitle })),
+          });
+        }
       }
       // A seller finishing the intake wizard completes the questionnaire
       // step — this flag drove broker checklists but was never set. The
@@ -2728,6 +2739,12 @@ Return JSON only.`,
         } catch (e) {
           console.warn("[intake] questionnaire seeding failed:", e);
         }
+      }
+      // Published: a regenerated CIM held for review reaches buyers again.
+      if (req.session.brokerId && dealPatch.isLive === true) {
+        const { releaseBuyerHold } = await import("./cim/generation-jobs");
+        await releaseBuyerHold(req.params.id);
+        deal = (await storage.getDeal(req.params.id)) ?? deal;
       }
       if (!req.session.brokerId) {
         // A seller-token save gets the seller-visible fields only.
@@ -4562,7 +4579,9 @@ Return JSON only.`,
         lastAccessedAt: now,
         viewCount: (access.viewCount ?? 0) + (newSession ? 1 : 0),
       };
-      if (!access.firstViewedAt) viewStamp.firstViewedAt = now;
+      // A CIM held for the broker's review isn't viewed yet: the decision
+      // reminders (anchored to the first view) wait until it is published.
+      if (!access.firstViewedAt && !cimHeldFromBuyers(deal)) viewStamp.firstViewedAt = now;
       await storage.updateBuyerAccess(access.id, viewStamp as any);
       const fullAccess = { ...access, ...viewStamp };
       // Buyers receive only what the view room needs — never the broker's
@@ -4643,6 +4662,22 @@ Return JSON only.`,
         });
       }
 
+      // A regenerated CIM is held from every buyer until the broker reviews
+      // and publishes it (server/cim/generation-jobs.ts) — nothing from it,
+      // or from the one it replaced, is served meanwhile.
+      if (cimHeldFromBuyers(deal)) {
+        return res.json({
+          access: freshAccess,
+          deal: publicDeal,
+          sections: [],
+          publishedQuestions: [],
+          branding,
+          design: gatedDesign,
+          cimMode,
+          updating: true,
+        });
+      }
+
       // Q&A feed: published answers plus this buyer's own pending questions
       // (whitelisted fields — never the seller-approval token or broker draft).
       const [baseSections, publishedQuestions] = await Promise.all([
@@ -4661,7 +4696,7 @@ Return JSON only.`,
         // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
         loadMediaAssets(deal.id),
       ]);
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media });
+      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal) });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -5537,6 +5572,8 @@ Return JSON only.`,
           figureWarnings: regenerated.figureWarnings?.length ? regenerated.figureWarnings : null,
           brokerEditedContent: null,
           brokerApproved: false,
+          // Written now: no longer a placeholder (placeholders never reach buyers).
+          ...(isCimFallbackSection(target) ? { aiLayoutReasoning: "Regenerated from the deal's information." } : {}),
         });
         // The section's overrides now describe content that no longer exists:
         // drop them, mark the section stale and re-redact in the background
@@ -5646,6 +5683,11 @@ Return JSON only.`,
       if (sections.length === 0) {
         return res.status(400).json({ error: "Generate CIM content first" });
       }
+      // Same gate as every other CIM-writing step (generate-content, layout,
+      // the builder's per-section DD refresh): DD commentary written from a
+      // disputed figure would reach due-diligence buyers straight away.
+      const openCritical = await blockingCriticalDiscrepancies(dealId);
+      if (openCritical.length > 0) return discrepancyBlockResponse(res, openCritical, "generating the due-diligence CIM");
 
       // DD context: shared documents only, CIM-safe facts, the computed
       // financial analysis (never the analyzer's raw JSON or its internal
@@ -6969,7 +7011,10 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
         chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
         loadMediaAssets(dealId),
       ]);
-      const chatCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia });
+      // A CIM held for the broker's review answers nothing (it escalates).
+      const chatCim = cimHeldFromBuyers(deal)
+        ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
+        : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
       const answerSections: AnswerSection[] = chatCim.sections
         .filter(s => !s.locked)
         .map(s => ({

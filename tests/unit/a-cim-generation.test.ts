@@ -81,7 +81,14 @@ assert.ok(!warnings.some((w) => /no such ranking/.test(w)), "no rank false posit
 
 // ACC2-09: the other slips are named for the broker (the rewrite kept them).
 assert.ok(warnings.some((w) => /Check the figures in "Transaction Structure"[^]*\$7,570,000 is the 2023 year-end term debt/.test(w)), "debt year");
-assert.ok(warnings.some((w) => /Check the figures in "Safety & Compliance"[^]*counts don't match the rate/.test(w)), "counts vs rate");
+// (FREE round, known-3: the misread count has no source on file, so it is
+// now taken out of the section — never shipped beside its warning.)
+assert.ok(
+  warnings.some((w) => /Check the figures in "Safety & Compliance"[^]*counts don't match the rate/.test(w)) ||
+    warnings.some((w) => /^Taken out of "Safety & Compliance" because no source on file has the figure: "Roadside Inspections: 646"/.test(w)),
+  "counts vs rate",
+);
+assert.ok(!/\b646\b/.test(JSON.stringify(byTitle("Safety & Compliance").layoutData)), "the misread count never reaches a buyer");
 assert.ok(warnings.some((w) => /Check the figures in "Key Customer Relationships"[^]*"evergreen" for "Kestrel Building Supply"/.test(w)), "evergreen");
 assert.ok(warnings.some((w) => /Counts that don't add up were left out of the CIM/.test(w)));
 assert.ok(warnings.some((w) => /Left out of the CIM: "Working Capital" \(\$1,022,999\)/.test(w)));

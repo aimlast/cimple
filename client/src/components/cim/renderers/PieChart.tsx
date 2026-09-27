@@ -21,7 +21,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartShares, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
@@ -36,6 +36,8 @@ interface PieDataPoint {
 interface PieChartLayoutData {
   data?: PieDataPoint[];
   totalLabel?: string;
+  /** The whole the slices make up, as the knowledge base states it — the only total ever printed. */
+  total?: number | string;
   unit?: string;
   title?: string;
   centerLabel?: string;
@@ -118,7 +120,17 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
     color: palette[i % palette.length],
   }));
 
-  const total = normalized.reduce((sum, d) => sum + d.value, 0);
+  // Shares and the total are printed only against a whole the chart states
+  // (shared/cim-chart-values.ts chartShares) — never the sum of the slices.
+  const { shares, total, asBars } = chartShares(normalized.map((d) => d.value), data.unit, data.total);
+  if (asBars) {
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <PercentBars items={normalized} unit={data.unit} />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -171,14 +183,14 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
         {/* Legend */}
         <div className={cn("flex flex-col gap-2 min-w-0", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "w-full" : "flex-1")}>
-          {data.totalLabel && total > 0 && (
+          {data.totalLabel && total !== null && (
             <div className="mb-2 pb-2 border-b border-border">
               <p className="text-xs text-muted-foreground">{data.totalLabel}</p>
               <p className="text-sm font-semibold tabular-nums">{formatFullValue(total, data.unit)}</p>
             </div>
           )}
           {normalized.map((entry, i) => {
-            const pct = total > 0 ? ((entry.value / total) * 100).toFixed(1) : "0";
+            const pct = shares ? shares[i].toFixed(1) : null;
             const isHighlighted = activeIndex === i;
             return (
               <div
@@ -196,13 +208,37 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
                   <span className="text-xs font-semibold tabular-nums text-foreground whitespace-nowrap">
                     {formatFullValue(entry.value, data.unit)}
                   </span>
-                  <span className="text-2xs text-muted-foreground whitespace-nowrap">({pct}%)</span>
+                  {pct !== null && <span className="text-2xs text-muted-foreground whitespace-nowrap">({pct}%)</span>}
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Percentages that aren't the parts of one whole (a top customer's 22% and
+ * the top five's 47%): each drawn as its own bar on a 0–100% scale with its
+ * value as written — a pie would have drawn them as the full circle.
+ */
+function PercentBars({ items, unit }: { items: Array<{ name: string; value: number }>; unit?: string }) {
+  const theme = useCimTheme();
+  return (
+    <div className="flex flex-col gap-3" data-testid="percent-bars">
+      {items.map((entry, i) => (
+        <div key={i} className="min-w-0">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-xs text-foreground/80 min-w-0 break-words">{entry.name}</span>
+            <span className="text-xs font-semibold tabular-nums text-foreground whitespace-nowrap">{formatFullValue(entry.value, unit)}</span>
+          </div>
+          <div className="mt-1 h-2 rounded-sm" style={{ backgroundColor: theme.stripe }}>
+            <div className="h-2 rounded-sm" style={{ width: `${Math.max(0, Math.min(100, entry.value))}%`, backgroundColor: theme.chart[0] }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

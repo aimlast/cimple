@@ -20,7 +20,7 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
-import { normalizeLayoutType } from "@shared/cim-layouts";
+import { isCimFallbackSection, normalizeLayoutType } from "@shared/cim-layouts";
 import { buildLayoutParams } from "./generation-jobs";
 import {
   groundLocationMap,
@@ -153,7 +153,8 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
           order: section.order,
           layoutType,
           tags: section.tags,
-          aiLayoutReasoning: section.aiLayoutReasoning,
+          // A placeholder's marker is no brief for the writer.
+          aiLayoutReasoning: isCimFallbackSection(section) ? null : section.aiLayoutReasoning,
         },
         { brief: task.request?.brief },
       );
@@ -185,6 +186,8 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
           : {}),
         // A brand-new section has nothing worth undoing back to.
         ...(task.kind === "write" ? {} : { contentHistory: historyWith(row, reason) }),
+        // Written now: no longer a placeholder (placeholders never reach buyers).
+        ...(isCimFallbackSection(row) ? { aiLayoutReasoning: "Written by the AI in the CIM builder." } : {}),
         aiTask: null,
         updatedAt: new Date(),
       })
@@ -248,6 +251,7 @@ export async function applyRewrite(section: CimSection): Promise<CimSection | nu
       brokerEditedContent: null,
       brokerApproved: false,
       contentHistory: historyWith(section, "AI rewrite"),
+      ...(isCimFallbackSection(section) ? { aiLayoutReasoning: "Written by the AI in the CIM builder." } : {}),
       aiTask: null,
       updatedAt: new Date(),
     })

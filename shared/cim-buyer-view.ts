@@ -4,7 +4,8 @@
  * and the buyer Q&A chatbot, so the two can never disagree.
  *
  * Rules (server-side — the browser is never trusted to hide anything):
- *   - Hidden sections, and sections the AI is still writing, never leave
+ *   - Hidden sections, sections the AI is still writing, and placeholders
+ *     for sections it couldn't write (CIM_FALLBACK_REASONING) never leave
  *     the server.
  *   - Access level → version: teaser/full → Blind, loi → Normal,
  *     due_diligence → DD.
@@ -38,6 +39,7 @@ import type { CimSection, CimSectionOverride } from "./schema";
 import {
   LOCKED_LAYOUT_TYPE,
   applySectionOverride,
+  isCimFallbackSection,
   cimModeForAccessLevel,
   getCimLayout,
   sectionTier,
@@ -45,6 +47,7 @@ import {
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
+import { parseChartNumber } from "./cim-chart-values";
 
 export interface BuyerSection {
   id: string;
@@ -88,6 +91,54 @@ export function ndaBlocksBuyer(
   return !!deal.ndaRequired && !access.ndaSigned;
 }
 
+/**
+ * True while a regenerated CIM waits for the broker to publish it: it
+ * replaced one buyers could open, so no buyer path (view room, Q&A chatbot,
+ * media) serves anything from it until then (server/cim/generation-jobs.ts).
+ */
+export function cimHeldFromBuyers(deal: { cimGeneration?: unknown }): boolean {
+  const g = deal.cimGeneration as { buyerHold?: unknown } | null | undefined;
+  return !!g?.buyerHold;
+}
+
+/**
+ * The listed asking price, written as a figure ("$4,500,000"); null when
+ * there is none. Text that isn't one number is used as written.
+ */
+export function listedPriceText(price: string | null | undefined): string | null {
+  const t = (price ?? "").trim();
+  if (!t) return null;
+  const n = parseChartNumber(t);
+  return n !== null && n >= 1000 ? `$${Math.round(n).toLocaleString("en-US")}` : t;
+}
+
+const ASKING_LABEL = /\b(?:asking|list(?:ing|ed)?)\s+price\b/i;
+
+/**
+ * A section with its asking price shown as the broker lists it now: the
+ * cover's price and an "Asking price" key number or callout. The figure is
+ * stored when the CIM is written; a price the broker changed afterwards on
+ * the Information tab never reached buyers (Lakeshore scenario, 2026-09-26).
+ * Other sections' wording is the staleness check's to flag for the broker.
+ */
+export function withListedAskingPrice<T extends { layoutType: string; layoutData: unknown }>(section: T, price: string | null): T {
+  if (!price || !section.layoutData || typeof section.layoutData !== "object") return section;
+  const d = section.layoutData as Record<string, unknown>;
+  if (section.layoutType === "cover_page" && typeof d.askingPrice === "string" && d.askingPrice.trim()) {
+    return { ...section, layoutData: { ...d, askingPrice: price } };
+  }
+  if (section.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
+    const metrics = (d.metrics as unknown[]).map((m) =>
+      m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) ? { ...(m as object), value: price } : m,
+    );
+    return { ...section, layoutData: { ...d, metrics } };
+  }
+  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? ""))) {
+    return { ...section, layoutData: { ...d, primaryValue: price } };
+  }
+  return section;
+}
+
 /** The neutral key a blind buyer sees for a section (never derived from its title). */
 export function blindSectionKey(sectionId: string): string {
   return `s_${String(sectionId).replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
@@ -109,7 +160,14 @@ function writingInProgress(s: CimSection): boolean {
  * Pure: build the buyer's sections from the deal's rows. `overrides` must be
  * the rows for the buyer's mode (blind or dd; ignored for normal).
  */
-export function buildBuyerCim(input: {
+export function buildBuyerCim(input: BuyerCimInput): BuyerCim {
+  const cim = buildBuyerSections(input);
+  const price = listedPriceText(input.askingPrice);
+  if (!price) return cim;
+  return { ...cim, sections: cim.sections.map((s) => (s.locked ? s : withListedAskingPrice(s, price))) };
+}
+
+interface BuyerCimInput {
   deal: DealLike;
   accessLevel: string | null | undefined;
   sections: CimSection[];
@@ -119,7 +177,11 @@ export function buildBuyerCim(input: {
    * Blind CIM then shows no uploads at all.
    */
   media?: MediaAssetRef[] | null;
-}): BuyerCim {
+  /** The broker's listed asking price now (server: listedAskingPrice) — the cover and key numbers show it. */
+  askingPrice?: string | null;
+}
+
+function buildBuyerSections(input: BuyerCimInput): BuyerCim {
   const { deal, accessLevel } = input;
   const mode = cimModeForAccessLevel(accessLevel);
   const assets = input.media ? new Map(input.media.map((m) => [m.id, m])) : null;
@@ -132,7 +194,9 @@ export function buildBuyerCim(input: {
       ? buyerMediaLayoutData(s.layoutType, s.layoutData, override, mode, { assets, identifiers: mediaIdentifiers })
       : s.layoutData;
   const visible = [...input.sections]
-    .filter((s) => s.isVisible !== false && !writingInProgress(s))
+    // A placeholder for a section the AI couldn't write is broker
+    // instructions, not content — never served, even if made visible.
+    .filter((s) => s.isVisible !== false && !writingInProgress(s) && !isCimFallbackSection(s))
     .sort((a, b) => a.order - b.order);
 
   const base = (s: CimSection): BuyerSection => ({

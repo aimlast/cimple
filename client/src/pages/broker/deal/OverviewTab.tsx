@@ -82,7 +82,8 @@ import {
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
+import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
+import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
@@ -1523,6 +1524,13 @@ function Phase3Center() {
   const { toast } = useToast();
   const cimContent = deal.cimContent as Record<string, string> | null;
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  // What "Regenerate all" does to buyers who can open the CIM now.
+  const builderState = useBuilderState(dealId);
+  const regenImpact = regenerateBuyerImpact({
+    isLive: deal.isLive,
+    openBuyers: builderState.data?.buyers.total,
+    approved: !!(deal.contentApprovedByBroker || deal.contentApprovedBySeller || deal.designApprovedByBroker || deal.designApprovedBySeller),
+  });
 
   // Throws on failure: returning [] here would drop the broker into the
   // "nothing generated yet" branch with a live Generate button — a loading
@@ -1872,6 +1880,7 @@ function Phase3Center() {
                   <li>Any generated Blind and DD versions</li>
                 </ul>
                 <p>To redo one section, hover it and choose Regenerate instead.</p>
+                {regenImpact && <p className="text-foreground" data-testid="text-regenerate-buyer-impact">{regenImpact}</p>}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

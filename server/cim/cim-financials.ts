@@ -599,6 +599,59 @@ function yearRow(label: string, years: string[], get: (y: string) => number | nu
 export const CIM_FINANCIALS_HEADING = "AUTHORITATIVE FINANCIALS";
 
 /**
+ * The analysis's figures are a reclassification of the statements: one-time
+ * items are taken out of cost of sales and operating expenses and shown on
+ * their own. A table copied from them then differs line by line from the
+ * statements as issued — Ridgeline's FY2024 cost of sales $6,804,000 and
+ * gross profit $3,011,000 against the compiled statements' $6,868,000 and
+ * $2,947,000 (the $64,000 crane rebuild moved) — and the writer labelled it
+ * "Compiled financial statements". This is the footnote that says so; null
+ * when the analysis moved nothing.
+ */
+export function reclassificationNote(fin: CimFinancials | null | undefined): string | null {
+  if (!fin?.pnl) return null;
+  const years = new Set(Object.keys(fin.pnl));
+  const oneTime = fin.lines
+    .filter((l) => /non-?recurring|one-?time/i.test(l.category))
+    .map((l) => {
+      const ys = Object.keys(l.values).filter((y) => years.has(y) && l.values[y]).sort();
+      return ys.length ? `${l.name.replace(/\s*\([^)]*\)\s*$/, "").trim()} (${ys.map((y) => `FY${y} ${money(Math.abs(l.values[y]))}`).join(", ")})` : null;
+    })
+    .filter((x): x is string => !!x);
+  if (oneTime.length === 0) return null;
+  return `Figures as reclassified in the financial analysis: one-time items — ${oneTime.join("; ")} — are shown apart from cost of sales and operating expenses, so these lines can differ from the financial statements as issued.`;
+}
+
+/** Does a financial table show the analysis's cost of sales or gross profit (so its reclassified lines)? */
+function showsAnalysisLines(layoutData: Record<string, unknown>, fin: CimFinancials): boolean {
+  if (!fin.pnl) return false;
+  const targets = Object.values(fin.pnl).flatMap((p) => [p.cogs, p.grossProfit, p.operatingExpenses]).filter((v): v is number => typeof v === "number" && v !== 0);
+  const rows = [...(Array.isArray(layoutData.rows) ? layoutData.rows : []), ...(Array.isArray(layoutData.normalizedRows) ? layoutData.normalizedRows : [])];
+  return rows.some((r) => {
+    const label = String((r as { label?: unknown })?.label ?? "");
+    if (!/cost of (?:sales|goods|revenue|services)|cogs|direct costs?|gross (?:profit|margin)|operating expenses|opex/i.test(label)) return false;
+    const values = Array.isArray((r as { values?: unknown })?.values) ? ((r as { values: unknown[] }).values) : [];
+    return values.some((v) => {
+      const n = Number(String(v ?? "").replace(/[$,()\s]/g, ""));
+      return Number.isFinite(n) && n !== 0 && targets.some((t) => Math.abs(Math.abs(n) - Math.abs(t)) <= 1);
+    });
+  });
+}
+
+/**
+ * A financial table built from the analysis's reclassified lines, with the
+ * footnote saying they are reclassified (unless it already says so).
+ */
+export function withReclassificationNote(layoutType: string, layoutData: Record<string, unknown>, fin: CimFinancials | null | undefined): Record<string, unknown> {
+  if (layoutType !== "financial_table" || !fin) return layoutData;
+  const note = reclassificationNote(fin);
+  if (!note || !showsAnalysisLines(layoutData, fin)) return layoutData;
+  const footnotes = Array.isArray(layoutData.footnotes) ? (layoutData.footnotes as unknown[]).map(String) : [];
+  if (footnotes.some((f) => /reclassif/i.test(f))) return layoutData;
+  return { ...layoutData, footnotes: [...footnotes, note] };
+}
+
+/**
  * The knowledge-base block. Statement and bridge sections copy these rows
  * and totals verbatim; a figure that isn't here or in the facts is left out.
  */
@@ -612,6 +665,12 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     "Use these for every financial table, EBITDA/SDE bridge (waterfall), earnings chart and statement figure. Copy line names, amounts and totals exactly. Never add, subtract, estimate or re-derive a figure, and never add a year or line that is not listed. Where a statement figure differs from a fact elsewhere in the knowledge base, these statement figures win inside tables and bridges.",
   );
   const pnl = fin.pnl;
+  const reclassified = reclassificationNote(fin);
+  if (reclassified) {
+    out.push(
+      `These are the analysis's RECLASSIFIED figures, not the statements' own lines. A statement table built from them never says it shows the financial statements as issued (no "per the compiled statements" caption or footnote); it carries this footnote: "${reclassified}"`,
+    );
+  }
   if (pnl) {
     const years = Object.keys(pnl).sort();
     out.push(`\nINCOME STATEMENT SUMMARY (fiscal years ${years.join(", ")}):`);
