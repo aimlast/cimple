@@ -33,7 +33,9 @@ export interface TaskPlan {
 
 const open = (t: TaskLike) => t.status === "pending" || t.status === "in_progress";
 /** Tasks the interview itself created — the only ones it may merge into or close (the broker's own follow-ups are the broker's). */
-const byInterview = (t: TaskLike) => t.createdBy === "ai_interview";
+// ("ai_interview_broker": the broker's own AI session — session-mode.ts BROKER_SESSION_TASK_CREATOR.)
+const INTERVIEW_CREATORS: ReadonlySet<string> = new Set(["ai_interview", "ai_interview_broker"]);
+const byInterview = (t: TaskLike) => INTERVIEW_CREATORS.has(String(t.createdBy ?? ""));
 /**
  * Title prefix of the counsel checks the legal-grounding guard creates (the
  * seller agreed to a legal point the interviewer raised). Only the broker
@@ -142,8 +144,9 @@ export function planTaskWrites(args: {
   const seen = new Map<string, TaskLike>();
   const byAge = [...pending].sort((a, b) => new Date(String(a.createdAt ?? 0)).getTime() - new Date(String(b.createdAt ?? 0)).getTime());
   for (const t of byAge) {
-    const k = `${t.type}|${t.title.trim().toLowerCase()}`;
-    if (seen.has(k) && t.createdBy === "ai_interview" && seen.get(k)!.createdBy === "ai_interview") plan.remove.push(t.id);
+    // (Per creator: the broker's own session never removes the seller interview's task, or the reverse.)
+    const k = `${t.createdBy ?? ""}|${t.type}|${t.title.trim().toLowerCase()}`;
+    if (seen.has(k) && byInterview(t) && byInterview(seen.get(k)!)) plan.remove.push(t.id);
     else if (!seen.has(k)) seen.set(k, t);
   }
   pending = pending.filter((t) => !plan.remove.includes(t.id));

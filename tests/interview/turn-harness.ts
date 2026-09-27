@@ -17,6 +17,8 @@ export interface ScriptedReply {
   extractedFields?: Record<string, { value: string; confidence: string; source?: string; basis?: string }>;
   retractedFields?: { field: string; reason: string }[];
   newDeferrals?: { topic: string; reason: string; whereInfoLives: string }[];
+  /** Tasks the reply creates (response-schema NewTask). */
+  newTasks?: { type: string; title: string; description: string; relatedField?: string; sellerExplanation: string }[];
   nextIntent?: string;
   currentTopic?: string;
   suggestedAnswers?: string[];
@@ -57,7 +59,7 @@ export function toolInput(r: ScriptedReply) {
       industryContext: { identified: false, industry: "", subIndustry: "", location: "", activeIndustryTopics: [], coveredIndustryTopics: [], regulatoryNotes: [] },
     },
   };
-  const bookkeeping = { privateNotes: [], newTasks: [] };
+  const bookkeeping = { privateNotes: [], newTasks: r.newTasks ?? [] };
   if (r.chipsLast) return { message: r.message, ...tail, ...labels, ...end, ...bookkeeping };
   return r.endLast
     ? { message: r.message, ...labels, ...tail, ...bookkeeping, ...end }

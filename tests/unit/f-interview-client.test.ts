@@ -85,7 +85,8 @@ const ok = (name: string) => { n++; process.stdout.write(`✓ ${name}\n`); };
 // ── F7: the notetaker recognises the broker by name ──
 {
   assert.equal(brokerNameFromMe({ user: { id: "u1", username: "mellis", name: "Morgan Ellis" } }), "morgan ellis", "GET /me answers { user: {…} }");
-  assert.equal(brokerNameFromMe({ user: { username: "qa_cimgen", name: null } }), "qa_cimgen");
+  // (Round 2: never the username — a login matches no one in the meeting and switched the host fallback off.)
+  assert.equal(brokerNameFromMe({ user: { username: "qa_cimgen", name: null } }), "");
   assert.equal(brokerNameFromMe(null), "");
 
   // The SELLER hosts the Zoom; the broker joins: labels must not invert.

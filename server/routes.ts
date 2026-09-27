@@ -7,7 +7,7 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia, turnPrecheck } from "./interview";
-import { callerMode, contextSessions, parseAnsweringAt, sessionModeOf, TurnConflictError, type ConductedBy } from "./interview/session-mode";
+import { callerMode, contextSessions, parseAnsweringAt, sellerSideTasks, sessionFinishedInterview, sessionModeOf, stalledSellerSessions, TurnConflictError, type ConductedBy } from "./interview/session-mode";
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
@@ -2184,7 +2184,9 @@ Return JSON only.`,
           ),
         );
 
-      const stalledInterviews = stalledRows.map((s) => ({
+      // Shown as "Waiting on the seller": only the seller's own interview, one
+      // row per deal (session-mode.ts stalledSellerSessions).
+      const stalledInterviews = stalledSellerSessions(stalledRows).map((s) => ({
         dealId: s.dealId,
         dealName: dealMap.get(s.dealId) || "Unknown",
         lastActivity: s.lastActivityAt.toISOString(),
@@ -4357,7 +4359,7 @@ Return JSON only.`,
       const progressKb = assembleKnowledgeBase(
         deal,
         kbDocuments,
-        await storage.getTasksByDeal(deal.id),
+        sellerSideTasks(await storage.getTasksByDeal(deal.id)),
         sessions[0] ?? null,
         await storage.getResolvedDiscrepancies(deal.id),
       );
@@ -4370,7 +4372,9 @@ Return JSON only.`,
         : 0;
       const hasActiveSession = sessions.some((s) => s.status === "active");
       // A session the broker reopened no longer counts as the interview being done.
-      const hasCompletedSession = sessions.some((s) => s.status === "completed" && !(s.extractedInfo as any)?._reopenedAt);
+      // (Not one the broker reopened, nor one closed because "Interview
+      // together" took over — session-mode.ts sessionFinishedInterview.)
+      const hasCompletedSession = sessions.some((s) => sessionFinishedInterview(s));
       const interviewCompleted = !!(deal as any).interviewCompleted || hasCompletedSession;
 
       // Document requirements

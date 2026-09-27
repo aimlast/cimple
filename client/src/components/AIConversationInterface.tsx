@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import { createPortal } from "react-dom";
-import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle } from "lucide-react";
+import { Send, StopCircle, CheckCircle, LogOut, Mic, MicOff, AlertCircle, RefreshCw, Pencil, X, PictureInPicture2, SkipForward, HelpCircle, Users } from "lucide-react";
 import { usePictureInPicture } from "@/lib/pip";
 import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandle, type LiveSegment } from "@/lib/live-transcription";
 import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
@@ -60,8 +60,8 @@ interface TurnResult {
   deferredTopics: string[];
   shouldEnd: boolean;
   endReason?: string;
-  /** "completed": the interview is finished and no session was started. */
-  status?: "completed";
+  /** "completed": the interview is finished and no session was started. "together_live": the broker is running "Interview together" with the seller right now — nothing was started. */
+  status?: "completed" | "together_live";
 }
 
 interface AIConversationInterfaceProps {
@@ -277,6 +277,10 @@ export function AIConversationInterface({
   // The interview is finished and nothing was started: opening the page
   // shows this state, and only "Continue interview" starts a new session.
   const [finishedIdle, setFinishedIdle] = useState(false);
+  // The seller opened their page while the broker is running "Interview
+  // together" with them: nothing was started; the page says so and checks
+  // again every half minute.
+  const [togetherLive, setTogetherLive] = useState(false);
   const resumeRef = useRef(resume);
   const [isFinished, setIsFinished] = useState(false);
   const [isEnding, setIsEnding] = useState(false);
@@ -355,6 +359,13 @@ export function AIConversationInterface({
           (text) => { if (!cancelled) setOpeningPreview(text); },
         ).finally(() => clearTimeout(slowTimer));
         if (cancelled) return;
+        if (result.status === "together_live") {
+          setTogetherLive(true);
+          setFinishedIdle(false);
+          onTurnResult?.(result);
+          return;
+        }
+        setTogetherLive(false);
         if (!result.sessionId) {
           throw new Error("The server did not return a session. Please try again.");
         }
@@ -896,7 +907,7 @@ export function AIConversationInterface({
       // of step)? Then show what it saved — asking the seller to send it
       // again would pair their answer with a question they never saw.
       const history = await loadHistory();
-      if (history && afterFailedSend(history.messages, cleanedInput) === "adopt") {
+      if (history && afterFailedSend(history.messages, cleanedInput, answering) === "adopt") {
         showHistory(history);
         backToBox(false);
         return;
@@ -1506,6 +1517,26 @@ export function AIConversationInterface({
   }
 
   // Finished interview, nothing started: say so, offer to continue.
+  if (togetherLive && !startError) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center p-6" data-testid="status-together-live">
+        <div className="max-w-md w-full rounded-lg border border-border bg-card p-6 text-center space-y-4">
+          <Users className="h-7 w-7 mx-auto text-teal" />
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Your broker is going through this with you now</p>
+            <p className="text-xs text-muted-foreground">
+              Everything you say on the call is being saved, so there's nothing to type here. When the call is over,
+              come back to this page to add anything else.
+            </p>
+          </div>
+          <Button onClick={retryStart} size="sm" variant="outline" data-testid="button-together-check-again">
+            Check again
+          </Button>
+        </div>
+      </div>
+    );
+  }
+
   if (finishedIdle && !startError) {
     return (
       <div className="flex flex-col h-full items-center justify-center p-6" data-testid="status-interview-complete">

@@ -62,6 +62,86 @@ export function sellerMayRead(session: SessionLike | null | undefined): boolean 
   return sessionModeOf(session) === "seller";
 }
 
+/**
+ * Did this session finish the interview? Not one closed because a sitting
+ * of another kind took over (_closedFor: the broker started "Interview
+ * together" mid-interview, or the seller came back after one), not one the
+ * broker reopened, and never the broker's own session (the seller was not
+ * interviewed in it). The seller's progress page used to show the
+ * interview complete for a seller whose session was merely closed.
+ */
+export function sessionFinishedInterview(session: SessionLike & { status?: string | null }): boolean {
+  const meta = (session.extractedInfo as Record<string, unknown> | null | undefined) ?? {};
+  return session.status === "completed" && !meta._reopenedAt && !meta._closedFor && !isBrokerAloneSession(session);
+}
+
+/**
+ * Does ending a session of this kind finish the deal's interview (the
+ * deal's interviewCompleted flag, phase 1 → 2, the learning loop)? Not the
+ * broker's own session: the seller was never interviewed, and the CIM gate
+ * would open on the broker's notes alone.
+ */
+export function endingCompletesInterview(mode: ConductedBy): boolean {
+  return mode !== "broker";
+}
+
+/**
+ * How long an "Interview together" sitting counts as live after its last
+ * exchange: a spoken answer can run several minutes, and the broker's
+ * screen sends the room's exchange only after it.
+ */
+export const TOGETHER_LIVE_MS = 30 * 60_000;
+
+/**
+ * Is this "Interview together" sitting happening right now (an exchange in
+ * the last TOGETHER_LIVE_MS, or a turn running)? The seller merely loading
+ * their interview page must not close it under the broker mid-call — the
+ * seller is told the broker is going through it with them instead.
+ */
+export function togetherSessionLive(
+  session: SessionLike & { id?: string; status?: string | null; lastActivityAt?: Date | string | null; startedAt?: Date | string | null },
+  now: number = Date.now(),
+): boolean {
+  if (sessionModeOf(session) !== "broker_with_seller") return false;
+  if (session.status !== "active" && session.status !== "paused") return false;
+  if (session.id && turnInFlight(session.id)) return true;
+  const raw = session.lastActivityAt ?? session.startedAt;
+  const last = raw instanceof Date ? raw.getTime() : Date.parse(String(raw ?? ""));
+  return !Number.isNaN(last) && now - last < TOGETHER_LIVE_MS;
+}
+
+/**
+ * The dashboard's "Waiting on the seller: interview quiet for N days": only
+ * the seller's own interview sessions (not the broker's own AI session, not
+ * an "Interview together" sitting — both are the broker's to pick up), one
+ * per deal (its latest).
+ */
+export function stalledSellerSessions<T extends SessionLike & { dealId: string; lastActivityAt: Date }>(rows: T[]): T[] {
+  const byDeal = new Map<string, T>();
+  for (const s of rows) {
+    if (sessionModeOf(s) !== "seller") continue;
+    const had = byDeal.get(s.dealId);
+    if (!had || had.lastActivityAt < s.lastActivityAt) byDeal.set(s.dealId, s);
+  }
+  return Array.from(byDeal.values());
+}
+
+// =====================
+// Tasks from the broker's own session
+// =====================
+
+/** Tasks the broker's own session creates: the broker's to-dos, never the seller's. */
+export const BROKER_SESSION_TASK_CREATOR = "ai_interview_broker";
+
+/**
+ * The deal's tasks a seller-facing context may read (the seller's
+ * interview, "Interview together", the seller's progress page): never the
+ * to-dos the broker's own session wrote from the broker's typed notes.
+ */
+export function sellerSideTasks<T extends { createdBy?: string | null }>(tasks: T[]): T[] {
+  return tasks.filter((t) => t.createdBy !== BROKER_SESSION_TASK_CREATOR);
+}
+
 // =====================
 // Turn admission
 // =====================

@@ -18,6 +18,10 @@ import {
   type ConductedBy,
   sessionModeOf,
   contextSessions,
+  togetherSessionLive,
+  sellerSideTasks,
+  endingCompletesInterview,
+  BROKER_SESSION_TASK_CREATOR,
   sellerMayRead,
   turnAdmission,
   turnInFlight,
@@ -108,6 +112,12 @@ import {
   isSuppressed,
   mergeAlternateMaps,
   sourceRank,
+  fieldSourceRank,
+  isBrokerFinalSource,
+  BROKER_SESSION_RANK,
+  BROKER_SESSION_SOURCE_NOTE,
+  isUntrackedSource,
+  SOURCE_RANK,
   noteSameValue,
   displaceCorroborations,
   BROKER_SUPPRESSED_KEY,
@@ -123,6 +133,7 @@ import {
   type FieldChange,
 } from "./info-merger";
 import { withDealFactsLock } from "../documents/facts-lock";
+import { effectiveRank } from "../documents/merge-policy";
 import { retireDeletedEntry } from "../information/facts";
 import { sellerProfileNeedsRebuild, carryBrokerProfileEdits } from "./eq-profiler";
 import {
@@ -270,8 +281,11 @@ export interface TurnResult {
   /**
    * "completed": the interview is finished and no session was started
    * (opening the page never starts one — the caller asks with resume).
+   * "together_live": the seller opened their page while the broker is
+   * running "Interview together" with them — nothing was started
+   * (sessionId is empty); the page says so and checks again.
    */
-  status?: "completed";
+  status?: "completed" | "together_live";
 }
 
 // =====================
@@ -317,8 +331,8 @@ export function sessionSourceKind(conductedBy: ConductedBy, via: ConductedVia | 
   return via && via !== "person" ? "video_call" : "call";
 }
 
-/** How a fact the broker typed in their own AI interview session is described ("You · …"). */
-export const BROKER_SESSION_SOURCE_NOTE = "typed in your AI interview session";
+/** How a fact the broker typed in their own AI interview session is described ("You · …") — info-merger.ts. */
+export { BROKER_SESSION_SOURCE_NOTE };
 
 /** Deal-level bookkeeping keys the turn's save merges explicitly (never copied wholesale). */
 const TURN_SAVE_BOOKKEEPING = new Set([
@@ -391,7 +405,7 @@ export function buildTurnSave(args: {
       recordAlternate(toSave, k, merged[k], statedSrc);
       continue;
     }
-    if (touchedMeanwhile && hasFactValue(fresh[k]) && freshSrc && sourceRank(freshSrc.source) > sourceRank(turnSrc.source)) {
+    if (touchedMeanwhile && hasFactValue(fresh[k]) && freshSrc && fieldSourceRank(freshSrc) > fieldSourceRank(turnSrc)) {
       // The broker set this fact during the turn — a broker value is final.
       if (!same(fresh[k], merged[k])) recordAlternate(toSave, k, merged[k], statedSrc);
       continue;
@@ -484,7 +498,7 @@ async function startOrResumeSessionOnce(
   };
   // Load the deal and all related data (side by side), with any existing
   // active/paused session among the deal's sessions.
-  const [loadedDeal, documents, tasks, resolvedDiscrepancies, existingSessions] = await Promise.all([
+  const [loadedDeal, documents, dealTasks, resolvedDiscrepancies, existingSessions] = await Promise.all([
     storage.getDeal(dealId),
     storage.getDocumentsByDeal(dealId),
     storage.getTasksByDeal(dealId),
@@ -506,10 +520,40 @@ async function startOrResumeSessionOnce(
   // session's transcript (unless the broker is the one reading).
   const inView = mode === "broker" ? existingSessions : contextSessions(existingSessions);
   const inLine = existingSessions.filter(sameLine);
+  // (Nor the to-dos the broker's own session wrote from the broker's notes.)
+  const tasks = mode === "broker" ? dealTasks : sellerSideTasks(dealTasks);
 
   let session = inLine.find(
     (s) => s.status === "active" || s.status === "paused",
   );
+  // The broker is running "Interview together" with the seller right now:
+  // the seller opening their own interview page must not close it under the
+  // broker mid-call (the broker's next exchange was refused, and their
+  // screen restarted). The seller is told what is happening; nothing is
+  // started, closed or asked. (A sitting gone quiet for longer is closed
+  // below, as before.)
+  if (mode === "seller") {
+    const live = inLine.find((s) => togetherSessionLive(s));
+    if (live) {
+      const kb = assembleKnowledgeBase(deal, documents, tasks, live, resolvedDiscrepancies, {
+        sessions: inView,
+        currentSessionId: live.id,
+      });
+      const meta = (live.extractedInfo as Record<string, unknown>) || {};
+      console.log(`[session-manager] Seller opened the interview on deal ${dealId} while "Interview together" session ${live.id} is live — left running`);
+      return {
+        message: "",
+        suggestedAnswers: [],
+        sessionId: "",
+        captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+        sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
+        industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
+        deferredTopics: [],
+        shouldEnd: false,
+        status: "together_live",
+      };
+    }
+  }
   // A sitting of the other kind with answers in it is closed, and this one
   // starts fresh (the facts it captured are on file; its transcript is an
   // earlier session). A seller returning after "Interview together" used to
@@ -524,7 +568,7 @@ async function startOrResumeSessionOnce(
       .set({ status: "completed", completedAt: closedAt, extractedInfo: { ...closedMeta, _closedFor: mode } })
       .where(eq(interviewSessions.id, session.id));
     console.log(`[session-manager] Closed ${sessionModeOf(session)} session ${session.id} on deal ${dealId} — a ${mode} session starts fresh`);
-    const closed = { ...session, status: "completed", completedAt: closedAt } as InterviewSession;
+    const closed = { ...session, status: "completed", completedAt: closedAt, extractedInfo: { ...closedMeta, _closedFor: mode } } as InterviewSession;
     for (const list of [existingSessions, inLine, inView]) {
       const i = list.findIndex((s) => s.id === closed.id);
       if (i >= 0) list[i] = closed;
@@ -1076,7 +1120,7 @@ async function processTurnLocked(
   const timer = new TurnTimer();
 
   // Load everything (side by side — the seller is waiting)
-  const [deal, session, documents, tasks, resolvedDiscrepancies, allDiscrepancies, dealSessions] = await Promise.all([
+  const [deal, session, documents, dealTasks, resolvedDiscrepancies, allDiscrepancies, dealSessions] = await Promise.all([
     storage.getDeal(dealId),
     getSession(sessionId),
     storage.getDocumentsByDeal(dealId),
@@ -1103,6 +1147,8 @@ async function processTurnLocked(
   // broker-alone session's transcript unless the broker is the one here.
   const conductedBy: ConductedBy = sessionModeOf(session);
   const sessionsInView = conductedBy === "broker" ? dealSessions : contextSessions(dealSessions, sessionId);
+  // (Nor the to-dos the broker's own session wrote, unless the broker is here.)
+  const tasks = conductedBy === "broker" ? dealTasks : sellerSideTasks(dealTasks);
   const kbExtras = { sessions: sessionsInView, currentSessionId: sessionId, openDiscrepancies };
   // A source added mid-interview gets its conflicts reviewed for later turns.
   ensureSourceReview(deal, documents);
@@ -3000,8 +3046,17 @@ async function processTurnLocked(
       const prev = priorSources[c.fieldName];
       const priorValue = existingExtracted[c.fieldName];
       const hadValue = priorValue !== null && priorValue !== undefined && priorValue !== "";
-      // (The broker's own session updates the broker's own values.)
-      if (prev?.source === "broker" && hadValue && kind !== "broker") {
+      // (The broker's notes from their own session are not final — the
+      // seller's answer replaces them, and they stay as another value.)
+      // The broker's own session, in turn, never writes over what the seller
+      // said themselves, a broker edit, or a document that is the authority
+      // for the fact (an untracked legacy value was most likely the seller's):
+      // the broker's differing note is kept beside it.
+      const priorOutranksBrokerNotes =
+        kind === "broker" &&
+        hadValue &&
+        (!prev || isUntrackedSource(prev) ? SOURCE_RANK.interview : effectiveRank(c.fieldName, prev)) > BROKER_SESSION_RANK;
+      if (priorOutranksBrokerNotes || (hadValue && isBrokerFinalSource(prev))) {
         mergedInfo[c.fieldName] = priorValue;
         // The broker's deal-row price is hidden from the interview, which
         // sees this seller answer in its place (interviewFactView) — so the
@@ -3010,6 +3065,7 @@ async function processTurnLocked(
           if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
           else delete updatedConfidence[c.fieldName];
         }
+        if (String(priorValue) === String(c.newValue)) continue;
         recordAlternate(mergedInfo, c.fieldName, c.newValue, turnSrc);
         continue;
       }
@@ -3117,7 +3173,8 @@ async function processTurnLocked(
   );
   const taskPlan = planTaskWrites({
     newTasks: aiResponse.newTasks,
-    existing: tasks,
+    // (The broker's own session never merges into or closes the seller's interview to-dos on the broker's word.)
+    existing: conductedBy === "broker" ? tasks.filter((t) => t.createdBy !== "ai_interview") : tasks,
     documents: documents.filter((d) => d.visibility !== "broker_only"),
     answeredKeys,
     resolvedTopics: aiResponse.reasoning.resolvedDeferrals,
@@ -3126,8 +3183,10 @@ async function processTurnLocked(
   for (const task of taskPlan.create) {
     await storage.createTask({
       dealId,
-      createdBy: "ai_interview",
-      assignedTo: deal.sellerId || null,
+      // The broker's own session: the broker's to-do, from the broker's
+      // notes — never assigned to the seller or read by their interview.
+      createdBy: conductedBy === "broker" ? BROKER_SESSION_TASK_CREATOR : "ai_interview",
+      assignedTo: conductedBy === "broker" ? deal.brokerId || null : deal.sellerId || null,
       type: task.type,
       title: task.title,
       description: task.description,
@@ -3268,8 +3327,12 @@ async function processTurnLocked(
     })
     .where(eq(interviewSessions.id, sessionId));
 
-  // If the interview is ending, mark the deal and trigger learning loop
-  if (aiResponse.shouldEnd) {
+  // If the interview is ending, mark the deal and trigger learning loop.
+  // (The broker's own session ending is not the interview ending: the
+  // seller was never interviewed — the deal, its phase and the CIM gate are
+  // left as they are, and the broker's typed notes teach the learning loop
+  // nothing about sellers. session-mode.ts endingCompletesInterview.)
+  if (aiResponse.shouldEnd && endingCompletesInterview(conductedBy)) {
     await storage.updateDeal(dealId, {
       interviewCompleted: true,
       // A finished interview means platform intake is underway — move the
@@ -3283,12 +3346,9 @@ async function processTurnLocked(
     // ignores ask_seller but blocks on seller_responded, so a routed critical
     // re-locks the CIM until the broker reviews the transcript and resolves —
     // nothing is silently accepted, and nothing stays "with the seller" forever.
-    // (Not from the broker's own session: the seller wasn't asked.)
-    if (conductedBy !== "broker") {
-      await markRoutedDiscrepanciesRaised(dealId, updatedMessages).catch((err) => {
-        console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
-      });
-    }
+    await markRoutedDiscrepanciesRaised(dealId, updatedMessages).catch((err) => {
+      console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+    });
 
     // What this session answered counts as on file for the next one — built
     // now, in the background, so a returning seller's opening already has it.
@@ -3298,6 +3358,10 @@ async function processTurnLocked(
     runInterviewLearningLoop(dealId, sessionId).catch((err) => {
       console.error(`[session-manager] Learning loop failed for session ${sessionId}:`, err);
     });
+  } else if (aiResponse.shouldEnd) {
+    // The broker's own session: what it answered is still on file for the
+    // seller's next session (background).
+    refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
   }
 
   // Rebuild coverage with the updated extracted info
@@ -3756,18 +3820,21 @@ export async function endSessionManually(
       .where(eq(interviewSessions.id, sessionId));
   }
 
-  const dealRow = await storage.getDeal(dealId);
-  await storage.updateDeal(dealId, {
-    interviewCompleted: true,
-    ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
-  });
+  // The broker ending their own session is not the interview ending (the
+  // seller was never interviewed): the deal, its phase, routed
+  // discrepancies and the learning loop are left alone.
+  const completes = endingCompletesInterview(sessionModeOf(session));
+  if (completes) {
+    const dealRow = await storage.getDeal(dealId);
+    await storage.updateDeal(dealId, {
+      interviewCompleted: true,
+      ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
+    });
 
-  // Discrepancies the broker routed to the seller come back to the broker,
-  // as when the AI ends the interview — before this, "End Overview" left a
-  // routed critical conflict "with the seller" forever, and the CIM could be
-  // generated without the broker ever reviewing it. (Not from the broker's
-  // own session: the seller wasn't asked.)
-  if (sessionModeOf(session) !== "broker") {
+    // Discrepancies the broker routed to the seller come back to the broker,
+    // as when the AI ends the interview — before this, "End Overview" left a
+    // routed critical conflict "with the seller" forever, and the CIM could be
+    // generated without the broker ever reviewing it.
     await markRoutedDiscrepanciesRaised(dealId, (session.messages as ConversationMessage[]) ?? []).catch((err) => {
       console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
     });
@@ -3775,6 +3842,7 @@ export async function endSessionManually(
 
   // The next session reads what this one answered as on file (background).
   refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
+  if (!completes) return { ok: true };
 
   // Fire-and-forget: learn from the transcript like an AI-driven ending does
   runInterviewLearningLoop(dealId, sessionId).catch((err) => {

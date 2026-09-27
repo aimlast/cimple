@@ -469,7 +469,10 @@ export function validateLiveClaims(raw: unknown[], message: string, material: Ma
     // saying what they'd sign with a buyer doesn't conflict with it (round A,
     // Great Lakes: "your shareholders' agreement shows a two-year non-compete,
     // but you just mentioned about five years post-sale…").
-    if (m.docKind === "document" && documentTermNotDealTerm({ key: m.key ?? key, topic: `${String(x.topic ?? "")} ${said} ${onFile}`, docName: m.docName })) continue;
+    // (Judged on what the seller said and the claim's topic — never the
+    // document's own wording: statements that mention staff who "stay on"
+    // are still compared on revenue.)
+    if (m.docKind === "document" && documentTermNotDealTerm({ key: m.key ?? key, topic: `${String(x.topic ?? "")} ${said}`, docName: m.docName })) continue;
     out.push({
       kind: "conflict",
       detail: `${key}: the seller just said "${clip(said, 140)}", but ${m.label} states "${clip(onFile, 160)}"`,

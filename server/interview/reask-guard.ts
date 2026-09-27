@@ -151,6 +151,34 @@ const TERM_ALIASES: Array<[RegExp, string]> = [
   [/\baccounts receivable\b/i, "receivables ar"],
   [/\baccounts payable\b/i, "payables ap"],
 ];
+/** Extra words for matching a fact key's subject only (factSubjectInQuestion). */
+const SUBJECT_ALIASES: Array<[RegExp, string]> = [
+  [/\b(?:sales|turnover|top[- ]line)\b/i, "revenue"],
+];
+
+/**
+ * Words of a fact key that say WHEN or HOW it is broken down, not what it
+ * is about ("revenueByYear" is about revenue — "year" is only its layout).
+ * Stems, 5 characters like keyTokens.
+ */
+const KEY_LAYOUT_STEMS = new Set(
+  ["year", "years", "yearly", "annual", "annually", "month", "monthly", "quarter", "quarterly", "total", "history", "historical", "trend", "data", "amount", "value", "figures", "breakdown", "split", "current", "last", "recent", "each", "period"].map((w) => w.slice(0, 5)),
+);
+
+/**
+ * Is `key` about the thing the question asks for? One of the key's subject
+ * words (not its layout words) must be in the question (with the usual
+ * aliases): "revenueByYear" answers "what was revenue in 2022–2024" but not
+ * "how many employees did you have at year end in 2022–2024" — the shared
+ * word "year" is only the layout.
+ */
+export function factSubjectInQuestion(key: string, question: string): boolean {
+  const subject = keyTokens(key.replace(/\d+/g, " ")).filter((t) => !KEY_LAYOUT_STEMS.has(t));
+  if (subject.length === 0) return false;
+  const extra = SUBJECT_ALIASES.filter(([re]) => re.test(question)).map(([, alias]) => alias).join(" ");
+  const q = questionTokens(`${withTermAliases(question)} ${extra}`).stems;
+  return subject.some((t) => q.has(t));
+}
 export function withTermAliases(text: string): string {
   const extra = TERM_ALIASES.filter(([re]) => re.test(text)).map(([, alias]) => alias);
   return extra.length ? `${text} (${extra.join(" ")})` : text;
@@ -842,6 +870,10 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
         const matchText = withTermAliases(questionWithLeadIn(draft));
         for (const c of rankedFactCandidates(matchText, ctx.info, [], conflictKeys, docs, 4)) {
           const key = c.detail.split(":")[0];
+          // (A "sure" finding — no answer check follows — so the fact must
+          // be about what the question asks: "revenueByYear" never answers a
+          // headcount or fleet question because both mention a year.)
+          if (!factSubjectInQuestion(key, question)) continue;
           const raw = ctx.info[key];
           const kind = String(sources[key]?.source ?? "");
           if (["crm", "website", "social"].includes(kind)) continue;

@@ -445,9 +445,18 @@ function longHistory(): ConversationMessage[] {
     assert.equal(h3.sessions.length, 1);
     assert.equal(h3.sessions[0].extractedInfo._conductedBy, "broker_with_seller");
     assert.equal((h3.sessions[0].messages as ConversationMessage[]).length, 1);
-    // …and the seller's own visit afterwards never continues it as the
-    // broker-led session (review F1): the unanswered opening is rewritten
-    // for the seller alone, in the same row.
+    // The seller opening their page while the broker's sitting is live
+    // (round 2): nothing is rewritten under the broker — the page says the
+    // broker is going through it with them.
+    const c3b = h3.calls.length;
+    const live = await startOrResumeSession("deal-1");
+    assert.equal(live.status, "together_live");
+    assert.equal(h3.calls.length, c3b, "no model call");
+    assert.equal(h3.sessions[0].extractedInfo._conductedBy, "broker_with_seller");
+    // …and once it has gone quiet, the seller's own visit never continues
+    // it as the broker-led session (review F1): the unanswered opening is
+    // rewritten for the seller alone, in the same row.
+    h3.sessions[0].lastActivityAt = new Date(Date.now() - 45 * 60_000);
     h3.script.push({ message: "What does Great Lakes Plastics make, and who buys from you?", ...bigTail });
     const c4 = h3.calls.length;
     const back = await startOrResumeSession("deal-1");
