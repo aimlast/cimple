@@ -99,10 +99,10 @@ const row = (id: string, name: string, category: string, values: Record<string, 
   assert.equal(gone.blocking, true);
   assert.match(gone.message!, /deleted \(“FY2023 statements\.pdf”\)/);
   assert.throws(() => cimFinancialsFor([analysis], docs.filter((d) => d.id !== "fs23")), StaleFinancialAnalysisError);
-  // A lease deleted is only a warning.
+  // A lease (not a financial source) deleted changes nothing (round F-2: no re-run invited).
   const lease = analysisSourceStatus(analysis, docs.filter((d) => d.id !== "lease"));
   assert.equal(lease.blocking, false);
-  assert.ok(lease.message);
+  assert.equal(lease.message, null);
   // FY2024 statements added since: a warning in the CIM generation and the banner.
   const added = [...docs, { id: "fs24", name: "FY2024 statements.pdf", category: "financials", isProcessed: true, extractedText: "y".repeat(80) }];
   const st = analysisSourceStatus(analysis, added);

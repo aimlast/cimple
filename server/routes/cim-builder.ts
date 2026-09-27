@@ -56,6 +56,23 @@ import {
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
 import { refreshSectionDd } from "../cim/dd-enrichment";
+import { cimFinancialsFor, StaleFinancialAnalysisError } from "../cim/cim-financials";
+
+/**
+ * Why the DD version can't be refreshed now: the financial analysis the CIM
+ * uses was built from a statement since deleted (the same stop as CIM
+ * generation) — said plainly instead of a generic failure.
+ */
+async function staleFinancialsBlock(dealId: string): Promise<string | null> {
+  const [analyses, docs] = await Promise.all([storage.getFinancialAnalysesByDeal(dealId), storage.getDocumentsByDeal(dealId)]);
+  try {
+    cimFinancialsFor(analyses, docs);
+    return null;
+  } catch (err) {
+    if (err instanceof StaleFinancialAnalysisError) return err.message.replace(/Generation is stopped until then\.$/, "The DD version can't be refreshed until then.");
+    throw err;
+  }
+}
 import { dealStreetAddress } from "@shared/cim-media";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
@@ -452,7 +469,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
       }
       if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section — wait for it to finish." });
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const { warning } = await refreshSectionDd(section, deal);
       res.json({ success: true, warning: warning ?? null });
@@ -460,6 +477,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (err?.message === "changed") {
         return res.status(409).json({ error: "The section changed while its DD version was being written. Refresh it again." });
       }
+      if (err instanceof StaleFinancialAnalysisError) return res.status(409).json({ error: err.message });
       console.error("[cim-builder] DD refresh failed:", err);
       res.status(500).json({ error: "Couldn't refresh the DD version" });
     }
@@ -475,7 +493,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         storage.getCimSectionOverrides(deal.id, "dd"),
       ]);
       if (ddOverrides.length === 0) return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
       const todo = sections.filter((s) => {

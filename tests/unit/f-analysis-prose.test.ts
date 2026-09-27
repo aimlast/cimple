@@ -143,12 +143,15 @@ const fx = JSON.parse(fs.readFileSync(path.join(path.dirname(new URL(import.meta
   assert.equal(formatLike("$1.54M", 1_552_000), "$1.55M");
   assert.equal(formatLike("$1,537,000", 1_552_000), "$1,552,000");
   assert.equal(formatLike("$890K", 875_000), "$875K");
-  assert.equal(reviseEarningsText("2024 adjusted EBITDA reached $1.2M.", computed).text, "2024 adjusted EBITDA reached $1.1M.");
+  assert.equal(reviseEarningsText("2024 adjusted EBITDA reached $1.08M.", computed).text, "2024 adjusted EBITDA reached $1.10M.");
+  // Further off than a misstatement (round 2): another basis — the words stay, a check is left.
+  same("2024 adjusted EBITDA reached $1.2M.");
+  assert.equal(reviseEarningsText("2024 adjusted EBITDA reached $1.2M.", computed).found[0].corrected, false);
   // Unqualified EBITDA that is the reported figure is left alone.
   same("2024 EBITDA of $900,000.");
   // A multiple of a corrected figure is worked out again from the price in the text.
   assert.equal(
-    reviseEarningsText("Asking price $6,500,000. At 2024 adjusted EBITDA of $1,250,000, this is 5.2x.", computed).text,
+    reviseEarningsText("Asking price $6,500,000. At 2024 adjusted EBITDA of $1,080,000, this is 6.0x.", computed).text,
     "Asking price $6,500,000. At 2024 adjusted EBITDA of $1,100,000, this is 5.9x.",
   );
   same("Asking price $6,500,000. At 2024 adjusted EBITDA of $1,100,000, this is 5.9x.");

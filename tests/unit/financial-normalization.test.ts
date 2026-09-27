@@ -150,8 +150,9 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
     aiReasoning: "",
   }));
   assert.equal((out.normalization as any).adjustedSde, 140_000);
-  assert.equal((out.insights as any).positive[0].detail, "2024 SDE of $140,000.", "$190,000 SDE (with the dividend) is corrected (round F)");
-  assert.match(out.aiReasoning, /Figures corrected in code: Insight "SDE" stated 2024 SDE 190,000; computed 140,000\./);
+  // Far off (the model counted the dividend): its words stay, flagged for the broker (round F-2).
+  assert.ok((out.insights as any).positive[0].flag, "$190,000 SDE (with the dividend) is flagged");
+  assert.match(out.aiReasoning, /Figures checked in code: Insight "SDE" stated 2024 SDE 190,000; computed 140,000\./);
   assert.equal((out.workingCapital as any).currentAssets.length, 0);
 }
 
@@ -303,14 +304,13 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
       "2024 SDE of $1,800,000 as claimed by the seller.",
     ],
   };
-  // Round F: only the analysis's own worked sum is rebuilt; the seller's figures are left as quoted.
+  // Only the analysis's own worked sum is judged; it says more than the sum (the aside), so it keeps
+  // its words and gets a check (round F-2); the seller's figures are left as quoted.
   const notes = flagEarningsNotes(n)!.notes!;
-  assert.equal(notes.filter((x) => x.startsWith("Check:")).length, 0);
-  assert.deepEqual(notes, [
-    "2024 SDE: $1,537,000 (adjusted EBITDA) + $180,000 (Owner salary (T4 wages)) = $1,717,000.",
-    "Seller initially claimed $1.8M SDE for 2024.",
-    "2024 SDE of $1,800,000 as claimed by the seller.",
-  ]);
+  const checks = notes.filter((x) => x.startsWith("Check:"));
+  assert.equal(checks.length, 1, "only the analysis's own worked sum is flagged");
+  assert.match(checks[0], /states 2024 SDE as \$1,777,000; the add-backs listed here compute \$1,717,000/);
+  assert.ok(notes.includes("Seller initially claimed $1.8M SDE for 2024.") && notes.includes("2024 SDE of $1,800,000 as claimed by the seller."));
 }
 
 // ── Round 2: Beacon's stored add-backs reproduce the broker-reviewed figures ──

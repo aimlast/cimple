@@ -611,7 +611,7 @@ function LinkFactDialog({
     if (own) setPickYearFor(own);
   }, [data, disc?.id, disc?.factKey]);
   // A list of values by year never takes one figure as a whole: the year is picked first.
-  const choose =(o: FactOption) => (o.years && o.years.length > 0 ? setPickYearFor(o) : link.mutate({ factKey: o.key }));
+  const choose = (o: FactOption) => (o.years && o.years.length > 0 ? setPickYearFor(o) : link.mutate({ factKey: o.key }));
   const yearChoices = pickYearFor
     ? Array.from(new Set([...(data?.suggestedYear ? [data.suggestedYear] : []), ...(pickYearFor.years ?? [])]))
     : [];

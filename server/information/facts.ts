@@ -63,6 +63,7 @@ import {
   bareDiscrepancyValue,
   resolutionSourceExtras,
   yearForMapResolution,
+  isYearMap,
   RESOLVED_NOTE,
   type DiscrepancyTarget,
 } from "./resolution-write";
@@ -133,7 +134,7 @@ export function coerceBrokerValue(current: unknown, input: unknown): unknown {
  */
 export function assertKeepsMapShape(current: unknown, value: unknown): void {
   const cur = repairCharIndexedValue(current);
-  if (isPlainMap(cur) && Object.keys(cur).length > 0 && !isPlainMap(value)) {
+  if (isYearMap(cur) && !isPlainMap(value)) {
     throw new FactError("That fact is a list of values by year. Write each year on its own line, like 2024: $9,815,000");
   }
 }

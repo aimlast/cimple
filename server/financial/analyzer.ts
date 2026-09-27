@@ -35,6 +35,7 @@ import {
   applyWorkingCapitalRules,
   flagEarningsNotes,
   flagEarningsStatements,
+  earningsCorrections,
   isOwnerCompDiscrepancy,
   isOwnerPayLine,
   clarifyOwnerPayAddbacks,
@@ -599,24 +600,29 @@ export function markPrivateMaterial(result: AnalysisOutput, index: FigureIndex):
 }
 
 /**
- * Canonical EBITDA/SDE from the final add-back list. Text that states a
- * different figure is corrected to it (a worked sum rebuilt from the
- * add-backs, growth rates and margins worked out again); a figure the code
- * can't place is flagged. A sentence that calls the owner's full pay "the
+ * Canonical EBITDA/SDE from the final add-back list. Text that ties a
+ * figure to its metric and year, a little off, is corrected to it (a
+ * sentence that is only a worked sum rebuilt from the add-backs; growth
+ * rates, margins and multiples on it worked out again); anything else that
+ * doesn't tie keeps its words and is flagged. A sentence that calls the owner's full pay "the
  * add-back" gains how the analysis splits it (SDE vs adjusted EBITDA).
  */
 export function finalizeEarnings(input: AnalysisOutput): AnalysisOutput {
   const result = withBalanceSheetFiguresChecked(input);
   const revenue = revenueByYear(result.reclassifiedPnl);
-  const flagged = withCanonicalEarnings(flagEarningsNotes(result.normalization, { revenue }));
+  // What the notes and insights themselves pin down, read before any is revised.
+  const corrections = earningsCorrections(result.normalization, result.insights, { revenue });
+  const flagged = withCanonicalEarnings(flagEarningsNotes(result.normalization, { revenue, corrections }));
   const normalization = flagged && Array.isArray(flagged.notes)
     ? { ...flagged, notes: flagged.notes.map((n) => clarifyOwnerPayAddbacks(n, flagged)) }
     : flagged;
-  const revised = flagEarningsStatements(result.insights, normalization, { revenue });
+  const revised = flagEarningsStatements(result.insights, normalization, { revenue, corrections });
   const insights = clarifyInsights(revised.insights, normalization);
   const mismatches = revised.mismatches;
   const say = (m: (typeof mismatches)[number]) =>
-    `${m.where} stated ${m.year} ${m.label} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`;
+    m.unplaced
+      ? `${m.where} stated ${m.label} ${Math.round(m.stated).toLocaleString("en-US")} with no year (nearest computed: ${m.year} ${Math.round(m.expected).toLocaleString("en-US")})`
+      : `${m.where} stated ${m.year} ${m.label} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`;
   const corrected = mismatches.filter((m) => m.corrected);
   const open = mismatches.filter((m) => !m.corrected);
   const lines = [
@@ -1421,6 +1427,14 @@ export interface AnalysisOutput {
   privateAddbackLabels?: string[];
 }
 
+/** The analysis reply's own shape: an object carrying the statements or the normalization, with at least one other part. */
+export function isAnalysisObject(v: unknown): boolean {
+  if (!v || typeof v !== "object" || Array.isArray(v)) return false;
+  const o = v as Record<string, unknown>;
+  const parts = ["reclassifiedPnl", "reclassifiedBalanceSheet", "reclassifiedCashFlow", "normalization", "workingCapital", "insights", "clarifyingQuestions", "discrepancies"];
+  return ("reclassifiedPnl" in o || "normalization" in o) && parts.filter((k) => k in o).length >= 2;
+}
+
 async function runComprehensiveAnalysis(
   deal: { industry: string; subIndustry?: string | null; businessName: string },
   sources: SourceBundle,
@@ -1605,7 +1619,9 @@ RULES:
   const text = response.content[0].type === "text" ? response.content[0].text : "";
   let parsed: any;
   try {
-    parsed = parseJsonLoose(text);
+    // Only the analysis object itself — never a piece of a malformed one, or
+    // an example: a value without the analysis's own keys is not the answer.
+    parsed = parseJsonLoose(text, isAnalysisObject);
   } catch (err) {
     console.error("Failed to parse comprehensive analysis response:", err);
     throw new Error("The AI analysis returned malformed output. Please re-run the analysis.");

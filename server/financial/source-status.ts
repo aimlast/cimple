@@ -13,8 +13,9 @@
  * other, private). A statement or tax document the analysis used that has
  * since been deleted blocks CIM generation until the analysis is re-run;
  * a statement or tax document added since is a warning (Financial Analysis
- * Center banner, CIM generation warning). Older rows recorded bare ids:
- * any deleted one is a warning. Pure.
+ * Center banner, CIM generation warning). Deleting any other source (a
+ * photo, a transcript, a CRM note) changes nothing. Older rows recorded
+ * bare ids: any deleted one is a warning. Pure.
  */
 
 export type AnalysisSourceRole = "statements" | "tax" | "other" | "private";
@@ -103,7 +104,10 @@ export function analysisSourceStatus(analysis: { sourceDocumentIds?: unknown } |
   if (!analysis || refs.length === 0) return none;
   const current = new Map(docs.map((d) => [d.id, d]));
   const used = new Set(refs.map((r) => r.id));
-  const removed = refs.filter((r) => !current.has(r.id));
+  // Only a financial source the figures came from matters: a deleted
+  // photo, transcript or CRM note never makes the analysis out of date
+  // (older rows recorded bare ids with no role — any of those still warns).
+  const removed = refs.filter((r) => !current.has(r.id) && (!r.role || r.role === "statements" || r.role === "tax"));
   const added = docs
     .filter((d) => !used.has(d.id) && hasContent(d) && !isBrokerOnly(d) && (isFinancialStatementDoc(d) || isTaxDocument(d)))
     .map((d) => ({ id: d.id, name: d.name }));

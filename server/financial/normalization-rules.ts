@@ -48,19 +48,36 @@ const BARE_DISTRIBUTION_RE = /^\s*(?:distributions?|draws?)(?:\s+paid)?\s*$/i;
 /** Money coming IN (income, a gain) — never a distribution. */
 const INCOME_WORD_RE = /\b(?:income|revenue|received|earned|gain|interest\s+on)\b/i;
 
-/**
- * A pay word in the label: "Owner compensation (T4 salary + T5 dividends)"
- * is the owner's pay with a dividend folded in, not a distribution — the
- * dividend is carved out and the salary kept (applyAddbackRules). Only a
- * line with no pay in it is a distribution as a whole.
- */
 const LABEL_PAY_RE = /\b(?:salary|salaries|wages?|t4|payroll|compensation|comp|remuneration|bonus(?:es)?|management\s+fees?)\b/i;
 
-export function isDistributionLine(ab: Pick<UiAddback, "label" | "amounts">): boolean {
+/**
+ * The owner's pay with a dividend listed as a PART of it: "Owner
+ * compensation (T4 salary + T5 dividends)", "Owner's salary and dividends".
+ * The pay leads and the dividend is another item beside it — not
+ * "Dividends in lieu of salary", "Shareholder dividend (bonus)" or
+ * "Salary paid as dividends", which are dividends whatever they replace.
+ */
+export function isPayWithDividendPart(label: string): boolean {
+  const pay = label.match(LABEL_PAY_RE);
+  const div = label.match(DISTRIBUTION_RE);
+  if (!pay || !div || pay.index! > div.index!) return false;
+  const between = label.slice(pay.index! + pay[0].length, div.index!);
+  if (/\b(?:as|in\s+(?:the\s+)?form\s+of|via|through|by\s+way\s+of|paid\s+as|taken\s+as)\b/i.test(between)) return false;
+  return /\+|&|,|\band\b|\bplus\b|\(/i.test(between);
+}
+
+/**
+ * A line that is a distribution to the owners, not an expense. A pay line
+ * with a dividend listed as a part of it is not — when its description
+ * states the dividend in figures, applyAddbackRules carves it out and keeps
+ * the salary; when it doesn't, the whole line is treated as a distribution
+ * (a dividend is never added back) and the broker is asked for the salary.
+ */
+export function isDistributionLine(ab: Pick<UiAddback, "label" | "amounts"> & { description?: string }): boolean {
   const label = ab.label ?? "";
   if (!DISTRIBUTION_RE.test(label) && !BARE_DISTRIBUTION_RE.test(label)) return false;
   if (INCOME_WORD_RE.test(label)) return false;
-  if (LABEL_PAY_RE.test(label)) return false;
+  if (isPayWithDividendPart(label) && dividendStatedIn(ab.description ?? "")) return false;
   // A distribution added back is always positive; a negative line is income
   // being removed.
   return !Object.values(ab.amounts ?? {}).some((v) => Number(v) < 0);
@@ -112,6 +129,14 @@ function dividendAmount(text: string): number | null {
     }
   }
   return null;
+}
+
+/** The description says how much of a line is the dividend ("T4 salary $180,000 plus T5 dividends $60,000"). */
+function dividendStatedIn(description: string): boolean {
+  if (!description || !DIVIDEND_MENTION_RE.test(description)) return false;
+  if (dividendAmount(description) !== null) return true;
+  const bd = ownerPayBreakdown(description);
+  return !!bd && bd.parts.some((p) => p.kind === "distribution");
 }
 
 /**
@@ -413,7 +438,11 @@ export function applyAddbackRules(n: UiNormalization | null): UiNormalization | 
       if (out.approved) {
         out.approved = false;
         out.description = `Not an add-back — dividends and owner draws are distributions of after-tax profit, not P&L expenses.${description ? ` ${description}` : ""}`;
-        notes.push(`"${out.label}" is a distribution to the shareholder, not an expense on the P&L, so it is not added back. It is listed for reference only.`);
+        notes.push(
+          isPayWithDividendPart(out.label)
+            ? `"${out.label}" includes a dividend, but its description doesn't say how much of it is salary, so none of it is added back (a dividend is a distribution, not an expense). Add the owner's salary as its own add-back.`
+            : `"${out.label}" is a distribution to the shareholder, not an expense on the P&L, so it is not added back. It is listed for reference only.`,
+        );
       }
       addbacks.push(out);
       continue;
@@ -467,6 +496,12 @@ export function applyAddbackRules(n: UiNormalization | null): UiNormalization | 
           .trim();
         if (relabelled && relabelled !== out.label && !DIVIDEND_MENTION_RE.test(relabelled)) out.label = relabelled;
         notes.push(`Owner compensation add-back "${out.label}" included a ${fmt(d)} dividend; dividends are distributions of after-tax profit and are not added back, so it was removed (${target.join(", ")}).`);
+      } else if (labelDividend && out.approved && !brokerOwned(out)) {
+        // The label says a dividend is in the line and it couldn't be taken
+        // out: nothing of it is added back until the broker splits it.
+        out.approved = false;
+        out.description = `Not an add-back until split — the line includes a dividend (a distribution, not an expense) and the amounts don't show how much.${description ? ` ${description}` : ""}`;
+        notes.push(`"${out.label}" includes a dividend that couldn't be separated from the salary, so none of it is added back. Add the owner's salary as its own add-back.`);
       } else {
         out.confidence = "low";
         notes.push(`"${out.label}" mentions a dividend or draw. Dividends and draws are distributions, not add-backs — check that none is included in the amount.`);
@@ -1015,7 +1050,8 @@ function statedFigures(sentence: string, carried: RegExpMatchArray | null = null
     if (next && !used.has(next.index)) {
       const gap = sentence.slice(metricEnd, next.index);
       const words = gap.toLowerCase().split(/[^a-z0-9.%]+/).filter(Boolean);
-      const linkOnly = gap.length <= 70 && !/[=+×*/]/.test(gap) &&
+      // "EBITDA = SDE - $80K": a minus is an operator, not a link.
+      const linkOnly = gap.length <= 70 && !/[=+×*/−]|\s[-–]\s/.test(gap) &&
         words.every((w) => LINK_WORDS.has(w) || /^(?:fy)?(?:19|20)\d{2}$/.test(w) || /^\d+(?:\.\d+)?%$/.test(w));
       if (linkOnly) {
         // "… from $A (2022) to $B (2024)"
@@ -1114,10 +1150,15 @@ export function findEarningsMismatches(text: string, computed: CanonicalEarnings
 // in 2021 to $1,537,000" and margins from the same wrong figures — while
 // its own add-back table computes $1,552,000 / $1,717,000. The code only
 // appended "Check:" lines, so the broker (and the DD writer) read two sets
-// of figures. Now every stated figure the code can place (metric + year)
-// is rewritten to the computed one, a worked sum is rebuilt from the
-// add-backs, and growth rates and margins that rest on a corrected figure
-// are worked out again. Only a figure the code can't place keeps a check.
+// of figures. Now a figure the text ties to its metric and year, a little
+// off the computed one, is rewritten to it; a sentence that is only a
+// worked sum is rebuilt from the add-backs; and growth rates, margins and
+// multiples that rest on a corrected figure are worked out again. The
+// round-1 version rewrote far more (any figure within 5% of some year, any
+// percentage after "margin") and falsified prose: a workbook's weighted
+// SDE, counterfactuals ("would be $1,535,000 if …"), industry benchmarks,
+// a three-year average. Anything the text doesn't pin down keeps its words
+// and, when it doesn't tie, gets a check.
 
 /** Revenue per year from the reclassified P&L (for margins). */
 export function revenueByYear(pnl: UiReclassifiedTable | null | undefined): Record<string, number> {
@@ -1137,12 +1178,28 @@ export interface EarningsTextContext {
   revenue?: Record<string, number>;
   /** Every amount in the text being revised (set by reviseEarningsText), for multiples. */
   prices?: number[];
+  /** Corrections made on explicit evidence anywhere in the analysis (earningsCorrections). */
+  corrections?: EarningsCorrection[];
 }
 
 export type EarningsFinding = Omit<EarningsMismatch, "where"> & {
   /** The text now states the computed figure (else a check is left). */
   corrected: boolean;
+  /** The text gives no year and the figure matches none: `year` is only the nearest one. */
+  unplaced?: boolean;
 };
+
+/** A check's words: a figure with no year is never said to be "stated as" a year's figure. */
+export function earningsCheckText(f: Pick<EarningsFinding, "year" | "label" | "stated" | "expected" | "unplaced">, form: "note" | "insight"): string {
+  if (f.unplaced) {
+    return form === "note"
+      ? `Check: the note above states ${f.label} as ${fmt(f.stated)}, which matches no year the add-backs compute (nearest: ${f.year}, ${fmt(f.expected)}).`
+      : `${fmt(f.stated)} matches no year's ${f.label} (nearest: ${f.year}, ${fmt(f.expected)})`;
+  }
+  return form === "note"
+    ? `Check: the note above states ${f.year} ${f.label} as ${fmt(f.stated)}; the add-backs listed here compute ${fmt(f.expected)}.`
+    : `the normalization computes ${f.year} ${f.label} as ${fmt(f.expected)}, not ${fmt(f.stated)}`;
+}
 
 type Variant = "reportedEbitda" | "adjustedEbitda" | "sde";
 const VARIANT_LABEL: Record<Variant, string> = { reportedEbitda: "reported EBITDA", adjustedEbitda: "adjusted EBITDA", sde: "SDE" };
@@ -1206,6 +1263,7 @@ const applyEdits = (s: string, edits: Edit[]) =>
 
 const PCT_RE = /(\d+(?:\.\d+)?)\s?%/g;
 const MARGIN_RE = /\b(adjusted\s+|normali[sz]ed\s+|reported\s+|unadjusted\s+)?(ebitda|sde)\s+margins?\b/i;
+const MARGIN_RE_G = new RegExp(MARGIN_RE.source, "gi");
 
 /** A percentage re-stated at the precision the text used. */
 function pctText(value: number, decimals: number): string {
@@ -1213,51 +1271,135 @@ function pctText(value: number, decimals: number): string {
 }
 
 /**
+ * How far a stated figure may be from the computed one and still be the
+ * same figure misstated (a sum that left out the $15,000 owner excess:
+ * $1,537,000 for $1,552,000). Further off, the text is working on another
+ * basis ("SDE" without D&A, the seller's own numbers) — rewriting one
+ * figure would leave the words around it wrong, so it gets a check.
+ */
+const DRIFT = 0.03;
+const drifted = (stated: number, expected: number) => expected !== 0 && Math.abs(stated - expected) / Math.abs(expected) <= DRIFT;
+
+/**
+ * A sentence about something other than the analysis's own figure for a
+ * year: a hypothetical ("would", "if", "excluding …", "a buyer using a
+ * $120,000 salary …"), another basis (run-rate, pro forma, an average, a
+ * weighting, a forecast) or figures quoted from elsewhere ("per the
+ * workbook", "per confirmed facts"), or a benchmark ("industry averages").
+ * Its figures are never rewritten or questioned: "If the $17,000 Donna
+ * excess is not accepted, adjusted EBITDA would be $1,535,000" corrected to
+ * the computed $1,552,000 reversed its meaning.
+ */
+const OTHER_BASIS_RE =
+  /\b(?:would|could|might|if|unless|assum(?:e|es|ed|ing|ptions?)|using|excluding|exclusive\s+of|without|pro[\s-]?forma|run[\s-]?rate|averages?|averaged|avg|weighted|blended|project(?:ed|ions?)|forecast\w*|budget\w*|scenarios?|sensitivity|potential(?:ly)?|should|trailing|ttm|ltm|ytd|year[\s-]to[\s-]date|annuali[sz]ed|stabili[sz]ed|workbook|methodology|benchmarks?|typical(?:ly)?)\b|\bper\s+(?:the\s+)?(?:confirmed|workbook|facts?|cim|model|seller|broker|accountant|cpa|statements?|p&l|t2|tax|listing|teaser)\b/i;
+/** "Adjusted EBITDA (normalizing only owner comp, not one-time items): …" names a basis of its own. */
+const OWN_BASIS_RE = /\b(?:ebitda|sde)\s*\(([^()]*)\)/gi;
+function isOtherBasis(sentence: string): boolean {
+  if (OTHER_BASIS_RE.test(sentence)) return true;
+  return Array.from(sentence.matchAll(OWN_BASIS_RE)).some((m) =>
+    /\b(?:only|not|exclud\w*|includ\w*|before|after|without|per|basis|definition|method|as\s+(?:stated|reported|claimed))\b/i.test(m[1]),
+  );
+}
+
+/** Where a worked sum's terms start: "2024 SDE:", "FY2024 SDE: Net Income …". */
+const SUM_HEAD_RE =
+  /^\s*(?:(?:FY\s?)?(?:19|20)\d{2}\s+)?(?:adjusted\s+|normali[sz]ed\s+|reported\s+)?(?:ebitda|sde)(?:\s+(?:calculation|computation|bridge|build[- ]?up|walk|reconciliation))?(?:\s+(?:for\s+|in\s+)?(?:FY\s?)?(?:19|20)\d{2})?\s*[:=]\s*(?:(?:FY\s?)?(?:19|20)\d{2}\s*:\s*)?(?:[A-Za-z][A-Za-z&'’ -]{0,40})?$/i;
+/**
+ * The sentence is nothing but the worked sum ("2024 SDE: $1,537,000
+ * (adjusted EBITDA) + $165,000 (market GM salary) = $1,702,000."), so
+ * rebuilding it from the add-backs loses nothing. A sum that carries more
+ * ("…, which is 4.2x on the $6,500,000 asking price"; "…; FY2023 $1,076K")
+ * keeps its words and gets a check.
+ */
+/** What a worked sum's own terms add up to ("$563,190 + $130K + $214K" → 907,190); null when it isn't plain + / −. */
+function termsTotal(sentence: string, f: StatedFigure): number | null {
+  const monies = moneyIn(sentence).filter((m) => m.index < f.amount.index);
+  if (monies.length < 2) return null;
+  let total = 0;
+  for (let k = 0; k < monies.length; k++) {
+    const between = k === 0 ? "" : sentence.slice(monies[k - 1].end, monies[k].index);
+    if (k > 0 && /[×*/]|\bx\s*$/.test(between)) return null;
+    const minus = k > 0 && /[−–]|\s-\s|\bless\b|\bminus\b/.test(between) && !/\+/.test(between);
+    total += minus ? -monies[k].value : monies[k].value;
+  }
+  return total;
+}
+
+function isWorkedSumOnly(sentence: string, f: StatedFigure): boolean {
+  if (!/^\s*\.?\s*$/.test(sentence.slice(f.amount.end))) return false;
+  if ((sentence.match(/=|≈/g) ?? []).length !== 1) return false;
+  const first = moneyIn(sentence)[0];
+  if (!first || first.index >= f.amount.index) return false;
+  if (!SUM_HEAD_RE.test(sentence.slice(0, first.index))) return false;
+  return !/;|\b(?:which|because|but|although|while|so|however|whereas)\b/i.test(sentence.slice(first.index, f.amount.index));
+}
+
+/**
+ * A correction made on explicit evidence (a figure with its metric and
+ * year, a worked sum, a margin with its year): the same misstatement
+ * written elsewhere in the analysis without its year ("The seller's figure
+ * is closer to SDE ($1,702,000)", "margin improved from 11.4% to 15.7%") is
+ * corrected the same way — never by guessing which year a bare figure is
+ * nearest to (that turned a three-year average into a year's figure).
+ */
+export interface EarningsCorrection {
+  kind: "figure" | "margin";
+  variant: Variant;
+  year: string;
+  /** The stated figure (for a margin: the percentage, as the text worked it out) and the computed one. */
+  from: number;
+  to: number;
+}
+
+/**
  * One sentence revised: its EBITDA/SDE figures, the worked sums they close,
- * and the growth rates and margins built on them.
+ * and the growth rates, margins and multiples built on them — only where
+ * the text itself ties the figure to its metric and year (or the same
+ * misstatement was corrected elsewhere on that evidence), and only a small
+ * misstatement. Everything else keeps its words; a figure that doesn't tie
+ * gets a check.
  */
 function reviseSentence(
   sentence: string,
   figures: StatedFigure[],
   computed: CanonicalEarnings,
   ctx: EarningsTextContext,
-): { text: string; found: EarningsFinding[] } {
+): { text: string; found: EarningsFinding[]; corrections: EarningsCorrection[] } {
+  if (isOtherBasis(sentence)) return { text: sentence, found: [], corrections: [] };
   const years = Object.keys(computed.adjustedEbitda);
   const keyFor = (y: string) => years.find((k) => k === y) ?? years.find((k) => (k.match(/(?:19|20)\d{2}/g)?.pop() ?? k) === y) ?? null;
   const found: EarningsFinding[] = [];
   const edits: Edit[] = [];
+  const corrections: EarningsCorrection[] = [];
+  const known = ctx.corrections ?? [];
   const valueOf = (v: Variant, y: string) => computed[v][y];
   const close = (f: StatedFigure, c: number | undefined) => typeof c === "number" && Math.abs(c - f.amount.value) <= allowedDifference(f.amount.raw, c, f.hedged);
   const variantsFor = (f: StatedFigure): Variant[] => {
     const adjusted = f.qualifier.startsWith("adjusted") || f.qualifier.startsWith("normali");
     return f.metric === "SDE" ? ["sde"] : adjusted ? ["adjustedEbitda"] : f.qualifier ? ["reportedEbitda"] : ["reportedEbitda", "adjustedEbitda"];
   };
-  /** The year a figure is for: its own, else (none written) the year whose figure it is closest to, within 5%. */
-  const placeYear = (f: StatedFigure, vs: Variant[]): string | null => {
-    if (f.year) return keyFor(f.year);
-    let best: { y: string; d: number } | null = null;
-    for (const y of years) for (const v of vs) {
-      const c = valueOf(v, y);
-      if (typeof c !== "number" || c === 0) continue;
-      const d = Math.abs(c - f.amount.value) / Math.abs(c);
-      if (!best || d < best.d) best = { y, d };
-    }
-    return best && best.d <= 0.05 ? best.y : null;
+  /** A figure written without its year: the one correction already made to that same figure (same metric), if any. */
+  const knownFigure = (f: StatedFigure, vs: Variant[]) => {
+    const hits = known.filter((c) => c.kind === "figure" && vs.includes(c.variant) && Math.abs(c.from - f.amount.value) <= allowedDifference(f.amount.raw, c.from, f.hedged));
+    return new Set(hits.map((h) => `${h.year}|${h.variant}`)).size === 1 ? hits[0] : null;
   };
 
-  const live = figures.map((f) => ({ f, attributed: isAttributed(sentence, f) }));
-  // Per figure: its year and the variant it is judged as.
-  const plan = live.map(({ f, attributed }) => {
-    if (attributed) return null;
+  // Per figure: its year (as written, or from a correction made elsewhere) and the variants it may be.
+  const plan = figures.map((f) => {
+    if (isAttributed(sentence, f)) return null;
     const vs = variantsFor(f);
-    const year = placeYear(f, vs);
-    if (f.year && year === null) return null; // a year the analysis doesn't cover (a forecast, YTD)
-    return { f, vs, year };
+    if (f.year) {
+      const year = keyFor(f.year);
+      return year ? { f, vs, year, via: null as Variant | null } : null; // a year the analysis doesn't cover (a forecast, YTD)
+    }
+    const k = knownFigure(f, vs);
+    return { f, vs, year: k?.year ?? null, via: k?.variant ?? null };
   });
   // An unqualified "EBITDA" pair is one series: the variant that fits both ends.
   const chosen = new Map<number, Variant>();
   plan.forEach((p, i) => {
     if (!p || chosen.has(i)) return;
+    if (p.via) { chosen.set(i, p.via); return; }
     if (p.vs.length === 1) { chosen.set(i, p.vs[0]); return; }
     const partner = p.f.pair !== undefined ? plan[p.f.pair] : null;
     const members = partner && partner.year ? [p, partner] : [p];
@@ -1267,69 +1409,85 @@ function reviseSentence(
     }, 0);
     const v = (["reportedEbitda", "adjustedEbitda"] as Variant[]).sort((a, b) => err(a) - err(b))[0];
     chosen.set(i, v);
-    if (partner && p.f.pair !== undefined) chosen.set(p.f.pair, v);
+    if (partner && p.f.pair !== undefined && !partner.via) chosen.set(p.f.pair, v);
   });
 
   const newValue = new Map<number, number>();
-  let rebuild = false;
+  let rebuilt: string | null = null;
   plan.forEach((p, i) => {
     if (!p) return;
     const v = chosen.get(i)!;
+    const stated = p.f.amount.value;
     if (!p.year) {
-      // Not placeable: judged as before, a check if it matches no year at all.
-      const any = years.some((y) => p.vs.some((vv) => close(p.f, valueOf(vv, y))));
-      if (!any) {
-        const y = computed.latestYear!;
-        const expected = valueOf(p.vs[0], y);
-        const label = p.f.metric === "SDE" ? "SDE" : p.vs.length > 1 ? "EBITDA" : VARIANT_LABEL[p.vs[0]];
-        if (typeof expected === "number") found.push({ metric: p.f.metric, label, year: y, stated: p.f.amount.value, expected, corrected: false });
+      // Not placeable: a check only when it matches no year at all — named
+      // for the year it is nearest to (else the latest), never rewritten.
+      if (years.some((y) => p.vs.some((vv) => close(p.f, valueOf(vv, y))))) return;
+      let near: { y: string; d: number } | null = null;
+      for (const y of years) for (const vv of p.vs) {
+        const c = valueOf(vv, y);
+        if (typeof c !== "number" || c === 0) continue;
+        const d = Math.abs(c - stated) / Math.abs(c);
+        if (d <= 0.1 && (!near || d < near.d)) near = { y, d };
       }
+      const y = near?.y ?? computed.latestYear!;
+      const expected = valueOf(p.vs[p.vs.length - 1], y);
+      const label = p.f.metric === "SDE" ? "SDE" : p.vs.length > 1 ? "EBITDA" : VARIANT_LABEL[p.vs[0]];
+      if (typeof expected === "number") found.push({ metric: p.f.metric, label, year: y, stated, expected, corrected: false, unplaced: true });
       return;
     }
     const expected = valueOf(v, p.year);
     if (typeof expected !== "number") return;
     // A qualified figure that ties to its own metric, or an unqualified one that ties to either: fine.
     if (p.vs.some((vv) => close(p.f, valueOf(vv, p.year!))) && (p.vs.length === 1 || p.f.pair === undefined || close(p.f, expected))) return;
-    const label = p.f.metric === "SDE" ? "SDE" : p.vs.length === 1 ? VARIANT_LABEL[v] : v === "adjustedEbitda" ? "adjusted EBITDA" : "EBITDA";
+    // As the text names it — an unqualified "EBITDA" is only called adjusted when it is corrected as such.
+    const label = p.f.metric === "SDE" ? "SDE" : p.vs.length === 1 ? VARIANT_LABEL[v] : v === "adjustedEbitda" && drifted(stated, expected) ? "adjusted EBITDA" : "EBITDA";
     // The right figure under the other metric's name: the name is corrected.
     const other: Variant | null = p.f.metric === "SDE"
       ? close(p.f, valueOf("adjustedEbitda", p.year)) ? "adjustedEbitda" : close(p.f, valueOf("reportedEbitda", p.year)) ? "reportedEbitda" : null
       : close(p.f, valueOf("sde", p.year)) ? "sde" : null;
-    if (other && p.f.metricAt && p.f.pair === undefined) {
+    // Not a worked sum's subject: "FY2024 EBITDA = $629,000 (its SDE) + D&A + interest = $711,200"
+    // renamed "SDE" would read SDE = SDE + D&A.
+    if (other && p.f.metricAt && p.f.pair === undefined && !p.f.chain) {
       const to = other === "sde" ? "SDE" : other === "adjustedEbitda" ? "adjusted EBITDA" : "EBITDA";
-      found.push({ metric: p.f.metric, label, year: p.year, stated: p.f.amount.value, expected, relabel: { sentence, at: p.f.metricAt.index, from: p.f.metricAt.text, to }, corrected: true });
+      found.push({ metric: p.f.metric, label, year: p.year, stated, expected, relabel: { sentence, at: p.f.metricAt.index, from: p.f.metricAt.text, to }, corrected: true });
       const at = p.f.metricAt.index;
       edits.push({ start: at, end: at + p.f.metricAt.text.length, text: at === 0 ? to.charAt(0).toUpperCase() + to.slice(1) : to });
       return;
     }
-    // A worked sum is rebuilt from the add-backs (only possible with them at hand).
-    found.push({ metric: p.f.metric, label, year: p.year, stated: p.f.amount.value, expected, corrected: !p.f.chain || !!ctx.normalization });
-    if (p.f.chain) { rebuild = true; return; }
+    // A small misstatement — or the analysis's own figure from before a broker
+    // edit moved it (a correction on file for this very figure and year).
+    const near = drifted(stated, expected) ||
+      known.some((c) => c.kind === "figure" && c.variant === v && c.year === p.year && Math.abs(c.from - stated) <= allowedDifference(p.f.amount.raw, c.from, p.f.hedged));
+    if (p.f.chain) {
+      // A sentence that is only the worked sum is rebuilt from the add-backs.
+      // A small misstatement, or plain arithmetic slip: its own terms add up to the computed figure.
+      const terms = termsTotal(sentence, p.f);
+      const slip = terms !== null && Math.abs(terms - expected) <= allowedDifference(fmt(expected), expected, false) + 1;
+      const bridge = (near || slip) && ctx.normalization && isWorkedSumOnly(sentence, p.f) ? bridgeSentence(v, p.year, ctx.normalization, computed) : null;
+      found.push({ metric: p.f.metric, label, year: p.year, stated, expected, corrected: !!bridge });
+      if (bridge) {
+        rebuilt = bridge;
+        corrections.push({ kind: "figure", variant: v, year: p.year, from: stated, to: expected });
+      }
+      return;
+    }
+    found.push({ metric: p.f.metric, label, year: p.year, stated, expected, corrected: near });
+    if (!near) return;
     // The figure as written, without the space or punctuation the reader took with it ("$1,250,000, this…").
     const raw = p.f.amount.raw.replace(/[\s,.]+$/, "");
     edits.push({ start: p.f.amount.index, end: p.f.amount.index + raw.length, text: formatLike(raw, expected) });
     newValue.set(i, expected);
+    corrections.push({ kind: "figure", variant: v, year: p.year, from: stated, to: expected });
   });
+  if (rebuilt) return { text: rebuilt, found, corrections };
 
   // A pair of an unqualified "EBITDA" whose ends are adjusted figures is named so.
   plan.forEach((p, i) => {
-    if (!p || p.vs.length === 1 || chosen.get(i) !== "adjustedEbitda" || !p.f.metricAt || p.f.qualifier) return;
-    if (!found.some((x) => x.corrected && x.stated === p.f.amount.value)) return;
+    if (!p || p.vs.length === 1 || chosen.get(i) !== "adjustedEbitda" || !p.f.metricAt || p.f.qualifier || !newValue.has(i)) return;
     const at = p.f.metricAt.index;
     if (edits.some((e) => e.start === at)) return;
     edits.push({ start: at, end: at, text: at === 0 ? "Adjusted " : "adjusted " });
   });
-
-  // A worked sum that doesn't tie is rebuilt from the add-backs, year by year.
-  if (rebuild && ctx.normalization) {
-    const rebuilt = plan
-      .filter((p): p is NonNullable<typeof p> => !!p && !!p.f.chain && !!p.year)
-      .map((p) => bridgeSentence(chosen.get(plan.indexOf(p))!, p.year!, ctx.normalization!, computed))
-      .filter((x): x is string => !!x);
-    if (rebuilt.length > 0) return { text: Array.from(new Set(rebuilt)).join(" "), found };
-    const chainValues = new Set(plan.filter((p) => p?.f.chain).map((p) => p!.f.amount.value));
-    found.forEach((x) => { if (!x.relabel && chainValues.has(x.stated)) x.corrected = false; });
-  }
 
   // Growth rates built on a corrected end are worked out again.
   const pctEdits: Edit[] = [];
@@ -1354,34 +1512,66 @@ function reviseSentence(
     }
   });
 
-  // Margins of a metric, from the computed figure and the P&L's revenue.
+  const rev = (y: string) => ctx.revenue?.[y] ?? ctx.revenue?.[yearOfKey(y)];
+  const hasRevenue = (y: string) => { const r = rev(y); return typeof r === "number" && Number.isFinite(r) && r > 0; };
   const marginEdits: Edit[] = [];
-  const mm = sentence.match(MARGIN_RE);
-  if (mm && ctx.revenue && Object.keys(ctx.revenue).length > 0) {
+  // "$1,537,000 (15.7% margin)" / "represents 15.7% margin": the margin of a
+  // figure corrected here, when the text worked it out from that figure.
+  newValue.forEach((next, i) => {
+    const p = plan[i]!;
+    if (!p.year || !hasRevenue(p.year)) return;
+    const tail = sentence.slice(p.f.amount.end).split(/[;.](?:\s|$)/)[0];
+    const m = tail.match(/(\d+(?:\.\d+)?)\s?%\s*(?:margin|of\s+revenue)\b/i);
+    if (!m) return;
+    const decimals = m[1].split(".")[1]?.length ?? 0;
+    if (Math.abs((p.f.amount.value / rev(p.year)!) * 100 - Number(m[1])) > Math.pow(10, -decimals) / 2 + 1e-9) return;
+    const at = p.f.amount.end + m.index!;
+    marginEdits.push({ start: at, end: at + m[1].length + 1, text: pctText((next / rev(p.year)!) * 100, decimals) });
+  });
+  // "<metric> margin … N%": a margin corrected elsewhere on the same evidence,
+  // or a qualified margin for a year the text names, a small misstatement.
+  for (const mm of Array.from(sentence.matchAll(MARGIN_RE_G))) {
     const q = (mm[1] || "").trim().toLowerCase();
     const variants: Variant[] = mm[2].toLowerCase() === "sde" ? ["sde"] : q.startsWith("adjusted") || q.startsWith("normali") ? ["adjustedEbitda"] : q ? ["reportedEbitda"] : ["reportedEbitda", "adjustedEbitda"];
-    const rev = (y: string) => ctx.revenue![y] ?? ctx.revenue![yearOfKey(y)];
-    const withRevenue = years.filter((y) => Number.isFinite(rev(y)) && rev(y) > 0);
     const after = mm.index! + mm[0].length;
-    const tail = sentence.slice(after);
-    const pcts = Array.from(tail.matchAll(PCT_RE)).filter((m) => !MARGIN_RE.test(tail.slice(0, m.index!).replace(mm[0], "")));
-    const stop = tail.search(/\b(?:ebitda|sde|gross|net)\s+margins?\b/i);
-    const own = pcts.filter((m) => stop < 0 || m.index! < stop);
-    own.forEach((m, k) => {
-      const yearAfter = tail.slice(m.index! + m[0].length, m.index! + m[0].length + 16).match(/^\s*(?:\(\s*(?:FY\s?)?((?:19|20)\d{2})\s*\)|(?:in|for)\s+(?:FY\s?)?((?:19|20)\d{2})\b)/i);
-      let y = yearAfter ? keyFor(yearAfter[1] ?? yearAfter[2]) : null;
-      // "from 11.4% to 15.7%" with no years: the analysis's first and last year.
-      if (!y && !yearAfter && withRevenue.length > 0) y = own.length === 2 ? withRevenue[k === 0 ? 0 : withRevenue.length - 1] : own.length === 1 ? withRevenue[withRevenue.length - 1] : null;
-      if (!y || !Number.isFinite(rev(y))) return;
+    // The margin's own figures: up to where the sentence moves on (another
+    // margin, a comparison, a benchmark: "an industry average of 14.5%").
+    let tail = sentence.slice(after);
+    const stop = tail.search(/;|\b(?:ebitda|sde|gross|net|operating)\s+margins?\b|\b(?:industry|benchmarks?|typical(?:ly)?|norms?|median|peers?|ranges?|comparable|compared|compares|versus|vs\.?|than|whereas|while|but|average)\b/i);
+    if (stop >= 0) tail = tail.slice(0, stop);
+    const leading = sentence.slice(Math.max(0, mm.index! - 12), mm.index!).match(/\b(?:FY\s?)?((?:19|20)\d{2})\s*$/i)?.[1];
+    Array.from(tail.matchAll(PCT_RE)).forEach((m, k) => {
+      const at = after + m.index!;
+      const end = at + m[0].length;
+      // Part of a range ("10-15%") or a rate of change ("a 36% increase"): not the margin.
+      if (/\d\s*[-–]\s*$/.test(sentence.slice(0, at)) || /^\s*[-–]\s*\d/.test(sentence.slice(end))) return;
+      if (/^\s*(?:growth|increase|decrease|decline|improvement|higher|lower|cagr|points?|pts?|bps)\b/i.test(sentence.slice(end))) return;
       const stated = Number(m[1]);
       const decimals = m[1].split(".")[1]?.length ?? 0;
-      const candidates = variants.map((v) => valueOf(v, y!)).filter((c): c is number => typeof c === "number").map((c) => (c / rev(y!)) * 100);
-      if (candidates.length === 0) return;
-      const expected = candidates.sort((a, b) => Math.abs(a - stated) - Math.abs(b - stated))[0];
       const unit = Math.pow(10, -decimals);
-      // Only a misstatement of this margin (within 2 points) — a figure further off is about something else.
-      if (Math.abs(expected - stated) < unit / 2 || Math.abs(expected - stated) > 2) return;
-      marginEdits.push({ start: after + m.index!, end: after + m.index! + m[0].length, text: pctText(expected, decimals) });
+      const ya = sentence.slice(end, end + 16).match(/^\s*(?:\(\s*(?:FY\s?)?((?:19|20)\d{2})\s*\)|(?:in|for)\s+(?:FY\s?)?((?:19|20)\d{2})\b)/i);
+      const written = ya ? ya[1] ?? ya[2] : k === 0 ? leading : undefined;
+      const year = written ? keyFor(written) : null;
+      if (written && !year) return; // a year the analysis doesn't cover
+      let next: number | null = null;
+      let variant: Variant | null = null;
+      const hits = known.filter((c) => c.kind === "margin" && variants.includes(c.variant) && (!year || c.year === year) && Math.abs(c.from - stated) <= unit / 2 + 1e-9);
+      if (new Set(hits.map((h) => `${h.year}|${h.variant}|${h.to.toFixed(decimals)}`)).size === 1) {
+        next = hits[0].to;
+        variant = hits[0].variant;
+      } else if (hits.length === 0 && variants.length === 1 && year && hasRevenue(year)) {
+        const c = valueOf(variants[0], year);
+        if (typeof c === "number") {
+          const pct = (c / rev(year)!) * 100;
+          const diff = Math.abs(pct - stated);
+          if (diff >= unit / 2 && diff <= Math.max(unit / 2, Math.abs(pct) * DRIFT)) { next = pct; variant = variants[0]; }
+        }
+      }
+      if (next === null || variant === null) return;
+      const text = pctText(next, decimals);
+      if (text === `${m[1]}%` || marginEdits.some((e) => e.start === at)) return;
+      marginEdits.push({ start: at, end, text });
+      if (year) corrections.push({ kind: "margin", variant, year, from: stated, to: next });
     });
   }
   // A multiple of a corrected figure ("at adjusted EBITDA of $1,537,000 this
@@ -1401,28 +1591,35 @@ function reviseSentence(
       if (again !== m[1] && !multipleEdits.some((e) => e.start === m.index!)) multipleEdits.push({ start: m.index!, end: m.index! + m[1].length, text: again });
     }
   });
-  const all = [
-    ...edits,
-    ...pctEdits,
-    ...marginEdits.filter((e) => !pctEdits.some((p) => p.start === e.start)),
-    ...multipleEdits.filter((e) => ![...pctEdits, ...marginEdits].some((p) => p.start === e.start)),
-  ];
-  return { text: all.length > 0 ? applyEdits(sentence, all) : sentence, found };
+  const all: Edit[] = [];
+  for (const e of [...edits, ...pctEdits, ...marginEdits, ...multipleEdits]) {
+    if (!all.some((x) => e.start < x.end && x.start < e.end && !(e.start === e.end || x.start === x.end))) all.push(e);
+  }
+  return { text: all.length > 0 ? applyEdits(sentence, all) : sentence, found, corrections };
 }
 
 const yearOfKey = (k: string) => k.match(/(?:19|20)\d{2}/g)?.pop() ?? k;
 
 /**
- * A text with every EBITDA/SDE figure the code can place made to tie:
- * figures corrected to the computed ones (in the text's own format), a
- * worked sum rebuilt from the add-backs, a right figure under the wrong
- * name renamed, and the growth rates and margins resting on them worked
- * out again. `found` lists what didn't tie; `corrected: false` = the figure
- * couldn't be placed (no year) and still needs the broker's eye.
+ * A text with its EBITDA/SDE figures made to tie where the text itself
+ * says what they are: a figure with its metric and year a little off the
+ * computed one is corrected (in the text's own format), a sentence that is
+ * only a worked sum is rebuilt from the add-backs, a right figure under
+ * the wrong name is renamed, and the growth rates, margins and multiples
+ * resting on a corrected figure are worked out again. The same
+ * misstatement repeated without its year follows `ctx.corrections`.
+ * Hypotheticals, other bases, quoted and attributed figures keep their
+ * words. `found` lists what didn't tie; `corrected: false` = the text still
+ * states it and needs the broker's eye (a check).
  */
-export function reviseEarningsText(text: string, computed: CanonicalEarnings, ctx: EarningsTextContext = {}): { text: string; found: EarningsFinding[] } {
+export function reviseEarningsText(
+  text: string,
+  computed: CanonicalEarnings,
+  ctx: EarningsTextContext = {},
+): { text: string; found: EarningsFinding[]; corrections: EarningsCorrection[] } {
   const parts = text.split(/((?<=[.!?])\s+(?=[A-Z0-9$(]))/);
   const found: EarningsFinding[] = [];
+  const corrections: EarningsCorrection[] = [];
   let carried: RegExpMatchArray | null = null;
   // Every amount in the text (an asking price a multiple is taken of).
   const withPrices = { ...ctx, prices: moneyIn(text).map((m) => m.value) };
@@ -1434,38 +1631,99 @@ export function reviseEarningsText(text: string, computed: CanonicalEarnings, ct
     const r = reviseSentence(sentence, figures, computed, withPrices);
     parts[i] = r.text;
     found.push(...r.found);
+    corrections.push(...r.corrections);
   }
-  return { text: parts.join(""), found };
+  return { text: parts.join(""), found, corrections };
+}
+
+/** An insight's detail without the check an earlier pass appended. */
+const insightDetail = (i: UiInsight) => {
+  const prior = (i as UiInsight & { flag?: string }).flag;
+  return prior ? i.detail.replace(` (Check: ${prior}.)`, "") : i.detail;
+};
+
+/**
+ * The corrections the analysis's own words support, read once over all of
+ * its notes and insights (before any is revised): each explicit one, and
+ * the margin each corrected figure implies. `revise*` then applies them
+ * everywhere, so a figure corrected in a note is corrected in an insight
+ * that repeats it without its year.
+ */
+export function earningsCorrections(
+  normalization: UiNormalization | null,
+  insights: UiInsights | null | undefined,
+  ctx: Omit<EarningsTextContext, "normalization" | "corrections"> = {},
+): EarningsCorrection[] {
+  const computed = computeCanonicalEarnings(normalization);
+  if (!normalization || !computed) return [];
+  const texts = [
+    ...(normalization.notes ?? []).filter((n) => !/^Check:/.test(n)),
+    ...(["positive", "negative", "neutral"] as const).flatMap((k) => (insights?.[k] ?? []).flatMap((i) => [i.title, insightDetail(i)])),
+  ].filter((t): t is string => typeof t === "string" && t.length > 0);
+  const out: EarningsCorrection[] = [];
+  for (const t of texts) out.push(...reviseEarningsText(t, computed, { ...ctx, normalization, corrections: [] }).corrections);
+  for (const c of [...out]) {
+    if (c.kind !== "figure") continue;
+    const r = ctx.revenue?.[c.year] ?? ctx.revenue?.[yearOfKey(c.year)];
+    if (typeof r === "number" && Number.isFinite(r) && r > 0) out.push({ kind: "margin", variant: c.variant, year: c.year, from: (c.from / r) * 100, to: (c.to / r) * 100 });
+  }
+  return out;
+}
+
+/**
+ * A broker edit moved the computed figures: each year's figure as it was
+ * (and its margin) is a correction to the figure as it is now, so text that
+ * stated the analysis's own figure follows the edit however far it moved
+ * (applyBrokerAnalysisEdit). Text on another basis is untouched.
+ */
+export function earningsShiftCorrections(
+  before: UiNormalization | null | undefined,
+  after: UiNormalization | null | undefined,
+  revenue: Record<string, number> = {},
+): EarningsCorrection[] {
+  const a = computeCanonicalEarnings(before ?? null);
+  const b = computeCanonicalEarnings(after ?? null);
+  if (!a || !b) return [];
+  const out: EarningsCorrection[] = [];
+  for (const variant of ["reportedEbitda", "adjustedEbitda", "sde"] as Variant[]) {
+    for (const [year, to] of Object.entries(b[variant])) {
+      const from = a[variant][year];
+      if (typeof from !== "number" || typeof to !== "number" || from === to) continue;
+      out.push({ kind: "figure", variant, year, from, to });
+      const r = revenue[year] ?? revenue[yearOfKey(year)];
+      if (typeof r === "number" && Number.isFinite(r) && r > 0) out.push({ kind: "margin", variant, year, from: (from / r) * 100, to: (to / r) * 100 });
+    }
+  }
+  return out;
 }
 
 /**
  * Insights that state an EBITDA/SDE amount (or a margin or growth rate on
- * one) the normalization doesn't compute are corrected in place. A figure
- * the code can't place keeps its text and gains a check line with the
- * computed figure (read by the broker and by the DD writer).
+ * one) the normalization doesn't compute are corrected in place where the
+ * text says what the figure is (reviseEarningsText). Anything else keeps
+ * its words and gains a check line with the computed figure (read by the
+ * broker and by the DD writer).
  */
 export function flagEarningsStatements(
   insights: UiInsights | null,
   normalization: UiNormalization | null,
   ctx: Omit<EarningsTextContext, "normalization"> = {},
-): { insights: UiInsights | null; mismatches: Array<EarningsMismatch & { corrected?: boolean }> } {
+): { insights: UiInsights | null; mismatches: Array<EarningsMismatch & { corrected?: boolean; unplaced?: boolean }> } {
   const computed = computeCanonicalEarnings(normalization);
   if (!insights || !computed) return { insights, mismatches: [] };
-  const mismatches: Array<EarningsMismatch & { corrected?: boolean }> = [];
-  const full = { ...ctx, normalization };
+  const mismatches: Array<EarningsMismatch & { corrected?: boolean; unplaced?: boolean }> = [];
+  const full = { ...ctx, normalization, corrections: ctx.corrections ?? earningsCorrections(normalization, insights, ctx) };
   const fix = (list: UiInsight[] | undefined) =>
     (list ?? []).map((i) => {
       // An earlier check is worked out again (an edit may have settled it).
-      const prior = (i as UiInsight & { flag?: string }).flag;
-      const base = prior ? i.detail.replace(` (Check: ${prior}.)`, "") : i.detail;
       const title = reviseEarningsText(i.title, computed, full);
-      const detail = reviseEarningsText(base, computed, full);
+      const detail = reviseEarningsText(insightDetail(i), computed, full);
       const found = [...title.found, ...detail.found];
       found.forEach((f) => mismatches.push({ ...f, where: `Insight "${i.title}"` }));
       const open = found.filter((f) => !f.corrected);
       const { flag: _drop, ...rest } = i as UiInsight & { flag?: string };
       if (open.length === 0) return { ...rest, title: title.text, detail: detail.text };
-      const check = open.map((f) => `the normalization computes ${f.year} ${f.label} as ${fmt(f.expected)}, not ${fmt(f.stated)}`).join("; ");
+      const check = open.map((f) => earningsCheckText(f, "insight")).join("; ");
       const flagged: UiInsight & { flag?: string } = { ...rest, title: title.text, detail: `${detail.text} (Check: ${check}.)`, flag: check };
       return flagged;
     });
@@ -1479,22 +1737,23 @@ const CHECK_NOTE_RE = /^Check: the note above states /;
 
 /**
  * Notes stating an EBITDA/SDE amount that doesn't tie are corrected in
- * place (a worked sum rebuilt from the add-backs); a figure the code can't
- * place gets a check note after it. Earlier check notes are worked out
+ * place where the note says what the figure is (reviseEarningsText); any
+ * other gets a check note after it. Earlier check notes are worked out
  * again from their note, so a re-run after an edit never keeps a stale one.
  */
 export function flagEarningsNotes(normalization: UiNormalization | null, ctx: Omit<EarningsTextContext, "normalization"> = {}): UiNormalization | null {
   const computed = computeCanonicalEarnings(normalization);
   if (!normalization || !computed) return normalization;
+  const full = { ...ctx, normalization, corrections: ctx.corrections ?? earningsCorrections(normalization, null, ctx) };
   const notes: string[] = [];
   for (const note of normalization.notes ?? []) {
     if (CHECK_NOTE_RE.test(note)) continue;
     if (/^Check:/.test(note)) { notes.push(note); continue; }
-    const r = reviseEarningsText(note, computed, { ...ctx, normalization });
+    const r = reviseEarningsText(note, computed, full);
     notes.push(r.text);
     for (const f of r.found) {
       if (f.corrected) continue;
-      notes.push(`Check: the note above states ${f.year} ${f.label} as ${fmt(f.stated)}; the add-backs listed here compute ${fmt(f.expected)}.`);
+      notes.push(earningsCheckText(f, "note"));
     }
   }
   return { ...normalization, notes: Array.from(new Set(notes)) };

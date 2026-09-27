@@ -122,7 +122,15 @@ If no financial statements are found, return an empty array [].`,
     const text =
       response.content[0].type === "text" ? response.content[0].text : "";
     const { parseJsonLoose } = await import("./shape");
-    const raw = parseJsonLoose<unknown>(text);
+    // Only an answer shaped like one: an array of statements (or none), a
+    // lone statement, or { statements: [...] } — never an example object
+    // quoted in prose before the real "[]".
+    const isStatement = (x: unknown) => !!x && typeof x === "object" && !Array.isArray(x) && Array.isArray((x as { lineItems?: unknown }).lineItems);
+    const raw = parseJsonLoose<unknown>(text, (v) =>
+      Array.isArray(v)
+        ? v.every(isStatement)
+        : isStatement(v) || (!!v && typeof v === "object" && Array.isArray((v as { statements?: unknown }).statements)),
+    );
     // An array of statements as asked; a lone statement object, or one
     // wrapped as { statements: [...] }, is the same answer.
     const parsed: ExtractedStatement[] | null = Array.isArray(raw)

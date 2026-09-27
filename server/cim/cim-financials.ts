@@ -127,7 +127,7 @@ export interface CimFinancials {
   sourceWarnings?: string[];
 }
 
-const sum =(xs: number[]) => xs.reduce((s, x) => s + x, 0);
+const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
 
 /**
  * Working capital as a CIM may state it: cash-free and debt-free — the
@@ -611,7 +611,26 @@ export function cimFinancialsFor(
   const picked = pickAnalysisForCim(analyses);
   if (!picked) return null;
   const status = analysisSourceStatus(picked as { sourceDocumentIds?: unknown }, docs);
-  if (status.blocking) throw new StaleFinancialAnalysisError(`${status.message} Generation is stopped until then.`);
+  if (status.blocking) {
+    // The broker already re-ran it: a newer completed run built from the
+    // documents on file is used (flagged as not yet reviewed) — the stale
+    // reviewed one never is, and generation isn't stopped for a re-run that
+    // has been done.
+    const newer = [...(analyses ?? [])]
+      .filter((a) => a.status === "completed" && (a.version ?? 0) > (picked.version ?? 0))
+      .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
+      .find((a) => !analysisSourceStatus(a as { sourceDocumentIds?: unknown }, docs).blocking);
+    if (!newer) throw new StaleFinancialAnalysisError(`${status.message} Generation is stopped until then.`);
+    const fin = buildCimFinancials(newer, analyses);
+    const newerStatus = analysisSourceStatus(newer as { sourceDocumentIds?: unknown }, docs);
+    if (fin) {
+      fin.sourceWarnings = [
+        `The reviewed financial analysis (v${picked.version}) was built from a document that has since been deleted, so the CIM uses the newer run (v${newer.version}), which hasn't been reviewed yet — review it on the Financials tab.`,
+        ...(newerStatus.message ? [newerStatus.message] : []),
+      ];
+    }
+    return fin;
+  }
   const fin = buildCimFinancials(picked, analyses);
   if (fin && status.message) fin.sourceWarnings = [status.message];
   return fin;

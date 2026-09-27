@@ -19,6 +19,8 @@ import { normalizeFinancialAnalysisRow, type UiInsights, type UiNormalization, t
 import {
   applyWorkingCapitalRules,
   clarifyOwnerPayAddbacks,
+  earningsCorrections,
+  earningsShiftCorrections,
   flagEarningsNotes,
   flagEarningsStatements,
   revenueByYear,
@@ -94,11 +96,21 @@ export function applyBrokerAnalysisEdit(
   // a check the edit settled).
   const normalizationChanged = updates.normalization !== undefined && !same(updates.normalization, stored.normalization);
   const pnlChanged = updates.reclassifiedPnl !== undefined && !same(updates.reclassifiedPnl, stored.reclassifiedPnl);
+  const revenue = revenueByYear((updates.reclassifiedPnl ?? stored.reclassifiedPnl) as UiReclassifiedTable | null);
+  // What the notes and insights pin down, read once before either is revised,
+  // and the analysis's own figures as they were before this edit moved them.
+  const corrections = [
+    ...earningsShiftCorrections(stored.normalization as UiNormalization | null, (updates.normalization ?? stored.normalization) as UiNormalization | null, revenue),
+    ...earningsCorrections(
+      withCanonicalEarnings((updates.normalization ?? stored.normalization) as UiNormalization | null),
+      stored.insights as UiInsights | null,
+      { revenue },
+    ),
+  ];
   if (updates.normalization && typeof updates.normalization === "object") {
-    const revenue = revenueByYear((updates.reclassifiedPnl ?? stored.reclassifiedPnl) as UiReclassifiedTable | null);
     let n: UiNormalization | null = withCanonicalEarnings(updates.normalization as UiNormalization);
     if (normalizationChanged) {
-      n = withCanonicalEarnings(flagEarningsNotes(n, { revenue }));
+      n = withCanonicalEarnings(flagEarningsNotes(n, { revenue, corrections }));
       const flagged = n;
       if (flagged && Array.isArray(flagged.notes)) n = { ...flagged, notes: flagged.notes.map((x) => clarifyOwnerPayAddbacks(x, flagged)) };
     }
@@ -108,8 +120,7 @@ export function applyBrokerAnalysisEdit(
   }
   if ((normalizationChanged || pnlChanged) && updates.insights === undefined && stored.insights) {
     const n = (updates.normalization ?? stored.normalization) as UiNormalization | null;
-    const revenue = revenueByYear((updates.reclassifiedPnl ?? stored.reclassifiedPnl) as UiReclassifiedTable | null);
-    const { insights } = flagEarningsStatements(stored.insights as UiInsights, n, { revenue });
+    const { insights } = flagEarningsStatements(stored.insights as UiInsights, n, { revenue, corrections });
     if (insights && !same(insights, stored.insights)) updates.insights = insights;
   }
 

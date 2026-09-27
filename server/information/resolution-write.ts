@@ -99,26 +99,56 @@ export function targetForFactKey(info: Info, factKey: string | null | undefined,
   return { key };
 }
 
+/**
+ * A list of values by year: every key is a fiscal year ("2024", "FY2024").
+ * Any other object ({ top1, top5 }, a lease's { term, rent }) is not — a
+ * text edit or a resolution may replace it like any other fact.
+ */
+export function isYearMap(v: unknown): v is Record<string, unknown> {
+  if (!isPlainMap(v)) return false;
+  const keys = Object.keys(v);
+  return keys.length > 0 && keys.every((k) => /^\s*(?:FY\s*'?)?(?:19|20)\d{2}\b/i.test(k));
+}
+
 /** The fact is a map by year (revenueByYear), or an empty by-year fact that will be one. */
 export function isMapFact(info: Info, key: string): boolean {
   const cur = repairCharIndexedValue(info[key]);
-  return cur === undefined || cur === null || cur === "" ? key === "revenueByYear" || /ByYear$/.test(key) : isPlainMap(cur);
+  return cur === undefined || cur === null || cur === "" || (isPlainMap(cur) && Object.keys(cur).length === 0)
+    ? key === "revenueByYear" || /ByYear$/.test(key)
+    : isYearMap(cur);
 }
 
 /**
  * The fiscal year a row with no factYear is about, for a by-year fact: the
  * one year its field names ("2024 Revenue", "Net income (FY2024)"), else
- * the one year both sides' values or source labels agree on ("$9,815,000 —
- * Financial statements FY2024"). Null when there is none, or more than one.
+ * the one fiscal year its sides tag as such ("$9,815,000 — Financial
+ * statements FY2024", "fiscal 2024") when neither side mentions any other
+ * year. A dated source is not the figure's year: "$10.4M — Seller call
+ * (September 2025)" wrote a phantom FY2025 revenue, "growing every year
+ * since 2019" a 2019 one. With `mapYears`, the year must already be one of
+ * the fact's years. Null means the broker picks the year.
  */
-export function yearForMapResolution(d: Pick<ResolutionRow, "field" | "interviewValue" | "documentValue">): string | null {
+export function yearForMapResolution(
+  d: Pick<ResolutionRow, "field" | "interviewValue" | "documentValue">,
+  mapYears?: string[],
+): string | null {
   const fromField = discrepancyYear({ field: d.field ?? "" });
   if (fromField) return fromField;
-  const years = new Set<string>();
+  const tagged = new Set<string>();
+  const mentioned = new Set<string>();
   for (const v of [d.interviewValue, d.documentValue]) {
-    for (const m of Array.from((v ?? "").matchAll(/\b(?:FY\s?'?)?((?:19|20)\d{2})\b/gi))) years.add(m[1]);
+    const text = v ?? "";
+    for (const m of Array.from(text.matchAll(/\b(?:FY\s*'?|fiscal\s+(?:year\s+)?)((?:19|20)\d{2}|\d{2})\b/gi))) {
+      const y = normalizeFactYear(m[1].length === 2 ? `FY${m[1]}` : m[1]);
+      if (y) tagged.add(y);
+    }
+    for (const m of Array.from(text.matchAll(/\b((?:19|20)\d{2})\b/g))) mentioned.add(m[1]);
   }
-  return years.size === 1 ? Array.from(years)[0] : null;
+  if (tagged.size !== 1) return null;
+  const year = Array.from(tagged)[0];
+  if (Array.from(mentioned).some((y) => y !== year)) return null;
+  if (mapYears && !mapYears.some((k) => (normalizeFactYear(k) ?? k) === year)) return null;
+  return year;
 }
 
 /** The value a target holds now (one year of a map, or the fact). */
@@ -320,7 +350,8 @@ export function planResolution(
   // replaced the map). The year comes from the row's field or its sides'
   // labels; with none, the broker is asked which year it is.
   if (!target.sub && isMapFact(info, target.key) && !isPlainMap(resolvedMapValue(resolved))) {
-    const year = yearForMapResolution(d);
+    const cur = repairCharIndexedValue(info[target.key]);
+    const year = yearForMapResolution(d, isYearMap(cur) ? Object.keys(cur) : []);
     if (!year) return { kind: "needs_mapping", year: true };
     target = { key: target.key, sub: year };
   }

@@ -585,29 +585,33 @@ export function normalizeFinancialAnalysisRow<T extends Record<string, any>>(row
 
 /**
  * Parse a Claude text response that should contain a single JSON value.
- * Strips markdown fences and trims to the outermost {...} or [...].
+ * Strips markdown fences; when the whole text isn't JSON, reads the
+ * complete top-level JSON values in it ("[]" followed by prose, "[]" then
+ * the real array) and returns the LAST one `accept` takes (default: any).
+ *
+ *  - Never a value from inside a malformed one: a top-level object with a
+ *    trailing comma or an unescaped quote is malformed output, not an
+ *    envelope to pick a piece out of (round 2: a broken analysis object
+ *    returned its inner reclassifiedPnl and was saved as an empty
+ *    "completed" analysis).
+ *  - The last accepted value, not the largest: an example the model quotes
+ *    in its preface ("For example {…} — this document has none: []") is not
+ *    the answer. Callers pass `accept` for the shape they expect.
  */
-export function parseJsonLoose<T = any>(text: string): T {
+export function parseJsonLoose<T = any>(text: string, accept: (value: unknown) => boolean = () => true): T {
   // Fences arrive as ```json, ```JSON, ```javascript, or bare ``` — strip all of them.
   const cleaned = (text || "").replace(/```[a-zA-Z]*\r?\n?/g, "").trim();
   try {
-    return JSON.parse(cleaned) as T;
+    const whole = JSON.parse(cleaned);
+    if (accept(whole)) return whole as T;
   } catch {
-    // Every complete JSON value in the text, the largest first. The old
-    // fallback took the first "[" to the last "]": a reply of "[]" followed
-    // by prose that mentions "[…]" (or a second value — "[]" then the real
-    // array) failed with "Unexpected non-whitespace character after JSON at
-    // position 4" and the extraction was lost (Ridgeline's add-back email).
-    const firstBrace = cleaned.search(/[{[]/);
-    if (firstBrace === -1) throw new Error("No JSON found in AI response");
-    const values = jsonValuesIn(cleaned);
-    if (values.length > 0) return values.sort((a, b) => b.length - a.length)[0].value as T;
-    const open = cleaned[firstBrace];
-    const close = open === "{" ? "}" : "]";
-    const lastClose = cleaned.lastIndexOf(close);
-    if (lastClose <= firstBrace) throw new Error("Malformed JSON in AI response");
-    return JSON.parse(cleaned.slice(firstBrace, lastClose + 1)) as T;
+    // Not one JSON value — read the values in it below.
   }
+  const firstBrace = cleaned.search(/[{[]/);
+  if (firstBrace === -1) throw new Error("No JSON found in AI response");
+  const values = jsonValuesIn(cleaned).filter((v) => accept(v.value));
+  if (values.length > 0) return values[values.length - 1].value as T;
+  throw new Error("Malformed JSON in AI response");
 }
 
 /** The end of the JSON value opening at `start` (bracket-matched, strings respected); -1 when it never closes. */
@@ -631,7 +635,12 @@ function matchingClose(text: string, start: number): number {
   return -1;
 }
 
-/** Every top-level object or array in a text that parses as JSON, in order. */
+/**
+ * Every top-level object or array in a text that parses as JSON, in order.
+ * A bracketed region shaped like JSON that closes but doesn't parse is
+ * malformed and skipped whole — nothing inside it is a value of its own.
+ * Prose in brackets ("[the add-back list]", "[sic") is read through.
+ */
 export function jsonValuesIn(text: string): Array<{ value: unknown; length: number }> {
   const out: Array<{ value: unknown; length: number }> = [];
   let attempts = 0;
@@ -643,10 +652,12 @@ export function jsonValuesIn(text: string): Array<{ value: unknown; length: numb
     if (end < 0) continue;
     try {
       out.push({ value: JSON.parse(text.slice(i, end + 1)), length: end + 1 - i });
-      i = end;
     } catch {
-      // Not JSON from here ("[sic]", "[the add-back list]") — try the next opening bracket.
+      // Prose in brackets ("[Note: here it is {…}]") may still hold a value;
+      // a region shaped like JSON that doesn't parse is malformed — skipped whole.
+      if (!/^\s*(?:["{[\]}\d-]|true|false|null)/.test(text.slice(i + 1, end + 1))) continue;
     }
+    i = end;
   }
   return out;
 }
