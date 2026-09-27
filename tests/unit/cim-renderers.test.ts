@@ -62,7 +62,7 @@ test("a header row that carries figures renders them (Harborview's Revenue line)
 
 console.log("donut / pie");
 test("a '$' unit is written as a prefix everywhere ('$3,520,000', never '3,520,000 $')", () => {
-  const h = html(PieChartRenderer, { unit: "$", totalLabel: "Total revenue", data: [{ name: "Freight", value: 3520000 }, { name: "Warehousing", value: 7412000 }] }, "donut_chart");
+  const h = html(PieChartRenderer, { unit: "$", totalLabel: "Total revenue", total: 10932000, data: [{ name: "Freight", value: 3520000 }, { name: "Warehousing", value: 7412000 }] }, "donut_chart");
   const t = text(h);
   assert.match(t, /\$3,520,000/);
   assert.match(t, /\$7,412,000/);
@@ -72,7 +72,8 @@ test("a '$' unit is written as a prefix everywhere ('$3,520,000', never '3,520,0
 test("legend names wrap instead of being cut off", () => {
   const h = html(PieChartRenderer, { unit: "%", data: [{ name: "Managed services (recurring monthly contracts)", value: 72 }, { name: "Projects", value: 28 }] }, "donut_chart");
   assert.doesNotMatch(h, /truncate/);
-  assert.match(text(h), /72% \(72\.0%\)/);
+  assert.match(text(h), /72%/);
+  assert.doesNotMatch(text(h), /\(72\.0%\)/, "a value in % is its own share — no second, computed one");
 });
 
 console.log("location card");

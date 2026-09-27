@@ -539,7 +539,12 @@ export function earningsMentions(text: string): EarningsMention[] {
     if (next && !next.earn && /^\s*(?:[A-Za-z-]+\s+){0,2}$/.test(gap)) continue;
     // "…$920,052 (FY2024 adjusted EBITDA $780,052 …)": a measure followed by
     // a figure of its own belongs to that figure, not to the one before it.
-    if (adjacent && next!.earn && !ownFigureAfter(text, next!.end)) gov = next!;
+    // A multiple is always of the measure named right after it: "4.2× FY2024
+    // adjusted EBITDA of $1,552,000" — the figure after the measure is its
+    // base, not a sign the measure belongs elsewhere (that read the 4.2× as a
+    // multiple of the SDE named earlier in the sentence and flagged a correct
+    // figure, Ridgeline 2026-09-26).
+    if (adjacent && next!.earn && (multiple || !ownFigureAfter(text, next!.end))) gov = next!;
     // 2. Else the nearest measure before it in the same clause, when only
     //    linking words sit between them.
     if (!gov) {

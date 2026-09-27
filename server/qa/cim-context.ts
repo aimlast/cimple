@@ -21,6 +21,7 @@ import { blindLeakTerms } from "@shared/blind-guard";
 import { readerMaySeeRow, rowScope } from "@shared/buyer-qa-scope";
 import type { BuyerQuestion } from "@shared/schema";
 import { normalizeFinancialTable } from "@shared/financial-table";
+import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 
 type AnyRecord = Record<string, any>;
 
@@ -266,10 +267,15 @@ export function serializeLayoutData(layoutType: string | null | undefined, layou
           if (!loc) continue;
           const facts: string[] = [];
           if (fmt(loc.address)) facts.push(`address ${fmt(loc.address)}`);
-          if (fmt(loc.sqft)) facts.push(`${fmt(loc.sqft)} sq ft`);
-          if (fmt(loc.leaseType)) facts.push(fmt(loc.leaseType).replace(/_/g, " "));
-          if (fmt(loc.monthlyRent)) facts.push(`monthly rent ${fmt(loc.monthlyRent)}`);
-          if (fmt(loc.annualRent)) facts.push(`annual rent ${fmt(loc.annualRent)}`);
+          if (fmt(loc.sqft)) facts.push(formatSqft(fmt(loc.sqft)));
+          // Worded the way the card renders it (shared/cim-location.ts): a
+          // per-square-foot rate is base rent, never "annual rent $12.00 per sq ft".
+          const lease = splitLeaseType(fmt(loc.leaseType).replace(/_/g, " "));
+          if (lease.badge) facts.push(lease.badge);
+          const terms = [lease.terms, fmt(loc.leaseTerms)].filter(Boolean).join(" ");
+          if (terms) facts.push(`lease terms: ${terms}`);
+          if (fmt(loc.monthlyRent)) facts.push(`${rentLabel("monthlyRent", fmt(loc.monthlyRent)).toLowerCase()} ${fmt(loc.monthlyRent)}`);
+          if (fmt(loc.annualRent)) facts.push(`${rentLabel("annualRent", fmt(loc.annualRent)).toLowerCase()} ${fmt(loc.annualRent)}`);
           if (fmt(loc.leaseExpiry)) facts.push(`lease expires ${fmt(loc.leaseExpiry)}`);
           if (fmt(loc.renewalOptions)) facts.push(`renewal options ${fmt(loc.renewalOptions)}`);
           if (fmt(loc.notes)) facts.push(fmt(loc.notes));

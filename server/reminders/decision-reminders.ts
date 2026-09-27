@@ -27,6 +27,7 @@ import { storage } from "../storage";
 import { notify } from "../notifications/service";
 import type { BuyerAccess, Deal } from "@shared/schema";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimHeldFromBuyers } from "@shared/cim-buyer-view";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_MS = 3 * DAY_MS; // day 3
@@ -233,6 +234,10 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   if (action === "none") return action;
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
+  // A regenerated CIM waiting for the broker to publish it: the buyer can
+  // only see "This document is being updated", so nobody is chased or
+  // lapsed over it. Publishing restarts the clock (restartReminderClocks).
+  if (cimHeldFromBuyers(deal)) return "none";
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
 
@@ -288,6 +293,39 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
     },
   });
   return action;
+}
+
+/**
+ * Pure: the buyer-access rows whose review clock restarts when a held CIM
+ * is published — still deciding, not revoked or expired, and first viewed
+ * before the hold began (they reviewed the CIM that was replaced). Their
+ * day-3/6/8 cycle restarts from the publish, the way "Need more time" gives
+ * a fresh clock; a warning sent about the old CIM never lapses them.
+ */
+export function clocksToRestart(
+  access: Array<Pick<BuyerAccess, "id" | "firstViewedAt" | "decision" | "revokedAt" | "expiresAt">>,
+  holdSince: string | Date | null | undefined,
+  now: number = Date.now(),
+): string[] {
+  const since = holdSince ? new Date(holdSince).getTime() : Number.POSITIVE_INFINITY;
+  return access
+    .filter((a) => {
+      if (!a.firstViewedAt || a.revokedAt) return false;
+      if (a.decision && a.decision !== "under_review") return false;
+      if (a.expiresAt && new Date(a.expiresAt).getTime() < now) return false;
+      return new Date(a.firstViewedAt).getTime() <= since;
+    })
+    .map((a) => a.id);
+}
+
+/** The held CIM was published: undecided buyers get a fresh review window. */
+export async function restartReminderClocks(dealId: string, holdSince: string | Date | null | undefined, now: number = Date.now()): Promise<number> {
+  const rows = await storage.getBuyerAccessByDeal(dealId);
+  const ids = clocksToRestart(rows, holdSince, now);
+  for (const id of ids) {
+    await storage.updateBuyerAccess(id, { firstViewedAt: new Date(now), reminderStage: "none", lastReminderAt: null } as any);
+  }
+  return ids.length;
 }
 
 interface RunStats {

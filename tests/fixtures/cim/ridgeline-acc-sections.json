@@ -1,0 +1,1163 @@
+[
+ {
+  "sectionKey": "cover_page",
+  "sectionTitle": "Ridgeline Metal Fabrication Inc.",
+  "order": 1,
+  "layoutType": "cover_page",
+  "layoutData": {
+   "date": "September 2026",
+   "ebitda": "$1,717,000",
+   "revenue": "$9,815,000",
+   "tagline": "Built right, shipped on time \u2014 29 years of precision structural steel fabrication",
+   "industry": "Manufacturing",
+   "location": "Nisku, Alberta",
+   "askingPrice": "$6,500,000",
+   "businessName": "Ridgeline Metal Fabrication Inc.",
+   "earningsLabel": "SDE",
+   "confidentialLabel": "Confidential Information Memorandum"
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "snapshot_metrics",
+  "sectionTitle": "Key Metrics at a Glance",
+  "order": 2,
+  "layoutType": "metric_grid",
+  "layoutData": {
+   "columns": 4,
+   "metrics": [
+    {
+     "delta": "+7.2% vs. FY2023",
+     "label": "Annual Revenue",
+     "trend": "up",
+     "value": "$9,815,000",
+     "highlight": true
+    },
+    {
+     "delta": "+16.4% vs. FY2023",
+     "label": "Seller's Discretionary Earnings (SDE)",
+     "trend": "up",
+     "value": "$1,717,000",
+     "highlight": true
+    },
+    {
+     "label": "SDE Margin",
+     "trend": "up",
+     "value": "17.5%"
+    },
+    {
+     "label": "Signed Backlog",
+     "value": "$3,100,000",
+     "footnote": "As of May 2025"
+    },
+    {
+     "label": "Total Employees",
+     "value": "42"
+    },
+    {
+     "label": "Years in Operation",
+     "value": "29 years"
+    },
+    {
+     "label": "Asking Price",
+     "value": "$6,500,000",
+     "highlight": true
+    },
+    {
+     "label": "Asking Price Multiple",
+     "value": "3.8\u00d7 FY2024 SDE",
+     "footnote": "4.2\u00d7 FY2024 Adjusted EBITDA"
+    }
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "investment_highlights",
+  "sectionTitle": "Investment Highlights",
+  "order": 3,
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "icon": "certificate",
+     "title": "CWB Division 2 Certified Fabricator",
+     "highlight": true,
+     "description": "Full CWB Division 2 certification with 40+ approved welding procedures. Annual CWB audits with clean history \u2014 never had a finding that couldn't be closed within a week. Weld maps maintained on every oil & gas job."
+    },
+    {
+     "icon": "handshake",
+     "title": "20-Year Larkspur Partnership",
+     "highlight": true,
+     "description": "Never missed a delivery to Larkspur in 20 years. Rock-solid relationship with Alberta's leading midstream operator, representing 18% of 2024 revenue. Larkspur and Halvorsen conduct annual vendor audits with top scores."
+    },
+    {
+     "icon": "shield",
+     "title": "COR Safety Certified Since 2010",
+     "description": "Certificate of Recognition (COR) safety certification maintained since 2010. TRIF 1.1 in 2024, no lost-time accidents since 2021. WCB rate decreased in 2024. Daily hazard assessments and Monday toolbox talks."
+    },
+    {
+     "icon": "chart-pie",
+     "title": "Diversified Revenue Base",
+     "description": "Revenue spread across oil & gas midstream (45%), commercial construction (26%), agriculture (22%), and repair/field service (7%). Customer base spans grain co-operatives, energy services, mechanical contractors, and agricultural equipment manufacturers."
+    },
+    {
+     "icon": "cog",
+     "title": "Modern Equipment Fleet",
+     "highlight": true,
+     "description": "New $468,000 CNC high-definition plasma cutting table with bevel head placed in service 2024. CNC beam drill & saw line, 230-ton hydraulic CNC press brake, three overhead cranes (two 10-ton cranes fully rebuilt 2024 with new hoists, end trucks and pendants)."
+    },
+    {
+     "icon": "users",
+     "title": "Stable, Skilled Workforce",
+     "description": "15 Red Seal journeyman welders and fitters with average tenure of 9 years. Haven't lost a good journeyman to another shop in 5 years. Company trains own apprentices from polytechnic; two fourth-year apprentices ready to replace retirees."
+    },
+    {
+     "icon": "trophy",
+     "title": "Proven Track Record Through Cycles",
+     "description": "29 years operating in Nisku. Kept all journeymen employed through the 2015 oil crash. Strong quality reputation \u2014 customer inspector stated he doesn't look for problems because he's never found any. Minimal rework, small issues only."
+    },
+    {
+     "icon": "clipboard-list",
+     "title": "Strong Backlog & Pipeline",
+     "description": "$3,100,000 in signed backlog as of May 2025 across oil & gas fabrication, commercial construction, and agriculture. $2,186,000 in open quotes including verbal award pending PO."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "business_overview",
+  "sectionTitle": "Business Overview",
+  "order": 4,
+  "layoutType": "prose_highlight",
+  "layoutData": {
+   "body": "Ridgeline Metal Fabrication Inc. was founded in 1996 by Gord McAllister as Ridgeline Welding, operating from a rented bay in Leduc doing repair work. The company started fabrication work around 2001, building skid bases and hiring its first two journeymen. In 2005, Ridgeline landed Larkspur as a customer, marking the beginning of a 20-year relationship that continues today.\n\nThe company built its current 28,000 square foot facility in Nisku in 2008 and changed its name to Ridgeline Metal Fabrication in 2009 when adding structural steel work to its capabilities. In 2011, the company obtained CWB Division 2 certification, opening the door to more complex oil and gas fabrication projects.\n\nToday, Ridgeline is a custom structural and miscellaneous steel fabricator and welding contractor serving three core markets: midstream oil and gas (pipe rack modules, compressor and meter skid bases, process module structural steel), agriculture (grain handling support structures, catwalks, conveyor galleries, barn steel, gates, custom farm structures), and commercial construction (structural steel packages, miscellaneous metals including stairs, rails, and embeds).\n\nThe company also provides field welding and repair services across central Alberta with three fully equipped welding trucks available for emergency call-outs. Products range from large fabricated assemblies such as pipe rack modules and grain elevator structures to precision components like launcher/receiver skids and equipment platforms.\n\nRidgeline employs 42 people and operates from a pre-engineered steel building in Nisku Industrial Business Park with three overhead cranes, modern CNC plasma cutting and beam processing equipment, and a 3-acre fenced and gravelled yard for assembly and staging.",
+   "pullQuote": "We've stuck around through the booms and the busts because we do what we say we'll do.",
+   "highlights": [
+    "Founded 1996, 29 years of continuous operation",
+    "CWB Division 2 certified since 2011",
+    "20-year relationship with Larkspur, never missed a delivery",
+    "Diversified revenue across oil & gas, agriculture, and commercial construction",
+    "28,000 sq ft facility with modern CNC equipment and three overhead cranes"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "revenue_growth",
+  "sectionTitle": "Revenue Growth",
+  "order": 5,
+  "layoutType": "bar_chart",
+  "layoutData": {
+   "data": [
+    {
+     "name": "2021",
+     "value": 7680000
+    },
+    {
+     "name": "2022",
+     "value": 8420000
+    },
+    {
+     "name": "2023",
+     "value": 9160000
+    },
+    {
+     "name": "2024",
+     "value": 9815000
+    }
+   ],
+   "unit": "$",
+   "xLabel": "Fiscal Year",
+   "yLabel": "Revenue",
+   "relatedSections": [
+    "revenue_mix",
+    "historical_financial_performance"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "revenue_by_segment",
+  "sectionTitle": "Revenue Mix by Industry Vertical",
+  "order": 6,
+  "layoutType": "donut_chart",
+  "layoutData": {
+   "data": [
+    {
+     "name": "Oil & Gas",
+     "color": "#2563eb",
+     "value": 45
+    },
+    {
+     "name": "Commercial Construction",
+     "color": "#10b981",
+     "value": 26
+    },
+    {
+     "name": "Agriculture",
+     "color": "#f59e0b",
+     "value": 22
+    },
+    {
+     "name": "Repair & Field Service",
+     "color": "#8b5cf6",
+     "value": 7
+    }
+   ],
+   "unit": "%",
+   "centerLabel": "2024 Revenue",
+   "centerValue": "$9,815,000",
+   "relatedSections": [
+    "backlog_pipeline",
+    "customer_relationships"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "backlog_pipeline",
+  "sectionTitle": "Backlog & Pipeline",
+  "order": 7,
+  "layoutType": "stat_callout",
+  "layoutData": {
+   "accentColor": "#2563eb",
+   "description": "Backlog as of May 2025. Open quotes include Prairie Crest Grain Co-operative $1.1M (verbal award pending PO), Larkspur Midstream $420k (submitted May 9, 2025), Bowline Construction $186k (competitive bid), and Whitemud Ag Equipment $480k (budgetary pricing). Historical win rate on quotes is approximately 35%.",
+   "primaryLabel": "Signed Backlog",
+   "primaryValue": "$3.1M",
+   "secondaryStats": [
+    {
+     "label": "Oil & Gas Fabrication",
+     "value": "$1,183,400"
+    },
+    {
+     "label": "Commercial Construction",
+     "value": "$788,000"
+    },
+    {
+     "label": "Agriculture",
+     "value": "$766,300"
+    },
+    {
+     "label": "Mixed / Other",
+     "value": "$362,300"
+    },
+    {
+     "label": "Open Quotes (Pipeline)",
+     "value": "$2,186,000"
+    }
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "major_projects",
+  "sectionTitle": "Current Major Projects",
+  "order": 8,
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "badge": "Oil & Gas",
+     "title": "R-2471: Larkspur Midstream \u2014 Pipe Rack Modules",
+     "highlight": true,
+     "description": "Contract value $1,240,000 | 45% complete | Backlog remaining $682,000"
+    },
+    {
+     "badge": "Commercial",
+     "title": "R-2466: Bowline Construction \u2014 3-Storey Office/Warehouse, Leduc",
+     "description": "Contract value $912,000 | 60% complete | Backlog remaining $364,800 | Structural steel erecting July"
+    },
+    {
+     "badge": "Agriculture",
+     "title": "R-2482: Prairie Crest Grain Co-operative \u2014 Grain Handling Structure, Vegreville",
+     "description": "Contract value $624,000 | 15% complete | Backlog remaining $530,400 | July push in shop"
+    },
+    {
+     "badge": "Oil & Gas",
+     "title": "R-2459: Halvorsen \u2014 Process Module Structural Steel",
+     "description": "Contract value $468,000 | 80% complete | Backlog remaining $93,600"
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "customer_base",
+  "sectionTitle": "Customer Relationships",
+  "order": 9,
+  "layoutType": "two_column",
+  "layoutData": {
+   "left": {
+    "title": "Diversified Base with Deep Relationships",
+    "content": "Ridgeline has cultivated long-term customer relationships across multiple industry verticals, providing stability and recurring revenue. The company's flagship relationship is with Larkspur Midstream Services Ltd., a 20-year partnership where Ridgeline has never missed a delivery. This track record has earned the company consistently high vendor performance scores and repeat work on pipe rack modules, compressor skid bases, and structural steel packages for midstream facilities.\n\nBeyond oil and gas, the customer base spans grain co-operatives (Prairie Crest Grain Co-operative), commercial construction firms (Bowline Construction Group), process systems integrators (Halvorsen), agricultural equipment manufacturers, mechanical contractors, and farming operations. This diversification across sectors mitigates cyclical risk inherent to any single industry.\n\nCustomers value Ridgeline's CWB Division 2 certification, clean quality record, and ability to deliver complex fabrications on schedule. The company is pre-qualified on Larkspur and Halvorsen vendor portals and undergoes annual audits from both customers with consistently clean results. Repeat business and referrals drive a significant portion of revenue, reflecting the strength of these relationships.",
+    "layoutType": "prose"
+   },
+   "right": {
+    "title": "Top Customers by Receivables",
+    "content": {
+     "data": [
+      {
+       "name": "Larkspur Midstream Services Ltd.",
+       "unit": "%",
+       "value": 30.1
+      },
+      {
+       "name": "Bowline Construction Group Inc.",
+       "unit": "%",
+       "value": 14.7
+      },
+      {
+       "name": "Prairie Crest Grain Co-operative",
+       "unit": "%",
+       "value": 10.2
+      },
+      {
+       "name": "All Other Customers",
+       "unit": "%",
+       "value": 45
+      }
+     ],
+     "unit": "%",
+     "yLabel": "Customer",
+     "showPercentages": true
+    },
+    "layoutType": "horizontal_bar_chart"
+   },
+   "title": null
+  },
+  "aiDraftContent": "Ridgeline has cultivated long-term customer relationships across multiple industry verticals, providing stability and recurring revenue. The company's flagship relationship is with Larkspur Midstream Services Ltd., a 20-year partnership where Ridgeline has never missed a delivery. This track record has earned the company consistently high vendor performance scores and repeat work on pipe rack modules, compressor skid bases, and structural steel packages for midstream facilities.\n\nBeyond oil and gas, the customer base spans grain co-operatives (Prairie Crest Grain Co-operative), commercial construction firms (Bowline Construction Group), process systems integrators (Halvorsen), agricultural equipment manufacturers, mechanical contractors, and farming operations. This diversification across sectors mitigates cyclical risk inherent to any single industry.\n\nCustomers value Ridgeline's CWB Division 2 certification, clean quality record, and ability to deliver complex fabrications on schedule. The company is pre-qualified on Larkspur and Halvorsen vendor portals and undergoes annual audits from both customers with consistently clean results. Repeat business and referrals drive a significant portion of revenue, reflecting the strength of these relationships."
+ },
+ {
+  "sectionKey": "certifications_capabilities",
+  "sectionTitle": "Certifications & Capabilities",
+  "order": 10,
+  "layoutType": "icon_stat_row",
+  "layoutData": {
+   "stats": [
+    {
+     "label": "CWB Division 2 Certification",
+     "value": "40+ approved welding procedures",
+     "description": "Annual CWB audits with no major findings; weld maps maintained for all oil and gas jobs"
+    },
+    {
+     "label": "COR Safety Certification",
+     "value": "Certified since 2010",
+     "description": "Certificate of Recognition for safety management systems; annual safety audits by Larkspur and Halvorsen customers"
+    },
+    {
+     "label": "Red Seal Journeyman Welders",
+     "value": "15 certified welders",
+     "description": "All welders test every 2 years for ticket renewal; Luis Ortega and Mark hold CWB welding supervisor certifications"
+    },
+    {
+     "label": "Quality Audit History",
+     "value": "Clean record",
+     "description": "Never had a CWB finding that couldn't be closed within a week; Larkspur and Halvorsen conduct annual audits with consistently top scores"
+    },
+    {
+     "label": "Welder Certification Compliance",
+     "value": "100% current",
+     "description": "Structured testing schedule ensures all welding certifications remain current and compliant with CWB Division 2 requirements"
+    }
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "equipment_assets",
+  "sectionTitle": "Equipment & Assets",
+  "order": 11,
+  "layoutType": "two_column",
+  "layoutData": {
+   "left": {
+    "content": "Ridgeline operates from a fully equipped 28,000 square foot fabrication facility in Nisku, housing a modern mix of CNC-controlled fabrication equipment, welding systems, and material handling assets that support both custom structural fabrication and high-volume production work.\n\nThe centerpiece of the fabrication floor is a CNC high-definition plasma cutting table with bevel head, measuring 10 ft \u00d7 30 ft with 400-amp HD plasma and 45-degree bevel capability. Placed in service in 2024 at an original cost of $468,000, this system eliminates manual grinding on weld preps and dramatically improves cut quality and throughput on structural steel packages. The table is backed by a secondary CNC plasma cutting system (8 ft \u00d7 20 ft, 260-amp, acquired 2014) for smaller parts and overflow work.\n\nForming capacity includes a hydraulic CNC press brake rated at 230 tons \u00d7 12 ft with 6-axis control, purchased in 2019 for $312,000. An older hydraulic press brake (110-ton \u00d7 10 ft, 2-axis, 2011) remains in service but is nearing end of life and will require replacement in the next one to two years at an estimated cost of approximately $180,000.\n\nThe CNC beam drill and saw line, acquired in 2021 for $486,000, features a 3-spindle drill head, 44-inch maximum beam capacity, integrated bandsaw, and 120 ft of infeed and outfeed conveyor. This system is a key differentiator for structural steel work and was cited by the seller as a factor in winning Larkspur work.\n\nMaterial handling is supported by three overhead bridge cranes: two 10-ton top-running units and one 5-ton under-hung crane, all installed in 2008. The two 10-ton cranes received a complete rebuild in summer 2024 at a cost of $64,000, including new hoists, new end trucks, and new pendants; the seller states these units will not require major work for another 20 years.\n\nThe welding department operates 28 multiprocess welding power sources (MIG, flux-core, stick, mixed vintages 2016\u20132024), 4 pulse MIG welders for aluminum and stainless with push-pull guns (2022), and a submerged arc welding tractor with column and boom manipulator (12 ft \u00d7 12 ft, 1,000-amp, 2020). A central welding fume extraction system with 6 ducted arms was installed in 2022.\n\nMobile assets include field service trucks (two one-ton pickups with welding decks and engine-driven welders, 2021 and 2023), a tandem-axle flatbed truck (26 ft deck, 2020), a service truck with 6-ton knuckle crane (2017), and yard equipment including two forklifts (15,000 lb diesel and 8,000 lb propane) and a telehandler (10,000 lb, 55 ft reach, 2019).\n\nThe seller notes that fully amortized tools, welders, and vehicles with an original cost of approximately $2,642,000 remain in operation and are carried at nil book value but continue to provide productive capacity.",
+    "layoutType": "prose"
+   },
+   "right": {
+    "content": {
+     "items": [
+      {
+       "title": "Fabrication & Forming Equipment",
+       "description": "CNC plasma tables (HD 10\u00d730 ft and secondary 8\u00d720 ft), hydraulic CNC press brake 230-ton, beam drill & saw line, ironworker, plate roll, angle roll, horizontal band saw. Original cost $1,633,000, net book value $806,000 per financial statements."
+      },
+      {
+       "title": "Material Handling & Cranes",
+       "description": "Three overhead bridge cranes (two 10-ton top-running rebuilt 2024, one 5-ton under-hung), welding positioners & turning rolls, two forklifts (15,000 lb diesel, 8,000 lb propane), telehandler 10,000 lb with 55 ft reach. Part of shop equipment aggregate."
+      },
+      {
+       "title": "Welding & Finishing Systems",
+       "description": "28 multiprocess welding power sources, submerged arc tractor with manipulator, 4 pulse MIG welders for aluminum/stainless, central fume extraction system with 6 arms, downdraft paint booth 40 ft with heated make-up air. Original cost included in shop equipment total."
+      },
+      {
+       "title": "Mobile Fleet & Trucks",
+       "description": "Field service trucks with welding decks (2023, 2021), flatbed truck 26 ft (2020), service truck with 6-ton knuckle crane (2017), step-deck trailer 53 ft (2019). Original cost $812,000, net book value $302,000 per financial statements."
+      },
+      {
+       "title": "Software & IT Systems",
+       "description": "3D steel detailing software (2 seats), CNC nesting software for plasma tables, fabrication job-costing ERP (cloud-based), safety management app. Original cost $84,000, net book value $18,000 per financial statements."
+      },
+      {
+       "title": "Leasehold Improvements",
+       "description": "Office renovation completed 2012 and LED shop lighting upgrade 2024, total original cost $148,000. These tenant improvements revert to landlord at lease end. Net book value $22,000 per financial statements."
+      }
+     ],
+     "style": "card"
+    },
+    "layoutType": "callout_list"
+   }
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "facility_location",
+  "sectionTitle": "Facility",
+  "order": 12,
+  "layoutType": "location_card",
+  "layoutData": {
+   "locations": [
+    {
+     "sqft": "28,000 sq ft (24,000 sq ft shop with 28 ft clear height, 4,000 sq ft two-storey office)",
+     "label": "Nisku Fabrication Facility",
+     "notes": "Single-storey pre-engineered steel building constructed 2008 on 3.1 acres in Nisku Industrial Business Park. Crane runways for two 10-ton and one 5-ton overhead cranes. 2 grade doors 16 ft \u00d7 20 ft; 1 drive-through bay. 800 amp, 600 volt, 3-phase power. Fenced and gravelled yard, approx. 2.3 acres usable. Roof re-coated 2022. Electrical upsized to 800 amps in 2008, panel added 2024 for plasma. Lot 7, Block 3, Plan 082 4471, Leduc County. Zoning: Industrial. Building may be leased post-closing or purchased separately for $4,100,000.",
+     "address": "2240 - 7A Street, Nisku, AB T9E 8N4",
+     "leaseType": "Triple-net lease (fully net and carefree to Landlord: Tenant pays realty taxes, building insurance premiums, utilities, repairs and maintenance)",
+     "annualRent": "$12.00 per sq ft (Years 3-5: 2024-2026)",
+     "leaseExpiry": "December 31, 2026",
+     "monthlyRent": "$28,000 per month ($336,000 per annum)",
+     "renewalOptions": "Two further terms of five years each at then-current Fair Market Rent"
+    }
+   ],
+   "totalSqft": "28,000"
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "capacity_utilization",
+  "sectionTitle": "Capacity & Growth Runway",
+  "order": 13,
+  "layoutType": "stat_callout",
+  "layoutData": {
+   "accentColor": "#2563eb",
+   "description": "The business operates at approximately 75% of single-shift capacity. Fitting and welding bays are the primary constraint, not the fabrication equipment. The CNC beam line and high-definition plasma cutting table can immediately support a second shift with just two additional operators. The 3-acre fenced and gravelled yard provides ample room for expanded fitting, welding, and assembly operations to support increased throughput.",
+   "primaryLabel": "Current Single-Shift Capacity Utilization",
+   "primaryValue": "~75%",
+   "secondaryStats": [
+    {
+     "label": "Immediate Second-Shift Capacity",
+     "value": "Beam line & plasma ready with 2 operators"
+    },
+    {
+     "label": "Current Bottleneck",
+     "value": "Fitting & welding bays (not machines)"
+    },
+    {
+     "label": "Expansion Space Available",
+     "value": "3-acre yard with room to grow"
+    },
+    {
+     "label": "Yard Currently in Use",
+     "value": "~2 acres of 3-acre site"
+    }
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "team_structure",
+  "sectionTitle": "Organization & Key Personnel",
+  "order": 14,
+  "layoutType": "org_chart",
+  "layoutData": {
+   "nodes": [
+    {
+     "id": "n1",
+     "name": "Gord McAllister",
+     "role": "President & Founder",
+     "notes": "85% shareholder, retiring",
+     "isOwner": true,
+     "yearsAtCompany": 29
+    },
+    {
+     "id": "n2",
+     "name": "Luis Ortega",
+     "role": "Operations Manager / VP Operations",
+     "notes": "15% shareholder, Red Seal welder, CWB welding supervisor, intends to stay post-sale",
+     "isOwner": true,
+     "reportsTo": "n1",
+     "isKeyPerson": true,
+     "yearsAtCompany": 21
+    },
+    {
+     "id": "n3",
+     "name": "Donna McAllister",
+     "role": "Office Manager / Bookkeeper",
+     "notes": "Part-time",
+     "reportsTo": "n1",
+     "yearsAtCompany": 29
+    },
+    {
+     "id": "n4",
+     "name": "Devin Pritchard",
+     "role": "Chief Estimator",
+     "notes": "Prices all jobs over $50k, key retention priority",
+     "reportsTo": "n1",
+     "isKeyPerson": true,
+     "yearsAtCompany": 13
+    },
+    {
+     "id": "n5",
+     "name": "Tanya Brandt",
+     "role": "Project Manager / Operations Coordinator",
+     "notes": "Job costing, weekly job cost reports",
+     "reportsTo": "n2",
+     "isKeyPerson": true,
+     "yearsAtCompany": 11
+    },
+    {
+     "id": "n6",
+     "name": "Mark Sokolowski",
+     "role": "QC Manager & CWB Welding Supervisor",
+     "notes": "CWB welding supervisor ticket",
+     "reportsTo": "n2",
+     "isKeyPerson": true,
+     "yearsAtCompany": 16
+    },
+    {
+     "id": "n7",
+     "name": "Estimating & Detailing",
+     "role": "Estimating & Detailing Team",
+     "notes": "4 staff",
+     "reportsTo": "n4"
+    },
+    {
+     "id": "n8",
+     "name": "Shop Supervision & QC",
+     "role": "Shop Supervision & QC",
+     "notes": "3 staff",
+     "reportsTo": "n2"
+    },
+    {
+     "id": "n9",
+     "name": "Journeyman Welders / Fitters",
+     "role": "Journeyman Welders / Fitters",
+     "notes": "15 staff, avg ~9 years tenure; Walt & Henry (senior journeymen) retiring in 2\u20133 years",
+     "reportsTo": "n2"
+    },
+    {
+     "id": "n10",
+     "name": "Apprentices",
+     "role": "Apprentice Welders",
+     "notes": "6 staff; two fourth-year apprentices ready to replace retirees",
+     "reportsTo": "n2"
+    },
+    {
+     "id": "n11",
+     "name": "CNC & Machine Operators",
+     "role": "CNC & Machine Operators",
+     "notes": "4 staff",
+     "reportsTo": "n2"
+    },
+    {
+     "id": "n12",
+     "name": "Field Service Welders",
+     "role": "Field Service Welders",
+     "notes": "3 staff",
+     "reportsTo": "n2"
+    },
+    {
+     "id": "n13",
+     "name": "Shipping, Yard & Driver",
+     "role": "Shipping, Yard & Driver",
+     "notes": "2 staff",
+     "reportsTo": "n2"
+    }
+   ],
+   "totalHeadcount": 42,
+   "ownerDependency": "Luis Ortega manages day-to-day operations; Devin Pritchard is critical for estimating (no contract or non-compete, retention bonus recommended on day one). Gord reviews estimates over $50k and maintains customer relationships (knows employees' kids' names). Gord will provide one year full-time training with personal customer introductions, then available by phone."
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "safety_quality",
+  "sectionTitle": "Safety & Quality Record",
+  "order": 15,
+  "layoutType": "metric_grid",
+  "layoutData": {
+   "columns": 4,
+   "metrics": [
+    {
+     "label": "Total Recordable Injury Frequency Rate (TRIF)",
+     "trend": "down",
+     "value": "1.1",
+     "footnote": "2024",
+     "highlight": true
+    },
+    {
+     "unit": "since 2021",
+     "label": "Lost-Time Accidents",
+     "trend": "stable",
+     "value": "0",
+     "footnote": "One back injury from lifting in 2021",
+     "highlight": true
+    },
+    {
+     "label": "COR (Certificate of Recognition) Safety Certification",
+     "value": "Certified",
+     "footnote": "Since 2010",
+     "highlight": false
+    },
+    {
+     "label": "CWB Division 2 Audit History",
+     "value": "Clean",
+     "footnote": "Annual audits, never had a finding that couldn't be closed in a week",
+     "highlight": false
+    },
+    {
+     "unit": "in 2024",
+     "label": "WCB Rate Status",
+     "trend": "down",
+     "value": "Decreased",
+     "footnote": "EMR close to 1.0, possibly under",
+     "highlight": false
+    },
+    {
+     "label": "Customer Quality Audits",
+     "value": "Pass",
+     "footnote": "Larkspur and Halvorsen conduct annual audits",
+     "highlight": false
+    },
+    {
+     "label": "Warranty & Rework History",
+     "value": "Minimal",
+     "footnote": "Small issues only (wrong bolt hole, paint touch-up); no major warranty claims",
+     "highlight": false
+    },
+    {
+     "unit": "%",
+     "label": "On-Time Delivery to Larkspur",
+     "trend": "stable",
+     "value": "100%",
+     "footnote": "Never missed a delivery in 20 years",
+     "highlight": true
+    }
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "financial_summary",
+  "sectionTitle": "Historical Financial Performance",
+  "order": 16,
+  "layoutType": "financial_table",
+  "layoutData": {
+   "rows": [
+    {
+     "bold": true,
+     "label": "Revenue",
+     "values": [
+      "$7,680,000",
+      "$8,420,000",
+      "$9,160,000",
+      "$9,815,000"
+     ]
+    },
+    {
+     "label": "Cost of sales",
+     "values": [
+      "$5,473,000",
+      "$5,960,000",
+      "$6,410,000",
+      "$6,804,000"
+     ]
+    },
+    {
+     "bold": true,
+     "label": "Gross profit",
+     "values": [
+      "$2,207,000",
+      "$2,460,000",
+      "$2,750,000",
+      "$3,011,000"
+     ]
+    },
+    {
+     "label": "Gross margin",
+     "indent": true,
+     "values": [
+      "28.7%",
+      "29.2%",
+      "30.0%",
+      "30.7%"
+     ]
+    },
+    {
+     "label": "Operating expenses",
+     "values": [
+      "$1,332,000",
+      "$1,422,000",
+      "$1,468,000",
+      "$1,613,000"
+     ]
+    },
+    {
+     "label": "EBITDA (as reported)",
+     "values": [
+      "$875,000",
+      "$1,038,000",
+      "$1,282,000",
+      "$1,398,000"
+     ],
+     "isTotal": true
+    },
+    {
+     "label": "EBITDA margin",
+     "indent": true,
+     "values": [
+      "11.4%",
+      "12.3%",
+      "14.0%",
+      "14.2%"
+     ]
+    },
+    {
+     "label": "Depreciation & amortization",
+     "values": [
+      "$251,000",
+      "$268,000",
+      "$286,000",
+      "$312,000"
+     ]
+    },
+    {
+     "label": "Interest",
+     "values": [
+      "$79,000",
+      "$71,000",
+      "$66,000",
+      "$58,000"
+     ]
+    },
+    {
+     "label": "Income before income taxes",
+     "values": [
+      "$545,000",
+      "$699,000",
+      "$930,000",
+      "$1,028,000"
+     ]
+    },
+    {
+     "label": "Income taxes",
+     "values": [
+      "$60,750",
+      "$97,090",
+      "$150,910",
+      "$131,590"
+     ]
+    },
+    {
+     "bold": true,
+     "label": "Net income",
+     "values": [
+      "$484,250",
+      "$601,910",
+      "$779,090",
+      "$896,410"
+     ],
+     "isTotal": true
+    }
+   ],
+   "caption": "Fiscal years ended December 31",
+   "headers": [
+    "",
+    "FY2021",
+    "FY2022",
+    "FY2023",
+    "FY2024"
+   ],
+   "currency": "CAD",
+   "footnotes": [
+    "Compiled financial statements (CSRS 4200) prepared by Kwan & Brodeur LLP.",
+    "Operating expenses for FY2024 include $82,000 in one-time expenses (crane rebuild $64,000, legal fees $18,000)."
+   ],
+   "relatedSections": [
+    "sde_normalization",
+    "ebitda_growth"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "sde_normalization",
+  "sectionTitle": "Seller's Discretionary Earnings Normalization",
+  "order": 17,
+  "layoutType": "waterfall_chart",
+  "layoutData": {
+   "unit": "$",
+   "items": [
+    {
+     "type": "start",
+     "label": "Net income",
+     "value": 896410
+    },
+    {
+     "type": "add",
+     "label": "Owner compensation (President \u2014 Gord McAllister)",
+     "value": 15000
+    },
+    {
+     "type": "add",
+     "label": "Donna McAllister salary above market (bookkeeper)",
+     "value": 17000
+    },
+    {
+     "type": "add",
+     "label": "Owner's truck & personal expenses",
+     "value": 28000
+    },
+    {
+     "type": "add",
+     "label": "Crane rebuild (both 10-ton cranes, one-time)",
+     "value": 64000
+    },
+    {
+     "type": "add",
+     "label": "Legal fees \u2014 shareholder agreement amendment (one-time)",
+     "value": 18000
+    },
+    {
+     "type": "add",
+     "label": "Hockey sponsorship (Leduc junior team, discretionary)",
+     "value": 12000
+    },
+    {
+     "type": "add",
+     "label": "Amortization of property and equipment",
+     "value": 312000
+    },
+    {
+     "type": "add",
+     "label": "Interest on long-term debt",
+     "value": 58000
+    },
+    {
+     "type": "add",
+     "label": "Income taxes \u2014 current",
+     "value": 131590
+    },
+    {
+     "type": "total",
+     "label": "Adjusted EBITDA",
+     "value": 1552000
+    },
+    {
+     "type": "add",
+     "label": "Owner compensation (President \u2014 Gord McAllister) \u2014 market salary",
+     "value": 165000
+    },
+    {
+     "type": "total",
+     "label": "SDE",
+     "value": 1717000
+    }
+   ],
+   "currency": "CAD"
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "ebitda_trend",
+  "sectionTitle": "Adjusted EBITDA Growth",
+  "order": 18,
+  "layoutType": "line_chart",
+  "layoutData": {
+   "data": [
+    {
+     "sde": 1055000,
+     "name": "2021",
+     "adjustedEbitda": 890000
+    },
+    {
+     "sde": 1229500,
+     "name": "2022",
+     "adjustedEbitda": 1064500
+    },
+    {
+     "sde": 1475000,
+     "name": "2023",
+     "adjustedEbitda": 1310000
+    },
+    {
+     "sde": 1717000,
+     "name": "2024",
+     "adjustedEbitda": 1552000
+    }
+   ],
+   "unit": "$",
+   "series": [
+    {
+     "key": "adjustedEbitda",
+     "color": "#2563eb",
+     "label": "Adjusted EBITDA"
+    },
+    {
+     "key": "sde",
+     "color": "#16a34a",
+     "label": "SDE"
+    }
+   ],
+   "xLabel": "Fiscal Year",
+   "yLabel": "Earnings",
+   "relatedSections": [
+    "sde_normalization",
+    "financial_performance"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "working_capital",
+  "sectionTitle": "Working Capital",
+  "order": 19,
+  "layoutType": "comparison_table",
+  "layoutData": {
+   "rows": [
+    {
+     "left": "$1,486,000",
+     "label": "Accounts receivable (including holdbacks)",
+     "right": ""
+    },
+    {
+     "left": "$238,000",
+     "label": "Contract assets \u2014 costs and earnings in excess of billings",
+     "right": ""
+    },
+    {
+     "left": "$544,000",
+     "label": "Inventory \u2014 steel, components & consumables",
+     "right": ""
+    },
+    {
+     "left": "$46,000",
+     "label": "Prepaid expenses & deposits",
+     "right": ""
+    },
+    {
+     "left": "($842,000)",
+     "label": "Accounts payable & accrued liabilities",
+     "right": ""
+    },
+    {
+     "left": "($164,000)",
+     "label": "Contract liabilities \u2014 billings in excess of costs and earnings",
+     "right": ""
+    },
+    {
+     "left": "($71,000)",
+     "label": "Government remittances payable",
+     "right": ""
+    },
+    {
+     "left": "$1,237,000",
+     "label": "Net working capital",
+     "right": "$1,096,250",
+     "highlight": true
+    }
+   ],
+   "intro": "Net working capital is shown on a cash-free, debt-free basis \u2014 the same basis as the working capital peg.",
+   "leftLabel": "December 31, 2024",
+   "rightLabel": "Peg (target)"
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "growth_opportunities",
+  "sectionTitle": "Growth Opportunities",
+  "order": 20,
+  "layoutType": "numbered_list",
+  "layoutData": {
+   "items": [
+    {
+     "title": "ABSA Certification for Pressure Piping",
+     "description": "Obtain ABSA pressure-piping QC program certification to capture piping fabrication work currently lost to competitors. Ridgeline presently refers out or declines packages containing pressure piping, limiting bid competitiveness on integrated oil and gas projects. ABSA certification would unlock additional revenue on existing customer base and enable pursuit of larger module contracts."
+    },
+    {
+     "title": "Robotic Welding Cell for Repeat Frames",
+     "description": "Install robotic welding system for high-volume repeat customer frames, particularly Whitemud Ag Equipment opportunities. Automation would reduce cycle time on standardized weldments, improve margin consistency, and free journeyman capacity for complex structural work. Excellent fit for agricultural equipment support structures and conveyor components with recurring geometries."
+    },
+    {
+     "title": "Second Shift on CNC Equipment",
+     "description": "Add second shift operation on beam line and plasma cutting tables to double throughput on fabrication preparation. Current equipment utilization at approximately 75% of one-shift capacity; both the CNC beam drill and saw line and the high-definition plasma table can run second shift immediately with two additional operators. Fitting and welding bays remain the bottleneck, not machine capacity."
+    },
+    {
+     "title": "Expand Fitting and Welding Capacity",
+     "description": "Add fitting bays and welding stations in the existing 3-acre fenced and gravelled yard to alleviate the primary production bottleneck. Current 28,000 square foot shop focuses on enclosed fabrication; outdoor expansion would accommodate larger structural assemblies, seasonal ag work overflow, and module pre-fit operations. Space available for immediate deployment without real estate acquisition."
+    }
+   ],
+   "ordered": true
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "key_risks",
+  "sectionTitle": "Key Considerations for Buyers",
+  "order": 21,
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "badge": "Material",
+     "title": "Larkspur Vendor Consolidation \u2013 2026",
+     "highlight": true,
+     "description": "Larkspur Midstream (18% of revenue, 20-year relationship) is reducing its approved fabricator list from 8 to 3 suppliers in 2026 and will re-bid the MSA. Ridgeline has maintained 100% on-time delivery over two decades, holds CWB Division 2 certification, and scores very well on vendor metrics (TRIF 1.1, strong quality). Management expects Ridgeline to make the short list, but the re-bid introduces execution risk during ownership transition."
+    },
+    {
+     "badge": "Key Person",
+     "title": "Estimator Retention Risk",
+     "description": "Devin (13 years with the company) is the chief estimator, pricing all jobs over $50,000 with deep knowledge of shop rates and fabrication times. He has no employment contract or non-compete and has not indicated whether he would stay under new ownership. Losing Devin would require slowing new bids and leaning on repeat customers for 3\u20136 months while a replacement is trained. Seller strongly recommends buyer discuss retention bonus on day one."
+    },
+    {
+     "badge": "Workforce",
+     "title": "Senior Welder Retirements",
+     "description": "Walt and Henry, two senior journeyman welders, are expected to retire in 2\u20133 years. The company has two fourth-year apprentices ready to replace them, but the Nisku journeyman hiring market is very difficult. Apprenticeship pipeline and low journeyman turnover (average ~9 years tenure, haven't lost a good journeyman to another shop in 5 years) mitigate immediate risk, but succession planning will be important."
+    },
+    {
+     "badge": "Capex",
+     "title": "Equipment Replacement Needs",
+     "description": "The 110-ton hydraulic press brake (2011) leaks and has a manual back gauge; it needs replacement in 1\u20132 years at an estimated cost of ~$180,000. The older 8 ft \u00d7 20 ft CNC plasma table (2014) is on borrowed time. The 2016 forklift will also require replacement. Conservative capex forecast is $400,000 over the next 3 years. Recent investments (new $468,000 plasma table with bevel head, beam line, 230-ton brake, and both 10-ton cranes rebuilt in 2024) are in excellent condition for 10+ years."
+    },
+    {
+     "badge": "Backlog",
+     "title": "Westlock Purchase Order Pending",
+     "description": "The Westlock terminal expansion project is counted in the $3.1M signed backlog, but the purchase order has not yet been received. The project manager verbally awarded the work pending board approval (expected end of June 2025). Operations manager Luis will not order steel or begin fabrication until the PO is in hand, citing a prior loss from cutting material before PO on a different project. If the PO does not materialize, backlog would be reduced by the Westlock scope."
+    },
+    {
+     "badge": "AR",
+     "title": "Coldbrook Payment Dispute",
+     "description": "A trailer modification project completed in October 2024 for Coldbrook is subject to a payment dispute. The customer changed drawings twice but still wanted the same delivery date; Ridgeline was 5 days late. The receivable ($38,000, over 90 days) is with a collection agency. Payment status is uncertain."
+    },
+    {
+     "badge": "Culture",
+     "title": "Employee Retention Under Ownership Change",
+     "description": "Employees value the current culture \u2013 the owner knows their kids' names. Retention of key staff (Luis operations manager, Tanya job costing, Mark QC, and the journeyman core) is critical through transition. Luis intends to stay post-sale and is open to rolling part of his 15% equity if the buyer has a good plan. Seller recommends buyer-funded retention plan for key staff, particularly Devin."
+    }
+   ],
+   "style": "card",
+   "columns": 2
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "reason_for_sale",
+  "sectionTitle": "Reason for Sale & Transition",
+  "order": 22,
+  "layoutType": "prose_highlight",
+  "layoutData": {
+   "body": "After 29 years of building Ridgeline Metal Fabrication from a single-bay repair shop into one of Alberta's most trusted structural steel fabricators, Gord McAllister is ready to retire. Since founding the business in 1996, Gord has built long-standing relationships with customers like Larkspur Midstream, invested in world-class equipment, and assembled a team of skilled journeymen welders and fabricators. Now he's looking to pass the torch to a buyer who will keep the shop in Nisku and continue the culture that has made Ridgeline successful.\n\nGord is committed to a smooth transition. He will work full-time for one year to personally introduce the new owner to every customer \u2014 Larkspur, Prairie Crest, Bowline, Halvorsen, and all the others. After that first year, he will remain available by phone as needed to support the new owner. This hands-on approach ensures that the relationships and operational knowledge that took nearly three decades to build are transferred effectively.\n\nLuis Ortega, who has been with Ridgeline for 21 years and owns 15% of the company, intends to stay on as operations manager after the sale. Luis is a Red Seal journeyman welder, holds his CWB welding supervisor ticket, and manages the day-to-day shop operations. His continued involvement will be critical to maintaining continuity with the crew and customers. Luis is also open to rolling part of his equity into the new ownership structure if the buyer has a strong plan for the business, subject to consultation with his lawyer and family.\n\nThe buyer should plan to retain key personnel, particularly Devin Pritchard, the chief estimator who has priced jobs for Ridgeline for 13 years. A retention bonus for Devin and other key staff is recommended and should be buyer-funded. Gord's advice to any prospective buyer is straightforward: keep Luis, keep the location, and keep the team intact.",
+   "pullQuote": "Anybody who buys this and doesn't keep Luis is an idiot.",
+   "highlights": [
+    "One year full-time owner training with personal customer introductions",
+    "Luis Ortega (15% shareholder, 21 years) intends to stay as operations manager",
+    "Luis open to rolling equity if buyer has strong plan",
+    "Retention plan recommended for Devin (estimator) and key staff"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "transaction_structure",
+  "sectionTitle": "Transaction Overview",
+  "order": 23,
+  "layoutType": "callout_list",
+  "layoutData": {
+   "items": [
+    {
+     "icon": "\ud83d\udcb0",
+     "title": "Asking Price",
+     "highlight": true,
+     "description": "$6,500,000 \u2014 representing 3.8\u00d7 FY2024 Seller's Discretionary Earnings of $1,717,000 and 4.2\u00d7 FY2024 Adjusted EBITDA of $1,552,000"
+    },
+    {
+     "icon": "\ud83d\udccb",
+     "title": "Transaction Structure",
+     "description": "Share sale preferred to enable seller to use capital gains exemption. Building held separately in McAllister Properties Ltd. and not included in asking price."
+    },
+    {
+     "icon": "\ud83c\udfed",
+     "title": "Real Estate Option",
+     "description": "28,000 sq ft facility on 3.1 acres in Nisku available for lease continuation (current lease expires December 31, 2026 with two 5-year renewal options) or purchase from McAllister Properties Ltd. for $4,100,000."
+    },
+    {
+     "icon": "\ud83e\udd1d",
+     "title": "Minority Shareholder Rights",
+     "description": "Luis Ortega (15% shareholder) has tag-along rights at same price per share under November 2024 shareholder agreement amendment. Luis has option to roll equity if buyer agrees. 80% drag-along provision applies."
+    },
+    {
+     "icon": "\ud83d\udcca",
+     "title": "Debt & Liabilities",
+     "description": "Total term debt of $910,000 as of December 31, 2024 (Northreach equipment loan $692,000 plus vehicle/equipment loans $218,000). Operating line of credit $750,000 at prime + 0.75%, currently undrawn. Buyer to assume or retire at closing."
+    },
+    {
+     "icon": "\ud83c\udf93",
+     "title": "Training & Transition Support",
+     "description": "Seller will provide one year full-time training including personal introduction to every customer (Larkspur, Prairie Crest, Bowline, all relationships). Available by phone thereafter as needed."
+    }
+   ],
+   "style": "card",
+   "columns": 2,
+   "relatedSections": [
+    "financial_summary",
+    "working_capital",
+    "reason_for_sale"
+   ]
+  },
+  "aiDraftContent": null
+ },
+ {
+  "sectionKey": "ideal_buyer",
+  "sectionTitle": "Ideal Buyer Profile",
+  "order": 24,
+  "layoutType": "numbered_list",
+  "layoutData": {
+   "items": [
+    {
+     "title": "Retain Luis Ortega as operations manager",
+     "description": "Luis Ortega (15% shareholder, 21 years with the company, Red Seal welder, CWB welding supervisor) intends to stay post-sale. Gord McAllister states that any buyer who does not keep Luis would be making a serious mistake. Luis is open to rolling part of his 15% equity if the buyer has a good plan and will consult his lawyer and wife. Luis manages day-to-day shop operations and maintains strong relationships with customers including Larkspur project managers."
+    },
+    {
+     "title": "Keep the Nisku shop location",
+     "description": "The business operates from a 28,000 square foot facility on 3.1 acres in Nisku Industrial Business Park. The current lease expires December 31, 2026, with two five-year renewal options available. The building can be leased or purchased separately for $4,100,000. The location provides proximity to key customers and suppliers, with established infrastructure including three overhead cranes, 800-amp electrical service, and permitted paint booth."
+    },
+    {
+     "title": "Maintain the employee culture",
+     "description": "Employees value that Gord McAllister knows their kids' names, reflecting a personal, family-oriented culture. Journeymen welders average approximately 9 years tenure. The company has not lost a good journeyman to another shop in 5 years. This culture has contributed to low turnover and strong operational stability. A buyer who preserves this environment will be better positioned to retain the skilled workforce."
+    },
+    {
+     "title": "Fund retention plan for Devin and key staff",
+     "description": "Devin Pritchard (estimator, 13 years experience) is the biggest key-person risk after the owner. Devin prices all jobs over $50,000, knows shop rates and fabrication times, and has no contract or non-compete. The seller recommends the buyer discuss a retention bonus with Devin on day one. A retention plan for key staff is considered normal and should be buyer-funded. Other key personnel include Tanya (job costing and admin, 11 years) and Mark (QC inspector, 16 years, holds CWB welding supervisor ticket)."
+    },
+    {
+     "title": "Understand the Larkspur relationship and 2026 re-bid",
+     "description": "Larkspur represents 18% of 2024 revenue with a 20-year relationship and 100% on-time delivery record over that period. Larkspur is consolidating its approved fabricator list from 8 to 3 in 2026 and will re-bid the MSA. The seller is confident Ridgeline will make the short list based on its track record, CWB Division 2 certification, and beam line capability. Luis maintains strong relationships with Larkspur project managers. A successful buyer will need to navigate this re-bid process and demonstrate commitment to quality and delivery standards."
+    },
+    {
+     "title": "Plan for senior welder succession",
+     "description": "Senior journeymen Walt and Henry are retiring in 2 to 3 years. The company currently has two fourth-year apprentices ready to replace them. The business takes 2 to 3 first-year apprentices annually from polytechnic and trains them in-house. A buyer should continue the apprenticeship program to maintain the skilled labour pipeline in a very difficult journeyman hiring market in Nisku."
+    },
+    {
+     "title": "Address equipment replacement needs",
+     "description": "The 110-ton hydraulic press brake leaks and has a manual back gauge, requiring replacement in 1 to 2 years at an estimated cost of approximately $180,000. The old 8 ft x 20 ft plasma table from 2014 is on borrowed time. The forklift from 2016 will need replacement. A conservative capital expenditure forecast of $400,000 over the next 3 years covers these replacements. Recent investments including the new $468,000 CNC plasma table, beam line, 230-ton brake, and rebuilt cranes are in good condition for 10-plus years."
+    }
+   ],
+   "title": "Attributes of the Ideal Buyer",
+   "ordered": true
+  },
+  "aiDraftContent": null
+ }
+]

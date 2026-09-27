@@ -1,0 +1,620 @@
+{
+ "cash": "$642,130",
+ "ebitda": "$1,398,000",
+ "wcbEMR": "Close to 1.0, possibly under \u2014 exact figures to be provided from WCB rate letters via Donna",
+ "address": "2240 - 7A Street, Nisku, AB T9E 8N4",
+ "backlog": "$3,100,000",
+ "taxYear": "January 1, 2024 to December 31, 2024",
+ "addbacks": "$399,000 total per seller's list: $260,000 owner compensation (salary + dividends, requires reconciliation with accountant), $28,000 personal expenses (truck, fuel, insurance, meals, cell, season tickets), $64,000 crane rebuild (one-time, both 10-ton cranes - new hoists, end trucks, pendants in 2024, won't recur for 20 years), $18,000 legal for shareholder agreement (one-time, November 2024), $12,000 hockey sponsorship (discretionary, Leduc junior team), $17,000 Donna salary over market (she makes $62k, market for part-time bookkeeper estimated $45k)",
+ "badDebts": "$12,000 (2023: $9,000)",
+ "industry": "Manufacturing",
+ "keyRisks": "Larkspur vendor consolidation 2026 (reducing from 8 to 3 approved fabricators, MSA re-bid required); Westlock PO not yet received (counted in backlog); Coldbrook payment dispute unresolved; senior welders Walt and Henry retiring in 2-3 years; very difficult journeyman hiring market in Nisku; Devin flight risk; equipment replacement needs (110-ton brake ~$180k, old plasma table, forklift); employee retention concerns if ownership changes significantly",
+ "landSize": "3 acres",
+ "location": "Nisku, Alberta",
+ "ownerAge": "64",
+ "preparer": "Kwan & Brodeur LLP",
+ "saleType": "Share sale preferred (to use capital gains exemption). Building separate - can be leased or purchased for $4.1M.",
+ "contracts": "Morgan Ellis: Shareholder agreement with amendment dated November 18, 2024. Amendment switches off Luis's right of first refusal for 100% share sale to arm's-length buyer closing by November 18, 2026, includes tag-along rights for Luis at same price per share, option for Luis to roll equity if buyer agrees, 80% drag-along provision exists",
+ "employees": "42",
+ "holdbacks": "$122,900 (8.0% of total) - statutory 10% holdbacks on commercial construction contracts per Prompt Payment and Construction Lien Act, Alberta",
+ "insurance": "$94,000",
+ "inventory": "$544,000 in steel, components & consumables (2023: $512,000)",
+ "leaseSqft": "28,000 square feet",
+ "leaseType": "Triple-net lease",
+ "naicsCode": "332319 \u2014 Other plate work and fabricated structural product manufacturing",
+ "netIncome": "$896,410 (2024)",
+ "ownerName": "Gord McAllister",
+ "strengths": "Never missed a delivery to Larkspur in 20 years, CWB Division 2 certified, COR certified since 2010, diversified revenue across oil & gas / commercial / ag, strong equipment including new $460k plasma table, low journeyman turnover (haven't lost good journeyman to another shop in 5 years), kept all journeymen employed through 2015 oil crash",
+ "suppliers": "Western Plate & Beam, Prairie Steel (steel supply); subcontract erection to an erector used for ten years",
+ "t4Summary": "Gord McAllister employment income (management salary) $180,000; Luis Ortega employment income (salary & bonus in direct wages) $124,000; Donna McAllister employment income (office management) $58,000",
+ "totalDebt": "$1,342,000 (2023), $1,604,000 (2022)",
+ "utilities": "$74,000",
+ "accountant": "Heather Kwan at Kwan & Brodeur",
+ "albertaTax": "$43,360",
+ "annualRent": "$322,000 (2023 and 2022)",
+ "cashByYear": {
+  "2021": "$125,720",
+  "2022": "$164,630",
+  "2023": "$431,720",
+  "2024": "$642,130"
+ },
+ "entityType": "Alberta private corporation. Class A voting: Gord McAllister 85%, Luis Ortega 15%. Class D discretionary dividend shares: Gord 100%. Real estate held in McAllister Properties Ltd. (Gord 100%).",
+ "federalTax": "$94,950",
+ "filingDate": "E-filed May 28, 2024",
+ "idealBuyer": "Buyer who keeps shop location, retains Luis as operations manager, maintains culture (employees value that Gord knows their kids' names), and funds retention for key staff (especially Devin)",
+ "legalNotes": "Morgan Ellis (broker): November 18, 2024 shareholder amendment switches off Luis's right of first refusal for sale of 100% of shares to arm's-length buyer (closing by November 18, 2026), with Luis getting same price per Class A share (tag-along), and option for Luis to roll equity if buyer agrees; Morgan Ellis: shareholder agreement includes 80% drag-along; Luis Ortega: confirmed November amendment waives his right of first refusal if Gord sells 100% to outside buyer as long as he gets same price per share",
+ "preparedBy": "D. McAllister",
+ "rentByYear": {
+  "2023": "$322,000",
+  "2024": "$336,000"
+ },
+ "reportDate": "May 31, 2025",
+ "taxBalance": "Balance owing at year end: $38,000. Instalments paid during year: $93,590.",
+ "taxYearEnd": "2022-12-31",
+ "askingPrice": "$6,500,000",
+ "auditStatus": "Compilations (Morgan stated 'compilations are fine' in information request)",
+ "bankCharges": "$9,000",
+ "companyName": "Ridgeline Metal Fabrication Inc.",
+ "costOfSales": "$6,868,000",
+ "debtDetails": "Northreach Commercial Bank equipment term loan $1,058,000, fixed rate 4.25%, blended monthly payments, matures November 2027, secured by general security agreement and limited personal guarantee; vehicle and equipment loans $284,000, 4.9%-6.9%, secured by specific assets, maturing 2026-2028; current portion of long-term debt $274,000",
+ "directLabor": "$2,720,000 in shop wages & benefits (2023: $2,560,000)",
+ "directWages": "$2,560,000",
+ "founderName": "Gord McAllister",
+ "grossMargin": "30.0%",
+ "grossProfit": "$2,947,000 (2024)",
+ "incomeTaxes": "$131,590",
+ "inventories": "$486,000",
+ "keyProducts": "Pipe rack modules, compressor and meter skid bases, grain handling support structures, catwalks, conveyor galleries, structural steel packages, miscellaneous metals (stairs, rails, embeds), process module structural steel, frame weldments, equipment platforms, pipe supports, launcher/receiver skids, field welding and repairs, barn steel, gates, custom farm structures",
+ "leaseExpiry": "December 31, 2026",
+ "monthlyRent": "Years 1-2 (2022-2023): $26,833.33 monthly. Years 3-5 (2024-2026): $28,000.00 monthly. Plus GST.",
+ "ownerSalary": "$180,000 (management salary paid to majority shareholder Gord McAllister, T4)",
+ "seasonality": "First quarter slowest. Summer busiest (ag customers want delivery before harvest, commercial building season). Oil and gas all year.",
+ "subIndustry": "Custom structural & miscellaneous metal fabrication and welding (oil & gas, agriculture, commercial construction)",
+ "totalAssets": "$5,140,130",
+ "yearsOfData": "4 years (2021\u20132024)",
+ "amortization": "$312,000",
+ "ar31to60Days": "$344,800 (22.5%)",
+ "ar61to90Days": "$42,500 (2.8%)",
+ "arOver90Days": "$47,600 (3.1%)",
+ "balanceOwing": "$38,000",
+ "businessName": "QA HARVEST acc-ridgeline \u2014 Ridgeline Metal Fabrication Inc.",
+ "cashDeposits": "$164,630",
+ "cashPosition": "$642,130 (2023: $431,720)",
+ "ccaBreakdown": "Class 53 (M&P equipment, 50%) $172,000; Class 10 (vehicles/mobile, 30%) $84,000; Class 8 (general equipment, 20%) $38,000; Class 50 (computers, 55%) $10,000; Class 13 (leasehold improvements) $14,000",
+ "commonShares": "$150,950",
+ "craneRebuild": "$64,000 spent on rebuild of two 10-ton overhead cranes in 2024, deducted as current expense (restoration to original condition), included in production equipment repairs of $184,000",
+ "customerBase": "Larkspur (18% of revenue, 20-year relationship, vendor consolidation 2026); Prairie Crest (Vegreville job in shop, 15% done, July push); Westlock (terminal expansion, PO pending board approval end June); Bowline (Leduc office-warehouse 60% done, erecting July); Coldbrook (trailer modification dispute, 5 days late, payment uncertain); Halvorsen (audits Ridgeline annually); Whitemud (potential for robotic welding cell on repeat frames); Castleford (2023 stair stringer rework, architect change, customer paid)",
+ "ebitdaByYear": {
+  "2022": "$1,038,000",
+  "2023": "$1,282,000",
+  "2024": "$1,398,000"
+ },
+ "facilitySize": "28,000 square feet on 3.1 acres",
+ "jurisdiction": "Alberta (references Prompt Payment and Construction Lien Act, Alberta)",
+ "keyEmployees": "Luis Ortega (operations manager, 15% shareholder, Red Seal welder, CWB welding supervisor); Tanya (office/job costing, runs weekly job cost reports); Devin (estimator, prices jobs, at risk of being poached); Mark (QC inspector, holds CWB welding supervisor ticket); Ravi (does hazard assessments); Walt and Henry (senior journeymen, retiring in 2\u20133 years); two fourth-year apprentices ready to replace retirees",
+ "leaseAcreage": "3.1 acres",
+ "leaseAddress": "2240 - 7A Street, Nisku, Alberta T9E 8N4",
+ "leaseDetails": "5-year term commencing January 1, 2022 ending December 31, 2026. Basic Rent: Years 1-2 (2022-2023): $11.50 per sq ft per annum = $322,000.00 per annum, payable $26,833.33 monthly. Years 3-5 (2024-2026): $12.00 per sq ft per annum = $336,000.00 per annum, payable $28,000.00 monthly. Plus GST. Fully net and carefree to Landlord: Tenant pays realty taxes, building insurance premiums, utilities, repairs and maintenance. Total rent over 5-year term: $1,652,000.00. Two renewal terms of 5 years each available. Permitted use: Steel fabrication, welding, cutting, forming, blasting and painting (in a permitted booth), storage and offices ancillary thereto. No deposit required.",
+ "legalCounsel": "Lawyer in Edmonton (holds minute book)",
+ "locationName": "Nisku Industrial Business Park",
+ "longTermDebt": "$624,000",
+ "ownerContact": "780-555-0163",
+ "propertyInfo": "Single-storey pre-engineered steel building constructed 2008: approx. 24,000 sq ft shop (clear height 28 ft) with crane runways for two 10-ton and one 5-ton overhead cranes, and a 4,000 sq ft two-storey office; total Rentable Area 28,000 sq ft; together with the fenced, gravelled yard. Lot 7, Block 3, Plan 082 4471, Leduc County (Nisku Industrial Business Park), containing 3.1 acres more or less. 2 grade doors 16 ft x 20 ft; 1 drive-through bay. 800 amp, 600 volt, 3-phase power. Fenced and gravelled yard, approx. 2.3 acres usable. Zoning: Industrial (Leduc County Land Use Bylaw).",
+ "safetyRecord": "No lost-time accidents since 2021 (one back injury from lifting in 2021); TRIF 1.1 in 2024; COR certified; Ravi conducts daily hazard assessments on app; Monday toolbox talks; WCB rate decreased in 2024; annual safety audits by Larkspur and Halvorsen customers",
+ "shareCapital": "$150,950",
+ "shareholders": "Gord McAllister (85% voting common), Luis Ortega (15% voting common)",
+ "targetMarket": "Oil and gas (midstream facilities, pipe racks, skids, module steel), commercial construction (structural steel packages), agriculture (grain elevators, catwalks, support structures, conveyor galleries), repair and field service",
+ "taxYearStart": "2022-01-01",
+ "taxesPayable": "$38,000",
+ "annualRevenue": "$9,815,000 (2024)",
+ "craneCapacity": "Three cranes (two 10-ton cranes got new hoists, new end trucks, new pendants summer 2024, $64k rebuild, won't need work for 20 years)",
+ "currentAssets": "$2,956,130",
+ "debtRepayment": "$432,000 repayment of long-term debt (2023: $262,000), including voluntary prepayment of $158,000 on equipment term loan",
+ "debtStructure": "Northreach Commercial Bank equipment term loan: $1,058,000, fixed rate 4.25%, matures November 2027, secured by general security agreement and limited personal guarantee of majority shareholder. Vehicle and equipment loans: $284,000, 4.9%-6.9%, secured by specific assets, maturing 2026-2028",
+ "dividendsPaid": "$60,000",
+ "fiscalYearEnd": "2024-12-31",
+ "freightInDuty": "$94,000",
+ "insuranceCost": "$94,000 (2023: $88,000)",
+ "majorProjects": "R-2471: Pipe rack modules for Larkspur ($1,240,000, 45% complete, $682,000 backlog) | R-2466: Structural steel 3-storey office/warehouse Leduc for Bowline ($912,000, 60% complete, $364,800 backlog) | R-2482: Grain handling structure Vegreville for Prairie Crest ($624,000, 15% complete, $530,400 backlog) | R-2459: Process module structural steel for Halvorsen ($468,000, 80% complete, $93,600 backlog)",
+ "materialsCost": "$3,046,000 (steel, plate & purchased components)",
+ "propertyTaxes": "$61,000 (2023: $58,000)",
+ "provincialTax": "$36,640 (Alberta)",
+ "reasonForSale": "Owner retiring",
+ "revenueByYear": {
+  "2021": "$7,680,000",
+  "2022": "$8,420,000",
+  "2023": "$9,160,000",
+  "2024": "$9,815,000"
+ },
+ "salariesWages": "$678,000 (office, estimating, project management $498,000 + management salary $180,000 to majority shareholder)",
+ "taxFilingDate": "May 28, 2024",
+ "taxableIncome": "$833,000",
+ "totalExpenses": "$7,721,000",
+ "utilitiesCost": "$74,000 (2023: $71,000)",
+ "accountingFirm": "Kwan & Brodeur LLP",
+ "arCurrent0to30": "$972,600 (63.6%)",
+ "assetsIncluded": "CNC high-definition plasma cutting table with bevel head (10 ft x 30 ft, 400A HD plasma, 45-degree bevel, 2024, $468,000 original cost, NBV $448,100), CNC plasma cutting table secondary (8 ft x 20 ft, 260A, 2014, $185,000 original cost, NBV $74,200), Hydraulic CNC press brake (230-ton x 12 ft, 6-axis, 2019, $312,000 original cost, NBV $193,300), Hydraulic press brake older (110-ton x 10 ft, 2-axis, 2011, $96,000 original cost, NBV $29,700), CNC beam drill & saw line (3-spindle drill, 44 in. max beam, bandsaw, 120 ft infeed/outfeed conveyor, 2021, $486,000 original cost, NBV $358,400), Horizontal mitering band saw (20 in. capacity, auto-feed, 2017, $42,000 original cost, NBV $21,900), Hydraulic ironworker (120-ton, punch/shear/notch, 2016, $38,000 original cost, NBV $18,100), 4-roll plate bending roll (10 ft x 1/2 in. capacity, 2018, $124,000 original cost, NBV $70,400), Angle roll / section bender (3-roll, 4 in. angle capacity, 2015, $46,000 original cost, NBV $20,100), Overhead bridge cranes 2 units (10-ton each, top-running, pendant control, 2008, rebuilt 2024, $180,000 original cost, NBV $42,800), Overhead bridge crane (5-ton, under-hung, 2008, $52,000 original cost, NBV $12,400), Multiprocess welding power sources 28 units (MIG/flux-core/stick, wire feeders, mixed 2016-2024, 2020, $196,000 original cost, NBV $132,500), Submerged arc welding tractor column & boom (12 ft x 12 ft manipulator, 1,000A, 2020, $88,000 original cost, NBV $59,500), Pulse MIG welders aluminum/stainless 4 units (push-pull guns, 2022, $64,000 original cost, NBV $51,500), Welding fume extraction system (central ducted, 6 arms, 2022, $71,000 original cost, NBV $57,100), Downdraft paint booth (40 ft, explosion-proof lighting, heated make-up air, 2019, $142,000 original cost, NBV $88,000), Rotary screw air compressor & dryer (50 HP, 2018, $34,000 original cost, NBV $19,300), Welding positioners & turning rolls 3 sets (up to 10,000 lb, 2019, $48,000 original cost, NBV $29,700), Magnetic drills grinders hand & power tools lot (various, 2023, $58,000 original cost, NBV $51,000), One-ton pickup with welding deck field service (diesel, 4x4, engine-driven welder, 2023, $98,000 original cost, NBV $70,100), One-ton pickup with welding deck field service (diesel, 4x4, engine-driven welder, 2021, $86,000 original cost, NBV $39,400), Tandem-axle flatbed truck (26 ft deck, air brakes, 2020, $128,000 original cost, NBV $46,900), Step-deck trailer (53 ft, spread axle, 2019, $72,000 original cost, NBV $21,100), Service truck with knuckle crane (6-ton crane, 2017, $118,000 original cost, NBV $22,100), Forklift (15,000 lb capacity, diesel, 2021, $96,000 original cost, NBV $43,400), Forklift (8,000 lb capacity, propane, 2016, $48,000 original cost, NBV $7,000), Telehandler (10,000 lb, 55 ft reach, 2019, $132,000 original cost, NBV $38,000), Scissor lifts 2 units (26 ft electric, 2018, $42,000 original cost, NBV $9,600), Detailing workstations servers & software licences (3D steel detailing 2 seats, nesting, job-costing ERP, acquired 2019-2024, 2023, $96,000 original cost, NBV $22,000), Office renovation 2012 & LED shop lighting upgrade 2024 $20,000 (tenant improvements to leased premises revert to landlord, 2012, $148,000 original cost, NBV $36,000), Older fully amortized tools welders and vehicles cost approximately $2,642,000 carried at nil book value not itemized",
+ "averageJobSize": "11 named jobs range $142,000 to $1,240,000; 23 smaller jobs each under $50,000 (grouped total $611,000)",
+ "badDebtExpense": "$22,000",
+ "badDebtsByYear": {
+  "2023": "$9,000",
+  "2024": "$12,000"
+ },
+ "businessNumber": "74219 3308 RC0001",
+ "certifications": "CWB Division 2 (40+ approved procedures, annual audits, no major findings, weld maps maintained for oil & gas jobs); COR safety certification; Red Seal welding certifications; CWB welding supervisor certifications (Luis and Mark)",
+ "companyAddress": "2240 - 7A Street, Nisku, AB T9E 8N4",
+ "companyHistory": "Founded in 1996 by Gord McAllister as Ridgeline Welding, operating from rented bay in Leduc doing repair work. Started fabrication work around 2001 building skid bases, hired two journeymen. Landed Larkspur as customer in 2005. Built current 28,000 sq ft Nisku facility in 2008. Changed name to Ridgeline Metal Fabrication in 2009 when adding structural steel work. Obtained CWB Division 2 certification in 2011.",
+ "contractAssets": "$238,000",
+ "dataProcessing": "$29,000",
+ "engagementType": "Compilation (CSRS 4200)",
+ "interimRevenue": {
+  "2024": "~4.18M YTD Jan-May, +8% vs LY",
+  "2025": "$4,180,000 (Jan-May YTD, +8% vs prior year)"
+ },
+ "managementTeam": "Luis Ortega (operations manager and 15% shareholder); Tanya (job costing and admin); Devin (estimator); Mark (QC)",
+ "officeExpenses": "$36,000",
+ "operatingHours": "Mon-Thu 6:00 am - 4:30 pm, Fri 6:00 am - 12:00 pm",
+ "qualityControl": "Mark is QC inspector; CWB Division 2 with 40+ approved procedures; annual CWB audits, never had finding that couldn't close within a week; welders test every 2 years for ticket renewal; Larkspur and Halvorsen conduct annual audits; weld maps maintained on every oil & gas job; minimal rework - small issues only (wrong bolt hole, paint touch-up); 2023 Castleford stair stringers returned due to architect change after approval, repaired and customer paid; inspector reputation: \"doesn't look for problems because he's never found any\"",
+ "revenueStreams": "Structural fabrication for buildings (4-8 week cycle, low-20s% margins); pipe rack modules for oil & gas (10-12 week cycle for large projects, mid-20s% margins); field service and repairs (same-day, higher margins); agricultural fabrication (mid-20s% margins); small jobs (higher margins); repeat customer work (higher margins)",
+ "totalIncomeTax": "$131,590",
+ "transitionPlan": "Luis Ortega intends to stay as operations manager post-sale; Gord recommends keeping Luis (\"anybody who buys this and doesn't keep Luis is an idiot\"); Luis open to rolling part of his 15% equity if buyer has good plan (will consult lawyer and wife); retention bonus recommended for Devin (estimator) on day one; retention plan for key staff normal and buyer-funded",
+ "travelExpenses": "$10,000 (incl. meals)",
+ "yearsOperating": "29 years",
+ "accountingBasis": "Historical cost basis, compiled financial information, unaudited",
+ "accountsPayable": "$842,000",
+ "bondingCapacity": "No bonding facility in place. Not required for current customer base (O&G and ag don't require, GCs bond at general contract level). Walked away from one government bid ~10 years ago due to bonding cost. Buyer would need to establish bonding line to pursue prime contractor or public sector work.",
+ "cashAndDeposits": "$431,720",
+ "compilationDate": "March 22, 2024",
+ "cwbAuditHistory": "CWB audits annually; never had a finding that couldn't be closed in a week; Larkspur and Halvorsen also audit Ridgeline once per year",
+ "debtObligations": "Total long-term debt $910,000: Northreach Commercial Bank equipment term loan $692,000 (4.25% fixed, blended monthly payments, matures November 2027, secured by general security agreement and limited personal guarantee); vehicle and equipment loans $218,000 (4.9%-6.9%, secured by specific assets, maturing 2026-2028). Current portion $286,000. Operating line of credit $750,000 at prime + 0.75%, undrawn at year end.",
+ "deferredRevenue": "$164,000 (contract liabilities)",
+ "dividendDetails": "Class D common to Gord McAllister, Non-eligible (taxable) dividend $60,000",
+ "facilityAddress": "2240 - 7A Street, Nisku, Alberta T9E 8N4",
+ "fiscalYearStart": "2024-01-01",
+ "geographicScope": "Alberta (Fort Saskatchewan, Leduc, Vegreville, Sherwood Park, Westlock mentioned)",
+ "incomeBeforeTax": "$1,028,000",
+ "instalmentsPaid": "$76,090",
+ "insuranceByYear": {
+  "2022": "$81,000",
+  "2023": "$88,000",
+  "2024": "$94,000"
+ },
+ "interestExpense": "$58,000",
+ "inventoryByYear": {
+  "2021": "$441,000",
+  "2022": "$486,000",
+  "2023": "$512,000",
+  "2024": "$544,000"
+ },
+ "larkspurMSA_COC": "MSA is evergreen with 30-day termination notice by either party. No change-of-control consent clause exists \u2014 Gord confirmed after reviewing the document that his earlier guess about a consent requirement was incorrect.",
+ "netIncomeByYear": {
+  "2021": "$484,250",
+  "2022": "$601,910",
+  "2023": "$779,090",
+  "2024": "$896,410"
+ },
+ "openQuotesTotal": "$2,186,000 across 4 quotes (Q-25-118: $1,100,000 Prairie Crest Grain Co-operative - verbal award pending PO; Q-25-131: $420,000 Larkspur Midstream - submitted May 9, 2025; Q-25-127: $186,000 Bowline Construction - competitive bid; Q-25-140: $480,000 Whitemud Ag Equipment - budgetary pricing)",
+ "operationsNotes": "Net book value at December 31, 2024 ties to financial statements. Desktop fair market value estimate by management, March 2025 (not an appraisal). CNC plasma table cost includes $140,000 deposit paid November 2023. Shop equipment & cranes NBV $1,778,000; Vehicles & trailers NBV $250,000; Forklifts & mobile equipment NBV $98,000; Computer & software NBV $22,000; Leasehold improvements NBV $36,000. Multiprocess welding power sources mixed 2016-2024. 5-ton overhead bridge crane inspected annually. Owner's 3/4-ton pickup excluded from sale.",
+ "permitsLicenses": "CWB Division 2 certification with 40+ approved welding procedures, annual CWB audits, welder certifications tested every 2 years; COR (Certificate of Recognition) safety certification; Luis Ortega holds Red Seal journeyman welding certification (2003) and CWB welding supervisor ticket; Mark holds CWB welding supervisor certification; WCB rate reduced in 2024 (exact rate TBD)",
+ "prepaidExpenses": "$46,000",
+ "tfwDependencies": "No TFW permits or visa-dependent employees. All employees are Canadian citizens or permanent residents, including newer immigrant apprentices who have PR status.",
+ "trainingSupport": "One year full-time, owner will personally introduce new owner to every customer (Larkspur, Prairie Crest, Bowline, all of them). Then one year available by phone as needed.",
+ "utilitiesByYear": {
+  "2022": "$78,000",
+  "2023": "$71,000",
+  "2024": "$74,000"
+ },
+ "vehicleExpenses": "$63,000",
+ "warrantyHistory": "Minimal rework - small issues only (wrong bolt hole, paint touch-up); 2023 Castleford stair stringers returned due to architect change after approval, Ridgeline repaired and customer paid for change; no major warranty claims; October 2024 Coldbrook trailer modifications 5 days late due to customer drawing changes (twice), payment disputed",
+ "yardUtilization": "3-acre yard, currently using ~2 acres",
+ "yearEstablished": "1996",
+ "albertaIncomeTax": "$24,640",
+ "backlogBySegment": "Oil & gas fabrication: $1,183,400 | Commercial construction: $788,000 | Agriculture: $766,300 | Mixed: $362,300 | Total signed backlog: $3,100,000",
+ "businessLocation": "Nisku, Alberta",
+ "companyLegalName": "RIDGELINE METAL FABRICATION INC.",
+ "creditFacilities": "Operating line of credit: $750,000 at prime + 0.75%, undrawn at year end",
+ "equipmentDetails": "Shop equipment & cranes cost $4,810,000 (accumulated amortization $3,198,000, net $1,612,000); vehicles & trailers cost $812,000 (accumulated amortization $510,000, net $302,000); forklifts & mobile equipment cost $318,000 (accumulated amortization $206,000, net $112,000); computer equipment & software cost $84,000 (accumulated amortization $66,000, net $18,000); leasehold improvements cost $128,000 (accumulated amortization $106,000, net $22,000)",
+ "installmentsPaid": "$93,590",
+ "insuranceExpense": "$94,000 general insurance plus $16,000 non-deductible life insurance premiums for corporate-owned buy-sell policies",
+ "managementSalary": "$180,000",
+ "natureOfBusiness": "Custom structural and miscellaneous steel fabricator and welding contractor",
+ "officeStaffWages": "$60,000 paid to family member of majority shareholder for bookkeeping and office management",
+ "otherDirectCosts": "$206,000 (shop supplies, gases & consumables)",
+ "ownerInvolvement": "Gord reviews any estimate over $50,000 before it goes out; knows employees' kids' names (cultural factor); Luis manages day-to-day shop operations",
+ "professionalFees": "$44,000 (2023: $26,000)",
+ "retainedEarnings": "$2,964,180",
+ "returnEfiledDate": "May 30, 2023",
+ "salariesAndWages": "Total salaries breakdown: direct shop wages $2,560,000 (GIFI 8340), office/estimating/project management salaries $538,000 (GIFI 9060), management salary $180,000 (GIFI 9060, paid to majority shareholder). Total operating salaries (GIFI 9060): $718,000",
+ "shareholderLoans": "Share capital: 1,000 Class A common shares ($150,850), 100 Class D common shares ($100). Retained earnings: $2,964,180 (2023: $2,127,770)",
+ "totalIncomeTaxes": "$97,090",
+ "totalLiabilities": "$2,025,000",
+ "accountantDetails": "Kwan & Brodeur LLP, Chartered Professional Accountants, 5012 - 50 Avenue, Suite 210, Leduc, Alberta T9E 6W3, phone 780-555-0177. Compilation engagement report dated March 24, 2023",
+ "bankChargesByYear": {
+  "2022": "$8,000",
+  "2023": "$8,000",
+  "2024": "$9,000"
+ },
+ "capexRequirements": "$430,000 purchase of property and equipment (2023: $404,000)",
+ "costOfSalesByYear": {
+  "2021": "$5,473,000",
+  "2022": "$5,960,000",
+  "2023": "$6,410,000",
+  "2024": "$6,868,000"
+ },
+ "directLaborByYear": {
+  "2023": "$2,560,000",
+  "2024": "$2,720,000"
+ },
+ "dividendsDeclared": "Class D shares: $60,000.00 aggregate dividend declared December 16, 2024, payable December 20, 2024 to holder of record December 16, 2024 (no dividend declared on Class A shares); directors satisfied solvency tests in section 43 of Business Corporations Act are met",
+ "employeeStructure": "Journeymen welders average ~9 years tenure; lose 1\u20132 apprentices per year to northern camps (some return); company takes 2\u20133 first-year apprentices annually from polytechnic; fitters, welders, detailers, CNC operators, yard crew, QC inspector",
+ "facilityCondition": "Roof re-coated 2022, landlord (seller's holdco) maintains building. Electrical upsized to 800 amps in 2008, panel added 2024 for plasma \u2014 no capacity issues. Downdraft paint booth 6 years old, filters changed regularly. No deferred maintenance identified.",
+ "generalRateIncome": "$333,000",
+ "grossMarginByYear": {
+  "2021": "28.7%",
+  "2022": "29.2%",
+  "2023": "30.0%",
+  "2024": "30.0%"
+ },
+ "grossProfitByYear": {
+  "2021": "$2,207,000",
+  "2022": "$2,460,000",
+  "2023": "$2,750,000",
+  "2024": "$2,947,000"
+ },
+ "headOfficeAddress": "2240 - 7A Street, Nisku, AB T9E 8N4",
+ "historicalWinRate": "~35% win rate on quotes",
+ "incomeTaxesByYear": {
+  "2021": "$60,750",
+  "2022": "$97,090",
+  "2023": "$150,910",
+  "2024": "$131,590"
+ },
+ "industryVerticals": "Customers span midstream oil & gas, grain co-operatives, construction, process systems, agricultural equipment, energy services, mechanical contractors, pipeline construction, farming, and oilfield rentals",
+ "jobCostingMargins": "Structural for contractors: low 20s% estimated margins; Oil & gas and ag: mid-20s%, sometimes higher on repeat work; Field service and small jobs: better margins; WIP sheet shows estimated margins range 21-29%; weekly job cost tracking identifies overruns by week 2 of project",
+ "keyFinancialNotes": "Gross margin 30% in 2024. Owner add-backs total $399,000 including: owner salary/dividends $260,000, truck and personal expenses $28,000, crane rebuild (one-time) $64,000, legal for shareholder agreement $18,000, hockey sponsorship $12,000, Donna over-market salary $17,000. 2022 bad debt from Silverthorn bankruptcy $20,000+. YTD 2025 revenue up 8% vs same period 2024. Receivables: Larkspur pays at 45 days, contractors hold back 10%. Company has not drawn line of credit in years. Coldbrook dispute $38k over 90 days (customer claims late delivery on trailer modifications October 2024, seller disputes, with collection agency).",
+ "marketRentOpinion": "Market rent opinion by Harlan & Voss Appraisals Ltd., letter dated December 6, 2021: fair market net rent for subject premises as at January 1, 2022 falls in range of $11.25 to $11.75 per square foot per annum, with customary escalations of approximately 4% to 5% at mid-point of five-year term, based on five comparable leases of crane-served industrial buildings of 20,000 to 40,000 sq ft in Nisku and Leduc industrial areas executed between 2020 and 2021. Comparables: Nisku 11 Street (32,000 sq ft, 2x10-ton, $11.40/sq ft), Nisku 5 Street (24,500 sq ft, 1x10-ton, $11.95/sq ft), Leduc Industrial Blvd (38,000 sq ft, 3x15-ton, $11.10/sq ft), Nisku 9 Avenue (21,000 sq ft, 2x5-ton, $11.60/sq ft), Acheson Spruce Valley Rd (30,000 sq ft, 2x10-ton, $11.30/sq ft).",
+ "maxShippingWeight": "Modules and assemblies up to approx. 60,000 lb shipped from our yard",
+ "netIncomeAfterTax": "$601,910",
+ "oldBrakeCondition": "110-ton brake leaks, back gauge is manual; needs replacement in 1\u20132 years, estimated cost ~$180k",
+ "operatingExpenses": "$1,549,000",
+ "ownerSalaryByYear": {
+  "2022": "$180,000",
+  "2023": "$180,000",
+  "2024": "$180,000"
+ },
+ "salariesOperating": "$538,000 for office, estimating & project management (2023), $498,000 (2022)",
+ "shareholderEquity": "$3,115,130",
+ "totalAssetsByYear": {
+  "2021": "$3,659,720",
+  "2022": "$4,075,630",
+  "2023": "$4,638,720",
+  "2024": "$5,140,130"
+ },
+ "travelMealsByYear": {
+  "2023": "$13,000",
+  "2024": "$14,000"
+ },
+ "accountsReceivable": "$1,486,000 total (2023: $1,392,000), comprising trade receivables $1,368,000 and holdbacks receivable (commercial contracts) $118,000",
+ "advertisingExpense": "$26,000 advertising and promotion",
+ "amortizationByYear": {
+  "2021": "$251,000",
+  "2022": "$268,000",
+  "2023": "$286,000",
+  "2024": "$312,000"
+ },
+ "amortizationPolicy": "Declining-balance basis at 10%-20% for shop equipment, cranes, vehicles and mobile equipment; 45% for computer equipment and software; leasehold improvements straight-line over lease term; assets not yet in use are not amortized",
+ "cashFromOperations": "$993,090 (2023), $730,910 (2022)",
+ "cashIncreaseByYear": {
+  "2023": "$267,090",
+  "2024": "$210,410"
+ },
+ "cncPurchaseDeposit": "$140,000 deposit paid in November 2023 on CNC plasma cutting system to be delivered in 2024",
+ "currentIncomeTaxes": "$97,090",
+ "currentLiabilities": "$1,401,000",
+ "debtAndLiabilities": "Total debt $1,604,000: Northreach Commercial Bank equipment term loan $1,268,000 at 4.25% fixed rate, blended monthly payments, matures November 2027, secured by general security agreement and limited personal guarantee of majority shareholder; Vehicle and equipment loans $336,000 at 4.9%-6.9%, secured by specific assets, maturing 2026-2028. Current portion of debt $262,000. Operating line of credit $750,000 at prime + 0.75%, undrawn at year end. Accounts payable & accrued liabilities $712,000. Contract liabilities $118,000. Income taxes payable $21,000. Government remittances payable $61,000.",
+ "depreciationPolicy": "Property and equipment amortized on declining-balance basis at 10%-20% (shop equipment, cranes, vehicles, mobile equipment) and 45% (computer equipment and software); leasehold improvements straight-line over lease term; assets not yet in use not amortized",
+ "devinRetentionRisk": "Devin has no contract or non-compete; has not indicated whether he would stay under new ownership; seller recommends buyer discuss retention bonus early; losing Devin would require slowing new bids and leaning on repeat customers",
+ "electricalCapacity": "800-amp service installed 2008, 200-amp plasma panel added 2024, plenty of headroom remaining. Not a constraint on adding equipment or running second shift.",
+ "equipmentAdditions": "CNC high-definition plasma cutting system placed in service with total cost of $468,000, including deposit of $140,000 paid in 2023. Fully amortized assets with cost of $58,000 written off.",
+ "equipmentCondition": "Excellent: new plasma table with bevel head (saves grinding on weld preps), beam line (serviced April 2025), 230-ton brake, cranes (rebuilt summer 2024). Needs replacement: 110-ton brake (leaks, manual back gauge, replace in 1-2 years, ~$180k); 8x20 plasma table from 2014 (on borrowed time); forklift from 2016",
+ "equipmentEndOfLife": "Old 110-ton brake (leaks, manual back gauge, replace in 1\u20132 years, ~$180k); old 8'\u00d720' plasma table from 2014 (thin material, on borrowed time); forklift from 2016",
+ "longTermDebtByYear": {
+  "2021": "$1,604,000",
+  "2022": "$1,342,000",
+  "2023": "$1,068,000",
+  "2024": "$624,000"
+ },
+ "materialsPurchases": "$3,228,000 in steel, plate & purchased components (2023: $3,046,000)",
+ "netIncomeBeforeTax": "$699,000",
+ "operationalSystems": "Accounting: Desktop accounting package (Donna); ERP: Fabrication job-costing ERP (cloud); Other: 3D steel detailing software (2 seats), CNC nesting software (plasma), Estimating spreadsheets (Excel), Safety management app (hazard assessments, COR)",
+ "personalGuarantees": "Limited personal guarantee of the majority shareholder on Northreach Commercial Bank equipment term loan",
+ "redSealWelderCount": "15 journeymen welders and fitters",
+ "returnPreparedDate": "May 30, 2023",
+ "revenueRecognition": "Revenue on fixed-price contracts over $50,000 recognized on percentage-of-completion basis measured by costs incurred to date relative to estimated total costs; smaller jobs and repair work recognized on completion",
+ "shareCapitalByYear": {
+  "2023": "$150,950",
+  "2024": "$150,950"
+ },
+ "shareholdersEquity": "$3,115,130",
+ "shopSuppliesByYear": {
+  "2023": "$221,000",
+  "2024": "$236,000"
+ },
+ "totalCurrentAssets": "$2,956,130",
+ "tradesSubcontracts": "$331,000",
+ "weldProcedureCount": "~40 approved weld procedures",
+ "backlogYearOverYear": "As good as it's been since 2014",
+ "bottleneckProcesses": "Fitting and welding bays are the bottleneck, not the machines; beam line and plasma could run second shift immediately with two operators",
+ "businessDescription": "Custom structural and miscellaneous steel fabricator and welding contractor",
+ "capacityUtilization": "~75% of one-shift capacity; fitting and welding bays are bottleneck, not machines; beam line and plasma can run second shift immediately with 2 operators; to double shop output would need more welders and bigger yard crew; have space for expansion",
+ "contractLiabilities": "$164,000 in billings in excess of costs and earnings (2023: $142,000)",
+ "currentAssetsByYear": {
+  "2021": "$1,847,720",
+  "2022": "$2,127,630",
+  "2023": "$2,572,720",
+  "2024": "$2,956,130"
+ },
+ "debtRepaymentByYear": {
+  "2021": "$236,000",
+  "2022": "$248,000",
+  "2023": "$262,000",
+  "2024": "$432,000"
+ },
+ "disputedReceivables": "Coldbrook trailer modifications from October 2024 - customer changed drawings twice, still wanted same delivery date, Ridgeline 5 days late, Luis recommended getting changes in writing, payment status uncertain (Gord says \"it'll get paid\", Luis skeptical \"maybe\")",
+ "dividendsPaidByYear": {
+  "2021": "$40,000",
+  "2022": "$40,000",
+  "2023": "$60,000",
+  "2024": "$60,000"
+ },
+ "growthOpportunities": "ABSA certification for pressure piping (currently lose piping work or whole packages); robotic welding cell for repeat customer frames (Whitemud); second shift on beam line and plasma; additional fitting and welding capacity (have space in 3-acre yard)",
+ "leaseRenewalOptions": "Two (2) further terms of five (5) years each at then-current Fair Market Rent",
+ "officeGeneralByYear": {
+  "2023": "$38,000",
+  "2024": "$40,000"
+ },
+ "officeStaffSalaries": "$560,000 for office, estimating & project management (2023: $538,000)",
+ "permitTransferNotes": "County business licence is straightforward annual renewal. Vendor portal pre-qualifications (Larkspur, Halvorsen) require buyer to apply separately \u2014 seller will assist with introductions. Heather (accountant) may know of any obscure registrations not mentioned.",
+ "propertyTaxesByYear": {
+  "2023": "$58,000",
+  "2024": "$61,000"
+ },
+ "subcontractServices": "$392,000 for galvanizing, blasting, coating (2023: $364,000)",
+ "taxReturnFilingDate": "May 16, 2025",
+ "advertisingPromotion": "$26,000",
+ "capitalCostAllowance": "$318,000",
+ "competitiveAdvantage": "CWB Division 2 certification with ~40 approved weld procedures, clean audit history; long-tenured journeymen (avg ~9 years); strong quality reputation (Larkspur inspector finds no problems, top scores on vendor metrics); established relationships with oil & gas, ag, and commercial customers; train own apprentices",
+ "contractAssetsByYear": {
+  "2023": "$196,000",
+  "2024": "$238,000"
+ },
+ "costOfSalesBreakdown": "Materials (steel, plate & purchased components) $3,228,000, Direct labour (shop wages & benefits) $2,720,000, Subcontract services (galvanizing, blasting, coating) $392,000, Shop supplies/gases/consumables $236,000, Equipment repairs & maintenance $184,000, Freight in & delivery $108,000",
+ "customerRebidSignals": "Larkspur procurement manager told Tanya about vendor consolidation program 2026, reducing approved fabricators from 8 to 3; Larkspur will re-bid MSA; Ridgeline scores very good (100% on-time delivery, TRIF 1.1, quality strong, price not cheapest)",
+ "daysSalesOutstanding": "55 days",
+ "employeeCompensation": "Direct wages $2,380,000; Office, estimating and project management salaries $498,000; Management salary (Gord McAllister) $180,000",
+ "employeeRemuneration": "Gord McAllister T4 employment income (management salary) $180,000; Luis Ortega T4 employment income (salary & bonus in direct wages) $131,000; Donna McAllister T4 employment income (office management) $60,000",
+ "equipmentAcquisition": "CNC plasma cutting system acquired for $468,000 in 2024 with accelerated investment incentive (75% first-year CCA rate applied). $140,000 deposit paid in 2023 was not claimed until equipment became available for use in 2024.",
+ "grossMarginBySegment": "Estimated margins by segment: structural for contractors low 20s%, oil & gas and ag mid-20s% (sometimes higher on repeat work), field service and small jobs better; WIP sheet shows estimated margins 21\u201329%",
+ "larkspurRebidOutlook": "Seller confident Ridgeline will make short list based on 20-year history, 100% on-time delivery, CWB Div 2 certification, and beam line capability. Luis has strong relationships with Larkspur project managers. Criteria to be announced fall 2025; vendor consolidation from 8 to 3 approved fabricators expected 2026.",
+ "propertyAndEquipment": "$2,184,000",
+ "shareholderStructure": "Gord McAllister (majority owner, selling 100%); Luis Ortega (15% shareholder since 2016); shareholder agreement amended November 2024: Luis waives first refusal for outside buyer sale, receives same price per share as Gord, option to retain some shares with new buyer, 80% vote forces all shareholders to sell",
+ "apprenticeshipProgram": "we train our own apprentices \u2014 several of our journeymen started here as first-years",
+ "associatedCorporation": "McAllister Properties Ltd. (BN: 74388 1052 RC0001)",
+ "corporateAccessNumber": "2006847312",
+ "customerConcentration": "Top 3 customers: 35.0% FY2022, 39.0% FY2023, 41.0% FY2024. Top 10 customers: 60.4% FY2022, 65.5% FY2023, 68.3% FY2024",
+ "facilityPowerCapacity": "28,000 square feet, three overhead cranes",
+ "freightDeliveryByYear": {
+  "2023": "$101,000",
+  "2024": "$108,000"
+ },
+ "incomeBeforeTaxByYear": {
+  "2021": "$545,000",
+  "2022": "$699,000",
+  "2023": "$930,000",
+  "2024": "$1,028,000"
+ },
+ "interestExpenseByYear": {
+  "2021": "$79,000",
+  "2022": "$71,000",
+  "2023": "$66,000",
+  "2024": "$58,000"
+ },
+ "keyTechnicalEmployees": "Devin (estimator) is the biggest key-person risk after owner \u2014 13 years experience, prices everything over $50K, knows shop rates and fabrication times, no contract or non-compete. Tanya can do rough estimates on smaller work but can't keep up with bid volume. Replacement and training would take 3-6 months and would hurt bid pipeline.",
+ "nonDeductibleExpenses": "Non-deductible meals and entertainment (50%) $5,000; non-deductible life insurance premiums (corporate-owned buy-sell policies) $16,000",
+ "operatingLineOfCredit": "$750,000 available at prime + 0.75%, undrawn at year end",
+ "prepaidExpensesByYear": {
+  "2022": "$38,000",
+  "2023": "$41,000",
+  "2024": "$46,000"
+ },
+ "retainedEarningsStart": "$2,127,770",
+ "shareholdersAgreement": "Shareholder agreement acknowledges Luis Ortega's annual bonus arrangement as consideration for Class D structure benefiting Gord McAllister",
+ "shopDrawingCapability": "Shop drawings produced in-house with 3D detailing",
+ "singleSourceSuppliers": "No single-source supplier risk. Steel is commodity-sourced from Western Plate & Beam (primary, 5 min away, structural) and Prairie Steel (backup, deeper tube inventory). Two additional accounts (Northland Steel and an Edmonton supplier) for specialty or odd-sized material. Galvanizing primarily through Sturgeon Valley but two other galvanizers available as backup. Can switch suppliers without disruption based on stock and pricing.",
+ "tangibleCapitalAssets": "$6,524,000",
+ "vehicleExpensesByYear": {
+  "2022": "$58,000",
+  "2023": "$60,000",
+  "2024": "$63,000"
+ },
+ "welderTestingSchedule": "Welders test every two years for their tickets (CWB)",
+ "workInProgressDetails": "Total WIP contracts: $5,243,000 | Estimated total cost: $3,962,100 | Cost incurred to date: $1,628,173 | Revenue earned to date: $2,143,000 | Billed to date: $2,183,400 | Net over-billed position: $40,400",
+ "accountingPractitioner": "Kwan & Brodeur LLP \u2014 compilation (CSRS 4200)",
+ "accountsPayableAccrued": "$842,000",
+ "associatedCorporations": "Yes \u2014 McAllister Properties Ltd. (BN 74388 1052 RC0001)",
+ "certificationOwnership": "Luis Ortega and Mark both hold CWB welding supervisor ticket (required for Division 2); welders test every two years for their tickets",
+ "computerSoftwareByYear": {
+  "2023": "$33,000",
+  "2024": "$36,000"
+ },
+ "equipmentCapexForecast": "$400K over next 3 years (conservative estimate): 110-ton brake replacement ~$180K, old 2014 plasma table replacement, 2016 forklift replacement ~$40K. Beam line, new plasma, 230-ton brake, and rebuilt cranes (2024) all in good condition for 10+ years.",
+ "fieldServiceCapability": "Three fully equipped welding trucks for field repairs, modifications and emergency call-outs across central Alberta. Field welding crews available 24/7",
+ "financialStatementDate": "December 31, 2023",
+ "financialStatementType": "Unaudited compiled financial statements (CSRS 4200 Compilation Engagement)",
+ "majorCapitalInvestment": "CNC high-definition plasma cutting system placed in service 2024, total cost $468,000 (including $140,000 deposit paid in 2023)",
+ "managementSalaryByYear": {
+  "2023": "$180,000",
+  "2024": "$180,000"
+ },
+ "productionTurnoverRate": "Lose 1\u20132 apprentices per year to northern camps (some return); journeymen retention good (avg ~9 years)",
+ "professionalFeesByYear": {
+  "2023": "$26,000",
+  "2024": "$44,000"
+ },
+ "retainedEarningsByYear": {
+  "2021": "$846,770",
+  "2022": "$1,408,680",
+  "2023": "$2,127,770",
+  "2024": "$2,964,180"
+ },
+ "smallBusinessDeduction": "Income eligible for small business deduction: $500,000 (full business limit). Remaining $333,000 taxed at general rate.",
+ "totalLiabilitiesByYear": {
+  "2021": "$2,662,000",
+  "2022": "$2,516,000",
+  "2023": "$2,360,000",
+  "2024": "$2,025,000"
+ },
+ "totalOperatingExpenses": "$1,761,000",
+ "totalShareholderEquity": "$3,115,130",
+ "accumulatedAmortization": "($4,340,000)",
+ "businessLimitAllocation": "$500,000 allocated to Ridgeline Metal Fabrication Inc., $0 to McAllister Properties Ltd. (total $500,000)",
+ "cncProgrammerDependency": "Low risk. Beam line (Jeff) and plasma (Kyle) run off nesting software \u2014 import DXF, software does tool paths. Two operators, Tanya can troubleshoot. Vendor training, ~1 month to get new operator comfortable. Old plasma table only Kyle runs but machine is being replaced anyway.",
+ "corporateOwnedInsurance": "Non-deductible life insurance premiums (corporate-owned buy-sell policies) $14,000",
+ "currentPortionLTDByYear": {
+  "2023": "$274,000",
+  "2024": "$286,000"
+ },
+ "environmentalCompliance": "Phase I ESA completed 2019 when waste oil tank removed \u2014 came back clean, no soil contamination. Paint booth development permit from county. Annual emissions filing with Environment Canada for solvents (under threshold for full air permit). Hazardous waste (used oil, spent filters, paint sludge) picked up quarterly by licensed contractor under manifest. WCB inspects paint booth and welding fume extraction \u2014 no issues.",
+ "operatingCashFlowByYear": {
+  "2021": "$652,250",
+  "2022": "$730,910"
+ },
+ "operatingExpensesByYear": {
+  "2021": "$1,332,000",
+  "2022": "$1,422,000",
+  "2023": "$1,468,000",
+  "2024": "$1,549,000"
+ },
+ "shareholderEquityByYear": {
+  "2023": "$2,278,720",
+  "2024": "$3,115,130"
+ },
+ "totalAccountsReceivable": "$1,530,400",
+ "totalCurrentLiabilities": "$1,401,000",
+ "accountsReceivableByYear": {
+  "2021": "$1,104,000",
+  "2022": "$1,268,000",
+  "2023": "$1,392,000",
+  "2024": "$1,486,000"
+ },
+ "amortizationDepreciation": "$268,000",
+ "authorizedSigningOfficer": "Gord McAllister, President",
+ "backlogCancellationTerms": "POs are firm once signed \u2014 customer cannot cancel without cause, owes for work done plus materials committed. O&G contracts have force majeure and termination-for-convenience clauses but require payout for fabricated work plus WIP markup. Commercial jobs (Bowline, Castleford) tied to GC contracts \u2014 if owner cancels building project, Ridgeline scope ends but gets paid for work done. Ag jobs (Prairie Crest, grain co-ops) very sticky, rarely cancel infrastructure once started. Only 2-3 cancellations in 29 years, always paid for work to date.",
+ "currentLiabilitiesByYear": {
+  "2021": "$1,058,000",
+  "2022": "$1,174,000",
+  "2023": "$1,292,000",
+  "2024": "$1,401,000"
+ },
+ "cwbCertificationDivision": "CWB Division 2",
+ "equipmentUtilizationRate": "~75% of one-shift capacity",
+ "incomeTaxesPayableByYear": {
+  "2023": "$29,000",
+  "2024": "$38,000"
+ },
+ "larkspur2026VendorStatus": "Larkspur vendor consolidation 2026: reducing approved list from 8 to 3 fabricators; Ridgeline expected to be one of three (top scores) but MSA will be re-bid; Gord believes risk is minimal (consolidation talk for years), Luis flags it as material risk",
+ "materialsPurchasesByYear": {
+  "2023": "$3,046,000",
+  "2024": "$3,228,000"
+ },
+ "purchasesCostOfMaterials": "$2,840,000",
+ "receivablesConcentration": "Largest customer Larkspur Midstream Services Ltd. with $461,000 AR (30.1% of total AR); second largest Bowline Construction Group Inc. with $225,000 AR (14.7% of total AR); third largest Prairie Crest Grain Co-operative with $156,500 AR (10.2% of total AR)",
+ "relatedPartyTransactions": "Luis Ortega owns 15% of company, serves as operations manager",
+ "revenueByIndustrySegment": "Oil and gas 45%, commercial construction 26%, agriculture 22%, repair and field service 7% (2024 actuals: 45%, 26%, 22%, 7%)",
+ "revenueRecognitionPolicy": "Fixed-price contracts over $50,000 recognized on percentage-of-completion basis measured by costs incurred to date relative to estimated total costs; smaller jobs and repair work recognized on completion",
+ "shareholdersEquityByYear": {
+  "2021": "$997,720",
+  "2022": "$1,559,630",
+  "2023": "$2,278,720",
+  "2024": "$3,115,130"
+ },
+ "uniqueSellingProposition": "Built right, shipped on time. We've stuck around through the booms and the busts because we do what we say we'll do. Our people are the difference.",
+ "capitalExpendituresByYear": {
+  "2021": "$362,000",
+  "2022": "$404,000",
+  "2023": "$404,000",
+  "2024": "$430,000"
+ },
+ "contractLiabilitiesByYear": {
+  "2023": "$142,000",
+  "2024": "$164,000"
+ },
+ "employeeDeductionsPayable": "$71,000",
+ "officeStaffSalariesByYear": {
+  "2023": "$538,000",
+  "2024": "$560,000"
+ },
+ "operatingExpenseBreakdown": "Salaries (office, estimating & project management) $560,000, Management salary $180,000, Rent $336,000, Insurance $94,000, Utilities $74,000, Vehicle expenses $63,000, Property taxes $61,000, Professional fees $44,000, Office & general $40,000, Computer & software $36,000, Advertising/promotion/sponsorships $26,000, Travel & meals $14,000, Bad debts $12,000, Bank charges $9,000",
+ "subcontractServicesByYear": {
+  "2023": "$364,000",
+  "2024": "$392,000"
+ },
+ "topCustomerContractExpiry": "Larkspur re-bidding MSA in 2026 as part of vendor consolidation",
+ "advertisingPromotionByYear": {
+  "2022": "$21,000",
+  "2023": "$24,000",
+  "2024": "$26,000"
+ },
+ "currentPortionLongTermDebt": "$286,000",
+ "environmentalContamination": "Old waste oil tank removed 2019, Phase One completed 2019, came back clean",
+ "operatingExpensesBreakdown": "Salaries (office, estimating & project management): $498,000 (2021: $471,000); Management salary (shareholder): $180,000 (2021: $180,000); Rent (related party): $322,000 (2021: $310,000); Property taxes: $55,000 (2021: $53,000); Insurance: $81,000 (2021: $76,000); Utilities: $78,000 (2021: $64,000); Vehicle expenses: $58,000 (2021: $54,000); Office & general: $36,000 (2021: $34,000); Computer & software: $29,000 (2021: $26,000); Professional fees: $24,000 (2021: $23,000); Advertising, promotion & sponsorships: $21,000 (2021: $20,000); Travel & meals: $10,000 (2021: $8,000); Bad debts: $22,000 (2021: $6,000); Bank charges: $8,000 (2021: $7,000)",
+ "permitsLicenses_additional": "Leduc County business licence (renewed annually); development permit for site covering industrial use and paint booth; WCB account in good standing; pre-qualified on Larkspur vendor portal and Halvorsen contractor management system (buyer would need to re-qualify with seller's help). No ABSA pressure-piping QC program \u2014 that's a growth opportunity.",
+ "propertyAndEquipmentByYear": {
+  "2021": "$1,812,000",
+  "2022": "$1,948,000",
+  "2023": "$2,066,000",
+  "2024": "$2,184,000"
+ },
+ "trailingTwelveMonthRevenue": "~$10.1M",
+ "deferredMaintenanceFacility": "Heather Kwan: Both 10-ton overhead cranes rebuilt in 2024 for $64,000",
+ "governmentRemittancesByYear": {
+  "2023": "$66,000",
+  "2024": "$71,000"
+ },
+ "smallBusinessDeductionLimit": "$500,000",
+ "topCustomerPercentageByYear": {
+  "2023": "17%",
+  "2024": "18%"
+ },
+ "westlockPurchaseOrderStatus": "Westlock terminal expansion PO pending; project manager said Ridgeline has it but PO must go to board approval end of June; Luis will not order steel or cut until paper in hand (cites 2019 loss of $40k plate from cutting before PO with different startup customer); Gord counts Westlock in backlog, Luis does not",
+ "accountsPayableAccruedByYear": {
+  "2022": "$712,000",
+  "2023": "$781,000",
+  "2024": "$842,000"
+ },
+ "allowanceForDoubtfulAccounts": "$0",
+ "preventiveMaintenanceProgram": "Beam line serviced April 2025; cranes rebuilt summer 2024; normal maintenance capex ~$200\u2013250k/year (welders, tools, truck every couple years)",
+ "realEstateRentalRelatedParty": "$322,000",
+ "repairsMaintenanceProduction": "$109,000",
+ "smallBusinessDeductionIncome": "$500,000",
+ "cashOperatingActivitiesByYear": {
+  "2023": "$993,090",
+  "2024": "$1,132,410"
+ },
+ "customerRelationshipOwnership": "Luis states \"the guys like that Gord knows their kids' names\" and \"if I'm still here, that helps\"; suggests relationships tied to both Gord's personal touch and Luis's shop leadership; Larkspur relationship 20 years, described as \"rock solid\" by Gord but subject to 2026 re-bid per Luis",
+ "environmentalComplianceHistory": "Phase I Environmental Site Assessment dated August 2019 (no areas of potential environmental concern identified following removal of a waste-oil tank in 2019) established as baseline condition of the Lands. At end of Term, Tenant shall remove Hazardous Substances brought on Lands by it and remediate any contamination caused by it to the baseline condition. This obligation survives expiry or termination of Lease.",
+ "payrollSourceDeductionsPayable": "$66,000",
+ "smallBusinessDeductionEligible": "$500,000",
+ "retainedEarningsBeginningByYear": {
+  "2021": "$402,520",
+  "2022": "$846,770",
+  "2023": "$1,408,680",
+  "2024": "$2,127,770"
+ },
+ "equipmentRepairsMaintenanceByYear": {
+  "2023": "$118,000",
+  "2024": "$184,000"
+ },
+ "deferredRevenueContractLiabilities": "$118,000",
+ "salariesOfficeEstimatingProjectManagement": "$538,000"
+}

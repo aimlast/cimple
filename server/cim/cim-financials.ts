@@ -599,6 +599,190 @@ function yearRow(label: string, years: string[], get: (y: string) => number | nu
 export const CIM_FINANCIALS_HEADING = "AUTHORITATIVE FINANCIALS";
 
 /**
+ * The analysis's figures are a reclassification of the statements: one-time
+ * items are taken out of cost of sales and operating expenses and shown on
+ * their own. A table copied from them then differs line by line from the
+ * statements as issued — Ridgeline's FY2024 cost of sales $6,804,000 and
+ * gross profit $3,011,000 against the compiled statements' $6,868,000 and
+ * $2,947,000 (the $64,000 crane rebuild moved) — and the writer labelled it
+ * "Compiled financial statements". The footnote that says so is written per
+ * table (tableReclassificationNote): it describes the lines THAT table uses.
+ * A generic "shown apart from cost of sales and operating expenses" was false
+ * for Ridgeline's table, whose operating expenses ($1,613,000) are the
+ * block's "incl. one-time items" line, and contradicted the writer's own
+ * footnote beside it.
+ */
+export interface OneTimeItem {
+  name: string;
+  values: Record<string, number>;
+  /** Where the statements book it, read from the line's place among the analysis's lines (null when unclear). */
+  from: "cogs" | "opex" | null;
+}
+
+const NON_RECURRING = /non-?recurring|one-?time/i;
+
+function lineKind(category: string): "cogs" | "opex" | "other" | "one_time" {
+  if (NON_RECURRING.test(category)) return "one_time";
+  if (/^cogs$|cost of (?:sales|goods|revenue)|direct cost/i.test(category)) return "cogs";
+  if (/operating expense|owner compensation|opex/i.test(category)) return "opex";
+  return "other";
+}
+
+/** The analysis's one-time lines, each with where the statements book it. */
+export function oneTimeItems(fin: CimFinancials | null | undefined): OneTimeItem[] {
+  if (!fin?.pnl) return [];
+  const years = new Set(Object.keys(fin.pnl));
+  const kinds = fin.lines.map((l) => lineKind(l.category));
+  const out: OneTimeItem[] = [];
+  fin.lines.forEach((l, i) => {
+    if (kinds[i] !== "one_time") return;
+    const values: Record<string, number> = {};
+    for (const [y, v] of Object.entries(l.values)) if (years.has(y) && typeof v === "number" && v) values[y] = Math.abs(v);
+    if (Object.keys(values).length === 0) return;
+    // The statement's own order: the item sits among the lines it was booked with.
+    let prev: string | undefined;
+    for (let j = i - 1; j >= 0 && !prev; j--) if (kinds[j] !== "one_time") prev = kinds[j];
+    let next: string | undefined;
+    for (let j = i + 1; j < kinds.length && !next; j++) if (kinds[j] !== "one_time") next = kinds[j];
+    // Between a cost-of-sales line and an operating-expense line it is unclear.
+    const near = [prev, next].filter((k): k is "cogs" | "opex" => k === "cogs" || k === "opex");
+    const from = near.length > 0 && near.every((k) => k === near[0]) ? near[0] : null;
+    out.push({ name: l.name.replace(/\s*\([^)]*\)\s*$/, "").trim(), values, from });
+  });
+  return out;
+}
+
+function itemsText(items: OneTimeItem[]): string {
+  return items.map((it) => `${it.name} (${Object.keys(it.values).sort().map((y) => `FY${y} ${money(it.values[y])}`).join(", ")})`).join("; ");
+}
+
+/** The general description (the knowledge-base block): what moved where. Null when nothing moved. */
+export function reclassificationNote(fin: CimFinancials | null | undefined): string | null {
+  const items = oneTimeItems(fin);
+  if (items.length === 0) return null;
+  const fromCogs = items.filter((i) => i.from === "cogs");
+  const fromOpex = items.filter((i) => i.from === "opex");
+  const unclear = items.filter((i) => i.from === null);
+  const parts = [
+    fromCogs.length ? `out of cost of sales: ${itemsText(fromCogs)}` : "",
+    fromOpex.length ? `out of operating expenses: ${itemsText(fromOpex)}` : "",
+    unclear.length ? `${fromCogs.length || fromOpex.length ? "also " : ""}${itemsText(unclear)}` : "",
+  ].filter(Boolean);
+  return `one-time items are taken out of the lines the statements book them in and listed on their own — ${parts.join("; ")}`;
+}
+
+type RowRole = "cogs_excl" | "cogs_issued" | "opex_excl" | "opex_incl_all" | "opex_issued";
+
+const money0 = (v: unknown): number | null => {
+  const t = String(v ?? "").trim();
+  if (!/\d/.test(t) || /%/.test(t)) return null;
+  const n = Number(t.replace(/[$,()\s]|CAD|USD|US\$/gi, ""));
+  return Number.isFinite(n) && n !== 0 ? Math.abs(n) : null;
+};
+
+/**
+ * Which of the analysis's reclassified lines a financial table shows (per
+ * row, per year column): cost of sales / gross profit without the one-time
+ * items, operating expenses without them, or operating expenses with every
+ * one-time item added back in — or the statements' own figures.
+ */
+function tableRoles(layoutData: Record<string, unknown>, fin: CimFinancials): Set<RowRole> {
+  const roles = new Set<RowRole>();
+  const pnl = fin.pnl;
+  if (!pnl) return roles;
+  const items = oneTimeItems(fin);
+  const headers = Array.isArray(layoutData.headers) ? (layoutData.headers as unknown[]).map(String) : [];
+  const valueHeaders = headers.length > 0 ? headers.slice(1) : [];
+  const yearOf = (col: number): string | null => valueHeaders[col]?.match(/(?:19|20)\d{2}/)?.[0] ?? null;
+  const near = (a: number, b: number | null | undefined) => typeof b === "number" && b !== 0 && Math.abs(a - Math.abs(b)) <= 1;
+  const rows = [...(Array.isArray(layoutData.rows) ? layoutData.rows : []), ...(Array.isArray(layoutData.normalizedRows) ? layoutData.normalizedRows : [])];
+  for (const r of rows) {
+    const label = String((r as { label?: unknown })?.label ?? "");
+    const isCogs = /cost of (?:sales|goods|revenue|services)|\bcogs\b|direct costs?/i.test(label);
+    const isGp = /gross (?:profit|margin)/i.test(label);
+    const isOpex = /operating expenses|\bopex\b/i.test(label) && !/incl(?:uding|\.)? one-?time|non-?recurring|before/i.test(label.replace(/operating expenses/i, ""));
+    if (!isCogs && !isGp && !isOpex) continue;
+    const values = Array.isArray((r as { values?: unknown })?.values) ? ((r as { values: unknown[] }).values) : [];
+    values.forEach((v, col) => {
+      const n = money0(v);
+      if (n === null) return;
+      const ys = yearOf(col) ? [yearOf(col)!] : Object.keys(pnl);
+      for (const y of ys) {
+        const p = pnl[y];
+        if (!p) continue;
+        const sumFrom = (f: OneTimeItem["from"] | "any") => items.filter((i) => f === "any" || i.from === f).reduce((s, i) => s + (i.values[y] ?? 0), 0);
+        const c = sumFrom("cogs");
+        const o = sumFrom("opex");
+        const all = sumFrom("any");
+        if (all === 0) continue;
+        if (isCogs && near(n, p.cogs)) roles.add(c + sumFrom(null) > 0 ? "cogs_excl" : "cogs_issued");
+        else if (isCogs && p.cogs !== null && near(n, p.cogs + c)) roles.add("cogs_issued");
+        else if (isGp && near(n, p.grossProfit)) roles.add(c + sumFrom(null) > 0 ? "cogs_excl" : "cogs_issued");
+        else if (isGp && p.grossProfit !== null && near(n, p.grossProfit - c)) roles.add("cogs_issued");
+        else if (isOpex && near(n, p.operatingExpenses)) roles.add(o + sumFrom(null) > 0 ? "opex_excl" : "opex_issued");
+        else if (isOpex && o !== all && near(n, p.operatingExpenses + all)) roles.add("opex_incl_all");
+        else if (isOpex && near(n, p.operatingExpenses + o)) roles.add("opex_issued");
+      }
+    });
+  }
+  return roles;
+}
+
+/**
+ * The footnote for one financial table, describing the lines it actually
+ * shows. Null when the table shows none of the reclassified lines (or only
+ * the statements' own figures).
+ */
+export function tableReclassificationNote(layoutData: Record<string, unknown>, fin: CimFinancials | null | undefined): string | null {
+  if (!fin?.pnl) return null;
+  const items = oneTimeItems(fin);
+  if (items.length === 0) return null;
+  const roles = tableRoles(layoutData, fin);
+  const cogsOut = roles.has("cogs_excl");
+  const opexOut = roles.has("opex_excl");
+  const opexAll = roles.has("opex_incl_all");
+  if (!cogsOut && !opexOut && !opexAll) return null;
+  const outOfCogs = items.filter((i) => i.from !== "opex");
+  const outOfOpex = items.filter((i) => i.from !== "cogs");
+  // "the one-time item Crane rebuild (FY2024 $64,000), which is" / "the one-time items — A; B — which are"
+  const named = (list: OneTimeItem[]) => (list.length === 1 ? `the one-time item ${itemsText(list)},` : `the one-time items — ${itemsText(list)} —`);
+  const isAre = (list: OneTimeItem[]) => (list.length === 1 ? "is" : "are");
+  let what: string;
+  if (cogsOut && opexOut) what = `${named(items)} ${isAre(items)} shown apart from cost of sales and operating expenses`;
+  else if (cogsOut && opexAll) {
+    const others = items.length > outOfCogs.length;
+    what = `cost of sales leaves out ${named(outOfCogs)} which ${isAre(outOfCogs)} counted in operating expenses${others ? " with the other one-time items" : " instead"}`;
+  } else if (cogsOut) what = `cost of sales leaves out ${named(outOfCogs)} which ${isAre(outOfCogs)} shown on ${outOfCogs.length === 1 ? "its" : "their"} own`;
+  else if (opexOut) what = `operating expenses leave out ${named(outOfOpex)} which ${isAre(outOfOpex)} shown on ${outOfOpex.length === 1 ? "its" : "their"} own`;
+  else what = `operating expenses include every one-time item — ${itemsText(items)} — including those the statements book in cost of sales`;
+  return `Figures as reclassified in the financial analysis: ${what}, so these lines can differ from the financial statements as issued.`;
+}
+
+const OWN_NOTE = /^Figures as reclassified in the financial analysis\b/i;
+
+/**
+ * A financial table built from the analysis's reclassified lines, with the
+ * footnote that says which lines are reclassified — replacing an earlier
+ * copy of that footnote, never duplicating a note that already explains it —
+ * and a source line citing the statements marked "as reclassified".
+ */
+export function withReclassificationNote(layoutType: string, layoutData: Record<string, unknown>, fin: CimFinancials | null | undefined): Record<string, unknown> {
+  if (layoutType !== "financial_table" || !fin) return layoutData;
+  const note = tableReclassificationNote(layoutData, fin);
+  const footnotes = Array.isArray(layoutData.footnotes) ? (layoutData.footnotes as unknown[]).map(String) : [];
+  const kept = footnotes.filter((f) => !OWN_NOTE.test(f.trim()));
+  if (!note) return kept.length === footnotes.length ? layoutData : { ...layoutData, footnotes: kept };
+  // "Compiled financial statements (CSRS 4200) prepared by …" names the
+  // statements as the table's source: it is qualified, not left to say the
+  // lines are theirs as issued.
+  const sourced = kept.map((f) =>
+    /financial statements/i.test(f) && !/reclassif/i.test(f) && f.length <= 200 ? `${f.trim().replace(/[.;:]\s*$/, "")}, as reclassified in the financial analysis (see note).` : f,
+  );
+  if (sourced.some((f) => /reclassif/i.test(f) && !/as reclassified in the financial analysis \(see note\)/.test(f))) return { ...layoutData, footnotes: sourced };
+  return { ...layoutData, footnotes: [...sourced, note] };
+}
+
+/**
  * The knowledge-base block. Statement and bridge sections copy these rows
  * and totals verbatim; a figure that isn't here or in the facts is left out.
  */
@@ -612,6 +796,12 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     "Use these for every financial table, EBITDA/SDE bridge (waterfall), earnings chart and statement figure. Copy line names, amounts and totals exactly. Never add, subtract, estimate or re-derive a figure, and never add a year or line that is not listed. Where a statement figure differs from a fact elsewhere in the knowledge base, these statement figures win inside tables and bridges.",
   );
   const pnl = fin.pnl;
+  const reclassified = reclassificationNote(fin);
+  if (reclassified) {
+    out.push(
+      `These are the analysis's RECLASSIFIED figures, not the statements' own lines: ${reclassified}. A statement table built from them never says it shows the financial statements as issued (no "per the compiled statements" caption or footnote). Don't write a footnote about the reclassification yourself — one that describes exactly the lines the table uses is added automatically.`,
+    );
+  }
   if (pnl) {
     const years = Object.keys(pnl).sort();
     out.push(`\nINCOME STATEMENT SUMMARY (fiscal years ${years.join(", ")}):`);

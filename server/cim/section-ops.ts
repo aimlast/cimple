@@ -22,7 +22,8 @@ import {
   type CimSectionSnapshot,
   type InsertCimSection,
 } from "@shared/schema";
-import { CIM_ACCESS_TIERS, defaultLayoutData, isCimLayoutKey, sameLayoutFamily } from "@shared/cim-layouts";
+import { CIM_ACCESS_TIERS, defaultLayoutData, isCimFallbackSection, isCimLayoutKey, sameLayoutFamily } from "@shared/cim-layouts";
+import { carryFigureWarnings } from "./figure-check";
 import { getOwnedDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "./blind-sync";
 import { uniqueSectionKey } from "./section-ops-keys";
@@ -161,6 +162,9 @@ export function snapshotOf(section: CimSection, reason: string): CimSectionSnaps
     layoutData: section.layoutData ?? null,
     aiDraftContent: section.aiDraftContent ?? null,
     brokerEditedContent: section.brokerEditedContent ?? null,
+    // Undo brings back this version's flags with it — an undone correction
+    // must not bring back an untraced figure unflagged.
+    figureWarnings: Array.isArray(section.figureWarnings) && section.figureWarnings.length ? (section.figureWarnings as string[]) : null,
   };
 }
 
@@ -175,14 +179,24 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
   const history = Array.isArray(section.contentHistory) ? [...(section.contentHistory as CimSectionSnapshot[])] : [];
   const last = history.pop();
   if (!last) return null;
+  const restored = {
+    sectionTitle: last.sectionTitle,
+    layoutType: last.layoutType,
+    layoutData: last.layoutData,
+    aiDraftContent: last.aiDraftContent,
+    brokerEditedContent: last.brokerEditedContent,
+  };
+  // The restored version's own flags; a snapshot from before flags were
+  // kept carries the current flags that still apply to what comes back.
+  const figureWarnings = "figureWarnings" in last
+    ? last.figureWarnings ?? null
+    : carryFigureWarnings(section, section.figureWarnings as string[] | null, restored);
   const [updated] = await db
     .update(cimSections)
     .set({
-      sectionTitle: last.sectionTitle,
-      layoutType: last.layoutType,
+      ...restored,
       layoutData: last.layoutData as any,
-      aiDraftContent: last.aiDraftContent,
-      brokerEditedContent: last.brokerEditedContent,
+      figureWarnings,
       contentHistory: history,
       updatedAt: new Date(),
     })
@@ -289,9 +303,18 @@ export async function patchCimSection(req: Request, res: Response) {
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);
-      // The broker edited the content: the figure check's flags described
-      // the AI's version, and the broker now owns what the section says.
-      if ("layoutData" in set || "brokerEditedContent" in set || "layoutType" in set) set.figureWarnings = null;
+      if (("layoutData" in set || "brokerEditedContent" in set || "layoutType" in set) && body.dismissFigureWarnings !== true) {
+        // A flag stays while the section still shows its figure (fixing a
+        // caption typo used to wipe the flag on an untraced figure two rows
+        // down); a corrected figure drops its flag; a table or bridge that
+        // no longer adds up after the edit is flagged.
+        set.figureWarnings = carryFigureWarnings(section, section.figureWarnings as string[] | null, { ...section, ...set } as CimSection);
+      }
+      // The broker wrote the section a placeholder stood in for: it is
+      // content now (placeholders are never served to buyers).
+      if (("layoutData" in set || "brokerEditedContent" in set) && isCimFallbackSection(section)) {
+        set.aiLayoutReasoning = "Written by the broker in the CIM builder.";
+      }
     }
     const [updated] = await db
       .update(cimSections)

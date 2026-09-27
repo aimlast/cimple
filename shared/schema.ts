@@ -167,6 +167,28 @@ export interface CimGenerationStatus {
   /** "critical" = must be resolved first; "new" = the pre-run check just found conflicts to review. */
   stoppedReason?: "critical" | "new";
   blockingDiscrepancies?: Array<{ id: string; field: string }>;
+  /**
+   * Set when a full generation replaced a CIM that buyers could open (the
+   * deal was live, had approvals, or had buyer links): the new CIM is held
+   * from every buyer until the broker reviews it and publishes it again.
+   * Carried across later runs; cleared by publishing.
+   */
+  buyerHold?: {
+    since: string;
+    /** The deal was live — it was taken off live and its approvals cleared. */
+    wasLive: boolean;
+    /** Buyer links that could open the CIM when it was replaced. */
+    buyers: number;
+    /** The due-diligence version was cleared with the old sections. */
+    ddCleared: boolean;
+  };
+  /**
+   * The facts the finished run wrote from (server/cim/cim-staleness.ts):
+   * compared with the current facts to list sections that still show a
+   * value the broker has since changed. Broker-only; left out of the
+   * generation-status responses.
+   */
+  factsAt?: { values: Record<string, string>; askingPrice: string | null; notesKey: string };
 }
 
 /** One buyer's AI deep-check verdict for a deal. */
@@ -2521,6 +2543,8 @@ export interface CimSectionSnapshot {
   layoutData: unknown;
   aiDraftContent: string | null;
   brokerEditedContent: string | null;
+  /** The figure check's flags on this version (restored with it on undo). Absent on older snapshots. */
+  figureWarnings?: string[] | null;
 }
 
 // ── CIM media library (cim-media workstream) ──────────────────────────────

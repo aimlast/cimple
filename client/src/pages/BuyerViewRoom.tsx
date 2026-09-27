@@ -72,6 +72,8 @@ interface ViewData {
   ndaGate?: boolean;
   /** True when the blind (redacted) version is still being prepared */
   preparing?: boolean;
+  /** True while the broker reviews an updated CIM before publishing it again */
+  updating?: boolean;
   /** Sections held back until their redacted version is ready (just added/edited). */
   pendingSections?: number;
 }
@@ -241,6 +243,7 @@ export default function BuyerViewRoom() {
     refetchInterval: (query) => {
       const d = query.state.data as ViewData | undefined;
       if (d?.preparing) return 4000;
+      if (d?.updating) return 60000;
       return d?.pendingSections ? 10000 : false;
     },
   });
@@ -270,10 +273,10 @@ export default function BuyerViewRoom() {
   const viewTracked = useRef(false);
   useEffect(() => {
     if (!data?.deal?.id || !data?.access?.id) return;
-    if (data.ndaGate || data.preparing || viewTracked.current) return;
+    if (data.ndaGate || data.preparing || data.updating || viewTracked.current) return;
     viewTracked.current = true;
     enqueue({ eventType: "view" });
-  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, enqueue]);
+  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, data?.updating, enqueue]);
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -332,6 +335,21 @@ export default function BuyerViewRoom() {
           <p className="text-sm text-muted-foreground">
             We're finalizing the secure version of this document. This only
             takes a moment — it will open automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // The broker is reviewing an updated version before publishing it again.
+  if (data.updating) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-sm text-center space-y-3" data-testid="view-room-updating">
+          <FileText className="h-8 w-8 mx-auto text-teal/60" />
+          <h2 className="text-lg font-semibold">This document is being updated</h2>
+          <p className="text-sm text-muted-foreground">
+            The broker is finalizing a new version. It opens here as soon as it's published — your access stays the same.
           </p>
         </div>
       </div>

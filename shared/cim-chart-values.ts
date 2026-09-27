@@ -234,3 +234,112 @@ export function comparisonAsFinancialTable(data: unknown): AnyRecord {
     })),
   };
 }
+
+// ── Shares and totals a chart may print ─────────────────────────────────────
+
+/** A unit saying the values are percentages ("%", "(%)", "% of revenue"). */
+export function isPercentUnit(unit: unknown): boolean {
+  return typeof unit === "string" && (/(?:^|[^\d.])%/.test(unit) || /^\s*per\s?cent/i.test(unit));
+}
+
+export interface ChartShares {
+  /**
+   * The share to print beside each value ("(43.7%)"), or null to print the
+   * value alone. Only ever a share of a whole the chart itself states.
+   */
+  shares: number[] | null;
+  /** The whole to print under the chart's totalLabel — a stated one only, never the sum of the slices. */
+  total: number | null;
+  /**
+   * The values are percentages that aren't the parts of one whole (a top
+   * customer's 22% beside the top five's 47%, or one 50% slice): a pie
+   * would draw them as the full circle. Draw bars instead.
+   */
+  asBars: boolean;
+}
+
+/**
+ * What a pie, donut or ranked-bar chart may print besides its values.
+ *
+ * The renderers printed every slice as "(x%)" of the sum of the slices and
+ * a computed "Total" — false whenever the data is partial, which truth rule
+ * 17 makes the normal case (Pacific: "largest customer 22%" and "top five
+ * 47%" read as 31.9% and 68.1%; a single "50%" slice read "(100.0%)"; one
+ * missing service line would have printed a false total revenue). Now:
+ *   - values in % are shares already and are printed as they are; when
+ *     they don't sum to about 100 they are not the parts of one whole
+ *     → `asBars`;
+ *   - other values get a share only of a `total` the chart states, and
+ *     only when they add up to it (±1%, rounding);
+ *   - the total printed is the stated one, never a sum;
+ *   - values with no unit that make exactly 100 (a 60 / 40 split) are the
+ *     parts of one whole of 100: each is its own share;
+ *   - slices that fall short of a stated total are parts of it, but not
+ *     all: drawn as bars, each with its share of the total (a pie drew
+ *     $21.97M of $31.02M as the full circle); slices that exceed it are not
+ *     its parts: bars, and neither shares nor the total.
+ */
+export function chartShares(values: number[], unit: unknown, statedTotal: unknown): ChartShares {
+  const sum = values.reduce((s, v) => s + (Number.isFinite(v) ? v : 0), 0);
+  if (isPercentUnit(unit)) {
+    const whole = values.length > 1 && Math.abs(sum - 100) <= 1.5;
+    return { shares: null, total: null, asBars: !whole };
+  }
+  const total = parseChartNumber(statedTotal, unitScale(unit));
+  if (total === null || !(total > 0)) {
+    const unitless = !String(unit ?? "").trim();
+    if (unitless && values.length > 1 && values.every((v) => v >= 0 && v <= 100) && Math.abs(sum - 100) <= 1.5) {
+      return { shares: values.slice(), total: null, asBars: false };
+    }
+    return { shares: null, total: null, asBars: false };
+  }
+  if (Math.abs(sum - total) <= total * 0.01) return { shares: values.map((v) => (v / total) * 100), total, asBars: false };
+  if (sum < total) return { shares: values.map((v) => (v / total) * 100), total, asBars: true };
+  return { shares: null, total: null, asBars: true };
+}
+
+const TOTAL_LAYOUTS = new Set(["pie_chart", "donut_chart", "horizontal_bar_chart"]);
+
+/** Every dollar amount a set of facts states ("$21,970,000", "$9.8M", "2024: $9,815,000"), absolute. */
+export function factAmounts(info: unknown): number[] {
+  const out: number[] = [];
+  const walk = (v: unknown, key = "") => {
+    if (key.startsWith("_")) return;
+    if (typeof v === "number") { if (Number.isFinite(v) && Math.abs(v) >= 1000) out.push(Math.abs(v)); return; }
+    if (typeof v === "string") {
+      for (const m of v.match(/\$\s?\d[\d,]*(?:\.\d+)?(?:\s?(?:[kmb]|mm|bn|million|thousand|billion)\b)?/gi) ?? []) {
+        const n = parseChartNumber(m);
+        if (n !== null && Math.abs(n) >= 1000) out.push(Math.abs(n));
+      }
+      return;
+    }
+    if (Array.isArray(v)) { v.forEach((x) => walk(x)); return; }
+    if (v && typeof v === "object") for (const [k, x] of Object.entries(v as Record<string, unknown>)) walk(x, k);
+  };
+  walk(info);
+  return out;
+}
+
+/**
+ * A pie, donut or ranked-bar chart written before charts carried their
+ * stated `total` (the 29 on file on 2026-09-26): its "FY2024 Total Revenue"
+ * line and every share vanished. When the slices add up to an amount the
+ * deal's facts state (±0.5%), that amount is the chart's stated whole and
+ * is filled in; otherwise the chart stays as it is (values only). Pure.
+ */
+export function withStatedChartTotal<T extends { layoutType: string; layoutData: unknown }>(section: T, amounts: readonly number[]): T {
+  if (!TOTAL_LAYOUTS.has(section.layoutType) || amounts.length === 0) return section;
+  const d = section.layoutData as Record<string, unknown> | null;
+  if (!d || typeof d !== "object" || d.total != null || !Array.isArray(d.data) || d.data.length < 2) return section;
+  if (isPercentUnit(d.unit)) return section;
+  const scale = unitScale(d.unit);
+  const values = (d.data as Array<{ value?: unknown }>).map((x) => parseChartNumber(x?.value, scale));
+  if (values.some((v) => v === null || v < 0)) return section;
+  // Chart units ("$M": 13.56) → dollars, to compare with the facts.
+  const sum = (values as number[]).reduce((s, v) => s + v, 0) * scale;
+  if (!(sum >= 1000)) return section;
+  const match = amounts.find((a) => Math.abs(a - sum) <= a * 0.005);
+  if (match === undefined) return section;
+  // "$2.01M" reads as 2009999.9999999998: the stated amount, not float noise.
+  return { ...section, layoutData: { ...d, total: Number((match / scale).toPrecision(12)) } };
+}
