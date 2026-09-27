@@ -27,7 +27,7 @@ import {
   isEvidenceDocument,
   type CheckDocument,
 } from "./discrepancy-engine";
-import { dropReason } from "./discrepancy-filter";
+import { dropReason, differentYears } from "./discrepancy-filter";
 import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
 
 export { recordsSameDispute };
@@ -192,7 +192,7 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
             ...values,
             // Keep a fact key the broker already linked.
             factKey: openMatch.factKey || values.factKey,
-            factYear: openMatch.factKey ? openMatch.factYear : values.factYear,
+            factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
           });
           refreshed++;
         } else if (severityRank(item.severity) > severityRank(openMatch.severity)) {
@@ -255,7 +255,8 @@ function matchersFor<T extends DisputeSides & Pick<Discrepancy, "id" | "source">
 ): { referenced: T | undefined; covers: (d: T) => boolean } {
   const covers = (d: T) => (isCheckRow(d) ? isSameDiscrepancy(item, d as any) : recordsSameDispute(item, d));
   const byId = item.existingId ? existing.find((d) => d.id === item.existingId) : undefined;
-  const referenced = byId && (isCheckRow(byId) || recordsSameDispute(item, byId)) ? byId : undefined;
+  // Another fiscal year is another conflict — the model's existingId included.
+  const referenced = byId && !differentYears(item, byId as { field: string; factYear?: string | null }) && (isCheckRow(byId) || recordsSameDispute(item, byId)) ? byId : undefined;
   return { referenced, covers };
 }
 

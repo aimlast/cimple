@@ -227,11 +227,11 @@ const output = (o: Partial<AnalysisOutput>): AnalysisOutput => ({
   };
   const ruled = applyAddbackRules(n)!;
   const flagged = flagEarningsNotes(ruled)!;
-  const checks = flagged.notes!.filter((x) => x.startsWith("Check:"));
-  assert.equal(checks.length, 1);
-  assert.match(checks[0], /states 2024 SDE as \$1,313,000; the add-backs listed here compute \$1,303,000/);
+  // Round F: the worked sum that doesn't tie is rebuilt from the add-backs; no check line is left.
+  assert.equal(flagged.notes!.filter((x) => x.startsWith("Check:")).length, 0);
+  assert.ok(flagged.notes!.includes("2024 SDE: $1,163,000 (adjusted EBITDA) + $140,000 (Owner pay — market salary) = $1,303,000."), flagged.notes!.join(" | "));
   const { insights } = flagEarningsStatements({ positive: [{ id: "i", type: "positive", title: "Earnings growth", detail: "SDE grew to $1.31M in 2024." }], negative: [] }, ruled);
-  assert.match(insights!.positive[0].detail, /computes 2024 SDE as \$1,303,000, not \$1,310,000/);
+  assert.equal(insights!.positive[0].detail, "SDE grew to $1.30M in 2024.", "corrected in its own format");
 }
 
 // ── peg-rule-evaded: the peg is the multi-year average from the balance sheet ──

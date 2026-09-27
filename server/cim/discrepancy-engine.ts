@@ -39,7 +39,7 @@ import {
 import { agentConfig } from "../interview/config/load-config";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
 import { sliceRelevantText } from "../financial/analyzer";
-import { filterDiscrepancyItems, isMissingSide, sidesEquivalent, numberTokens, tokensMatch, FINDING_RELATIONS, type NumTok, type FindingRelation } from "./discrepancy-filter";
+import { filterDiscrepancyItems, isMissingSide, sidesEquivalent, numberTokens, tokensMatch, differentYears, FINDING_RELATIONS, type NumTok, type FindingRelation } from "./discrepancy-filter";
 import type { DiscrepancySideSources, DiscrepancySideSource } from "@shared/discrepancy-sides";
 import { scrubPrivateText } from "./discrepancy-privacy";
 import { likeForLikeCountConflict, stripSourceRefs, sameConflictByFigures } from "./discrepancy-backstop";
@@ -158,6 +158,8 @@ export function isSameDiscrepancy(
   item: { field: string; factKey?: string | null; factYear?: string | null; interviewValue?: string | null; documentValue?: string | null },
   existing: ExistingDiscrepancy,
 ): boolean {
+  // Another fiscal year is another conflict, whatever the names share.
+  if (differentYears(item, existing)) return false;
   if (
     item.factKey && existing.factKey && item.factKey === existing.factKey && (item.factYear ?? null) === (existing.factYear ?? null) &&
     !differentSubjects(item, existing)
@@ -199,7 +201,7 @@ const SEVERITY_RANK: Record<string, number> = { minor: 1, significant: 2, critic
 export const severityRank = (s: string | null | undefined) => SEVERITY_RANK[s || ""] ?? 0;
 
 export type DisputeSides = { field: string } & Partial<
-  Record<"factKey" | "interviewValue" | "documentValue" | "resolvedValue" | "aiExplanation", string | null>
+  Record<"factKey" | "factYear" | "interviewValue" | "documentValue" | "resolvedValue" | "aiExplanation", string | null>
 >;
 
 /**
@@ -212,6 +214,7 @@ export type DisputeSides = { field: string } & Partial<
  * are two disputes about one figure. Pure.
  */
 export function recordsSameDispute(own: DisputeSides, other: DisputeSides): boolean {
+  if (differentYears(own, other)) return false;
   const a = (own.interviewValue ?? "").trim();
   const b = (own.documentValue ?? "").trim();
   if (!a || !b) return false;
@@ -242,6 +245,7 @@ export function settledRowSettles(
   item: DisputeSides & { factYear?: string | null; severity?: string | null },
   row: ExistingDiscrepancy,
 ): boolean {
+  if (differentYears(item, row)) return false;
   if (isCheckRow(row)) return isSameDiscrepancy(item, row);
   return recordsSameDispute(item, row) && severityRank(row.severity) >= severityRank(item.severity);
 }

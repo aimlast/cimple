@@ -4,6 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Pencil, Check, X, Info } from "lucide-react";
+import { pnlNetIncome } from "@shared/pnl-sign";
 
 /* ──────────────────────────────────────────────
    Types
@@ -134,21 +135,9 @@ export function ReclassifiedTable({ data, title = "Income Statement", years: yea
   }, [grouped, years]);
 
   // Grand total (Revenue + Other Income - everything else). Only meaningful in P&L mode.
-  const grandTotals = useMemo(() => {
-    const totals: Record<string, number> = {};
-    for (const year of years) {
-      let total = 0;
-      for (const [cat, catTotal] of Object.entries(categoryTotals)) {
-        if (cat === "Revenue" || cat === "Other Income") {
-          total += catTotal[year] || 0;
-        } else if (cat !== "Excluded") {
-          total -= Math.abs(catTotal[year] || 0);
-        }
-      }
-      totals[year] = total;
-    }
-    return totals;
-  }, [categoryTotals, years]);
+  // The server's rule (shared/pnl-sign.ts): a negative expense is a recovery
+  // (an income-tax recovery adds to net income), never turned into a cost.
+  const grandTotals = useMemo(() => pnlNetIncome(rows, years), [rows, years]);
 
   const handleCategoryChange = useCallback((rowId: string, newCategory: string) => {
     if (!onUpdate || !data) return;

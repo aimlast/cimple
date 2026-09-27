@@ -2961,7 +2961,7 @@ Return JSON only.`,
       // An explicit checklist row decides the parser category (a seller's
       // checklist upload used to land as "other" and parse with the wrong
       // prompt). Sellers may not replace a row the broker has verified.
-      const { docCategoryForRequirement, linkUploadToRequirement } = await import("./documents/requirements");
+      const { docCategoryForRequirement, linkUploadToRequirement, categoryAfterLink } = await import("./documents/requirements");
       let targetRequirement: Awaited<ReturnType<typeof storage.getDocumentRequirement>> | undefined;
       if (requirementId) {
         targetRequirement = await storage.getDocumentRequirement(requirementId);
@@ -3031,6 +3031,15 @@ Return JSON only.`,
         requirementId,
         sourceKind: requestedKind,
       });
+      // Matched to a checklist row by its name ("2024 P&L.pdf" → "Financial
+      // Statements"): an uncategorised upload takes the row's category, as a
+      // chosen row does, so it is read as a statement (the financial analysis
+      // extracts line items only from financial documents).
+      const linkedCategory = categoryAfterLink(category, linkedRequirement);
+      if (linkedCategory !== category) {
+        await storage.updateDocument(doc.id, { category: linkedCategory } as any);
+        (doc as any).category = linkedCategory;
+      }
       if (linkedRequirement && previousFileId && previousFileId !== doc.id && uploadedBy === "seller") {
         const previous = await storage.getDocument(previousFileId);
         if (previous && previous.dealId === req.params.dealId && previous.uploadedBy === "seller") {
@@ -3334,6 +3343,15 @@ Return JSON only.`,
     return { ...row, status: "failed", aiReasoning };
   };
 
+  // Whether a finished analysis's source documents are still the deal's
+  // (a deleted statement, or one added since) — the "re-run" banner.
+  const financialSourceStatus = async (analysis: { dealId: string; status: string; sourceDocumentIds: unknown }) => {
+    if (analysis.status !== "completed" && analysis.status !== "reviewed") return null;
+    const { analysisSourceStatus } = await import("./financial/source-status");
+    const status = analysisSourceStatus(analysis, await storage.getDocumentsByDeal(analysis.dealId));
+    return status.message ? status : null;
+  };
+
   // Get the latest financial analysis for a deal
   app.get("/api/deals/:dealId/financial-analysis", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
@@ -3342,7 +3360,7 @@ Return JSON only.`,
       const analysis = await reconcileStaleRunningAnalysis(latest);
       // Convert legacy-shaped rows so they render in the UI (see financial/shape.ts)
       const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
-      res.json(normalizeFinancialAnalysisRow(analysis));
+      res.json({ ...normalizeFinancialAnalysisRow(analysis), sourceStatus: await financialSourceStatus(analysis) });
     } catch (error: any) {
       console.error("Error fetching financial analysis:", error);
       res.status(500).json({ error: "Failed to fetch financial analysis" });
@@ -3384,7 +3402,7 @@ Return JSON only.`,
       }
       const analysis = await reconcileStaleRunningAnalysis(row);
       const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
-      res.json(normalizeFinancialAnalysisRow(analysis));
+      res.json({ ...normalizeFinancialAnalysisRow(analysis), sourceStatus: await financialSourceStatus(analysis) });
     } catch (error: any) {
       console.error("Error fetching financial analysis:", error);
       res.status(500).json({ error: "Failed to fetch financial analysis" });
@@ -3399,71 +3417,11 @@ Return JSON only.`,
         return res.status(404).json({ error: "Financial analysis not found" });
       }
 
-      const allowedFields = [
-        "brokerNotes", "normalization", "comps", "insights",
-        "clarifyingQuestions", "reclassifiedPnl", "reclassifiedBalanceSheet",
-        "reclassifiedCashFlow", "workingCapital",
-      ];
-      const updates: Record<string, any> = {};
-      for (const field of allowedFields) {
-        if (req.body[field] !== undefined) {
-          updates[field] = req.body[field];
-        }
-      }
-
-      // Mark broker decisions so a re-run can carry them into the next version
-      // (see financial/analyzer carryForwardBrokerEdits). The client sends whole
-      // blobs; diffing against the stored row is the only place that knows
-      // which change was the broker's rather than the AI's.
-      const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
-      const stored = normalizeFinancialAnalysisRow(existing);
-      for (const tableField of ["reclassifiedPnl", "reclassifiedBalanceSheet", "reclassifiedCashFlow"] as const) {
-        const incoming = updates[tableField];
-        const prior = stored[tableField] as { rows?: Array<{ id: string; category: string; categoryOverride?: boolean }> } | null;
-        if (!incoming || !Array.isArray(incoming.rows) || !prior?.rows) continue;
-        const priorById = new Map(prior.rows.map((r) => [r.id, r]));
-        incoming.rows = incoming.rows.map((row: any) => {
-          if (!row || typeof row !== "object") return row;
-          const before = priorById.get(row.id);
-          if (before && (before.categoryOverride || before.category !== row.category)) {
-            return { ...row, categoryOverride: true };
-          }
-          return row;
-        });
-      }
-      if (updates.normalization && typeof updates.normalization === "object") {
-        const incoming = updates.normalization as { metric?: string; metricOverride?: boolean; addbacks?: any[] };
-        const prior = stored.normalization as { metric?: string; metricOverride?: boolean; addbacks?: Array<{ id: string; approved: boolean; approvedOverride?: boolean; custom?: boolean }> } | null;
-        if (prior) {
-          if (prior.metricOverride || (prior.metric && incoming.metric && prior.metric !== incoming.metric)) {
-            incoming.metricOverride = true;
-          }
-          const priorById = new Map((prior.addbacks ?? []).map((a) => [a.id, a]));
-          if (Array.isArray(incoming.addbacks)) {
-            incoming.addbacks = incoming.addbacks.map((ab: any) => {
-              if (!ab || typeof ab !== "object") return ab;
-              const before = priorById.get(ab.id);
-              const custom = ab.custom === true || before?.custom === true || (typeof ab.id === "string" && ab.id.startsWith("custom_"));
-              const approvedOverride = before
-                ? before.approvedOverride === true || before.approved !== ab.approved
-                : false;
-              return { ...ab, ...(custom ? { custom: true } : {}), ...(approvedOverride ? { approvedOverride: true } : {}) };
-            });
-          }
-        }
-        // EBITDA / SDE are recomputed in code from the edited add-backs —
-        // the stored canonical figures always match what the panel shows.
-        const { withCanonicalEarnings } = await import("./financial/normalization-rules");
-        // Dated when those figures move: an earnings decision the broker made
-        // before no longer overrules the bridge (cim/earnings-canon.ts).
-        const { stampEarningsChange } = await import("./cim/cim-financials");
-        updates.normalization = stampEarningsChange(existing.normalization, withCanonicalEarnings(updates.normalization), new Date());
-      }
-
-      if (req.body.brokerReviewed) {
-        updates.brokerReviewedAt = new Date();
-        updates.status = "reviewed";
-      }
+      // Broker decisions marked for re-runs, EBITDA/SDE recomputed, and
+      // everything computed from an edited table computed again (working
+      // capital from the balance sheet; notes and insights from the add-backs).
+      const { applyBrokerAnalysisEdit } = await import("./financial/broker-edit");
+      const updates = applyBrokerAnalysisEdit(existing as Record<string, any>, req.body ?? {}, new Date());
 
       const updated = await storage.updateFinancialAnalysis(req.params.id, updates);
       res.json(updated);
@@ -3637,42 +3595,11 @@ Return JSON only.`,
     if (workflow !== "provided" || !financialAnalysisId) return [];
     const fa = await storage.getFinancialAnalysis(financialAnalysisId);
     if (!fa || fa.dealId !== dealId || !fa.normalization) return [];
-    const norm = fa.normalization as any;
-    // The headline amount is the LATEST year's figure, not a multi-year
-    // average — a $28,000 one-time renovation in 2024 is a $28,000 addback,
-    // not $9,333. Years with no value for this addback are ignored; the full
-    // per-year array is kept alongside for the matcher.
-    const orderedYears: string[] = Array.isArray(norm.years) && norm.years.length > 0
-      ? norm.years.map(String)
-      : [];
-    // The seller reviews these: an add-back that rests only on the broker's
-    // private notes stays out until the broker has approved it.
-    return (norm.addbacks || []).filter((a: any) => !a?.privateEvidence || (a.approvedOverride === true && a.approved)).map((a: any) => {
-      const amounts: Record<string, number> = {};
-      for (const [year, v] of Object.entries(a.amounts || {})) {
-        const n = Number(v);
-        if (Number.isFinite(n)) amounts[year] = n;
-      }
-      const years = Object.keys(amounts).sort(
-        (x, y) => (orderedYears.indexOf(x) === -1 || orderedYears.indexOf(y) === -1
-          ? x.localeCompare(y)
-          : orderedYears.indexOf(x) - orderedYears.indexOf(y)),
-      );
-      const latestWithValue = [...years].reverse().find((y) => amounts[y] !== 0) ?? years[years.length - 1];
-      return {
-        id: a.id || `ab_${Math.random().toString(36).slice(2, 8)}`,
-        label: a.label || "",
-        description: a.description || "",
-        category: a.category || "other",
-        annualAmount: latestWithValue ? amounts[latestWithValue] : 0,
-        amountYear: latestWithValue ?? null,
-        yearAmounts: amounts,
-        verificationStatus: "unverified",
-        matchedTransactions: [],
-        sellerNotes: null,
-        aiNotes: null,
-      };
-    });
+    // Only the add-backs the analysis counts, with the owner's pay as one
+    // line at what payroll shows (financial/addback-seed.ts).
+    const { seedAddbacksFromNormalization } = await import("./financial/addback-seed");
+    const { normalizeFinancialAnalysisRow } = await import("./financial/shape");
+    return seedAddbacksFromNormalization((normalizeFinancialAnalysisRow(fa) as any).normalization);
   }
 
   // Start addback verification for a deal

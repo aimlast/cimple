@@ -526,8 +526,10 @@ export function assembleKnowledgeBase(
         valueA: privateA ? null : d.interviewValue,
         valueB: privateB ? null : d.documentValue,
         severity: d.severity,
-        explanation: privateSource ? null : d.aiExplanation,
-        suggestedResolution: privateSource ? null : d.suggestedResolution,
+        // The broker's normalisation work in them (add-backs, SDE vs
+        // adjusted EBITDA, a market salary) never reaches the interview.
+        explanation: privateSource ? null : sellerSafeGuidance(d.aiExplanation),
+        suggestedResolution: privateSource ? null : sellerSafeGuidance(d.suggestedResolution),
         ...(privateSource ? { privateSource: true } : {}),
       };
     });
@@ -967,6 +969,23 @@ function describeFactSource(
       if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
       return doc ? `from document: ${doc.name}` : "from an uploaded document";
   }
+}
+
+/**
+ * A discrepancy's broker-facing guidance, as the seller interview may see
+ * it: sentences that carry the broker's normalisation work — add-backs, SDE
+ * or EBITDA, a market or replacement salary — are left out ("The correct
+ * owner compensation add-back is $180,000 (…adjusted EBITDA adds back only
+ * the $15,000 above a $165,000 market salary)" is the broker's, not a
+ * question for the seller). Null when nothing is left.
+ */
+export function sellerSafeGuidance(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const kept = text
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)
+    .filter((s) => !isBrokerWorkText(s) && !/\b(?:ebitda|added\s+back|adds?\s+back|market\s+(?:salary|rate|wage)|replacement\s+(?:salary|cost))\b/i.test(s));
+  const out = kept.join(" ").trim();
+  return out.length > 0 ? out : null;
 }
 
 // =====================
