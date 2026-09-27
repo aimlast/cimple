@@ -198,7 +198,7 @@ const ctx = { docNames: [], figureOnRecord: () => false, figuresOf: () => [], su
   assert.deepEqual(flagEarningsStatements(ins, { ...n, notes: [] }).insights!.positive[0], ins.positive[0]);
   // A real mislabel is still renamed, a wrong figure still checked.
   assert.deepEqual(flagEarningsNotes({ ...n, notes: ["2024 SDE: $1,552,000."] })!.notes, ["2024 adjusted EBITDA: $1,552,000."]);
-  assert.equal(flagEarningsNotes({ ...n, notes: ["2024 SDE was $1,650,000."] })!.notes.length, 2);
+  assert.deepEqual(flagEarningsNotes({ ...n, notes: ["2024 SDE was $1,650,000."] })!.notes, ["2024 SDE was $1,717,000."], "a wrong figure is corrected (round F)");
   // The recorded balance sheet's row is "Long-term debt (non-current portion)".
   const debt = "Debt: Long-term debt of $1,342,000 (Dec 31 2024) is modest (0.8x adjusted EBITDA). The equipment term loan matures November 2027.";
   const fixed = correctBalanceSheetFigures(debt, fx.balanceSheet);

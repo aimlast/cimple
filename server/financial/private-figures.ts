@@ -19,7 +19,7 @@ import type { IStorage } from "../storage";
 import { numberTokens, tokensMatch, type NumTok } from "../cim/discrepancy-filter";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
-import type { UiAddback, UiClarifyingQuestion, UiNormalization } from "./shape";
+import type { UiAddback, UiClarifyingQuestion, UiNormalization, UiReclassifiedTable, UiWorkingCapital } from "./shape";
 
 /** A figure with what it is about: the meaningful words of its own line or clause. */
 export interface Figure {
@@ -300,4 +300,116 @@ export function markPrivateQuestionFigures(
     }
     return { ...q, privateFigures: figures };
   });
+}
+
+// ── Statement figures only the broker's private material holds ──
+
+const yearLabel = (y: string) => y.match(/(?:19|20)\d{2}/g)?.pop() ?? y;
+
+/**
+ * A statement amount only private material states: the private material
+ * has it and no shared source states the same amount at all. (By value
+ * alone — a reclassified row's name rarely matches the source line's
+ * words, and a real statement figure must never be withheld for that; the
+ * add-back check's topic rule guards the other direction.)
+ */
+function privateStatementAmount(value: number, index: FigureIndex): boolean {
+  const t = amountToken(value);
+  if (!distinctive(t)) return false;
+  const same = (x: NumTok) => tokensMatch({ ...t, approx: false }, { ...x, approx: false });
+  return index.private.some((p) => same(p.tok)) && !index.shared.some((s) => same(s.tok));
+}
+
+/** The years of a table with a value only private material states. */
+function privateTableYears(table: UiReclassifiedTable | null | undefined, index: FigureIndex): string[] {
+  if (!table || !Array.isArray(table.rows)) return [];
+  const out = new Set<string>();
+  for (const row of table.rows) {
+    for (const [y, v] of Object.entries(row.values ?? {})) {
+      if (typeof v !== "number" || !Number.isFinite(v) || v === 0) continue;
+      if (privateStatementAmount(v, index)) out.add(y);
+    }
+  }
+  return Array.from(out).sort();
+}
+
+const PRIVATE_YEARS_NOTE = (what: string, years: string[]) =>
+  `The ${years.map(yearLabel).join(", ")} ${what} ${years.length === 1 ? "rests" : "rest"} only on your private notes (CRM or broker-only files), so ${years.length === 1 ? "it is" : "they are"} left out of the CIM until you approve ${years.length === 1 ? "it" : "them"}.`;
+
+export interface PrivateStatementParts {
+  reclassifiedPnl: UiReclassifiedTable | null;
+  reclassifiedBalanceSheet: UiReclassifiedTable | null;
+  normalization: UiNormalization | null;
+  workingCapital: UiWorkingCapital | null;
+}
+
+/**
+ * Mark statement figures whose only support is the broker's private
+ * material. The analysis reads SOURCE 5 (CRM notes, broker-only files) as
+ * context; add-backs and questions were checked against it, but a P&L
+ * column, a balance-sheet year, reported net income or a working-capital
+ * line built from it went straight into the CIM's "AUTHORITATIVE
+ * FINANCIALS" — a broker-only 2025 interim P&L became a 2025 column in the
+ * buyer CIM with no approval. Now such a year is listed in `privateYears`
+ * (a working-capital line sets `privateEvidence`) and the CIM leaves it out
+ * until the broker approves it (`privateApproved`, carried from `previous`
+ * when the same years are marked again).
+ */
+export function markPrivateStatements<T extends PrivateStatementParts>(result: T, index: FigureIndex, previous?: Partial<PrivateStatementParts> | null): T {
+  const approvedBefore = (prev: { privateYears?: string[]; privateApproved?: boolean } | null | undefined, years: string[]) =>
+    !!prev?.privateApproved && years.every((y) => (prev.privateYears ?? []).includes(y));
+  const markTable = (t: UiReclassifiedTable | null, prev: UiReclassifiedTable | null | undefined, what: string): UiReclassifiedTable | null => {
+    if (!t) return t;
+    const { privateYears: _p, privateApproved: _a, ...base } = t;
+    const years = privateTableYears(t, index);
+    if (years.length === 0) return base;
+    const approved = approvedBefore(prev, years);
+    return {
+      ...base,
+      privateYears: years,
+      ...(approved ? { privateApproved: true } : {}),
+      notes: Array.from(new Set([...(t.notes ?? []), ...(approved ? [] : [PRIVATE_YEARS_NOTE(what, years)])])),
+    };
+  };
+  let normalization = result.normalization;
+  if (normalization) {
+    const { privateYears: _p, privateApproved: _a, ...base } = normalization;
+    const years = Object.entries(normalization.netIncome ?? {})
+      .filter(([, v]) => typeof v === "number" && v !== 0 && privateStatementAmount(v, index))
+      .map(([y]) => y)
+      .sort();
+    normalization = years.length === 0
+      ? (base as UiNormalization)
+      : {
+          ...(base as UiNormalization),
+          privateYears: years,
+          ...(approvedBefore(previous?.normalization, years) ? { privateApproved: true } : {}),
+          notes: Array.from(new Set([...(normalization.notes ?? []), ...(approvedBefore(previous?.normalization, years) ? [] : [PRIVATE_YEARS_NOTE("reported net income", years)])])),
+        };
+  }
+  let workingCapital = result.workingCapital;
+  if (workingCapital) {
+    const { privateEvidence: _p, privateApproved: _a, ...base } = workingCapital;
+    const lines = [...(workingCapital.currentAssets ?? []), ...(workingCapital.currentLiabilities ?? [])];
+    const hit = lines.filter((i) => Number.isFinite(i.amount) && i.amount !== 0 && privateStatementAmount(i.amount, index));
+    const prevWc = previous?.workingCapital;
+    workingCapital = hit.length === 0
+      ? (base as UiWorkingCapital)
+      : {
+          ...(base as UiWorkingCapital),
+          privateEvidence: true,
+          ...(prevWc?.privateEvidence && prevWc.privateApproved ? { privateApproved: true } : {}),
+          notes: Array.from(new Set([
+            ...(workingCapital.notes ?? []),
+            ...(prevWc?.privateApproved ? [] : [`Working capital (${hit.map((i) => i.name).join(", ")}) rests only on your private notes, so it is left out of the CIM until you approve it.`]),
+          ])),
+        };
+  }
+  return {
+    ...result,
+    reclassifiedPnl: markTable(result.reclassifiedPnl, previous?.reclassifiedPnl, "income statement column"),
+    reclassifiedBalanceSheet: markTable(result.reclassifiedBalanceSheet, previous?.reclassifiedBalanceSheet, "balance sheet column"),
+    normalization,
+    workingCapital,
+  };
 }

@@ -23,6 +23,8 @@ import {
   type UiWorkingCapitalItem,
 } from "../financial/shape";
 import { isExcludedWorkingCapitalAsset, isExcludedWorkingCapitalLiability, workingCapitalHistory } from "../financial/normalization-rules";
+import { expenseCategorySigns } from "@shared/pnl-sign";
+import { analysisSourceStatus, type SourceDocLike } from "../financial/source-status";
 
 type AnalysisLike = Pick<FinancialAnalysis, "id" | "version" | "status" | "brokerReviewedAt"> & {
   reclassifiedPnl?: unknown;
@@ -119,9 +121,13 @@ export interface CimFinancials {
    * overrules the bridge (earnings-canon.ts). Absent when unknown.
    */
   bridgeChangedAt?: Record<string, string> | null;
+  /** What was left out because only the broker's private material states it (not yet approved). */
+  privateWithheld?: string[];
+  /** The analysis's sources changed since it ran (analysisSourceStatus) — the broker is told to re-run it. */
+  sourceWarnings?: string[];
 }
 
-const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
+const sum =(xs: number[]) => xs.reduce((s, x) => s + x, 0);
 
 /**
  * Working capital as a CIM may state it: cash-free and debt-free — the
@@ -291,12 +297,16 @@ export function cimDebt(balanceSheet: UiReclassifiedTable | null | undefined): C
 
 function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>): Record<string, CimPnlYear> {
   const computedNi = computePnlNetIncome(table);
+  // An expense category's amount as a cost, signed: a negative one is a
+  // recovery (an income-tax recovery), never turned into a cost
+  // (shared/pnl-sign.ts — the same rule as the Income Statement's net income).
+  const signs = expenseCategorySigns(table.rows);
   const out: Record<string, CimPnlYear> = {};
   for (const year of table.years) {
     const rowsOf = (c: string) => table.rows.filter((r) => r.category === c && typeof r.values?.[year] === "number");
     const cat = (c: string) => {
       const vals = rowsOf(c).map((r) => r.values[year]);
-      return { has: vals.length > 0, total: sum(vals) };
+      return { has: vals.length > 0, total: sum(vals), category: c };
     };
     const revenue = cat("Revenue");
     if (!revenue.has) continue;
@@ -304,7 +314,7 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
     const opex = cat("Operating Expenses");
     const owner = cat("Owner Compensation");
     const nonRec = cat("Non-Recurring");
-    const abs = (x: { total: number }) => Math.abs(x.total);
+    const abs = (x: { total: number; category: string }) => (signs[x.category] ?? 1) * x.total;
     const cogsAbs = cogs.has ? abs(cogs) : null;
     const operatingExpenses = abs(opex) + abs(owner);
     const dep = cat("Depreciation"), interest = cat("Interest"), taxes = cat("Taxes");
@@ -543,12 +553,18 @@ export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[
 export function buildCimFinancials(analysis: AnalysisLike | null | undefined, history?: AnalysisLike[] | null): CimFinancials | null {
   if (!analysis) return null;
   const row = normalizeFinancialAnalysisRow({ ...(analysis as Record<string, unknown>) }) as Record<string, any>;
-  const table = row.reclassifiedPnl as UiReclassifiedTable | null;
-  const norm = row.normalization as UiNormalization | null;
+  // Figures only the broker's private material states (private-figures.ts
+  // markPrivateStatements) reach the CIM only once the broker approves them.
+  const withheld: string[] = [];
+  const table = withoutPrivateYears(row.reclassifiedPnl as UiReclassifiedTable | null, "income statement", withheld);
+  const norm = withoutPrivateNetIncome(row.normalization as UiNormalization | null, withheld);
   const hasTable = !!table && Array.isArray(table.rows) && table.rows.length > 0 && Array.isArray(table.years);
   const hasNorm = !!norm && Array.isArray(norm.addbacks);
-  const balanceSheet = (row.reclassifiedBalanceSheet ?? null) as UiReclassifiedTable | null;
-  const wc = cimWorkingCapital(row.workingCapital as UiWorkingCapital | null, balanceSheet);
+  const balanceSheet = withoutPrivateYears((row.reclassifiedBalanceSheet ?? null) as UiReclassifiedTable | null, "balance sheet", withheld);
+  const rawWc = row.workingCapital as UiWorkingCapital | null;
+  const privateWc = !!rawWc?.privateEvidence && !rawWc.privateApproved;
+  if (privateWc) withheld.push("working capital (a line rests only on your private notes)");
+  const wc = privateWc ? null : cimWorkingCapital(rawWc, balanceSheet);
   const debt = cimDebt(balanceSheet);
   if (!hasTable && !hasNorm && !wc && !debt) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
@@ -569,6 +585,59 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
     workingCapital: wc,
     ...(debt ? { debt } : {}),
     ...(Object.keys(changedAt).length > 0 ? { bridgeChangedAt: changedAt } : {}),
+    ...(withheld.length > 0 ? { privateWithheld: withheld } : {}),
+  };
+}
+
+/** Thrown when the CIM's analysis was built from a statement that has since been deleted. */
+export class StaleFinancialAnalysisError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaleFinancialAnalysisError";
+  }
+}
+
+/**
+ * The CIM's financials from the deal's analyses and its documents now: the
+ * analysis pickAnalysisForCim chooses, checked against the documents it was
+ * built from (financial/source-status.ts). A statement or tax return it used
+ * that has since been deleted stops generation (its figures can't reach a
+ * buyer); a statement added since is a warning to re-run it.
+ */
+export function cimFinancialsFor(
+  analyses: AnalysisLike[] | null | undefined,
+  docs: SourceDocLike[],
+): CimFinancials | null {
+  const picked = pickAnalysisForCim(analyses);
+  if (!picked) return null;
+  const status = analysisSourceStatus(picked as { sourceDocumentIds?: unknown }, docs);
+  if (status.blocking) throw new StaleFinancialAnalysisError(`${status.message} Generation is stopped until then.`);
+  const fin = buildCimFinancials(picked, analyses);
+  if (fin && status.message) fin.sourceWarnings = [status.message];
+  return fin;
+}
+
+/** A table without the years only private material states (unless the broker approved them). */
+function withoutPrivateYears(t: UiReclassifiedTable | null, what: string, withheld: string[]): UiReclassifiedTable | null {
+  if (!t || !t.privateYears?.length || t.privateApproved) return t;
+  const drop = new Set(t.privateYears);
+  withheld.push(`the ${t.privateYears.join(", ")} ${what} ${t.privateYears.length === 1 ? "column" : "columns"}`);
+  return {
+    ...t,
+    years: (t.years ?? []).filter((y) => !drop.has(y)),
+    rows: (t.rows ?? []).map((r) => ({ ...r, values: Object.fromEntries(Object.entries(r.values ?? {}).filter(([y]) => !drop.has(y))) })),
+  };
+}
+
+/** The normalization without the years whose reported net income only private material states. */
+function withoutPrivateNetIncome(n: UiNormalization | null, withheld: string[]): UiNormalization | null {
+  if (!n || !n.privateYears?.length || n.privateApproved) return n;
+  const drop = new Set(n.privateYears);
+  withheld.push(`the ${n.privateYears.join(", ")} earnings bridge (reported net income)`);
+  return {
+    ...n,
+    years: (n.years ?? []).filter((y) => !drop.has(y)),
+    netIncome: Object.fromEntries(Object.entries(n.netIncome ?? {}).filter(([y]) => !drop.has(y))),
   };
 }
 
@@ -654,7 +723,11 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
       hasBelowTheLine
         ? yearRow("Income before income taxes (= EBITDA before other income + other income − other expense − D&A − interest)", years, (y) => (untied.includes(y) ? null : pnl[y].incomeBeforeTaxes))
         : null,
-      yearRow("Income taxes", years, (y) => (pnl[y].taxes ? pnl[y].taxes : null)),
+      yearRow(
+        years.some((y) => pnl[y].taxes < 0) ? "Income taxes (a recovery — money back from taxes — is shown in parentheses and adds to net income)" : "Income taxes",
+        years,
+        (y) => (pnl[y].taxes ? pnl[y].taxes : null),
+      ),
       yearRow("Net income (as reported)", years, (y) => pnl[y].netIncomeReported ?? pnl[y].netIncomeFromRows),
     ].filter(Boolean) as string[];
     out.push(...rows);
@@ -914,8 +987,12 @@ export function untiedYears(fin: CimFinancials | null | undefined): string[] {
  * income (restateFromReported) and years that don't tie at all.
  */
 export function restatementWarnings(fin: CimFinancials | null | undefined): string[] {
+  const held = (fin?.privateWithheld ?? []).map(
+    (w) => `Financial analysis: ${w} rests only on your private notes (CRM or broker-only files), so the CIM leaves it out. Approve it on the Financials tab to include it.`,
+  );
+  const sources = fin?.sourceWarnings ?? [];
   const pnl = fin?.pnl;
-  if (!pnl) return [];
+  if (!pnl) return [...sources, ...held];
   const untied = untiedYears(fin).map((y) => {
     const gap = (pnl[y].netIncomeFromRows ?? 0) - (pnl[y].netIncomeReported ?? 0);
     return `Financial analysis, ${y}: the Income Statement lines give net income of ${money(pnl[y].netIncomeFromRows ?? 0)}, but the reported net income is ${money(pnl[y].netIncomeReported ?? 0)} (${money(Math.abs(gap))} apart). The CIM's statement table shows ${y} only down to EBITDA. Correct the Income Statement on the Financials tab so it ties.`;
@@ -928,5 +1005,5 @@ export function restatementWarnings(fin: CimFinancials | null | undefined): stri
       const cause = r.likelyCause ? ` — most likely ${r.likelyCause} was taken out of its original expense line as well as listed as one-time` : "";
       return `Financial analysis, ${y}: the expense lines add up to EBITDA of ${money(r.rowEbitda)}, but the reported net income gives ${money(pnl[y].ebitda)} (a ${money(Math.abs(r.gap))} difference${cause}). The CIM states ${y} from the reported net income so every table adds up. Correct the Income Statement on the Financials tab to make the lines match.`;
     })
-    .concat(untied);
+    .concat(untied, sources, held);
 }

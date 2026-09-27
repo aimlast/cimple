@@ -38,7 +38,7 @@ import {
   type FieldSource,
 } from "../interview/info-merger";
 import { HEADLINE_MAPS, headlineYearOnFile, periodYear } from "../documents/merge-policy";
-import { numberTokens, tokensMatch } from "../cim/discrepancy-filter";
+import { numberTokens, tokensMatch, discrepancyYear, normalizeFactYear } from "../cim/discrepancy-filter";
 import { discrepancyHasPrivateSide, discrepancySideValue, mentionsPrivateSource } from "@shared/discrepancy-sides";
 
 type Info = Record<string, unknown>;
@@ -93,11 +93,32 @@ export function sameFigure(a: string | null | undefined, b: string | null | unde
 export function targetForFactKey(info: Info, factKey: string | null | undefined, factYear?: string | null): DiscrepancyTarget | null {
   const key = (factKey || "").trim();
   if (!key || !FACT_KEY_SHAPE.test(key) || !isFactKey(key)) return null;
-  const year = (factYear || "").trim().replace(/^FY\s*/i, "");
-  const cur = repairCharIndexedValue(info[key]);
-  const mapLike = cur === undefined || cur === null || cur === "" ? key === "revenueByYear" || /ByYear$/.test(key) : isPlainMap(cur);
-  if (year && mapLike) return { key, sub: year };
+  const raw = (factYear || "").trim();
+  const year = normalizeFactYear(raw) ?? raw.replace(/^FY\s*/i, "");
+  if (year && isMapFact(info, key)) return { key, sub: year };
   return { key };
+}
+
+/** The fact is a map by year (revenueByYear), or an empty by-year fact that will be one. */
+export function isMapFact(info: Info, key: string): boolean {
+  const cur = repairCharIndexedValue(info[key]);
+  return cur === undefined || cur === null || cur === "" ? key === "revenueByYear" || /ByYear$/.test(key) : isPlainMap(cur);
+}
+
+/**
+ * The fiscal year a row with no factYear is about, for a by-year fact: the
+ * one year its field names ("2024 Revenue", "Net income (FY2024)"), else
+ * the one year both sides' values or source labels agree on ("$9,815,000 —
+ * Financial statements FY2024"). Null when there is none, or more than one.
+ */
+export function yearForMapResolution(d: Pick<ResolutionRow, "field" | "interviewValue" | "documentValue">): string | null {
+  const fromField = discrepancyYear({ field: d.field ?? "" });
+  if (fromField) return fromField;
+  const years = new Set<string>();
+  for (const v of [d.interviewValue, d.documentValue]) {
+    for (const m of Array.from((v ?? "").matchAll(/\b(?:FY\s?'?)?((?:19|20)\d{2})\b/gi))) years.add(m[1]);
+  }
+  return years.size === 1 ? Array.from(years)[0] : null;
 }
 
 /** The value a target holds now (one year of a map, or the fact). */
@@ -263,8 +284,21 @@ export function pairedWrite(info: Info, target: DiscrepancyTarget, resolved: str
 export type ResolutionPlan =
   | { kind: "write"; target: DiscrepancyTarget; writes: ResolutionWrite[] }
   | { kind: "narrative"; target: DiscrepancyTarget }
-  | { kind: "needs_mapping" }
+  /** `year`: the fact is a map by year and the row doesn't say which year — the broker picks it. */
+  | { kind: "needs_mapping"; year?: true }
   | { kind: "none" };
+
+/** A resolved value written as "2023: $9.1M; 2024: $9.8M" is a whole map; anything else is one figure. */
+function resolvedMapValue(resolved: string): Record<string, string> | string {
+  const lines = resolved.split(/\n|;/).map((l) => l.trim()).filter(Boolean);
+  const map: Record<string, string> = {};
+  for (const line of lines) {
+    const m = line.match(/^((?:FY\s*)?(?:19|20)\d{2}):\s*(.+)$/i);
+    if (!m) return resolved;
+    map[normalizeFactYear(m[1]) ?? m[1]] = m[2].trim();
+  }
+  return lines.length > 1 ? map : resolved;
+}
 
 /**
  * What resolving `d` onto `target` writes — the same decision for the
@@ -281,6 +315,15 @@ export function planResolution(
 ): ResolutionPlan {
   const resolved = (d.resolvedValue || "").trim();
   if (!resolved) return { kind: "none" };
+  // A figure is never written over a whole map by year: "2024 Revenue"
+  // resolved onto revenueByYear with no factYear wiped 2022–2023 (the value
+  // replaced the map). The year comes from the row's field or its sides'
+  // labels; with none, the broker is asked which year it is.
+  if (!target.sub && isMapFact(info, target.key) && !isPlainMap(resolvedMapValue(resolved))) {
+    const year = yearForMapResolution(d);
+    if (!year) return { kind: "needs_mapping", year: true };
+    target = { key: target.key, sub: year };
+  }
   if (!opts.brokerChoseFact && d.factKey && d.source !== "merge" && !targetRelatesToSides(info, target, d)) return { kind: "needs_mapping" };
   if (isNarrativeTarget(info, target, resolved, sideValues(d))) return { kind: "narrative", target };
   const writes: ResolutionWrite[] = [{ key: target.key, ...(target.sub ? { sub: target.sub } : {}), value: resolved }];

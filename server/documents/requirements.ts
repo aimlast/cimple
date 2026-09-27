@@ -278,6 +278,18 @@ export function docCategoryForRequirement(requirementCategory: string): string {
   return REQUIREMENT_TO_DOC_CATEGORY[requirementCategory] ?? "other";
 }
 
+/**
+ * The category an upload keeps once it is linked to a checklist row: an
+ * uncategorised one ("other" — "2024 P&L.pdf" dropped outside the
+ * checklist, matched to "Financial Statements" by its name) takes the
+ * row's; an upload the broker or seller already categorised keeps its own.
+ */
+export function categoryAfterLink(category: string, linked: { category: string } | null | undefined): string {
+  if (!linked || (category && category !== "other")) return category;
+  const derived = docCategoryForRequirement(linked.category);
+  return derived !== "other" ? derived : category;
+}
+
 const NAME_STOPWORDS = new Set([
   "the", "and", "for", "years", "year", "months", "month", "current", "key",
   "list", "summary", "report", "copy", "copies", "pdf", "final", "draft",

@@ -24,9 +24,10 @@ import type { Discrepancy, FinancialAnalysis } from "@shared/schema";
 import { extractFinancialData, type ExtractedStatement } from "./extractor";
 import { brokerPrivacy } from "../interview/seller-view";
 import { getFieldSources } from "../interview/info-merger";
-import { filterDiscrepancyItems, dropReason } from "../cim/discrepancy-filter";
+import { filterDiscrepancyItems, dropReason, differentYears, discrepancyYear, normalizeFactYear } from "../cim/discrepancy-filter";
 import { analysisFactKey } from "./discrepancy-fact-key";
 import { correctBalanceSheetFigures } from "./note-figures";
+import { analysisSourceRole, isFinancialStatementDoc, isTaxDocument, type AnalysisSourceRef } from "./source-status";
 import { scrubPrivateText } from "../cim/discrepancy-privacy";
 import { mentionsPrivateSource, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import {
@@ -36,6 +37,8 @@ import {
   flagEarningsStatements,
   isOwnerCompDiscrepancy,
   isOwnerPayLine,
+  clarifyOwnerPayAddbacks,
+  revenueByYear,
   withCanonicalEarnings,
   ownerPayOnly,
 } from "./normalization-rules";
@@ -43,6 +46,7 @@ import {
   buildFigureIndex,
   dealFigureTexts,
   markPrivateAddbacks,
+  markPrivateStatements,
   markPrivateQuestionFigures,
   withoutPrivateFigureSentences,
   type FigureIndex,
@@ -72,7 +76,7 @@ interface SourceBundle {
   /** Structured statements extracted from financial-category documents */
   statements: ExtractedStatement[];
   /** IDs of every document that contributed */
-  sourceDocumentIds: string[];
+  sourceDocumentIds: AnalysisSourceRef[];
   /** Rendered text context for tax + other documents */
   otherDocsContext: string;
   /** Rendered knowledge-base (extractedInfo) context */
@@ -205,11 +209,6 @@ export function sliceRelevantText(text: string, budget: number, extraKeywords: s
   return chunks.join("");
 }
 
-function isTaxDocument(doc: { name: string; category: string | null; subcategory?: string | null }): boolean {
-  const s = `${doc.name} ${doc.category ?? ""} ${doc.subcategory ?? ""}`.toLowerCase();
-  return /\btax\b|t2\b|t1\b|1120|1065|1040|notice of assessment|gifi/.test(s);
-}
-
 async function assembleSources(
   dealId: string,
   storage: IStorage,
@@ -233,9 +232,12 @@ async function assembleSources(
   const privateDocs = processedDocs.filter((d) => docMetaById[d.id].brokerOnly);
   const sharedDocs = processedDocs.filter((d) => !docMetaById[d.id].brokerOnly);
 
-  // 1. Financial-category docs -> full structured extraction
+  // 1. Financial statements -> full structured extraction. A statement a
+  //    seller dropped outside the checklist is filed "other" but named like
+  //    one ("2024 P&L.pdf") — it is read as a statement too, never as a
+  //    4,000-character slice of "other documents".
   const financialDocs = sharedDocs.filter(
-    (d) => d.category === "financials" && d.extractedText && d.extractedText.trim().length >= 50,
+    (d) => isFinancialStatementDoc(d) && d.extractedText && d.extractedText.trim().length >= 50,
   );
   // Per-doc failures (network blips, malformed output) must not kill the run —
   // the comprehensive pass still has the other docs + raw context to work with.
@@ -258,7 +260,8 @@ async function assembleSources(
   );
 
   // 2. Tax + other docs -> key-value data + relevant text slices
-  const nonFinancialDocs = sharedDocs.filter((d) => d.category !== "financials");
+  const financialIds = new Set(financialDocs.map((d) => d.id));
+  const nonFinancialDocs = sharedDocs.filter((d) => d.category !== "financials" && !financialIds.has(d.id));
   const taxDocs = nonFinancialDocs.filter(isTaxDocument);
   const otherDocs = nonFinancialDocs.filter((d) => !isTaxDocument(d));
 
@@ -364,12 +367,13 @@ async function assembleSources(
     questionnaireContext = json.length > 8000 ? json.slice(0, 8000) + "\n... [truncated]" : json;
   }
 
-  const contributingDocIds = [
-    ...financialDocs.map((d) => d.id),
-    ...taxDocs.map((d) => d.id),
-    ...otherDocs.filter((d) => d.extractedData || d.extractedText).map((d) => d.id),
-    ...privateDocs.map((d) => d.id),
-  ];
+  // Every document the run read, with its role — so a deleted statement
+  // (or one added since) marks the analysis out of date (source-status.ts).
+  const contributingDocIds: AnalysisSourceRef[] = processedDocs.map((d) => ({
+    id: d.id,
+    name: d.name,
+    role: financialIds.has(d.id) ? "statements" : analysisSourceRole(d),
+  }));
 
   const privateParts: string[] = [];
   if (Object.keys(privateFacts).length > 0) {
@@ -500,10 +504,17 @@ export async function runFinancialAnalysis(
       : { ...ruled, reclassifiedPnl: reconciled.pnl, normalization: reconciled.normalization };
     // Working capital once more on the final balance sheet (a broker's
     // carried-over reclassification can move a row in or out of it).
-    const analysisResult = finalizeEarnings({
-      ...carried,
-      workingCapital: applyWorkingCapitalRules(carried.workingCapital, carried.reclassifiedBalanceSheet),
-    });
+    // Last: a statement year (or reported net income, or a working-capital
+    // line) only the broker's private material states stays out of the CIM
+    // until the broker approves it — an approval of the same years carries over.
+    const analysisResult = markPrivateStatements(
+      finalizeEarnings({
+        ...carried,
+        workingCapital: applyWorkingCapitalRules(carried.workingCapital, carried.reclassifiedBalanceSheet),
+      }),
+      sources.figureIndex,
+      previous ? (normalizeFinancialAnalysisRow(previous) as any) : null,
+    );
 
     // 4. Pull comps (stub for now)
     const latestRevenue = deriveLatestRevenue(analysisResult.reclassifiedPnl);
@@ -537,6 +548,7 @@ export async function runFinancialAnalysis(
       sources.docMetaById,
       sources.figureIndex,
       (deal.extractedInfo as Record<string, unknown> | null) || {},
+      analysisResult.normalization,
     );
     // One conflict, one row: a verification-check row for a conflict this
     // analysis raised gives way to the analysis's row (discrepancy-check.ts).
@@ -586,15 +598,42 @@ export function markPrivateMaterial(result: AnalysisOutput, index: FigureIndex):
   };
 }
 
-/** Canonical EBITDA/SDE from the final add-back list; text that disagrees is flagged. */
+/**
+ * Canonical EBITDA/SDE from the final add-back list. Text that states a
+ * different figure is corrected to it (a worked sum rebuilt from the
+ * add-backs, growth rates and margins worked out again); a figure the code
+ * can't place is flagged. A sentence that calls the owner's full pay "the
+ * add-back" gains how the analysis splits it (SDE vs adjusted EBITDA).
+ */
 export function finalizeEarnings(input: AnalysisOutput): AnalysisOutput {
   const result = withBalanceSheetFiguresChecked(input);
-  const normalization = withCanonicalEarnings(flagEarningsNotes(result.normalization));
-  const { insights, mismatches } = flagEarningsStatements(result.insights, normalization);
-  const aiReasoning = mismatches.length > 0
-    ? `${result.aiReasoning}${result.aiReasoning ? "\n\n" : ""}Figures checked in code: ${mismatches.map((m) => `${m.where} states ${m.year} ${m.label} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`).join("; ")}.`
-    : result.aiReasoning;
+  const revenue = revenueByYear(result.reclassifiedPnl);
+  const flagged = withCanonicalEarnings(flagEarningsNotes(result.normalization, { revenue }));
+  const normalization = flagged && Array.isArray(flagged.notes)
+    ? { ...flagged, notes: flagged.notes.map((n) => clarifyOwnerPayAddbacks(n, flagged)) }
+    : flagged;
+  const revised = flagEarningsStatements(result.insights, normalization, { revenue });
+  const insights = clarifyInsights(revised.insights, normalization);
+  const mismatches = revised.mismatches;
+  const say = (m: (typeof mismatches)[number]) =>
+    `${m.where} stated ${m.year} ${m.label} ${Math.round(m.stated).toLocaleString("en-US")}; computed ${Math.round(m.expected).toLocaleString("en-US")}`;
+  const corrected = mismatches.filter((m) => m.corrected);
+  const open = mismatches.filter((m) => !m.corrected);
+  const lines = [
+    corrected.length > 0 ? `Figures corrected in code: ${corrected.map(say).join("; ")}.` : "",
+    open.length > 0 ? `Figures checked in code: ${open.map(say).join("; ")}.` : "",
+  ].filter(Boolean);
+  const reasoning = clarifyOwnerPayAddbacks(result.aiReasoning ?? "", normalization);
+  const aiReasoning = lines.length > 0 ? `${reasoning}${reasoning ? "\n\n" : ""}${lines.join(" ")}` : reasoning;
   return { ...result, normalization, insights, aiReasoning };
+}
+
+/** clarifyOwnerPayAddbacks over every insight's text. */
+function clarifyInsights(insights: any, normalization: UiNormalization | null): any {
+  if (!insights || typeof insights !== "object") return insights;
+  const each = (list: any[] | undefined) =>
+    Array.isArray(list) ? list.map((i) => (i && typeof i.detail === "string" ? { ...i, detail: clarifyOwnerPayAddbacks(i.detail, normalization) } : i)) : list;
+  return { ...insights, positive: each(insights.positive), negative: each(insights.negative), ...(insights.neutral ? { neutral: each(insights.neutral) } : {}) };
 }
 
 /**
@@ -1102,6 +1141,9 @@ function bareValue(v: string | null | undefined): string {
  * fields share a meaningful word AND one of the values is the same.
  */
 function matchesExisting(item: FinancialDiscrepancyItem, existing: Discrepancy): boolean {
+  // "Net income (2023)" and "Net income (2024)" share half their words; they
+  // are two conflicts, never one (a settled 2023 row hid the 2024 conflict).
+  if (differentYears(item, existing)) return false;
   if (normalizeFieldKey(item.field) === normalizeFieldKey(existing.field)) return true;
   const shared = questionSimilarity(item.field, existing.field);
   if (shared === 0) return false;
@@ -1222,6 +1264,8 @@ async function persistFinancialDiscrepancies(
   figureIndex?: FigureIndex,
   /** The deal's facts: every finding (and every open row of ours) names the fact it is about. */
   info?: Record<string, unknown>,
+  /** The run's normalization (how the owner's pay splits between SDE and adjusted EBITDA). */
+  normalization: UiNormalization | null = null,
 ): Promise<void> {
   const live = existing.filter((d) => d.status !== "superseded");
   const byId = new Map(live.map((d) => [d.id, d]));
@@ -1251,16 +1295,25 @@ async function persistFinancialDiscrepancies(
   // the broker reads too, not only in the add-backs: a side that folds a
   // dividend (or another add-back, like personal expenses) into the owner's
   // pay is restated as the pay alone (and may then agree with the other side).
+  // The model's suggestion also says what the owner-pay add-back is: "the
+  // correct owner compensation add-back is $180,000" is the SDE add-back —
+  // adjusted EBITDA adds back only the part above the market salary, as the
+  // normalization does (clarifyOwnerPayAddbacks).
   const reframed = rawItems.map((item) => {
     if (!isOwnerCompDiscrepancy(item.field, item.factKey)) return item;
+    const clarified = {
+      ...item,
+      explanation: clarifyOwnerPayAddbacks(item.explanation, normalization),
+      suggestedResolution: clarifyOwnerPayAddbacks(item.suggestedResolution, normalization),
+    };
     const a = ownerPayOnly(item.sourceA.value);
     const b = ownerPayOnly(item.sourceB.value);
-    if (!a && !b) return item;
+    if (!a && !b) return clarified;
     return {
-      ...item,
+      ...clarified,
       sourceA: { ...item.sourceA, value: a ?? item.sourceA.value },
       sourceB: { ...item.sourceB, value: b ?? item.sourceB.value },
-      explanation: `${item.explanation}${item.explanation ? " " : ""}${DIVIDEND_NOTE}`,
+      explanation: `${clarified.explanation}${clarified.explanation ? " " : ""}${DIVIDEND_NOTE}`,
     };
   });
 
@@ -1271,7 +1324,9 @@ async function persistFinancialDiscrepancies(
   const droppedExisting = new Set(dropped.map((d) => d.item.existingId).filter((id): id is string => !!id));
 
   for (const item of items) {
-    const referenced = item.existingId ? byId.get(item.existingId) : undefined;
+    // The model's own existingId is held to the same year rule.
+    const byExisting = item.existingId ? byId.get(item.existingId) : undefined;
+    const referenced = byExisting && !differentYears(item, byExisting) ? byExisting : undefined;
     const settledMatch = referenced && settled.includes(referenced)
       ? referenced
       : settled.find((d) => matchesExisting(item, d));
@@ -1288,10 +1343,12 @@ async function persistFinancialDiscrepancies(
       if (openMatch.source !== "financial_analysis") continue; // interview-check rows are not ours to rewrite
       // Refresh the finding; keep the broker's routing/status, the original
       // field name and a fact key the broker already linked.
+      // A year the broker linked stays, unless the finding is plainly about
+      // another year (it never reaches here then — matchesExisting).
       await storage.updateDiscrepancy(openMatch.id, {
         ...values,
         factKey: openMatch.factKey || values.factKey,
-        factYear: openMatch.factKey ? openMatch.factYear : values.factYear,
+        factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
       });
       continue;
     }
@@ -1517,6 +1574,7 @@ RULES:
 - DISTRIBUTIONS ARE NOT ADD-BACKS: dividends (any class), owner draws, and shareholder-loan repayments are paid out of after-tax profit on the balance sheet — nothing on the P&L to add back. Never include them in an add-back or in owner compensation; mention them in normalization.notes instead.
 - OWNER COMPENSATION: one add-back per working owner, category "owner_comp", with "ownerActualComp" = the owner's actual salary/wages + benefits on the P&L per year (never a dividend) and "marketSalary" = what it would cost to hire someone for the role they do (annual); put the actual compensation in "amounts" too. The code splits it: SDE adds back the owner's FULL compensation, adjusted EBITDA only the part above the market salary. If you cannot estimate a market salary, give "ownerActualComp" and leave "marketSalary" out.
 - An OWNER-COMPENSATION DISCREPANCY compares the owner's pay only (salary, wages, benefits): never fold dividends, draws or other add-backs (personal expenses, a relative's pay) into either side's figure, and restate a PREVIOUSLY RAISED one that did (e.g. the T2 side is "$180,000 T4 salary", not "$268,000 = salary + dividends + personal expenses").
+- STATEMENT TABLES come only from SOURCES 0-4: never build a reclassifiedPnl, reclassifiedBalanceSheet or workingCapital value, a year column or normalization.netIncome from SOURCE 5 (an interim P&L in a broker-only file, "2025 tracking $11.2M" in a CRM note). Mention such a figure in the notes instead. The code checks every table value against the sources and keeps anything only SOURCE 5 states out of the CIM until the broker approves it.
 - Each add-back's "evidence" says where its amount comes from: "statements" (a line on the financial statements or tax returns), "seller" (the seller's interview answers, emails or questionnaire), "estimate" (your own estimate from those sources), or "private" (only SOURCE 5 supports it). An add-back only SOURCE 5 supports may be listed, but mark it "private": it stays out of EBITDA and SDE until the broker approves it.
 - A clawback the business had to REPAY (a drug-plan post-payment audit recovery, a recoupment) is a cost, not income: never remove it as a negative add-back (a one-time clawback may be added back as non-recurring). A recovery the business RECEIVED (insurance proceeds, a legal settlement, a one-time gain) is non-recurring income: remove it with a NEGATIVE add-back.
 - Every EBITDA or SDE figure you state (insights, notes, discrepancies) must tie to net income + the add-backs you listed for that year — adjusted EBITDA = net income + the non-owner add-backs + owner compensation above the market salary; SDE = adjusted EBITDA + the market salary (= net income + the non-owner add-backs + the owner's full compensation). The code recomputes both and flags any figure that doesn't tie.
@@ -1579,7 +1637,8 @@ RULES:
     .map((d: any) => ({
       field: String(d.field),
       factKey: typeof d.factKey === "string" && sources.factKeys.includes(d.factKey.trim()) ? d.factKey.trim() : null,
-      factYear: typeof d.factYear === "string" && /^(?:FY\s*)?\d{4}$/.test(d.factYear.trim()) ? d.factYear.trim().replace(/^FY\s*/i, "") : null,
+      // "2024", "FY2024", "FY24" or the number 2024; else the one year the field names ("2024 Revenue").
+      factYear: normalizeFactYear(d.factYear) ?? discrepancyYear({ field: String(d.field) }),
       sourceA: { source: String(d.sourceA.source ?? "Source A"), value: String(d.sourceA.value), ...(isUuid(d.sourceA.documentId) ? { documentId: d.sourceA.documentId } : {}) },
       sourceB: { source: String(d.sourceB.source ?? "Source B"), value: String(d.sourceB.value), ...(isUuid(d.sourceB.documentId) ? { documentId: d.sourceB.documentId } : {}) },
       documentId: isUuid(d.documentId) ? d.documentId : isUuid(d.sourceB?.documentId) ? d.sourceB.documentId : undefined,

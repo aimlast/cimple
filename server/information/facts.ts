@@ -62,6 +62,7 @@ import {
   sameFigure,
   bareDiscrepancyValue,
   resolutionSourceExtras,
+  yearForMapResolution,
   RESOLVED_NOTE,
   type DiscrepancyTarget,
 } from "./resolution-write";
@@ -122,6 +123,19 @@ export function coerceBrokerValue(current: unknown, input: unknown): unknown {
     map[m[1].trim()] = m[2].trim();
   }
   return Object.keys(map).length > 0 ? map : text;
+}
+
+/**
+ * A fact that is a list of values by year (revenue by year) is never
+ * replaced by a single figure — one year's figure over the map wiped the
+ * other years (a resolution with no year). The broker writes each year on
+ * its own line instead.
+ */
+export function assertKeepsMapShape(current: unknown, value: unknown): void {
+  const cur = repairCharIndexedValue(current);
+  if (isPlainMap(cur) && Object.keys(cur).length > 0 && !isPlainMap(value)) {
+    throw new FactError("That fact is a list of values by year. Write each year on its own line, like 2024: $9,815,000");
+  }
 }
 
 /** Writes a broker value (edit, resolution, chosen alternate) keeping the displaced one. */
@@ -191,6 +205,7 @@ export function editFact(info: Info, key: string, input: unknown): void {
   if (value === "" || (isPlainMap(value) && Object.keys(value).length === 0)) {
     throw new FactError("Enter a value — or delete the fact instead");
   }
+  assertKeepsMapShape(info[key], value);
   setBrokerFact(info, key, value);
 }
 
@@ -622,13 +637,16 @@ export function applyResolutionToInfo(
 ): string | typeof NEEDS_MAPPING | typeof NARRATIVE_FACT | null {
   const resolved = (d.resolvedValue || "").trim();
   if (!resolved) return null;
-  const target = resolutionTarget(info, d);
-  if (target === NO_FACT_KEY) return null;
-  if (!target) return NEEDS_MAPPING;
+  const found = resolutionTarget(info, d);
+  if (found === NO_FACT_KEY) return null;
+  if (!found) return NEEDS_MAPPING;
+  let target: DiscrepancyTarget = found;
   const plan = planResolution(info, target, d, opts);
   if (plan.kind === "none") return null;
   if (plan.kind === "needs_mapping") return NEEDS_MAPPING;
   if (plan.kind === "narrative") return NARRATIVE_FACT;
+  // The plan's target: a map fact's year may have been worked out from the row.
+  target = plan.target;
   const labelled = d.source === "financial_analysis";
   const altKey = target.sub ? `${target.key}.${target.sub}` : target.key;
   // Where each ruled-out value came from — read before anything is overwritten.
@@ -643,7 +661,12 @@ export function applyResolutionToInfo(
   const extra: Partial<FieldSource> = fromPrivate ? { brokerOnly: true, acceptedByBroker: true, hiddenFromSeller: true } : {};
   for (const w of plan.writes) {
     if (w.sub) setBrokerMapEntry(info, w.key, w.sub, w.value, RESOLVED_NOTE, extra);
-    else setBrokerFact(info, w.key, coerceBrokerValue(info[w.key], w.value), { note: RESOLVED_NOTE, ...extra, ...(w.period ? { period: w.period } : {}) });
+    else {
+      const value = coerceBrokerValue(info[w.key], w.value);
+      // Never a figure over a whole map by year (planResolution picks the year).
+      assertKeepsMapShape(info[w.key], value);
+      setBrokerFact(info, w.key, value, { note: RESOLVED_NOTE, ...extra, ...(w.period ? { period: w.period } : {}) });
+    }
   }
   // The conflicting values the broker ruled on stay visible as alternates —
   // bare figures (the " — source" label stripped) under their real kind.
@@ -677,6 +700,8 @@ export interface FactTargetOption {
   label: string;
   /** Short preview of the value on file. */
   value: string;
+  /** A fact that is a list of values by year: its years (newest first) — the broker picks one. */
+  years?: string[];
 }
 
 /**
@@ -689,7 +714,7 @@ export function suggestFactTargets(
   info: Info,
   d: Pick<Discrepancy, "field"> & Partial<Pick<Discrepancy, "interviewValue" | "documentValue" | "resolvedValue">>,
   limit = 6,
-): { suggestions: FactTargetOption[]; all: FactTargetOption[] } {
+): { suggestions: FactTargetOption[]; all: FactTargetOption[]; suggestedYear: string | null } {
   const stem = (w: string) => w.replace(/(?:ies|es|s)$/, "");
   const words = (s: string) =>
     new Set(s.replace(/([a-z])([A-Z])/g, "$1 $2").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length >= 3).map(stem));
@@ -725,13 +750,17 @@ export function suggestFactTargets(
     });
     score += Math.min(2, Array.from(distinctive).filter((w) => valueWords.has(w)).length);
     if (figures.some((f) => text.includes(f))) score += 2;
-    all.push({ key, label, value: text.replace(/\s+/g, " ").slice(0, 120), score });
+    const map = repairCharIndexedValue(raw);
+    const years = isPlainMap(map) ? Object.keys(map).sort((a, b) => b.localeCompare(a)) : undefined;
+    all.push({ key, label, value: text.replace(/\s+/g, " ").slice(0, 120), ...(years && years.length > 0 ? { years } : {}), score });
   }
   all.sort((a, b) => b.score - a.score || a.label.localeCompare(b.label));
   const strip = ({ score: _s, ...o }: FactTargetOption & { score: number }) => o;
   return {
     suggestions: all.filter((o) => o.score >= 2).slice(0, limit).map(strip),
     all: [...all].sort((a, b) => a.label.localeCompare(b.label)).map(strip),
+    // The year the row is about, for a fact that is a list of values by year.
+    suggestedYear: yearForMapResolution(d),
   };
 }
 

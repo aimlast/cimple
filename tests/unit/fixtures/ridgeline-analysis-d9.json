@@ -1,0 +1,265 @@
+{
+ "_source": "Ridgeline Metal clone, financial analysis as stored by the 2026-09-26 acceptance run (acc-data-cim/fa.json, fa-disc.json)",
+ "normalization": {
+  "notes": [
+   "Adjusted EBITDA calculation: Net income + Amortization + Interest + Taxes + One-time expenses (crane rebuild, legal fees, Silverthorn bad debt excess) + Discretionary expenses (Donna salary above market, owner's truck & personal, hockey sponsorship).",
+   "SDE calculation: Adjusted EBITDA + Owner's full compensation (management salary $180,000). The market salary of $165,000 is already included in adjusted EBITDA (only the $15,000 excess is added back), so SDE = Adjusted EBITDA + $165,000.",
+   "2024 Adjusted EBITDA: $896,410 (net income) + $312,000 (D&A) + $58,000 (interest) + $131,590 (taxes) + $64,000 (crane) + $18,000 (legal) + $12,000 (hockey) + $28,000 (truck) + $17,000 (Donna excess) = $1,537,000.",
+   "Check: the note above states 2024 adjusted EBITDA as $1,537,000; the add-backs listed here compute $1,552,000.",
+   "2024 SDE: $1,537,000 (adjusted EBITDA) + $165,000 (market GM salary) = $1,702,000.",
+   "Check: the note above states 2024 SDE as $1,702,000; the add-backs listed here compute $1,717,000.",
+   "Seller's claimed adjusted EBITDA of 'close to 1.8' ($1,800,000) includes the owner's full $180,000 salary, which is only partially an add-back to adjusted EBITDA ($15,000 above market). The seller's figure is closer to SDE ($1,702,000) than adjusted EBITDA ($1,537,000).",
+   "Dividends: Class D dividends of $60,000 paid in 2024 (and 2023) are distributions of after-tax profit from retained earnings. They do not appear on the P&L and are not add-backs to EBITDA or SDE.",
+   "Owner's total compensation: The seller's add-back list claims $260,000 total owner compensation, which appears to include salary ($180,000 T4) + dividends ($60,000 T5) + personal expenses ($28,000) = $268,000. However, only the salary ($180,000) is an expense on the P&L and thus an add-back. Dividends are not an add-back. Personal expenses ($28,000) are a separate discretionary add-back.",
+   "Market salary estimate: A general manager for a $10M industrial fabrication shop in Alberta with 42 employees, CWB Division 2 certification, and customer relationship management responsibilities would command approximately $165,000 in total compensation (base salary + benefits). This is a conservative estimate; some buyers may use a lower replacement cost.",
+   "Donna McAllister: Paid $62,000 in 2024 for part-time bookkeeping (office management per T4 summary). Market rate for a part-time bookkeeper in Leduc/Nisku area is estimated at $45,000. The $17,000 excess is treated as a discretionary add-back (family member above-market compensation).",
+   "One-time expenses: Crane rebuild ($64,000) and legal fees for shareholder agreement amendment ($18,000) are clearly one-time and supported by financial statements. Seller states crane rebuild won't recur for 20 years.",
+   "Discretionary expenses: Hockey sponsorship ($12,000) and owner's truck & personal expenses ($28,000) are discretionary and supported by seller's add-back list. These are typical owner perks in a closely-held business.",
+   "Bad debts: The 2022 bad debt of $22,000 (Silverthorn Energy receivership) is significantly higher than 2023 ($9,000) and 2024 ($12,000). The excess of $11,500 above the average of $10,500 is treated as non-recurring. Ongoing bad debt expense of approximately $10,000-$12,000 per year is normal for this business.",
+   "Interest expense: Declining from $79,000 in 2021 to $58,000 in 2024 as long-term debt is paid down. A buyer may have different financing costs.",
+   "Taxes: Current income taxes on taxes payable method. CCA claimed for tax purposes exceeds book amortization in all years, creating a timing difference but no deferred tax liability is recorded (compilation engagement).",
+   "Growth trajectory: Adjusted EBITDA has grown from $875,000 in 2021 to $1,537,000 in 2024 (76% growth over 3 years), driven by revenue growth (29% over same period) and improving margins.",
+   "Margin analysis: Adjusted EBITDA margin improved from 11.4% in 2021 to 15.7% in 2024. SDE margin improved from 13.5% in 2021 to 17.3% in 2024.",
+   "Working capital: The business generates strong operating cash flow ($1,132,410 in 2024) and has minimal working capital requirements relative to revenue. Cash conversion is excellent.",
+   "Buyer considerations: A buyer may have different financing costs (interest), tax rates, and depreciation schedules. A buyer may also have different discretionary expenses (no hockey sponsorship, different vehicle policy). The normalized EBITDA and SDE figures provide a baseline for valuation and comparison.",
+   "Income Statement net income now ties to the reported net income used here (Owner's truck & personal expenses, Hockey sponsorship (Leduc junior team, discretionary) counted as expenses again on the Income Statement)."
+  ],
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "metric": "sde",
+  "addbacks": [
+   {
+    "id": "ab_muj046cq_51",
+    "type": "ebitda",
+    "label": "Owner compensation (President \u2014 Gord McAllister)",
+    "amounts": {
+     "2021": 15000,
+     "2022": 15000,
+     "2023": 15000,
+     "2024": 15000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "Owner's pay $180,000 (2024) less a $165,000 market salary for the role: the difference counts for EBITDA and SDE; the market salary is added back for SDE only. Management salary paid to majority shareholder Gord McAllister per T4. A general manager for this role would cost approximately $165,000 (market salary for operations-focused GM in Alberta industrial fabrication sector).",
+    "marketSalary": 165000,
+    "ownerCompPart": "excess",
+    "ownerActualComp": {
+     "2021": 180000,
+     "2022": 180000,
+     "2023": 180000,
+     "2024": 180000
+    }
+   },
+   {
+    "id": "ab_muj046cq_51_market",
+    "type": "sde",
+    "label": "Owner compensation (President \u2014 Gord McAllister) \u2014 market salary",
+    "amounts": {
+     "2021": 165000,
+     "2022": 165000,
+     "2023": 165000,
+     "2024": 165000
+    },
+    "approved": true,
+    "category": "owner_comp",
+    "confidence": "high",
+    "description": "SDE adds back the owner's full pay; this is the market-salary part. A buyer who hires someone for the role pays it, so it is not added back to EBITDA.",
+    "ownerCompPart": "market"
+   },
+   {
+    "id": "ab_muj046cq_52",
+    "label": "Donna McAllister salary above market (bookkeeper)",
+    "amounts": {
+     "2023": 13000,
+     "2024": 17000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Donna McAllister (owner's wife) paid $62,000 in 2024 ($58,000 in 2023) for part-time bookkeeping. Market rate for part-time bookkeeper estimated at $45,000. Excess above market: $17,000 in 2024, $13,000 in 2023."
+   },
+   {
+    "id": "ab_muj046cq_53",
+    "label": "Owner's truck & personal expenses",
+    "amounts": {
+     "2024": 28000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Owner's truck on company (fuel, insurance), personal meals, cell phone, season tickets. Per seller's add-back list."
+   },
+   {
+    "id": "ab_muj046cq_54",
+    "label": "Crane rebuild (both 10-ton cranes, one-time)",
+    "amounts": {
+     "2024": 64000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Rebuild of both 10-ton overhead cranes in summer 2024: new hoists, end trucks, pendants. Deducted as current expense. Won't recur for 20 years per seller."
+   },
+   {
+    "id": "ab_muj046cq_55",
+    "label": "Legal fees \u2014 shareholder agreement amendment (one-time)",
+    "amounts": {
+     "2024": 18000
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "Legal fees for unanimous shareholder agreement amendment in November 2024 to facilitate sale. One-time expense."
+   },
+   {
+    "id": "ab_muj046cq_56",
+    "label": "Hockey sponsorship (Leduc junior team, discretionary)",
+    "amounts": {
+     "2024": 12000
+    },
+    "approved": true,
+    "category": "discretionary",
+    "confidence": "high",
+    "description": "Discretionary sponsorship of Leduc junior hockey team. Per seller's add-back list."
+   },
+   {
+    "id": "ab_muj046cq_57",
+    "label": "Amortization of property and equipment",
+    "amounts": {
+     "2021": 251000,
+     "2022": 268000,
+     "2023": 286000,
+     "2024": 312000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Non-cash depreciation expense. Book amortization differs from CCA claimed for tax purposes."
+   },
+   {
+    "id": "ab_muj046cq_58",
+    "label": "Interest on long-term debt",
+    "amounts": {
+     "2021": 79000,
+     "2022": 71000,
+     "2023": 66000,
+     "2024": 58000
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Interest expense on equipment term loan and vehicle/equipment loans. Declining as debt is paid down."
+   },
+   {
+    "id": "ab_muj046cq_59",
+    "label": "Income taxes \u2014 current",
+    "amounts": {
+     "2021": 60750,
+     "2022": 97090,
+     "2023": 150910,
+     "2024": 131590
+    },
+    "approved": true,
+    "category": "other",
+    "confidence": "high",
+    "description": "Current income taxes on taxes payable method (no deferred taxes recorded). CCA exceeds book amortization in all years."
+   },
+   {
+    "id": "ab_muj046cq_60",
+    "label": "Silverthorn Energy receivership bad debt (one-time)",
+    "amounts": {
+     "2022": 11500
+    },
+    "approved": true,
+    "category": "one_time",
+    "confidence": "high",
+    "description": "2022 bad debt of $22,000 was single customer (Silverthorn Energy Services) which went into receivership in September 2022. 2023 and 2024 bad debts ($9,000 and $12,000) are ordinary small write-offs. The $22,000 is treated as non-recurring; the $16,000 excess above the 2023-2024 average of $10,500 is added back."
+   }
+  ],
+  "computed": {
+   "sde": {
+    "2021": 1055000,
+    "2022": 1229500,
+    "2023": 1475000,
+    "2024": 1717000
+   },
+   "latestYear": "2024",
+   "adjustedEbitda": {
+    "2021": 890000,
+    "2022": 1064500,
+    "2023": 1310000,
+    "2024": 1552000
+   },
+   "reportedEbitda": {
+    "2021": 875000,
+    "2022": 1038000,
+    "2023": 1282000,
+    "2024": 1398000
+   }
+  },
+  "netIncome": {
+   "2021": 484250,
+   "2022": 601910,
+   "2023": 779090,
+   "2024": 896410
+  },
+  "adjustedSde": 1717000,
+  "adjustedEbitda": 1552000
+ },
+ "insights": {
+  "positive": [
+   {
+    "id": "in_muj046cr_62",
+    "flag": "the normalization computes 2024 adjusted EBITDA as $1,552,000, not $1,537,000",
+    "type": "positive",
+    "title": "Improving profitability and margins",
+    "detail": "EBITDA grew 76% from $875,000 in 2021 to $1,537,000 in 2024. Adjusted EBITDA margin improved from 11.4% to 15.7%. SDE margin improved from 13.5% to 17.3%. Gross margin stable at 28.7%-30.0%. (Check: the normalization computes 2024 adjusted EBITDA as $1,552,000, not $1,537,000.)",
+    "cimSection": "financialOverview"
+   }
+  ],
+  "negative": [],
+  "neutral": [
+   {
+    "id": "in_muj046cr_90",
+    "type": "neutral",
+    "title": "Dividends paid to owner are not add-backs",
+    "detail": "Class D dividends of $60,000 paid in 2024 (and 2023) to Gord McAllister are distributions of after-tax profit from retained earnings. They do not appear on the P&L and are not add-backs to EBITDA or SDE. Seller's claimed owner compensation of $260,000 appears to include dividends, but only the salary ($180,000) is an add-back.",
+    "cimSection": "financialOverview"
+   }
+  ]
+ },
+ "reclassifiedPnl": {
+  "years": [
+   "2021",
+   "2022",
+   "2023",
+   "2024"
+  ],
+  "rows": [
+   {
+    "id": "row_muj046cp_1",
+    "name": "Contract & fabrication revenue",
+    "values": {
+     "2021": 7680000,
+     "2022": 8420000,
+     "2023": 9160000,
+     "2024": 9815000
+    },
+    "category": "Revenue"
+   }
+  ]
+ },
+ "ownerCompDiscrepancy": {
+  "field": "Owner compensation (2024)",
+  "factKey": "ownerSalary",
+  "interviewValue": "$260,000 total owner compensation \u2014 Seller's add-back list (email June 3, 2025)",
+  "documentValue": "$180,000 T4 salary (management salary to shareholder Gord McAllister) \u2014 T2 corporate tax return 2024 and compiled financial statements FY2024",
+  "explanation": "The seller's add-back list claims $260,000 total owner compensation. However, the T2 tax return and compiled financial statements show only $180,000 in management salary (T4 employment income) paid to Gord McAllister. The T5 shows $60,000 in dividends (Class D shares), and the seller's add-back list also includes $28,000 in personal expenses (truck, fuel, insurance, meals, cell, season tickets). However, dividends are NOT an expense on the P&L and cannot be added back to EBITDA or SDE. Only the salary ($180,000) is an add-back for owner compensation. Personal expenses ($28,000) are a separate discretionary add-back. The seller's $260,000 figure is incorrect because it includes dividends, which are distributions of after-tax profit from retained earnings, not an expense.",
+  "suggestedResolution": "Explain that dividends are not an expense on the P&L and cannot be added back to EBITDA or SDE. The correct owner compensation add-back is $180,000 (T4 salary). Personal expenses ($28,000) are a separate discretionary add-back. Update the seller's understanding and the add-back list to reflect the correct treatment. For CIM purposes, use $180,000 as the owner compensation add-back and $28,000 as a separate discretionary add-back for personal expenses."
+ }
+}

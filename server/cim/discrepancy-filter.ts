@@ -17,6 +17,8 @@
 
 export interface DiscrepancyCandidateLike {
   field: string;
+  /** The fact it is about ("sde", "adjustedEbitda") — says what metric the subject is. */
+  factKey?: string | null;
   suggestedResolution?: string | null;
   interviewValue?: string | null;
   documentValue?: string | null;
@@ -33,6 +35,44 @@ export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "pr
 export interface FilterResult<T> {
   kept: T[];
   dropped: Array<{ item: T; reason: DropReason }>;
+}
+
+// ─── The fiscal year a finding is about ───────────────────────────────────────
+
+/** "2024", "FY2024", "FY 24", 2024 → "2024"; anything else → null. */
+export function normalizeFactYear(v: unknown): string | null {
+  const t = String(v ?? "").trim();
+  const full = t.match(/^(?:FY\s*'?)?((?:19|20)\d{2})$/i);
+  if (full) return full[1];
+  const short = t.match(/^(?:FY\s*'?)(\d{2})$/i);
+  return short ? `20${short[1]}` : null;
+}
+
+/**
+ * The fiscal year a discrepancy (row or finding) is about: its factYear,
+ * else the one year its field names ("Net income (2023)", "FY2024 revenue").
+ * Null when it names none, or more than one.
+ */
+export function discrepancyYear(d: { field?: string | null; factYear?: string | null }): string | null {
+  const own = normalizeFactYear(d.factYear);
+  if (own) return own;
+  const years = new Set(Array.from((d.field ?? "").matchAll(/\b(?:FY\s?'?)?((?:19|20)\d{2})\b/gi)).map((m) => m[1]));
+  return years.size === 1 ? Array.from(years)[0] : null;
+}
+
+/**
+ * Two findings about different fiscal years are never the same conflict,
+ * however alike their names: "Net income (2023)" settled must not hide
+ * "Net income (2024)", and an open 2023 row is never refreshed with 2024's
+ * figures. Only when both name a year.
+ */
+export function differentYears(
+  a: { field?: string | null; factYear?: string | null },
+  b: { field?: string | null; factYear?: string | null },
+): boolean {
+  const ya = discrepancyYear(a);
+  const yb = discrepancyYear(b);
+  return !!ya && !!yb && ya !== yb;
 }
 
 /** Strip the " — source" label the financial analysis appends to a value. */
@@ -214,10 +254,27 @@ export function isAdjustedVsReported(item: DiscrepancyCandidateLike): boolean {
   const a = stripLabel(item.interviewValue ?? "");
   const b = stripLabel(item.documentValue ?? "");
   if (!EARNINGS_RE.test(`${item.field} ${a} ${b}`)) return false;
-  if (ADJUSTED_RE.test(item.field)) return false;
+  // The subject is itself an adjusted metric ("SDE (2024)", "Seller's
+  // discretionary earnings", "2024 Adjusted EBITDA"): both sides are that
+  // metric, so "$1.1M" vs "$898,000 after add-backs" is a real conflict.
+  // Only a side that is plainly the REPORTED figure ("$512,000 net income
+  // before add-backs") is a different metric.
+  const subject = `${item.field} ${(item.factKey ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")}`;
+  if (ADJUSTED_RE.test(subject) || ADJUSTED_SUBJECT_RE.test(subject)) {
+    return reportedSide(a) !== reportedSide(b);
+  }
   const adjA = ADJUSTED_RE.test(a) && !REPORTED_RE.test(a);
   const adjB = ADJUSTED_RE.test(b) && !REPORTED_RE.test(b);
   return adjA !== adjB;
+}
+
+/** Metrics that are adjusted by definition — SDE / seller's discretionary earnings / owner benefit / adjusted EBITDA. */
+const ADJUSTED_SUBJECT_RE = /\b(?:sde|seller'?s?\s+discretionary\s+(?:earnings|cash\s*flow)|discretionary\s+earnings|owner'?s?\s+(?:benefit|discretionary\s+(?:earnings|cash\s*flow))|adjusted\s+ebitda)\b/i;
+/** A side that states the reported (unadjusted) figure of the metric, not the metric itself. */
+function reportedSide(v: string): boolean {
+  if (REPORTED_RE.test(v)) return true;
+  // "$512,000 net income" alone — no add-backs, no adjusted metric named.
+  return /\b(?:net\s+(?:income|profit|earnings)|pre-?tax\s+(?:income|profit))\b/i.test(v) && !ADJUSTED_RE.test(v) && !ADJUSTED_SUBJECT_RE.test(v);
 }
 
 // The model's own explanation says the two sides don't actually conflict

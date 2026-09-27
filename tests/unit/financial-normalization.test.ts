@@ -108,9 +108,10 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
   assert.equal(mismatches.length, 1);
   assert.equal(mismatches[0].stated, 679_312);
   assert.equal(mismatches[0].expected, 660_252);
-  assert.ok((insights!.positive[0] as any).flag, "the wrong figure is flagged");
-  assert.match(insights!.positive[0].detail, /computes 2024 EBITDA as \$660,252/);
-  assert.ok(!(insights!.positive[1] as any).flag, "a figure that ties is left alone");
+  // Round F: the wrong figure is corrected in place, no check left.
+  assert.ok(!(insights!.positive[0] as any).flag);
+  assert.equal(insights!.positive[0].detail, "FY2024 EBITDA of $660,252 on revenue of $9.1M.");
+  assert.equal(insights!.positive[1].detail, "FY2024 EBITDA reached $660,252.", "a figure that ties is left alone");
 }
 
 // ── A worked sum is judged on its result, not its first term ──
@@ -124,10 +125,11 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
     ],
   };
   const flagged = flagEarningsNotes(n)!;
-  const checks = flagged.notes!.filter((x) => x.startsWith("Check:"));
-  assert.equal(checks.length, 1, "only the sum that doesn't tie is flagged");
-  assert.match(checks[0], /states 2024 SDE as \$950,000; the add-backs listed here compute \$907,190/);
-  assert.equal(flagEarningsNotes(flagged)!.notes!.filter((x) => x.startsWith("Check:")).length, 1, "idempotent");
+  // Round F: only the sum that doesn't tie is rebuilt (from the add-backs); the one that ties stays.
+  assert.equal(flagged.notes!.filter((x) => x.startsWith("Check:")).length, 0);
+  assert.equal(flagged.notes![0], "FY2024 SDE: $563,190 + $130K + $214K = $907,190.");
+  assert.equal(flagged.notes![1], "2024 SDE: $777,190 (adjusted EBITDA) + $130,000 (Owner salary above market) = $907,190.");
+  assert.deepEqual(flagEarningsNotes(flagged)!.notes, flagged.notes, "idempotent");
 }
 
 // ── The analyzer's pipeline applies the rules end to end ──
@@ -148,7 +150,8 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
     aiReasoning: "",
   }));
   assert.equal((out.normalization as any).adjustedSde, 140_000);
-  assert.ok((out.insights as any).positive[0].flag, "$190,000 SDE (with the dividend) is flagged");
+  assert.equal((out.insights as any).positive[0].detail, "2024 SDE of $140,000.", "$190,000 SDE (with the dividend) is corrected (round F)");
+  assert.match(out.aiReasoning, /Figures corrected in code: Insight "SDE" stated 2024 SDE 190,000; computed 140,000\./);
   assert.equal((out.workingCapital as any).currentAssets.length, 0);
 }
 
@@ -300,9 +303,14 @@ const ab = (o: Record<string, unknown>) => ({ id: String(o.label), approved: tru
       "2024 SDE of $1,800,000 as claimed by the seller.",
     ],
   };
-  const checks = flagEarningsNotes(n)!.notes!.filter((x) => x.startsWith("Check:"));
-  assert.equal(checks.length, 1, "only the analysis's own worked sum is flagged");
-  assert.match(checks[0], /states 2024 SDE as \$1,777,000; the add-backs listed here compute \$1,717,000/);
+  // Round F: only the analysis's own worked sum is rebuilt; the seller's figures are left as quoted.
+  const notes = flagEarningsNotes(n)!.notes!;
+  assert.equal(notes.filter((x) => x.startsWith("Check:")).length, 0);
+  assert.deepEqual(notes, [
+    "2024 SDE: $1,537,000 (adjusted EBITDA) + $180,000 (Owner salary (T4 wages)) = $1,717,000.",
+    "Seller initially claimed $1.8M SDE for 2024.",
+    "2024 SDE of $1,800,000 as claimed by the seller.",
+  ]);
 }
 
 // ── Round 2: Beacon's stored add-backs reproduce the broker-reviewed figures ──

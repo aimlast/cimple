@@ -12,6 +12,8 @@
  * converts legacy stored rows on read so old analyses render too.
  */
 
+import { pnlNetIncome } from "@shared/pnl-sign";
+
 // ── Canonical shapes (what the client components consume) ──
 
 export interface UiFinancialRow {
@@ -31,6 +33,14 @@ export interface UiReclassifiedTable {
   years: string[];
   rows: UiFinancialRow[];
   notes?: string[];
+  /**
+   * Years with a figure only the broker's private material states (a CRM
+   * note, a broker-only file) — private-figures.ts markPrivateStatements.
+   * Left out of every CIM until the broker approves them (privateApproved).
+   */
+  privateYears?: string[];
+  /** The broker approved the private-only years for the CIM. */
+  privateApproved?: boolean;
 }
 
 export interface UiAddback {
@@ -85,6 +95,9 @@ export interface UiNormalization {
   };
   adjustedEbitda?: number;
   adjustedSde?: number;
+  /** Years whose reported net income only the broker's private material states (left out of the CIM bridge until approved). */
+  privateYears?: string[];
+  privateApproved?: boolean;
 }
 
 export interface UiWorkingCapitalItem {
@@ -104,6 +117,9 @@ export interface UiWorkingCapital {
   history?: Record<string, number>;
   /** How the suggested peg was worked out ("Average of year-end net working capital, 2022–2024"). */
   pegBasis?: string;
+  /** A working-capital line only the broker's private material states: left out of the CIM until approved. */
+  privateEvidence?: boolean;
+  privateApproved?: boolean;
 }
 
 export interface UiClarifyingQuestion {
@@ -340,20 +356,10 @@ export function computePnlNetIncome(table: UiReclassifiedTable | null | undefine
   const years = table.years?.length
     ? table.years
     : Array.from(new Set(table.rows.flatMap((r) => Object.keys(r.values || {}))));
-  for (const year of years) {
-    const byCategory: Record<string, number> = {};
-    for (const row of table.rows) {
-      const v = row.values?.[year];
-      if (v === undefined || v === null) continue;
-      byCategory[row.category] = (byCategory[row.category] ?? 0) + v;
-    }
-    let total = 0;
-    for (const [cat, sum] of Object.entries(byCategory)) {
-      if (cat === "Revenue" || cat === "Other Income") total += sum;
-      else if (cat !== "Excluded") total -= Math.abs(sum);
-    }
-    out[year] = total;
-  }
+  // A negative expense is a recovery (an income-tax recovery adds to net
+  // income); only a category written negative throughout is turned round
+  // (shared/pnl-sign.ts).
+  Object.assign(out, pnlNetIncome(table.rows, years));
   return out;
 }
 
@@ -587,13 +593,60 @@ export function parseJsonLoose<T = any>(text: string): T {
   try {
     return JSON.parse(cleaned) as T;
   } catch {
-    // Fall back to the outermost JSON block
+    // Every complete JSON value in the text, the largest first. The old
+    // fallback took the first "[" to the last "]": a reply of "[]" followed
+    // by prose that mentions "[…]" (or a second value — "[]" then the real
+    // array) failed with "Unexpected non-whitespace character after JSON at
+    // position 4" and the extraction was lost (Ridgeline's add-back email).
     const firstBrace = cleaned.search(/[{[]/);
     if (firstBrace === -1) throw new Error("No JSON found in AI response");
+    const values = jsonValuesIn(cleaned);
+    if (values.length > 0) return values.sort((a, b) => b.length - a.length)[0].value as T;
     const open = cleaned[firstBrace];
     const close = open === "{" ? "}" : "]";
     const lastClose = cleaned.lastIndexOf(close);
     if (lastClose <= firstBrace) throw new Error("Malformed JSON in AI response");
     return JSON.parse(cleaned.slice(firstBrace, lastClose + 1)) as T;
   }
+}
+
+/** The end of the JSON value opening at `start` (bracket-matched, strings respected); -1 when it never closes. */
+function matchingClose(text: string, start: number): number {
+  let depth = 0;
+  let inString = false;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (inString) {
+      if (c === "\\") i++;
+      else if (c === "\"") inString = false;
+      continue;
+    }
+    if (c === "\"") inString = true;
+    else if (c === "{" || c === "[") depth++;
+    else if (c === "}" || c === "]") {
+      depth--;
+      if (depth === 0) return i;
+    }
+  }
+  return -1;
+}
+
+/** Every top-level object or array in a text that parses as JSON, in order. */
+export function jsonValuesIn(text: string): Array<{ value: unknown; length: number }> {
+  const out: Array<{ value: unknown; length: number }> = [];
+  let attempts = 0;
+  for (let i = 0; i < text.length && attempts < 200; i++) {
+    const c = text[i];
+    if (c !== "{" && c !== "[") continue;
+    attempts++;
+    const end = matchingClose(text, i);
+    if (end < 0) continue;
+    try {
+      out.push({ value: JSON.parse(text.slice(i, end + 1)), length: end + 1 - i });
+      i = end;
+    } catch {
+      // Not JSON from here ("[sic]", "[the add-back list]") — try the next opening bracket.
+    }
+  }
+  return out;
 }

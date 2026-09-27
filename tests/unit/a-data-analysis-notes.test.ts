@@ -87,10 +87,13 @@ const bs: any = {
   assert.equal(c.sde["2024"], 1717000);
   const out = flagEarningsNotes(n)!;
   assert.deepEqual(out.notes, ["Normalized 2024 adjusted EBITDA: $1,552,000, after the non-recurring items."]);
-  // A figure that is neither metric still gets its check line.
+  // A figure that is neither metric is corrected to the computed one (round F: prose that ties).
   const wrong = flagEarningsNotes({ ...n, notes: ["2024 SDE of $1,900,000."] })!;
-  assert.ok(wrong.notes!.some((x: string) => /^Check: the note above states 2024 SDE as \$1,900,000; the add-backs listed here compute \$1,717,000\./.test(x)));
-  console.log("✓ '2024 SDE $1,552,000' (the adjusted EBITDA) is renamed; a figure that ties to nothing is still checked");
+  assert.deepEqual(wrong.notes, ["2024 SDE of $1,717,000."]);
+  // With no year and nowhere near any year's figure, it keeps its check line.
+  const unplaced = flagEarningsNotes({ ...n, notes: ["SDE of $3,900,000."] })!;
+  assert.ok(unplaced.notes!.some((x: string) => /^Check: the note above states 2024 SDE as \$3,900,000; the add-backs listed here compute \$1,717,000\./.test(x)));
+  console.log("✓ '2024 SDE $1,552,000' (the adjusted EBITDA) is renamed; a wrong figure is corrected; one the code can't place is still checked");
 }
 
 // 4. Through finalizeEarnings (the analysis' last step).

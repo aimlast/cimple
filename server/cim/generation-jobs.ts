@@ -22,7 +22,7 @@ import { listedAskingPrice } from "../information/deal-mirror";
 import { brokerFactsView } from "../information/facts";
 import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
-import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
+import { cimFinancialsFor } from "./cim-financials";
 import { keepOutFor } from "./keep-out";
 import { hasMonthYear } from "./fact-dates";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
@@ -129,7 +129,8 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
   // Every source entry stamped with its row's visibility (facts1): a
   // broker-only / CRM fact or year never reaches the writer, even on facts
   // recorded before the stamp existed.
-  const extractedInfo = stampSourceDetails(settled.facts, await storage.getDocumentsByDeal(deal.id));
+  const docs = await storage.getDocumentsByDeal(deal.id);
+  const extractedInfo = stampSourceDetails(settled.facts, docs);
   const [branding, insights, analyses, factSourceWords] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
@@ -161,8 +162,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
       : null,
     sectionOutline: template?.sectionOutline ?? null,
     // The broker-reviewed financial analysis (else the latest completed one):
-    // statement tables and bridges are copied from it, never rebuilt.
-    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
+    // statement tables and bridges are copied from it, never rebuilt. One
+    // built from a statement since deleted stops generation (cimFinancialsFor).
+    financials: cimFinancialsFor(analyses, docs),
     factSourceWords,
     // Items the broker's notes or the facts say must not reach buyers (AI
     // review + rules, cached per content).
