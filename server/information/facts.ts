@@ -38,6 +38,7 @@ import {
   LEGACY_SOURCE_NOTE,
   type FieldSource,
   type FieldAlternate,
+  isBrokerFinalSource,
 } from "../interview/info-merger";
 import { GENERIC_FIELD_LABELS, fieldLabel } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
@@ -875,7 +876,9 @@ export async function setMirroredDealFacts(
       const src = getFieldSources(info)[key];
       // Already the broker's value — unless it was only just lined up from the
       // column a moment ago (then give it the real reason: Valuation, creation).
-      if (sameValue(columnText(info[key]), text) && src?.source === "broker" && !isReconciledNote(src.note)) continue;
+      // (Not the broker's notes from their own AI session — the column's
+      // entry makes that figure the broker's deliberate value.)
+      if (sameValue(columnText(info[key]), text) && isBrokerFinalSource(src) && !isReconciledNote(src!.note)) continue;
       setBrokerFact(info, key, text, { note });
     }
   });

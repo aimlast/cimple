@@ -7,7 +7,7 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, isBrokerSessionSource, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher, heldByBroker, withHeldFacts } from "./seller-view";
 import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
@@ -954,6 +954,10 @@ function describeFactSource(
     case "questionnaire":
       return "from the seller's intake questionnaire";
     case "broker":
+      // The broker's notes from their own AI interview session are not a
+      // broker edit — typed from memory, the seller confirms them (their
+      // answer replaces the note, info-merger.ts isBrokerSessionSource).
+      if (isBrokerSessionSource(src)) return "from the broker's notes (their AI session) — confirm with the seller";
       return "confirmed by the broker";
     case "crm":
       return "from the broker's CRM notes — confirm with the seller; never mention the CRM or quote it";

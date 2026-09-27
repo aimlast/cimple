@@ -37,6 +37,7 @@ import {
   RESOLVED_NOTE,
 } from "../information/resolution-write";
 import { HEADLINE_MAPS } from "../documents/merge-policy";
+import { isBrokerFinalSource } from "../interview/info-merger";
 
 export interface ResolvedDiscrepancyNote {
   /** The discrepancy row it came from. */
@@ -262,7 +263,9 @@ export function settleResolvedFacts(
       const src = sourceAtTarget(extractedInfo, at);
       const srcAt = Date.parse(src?.at ?? "");
       if (!(Number.isFinite(resolvedAt) && Number.isFinite(srcAt) && srcAt > resolvedAt)) return false;
-      return src?.source === "broker" || !ruledOut.some((v) => sameFigureExactly(String(cur), v));
+      // (The broker's notes from their own AI session re-stating a ruled-out
+      // figure are not a newer decision — only a broker edit is.)
+      return isBrokerFinalSource(src) || !ruledOut.some((v) => sameFigureExactly(String(cur), v));
     });
     if (newer) {
       status.set(n, "superseded");

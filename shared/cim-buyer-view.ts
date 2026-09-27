@@ -178,19 +178,7 @@ function writingInProgress(s: CimSection): boolean {
  * the rows for the buyer's mode (blind or dd; ignored for normal).
  */
 export function buildBuyerCim(input: BuyerCimInput): BuyerCim {
-  const cim = buildBuyerSections(input);
-  const price = listedPriceText(input.askingPrice);
-  // Charts written before they carried their stated total get it back when
-  // the facts state the whole their slices make (withStatedChartTotal).
-  const amounts = factAmounts(input.deal.extractedInfo);
-  return {
-    ...cim,
-    sections: cim.sections.map((s) => {
-      if (s.locked) return s;
-      const withTotal = withStatedChartTotal(s, amounts);
-      return price ? withListedAskingPrice(withTotal, price) : withTotal;
-    }),
-  };
+  return buildBuyerSections(input);
 }
 
 interface BuyerCimInput {
@@ -210,6 +198,25 @@ interface BuyerCimInput {
 function buildBuyerSections(input: BuyerCimInput): BuyerCim {
   const { deal, accessLevel } = input;
   const mode = cimModeForAccessLevel(accessLevel);
+  // The figures as they stand now, applied to each section BEFORE the Blind
+  // identity check so the check sees exactly what the buyer receives:
+  // charts written before they carried their stated total get it back when
+  // the facts state the whole their slices make (withStatedChartTotal), and
+  // the cover / key numbers show the broker's listed price. In the Blind CIM
+  // a listed price the broker typed as words that identify the business
+  // ("$2.1M plus Harbourline Dental Group's building") is never injected —
+  // the redacted section keeps its own figure.
+  const amounts = factAmounts(deal.extractedInfo);
+  let price = listedPriceText(input.askingPrice);
+  if (price && mode === "blind") {
+    const terms = blindLeakTerms(deal as any, { codename: deal.blindCodename || "Confidential Opportunity" });
+    if (findBlindLeaks(price, terms).length > 0 || blindPlaceholders(price).length > 0) price = null;
+  }
+  const withCurrentFigures = (s: BuyerSection): BuyerSection => {
+    if (s.locked) return s;
+    const withTotal = withStatedChartTotal(s, amounts);
+    return price ? withListedAskingPrice(withTotal, price) : withTotal;
+  };
   const assets = input.media ? new Map(input.media.map((m) => [m.id, m])) : null;
   const mediaIdentifiers = mode === "blind"
     ? [...blindIdentifiers(deal as any), ...dealAddressFragments((deal as any).extractedInfo)]
@@ -242,7 +249,7 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
     const sections: BuyerSection[] = [];
     for (const s of visible) {
       const data = mediaData(s, null);
-      if (data) sections.push({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) });
+      if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) }));
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
@@ -258,13 +265,13 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
     for (const s of visible) {
       if (isMediaLayout(s.layoutType)) {
         const data = mediaData(s, null);
-        if (data) sections.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null });
+        if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null }));
         continue;
       }
       // A DD version written before the section's last edit is stale: the
       // current named content is served until the broker refreshes it.
       const o = s.ddStaleAt ? undefined : overrideMap.get(s.id);
-      sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
+      sections.push(withCurrentFigures(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s)));
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
@@ -285,7 +292,8 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
   // Real key → neutral key, for every section (relatedSections point at keys).
   const keyMap = new Map(visible.map((s) => [s.sectionKey, blindSectionKey(s.id)]));
   /** Serve it only if nothing identifying is left in what the buyer receives. */
-  const serve = (s: CimSection, section: BuyerSection) => {
+  const serve = (s: CimSection, served: BuyerSection) => {
+    const section = withCurrentFigures(served);
     // relatedSections carry the real (title-derived) keys — switch them to
     // neutral ones before the check; unknown keys are dropped.
     const data = section.layoutData as Record<string, unknown> | null;

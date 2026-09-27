@@ -39,6 +39,8 @@ import {
   resolvedYearSources,
   sourceRowLookup,
   SOURCE_META_KEYS,
+  isBrokerFinalSource,
+  isBrokerSessionSource,
   type FieldSource,
   type SourceKind,
 } from "../interview/info-merger";
@@ -246,6 +248,9 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
 
   const confidenceOf = (key: string, src: InferredFieldSource | undefined): FactConfidence => {
     const kind = src?.source;
+    // The broker's notes from their own AI interview session are not a
+    // broker edit: typed from memory, the seller hasn't confirmed them.
+    if (isBrokerSessionSource(src)) return "inferred";
     if (kind === "broker") return "confirmed";
     // A website / CRM / social value the broker accepted into the facts is
     // treated as a fact everywhere (CIM writers included) — shown as such.
@@ -346,7 +351,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       alternates: alternatesFor(key),
       ...(agree.length > 0 ? { corroboratedBy: agree } : {}),
       ...(yearSources ? { yearSources } : {}),
-      brokerEdited: src?.source === "broker",
+      brokerEdited: isBrokerFinalSource(src),
       ...extra,
     };
   };

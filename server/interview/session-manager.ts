@@ -151,7 +151,7 @@ import { ensureSectionImportance } from "./section-importance";
 import { ensureInterviewPlan } from "./interview-plan";
 import { generateSellerProfile } from "./eq-profiler";
 import { runInterviewLearningLoop } from "./learning-loop";
-import { isDealRowFact } from "../information/deal-mirror";
+import { isInterviewHiddenFact } from "../information/deal-mirror";
 import { sellerInterviewView, withHeldFacts } from "./seller-view";
 import { completionBlockers, type Exchange } from "./completion-gaps";
 import {
@@ -2417,17 +2417,18 @@ async function processTurnLocked(
   if (!degraded && (early || (aiResponse.shouldEnd && !forcedEnd))) {
     let verdict: GovernanceResult | null = null;
     if (aiResponse.shouldEnd && !forcedEnd) {
-      // A seller answer to a field that holds the broker's deal-row price is
-      // kept beside it (see the provenance block below) — count it here too.
+      // A seller answer to a field that holds the broker's price (hidden from
+      // the interview) is kept beside it (see the provenance block below) — count it here too.
       // A seller answer replacing a broker-only source's value becomes the
       // seller's own (as the provenance block below records it), so the
       // interview's view counts it.
       const prospectiveInfo: Record<string, unknown> = applyTurn();
       const priorSourcesNow = getFieldSources(existingExtracted);
       for (const c of changes) {
-        if (isDealRowFact(existingExtracted, c.fieldName)) {
+        const priorNow = priorSourcesNow[c.fieldName];
+        if (isBrokerFinalSource(priorNow) && isInterviewHiddenFact(existingExtracted, c.fieldName)) {
           recordAlternate(prospectiveInfo, c.fieldName, c.newValue, { source: "interview", at: new Date().toISOString() });
-        } else if (priorSourcesNow[c.fieldName]?.source !== "broker") {
+        } else if (!isBrokerFinalSource(priorNow)) {
           setFieldSource(prospectiveInfo, c.fieldName, { source: "interview", at: new Date().toISOString() });
         }
       }
@@ -3061,10 +3062,10 @@ async function processTurnLocked(
         (!prev || isUntrackedSource(prev) ? SOURCE_RANK.interview : effectiveRank(c.fieldName, prev)) > BROKER_SESSION_RANK;
       if (priorOutranksBrokerNotes || (hadValue && isBrokerFinalSource(prev))) {
         mergedInfo[c.fieldName] = priorValue;
-        // The broker's deal-row price is hidden from the interview, which
+        // The broker's price is hidden from the interview, which
         // sees this seller answer in its place (interviewFactView) — so the
         // interview keeps the seller's confidence in it, as before.
-        if (!isDealRowFact(existingExtracted, c.fieldName)) {
+        if (!isInterviewHiddenFact(existingExtracted, c.fieldName)) {
           if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
           else delete updatedConfidence[c.fieldName];
         }

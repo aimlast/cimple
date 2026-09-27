@@ -34,13 +34,14 @@ import {
   serializeFactValue,
   yearSource,
   sourceRowLookup,
+  isBrokerSessionSource,
   type FieldSource,
 } from "../interview/info-merger";
 import { agentConfig } from "../interview/config/load-config";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
 import { sliceRelevantText } from "../financial/analyzer";
 import { filterDiscrepancyItems, isMissingSide, sidesEquivalent, numberTokens, tokensMatch, differentYears, FINDING_RELATIONS, type NumTok, type FindingRelation } from "./discrepancy-filter";
-import type { DiscrepancySideSources, DiscrepancySideSource } from "@shared/discrepancy-sides";
+import { BROKER_SESSION_SIDE_LABEL, type DiscrepancySideSources, type DiscrepancySideSource } from "@shared/discrepancy-sides";
 import { scrubPrivateText } from "./discrepancy-privacy";
 import { likeForLikeCountConflict, stripSourceRefs, sameConflictByFigures } from "./discrepancy-backstop";
 import { HEADLINE_MAPS } from "../documents/merge-policy";
@@ -291,6 +292,8 @@ export interface DiscrepancyInput {
   entries?: FactEntry[];
 }
 
+/** How the check names the broker's own AI-session notes (a claim, not a broker edit). */
+const BROKER_NOTES_REF_LABEL = "Broker's notes (their own AI interview session)";
 const CLAIM_KINDS = new Set(["interview", "questionnaire", "call", "video_call", "email"]);
 const KIND_LABEL: Record<string, string> = {
   interview: "Seller interview",
@@ -401,6 +404,11 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
     } else {
       kind = src!.source as SourceKind;
       if ((doc && doc.visibility === "broker_only") || src!.brokerOnly || kind === "crm") cls = "private";
+      // The broker's notes from their own AI interview session are not a
+      // broker edit: typed from memory ("about 12 staff"), they are checked
+      // against the documents like any other claim (info-merger.ts
+      // isBrokerSessionSource). Only a deliberate edit or resolution is final.
+      else if (isBrokerSessionSource(src)) cls = "claim";
       else if (kind === "broker") cls = "settled";
       else if (CLAIM_KINDS.has(kind)) cls = "claim";
       else if (kind === "document") cls = doc && !isEvidenceDocument(doc) ? (doc.visibility === "broker_only" ? "private" : "claim") : "evidence";
@@ -411,7 +419,9 @@ export function buildDiscrepancyInput(info: Record<string, unknown>, documents: 
     if (existing) return existing;
     const label = doc
       ? `${cls === "private" ? "Broker-private file" : KIND_LABEL[kind] ?? "Source"}: ${doc.name}`
-      : isUntrackedSource(src) ? "Seller (source not recorded)" : KIND_LABEL[kind] ?? kind;
+      : isUntrackedSource(src) ? "Seller (source not recorded)"
+      : kind === "broker" && cls === "claim" ? BROKER_NOTES_REF_LABEL
+      : KIND_LABEL[kind] ?? kind;
     const ref: SourceRef = { ref: `S${refs.length + 1}`, cls, kind, ...(doc ? { documentId: doc.id } : {}), label };
     refs.push(ref);
     refByOrigin.set(origin, ref);
@@ -793,7 +803,7 @@ ${facts.length > 0 ? `Facts it states:\n${facts.map(renderEntry).join("\n")}\n` 
 ## Sources
 ${refLines.join("\n") || "(none)"}
 
-## What the seller said (claims)
+## What the seller said (claims)${input.refs.some((r) => r.kind === "broker" && r.cls === "claim") ? `\n(A claim from "${BROKER_NOTES_REF_LABEL}" is the broker's own notes typed from memory — check it like the seller's; call it the broker's notes, never "the seller said".)` : ""}
 ${input.claims.map(renderEntry).join("\n") || "(none)"}
 ${input.privateClaims.length > 0 ? `\n## Broker-private notes (compare, never quote or name in the explanation)\n${input.privateClaims.map(renderEntry).join("\n")}\n` : ""}
 ## Settled by the broker (final — never flag)
@@ -826,7 +836,9 @@ Report the real conflicts with the report_discrepancies tool.`;
           ...(r.documentId ? { documentId: r.documentId } : {}),
           ...(r.cls === "private" ? { brokerOnly: true } : {}),
           // A private side carries no name — the panel says "Your private notes".
-          ...(r.cls === "private" ? {} : { label: r.documentId ? docMap.get(r.documentId)?.name ?? r.label : r.label }),
+          ...(r.cls === "private"
+            ? {}
+            : { label: r.documentId ? docMap.get(r.documentId)?.name ?? r.label : r.kind === "broker" && r.cls === "claim" ? BROKER_SESSION_SIDE_LABEL : r.label }),
         }
       : undefined;
 
@@ -847,6 +859,7 @@ Report the real conflicts with the report_discrepancies tool.`;
     if (r.cls === "private") return null;
     const docName = r.documentId ? docMap.get(r.documentId)?.name : undefined;
     if (docName) return `“${docName}”`;
+    if (r.kind === "broker" && r.cls === "claim") return "your AI interview session notes";
     return REF_KIND_NAME[r.kind] ?? "another source";
   };
 
