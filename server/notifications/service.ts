@@ -283,6 +283,13 @@ export interface NotifyOptions {
   metadata?: Record<string, any>;
   // Override default routing — send to specific members instead
   specificMemberIds?: string[];
+  /**
+   * The broker whose own action caused this event (e.g. they submitted or
+   * rejected a buyer). They aren't emailed about it — neither as the deal's
+   * owning broker nor as a broker-team member with their account email.
+   * Everyone else routed for the event still is.
+   */
+  actorBrokerId?: string | null;
 }
 
 export interface NotifyResult {
@@ -412,6 +419,11 @@ async function notifyOwningBrokerFallback(
 ): Promise<NotifyResult> {
   const deal = await storage.getDeal(dealId);
   if (!deal?.brokerId) return NO_RECIPIENTS;
+  if (opts.actorBrokerId && opts.actorBrokerId === deal.brokerId) {
+    // Their own action: nothing to tell them.
+    console.log(`[notify] ${eventType}: the owning broker did this themselves — not notified`);
+    return NO_RECIPIENTS;
+  }
   const user = await storage.getUser(deal.brokerId);
   const email = user?.email?.trim();
   if (!user || !email || !email.includes("@")) {
@@ -488,6 +500,15 @@ export async function notify(
     const brokerFallback = brokerRouted && !recipients.some((m) => m.teamType === "broker")
       ? await notifyOwningBrokerFallback(dealId, eventType, opts)
       : NO_RECIPIENTS;
+
+    // The broker who caused the event isn't told about it (matched to a
+    // broker-team member by their account email).
+    if (opts.actorBrokerId && recipients.length > 0) {
+      const actorEmail = (await storage.getUser(opts.actorBrokerId).catch(() => undefined))?.email?.trim().toLowerCase();
+      if (actorEmail) {
+        recipients = recipients.filter((m) => !(m.teamType === "broker" && m.email?.trim().toLowerCase() === actorEmail));
+      }
+    }
 
     if (recipients.length === 0) {
       if (sellerRouted) {

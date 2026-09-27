@@ -53,7 +53,7 @@ import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser, reinviteBuyerWithoutPassword } from "./buyer-auth/routes.js";
 import { buildApprovalInviteEmail, type ApprovalEmailVariant } from "./buyers/approval-emails.js";
 import { sellerReviewPayload } from "./buyers/seller-review-payload.js";
-import { outreachReplyTo } from "./buyers/outreach-reply.js";
+import { outreachReplyTo, outreachFromName, brokerDisplayName } from "./buyers/outreach-reply.js";
 import { answerNoticeDue, notifyBuyerQuestionAnswered } from "./qa/answer-notice.js";
 import { buyerNdaFor, signedNdaCopy, type BuyerNdaSignature } from "./buyers/buyer-nda.js";
 import { validSignerName } from "@shared/buyer-nda";
@@ -959,7 +959,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // $2M revenue, $628K SDE" in a cold email). Bands + region only.
       const { blindDealSummary } = await import("./buyers/blind-deal-summary.js");
       const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
-      const brokerName = brokerUser?.name || "Your broker";
+      const brokerName = brokerDisplayName(brokerUser) || "Your broker";
       const dealSummary = blindDealSummary(deal);
       // Deterministic identity check on every draft (and on the deep-check
       // hook fed into it): a draft naming the business, owner, staff, city,
@@ -1112,7 +1112,8 @@ Return JSON only.`,
           code: "no_reply_to",
         });
       }
-      const brokerName = brokerUser?.name?.trim() || brokerUser?.username || null;
+      // Never the login username on the From line: the display name, else the brokerage.
+      const fromName = outreachFromName(brokerUser, (branding as any)?.companyName);
       // Only buyers on this broker's own list can be emailed from here.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
       const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -1145,7 +1146,7 @@ Return JSON only.`,
 
         const sent = await sendDirectEmail(buyer.email, item.subject, html, undefined, {
           replyTo,
-          fromName: brokerName ? `${brokerName} via Cimple` : null,
+          fromName,
         });
 
         // Record the outreach regardless of email success — we want full audit
@@ -1480,7 +1481,7 @@ Return JSON only.`,
         call = { roomName: room.name, roomUrl: room.url, startedAt: new Date().toISOString(), expiresAt: room.expiresAt };
         await storage.updateDeal(deal.id, { interviewCall: call } as any);
       }
-      const token = await createMeetingToken(call.roomName, broker?.name || broker?.username || "Broker", true);
+      const token = await createMeetingToken(call.roomName, brokerDisplayName(broker) || "Broker", true);
       res.json({ roomUrl: call.roomUrl, token, startedAt: call.startedAt, expiresAt: call.expiresAt });
     } catch (error: any) {
       console.error("[call] start failed:", error);
@@ -4209,7 +4210,7 @@ Return JSON only.`,
       const broker = deal.brokerId ? await storage.getUser(deal.brokerId) : null;
       res.json({
         businessName: deal.businessName,
-        brokerName: broker?.name || broker?.username || null,
+        brokerName: brokerDisplayName(broker),
         ndaText: deal.ndaText,
         ndaSigned: !!deal.ndaSigned,
         ndaSignedAt: deal.ndaSignedAt,
@@ -4393,8 +4394,9 @@ Return JSON only.`,
         { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
       ];
 
-      // Broker contact
+      // Broker contact (their display name, else the brokerage — never the login username)
       const broker = await storage.getUser(deal.brokerId);
+      const sellerBrokerCompany = broker ? ((await storage.getBrandingByBroker(deal.brokerId).catch(() => undefined)) as any)?.companyName?.trim() || null : null;
 
       res.json({
         businessName: deal.businessName,
@@ -4434,7 +4436,7 @@ Return JSON only.`,
           }),
         },
         pendingApprovals: pendingSeller.length,
-        broker: broker ? { name: broker.name || broker.username, email: broker.email } : null,
+        broker: broker ? { name: brokerDisplayName(broker) || sellerBrokerCompany || "Your broker", email: broker.email } : null,
       });
     } catch (error: any) {
       console.error("Error fetching seller progress:", error);
@@ -4819,12 +4821,18 @@ Return JSON only.`,
       // applyNdaProfile may have just written ndaProfile — keep its answers.
       const afterProfile = await storage.getBuyerAccess(access.id);
       const priorProfile = ((afterProfile ?? access).ndaProfile as Record<string, unknown> | null) ?? {};
+      // On a deal that requires the NDA nothing was served before this
+      // signature, so a view stamp already on the row came from the gate
+      // (rows stamped before the gate stopped counting): clear it, and the
+      // first real view that follows starts the reminder clock afresh.
+      const gateStamped = !!ndaDeal.ndaRequired && !access.ndaSigned && !!access.firstViewedAt;
       await storage.updateBuyerAccess(access.id, {
         ndaSigned: true,
         ndaSignedAt: signedAt,
         ndaSignedIp: ip,
         ndaVersion: nda.hash,
         ndaProfile: { ...priorProfile, signature },
+        ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
       storage.createAnalyticsEvent({
         dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,
@@ -4934,6 +4942,13 @@ Return JSON only.`,
 
       const deal = await storage.getDeal(access.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // A buyer who hasn't signed a required NDA has never seen the CIM: a
+      // decision from them would move the broker's CRM and tell the broker
+      // they "finished reviewing" it. The view room shows no decision panel
+      // before the NDA; the API refuses too.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Please sign the NDA before sharing your decision.", code: "nda_required" });
+      }
 
       // Every decision (including "need more time") lands in the analytics
       // stream so it shows up in the broker's activity timeline.
@@ -5224,6 +5239,8 @@ Return JSON only.`,
         actionUrl: `/deal/${deal.id}?approval=${request.id}`,
         businessName: deal.businessName,
         metadata: { approvalRequestId: request.id, category, riskLevel },
+        // The broker who submitted it isn't emailed about their own request.
+        actorBrokerId: req.session.brokerId ?? null,
       });
 
       res.json(request);
@@ -5266,6 +5283,8 @@ Return JSON only.`,
           actionUrl: `/deal/${deal.id}`,
           businessName: deal.businessName,
           metadata: { approvalRequestId: request.id },
+          // The rejecting broker isn't emailed about their own rejection.
+          actorBrokerId: req.session.brokerId ?? null,
         });
 
         return res.json(updated);

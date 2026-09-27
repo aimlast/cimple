@@ -77,6 +77,14 @@ export function registerBuyerDashboardRoutes(app: Express) {
       // register someone else's address, and each card carries the link's
       // view token.
       const verified = dashboardShowsLinkedDeals(buyer);
+      // A verified account also picks up links shared with its email that
+      // were never linked (granted before it verified, or signed at the NDA
+      // while it wasn't) — the dashboard is where the buyer expects them.
+      if (verified) {
+        await storage.linkBuyerAccessToVerifiedBuyer(buyerUserId).catch((err) => {
+          console.warn("[buyer-dashboard] linking shared deals failed:", err?.message || err);
+        });
+      }
       const byUser = verified ? await storage.getBuyerAccessByBuyerUser(buyerUserId) : [];
 
       // Dedupe + enrich

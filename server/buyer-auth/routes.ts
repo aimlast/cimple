@@ -408,6 +408,11 @@ export function registerBuyerAuthRoutes(app: Express) {
         emailVerified: true,
         lastLoginAt: new Date(),
       } as any);
+      // The inbox is proven: links shared with this email that were left
+      // unlinked while it wasn't (grants, NDA signings) now reach the dashboard.
+      await storage.linkBuyerAccessToVerifiedBuyer(user.id).catch((err) => {
+        console.warn("[buyer-auth] linking shared deals after verification failed:", err?.message || err);
+      });
 
       req.session.buyerId = user.id;
       res.json({ user: toPublicBuyerUser(updated!) });

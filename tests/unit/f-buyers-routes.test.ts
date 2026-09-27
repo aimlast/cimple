@@ -446,6 +446,169 @@ async function main() {
   await settle();
   assert.equal(sent.length, 0, "F11: no broker email from a dead link");
 
+  // ═══════════════════════════ Round 2 ═══════════════════════════════════
+  const { hashResetToken } = await import("../../server/buyer-auth/reset-token");
+  Object.assign(S, {
+    getBuyerUserByResetToken: async (tok: string) => read("buyers", (b) => b.resetToken === hashResetToken(tok) || b.resetToken === tok),
+    // Same rule as the SQL: only a verified account, only unlinked rows, email match.
+    linkBuyerAccessToVerifiedBuyer: async (bid: string) => {
+      const b = find("buyers", (x) => x.id === bid);
+      if (!b?.emailVerified) return 0;
+      let n = 0;
+      for (const a of T.access) {
+        if (a.buyerUserId == null && String(a.buyerEmail).toLowerCase() === String(b.email).toLowerCase()) { a.buyerUserId = b.id; n++; }
+      }
+      return n;
+    },
+  });
+
+  // ════ R2-F5 — From line never carries the login username ══════════════
+  reset();
+  T.users.push({ id: "B3", role: "broker", username: "morgan_login", name: "  ", email: "desk@brassline.invalid", settings: {} });
+  T.users.push({ id: "B5", role: "broker", username: "solo_login", name: null, email: "solo@broker.invalid", settings: {} });
+  T.deals.push({ ...deal, id: "D5", brokerId: "B3" }, { ...deal, id: "D6", brokerId: "B5" });
+  const realBranding = S.getBrandingByBroker;
+  S.getBrandingByBroker = async (bid: string) => (bid === "B3" ? { companyName: "Brassline Advisory Partners" } : undefined);
+  res = await call("POST", "/api/deals/D5/send-outreach", { outreach: [{ buyerUserId: "U-out", subject: "s", body: "Hi,\n\nJust reply." }] }, { "x-test-broker": "B3" });
+  assert.equal(res.status, 200, res.text);
+  let outMail = sent.find((m) => m.to.includes("lead@acquirer.invalid"))!;
+  assert.ok(outMail.from.startsWith("Brassline Advisory Partners via Cimple <"), `R2-F5: no display name → the brokerage (${outMail.from})`);
+  assert.ok(!/morgan_login/.test(JSON.stringify(outMail)), "R2-F5: the username appears nowhere in the email");
+  // Neither a display name nor a brokerage → the plain Cimple sender.
+  reset();
+  res = await call("POST", "/api/deals/D6/send-outreach", { outreach: [{ buyerUserId: "U-out", subject: "s", body: "b" }] }, { "x-test-broker": "B5" });
+  assert.equal(res.status, 200, res.text);
+  outMail = sent.find((m) => m.to.includes("lead@acquirer.invalid"))!;
+  assert.equal(outMail.from, "Cimple <notifications@cimple.ca>", "R2-F5: default sender");
+  assert.ok(!/solo_login/.test(JSON.stringify(outMail)));
+  // The buyer-profile "email this buyer" send follows the same rule.
+  const realSelect = (db as any).select;
+  (db as any).select = () => {
+    const chain: any = { from() { return chain; }, where() { return chain; }, limit() { return chain; },
+      then(res2: any, rej: any) { return Promise.resolve([{ id: "U-out" }]).then(res2, rej); } };
+    return chain;
+  };
+  const realInsert = (db as any).insert;
+  (db as any).insert = () => ({ values: (row: any) => ({ returning: async () => [{ id: "BE1", ...row }] }) });
+  reset();
+  res = await call("POST", "/api/broker/buyers/U-out/email", { subject: "Hello", body: "A note." }, { "x-test-broker": "B3" });
+  assert.equal(res.status, 200, res.text);
+  outMail = sent.find((m) => m.to.includes("lead@acquirer.invalid"))!;
+  assert.ok(outMail.from.startsWith("Brassline Advisory Partners via Cimple <"), `R2-F5: buyer-profile email From (${outMail.from})`);
+  assert.ok(!/morgan_login/.test(JSON.stringify(outMail)), "R2-F5: buyer-profile email never shows the username");
+  (db as any).select = realSelect;
+  (db as any).insert = realInsert;
+  S.getBrandingByBroker = realBranding;
+  const { outreachFromName, brokerDisplayName } = await import("../../server/buyers/outreach-reply");
+  assert.equal(outreachFromName({ name: "Morgan Ellis" }, "Brassline"), "Morgan Ellis via Cimple");
+  assert.equal(outreachFromName({ name: "" }, "Brassline"), "Brassline via Cimple");
+  assert.equal(outreachFromName({ name: null }, " "), null);
+  assert.equal(brokerDisplayName({ name: "   " }), null);
+
+  // ════ R2 — demo deals are never automated by the reminder pipeline ═══
+  reset();
+  T.deals.push({ ...deal, id: "D-demo", demoKey: "pacific-coast-logistics" });
+  const demoRow = mkAccess({ dealId: "D-demo", ndaSigned: true, ndaSignedAt: new Date(now - 20 * DAY), firstViewedAt: new Date(now - 9 * DAY), reminderStage: "warning_sent", lastReminderAt: new Date(now - 3 * DAY), decision: null });
+  assert.equal(await processReminderForAccess(demoRow as any, now, "https://app.test"), "none", "R2: a demo deal's buyer is not lapsed");
+  assert.equal(demoRow.decision, null, "R2: the showcase row is untouched");
+  assert.equal(sent.length, 0, "R2: nobody is emailed about a fictional buyer");
+  // The same row on a real deal would lapse (the pipeline itself still works).
+  const realRow = mkAccess({ ndaSigned: true, ndaSignedAt: new Date(now - 20 * DAY), firstViewedAt: new Date(now - 9 * DAY), reminderStage: "warning_sent", lastReminderAt: new Date(now - 3 * DAY), decision: null });
+  assert.equal(await processReminderForAccess(realRow as any, now, "https://app.test"), "lapse");
+
+  // ════ R2 — a decision needs the NDA first ═════════════════════════════
+  reset();
+  const unsignedDecider = mkAccess({ buyerEmail: "early@buyer.invalid" });
+  res = await call("POST", `/api/view/${unsignedDecider.accessToken}/decision`, { decision: "interested" });
+  assert.equal(res.status, 403, "R2: no decision before a required NDA");
+  assert.equal(res.json.code, "nda_required");
+  assert.equal(unsignedDecider.decision, "under_review", "R2: nothing recorded");
+  res = await call("POST", `/api/view/${unsignedDecider.accessToken}/decision`, { decision: "need_more_time" });
+  assert.equal(res.status, 403, "R2: 'need more time' also needs the NDA");
+  await settle();
+  assert.equal(sent.length, 0, "R2: the broker is not told a gate-only visitor 'finished reviewing'");
+  assert.equal(T.events.filter((e) => e.buyerAccessId === unsignedDecider.id && e.eventType === "decision").length, 0);
+  // No NDA required on the deal → decisions work without one.
+  T.deals.push({ ...deal, id: "D-open", ndaRequired: false });
+  const openDecider = mkAccess({ dealId: "D-open", buyerEmail: "open@buyer.invalid", firstViewedAt: new Date(now - DAY) });
+  res = await call("POST", `/api/view/${openDecider.accessToken}/decision`, { decision: "not_interested" });
+  assert.equal(res.status, 200, res.text);
+
+  // ════ R2 — legacy gate stamps don't start the reminder clock ═══════════
+  reset();
+  // Signed yesterday, stamped at the gate a week ago (before the gate fix):
+  // the clock runs from the signature, so no day-6 "final follow-up" now.
+  const legacy = mkAccess({ ndaSigned: true, ndaSignedAt: new Date(now - 1 * DAY), firstViewedAt: new Date(now - 7 * DAY), reminderStage: "none", decision: null });
+  assert.equal(await processReminderForAccess(legacy as any, now, "https://app.test"), "none", "R2: clock starts at the signature");
+  assert.equal(sent.length, 0);
+  const { reminderActionFor, reminderClockStart } = await import("../../server/reminders/decision-reminders");
+  assert.equal(reminderActionFor(legacy as any, now + 3.5 * DAY, { ndaRequired: true }), "reminder", "R2: day 3 after signing → reminder");
+  assert.equal(reminderActionFor(legacy as any, now + 5.5 * DAY, { ndaRequired: true }), "warning", "R2: day 6 after signing → warning");
+  assert.equal(reminderClockStart(legacy as any, { ndaRequired: false }), new Date(legacy.firstViewedAt).getTime(), "R2: no NDA required → the first view");
+  // Signing now clears a gate stamp so the first real view restarts the clock.
+  const gateStamped = mkAccess({ accessLevel: "loi", firstViewedAt: new Date(now - 4 * DAY), viewCount: 3, reminderStage: "reminder_sent" });
+  res = await call("GET", `/api/view/${gateStamped.accessToken}/buyer-profile`);
+  res = await call("POST", `/api/view/${gateStamped.accessToken}/sign-nda`, { profile, signerName: "Sam Rivera", termsHash: res.json.nda.hash });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(gateStamped.firstViewedAt, null, "R2: the gate stamp is cleared at signing");
+  assert.equal(gateStamped.viewCount, 0);
+  assert.equal(gateStamped.reminderStage, "none");
+  res = await call("GET", `/api/view/${gateStamped.accessToken}`);
+  assert.equal(res.status, 200, res.text);
+  assert.ok(gateStamped.firstViewedAt && now - new Date(gateStamped.firstViewedAt).getTime() < 60_000, "R2: the first real view starts the clock");
+  assert.equal(gateStamped.viewCount, 1);
+
+  // ════ R2-F4 — confirming the email brings the shared deal to the dashboard
+  reset();
+  const rawTok = "confirm-token-123";
+  T.buyers.push({ id: "U-late", email: "late@buyer.invalid", passwordHash: "h", emailVerified: false, name: "Late", source: "self_signup", buyerCriteria: {}, resetToken: hashResetToken(rawTok), resetTokenExpiresAt: new Date(now + DAY) });
+  const lateGrant = mkAccess({ buyerEmail: "Late@Buyer.invalid", ndaSigned: true, buyerUserId: null });
+  res = await call("GET", "/api/buyer-auth/dashboard", undefined, { "x-test-buyer": "U-late" });
+  assert.equal(res.json.deals.length, 0, "R2-F4: unverified → nothing yet");
+  assert.equal(lateGrant.buyerUserId, null, "R2-F4: and nothing is linked while unverified");
+  res = await call("POST", `/api/buyer-auth/set-password/${rawTok}`, { password: "a-good-password" });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(lateGrant.buyerUserId, "U-late", "R2-F4: confirming the email links the shared deal");
+  res = await call("GET", "/api/buyer-auth/dashboard", undefined, { "x-test-buyer": "U-late" });
+  assert.equal(res.status, 200, res.text);
+  assert.equal(res.json.deals.length, 1, "R2-F4: the dashboard lists it");
+  assert.equal(res.json.emailUnverified, false);
+  // A verified account opening its dashboard picks up a link left unlinked.
+  const laterGrant = mkAccess({ dealId: "D2", buyerEmail: "late@buyer.invalid", ndaSigned: true });
+  res = await call("GET", "/api/buyer-auth/dashboard", undefined, { "x-test-buyer": "U-late" });
+  assert.equal(laterGrant.buyerUserId, "U-late", "R2-F4: self-heals on the dashboard");
+  assert.equal(res.json.deals.length, 2);
+
+  // ════ R2 — the broker isn't emailed about their own actions ════════════
+  reset();
+  const r2a = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorBrokerId: "B1" });
+  assert.equal(r2a.recipients, 0, "R2: the owner submitted it — no email to themselves");
+  assert.equal(sent.length, 0);
+  // Someone else's action still reaches the owner.
+  const r2b = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorBrokerId: "B-other" });
+  assert.equal(r2b.via, "owning_broker");
+  assert.equal(brokerEmails().length, 1);
+  // A broker-team member who is the actor is skipped; other members still hear.
+  reset();
+  T.members.push(
+    { id: "M-self", dealId: "D1", teamType: "broker", role: "lead", email: "MORGAN@brokerage.invalid", inviteStatus: "accepted", emailNotifications: true },
+    { id: "M-assoc", dealId: "D1", teamType: "broker", role: "associate", email: "assoc@team.invalid", inviteStatus: "accepted", emailNotifications: true },
+  );
+  await notify("D1", "buyer_approval_rejected", { title: "t", body: "b", actorBrokerId: "B1" });
+  assert.deepEqual(sent.map((m) => m.to[0]), ["assoc@team.invalid"], "R2: the acting broker is skipped, the associate is told");
+  T.members.length = 0;
+  // Through the real routes: submitting and rejecting a buyer as the owner sends no self-email.
+  reset();
+  const createdApproval: any[] = [];
+  S.createBuyerApprovalRequest = async (row: any) => { const r = { id: id("R"), ...row }; T.approvals.push(r); createdApproval.push(r); return r; };
+  S.getBuyerApprovalRequest = async (rid: string) => read("approvals", (r) => r.id === rid);
+  res = await call("POST", "/api/deals/D1/buyer-approvals", { buyerName: "Quinn Buyer", buyerEmail: "quinn@buyer.invalid", category: "individual" }, broker);
+  assert.equal(res.status, 200, res.text);
+  assert.equal(brokerEmails().length, 0, "R2: no email to the owner about their own submission");
+  res = await call("POST", `/api/buyer-approvals/${createdApproval[0].id}/broker-review`, { action: "reject", notes: "Not a fit" }, broker);
+  assert.equal(res.status, 200, res.text);
+  assert.equal(brokerEmails().length, 0, "R2: no email to the owner about their own rejection");
+
   server.close();
   console.log("f-buyers routes: all assertions passed");
   process.exit(0);
