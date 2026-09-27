@@ -98,6 +98,7 @@ stub("getSellerInvitesByDealId", (dealId) => Array.from(invites.values()).filter
 stub("updateSellerInvite", (id, u) => { const i = { ...invites.get(id), ...u }; invites.set(id, i); return i; });
 stub("createNotification", (n) => { notificationsOut.push(n); return { id: `n${notificationsOut.length}`, ...n }; });
 stub("getBuyerApprovalRequestByToken", (t) => Array.from(approvals.values()).find((a) => a.sellerReviewToken === t));
+stub("getBuyerApprovalRequest", (id) => approvals.get(id));
 stub("getBuyerApprovalRequestsByDeal", (dealId) => Array.from(approvals.values()).filter((a) => a.dealId === dealId));
 stub("updateBuyerApprovalRequest", (id, u) => { const a = { ...approvals.get(id), ...u }; approvals.set(id, a); return a; });
 stub("getDiscrepanciesByDeal", () => []);
@@ -254,6 +255,74 @@ try {
     }
   });
 
+  // ── F-B3 (round 2): the owner isn't emailed about their own actions, gets
+  // one email per grant, and demo deals never email them ─────────────────
+  await check("F-B3  owner: no self-emails, one email per grant, demo deals quiet", async () => {
+    const origLog = console.log;
+    const logs: string[] = [];
+    console.log = (...a: unknown[]) => { logs.push(a.join(" ")); origLog(...a); };
+    try {
+      // 1. The broker submits a buyer for approval → not emailed about it.
+      let createdReq: any = null;
+      stub("createBuyerApprovalRequest", (r) => { createdReq = { id: "apr-new", ...r }; approvals.set("apr-new", createdReq); return createdReq; });
+      const n0 = notificationsOut.length;
+      const l0 = logs.length;
+      const submit = await req("POST", "/api/deals/deal-live/buyer-approvals", {
+        buyerName: "Sam Lee", buyerEmail: "sam@x.invalid", category: "individual",
+      });
+      assert.equal(submit.status, 200, submit.text);
+      assert.ok(createdReq, "request created");
+      assert.equal(
+        notificationsOut.slice(n0).filter((n) => n.type === "buyer_approval_requested" && n.recipientEmail === "owner-b1@broker.invalid").length,
+        0, "the submitting (owning) broker gets no 'approval requested' notice",
+      );
+      assert.ok(!logs.slice(l0).some((l) => l.includes("owner-b1@broker.invalid")), "…and no email");
+      // Their own rejection: no notice either.
+      approvals.set("apr-new", { ...approvals.get("apr-new"), status: "pending_broker_review" });
+      const n1 = notificationsOut.length;
+      const reject = await req("POST", "/api/buyer-approvals/apr-new/broker-review", { action: "reject", notes: "not a fit" });
+      assert.equal(reject.status, 200, reject.text);
+      assert.equal(notificationsOut.slice(n1).filter((n) => n.recipientEmail === "owner-b1@broker.invalid").length, 0, "own rejection: no notice");
+
+      // 2. The seller approves on a published deal → the buyer is invited
+      //    (owner not CC'd) and the owner gets exactly one email: the notice.
+      approvals.set("apr-2", { id: "apr-2", dealId: "deal-live", status: "pending_seller_review", sellerReviewToken: "review-tok-2", buyerEmail: "second@x.invalid", buyerName: "Jo Park", buyerCompany: null, grantedBuyerAccessId: null });
+      const l2 = logs.length;
+      const n2 = notificationsOut.length;
+      const approve = await req("POST", "/api/buyer-approval-review/review-tok-2", { action: "approve", reviewerName: "Dana" });
+      assert.equal(approve.status, 200, approve.text);
+      assert.equal(approvals.get("apr-2").status, "access_granted");
+      const ownerEmails = logs.slice(l2).filter((l) => l.includes("[notify:email]") && l.includes("owner-b1@broker.invalid"));
+      assert.equal(ownerEmails.length, 1, `exactly one email to the owner, got: ${ownerEmails.join(" | ")}`);
+      assert.ok(!/cc:.*owner-b1/.test(ownerEmails[0]), "…and it isn't a CC of the buyer's invite");
+      assert.ok(notificationsOut.slice(n2).some((n) => n.type === "buyer_approval_seller_approved" && n.recipientEmail === "owner-b1@broker.invalid"));
+
+      // 3. A demo deal: the notice is recorded, never emailed.
+      deals.set("deal-demo", { id: "deal-demo", brokerId: "b1", businessName: "Demo Co", industry: "HVAC", isLive: true, blindCodename: "Project Demo", demoKey: "demo-lakeshore", phase: "phase4_design_finalization" });
+      approvals.set("apr-3", { id: "apr-3", dealId: "deal-demo", status: "pending_seller_review", sellerReviewToken: "review-tok-3", buyerEmail: "third@x.invalid", buyerName: "Lee Wu", buyerCompany: null, grantedBuyerAccessId: null });
+      const l3 = logs.length;
+      const n3 = notificationsOut.length;
+      const approveDemo = await req("POST", "/api/buyer-approval-review/review-tok-3", { action: "approve", reviewerName: "Dana" });
+      assert.equal(approveDemo.status, 200, approveDemo.text);
+      const demoNote = notificationsOut.slice(n3).find((n) => n.recipientEmail === "owner-b1@broker.invalid");
+      assert.ok(demoNote, "recorded for the owner");
+      assert.equal(demoNote.emailSent, false);
+      assert.equal(demoNote.metadata?.emailSkipped, "demo_deal");
+      assert.ok(!logs.slice(l3).some((l) => l.includes("→ owner-b1@broker.invalid")), "no email to the owner on a demo deal");
+    } finally {
+      console.log = origLog;
+    }
+
+    // 4. Interview turns / end from the deal's own broker session are marked
+    //    as theirs (no "seller finished" email); a seller token never is.
+    const { isDealOwnerSession } = await import("../../server/broker-auth/routes");
+    assert.equal(await isDealOwnerSession({ session: { brokerId: "b1" } } as any, "deal-draft"), true);
+    assert.equal(await isDealOwnerSession({ session: { brokerId: "b2" } } as any, "deal-draft"), false);
+    assert.equal(await isDealOwnerSession({ session: {}, headers: { "x-seller-token": "seller-tok" } } as any, "deal-draft"), false);
+    const src = fs.readFileSync(path.join(import.meta.dirname, "../../server/routes.ts"), "utf8");
+    assert.equal((src.match(/byDealBroker: await isDealOwnerSession\(req, dealId\)/g) || []).length, 3, "message, message/stream and end all pass it");
+  });
+
   // ── F-B6: removing a seller-team member revokes their link ───────────────
   await check('F-B6  removing a seller-team member revokes their link', async () => {
     const r = await req("DELETE", "/api/members/m-bk");
@@ -261,9 +330,25 @@ try {
     assert.equal(r.json.linkRevoked, true);
     assert.equal(invites.get("inv-bk").status, "revoked");
     assert.equal(invites.get("inv-seller").status, "accepted", "the seller's own invite is untouched");
+    assert.equal(r.json.linkOutcome, "revoked");
     const r2 = await req("DELETE", "/api/members/m-owner");
     assert.equal(r2.json.linkRevoked, false, "the seller's own (older) invite is never revoked");
+    assert.equal(r2.json.linkOutcome, "seller_invite", "the toast says why the link still works");
     assert.equal(invites.get("inv-seller").status, "accepted");
+
+    // A member whose minted link the broker chose to keep (e.g. they copied
+    // it to the seller): ?keepLink=1 leaves it working.
+    const t0 = Date.now() - 30_000;
+    members.set("m-rep", { id: "m-rep", dealId: "deal-draft", teamType: "seller", role: "representative", email: "rep@acme.invalid", invitedAt: new Date(t0), inviteStatus: "sent" });
+    invites.set("inv-rep", { id: "inv-rep", dealId: "deal-draft", token: "rep-tok", sellerEmail: "rep@acme.invalid", status: "pending", createdAt: new Date(t0 + 50), sentAt: null });
+    const r3 = await req("DELETE", "/api/members/m-rep?keepLink=1");
+    assert.equal(r3.status, 200);
+    assert.equal(r3.json.linkOutcome, "kept");
+    assert.equal(invites.get("inv-rep").status, "pending", "kept as the broker chose");
+    // No link at all → says so (not "it's the main invite").
+    members.set("m-att", { id: "m-att", dealId: "deal-draft", teamType: "seller", role: "attorney", email: "law@acme.invalid", invitedAt: new Date(), inviteStatus: "sent" });
+    const r4 = await req("DELETE", "/api/members/m-att");
+    assert.equal(r4.json.linkOutcome, "none");
   });
 
   // ── F-B7: team invite emails ─────────────────────────────────────────────

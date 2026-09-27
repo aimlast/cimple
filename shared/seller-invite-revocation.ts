@@ -55,3 +55,47 @@ export function inviteMintedForMember<T extends InviteLike>(member: MemberLike, 
   if (!minted || minted.sentAt) return null;
   return minted;
 }
+
+type PrimaryLike = InviteLike & { acceptedAt?: Date | string | null };
+
+/**
+ * The invite that represents the seller — the one the Overview's status card
+ * and "Copy invite link" use, so the one a broker may have pasted to the
+ * seller by hand. Furthest along wins (opened > emailed > created), newest
+ * on ties. Revoked invites never count.
+ */
+export function primarySellerInvite<T extends PrimaryLike>(invites: T[]): T | undefined {
+  const live = invites.filter((i) => !inviteIsRevoked(i));
+  if (live.length === 0) return undefined;
+  const newestFirst = [...live].sort((a, b) => (time(b.createdAt) ?? 0) - (time(a.createdAt) ?? 0));
+  return newestFirst.find((i) => !!i.acceptedAt) ?? newestFirst.find((i) => !!i.sentAt) ?? newestFirst[0];
+}
+
+/**
+ * What removing a seller-team member does to seller links — shown in the
+ * confirm dialog before the broker clicks Remove, and returned afterwards:
+ *   own_link       their own link was minted with the seat; it can be turned
+ *                  off. `isDealSellerLink` = it is also the link the Overview
+ *                  shows as the seller's (it may have been copied to the
+ *                  seller), so the broker must decide knowingly.
+ *   seller_invite  their address is on the seller's own invite, which keeps
+ *                  working (this was the seller).
+ *   none           they have no seller link.
+ */
+export type SellerLinkOnRemoval =
+  | { kind: "own_link"; inviteId: string; isDealSellerLink: boolean }
+  | { kind: "seller_invite" }
+  | { kind: "none" };
+
+export function sellerLinkOnRemoval<T extends PrimaryLike>(member: MemberLike, invites: T[]): SellerLinkOnRemoval {
+  if (member.teamType !== "seller") return { kind: "none" };
+  const minted = inviteMintedForMember(member, invites);
+  if (minted) {
+    return { kind: "own_link", inviteId: minted.id, isDealSellerLink: primarySellerInvite(invites)?.id === minted.id };
+  }
+  const email = member.email?.trim().toLowerCase();
+  const onSellerInvite = !!email && invites.some(
+    (i) => !inviteIsRevoked(i) && (i.sellerEmail || "").trim().toLowerCase() === email,
+  );
+  return onSellerInvite ? { kind: "seller_invite" } : { kind: "none" };
+}

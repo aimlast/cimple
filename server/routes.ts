@@ -52,7 +52,7 @@ import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
 import { teamInviteCopy } from "./notifications/team-invite-copy";
-import { inviteMintedForMember, REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
+import { sellerLinkOnRemoval, REVOKED_INVITE_STATUS, type SellerLinkOnRemoval } from "@shared/seller-invite-revocation";
 import { createWebhookTokenResolver, dealIdForWebhookToken } from "./calls/webhook-lookup";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
@@ -61,7 +61,7 @@ import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
 import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
 import { keepOutFor } from "./cim/keep-out";
-import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
+import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal, isDealOwnerSession } from "./broker-auth/routes.js";
 import {
   pickBodyFields,
   DOCUMENT_CREATE_FIELDS, DOCUMENT_PATCH_FIELDS, DOCUMENT_SERVER_OWNED,
@@ -1686,6 +1686,7 @@ Return JSON only.`,
         correctionOf: parseCorrectionOf(req.body.correctionOf),
         conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
         conductedVia: parseConductedVia(req.body?.conductedVia),
+        byDealBroker: await isDealOwnerSession(req, dealId),
       });
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
@@ -1731,6 +1732,7 @@ Return JSON only.`,
             correctionOf: parseCorrectionOf(req.body.correctionOf),
             conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
             conductedVia: parseConductedVia(req.body?.conductedVia),
+            byDealBroker: await isDealOwnerSession(req, dealId),
             // The question on screen is final and its chips are ready: the
             // seller can answer while the turn finishes saving.
             onReady: (ready) => send({ type: "ready", ...ready }),
@@ -1769,7 +1771,7 @@ Return JSON only.`,
         return res.status(400).json({ error: "Session ID is required" });
       }
       const { endSessionManually } = await import("./interview/session-manager");
-      const result = await endSessionManually(dealId, sessionId);
+      const result = await endSessionManually(dealId, sessionId, { byDealBroker: await isDealOwnerSession(req, dealId) });
       res.json(result);
     } catch (error: any) {
       console.error("Interview end error:", error);
@@ -5157,6 +5159,8 @@ Return JSON only.`,
         actionUrl: `/deal/${deal.id}?approval=${request.id}`,
         businessName: deal.businessName,
         metadata: { approvalRequestId: request.id, category, riskLevel },
+        // The submitting broker isn't emailed about their own submission.
+        actorUserId: req.session.brokerId ?? null,
       });
 
       res.json(request);
@@ -5199,6 +5203,7 @@ Return JSON only.`,
           actionUrl: `/deal/${deal.id}`,
           businessName: deal.businessName,
           metadata: { approvalRequestId: request.id },
+          actorUserId: req.session.brokerId ?? null,
         });
 
         return res.json(updated);
@@ -5320,14 +5325,13 @@ Return JSON only.`,
       grantedAt: new Date(),
     } as any);
 
-    // CC the brokers: the broker team, and the deal's own broker.
+    // CC the broker team. The deal's own broker (when not on the team) is
+    // told by the notice below instead — one email, honouring their
+    // Settings → Notifications switch — never both a CC and a notice.
     const members = await storage.getDealMembers(deal.id);
-    const owner = deal.brokerId ? await storage.getUser(deal.brokerId) : undefined;
-    const brokerEmails = [
-      ...members.filter(m => m.teamType === "broker" && m.email).map(m => m.email as string),
-      ...(owner?.email ? [owner.email] : []),
-    ];
+    const brokerEmails = members.filter(m => m.teamType === "broker" && m.email).map(m => m.email as string);
     const ccList = Array.from(new Set(brokerEmails.map((e) => e.trim().toLowerCase())));
+    const copied = ccList.filter((e) => e !== request.buyerEmail.trim().toLowerCase());
 
     // For existing accounts: send "added to deal" email pointing to dashboard.
     // For brand-new accounts: inviteBuyerUser already sent a set-password email,
@@ -5365,7 +5369,7 @@ Return JSON only.`,
         ? `You've been invited to ${buyerFacingName} on Cimple`
         : `New CIM added to your Cimple dashboard: ${buyerFacingName}`,
       inviteHtml,
-      ccList.filter((e) => e !== request.buyerEmail.trim().toLowerCase()),
+      copied,
     );
 
     // Also notify broker team that access was granted
@@ -5374,7 +5378,8 @@ Return JSON only.`,
       body:
         `The seller has approved <strong>${escapeHtml(request.buyerName)}</strong>` +
         (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
-        `. An invite email has been sent to ${escapeHtml(request.buyerEmail)} with the brokers CC'd.`,
+        `. An invite email has been sent to ${escapeHtml(request.buyerEmail)}` +
+        (copied.length ? " with your broker team copied." : "."),
       actionUrl: `/deal/${deal.id}`,
       businessName: deal.businessName,
       metadata: { approvalRequestId: request.id, buyerAccessId: buyerAccess.id },
@@ -6923,17 +6928,24 @@ Return JSON only.`,
       if (!existingMember || !(await ownsDeal(req, existingMember.dealId))) return res.status(404).json({ error: "Member not found" });
       // A seller-team member's own seller link stops working with them
       // (a removed bookkeeper could otherwise still open every financial).
-      // The seller's own invite, if this was the seller, is left alone.
+      // The seller's own invite, if this was the seller, is left alone. The
+      // confirm dialog shows the broker which case this is (the same
+      // sellerLinkOnRemoval) and lets them keep a link they handed to the
+      // seller: ?keepLink=1.
+      const keepLink = req.query.keepLink === "1" || req.query.keepLink === "true";
       let linkRevoked = false;
+      let link: SellerLinkOnRemoval = { kind: "none" };
       if (existingMember.teamType === "seller") {
-        const minted = inviteMintedForMember(existingMember, await storage.getSellerInvitesByDealId(existingMember.dealId));
-        if (minted) {
-          await storage.updateSellerInvite(minted.id, { status: REVOKED_INVITE_STATUS });
+        link = sellerLinkOnRemoval(existingMember, await storage.getSellerInvitesByDealId(existingMember.dealId));
+        if (link.kind === "own_link" && !keepLink) {
+          await storage.updateSellerInvite(link.inviteId, { status: REVOKED_INVITE_STATUS });
           linkRevoked = true;
         }
       }
       await storage.deleteDealMember(req.params.memberId);
-      res.json({ success: true, linkRevoked });
+      const linkOutcome =
+        link.kind === "own_link" ? (linkRevoked ? "revoked" : "kept") : link.kind; // "seller_invite" | "none"
+      res.json({ success: true, linkRevoked, linkOutcome });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to remove member" });
     }

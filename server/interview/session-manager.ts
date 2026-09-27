@@ -985,6 +985,8 @@ export async function processTurn(
      * turn saves (an answer typed meanwhile would never be sent).
      */
     onEnding?: () => void;
+    /** The turn was sent from the deal's own broker session (no "seller finished" email). */
+    byDealBroker?: boolean;
   } = {},
 ): Promise<TurnResult> {
   // The seller's message is timestamped when it arrives, not when the AI
@@ -3159,7 +3161,7 @@ export async function processTurn(
       ...(deal.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
     // Tell the deal's broker (once per finish; not for a broker-led session).
-    if (shouldAnnounceInterviewComplete({ wasCompleted: deal.interviewCompleted, conductedBy })) {
+    if (shouldAnnounceInterviewComplete({ wasCompleted: deal.interviewCompleted, conductedBy, byDealBroker: opts.byDealBroker })) {
       notifyInterviewComplete(dealId, "ai_closed").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
     }
 
@@ -3550,6 +3552,7 @@ async function generateOpeningMessage(
 export async function endSessionManually(
   dealId: string,
   sessionId: string,
+  opts: { byDealBroker?: boolean } = {},
 ): Promise<{ ok: true }> {
   const session = await getSession(sessionId);
   if (!session || session.dealId !== dealId) {
@@ -3569,7 +3572,7 @@ export async function endSessionManually(
     ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
   });
   const conductedBy = (session.extractedInfo as Record<string, unknown> | null)?._conductedBy as string | undefined;
-  if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy })) {
+  if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy, byDealBroker: opts.byDealBroker })) {
     notifyInterviewComplete(dealId, "seller_ended").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
   }
 

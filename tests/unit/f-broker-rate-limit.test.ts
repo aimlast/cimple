@@ -63,4 +63,44 @@ assert.equal(after.askStatus, 200, "a buyer can still ask after the chat polled"
 // 2 AI requests so far (turn + ask) → the 59th more is the 61st in the window.
 assert.equal(after.turns429, 59, "model-running requests are still capped at 60 per 5 minutes");
 
-console.log("f-broker-rate-limit: ok", { before, after });
+// Case variants reach the same model handler (Express routing ignores case),
+// so they must meet the same cap — the checker's probe ran /MESSAGE 120/120
+// times under the poll limit. The Deepgram key mint is capped the same way.
+async function hammer(url: string, n: number) {
+  const app = express();
+  app.set("trust proxy", 1);
+  applyInterviewRateLimits(app, aiLimiterFor());
+  let runs = 0;
+  for (const p of ["start", "message", "message/stream", "end", "transcription-token"]) {
+    app.post(`/api/interview/:d/${p}`, (_q, r) => { runs++; r.json({ ok: true }); });
+  }
+  const server = app.listen(0);
+  await new Promise((r) => server.once("listening", r));
+  const port = (server.address() as any).port;
+  let first429: number | null = null;
+  let limitHeader: string | null = null;
+  for (let i = 1; i <= n; i++) {
+    const r = await fetch(`http://127.0.0.1:${port}${url}`, { method: "POST" });
+    if (i === 1) limitHeader = r.headers.get("ratelimit-limit");
+    if (r.status === 429 && first429 === null) first429 = i;
+  }
+  server.close();
+  return { url, runs, first429, limitHeader };
+}
+const variants = [];
+for (const url of [
+  "/api/interview/d1/message",
+  "/api/interview/d1/MESSAGE",
+  "/API/Interview/d1/Message/Stream",
+  "/api/interview/d1/Start/",
+  "/api/interview/d1/End",
+  "/api/interview/d1/transcription-token",
+]) {
+  const v = await hammer(url, 120);
+  assert.equal(v.runs, 60, `${url}: the handler runs at most 60 times in the window`);
+  assert.equal(v.first429, 61, `${url}: the 61st request is refused`);
+  assert.equal(v.limitHeader, "60", `${url}: served under the AI limit`);
+  variants.push(v);
+}
+
+console.log("f-broker-rate-limit: ok", { before, after, variants });

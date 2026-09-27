@@ -23,6 +23,7 @@ import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
 import type { DealSellerContact } from "@shared/schema";
+import { primarySellerInvite } from "@shared/seller-invite-revocation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -195,18 +196,10 @@ function useInvites(dealId: string) {
  * status card and "Copy invite link" to the wrong person. Prefer the invite
  * furthest along (opened > emailed > created), NEWEST on ties — a re-invite
  * sent to a corrected email must win over the typo'd one it replaced.
+ * Shared with the Team tab's remove dialog, which warns when a removed
+ * member's link is this one.
  */
-function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
-  if (invites.length === 0) return undefined;
-  const newestFirst = [...invites].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-  return (
-    newestFirst.find((i) => !!i.acceptedAt) ??
-    newestFirst.find((i) => !!i.sentAt) ??
-    newestFirst[0]
-  );
-}
+const pickPrimaryInvite = (invites: SellerInvite[]): SellerInvite | undefined => primarySellerInvite(invites);
 
 /* ═══════════════════════════════════════════
    DOCUMENT UPLOAD CARD

@@ -14,9 +14,10 @@ import {
   INTEGRATION_PATCH_FIELDS, INTEGRATION_SERVER_OWNED,
 } from "../../server/security/body-fields";
 import { escapeHtml, sanitizeEmailFragment } from "../../server/notifications/email-escape";
-import { buildEmailHtml, ownerGetsEvent, ownerMutedFor } from "../../server/notifications/service";
+import { buildEmailHtml, ownerGetsEvent, ownerMutedFor, ownerEmailSkipReason } from "../../server/notifications/service";
 import { shouldAnnounceInterviewComplete } from "../../server/notifications/interview-complete";
-import { inviteMintedForMember, inviteIsRevoked } from "../../shared/seller-invite-revocation";
+import { inviteMintedForMember, inviteIsRevoked, primarySellerInvite, sellerLinkOnRemoval } from "../../shared/seller-invite-revocation";
+import { setPasswordEmail } from "../../server/buyer-auth/routes";
 import { teamInviteCopy } from "../../server/notifications/team-invite-copy";
 import { createWebhookTokenResolver, WEBHOOK_TOKEN_SHAPE } from "../../server/calls/webhook-lookup";
 import { dealPublishedForBuyers, notPublishedBody } from "../../shared/buyer-publish-gate";
@@ -145,6 +146,16 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
   assert.equal(shouldAnnounceInterviewComplete({ wasCompleted: false, conductedBy: "seller" }), true);
   assert.equal(shouldAnnounceInterviewComplete({ wasCompleted: true, conductedBy: "seller" }), false);
   assert.equal(shouldAnnounceInterviewComplete({ wasCompleted: false, conductedBy: "broker_with_seller" }), false);
+  // …nor when the deal's own broker drove the finishing turn (broker-mode
+  // interview, "Preview seller view"): "the seller finished" would be false.
+  assert.equal(shouldAnnounceInterviewComplete({ wasCompleted: false, conductedBy: "seller", byDealBroker: true }), false);
+  assert.equal(shouldAnnounceInterviewComplete({ wasCompleted: false, conductedBy: undefined, byDealBroker: false }), true);
+  const sm0 = fs.readFileSync(path.join(REPO, "server/interview/session-manager.ts"), "utf8");
+  assert.equal((sm0.match(/byDealBroker: opts\.byDealBroker/g) || []).length, 2, "both announce sites honour it");
+  // Demo / QA deals record the owner's notices but never email them.
+  assert.equal(ownerEmailSkipReason({ settings: {}, eventType: "buyer_decision_lapsed", demoKey: "demo-pacific" }), "demo_deal");
+  assert.equal(ownerEmailSkipReason({ settings: {}, eventType: "buyer_decision_lapsed", demoKey: null }), null);
+  assert.equal(ownerEmailSkipReason({ settings: { notifications: { buyerDecisions: false } }, eventType: "buyer_decision_lapsed" }), "muted_by_preference");
   // …and something actually emits it.
   const sm = fs.readFileSync(path.join(REPO, "server/interview/session-manager.ts"), "utf8");
   assert.equal((sm.match(/notifyInterviewComplete\(dealId/g) || []).length, 2, "AI close + seller end both announce");
@@ -171,6 +182,37 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
   const storageSrc = fs.readFileSync(path.join(REPO, "server/storage.ts"), "utf8");
   const byToken = storageSrc.slice(storageSrc.indexOf("async getSellerInviteByToken(token"), storageSrc.indexOf("async getSellerInvitesByDealId(dealId"));
   assert.ok(byToken.includes("REVOKED_INVITE_STATUS"), "token lookup refuses revoked invites");
+
+  // What the remove dialog shows (round 2): the member's own link, whether it
+  // is also the link the Overview presents as the seller's, or neither.
+  assert.equal(primarySellerInvite(invites)?.id, "inv-seller", "the emailed seller invite is what the Overview shows");
+  assert.deepEqual(
+    sellerLinkOnRemoval({ teamType: "seller", email: "books@acme.invalid", invitedAt: t(40) }, invites),
+    { kind: "own_link", inviteId: "inv-bk", isDealSellerLink: false },
+  );
+  // The seller was only ever added through the Team tab: their minted link is
+  // the one the Overview shows (and a broker may have copied it to them).
+  const onlyTeamLink = [{ ...bookkeeper, id: "inv-owner", sellerEmail: "owner@acme.invalid" }];
+  assert.deepEqual(
+    sellerLinkOnRemoval({ teamType: "seller", email: "owner@acme.invalid", invitedAt: t(40) }, onlyTeamLink),
+    { kind: "own_link", inviteId: "inv-owner", isDealSellerLink: true },
+    "the broker is warned before cutting the link the Overview presents as the seller's",
+  );
+  // Opened (acceptedAt) beats emailed, newest on ties.
+  const bothOpened = [{ ...bookkeeper, acceptedAt: t(50) }, { ...primary, acceptedAt: t(2) }];
+  assert.equal(primarySellerInvite(bothOpened)?.id, "inv-bk");
+  assert.deepEqual(sellerLinkOnRemoval({ teamType: "seller", email: "owner@acme.invalid", invitedAt: t(3600) }, invites), { kind: "seller_invite" });
+  assert.deepEqual(sellerLinkOnRemoval({ teamType: "seller", email: "law@acme.invalid", invitedAt: t(90) }, invites), { kind: "none" });
+  assert.equal(primarySellerInvite([{ ...primary, status: "revoked" }]), undefined, "revoked invites never count");
+}
+
+// ── F-B9 residual: the set-password email escapes typed names ────────────
+{
+  const html = setPasswordEmail(`Pat <a href="https://evil.invalid">Buyer</a>`, `Acme <b>Co</b>`, `https://app.cimple.ca/buyer/set-password/x"><script>`);
+  assert.ok(!html.includes("<a href=\"https://evil.invalid\""), "the name can't carry a link");
+  assert.ok(html.includes("Pat &lt;a href=&quot;https://evil.invalid&quot;&gt;Buyer&lt;/a&gt;"));
+  assert.ok(html.includes("Acme &lt;b&gt;Co&lt;/b&gt;"));
+  assert.ok(!html.includes("<script>"), "the URL is attribute-safe");
 }
 
 // ── F-B7: team invite emails say what the person gets ────────────────────
@@ -239,7 +281,19 @@ const REPO = path.resolve(path.dirname(new URL(import.meta.url).pathname), "../.
   assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/end"), true);
   assert.equal(isAiInterviewRequest("GET", "/api/interview/d1/call/bot/lines"), false);
   assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/call/bot/start"), false);
-  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/transcription-token"), false);
+  // Express routes are case-insensitive, so the limit must be too.
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/MESSAGE"), true);
+  assert.equal(isAiInterviewRequest("POST", "/API/Interview/d1/Message/Stream"), true);
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/Start/"), true);
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/END"), true);
+  // Fail-closed: the Deepgram key mint and any unknown POST stay on the AI limit.
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/transcription-token"), true);
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/something-new"), true);
+  assert.equal(isAiInterviewRequest("PUT", "/api/interview/d1/call/bot/start"), true);
+  // Call control, any case.
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/Call/Bot/Stop"), false);
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/call/end"), false);
+  assert.equal(isAiInterviewRequest("POST", "/api/interview/d1/reopen"), false);
   assert.equal(isAiInterviewRequest("GET", "/api/interview/session/s1/history"), false);
   assert.equal(isAiQuestionRequest("POST"), true);
   assert.equal(isAiQuestionRequest("GET"), false);

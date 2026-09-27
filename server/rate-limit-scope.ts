@@ -5,17 +5,28 @@
  * prefix, so the Zoom/Meet/Teams notetaker's 2-second transcript poll
  * (GET …/call/bot/lines, 30 a minute) used it up after ~2 minutes of a live
  * call: the transcript froze silently and the next interview turn got a 429.
- * Only requests that actually run the model count now; the polls, call
- * control, transcription tokens and history get their own generous limit.
+ *
+ * The split is fail-closed: a request is on the roomy limit only when it is a
+ * read (GET/HEAD/OPTIONS — none of the interview reads run the model) or one
+ * of the named call-control posts below. Everything else under the prefix —
+ * start, message, message/stream, end, the transcription-token mint (a paid
+ * Deepgram key), and any route added later — stays on the AI limit. Matching
+ * is case-insensitive because Express routing is: /Message/Stream reaches the
+ * same model handler as /message/stream, so it must meet the same cap.
  */
 import type { Express, RequestHandler } from "express";
 import rateLimit from "express-rate-limit";
 
-/** POST /api/interview/:dealId/(start|message|message/stream|end) — the model runs. */
-const AI_INTERVIEW_PATH = /^\/api\/interview\/[^/]+\/(start|message|message\/stream|end)\/?$/;
+/** POSTs under /api/interview/:dealId/ that never run the model or mint a paid key. */
+const INTERVIEW_CONTROL_POST =
+  /^\/api\/interview\/[^/]+\/(reopen|call\/start|call\/end|call\/seller-link|call\/bot\/start|call\/bot\/stop)\/?$/i;
+
+const READ_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 
 export function isAiInterviewRequest(method: string, fullPath: string): boolean {
-  return method.toUpperCase() === "POST" && AI_INTERVIEW_PATH.test(fullPath);
+  const m = method.toUpperCase();
+  if (READ_METHODS.has(m)) return false;
+  return !(m === "POST" && INTERVIEW_CONTROL_POST.test(fullPath));
 }
 
 /**

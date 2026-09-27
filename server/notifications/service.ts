@@ -270,6 +270,12 @@ export interface NotifyOptions {
   metadata?: Record<string, any>;
   // Override default routing — send to specific members instead
   specificMemberIds?: string[];
+  /**
+   * The signed-in broker whose own action raised this event (they submitted
+   * the approval, rejected it, ran the interview themselves). The deal's
+   * owner is never emailed about what they just did.
+   */
+  actorUserId?: string | null;
 }
 
 export interface NotifyResult {
@@ -310,6 +316,22 @@ export function ownerMutedFor(settings: unknown, eventType: string): boolean {
   return prefs?.[prefKey] === false;
 }
 
+/**
+ * Why the deal's owner is recorded but not emailed for this event (null =
+ * email them). Seeded demo / QA deals (`deals.demoKey`) never email their
+ * owner: their buyers and sellers are fictional, and a lapse notice for a
+ * made-up buyer in the founder's inbox is noise, not news.
+ */
+export function ownerEmailSkipReason(opts: {
+  settings: unknown;
+  eventType: string;
+  demoKey?: string | null;
+}): "muted_by_preference" | "demo_deal" | null {
+  if (ownerMutedFor(opts.settings, opts.eventType)) return "muted_by_preference";
+  if (opts.demoKey) return "demo_deal";
+  return null;
+}
+
 /** Email the deal's owning broker; records the notification either way. */
 async function notifyDealOwner(
   dealId: string,
@@ -320,11 +342,21 @@ async function notifyDealOwner(
   const deal = await storage.getDeal(dealId);
   const owner = deal?.brokerId ? await storage.getUser(deal.brokerId) : undefined;
   if (!owner || !ownerGetsEvent(eventType, owner.email, members)) return { addressed: false, emailSent: false };
+  // Their own action: nothing to tell them.
+  if (opts.actorUserId && opts.actorUserId === owner.id) {
+    console.log(`[notify] ${eventType}: raised by the deal's own broker — not notifying them`);
+    return { addressed: false, emailSent: false };
+  }
   const email = owner.email!.trim();
-  const muted = ownerMutedFor(owner.settings, eventType);
+  const skip = ownerEmailSkipReason({
+    settings: owner.settings,
+    eventType,
+    demoKey: deal?.demoKey,
+  });
+  const muted = skip === "muted_by_preference";
   let emailSent = false;
-  if (muted) {
-    console.log(`[notify:email] Muted by preference (${BROKER_EVENT_PREFERENCE[eventType]}) → deal owner: ${eventType}`);
+  if (skip) {
+    console.log(`[notify:email] Not emailed (${skip === "muted_by_preference" ? `muted: ${BROKER_EVENT_PREFERENCE[eventType]}` : skip}) → deal owner: ${eventType}`);
   } else {
     emailSent = await sendEmail(email, opts.title, buildEmailHtml({ ...opts }));
   }
@@ -337,7 +369,12 @@ async function notifyDealOwner(
     title: opts.title,
     body: opts.body,
     actionUrl: opts.actionUrl || null,
-    metadata: { ...(opts.metadata || {}), fallbackRecipient: "deal_owner", ...(muted ? { emailMutedByPreference: true } : {}) },
+    metadata: {
+      ...(opts.metadata || {}),
+      fallbackRecipient: "deal_owner",
+      ...(muted ? { emailMutedByPreference: true } : {}),
+      ...(skip && !muted ? { emailSkipped: skip } : {}),
+    },
     emailSent,
     emailSentAt: emailSent ? new Date() : null,
     smsSent: false,

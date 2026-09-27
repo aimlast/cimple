@@ -16,6 +16,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service.js";
+import { escapeHtml } from "../notifications/email-escape";
 import { hashResetToken } from "./reset-token";
 import {
   calculateBuyerProfileCompletion,
@@ -88,7 +89,16 @@ function baseUrl(req: Request): string {
   return process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
 }
 
-function setPasswordEmail(name: string, businessName: string | null, setPasswordUrl: string): string {
+/**
+ * The buyer's name comes from whoever typed it — a broker, a CRM import, the
+ * buyer at signup — so every value is escaped: a name like
+ * `Pat <a href=…>` can never become markup or a link in an email sent from
+ * notifications@cimple.ca.
+ */
+export function setPasswordEmail(rawName: string, rawBusinessName: string | null, rawUrl: string): string {
+  const name = escapeHtml(rawName);
+  const businessName = rawBusinessName ? escapeHtml(rawBusinessName) : null;
+  const setPasswordUrl = escapeHtml(rawUrl);
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to Cimple</h2>
