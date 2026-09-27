@@ -456,34 +456,10 @@ async function checkAndRepairFigures(
             }
           }
         }
-        // Figures with no source never reach a buyer: after the one rewrite,
-        // the sentence, cell or bar that still states one is taken out; a
-        // section that would still show one (a bridge step, a headline
-        // figure), or would have nothing left, is held back as written —
-        // flagged, for the broker to correct.
-        if (final.some(isUntracedIssue)) {
-          const repaired = withoutUntracedFigures(sections[i], final);
-          const cover = sections[i].layoutType === "cover_page";
-          if (repaired && !cover && nothingLeft(repaired.section)) {
-            sections[i] = { ...sections[i], isVisible: false };
-            warnings.push(`"${section.sectionTitle}" is hidden from buyers: none of its figures has a source on file. Correct them in the CIM builder (or add them to the facts and regenerate), then show the section.`);
-          } else {
-            if (repaired) {
-              const after = checkSectionFigures(repaired.section, sharedSystem.known);
-              if (after.filter(isUntracedIssue).length < final.filter(isUntracedIssue).length && after.length <= final.length) {
-                sections[i] = repaired.section;
-                final = after;
-                warnings.push(
-                  `Taken out of "${section.sectionTitle}" because no source on file has the figure: ${repaired.removed.slice(0, 4).map((r) => `"${r.length > 140 ? `${r.slice(0, 137)}…` : r}"`).join("; ")}${repaired.removed.length > 4 ? ` and ${repaired.removed.length - 4} more` : ""}. Add the figure to the facts and regenerate the section if it should be there.`,
-                );
-              }
-            }
-            if (!cover && final.some(isUntracedIssue)) {
-              sections[i] = { ...sections[i], isVisible: false };
-              warnings.push(`"${section.sectionTitle}" is hidden from buyers: it still shows figures with no source on file. Correct them in the CIM builder, then show the section.`);
-            }
-          }
-        }
+        const settled = settleUntracedFigures(sections[i], final, sharedSystem.known, section.sectionTitle);
+        sections[i] = settled.section;
+        final = settled.final;
+        warnings.push(...settled.notes);
         if (final.length > 0) {
           sections[i] = { ...sections[i], figureWarnings: final };
           warnings.push(figureWarningText(section.sectionTitle, final));
@@ -491,6 +467,78 @@ async function checkAndRepairFigures(
       }),
     );
   }
+}
+
+/**
+ * Figures with no source never reach a buyer: the sentence, cell or bar that
+ * still states one is taken out; a section that would still show one (a
+ * bridge step, a headline figure), or would have nothing left, is hidden as
+ * written — flagged, for the broker to correct. `notes` say what was done,
+ * for the broker (the generation warnings; a one-section write keeps them
+ * on the section's flags). Pure.
+ */
+export function settleUntracedFigures<S extends CimLayoutSection>(
+  section: S,
+  issues: string[],
+  known: KnownFigures,
+  title: string,
+): { section: S; final: string[]; notes: string[] } {
+  const notes: string[] = [];
+  if (!issues.some(isUntracedIssue)) return { section, final: issues, notes };
+  let current = section;
+  let final = issues;
+  const repaired = withoutUntracedFigures(current, final);
+  const cover = current.layoutType === "cover_page";
+  if (repaired && !cover && nothingLeft(repaired.section)) {
+    notes.push(`"${title}" is hidden from buyers: none of its figures has a source on file. Correct them in the CIM builder (or add them to the facts and regenerate), then show the section.`);
+    return { section: { ...current, isVisible: false }, final, notes };
+  }
+  if (repaired) {
+    const after = checkSectionFigures(repaired.section, known);
+    if (after.filter(isUntracedIssue).length < final.filter(isUntracedIssue).length && after.length <= final.length) {
+      current = repaired.section;
+      final = after;
+      notes.push(
+        `Taken out of "${title}" because no source on file has the figure: ${repaired.removed.slice(0, 4).map((r) => `"${r.length > 140 ? `${r.slice(0, 137)}…` : r}"`).join("; ")}${repaired.removed.length > 4 ? ` and ${repaired.removed.length - 4} more` : ""}. Add the figure to the facts and regenerate the section if it should be there.`,
+      );
+    }
+  }
+  if (!cover && final.some(isUntracedIssue)) {
+    current = { ...current, isVisible: false };
+    notes.push(`"${title}" is hidden from buyers: it still shows figures with no source on file. Correct them in the CIM builder, then show the section.`);
+  }
+  return { section: current, final, notes };
+}
+
+/**
+ * The same for a section converted to another layout in the CIM builder
+ * (no AI rewrite): its untraced figures are taken out or it is hidden.
+ * `flags` = what is left to check plus what was done, for the section's flags.
+ */
+export function settleSectionFigures(
+  params: CimLayoutParams,
+  section: { sectionKey?: string; sectionTitle: string; layoutType: string; layoutData: unknown; aiDraftContent?: string | null; tags?: unknown },
+): { layoutData: Record<string, unknown>; aiDraftContent?: string; isVisible: boolean; flags: string[] } {
+  const known = knownFor(assembleKnowledgeBase(params), params);
+  const asSection = {
+    sectionKey: section.sectionKey ?? "section",
+    sectionTitle: section.sectionTitle,
+    order: 0,
+    layoutType: section.layoutType as LayoutType,
+    layoutData: (section.layoutData ?? {}) as CimLayoutSection["layoutData"],
+    aiDraftContent: section.aiDraftContent ?? undefined,
+    aiLayoutReasoning: "",
+    tags: Array.isArray(section.tags) ? (section.tags as string[]) : [],
+    isVisible: true,
+    brokerApproved: false,
+  } as CimLayoutSection;
+  const settled = settleUntracedFigures(asSection, checkSectionFigures(asSection, known), known, section.sectionTitle);
+  return {
+    layoutData: settled.section.layoutData as Record<string, unknown>,
+    aiDraftContent: settled.section.aiDraftContent,
+    isVisible: settled.section.isVisible !== false,
+    flags: [...settled.final, ...settled.notes],
+  };
 }
 
 /** A table, chart or key-number grid left with nothing to show (every figure in it was untraced). */
@@ -610,10 +658,25 @@ export async function writeOneSection(
     );
   }
   const checked = [section];
-  await checkAndRepairFigures(sharedSystem, manifest, checked, []);
+  const checkNotes: string[] = [];
+  await checkAndRepairFigures(sharedSystem, manifest, checked, checkNotes);
   const scrubbed = scrubHeldNames(checked[0], sharedSystem.heldNames);
   const out = scrubbed ? { ...checked[0], layoutData: scrubbed.layoutData as CimLayoutSection["layoutData"], aiDraftContent: scrubbed.aiDraftContent } : checked[0];
-  return { ...out, layoutData: withReclassificationNote(out.layoutType, finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today), params.financials) as any };
+  // What the check did (figures taken out, the section hidden) is kept on the
+  // section's flags: a single-section write has no generation warnings, and
+  // these notes were dropped — the caller saved a visible section with the
+  // untraced figures still in it.
+  const repairNotes = checkNotes.filter(isRepairNote);
+  return {
+    ...out,
+    layoutData: withReclassificationNote(out.layoutType, finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today), params.financials) as any,
+    ...(repairNotes.length > 0 ? { figureWarnings: [...(out.figureWarnings ?? []), ...repairNotes] } : {}),
+  };
+}
+
+/** A note saying the figure check removed something or hid the section (not a flag it already carries). */
+function isRepairNote(w: string): boolean {
+  return /^Taken out of "/.test(w) || /" is hidden from buyers: /.test(w) || /working capital on a different basis|set net working capital beside the peg/.test(w);
 }
 
 /** Arrays whose entries are columns (financial_table headers / row values): position is meaning. */

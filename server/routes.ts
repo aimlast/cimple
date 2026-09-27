@@ -38,6 +38,7 @@ import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } f
 import { registerInformationRoutes } from "./routes/information.js";
 import { listedAskingPrice } from "./information/deal-mirror";
 import { brokerFactsView } from "./information/facts";
+import { withoutFactsSnapshot } from "./cim/cim-staleness";
 import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
 import { registerCrmSellerRoutes } from "./routes/crm-seller.js";
 import { registerBuyerProfileRoutes } from "./routes/buyer-profiles.js";
@@ -1940,7 +1941,7 @@ Return JSON only.`,
       const deals = (await storage.getAllDeals(req.session.brokerId)).filter((d) => !d.archivedAt);
       // Drifted asking-price copies lined up in memory (one value everywhere;
       // reading never writes — see information/deal-mirror.ts).
-      res.json(deals.map((d) => brokerFactsView(d)));
+      res.json(deals.map((d) => withoutFactsSnapshot(brokerFactsView(d))));
     } catch (error: any) {
       console.error("Error fetching deals:", error);
       res.status(500).json({ error: "Failed to fetch deals" });
@@ -1959,7 +1960,7 @@ Return JSON only.`,
       // as the Information tab, deal list, readiness and CIM: drifted copies
       // from before the one-value rule are lined up in memory, never saved
       // on read (the broker's next change saves them — deal-mirror.ts).
-      res.json(brokerFactsView(deal));
+      res.json(withoutFactsSnapshot(brokerFactsView(deal)));
     } catch (error: any) {
       console.error("Error fetching deal:", error);
       res.status(500).json({ error: "Failed to fetch deal" });
@@ -2751,7 +2752,7 @@ Return JSON only.`,
         const { sellerSafeDeal } = await import("./seller-safe-deal");
         return res.json(sellerSafeDeal(deal));
       }
-      res.json(brokerFactsView(deal));
+      res.json(withoutFactsSnapshot(brokerFactsView(deal)));
     } catch (error: any) {
       if (error.name === "ZodError") {
         return res.status(400).json({ error: "Invalid deal data", details: error.errors });
@@ -5570,6 +5571,8 @@ Return JSON only.`,
           layoutData: regenerated.layoutData as any,
           aiDraftContent: regenerated.aiDraftContent || null,
           figureWarnings: regenerated.figureWarnings?.length ? regenerated.figureWarnings : null,
+          // The figure check hid it (untraced figures it couldn't take out, or nothing left).
+          ...(regenerated.isVisible === false ? { isVisible: false } : {}),
           brokerEditedContent: null,
           brokerApproved: false,
           // Written now: no longer a placeholder (placeholders never reach buyers).

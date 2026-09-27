@@ -27,6 +27,7 @@ import {
   convertSectionLayout,
   rewriteSectionContent,
   sectionFigureWarnings,
+  settleSectionFigures,
   writeOneSection,
   type RewriteLength,
 } from "./layout-engine";
@@ -127,10 +128,17 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
     let layoutType = normalizeLayoutType(section.layoutType);
     // Figures/names the check couldn't trace to the deal (figure-check.ts).
     let figureWarnings: string[] = [];
+    // The figure check hid it: a figure with no source that couldn't be taken
+    // out, or nothing left once they were. Saved hidden — never shown to
+    // buyers with the untraced figures in it.
+    let hide = false;
     if (task.kind === "convert") {
       layoutType = normalizeLayoutType(task.request?.layoutType);
       result = await convertSectionLayout(params, current, layoutType);
-      figureWarnings = sectionFigureWarnings(params, { sectionTitle: section.sectionTitle, layoutType, layoutData: result.layoutData, tags: section.tags });
+      const settled = settleSectionFigures(params, { sectionKey: section.sectionKey, sectionTitle: section.sectionTitle, layoutType, layoutData: result.layoutData, aiDraftContent: result.aiDraftContent, tags: section.tags });
+      result = { layoutData: settled.layoutData, aiDraftContent: settled.aiDraftContent };
+      figureWarnings = settled.flags;
+      hide = !settled.isVisible;
     } else {
       // write / regenerate — the rest of the CIM is sibling context. A new
       // section is left out of its own sibling list so it is written fresh.
@@ -161,6 +169,7 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
       result = { layoutData: written.layoutData as Record<string, unknown>, aiDraftContent: written.aiDraftContent };
       layoutType = normalizeLayoutType(written.layoutType);
       figureWarnings = written.figureWarnings ?? [];
+      hide = written.isVisible === false;
     }
 
     // Maps only show addresses from the deal's facts; photo/video sections
@@ -178,6 +187,7 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
         layoutData: result.layoutData as any,
         aiDraftContent: result.aiDraftContent ?? null,
         figureWarnings: figureWarnings.length ? figureWarnings : null,
+        ...(hide ? { isVisible: false } : {}),
         // The new text lives in layoutData / the AI draft now.
         brokerEditedContent: null,
         brokerApproved: false,

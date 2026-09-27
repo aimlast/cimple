@@ -69,6 +69,17 @@ export function generationSummary(sectionCount: number, warnings: readonly strin
 }
 
 /**
+ * Why a regenerated CIM is held, in the broker's words: it replaced one
+ * buyers could open, the live one, or one that had been approved (a hold
+ * with no buyer links said "replaced the one buyers could open").
+ */
+export function heldReplacedText(hold: { buyers: number; wasLive: boolean }): string {
+  if (hold.buyers > 0) return `It was regenerated and replaced the one ${hold.buyers} buyer${hold.buyers === 1 ? "" : "s"} could open.`;
+  if (hold.wasLive) return "It was regenerated and replaced the live one.";
+  return "It was regenerated and replaced the approved one, so its approvals were cleared.";
+}
+
+/**
  * What "Regenerate all" does to buyers, for the confirm dialogs — null when
  * no buyer can open the CIM and it isn't live or approved.
  */

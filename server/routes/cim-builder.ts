@@ -38,7 +38,8 @@ import {
   dealHasBlindVersion,
 } from "../cim/blind-sync";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
-import { renameDealCodename } from "../cim/codenames";
+import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
+import { codenameProblem, renameDealCodename } from "../cim/codenames";
 import {
   deleteSection,
   duplicateSection,
@@ -58,7 +59,7 @@ import {
 import { REWRITE_TONES } from "../cim/layout-engine";
 import { refreshSectionDd } from "../cim/dd-enrichment";
 import { dealStreetAddress } from "@shared/cim-media";
-import { lastGenerationFacts } from "../cim/generation-jobs";
+import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
@@ -200,8 +201,10 @@ export function registerCimBuilderRoutes(app: Express): void {
           })
         : null;
       const staleBy = new Map((staleness?.sections ?? []).map((x) => [x.id, x.facts]));
+      // The same chart totals buyers get (a chart written before it carried its stated total).
+      const amounts = factAmounts(deal.extractedInfo);
       const rows = sections.map((s) => ({
-        ...toBuilderSection(s, blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
+        ...toBuilderSection(withStatedChartTotal(s, amounts), blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
         /** Changed facts whose old value this section still shows. */
         factsChanged: staleBy.get(s.id) ?? [],
       }));
@@ -215,6 +218,8 @@ export function registerCimBuilderRoutes(app: Express): void {
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
+          /** Why the codename (chosen before a stricter check, or before a fact changed) would point at the business; null when it is neutral. */
+          codenameProblem: deal.blindCodename ? codenameProblem(deal, deal.blindCodename) : null,
           running: blind.running,
           error: blind.error,
           /** Sections waiting for their redaction (not held back). */
@@ -228,7 +233,9 @@ export function registerCimBuilderRoutes(app: Express): void {
           outOfDate: rows.filter((r) => r.ddStatus === "stale" || r.ddStatus === "missing").length,
           running: ddRefreshRunning.has(deal.id),
         },
-        buyers: { total: active.length, byLevel },
+        // `total` = links that can open the CIM now (not revoked, not expired):
+        // the count the regenerate dialogs quote and the hold is decided on.
+        buyers: { total: openBuyerLinks(buyers), byLevel },
         deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
         // What the broker must look at before publishing: the last run's
         // notes, placeholders, a hold from buyers, facts changed since.

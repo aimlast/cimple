@@ -86,8 +86,19 @@ ok("known-3: untraced figures are taken out of the section, and the broker is to
 // known-4 — the reclassified statement lines say so.
 const fin = byTitle("Historical Financial Performance");
 const notes: string[] = (fin.layoutData as any).footnotes ?? [];
-assert.ok(notes.some((n) => /as reclassified in the financial analysis: one-time items — Crane rebuild \(FY2024 \$64,000\)/.test(n)), notes.join("\n"));
-ok("known-4: the financial summary says its lines are reclassified (crane rebuild shown apart)");
+// Its operating expenses ($1,613,000) are the "incl. one-time items" line: the
+// footnote says the crane rebuild is left out of cost of sales and counted in
+// operating expenses — never "shown apart from … operating expenses", which
+// contradicted the table and the writer's own footnote beside it.
+assert.ok(
+  notes.some((n) => /^Figures as reclassified in the financial analysis: cost of sales leaves out the one-time item Crane rebuild \(FY2024 \$64,000\), which is counted in operating expenses with the other one-time items/.test(n)),
+  notes.join("\n"),
+);
+assert.ok(!notes.some((n) => /shown apart from cost of sales and operating expenses/.test(n)), notes.join("\n"));
+assert.ok(notes.some((n) => /^Operating expenses for FY2024 include \$82,000 in one-time expenses/.test(n)), "the writer's own footnote stays");
+assert.ok(notes.some((n) => /^Compiled financial statements \(CSRS 4200\).*, as reclassified in the financial analysis \(see note\)\.$/.test(n)), "the source line is qualified");
+assert.equal(notes.filter((n) => /^Figures as reclassified/.test(n)).length, 1);
+ok("known-4: the financial summary's footnote describes the lines it shows (crane rebuild out of cost of sales, into operating expenses)");
 
 // F8 — the section the model couldn't write is a hidden placeholder.
 const ph = byTitle(FAILING);

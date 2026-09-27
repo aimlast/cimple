@@ -66,11 +66,16 @@ function toStatus(job: CimGenerationJob): CimGenerationStatus {
   return status;
 }
 
+/** The status as stored on the deal (the facts snapshot included). */
+function storedStatus(job: CimGenerationJob): CimGenerationStatus {
+  const { dealId: _d, brokerId: _b, businessName: _n, ...stored } = job;
+  return stored;
+}
+
 /** Best-effort persistence — a failed status write must never kill the run. */
 async function persist(job: CimGenerationJob) {
   try {
-    const { dealId: _d, brokerId: _b, businessName: _n, ...stored } = job;
-    await storage.updateDeal(job.dealId, { cimGeneration: stored } as any);
+    await storage.updateDeal(job.dealId, { cimGeneration: storedStatus(job) } as any);
   } catch (err) {
     console.warn(`[cim-generation] could not persist status for deal ${job.dealId}:`, err);
   }
@@ -213,11 +218,15 @@ export function replacementNeedsReview(
  *
  * When buyers could open the old CIM (or it was live / approved), the new
  * one is held from every buyer until the broker publishes it again: the deal
- * leaves live, its content and design approvals are cleared, and the hold
- * is returned for the job status (the view room shows buyers a "being
- * updated" state meanwhile — see cimHeldFromBuyers).
+ * leaves live, its content and design approvals are cleared (the view room
+ * shows buyers a "being updated" state meanwhile — see cimHeldFromBuyers).
+ * The hold is written with those changes BEFORE a single section is
+ * replaced, and that write is not best-effort: if it fails the run fails
+ * and the old sections stay. (Written only in the job's final status
+ * write, which swallows errors, a failed write — or the moment before it —
+ * served the unreviewed CIM to every link holder.)
  */
-async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument): Promise<CimGenerationStatus["buyerHold"] | null> {
+async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument, job: CimGenerationJob): Promise<CimGenerationStatus["buyerHold"] | null> {
   // As the deal is now — it may have gone live while the run was writing.
   const current = (await storage.getDeal(deal.id)) ?? deal;
   const [access, ddBefore] = await Promise.all([
@@ -234,6 +243,20 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
         ddCleared: ddBefore.length > 0 || !!previousHold?.ddCleared,
       }
     : null;
+  if (hold) {
+    // On the job only once it is on the deal: a failed write leaves the old
+    // CIM in place, live, and not held.
+    await storage.updateDeal(deal.id, {
+      cimGeneration: { ...storedStatus(job), buyerHold: hold },
+      // The approvals were for the CIM that is about to be replaced.
+      isLive: false,
+      contentApprovedByBroker: false,
+      contentApprovedBySeller: false,
+      designApprovedByBroker: false,
+      designApprovedBySeller: false,
+    } as any);
+    job.buyerHold = hold;
+  }
   await storage.deleteCimSectionsForDeal(deal.id);
   await storage.deleteCimSectionOverrides(deal.id, "blind");
   await storage.deleteCimSectionOverrides(deal.id, "dd");
@@ -259,14 +282,6 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
     cimLayoutGeneratedAt: new Date(),
     cimLayoutVersion: (deal.cimLayoutVersion || 0) + 1,
   };
-  if (hold) {
-    // The approvals were for the CIM that no longer exists.
-    updates.isLive = false;
-    updates.contentApprovedByBroker = false;
-    updates.contentApprovedBySeller = false;
-    updates.designApprovedByBroker = false;
-    updates.designApprovedBySeller = false;
-  }
   if (mode === "content") {
     updates.cimContent = cimContent;
     // Moves an earlier deal into Content Creation; a full regenerate on a
@@ -313,9 +328,8 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.phase = "saving";
     touch();
     await persist(job);
-    const hold = await persistDocument(deal, job.mode, document);
+    const hold = await persistDocument(deal, job.mode, document, job);
     if (hold) {
-      job.buyerHold = hold;
       if (hold.ddCleared) document.warnings = [...(document.warnings ?? []), "The due-diligence version was cleared with the old sections. Generate it again before due-diligence buyers see enriched content."];
     }
     if (factsAt) job.factsAt = factsAt;
@@ -422,12 +436,24 @@ function getStoredCimGenerationStatus(deal: Deal): CimGenerationStatus | null {
  */
 export async function releaseBuyerHold(dealId: string): Promise<void> {
   const live = jobs.get(dealId);
+  const liveHold = live?.buyerHold ?? null;
   if (live) delete live.buyerHold;
   const deal = await storage.getDeal(dealId);
   const stored = deal?.cimGeneration as CimGenerationStatus | null | undefined;
-  if (!stored?.buyerHold) return;
-  const { buyerHold: _h, ...rest } = stored;
-  await storage.updateDeal(dealId, { cimGeneration: rest } as any);
+  const hold = stored?.buyerHold ?? liveHold;
+  if (!hold) return;
+  if (stored?.buyerHold) {
+    const { buyerHold: _h, ...rest } = stored;
+    await storage.updateDeal(dealId, { cimGeneration: rest } as any);
+  }
+  // Buyers who were deciding on the replaced CIM get a fresh review window
+  // on the published one (no reminder or lapse was sent while it was held).
+  try {
+    const { restartReminderClocks } = await import("../reminders/decision-reminders");
+    await restartReminderClocks(dealId, hold.since);
+  } catch (err) {
+    console.warn(`[cim-generation] could not restart buyer review clocks for deal ${dealId}:`, err);
+  }
 }
 
 /** The facts the last finished run wrote from (null before the first, or on older runs). */

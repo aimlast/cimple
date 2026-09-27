@@ -70,10 +70,13 @@ test("amounts that add up to the stated total: its shares and the stated total",
   assert.match(t, /Total Revenue \$31,020,000/);
   assert.match(t, /\(43\.7%\)/);
 });
-test("a stated total the slices don't reach: the total is printed, shares are not", () => {
+test("a stated total the slices don't reach: the total, each slice's share OF IT, drawn as bars (never a full circle)", () => {
   const r = chartShares([13560000, 9310000], "$", 31020000);
   assert.equal(r.total, 31020000);
-  assert.equal(r.shares, null);
+  assert.deepEqual(r.shares!.map((s) => s.toFixed(1)), ["43.7", "30.0"]);
+  assert.equal(r.asBars, true);
+  const over = chartShares([23560000, 9310000], "$", 31020000);
+  assert.deepEqual(over, { shares: null, total: null, asBars: true }, "slices beyond the total are not its parts");
 });
 
 // ── F3: bridges ──────────────────────────────────────────────────────────
@@ -131,6 +134,23 @@ test("a per-square-foot rate is not an 'Annual Rent'", () => {
   assert.equal(rentLabel("annualRent", "$12.00 per sq ft (Years 3-5: 2024-2026)"), "Base Rent");
   assert.equal(rentLabel("annualRent", "$336,000"), "Annual Rent");
   assert.equal(rentLabel("monthlyRent", "$28,000"), "Monthly Rent");
+});
+test("the first unit named decides the rent label (an aside in brackets never wins)", () => {
+  assert.equal(rentLabel("monthlyRent", "$28,000 per month ($336,000 per annum)"), "Monthly Rent");
+  assert.equal(rentLabel("annualRent", "$336,000 ($28,000 per month)"), "Annual Rent");
+  assert.equal(rentLabel("annualRent", "$336,000 per annum ($28,000 per month)"), "Annual Rent");
+  assert.equal(rentLabel("monthlyRent", "$336,000 per year"), "Annual Rent");
+  assert.equal(rentLabel("annualRent", "$28,000 monthly"), "Monthly Rent");
+  assert.equal(rentLabel("annualRent", "$12.00 per sq ft per annum"), "Base Rent");
+  assert.equal(rentLabel("annualRent", "$336,000 per annum ($12.00 per sq ft)"), "Annual Rent");
+  assert.equal(rentLabel("monthlyRent", "$4,500 a month"), "Monthly Rent");
+});
+test("the recorded Ridgeline card (both rent rows) renders Monthly Rent + Base Rent, never Annual Rent", () => {
+  const rec = JSON.parse(fs.readFileSync(path.join(FIX, "ridgeline-acc-sections.json"), "utf8")).find((s: any) => s.layoutType === "location_card");
+  const t = text(html(LocationCardRenderer, rec.layoutData, "location_card"));
+  assert.match(t, /Monthly Rent \$28,000 per month \(\$336,000 per annum\)/);
+  assert.match(t, /Base Rent \$12\.00 per sq ft/);
+  assert.doesNotMatch(t, /Annual Rent/);
 });
 test("the Ridgeline facility card: badge under the address, terms spelt out, rent labelled right", () => {
   const h = html(LocationCardRenderer, { locations: [{ label: "Nisku Fabrication Facility", address: "2240 - 7A Street, Nisku, AB T9E 8N4", leaseType: NNN, annualRent: "$12.00 per sq ft (Years 3-5: 2024-2026)" }] }, "location_card");

@@ -194,7 +194,17 @@ export function CimTab() {
                     : <span className="text-success">Ready</span>
                 }
                 detail={data.blind.codename ? `Shown as “${data.blind.codename}”. Names, places and people are redacted.` : "Names, places and people redacted under a project codename."}
-                extra={<CodenameEditor dealId={dealId} codename={data.blind.codename} onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["/api/deals", dealId] }); }} />}
+                extra={
+                  <>
+                    {data.blind.codenameProblem && (
+                      <p className="text-[11px] text-amber-500 leading-snug flex items-start gap-1" role="alert" data-testid="codename-problem">
+                        <AlertTriangle className="h-3 w-3 mt-0.5 shrink-0" />
+                        <span>This codename could point buyers to the business: {data.blind.codenameProblem} Change it before sending the blind CIM to anyone new.</span>
+                      </p>
+                    )}
+                    <CodenameEditor dealId={dealId} codename={data.blind.codename} onSaved={() => { refetch(); qc.invalidateQueries({ queryKey: ["/api/deals", dealId] }); }} />
+                  </>
+                }
                 onPreview={() => openBuilder("teaser")}
                 action={!data.blind.generated
                   ? { label: "Generate", busy: version.isPending && version.variables === "blind", onClick: () => version.mutate("blind") }

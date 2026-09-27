@@ -63,6 +63,18 @@ export function factsSnapshotOf(info: Record<string, unknown>, askingPrice: stri
   return { values, askingPrice: askingPrice?.trim() || null, notesKey: hash(notes) };
 }
 
+/**
+ * A deal as the browser gets it: the facts snapshot (`cimGeneration.factsAt`,
+ * up to ~600 characters per fact) stays on the server — GET /api/deals sent
+ * it for every deal. Pure; returns the same object when there is nothing to drop.
+ */
+export function withoutFactsSnapshot<D extends { cimGeneration?: unknown }>(deal: D): D {
+  const g = deal.cimGeneration as Record<string, unknown> | null | undefined;
+  if (!g || typeof g !== "object" || !("factsAt" in g)) return deal;
+  const { factsAt: _f, ...rest } = g;
+  return { ...deal, cimGeneration: rest };
+}
+
 /** The facts the writer would be given now (the same view generation-jobs builds). */
 export async function writerFactsSnapshot(deal: Deal): Promise<FactsSnapshot> {
   const settled = settleResolvedFacts(
@@ -107,15 +119,35 @@ function figuresIn(text: string): Fig[] {
 
 const sameFig = (a: Fig, b: Fig) => a.pct === b.pct && Math.abs(a.value - b.value) <= Math.max(0.5, Math.abs(a.value) * 0.0005);
 
-/** Does the section text state this value (the same figure, or the same short wording)? */
-function shows(sectionText: string, sectionFigs: Fig[], before: string): boolean {
+/**
+ * Does the section text state an OLD value of this fact — a figure the old
+ * value has and the new one doesn't, or the old short wording? A fact with
+ * several values (revenue by year) changes in one of them: a section showing
+ * only the unchanged FY2023 revenue is not stale when FY2024 moved.
+ */
+function showsOld(sectionText: string, sectionFigs: Fig[], before: string, after: string | null): boolean {
   const figs = figuresIn(before);
-  if (figs.length > 0) return figs.some((v) => sectionFigs.some((s) => sameFig(s, v)));
+  if (figs.length > 0) {
+    const afterFigs = after && !after.startsWith("#") ? figuresIn(after) : [];
+    const gone = figs.filter((v) => !afterFigs.some((a) => sameFig(a, v)));
+    return gone.some((v) => sectionFigs.some((s) => sameFig(s, v)));
+  }
   // Short wording ("Month-to-month", "Nisku, Alberta") — long narrative facts
   // are rewritten by the writer and can't be matched word for word.
   const t = before.trim().toLowerCase();
-  return t.length >= 4 && t.length <= 60 && sectionText.toLowerCase().includes(t);
+  if (!(t.length >= 4 && t.length <= 60 && sectionText.toLowerCase().includes(t))) return false;
+  // A section that already shows the new wording (which contains the old) is up to date.
+  const n = (after ?? "").trim().toLowerCase();
+  return !(n && n.includes(t) && sectionText.toLowerCase().includes(n));
 }
+
+/**
+ * A figure worked out from the asking price — "Asking Price / SDE 9.4×",
+ * "asking price as a multiple of SDE", "3.8× FY2024 SDE", "List price per sq
+ * ft". The view room shows the listed price itself, but a multiple can't be
+ * recomputed there: a price change makes the section stale.
+ */
+const PRICE_DERIVED = /\b(?:asking|list(?:ing|ed)?)\s+price\b[^"\n]{0,40}?(?:\/|\bmultiple\b|\bper\b|\bto\s+(?:sde|ebitda|revenue|earnings))|\bprice\s*(?:\/|to)\s*(?:sde|ebitda|revenue|earnings|adjusted)|\b(?:sde|ebitda|earnings|revenue)\s+multiple\b|\bmultiple\s+of\s+(?:fy\s?\d{4}\s+)?(?:sde|ebitda|adjusted|earnings|revenue|seller)|\d(?:\.\d+)?\s*[x×]\s+(?:fy\s?\d{4}\s+)?(?:sde|ebitda|adjusted|seller|earnings|revenue)/i;
 
 /**
  * Pure: what changed between the facts a CIM was written from and now, and
@@ -144,7 +176,9 @@ export function cimStaleness(then: FactsSnapshot | null | undefined, now: FactsS
   for (const s of sections) {
     const text = [s.sectionTitle, JSON.stringify(s.layoutData ?? {}), s.aiDraftContent ?? "", s.brokerEditedContent ?? ""].join("\n");
     const figs = figuresIn(text);
-    const facts = changes.filter((c) => c.before && shows(text, figs, c.before)).map((c) => c.label);
+    const facts = changes
+      .filter((c) => (c.before && showsOld(text, figs, c.before, c.after)) || (c.key === "askingPrice" && PRICE_DERIVED.test(text)))
+      .map((c) => c.label);
     if (facts.length > 0) stale.push({ id: s.id, title: s.sectionTitle, facts: Array.from(new Set(facts)) });
   }
   return { changes, sections: stale, notesChanged: then.notesKey !== now.notesKey };

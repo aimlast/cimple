@@ -5,6 +5,7 @@
 import { cn } from "@/lib/utils";
 import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
+import { formatSqft, rentLabel, splitLeaseType } from "@shared/cim-location";
 import { ProseFallback, renderInline } from "../richText";
 import { BlockTitle } from "./BlockTitle";
 
@@ -63,59 +64,9 @@ function KVRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-/**
- * "2,650 sq ft" — the unit is added only to a bare number. A value that
- * names its own unit ("4 acres", "1.2 ha", "450 m²") or is words ("4 acres
- * with shop facility") is shown as written — never "4 acres sq ft".
- */
-export function formatSqft(v: unknown): string {
-  if (typeof v === "number") return Number.isFinite(v) ? `${v.toLocaleString("en-US")} sq ft` : "";
-  const t = String(v ?? "").trim();
-  if (!t) return "";
-  const bare = t.match(/^~?\s*(\d{1,3}(?:,\d{3})+|\d+)(\.\d+)?$/);
-  if (!bare) return t;
-  const n = Number(`${bare[1].replace(/,/g, "")}${bare[2] ?? ""}`);
-  return Number.isFinite(n) ? `${t.startsWith("~") ? "~" : ""}${n.toLocaleString("en-US")} sq ft` : t;
-}
-
-/** A lease kind short enough for a badge ("Triple-net lease", "Owned", "Month-to-month"). */
-const SHORT_LEASE_TYPE = (t: string) => t.length <= 32 && t.split(/\s+/).length <= 5;
-
-/**
- * The lease type as a short badge plus, when the writer put a paragraph in
- * it, the rest as a "Lease terms" line: "Triple-net lease (fully net and
- * carefree to Landlord: Tenant pays realty taxes, …)" drew a pill that
- * overlapped the facility's name and squeezed the address to one word per
- * line (Ridgeline, 2026-09-26).
- */
-export function splitLeaseType(v: unknown): { badge: string | null; terms: string | null } {
-  const t = String(v ?? "").trim();
-  if (!t) return { badge: null, terms: null };
-  if (SHORT_LEASE_TYPE(t)) return { badge: t, terms: null };
-  const m = t.match(/^([^(:;—–]+?)\s*(?:\(|:|;|—|–|\s-\s)\s*([\s\S]+?)\)?\s*$/);
-  const head = m?.[1]?.trim() ?? "";
-  if (head && SHORT_LEASE_TYPE(head)) {
-    const rest = (m?.[2] ?? "").trim();
-    return { badge: head, terms: rest ? rest.charAt(0).toUpperCase() + rest.slice(1) : null };
-  }
-  return { badge: null, terms: t };
-}
-
-/**
- * The label a rent figure is shown under: "Annual Rent" / "Monthly Rent"
- * only when the value is that — a per-square-foot rate ("$12.00 per sq ft
- * (Years 3-5)") is "Base Rent", never an annual amount; a value that names
- * the other period gets that period's label.
- */
-export function rentLabel(field: "annualRent" | "monthlyRent", value: unknown): string {
-  const t = String(value ?? "").toLowerCase();
-  const perArea = /(?:per|\/)\s*(?:sq\.?\s*(?:ft|feet|foot|m)|square\s+(?:foot|feet|metre|meter)|m²|m2)\b|\bpsf\b|\bper\s+(?:rentable|usable)\b/.test(t);
-  const monthly = /(?:per|\/|a)\s*(?:month|mo)\b|\bmonthly\b/.test(t);
-  const yearly = /(?:per|\/|a)\s*(?:year|yr|annum)\b|\bannual(?:ly)?\b|\bp\.?a\.?(?:\s|$)/.test(t);
-  if (perArea) return "Base Rent";
-  if (field === "annualRent") return monthly ? "Monthly Rent" : "Annual Rent";
-  return yearly ? "Annual Rent" : "Monthly Rent";
-}
+// The wording helpers live in shared/ so the buyer chatbot describes the card
+// the way it renders (server/qa/cim-context.ts).
+export { formatSqft, splitLeaseType, rentLabel };
 
 export function LocationCardRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: LocationCardLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};

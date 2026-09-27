@@ -47,7 +47,7 @@ import {
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
-import { parseChartNumber } from "./cim-chart-values";
+import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
 
 export interface BuyerSection {
   id: string;
@@ -112,7 +112,22 @@ export function listedPriceText(price: string | null | undefined): string | null
   return n !== null && n >= 1000 ? `$${Math.round(n).toLocaleString("en-US")}` : t;
 }
 
-const ASKING_LABEL = /\b(?:asking|list(?:ing|ed)?)\s+price\b/i;
+/**
+ * A label that IS the asking price — "Asking Price", "List price (CAD)",
+ * "Listed price:" — and nothing else. "Asking Price / SDE" (9.4×), "Asking
+ * price as a multiple of SDE" and "List price per sq ft" are other figures
+ * that only mention the price; rewriting them showed buyers "$3,200,000" in
+ * place of a multiple.
+ */
+const ASKING_LABEL = /^\s*(?:the\s+)?(?:asking|list(?:ing|ed)?)\s+price\s*(?:\(\s*(?:cad|usd|c\$|us\$|\$)\s*\))?\s*[:*]?\s*$/i;
+
+/** The value shown is a dollar amount (never a multiple, a percentage or a rate). */
+function isPriceValue(v: unknown): boolean {
+  const t = String(v ?? "").trim();
+  if (!t || /[x×%]\s*\)?\s*$/i.test(t) || /\bper\b|\/\s*(?:sq|ft|yr|year|month)/i.test(t)) return false;
+  const n = parseChartNumber(t);
+  return /\$/.test(t) || (n !== null && n >= 1000) || /price upon request|offers?\b/i.test(t);
+}
 
 /**
  * A section with its asking price shown as the broker lists it now: the
@@ -129,11 +144,13 @@ export function withListedAskingPrice<T extends { layoutType: string; layoutData
   }
   if (section.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
     const metrics = (d.metrics as unknown[]).map((m) =>
-      m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) ? { ...(m as object), value: price } : m,
+      m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) && isPriceValue((m as Record<string, unknown>).value)
+        ? { ...(m as object), value: price }
+        : m,
     );
     return { ...section, layoutData: { ...d, metrics } };
   }
-  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? ""))) {
+  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? "")) && isPriceValue(d.primaryValue)) {
     return { ...section, layoutData: { ...d, primaryValue: price } };
   }
   return section;
@@ -163,8 +180,17 @@ function writingInProgress(s: CimSection): boolean {
 export function buildBuyerCim(input: BuyerCimInput): BuyerCim {
   const cim = buildBuyerSections(input);
   const price = listedPriceText(input.askingPrice);
-  if (!price) return cim;
-  return { ...cim, sections: cim.sections.map((s) => (s.locked ? s : withListedAskingPrice(s, price))) };
+  // Charts written before they carried their stated total get it back when
+  // the facts state the whole their slices make (withStatedChartTotal).
+  const amounts = factAmounts(input.deal.extractedInfo);
+  return {
+    ...cim,
+    sections: cim.sections.map((s) => {
+      if (s.locked) return s;
+      const withTotal = withStatedChartTotal(s, amounts);
+      return price ? withListedAskingPrice(withTotal, price) : withTotal;
+    }),
+  };
 }
 
 interface BuyerCimInput {

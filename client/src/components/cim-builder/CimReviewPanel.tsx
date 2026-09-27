@@ -14,7 +14,7 @@ import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, ChevronDown, ChevronUp, EyeOff, History, Info, ShieldAlert, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { classifyGenerationWarnings, type CimWarningKind } from "@shared/cim-generation-warnings";
+import { classifyGenerationWarnings, heldReplacedText, type CimWarningKind } from "@shared/cim-generation-warnings";
 import type { BuilderSection, CimReview } from "./api";
 
 const KIND_LABEL: Record<CimWarningKind, string> = {
@@ -91,7 +91,7 @@ export function CimReviewPanel({ dealId, review, sections, onOpenSection, compac
               <div className="min-w-0 space-y-0.5">
                 <p className="font-medium">Buyers can't see this CIM until you publish it again</p>
                 <p className="text-xs text-muted-foreground">
-                  It was regenerated and replaced the one {hold.buyers > 0 ? `${hold.buyers} buyer${hold.buyers === 1 ? "" : "s"} could open` : "buyers could open"}.
+                  {heldReplacedText(hold)}
                   They see a notice that the document is being updated. Review the sections, record the approvals on the Overview and publish when it's right.
                   {hold.ddCleared ? " The due-diligence version was cleared — generate it again for due-diligence buyers." : ""}
                 </p>
