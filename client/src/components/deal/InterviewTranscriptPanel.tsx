@@ -41,7 +41,21 @@ interface SessionSummary {
   messages: ConversationMessage[];
   messageCount: number;
   durationMinutes: number;
+  /** Who ran it: the seller alone, the broker with the seller, or the broker alone. */
+  conductedBy?: "seller" | "broker_with_seller" | "broker";
 }
+
+/** Who the answers in a session came from. */
+const ANSWER_LABEL: Record<NonNullable<SessionSummary["conductedBy"]>, string> = {
+  seller: "Seller",
+  broker_with_seller: "In the room",
+  broker: "You",
+};
+const SESSION_KIND: Record<NonNullable<SessionSummary["conductedBy"]>, string | null> = {
+  seller: null,
+  broker_with_seller: "Interview together",
+  broker: "Your session",
+};
 
 interface InterviewTranscriptPanelProps {
   dealId: string;
@@ -116,12 +130,15 @@ function MessageBubble({
   turn,
   anchorId,
   highlighted,
+  answerLabel = "Seller",
 }: {
   message: ConversationMessage;
   /** Seller turn number (1-based) — what fact sources cite as "turn N". */
   turn?: number;
   anchorId?: string;
   highlighted?: boolean;
+  /** Who the answers came from ("You" in the broker's own session). */
+  answerLabel?: string;
 }) {
   const isAI = message.role === "ai";
 
@@ -149,7 +166,7 @@ function MessageBubble({
       >
         <div className="flex items-center gap-2 mb-1">
           <span className="text-[11px] font-medium text-muted-foreground/70">
-            {isAI ? "Interviewer" : "Seller"}
+            {isAI ? "Interviewer" : answerLabel}
           </span>
           {typeof turn === "number" && (
             <span className="text-[10px] text-muted-foreground/50">Turn {turn}</span>
@@ -221,6 +238,11 @@ function SessionCard({
               <span className="text-sm font-medium">
                 Session {index + 1}
               </span>
+              {session.conductedBy && SESSION_KIND[session.conductedBy] && (
+                <Badge variant="secondary" className="text-[10px] px-1.5 py-0 h-4 bg-teal/10 text-teal border-0" data-testid="badge-session-kind">
+                  {SESSION_KIND[session.conductedBy]}
+                </Badge>
+              )}
               <Badge
                 variant="secondary"
                 className="text-[10px] px-1.5 py-0 h-4 bg-muted/60 border-0"
@@ -277,6 +299,7 @@ function SessionCard({
                     turn={turn}
                     anchorId={turn ? `turn-${session.id}-${turn}` : undefined}
                     highlighted={isFocus}
+                    answerLabel={ANSWER_LABEL[session.conductedBy ?? "seller"]}
                   />
                 );
               })

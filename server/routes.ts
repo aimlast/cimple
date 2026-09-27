@@ -7,7 +7,7 @@ import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
 import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia, turnPrecheck } from "./interview";
-import { callerMode, contextSessions, parseAnsweringAt, TurnConflictError, type ConductedBy } from "./interview/session-mode";
+import { callerMode, contextSessions, parseAnsweringAt, sessionModeOf, TurnConflictError, type ConductedBy } from "./interview/session-mode";
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
@@ -1329,6 +1329,8 @@ Return JSON only.`,
           messages: msgs,
           messageCount: msgs.length,
           durationMinutes,
+          // (The broker's own sessions and "Interview together" are labelled as such.)
+          conductedBy: sessionModeOf(s),
         };
       });
 
