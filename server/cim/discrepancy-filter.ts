@@ -502,7 +502,35 @@ const DOC_CONFIRMS_FOR_YEAR_RE =
  * statements blocked CIM generation — f-facts known-1).
  */
 const CLAIM_IS_OTHER_YEAR_RE =
-  /\b(?:appears to |seems to |likely |probably |actually )?(?:refers?|relates?|belongs?|applies|is for)\s+(?:to\s+)?(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})\b[^.;]{0,80}?\b(?:match(?:es|ing)?|agrees? with|consistent with)\b/i;
+  /\b(?:appears to |seems to |likely |probably |actually )?(?:refers?|relates?|belongs?|applies|is for)\s+(?:to\s+)?(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})\b([^.;]{0,80}?)\b(?:match(?:es|ing)?|agrees? with|consistent with)\b([^.;)]{0,60})/i;
+/**
+ * Words that turn the match into a mismatch ("but it does not match",
+ * "which matches neither year", "matches nothing on file", "still
+ * conflicts"): read between the year and the match word, and in the match
+ * clause itself.
+ */
+const MATCH_NEGATED_RE = /\b(?:not|never|no|neither|nor|nothing|none|either|inconsistent|conflicts?|conflicting|differs?|different|but|however|although|though|still|even)\b|n't\b/i;
+
+/**
+ * The model's own words that the claim is another year's figure AND agrees
+ * with that year's evidence, or null. The match clause must name the same
+ * year ("which matches the FY2024 statements"): "appears to refer to 2022,
+ * which matches nothing on file" or "…FY2024, but it does not match the
+ * FY2024 statements either" are conflicts, kept.
+ */
+function claimIsOtherYear(text: string): string | null {
+  const m = text.match(CLAIM_IS_OTHER_YEAR_RE);
+  if (!m || m.index === undefined) return null;
+  // Not when it says the claim does NOT refer to that year, or only supposes it does ("Even if …").
+  const before = text.slice(Math.max(0, m.index - 24), m.index);
+  if (/\b(?:not|never)\b[^.;]{0,20}$|n't\b[^.;]{0,20}$|\b(?:if|even if|whether|unless)\b[^.;]{0,20}$/i.test(before)) return null;
+  const [, year, gap, clause] = m;
+  if (MATCH_NEGATED_RE.test(gap) || MATCH_NEGATED_RE.test(clause)) return null;
+  // The match clause names the same year.
+  const clauseYears = Array.from(clause.matchAll(/(?:^|[^0-9])(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})(?![0-9])/gi)).map((y) => y[1]);
+  if (!clauseYears.includes(year) || clauseYears.some((y) => y !== year)) return null;
+  return year;
+}
 
 /** The model reasoned, in its own words, that the evidence lacks this measure or confirms the claim for its own year. */
 export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean {
@@ -516,11 +544,10 @@ export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean
     const ey = periodYears(evidence);
     if (ey.size > 0 && !ey.has(confirms[1])) return true;
   }
-  const otherYear = text.match(CLAIM_IS_OTHER_YEAR_RE);
-  // (Not when it says the claim does NOT refer to that year.)
-  if (otherYear && otherYear.index !== undefined && !/\b(?:not|never)\b[^.;]{0,20}$|n't\b[^.;]{0,20}$/i.test(text.slice(Math.max(0, otherYear.index - 24), otherYear.index))) {
+  const otherYear = claimIsOtherYear(text);
+  if (otherYear) {
     const disputed = new Set([...Array.from(periodYears(item.field ?? "")), ...Array.from(periodYears(evidence)), ...(item.factYear ? [String(item.factYear)] : [])]);
-    if (disputed.size > 0 && !disputed.has(otherYear[1])) return true;
+    if (disputed.size > 0 && !disputed.has(otherYear)) return true;
   }
   const lacks = text.match(DOC_LACKS_MEASURE_RE);
   if (lacks) {

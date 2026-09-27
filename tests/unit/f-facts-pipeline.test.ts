@@ -315,9 +315,10 @@ const reset = () => {
   const open = rows.filter((r) => r.status === "open");
   assert.ok(open.some((r) => r.factKey === "annualRevenue" && /2,300,000/.test(`${r.interviewValue} ${r.documentValue}`) && /1,835,000/.test(`${r.interviewValue} ${r.documentValue}`)), `a merge row stands for call vs final: ${JSON.stringify(rows.map((r) => [r.id, r.status, r.factKey, r.interviewValue, r.documentValue]))}`);
   assert.equal(rows.find((r) => r.id === "old")!.status, "superseded");
-  // F-DEL-CHECKLIST: the verified row the draft was uploaded for is missing again.
-  assert.deepEqual([reqs[0].status, reqs[0].uploadedFileId, reqs[0].uploadedBy], ["missing", null, null]);
-  ok("F-DEL-PROMOTE + F-DEL-CHECKLIST: deleting a draft P&L refills revenue and FY2024 from the final statements (not the call), raises call-vs-final as a merge row, and releases its checklist row");
+  // F-DEL-CHECKLIST: the row the draft was uploaded for is credited to the
+  // final statements still on the deal (never re-ask for a document on file).
+  assert.deepEqual([reqs[0].status, reqs[0].uploadedFileId, reqs[0].uploadedBy], ["uploaded", "final", "seller"]);
+  ok("F-DEL-PROMOTE + F-DEL-CHECKLIST: deleting a draft P&L refills revenue and FY2024 from the final statements (not the call), raises call-vs-final as a merge row, and moves its checklist row to the final statements");
 }
 
 // ── F-MAPEDIT-PRIVACY: a typo fixed in one year ─────────────────────────────────

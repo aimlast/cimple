@@ -880,7 +880,48 @@ export function unreadableExtraction(text: string | null | undefined, kind: Sour
  * (ETIMEDOUT: one long call transcript's re-read failed three times at 6–9
  * minutes each), a stream keeps it alive.
  */
-async function readPart(
+/**
+ * Reads in flight across the whole server. A reprocess reads four sources
+ * at once and a long source reads three parts at once, so 4 × 3 = 12
+ * streams could start together — rate limits (429s) and retries follow.
+ * Every read (a whole source or one part) takes a slot here first.
+ */
+export const MAX_READS_IN_FLIGHT = 4;
+let readsInFlight = 0;
+const waitingReads: Array<() => void> = [];
+
+/** Runs `fn` once a read slot is free (first come, first served). */
+export async function withReadSlot<T>(fn: () => Promise<T>, limit: number = MAX_READS_IN_FLIGHT): Promise<T> {
+  if (readsInFlight >= limit) await new Promise<void>((resolve) => waitingReads.push(resolve));
+  readsInFlight++;
+  try {
+    return await fn();
+  } finally {
+    readsInFlight--;
+    waitingReads.shift()?.();
+  }
+}
+
+/** For tests: how many reads are running now. */
+export function _readsInFlightForTests(): number {
+  return readsInFlight;
+}
+
+/** The instructions every read shares, marked for the prompt cache (a long source's later parts and a reprocess's other sources reuse it). */
+const CACHED_SYSTEM = [{ type: "text" as const, text: SYSTEM_PROMPT, cache_control: { type: "ephemeral" as const } }];
+
+function readPart(
+  text: string,
+  category: string,
+  subcategory: string | null | undefined,
+  kind: SourceKind,
+  checklist?: ExtractionChecklistItem[],
+  part?: { index: number; total: number },
+): Promise<{ ok: true; data: ExtractedDocumentData } | { ok: false; failure: ExtractedDocumentData }> {
+  return withReadSlot(() => readPartNow(text, category, subcategory, kind, checklist, part));
+}
+
+async function readPartNow(
   text: string,
   category: string,
   subcategory: string | null | undefined,
@@ -895,7 +936,7 @@ async function readPart(
       {
         model: agentConfig.models.supportingAgents,
         max_tokens: 8000,
-        system: SYSTEM_PROMPT,
+        system: CACHED_SYSTEM,
         tools: [EXTRACTION_TOOL],
         tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
         messages: [{
@@ -972,8 +1013,17 @@ export function combineExtractions(list: ExtractedDocumentData[]): ExtractedDocu
       if (k === "_documentType" || k === "_confidence") { out[k] = v as string; continue; }
       if (k.startsWith("_")) { out[k] = v as never; continue; }
       if (JOINED_TEXT_KEYS.has(k) && typeof v === "string") {
+        // Item by item ("Customer concentration" then "Customer concentration;
+        // tax arrears" is each once); a fuller wording replaces one it contains.
         const list = (joined[k] ??= []);
-        if (!list.some((x) => x === v || x.includes(v))) list.push(v);
+        const items = k === "summary" ? [v.trim()] : v.split(/;\s+|\n+/).map((x) => x.trim().replace(/[;.\s]+$/, "")).filter(Boolean);
+        for (const item of items) {
+          const low = item.toLowerCase();
+          if (list.some((x) => x.toLowerCase() === low || x.toLowerCase().includes(low))) continue;
+          const shorter = list.findIndex((x) => low.includes(x.toLowerCase()));
+          if (shorter >= 0) list[shorter] = item;
+          else list.push(item);
+        }
         continue;
       }
       if (isPlainObject(v) && isPlainObject(out[k])) {

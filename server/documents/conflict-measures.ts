@@ -268,8 +268,14 @@ const COUNT_WORDS: Record<string, number> = {
 const COUNT_RE = String.raw`(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty(?:-five)?|fifty)`;
 const toCount = (w: string) => (/^\d+$/.test(w) ? Number(w) : COUNT_WORDS[w.toLowerCase()]);
 
-/** Facts about how concentrated the customer base is. */
-const CONCENTRATION_KEY = /concentration|customer|client|account/i;
+/**
+ * Facts about how concentrated the customer base is (customerConcentration,
+ * topCustomers, largestCustomer, receivablesConcentration) — never any fact
+ * that merely names customers or accounts: an AR aging ("18% over 90 days"),
+ * a retention rate or a customer mix states other shares, whose conflicts
+ * are real.
+ */
+const CONCENTRATION_KEY = /concentration|^(?:top|largest|biggest|major|key|main)\d*(?:customer|client|account|payer)s?$|^(?:customer|client)s?(?:share|dependen\w*)$/i;
 
 /**
  * Which slice of the customer base each share in a value is of: 1 for one

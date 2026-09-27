@@ -2519,6 +2519,9 @@ Return JSON only.`,
       if (!deal) return res.status(404).json({ error: "Deal not found" });
       const doc = await storage.getDocument(req.params.documentId);
       if (!doc || doc.dealId !== deal.id) return res.status(404).json({ error: "Source not found" });
+      // Its first read is still running (a long source read in parts): never a second, concurrent read.
+      const { isBeingRead } = await import("./documents/ingest");
+      if (isBeingRead(doc.id)) return res.status(409).json({ status: "running", message: "Cimple is still reading this source. It will show its facts when it's done." });
       const { startReprocessJob } = await import("./documents/reprocess-jobs");
       const { job, started } = startReprocessJob(deal.id, undefined, undefined, { onlyDocumentIds: [doc.id] });
       res.status(started ? 202 : 409).json(job);

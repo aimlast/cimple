@@ -288,7 +288,8 @@ export function rememberPeriodEnd(
 }
 
 export interface IngestResult {
-  status: "extracted" | "failed" | "missing";
+  /** "busy": the source was already being read — nothing was started. */
+  status: "extracted" | "failed" | "missing" | "busy";
   /** Keys this source newly asserted or replaced on the deal. */
   fieldsWritten: string[];
 }
@@ -325,6 +326,11 @@ export function sourceMetaAfterRead(
 
 /** Sources being read by this server process right now (a row stuck "parsing" that isn't here was interrupted). */
 const activeReads = new Set<string>();
+
+/** True while this server is reading the source (its first read, or a read started again). */
+export function isBeingRead(documentId: string): boolean {
+  return activeReads.has(documentId);
+}
 
 /** A row left "reading" this long, by no live read, was interrupted (a redeploy mid-read). */
 export const STUCK_READ_MS = 30 * 60_000;
@@ -378,9 +384,33 @@ export function startInterruptedReadRecovery(): void {
 }
 
 /** Why a file couldn't be opened, in plain words (a format Cimple can't read, a damaged or locked file). */
-function parseProblem(err: unknown): string {
+export function parseProblem(err: unknown): string {
   if (err instanceof UnreadableFormatError) return err.message;
   return "the file couldn't be opened — it may be damaged or password-protected; save it again (or as a PDF) and upload that";
+}
+
+/** Why a source with neither its file nor its text on the server can't be read. */
+export const NO_COPY_REASON = "there is no copy of its file or text left on the server — upload it again";
+
+/** While a source is being read, its row is touched this often (a long read is never taken for a stopped one). */
+export const READ_HEARTBEAT_MS = 5 * 60_000;
+
+/**
+ * Keeps a row's "last changed" fresh while it is being read. A long source
+ * read in parts (each with its own retries) can run past STUCK_READ_MS; the
+ * Information tab and the startup recovery would then call it stopped and
+ * offer a second, concurrent read. Returns the stop function.
+ */
+export function startReadHeartbeat(
+  documentId: string,
+  touch: (id: string) => Promise<unknown> = (id) => storage.updateDocument(id, {} as any),
+  every: number = READ_HEARTBEAT_MS,
+): () => void {
+  const timer = setInterval(() => {
+    touch(documentId).catch(() => undefined);
+  }, every);
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 /**
@@ -398,7 +428,10 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   const doc = await storage.getDocument(documentId);
   if (!doc) return { status: "missing", fieldsWritten: [] };
   const kind = documentKind(doc);
+  // Already being read (a second "parse" while the first read runs): one read at a time.
+  if (activeReads.has(doc.id)) return { status: "busy", fieldsWritten: [] };
   activeReads.add(doc.id);
+  const stopHeartbeat = startReadHeartbeat(doc.id);
   try {
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
@@ -438,7 +471,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     } as any);
     if (failed) {
       // Nothing readable in it: it is not the checklist document it was uploaded for.
-      if (extracted._failure === "unreadable" && !hadExtraction) await releaseRequirementsFor(doc.dealId, doc.id);
+      if (extracted._failure === "unreadable" && !hadExtraction) {
+        await releaseRequirementsFor(doc.dealId, doc.id, {
+          fileName: doc.originalName || doc.name,
+          reason: typeof extracted._failureReason === "string" ? extracted._failureReason : "it has no readable text",
+        });
+      }
       return { status: "failed", fieldsWritten: [] };
     }
     return await mergeExtractionIntoDeal(doc, extracted);
@@ -448,6 +486,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
     await storage.updateDocument(documentId, { status: "failed", sourceMeta: meta } as any).catch(() => {});
     return { status: "failed", fieldsWritten: [] };
   } finally {
+    stopHeartbeat();
     activeReads.delete(doc.id);
   }
 }

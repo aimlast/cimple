@@ -310,7 +310,8 @@ export function SourceViewer({
     try {
       const res = await fetch(`/api/deals/${dealId}/documents/${docId}/reprocess`, { method: "POST", credentials: "include" });
       if (res.status === 409) {
-        toast({ title: "Already reading", description: "Cimple is re-reading this deal's sources right now. Try again when it's done." });
+        const busy = await res.json().catch(() => ({}));
+        toast({ title: "Already reading", description: busy?.message ?? "Cimple is re-reading this deal's sources right now. Try again when it's done." });
         return;
       }
       if (!res.ok) throw new Error((await res.json().catch(() => ({})))?.error || "Couldn't start reading it again");

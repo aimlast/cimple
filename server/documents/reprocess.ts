@@ -61,7 +61,7 @@ import {
   type SourceKind,
   type SourceRowLookup,
 } from "../interview/info-merger";
-import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, sourceMetaAfterRead } from "./ingest";
+import { documentKind, mergeableExtraction, mergeSourceFor, NO_COPY_REASON, parseProblem, refreshSourceNotes, sourceMetaAfterRead } from "./ingest";
 import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 import {
@@ -183,6 +183,7 @@ export async function reprocessDealDocuments(
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
+    let openProblem: string | null = null;
     const relative = (doc.fileUrl || "").replace(/^\/uploads\//, "");
     const filePath = relative ? path.join(uploadsDir, relative) : null;
     if (filePath && fs.existsSync(filePath)) {
@@ -190,6 +191,7 @@ export async function reprocessDealDocuments(
         text = await extractTextFromFile(filePath, doc.mimeType);
       } catch (err) {
         console.error(`[reprocess] parse failed for doc ${doc.id} (${doc.name}):`, err);
+        openProblem = parseProblem(err);
       }
     }
     // Parsed text is persisted on the row — lets the new prompt re-run even
@@ -239,6 +241,13 @@ export async function reprocessDealDocuments(
       }
     } else {
       console.log(`[reprocess] no file or stored text for doc ${doc.id} (${doc.name}) — replaying stored extraction only`);
+      // A source never read (an older failed row with no reason on it): "Read
+      // it again" must not look like it did something — the row says why it
+      // can't be read (the file couldn't be opened, or there is no copy left).
+      const storedSays = !!stored && Object.keys(stored).some((k) => !k.startsWith("_") && !(k === "summary" && stored.summary === "Extraction failed"));
+      if (!storedSays && (doc.status === "failed" || doc.status === "pending" || doc.status === "parsing")) {
+        failure = { reason: openProblem ?? NO_COPY_REASON, attempts: 0 };
+      }
     }
     return { data: stored, freshText: null, ...(failure ? { failure } : {}) };
   };
