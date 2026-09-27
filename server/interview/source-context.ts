@@ -30,6 +30,7 @@ import {
   type FieldSource,
 } from "./info-merger";
 import { normaliseTableText } from "./table-text";
+import { documentTermNotDealTerm, isDealDocument, isDealTermTopic } from "./deal-terms";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> & Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "isProcessed" | "status" | "category" | "updatedAt">>;
 
@@ -496,6 +497,10 @@ export function detectAlternateConflicts(viewInfo: Record<string, unknown>, docu
       const spokenVsDoc =
         (SPOKEN_KINDS.has(winKind) && altKind === "document") || (winKind === "document" && SPOKEN_KINDS.has(altKind));
       if (!spokenVsDoc) continue;
+      // A document's own term for a deal term (a shareholders' agreement's
+      // covenant vs the non-compete the seller would sign) is not a conflict
+      // (deal-terms.ts).
+      if (documentTermNotDealTerm({ key, docName: (winKind === "document" ? winDoc : altDoc)?.name })) continue;
       if (!valuesMateriallyDiffer(key, win, alt.value, { a: winDoc?.name, b: altDoc?.name, asOf })) continue;
       if (conflicting.some((c) => c.value === alt.value)) continue;
       conflicting.push(alt);
@@ -929,12 +934,17 @@ export function spokenFigureConflicts(sellerMessage: string, documents: DocLike[
   // isn't the headline count of anything a document lists.
   const said = figuresWithUnits(sellerMessage).filter((f) => f.value >= 2 && !f.unit.startsWith("%") && !f.subset);
   if (said.length === 0) return [];
+  // The seller talking about a term of the sale (the non-compete they'd sign,
+  // a transition period) is compared only with a document that sets the
+  // sale's terms — never with an existing agreement's own clause (deal-terms.ts).
+  const aboutDealTerm = isDealTermTopic(sellerMessage);
   const out: { said: string; docName: string; snippet: string }[] = [];
   for (const f of said) {
     let best: { docName: string; snippet: string; score: number } | null = null;
     let agrees = false;
     for (const d of documents) {
       if (!isSellerVisible(d) || String(d.sourceKind || "document") !== "document") continue;
+      if (aboutDealTerm && !isDealDocument(d.name)) continue;
       // A document about the thing counted ("Fleet list" for trucks) is
       // compared on its headline count only — its first figure of that kind
       // (a roster's 96 drivers, not its 38 linehaul drivers).

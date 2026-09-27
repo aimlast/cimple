@@ -27,6 +27,7 @@ import { QUESTION_STOP, searchWord, sourceLabel } from "./source-context";
 import type { OnFileFact, ReaskFinding } from "./reask-guard";
 import { NUMBER_RE } from "./on-file-evidence";
 import { normaliseTableText } from "./table-text";
+import { documentTermNotDealTerm } from "./deal-terms";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "updatedAt">>;
@@ -57,7 +58,15 @@ export interface LiveClaimInput {
   settled?: string[];
 }
 
-interface Material { id: string; label: string; text: string; key?: string }
+interface Material {
+  id: string;
+  label: string;
+  text: string;
+  key?: string;
+  /** Where it comes from, when a source row does: its kind ("document", "call"…) and name. */
+  docKind?: string;
+  docName?: string;
+}
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 
@@ -216,7 +225,9 @@ export function claimMaterial(input: LiveClaimInput, claims: string[]): Material
     valueWords.forEach((w) => { if (words.has(w) && !keyWords.has(w)) s++; });
     if (money && MONEY_FACT_RE.test(key)) s += 1.5;
     if (money && HEADLINE_MONEY_RE.test(key)) s = Math.max(s, 2.5);
-    if (s >= 2) facts.push({ score: s, m: { label: `fact ${key} [${sourceLabel(src, docs)}]`, text: clip(text, 260), key } });
+    const srcDoc = src?.documentId ? docs.get(src.documentId) : undefined;
+    const origin = kind === "document" ? { docKind: "document", ...(srcDoc ? { docName: srcDoc.name } : {}) } : {};
+    if (s >= 2) facts.push({ score: s, m: { label: `fact ${key} [${sourceLabel(src, docs)}]`, text: clip(text, 260), key, ...origin } });
   }
   facts.sort((a, b) => b.score - a.score).slice(0, 8).forEach((f) => out.push({ id: `M${out.length + 1}`, ...f.m }));
   let onFileAdded = 0;
@@ -238,7 +249,13 @@ export function claimMaterial(input: LiveClaimInput, claims: string[]): Material
       const k = `${hit.docId}|${hit.text.slice(0, 80)}`;
       if (seen.has(k)) continue;
       seen.add(k);
-      out.push({ id: `M${out.length + 1}`, label: `passage from "${hit.docName}"`, text: hit.text });
+      out.push({
+        id: `M${out.length + 1}`,
+        label: `passage from "${hit.docName}"`,
+        text: hit.text,
+        docKind: String(docs.get(hit.docId)?.sourceKind || "document"),
+        docName: hit.docName,
+      });
     }
     if (out.length >= 24) break;
   }
@@ -277,6 +294,7 @@ const SYSTEM = [
   "Do report a count that includes items the file lists separately or excludes (the owner's '26 trucks' vs the fleet list's 24 service vans plus 2 owner vehicles; '3,100 members' vs 2,900 active plus 214 suspended) — the document for buyers must state the right one.",
   "In a table passage each figure belongs to the label right before it on its row ('Setup & process technicians: 22'), never to the next row's label.",
   "Do NOT report: different measures (a total vs a labelled subset, gross vs net, adjusted vs reported, a rate vs an amount, one segment vs the whole), different years or periods (an older year vs 'now' is a change, not a conflict), rounding or an approximate figure within about 5%, anything you would have to calculate or infer, or what the owner is only estimating about the future. When in doubt, leave it out. At most 2.",
+  "An existing agreement's own term (a shareholders' agreement's covenant, an employment contract's non-compete, a lease clause) is not a term of the sale: the owner saying what they would accept or sign in the sale (a non-compete, a transition period, financing) is a different measure — never report it against such a document.",
 ].join(" ");
 
 let client: Anthropic | null = null;
@@ -446,6 +464,12 @@ export function validateLiveClaims(raw: unknown[], message: string, material: Ma
     }
     const key = (typeof x.key === "string" && x.key.trim() ? x.key.trim() : m.key ?? String(x.topic ?? "figure"))
       .replace(/[^A-Za-z0-9]/g, "").replace(/^[A-Z]/, (c) => c.toLowerCase()).slice(0, 48) || "figure";
+    // A document's own term (a shareholders' agreement's covenant, an
+    // employment contract's non-compete) is not the sale's term: the seller
+    // saying what they'd sign with a buyer doesn't conflict with it (round A,
+    // Great Lakes: "your shareholders' agreement shows a two-year non-compete,
+    // but you just mentioned about five years post-sale…").
+    if (m.docKind === "document" && documentTermNotDealTerm({ key: m.key ?? key, topic: `${String(x.topic ?? "")} ${said} ${onFile}`, docName: m.docName })) continue;
     out.push({
       kind: "conflict",
       detail: `${key}: the seller just said "${clip(said, 140)}", but ${m.label} states "${clip(onFile, 160)}"`,

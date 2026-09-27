@@ -6,6 +6,14 @@ import { startLiveTranscription, NotConfiguredError, type LiveTranscriptionHandl
 import { createDailyCall, joinDailyCall, type CallHandle } from "@/lib/daily-call";
 import DailyIframe, { type DailyCall } from "@daily-co/daily-js";
 import { CallStage } from "@/components/call/CallStage";
+import {
+  answeringAt as answeringAtOf,
+  afterFailedSend,
+  liveExchangeText,
+  brokerNameFromMe,
+  botSpeakerFor,
+  newBotSpeakerState,
+} from "@/lib/interview-sync";
 import { Copy } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -73,6 +81,20 @@ interface AIConversationInterfaceProps {
   resume?: boolean;
   /** Where the finished interview's transcript can be read (broker). */
   transcriptHref?: string;
+  /**
+   * The broker's own page ("Start AI Interview" on the deal): "broker" — the
+   * broker answers from their notes, in a session of their own that the
+   * seller never resumes or reads. (Seller pages send nothing: the invite
+   * token decides. "together" sends broker_with_seller itself.)
+   */
+  conductedBy?: "broker";
+}
+
+/** A turn the server refused (409): the screen re-syncs from the saved transcript. */
+class TurnRefused extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+  }
 }
 
 const IMPORTANCE_TEXT = { critical: "Critical for buyers", important: "Important", helpful: "Helpful" } as const;
@@ -176,9 +198,10 @@ export function AIConversationInterface({
   meetingLink,
   resume = false,
   transcriptHref,
+  conductedBy: conductedByProp,
 }: AIConversationInterfaceProps) {
   const together = variant === "together";
-  const conductedBy = together ? ("broker_with_seller" as const) : undefined;
+  const conductedBy = together ? ("broker_with_seller" as const) : conductedByProp;
   // Hands-free (together mode): keep listening across questions and send the
   // seller's answer automatically after a pause. The broker clicks once.
   const [handsFree, setHandsFree] = useState(false);
@@ -226,6 +249,8 @@ export function AIConversationInterface({
   const botSeqRef = useRef(0);
   const botActiveRef = useRef(false);
   const brokerNameRef = useRef<string>("");
+  // One speaker per meeting participant (so "this is me" works), and who the broker is.
+  const botSpeakersRef = useRef(newBotSpeakerState());
   const pip = usePictureInPicture({ width: 460, height: 600 });
   // Seller-mode calls carry the invite token; broker-mode relies on the
   // session cookie. authHeaders merges the token header when present.
@@ -233,6 +258,11 @@ export function AIConversationInterface({
     sellerToken ? { ...base, "X-Seller-Token": sellerToken } : base;
 
   const [messages, setMessages] = useState<ConversationMessage[]>([]);
+  // The transcript as rendered, for callbacks (the question being answered is sent as answeringAt).
+  const messagesRef = useRef<ConversationMessage[]>([]);
+  messagesRef.current = messages;
+  // AI bubbles the page wrote itself (an error notice, the local goodbye) — never "the question being answered".
+  const localOnlyRef = useRef<Set<string>>(new Set());
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [input, setInput] = useState("");
   const [suggestedAnswers, setSuggestedAnswers] = useState<string[]>([]);
@@ -421,6 +451,30 @@ export function AIConversationInterface({
     setSessionId(null);
     initialScrollDoneRef.current = false;
     setStartAttempt((n) => n + 1);
+  }, []);
+
+  /** The session's transcript as the server saved it (null when it can't be read). */
+  const loadHistory = useCallback(async (): Promise<{ messages: ConversationMessage[]; status?: string } | null> => {
+    if (!sessionId) return null;
+    try {
+      const r = await fetch(`/api/interview/session/${sessionId}/history`, { headers: authHeaders() });
+      if (!r.ok) return null;
+      const h = await r.json();
+      return Array.isArray(h?.messages) ? h : null;
+    } catch {
+      return null;
+    }
+    // (authHeaders reads the seller token prop.)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, sellerToken]);
+
+  /** Shows a saved transcript: its pending question's chips, or the finished state. */
+  const showHistory = useCallback((h: { messages: ConversationMessage[]; status?: string }) => {
+    localOnlyRef.current.clear();
+    setMessages(h.messages);
+    const last = h.messages[h.messages.length - 1];
+    setSuggestedAnswers(h.status !== "completed" && last?.role === "ai" ? last.suggestedAnswers ?? [] : []);
+    if (h.status === "completed") setIsFinished(true);
   }, []);
 
   // Auto-scroll to the newest message. This has to wait for the transcript
@@ -652,6 +706,7 @@ export function AIConversationInterface({
 
     const controller = new AbortController();
     setAbortController(controller);
+    const answering = answeringAtOf(messagesRef.current, localOnlyRef.current);
 
     // The AI reply streams into a single bubble, identified by this timestamp.
     const aiTs = new Date().toISOString();
@@ -683,12 +738,16 @@ export function AIConversationInterface({
           sessionId,
           ...(userMessage.correctionOf ? { correctionOf: userMessage.correctionOf } : {}),
           ...(conductedBy ? { conductedBy, ...(via ? { conductedVia: via } : {}) } : {}),
+          // The question this answers — the server refuses an answer to a
+          // question that is no longer the latest (another tab, a resend).
+          ...(answering ? { answeringAt: answering } : {}),
         }),
         signal: controller.signal,
       });
 
       if (!res.ok || !res.body) {
         const err = await res.json().catch(() => ({}));
+        if (res.status === 409 && typeof err.code === "string") throw new TurnRefused(err.code, err.error || "The conversation moved on");
         throw new Error(err.error || `${res.status}: ${res.statusText}`);
       }
 
@@ -698,6 +757,7 @@ export function AIConversationInterface({
       let buffer = "";
       let result: TurnResult | null = null;
       let streamError: string | null = null;
+      let streamCode: string | null = null;
 
       for (;;) {
         const { done, value } = await reader.read();
@@ -738,11 +798,12 @@ export function AIConversationInterface({
             result = evt.result as TurnResult;
           } else if (evt.type === "error") {
             streamError = evt.error || "Failed to process message";
+            if (typeof evt.code === "string") streamCode = evt.code;
           }
         }
       }
 
-      if (streamError) throw new Error(streamError);
+      if (streamError) throw streamCode ? new TurnRefused(streamCode, streamError) : new Error(streamError);
       if (!result) throw new Error("No response received");
       const finalResult: TurnResult = result;
 
@@ -787,34 +848,78 @@ export function AIConversationInterface({
           setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === dropped.userMessage.timestamp)));
           toast({ title: "Your last message wasn't sent", description: "The overview has ended. You can reopen it any time to add more." });
         }
+        // The goodbye stays on screen — with the answer to the seller's
+        // parting question — and the finished state offers Continue. (It
+        // used to navigate away 2s later: the seller lost the goodbye, and
+        // on a Cimple call the broker's page unmounted and hung up on the
+        // seller mid-sentence.)
         setIsFinished(true);
-        setTimeout(() => { void onComplete?.(); }, 2000);
       }
     } catch (error: any) {
       if (error.name === "AbortError") return;
 
       console.error("Interview message error:", error);
+      // An answer queued behind this turn comes back to the box, after this
+      // one; a draft typed meanwhile is kept.
+      const waiting = queuedSendRef.current;
+      queuedSendRef.current = null;
+      setQueuedSend(false);
+      // (Chips a ready event showed belong to the reply that failed.)
+      setSuggestedAnswers([]);
+      const dropLocal = (prev: ConversationMessage[]) =>
+        prev.filter(
+          (m) =>
+            !(m.role === "ai" && m.timestamp === aiTs) &&
+            !(m.role === "user" && (m.timestamp === userMessage.timestamp || m.timestamp === waiting?.userMessage.timestamp)),
+        );
+      const backToBox = (withSent: boolean) => {
+        const restored = [withSent ? cleanedInput : "", waiting?.text, inputRef.current.trim()].filter(Boolean).join("\n\n");
+        setInput(restored);
+        inputRef.current = restored;
+        if (withSent && correction) setEditing(correction);
+      };
+      const code = error instanceof TurnRefused ? error.code : null;
+
+      // The session was ended, or taken over by another kind of session
+      // (e.g. the seller's own, after "Interview together"): start again —
+      // the answer waits in the box.
+      if (code === "session_closed" || code === "mode_mismatch" || code === "wrong_session") {
+        setMessages(dropLocal);
+        backToBox(true);
+        toast({ title: "This conversation moved on", description: "Loading the latest — your answer is still in the box." });
+        retryStart();
+        return;
+      }
+
+      // Did the server save this answer and reply after all (a dropped
+      // connection, a phone that locked mid-turn, a resend refused as out
+      // of step)? Then show what it saved — asking the seller to send it
+      // again would pair their answer with a question they never saw.
+      const history = await loadHistory();
+      if (history && afterFailedSend(history.messages, cleanedInput) === "adopt") {
+        showHistory(history);
+        backToBox(false);
+        return;
+      }
+      if (code === "out_of_sync" && history) {
+        showHistory(history);
+        backToBox(true);
+        toast({ title: "The conversation had moved on", description: "Here is the latest question — your answer is in the box if it still applies." });
+        return;
+      }
+
       const errText =
         "I'm sorry, something went wrong on my end. Your answer is still in the box below — just hit send again.";
+      localOnlyRef.current.add(aiTs);
       if (streamedAny) {
         setBubble(errText);
       } else {
         setMessages((prev) => [...prev, { role: "ai", content: errText, timestamp: aiTs }]);
       }
       // Restore the seller's text so they don't have to retype it — and the
-      // editing state, so a re-send still lands as a correction. An answer
-      // queued behind this turn comes back to the box too (after it), and a
-      // draft typed meanwhile is kept.
-      const waiting = queuedSendRef.current;
-      queuedSendRef.current = null;
-      setQueuedSend(false);
-      // (Chips a ready event showed belong to the reply that failed.)
-      setSuggestedAnswers([]);
+      // editing state, so a re-send still lands as a correction.
       if (waiting) setMessages((prev) => prev.filter((m) => !(m.role === "user" && m.timestamp === waiting.userMessage.timestamp)));
-      const restored = [cleanedInput, waiting?.text, inputRef.current.trim()].filter(Boolean).join("\n\n");
-      setInput(restored);
-      inputRef.current = restored;
-      if (correction) setEditing(correction);
+      backToBox(true);
     } finally {
       setAbortController(null);
       setIsLoading(false);
@@ -822,7 +927,7 @@ export function AIConversationInterface({
       setTurnReady(false);
       setTurnEnding(false);
     }
-  }, [input, editing, isFinished, isLoading, isStreaming, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast]);
+  }, [input, editing, isFinished, isLoading, isStreaming, sessionId, dealId, stopRecording, onTurnResult, onComplete, toast, loadHistory, showHistory, retryStart]);
 
   // "Edit" on an earlier answer loads it into the composer; the banner above
   // the composer names what's being corrected and offers Cancel.
@@ -903,10 +1008,14 @@ export function AIConversationInterface({
       content: "Thank you for your time. Your broker will review the information you've provided and may reach out if they need anything else.",
       timestamp: new Date().toISOString(),
     };
+    localOnlyRef.current.add(finishMessage.timestamp);
     setMessages((prev) => [...prev, finishMessage]);
     setIsEnding(false);
-    void onComplete?.();
-  }, [stopRecording, handleCancel, onComplete, sessionId, dealId, isEnding, toast]);
+    // Interview together: ending the interview never ends the call — the
+    // broker is still talking to the seller; leaving the page (an explicit
+    // "Return to deal") does.
+    if (!together) void onComplete?.();
+  }, [stopRecording, handleCancel, onComplete, sessionId, dealId, isEnding, toast, together]);
 
   // Enter sends (the convention in every messaging app); Shift+Enter inserts
   // a newline. Ctrl/Cmd+Enter still sends for muscle memory.
@@ -917,7 +1026,13 @@ export function AIConversationInterface({
     return speaker === b ? "Broker" : "Seller";
   }, []);
 
-  const flushLiveExchange = useCallback(() => {
+  /**
+   * Sends the room's exchange since the last question. The pause timer sends
+   * once the seller has answered (any length when the broker hasn't spoken
+   * since — "We lease it." used to wait forever for a fourth word); "Send
+   * now" (`force`) sends whatever the transcript holds.
+   */
+  const flushLiveExchange = useCallback((force = false) => {
     const lines = liveLinesRef.current;
     if (lines.length === 0) return;
     // The AI is still answering the previous exchange: keep everything and try
@@ -926,26 +1041,21 @@ export function AIConversationInterface({
     // thinking was silently lost.)
     if (isLoadingRef.current) {
       if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
-      liveTimerRef.current = setTimeout(() => flushLiveExchangeRef.current(), 1500);
+      liveTimerRef.current = setTimeout(() => flushLiveExchangeRef.current(force), 1500);
       return;
     }
-    const b = brokerSpeakerRef.current;
-    // Only send once the SELLER has said something substantive — the broker
-    // reading or rephrasing the question alone is not an answer.
-    const sellerWords = lines
-      .filter((l) => b === null || l.speaker !== b)
-      .reduce((n, l) => n + l.text.split(/\s+/).filter(Boolean).length, 0);
-    if (sellerWords < 4) return;
-    const text = lines
-      // Only the broker's lines can be "the question being read aloud"; a
-      // seller who repeats the question's words is answering it.
-      .filter((l) => !(l.speaker === b && looksLikeQuestionEcho(l.text, currentQuestionRef.current)))
-      .map((l) => `${speakerLabel(l.speaker)}: ${l.text}`)
-      .join("\n");
+    // Only the broker's lines can be "the question being read aloud"; a
+    // seller who repeats the question's words is answering it.
+    const text = liveExchangeText(lines, brokerSpeakerRef.current, {
+      force,
+      label: speakerLabel,
+      isEcho: (t) => looksLikeQuestionEcho(t, currentQuestionRef.current),
+    });
+    if (!text) return;
     liveLinesRef.current = [];
     setLiveLines([]);
     setLiveInterim("");
-    if (text.trim()) void handleSendRef.current(text);
+    void handleSendRef.current(text);
   }, [speakerLabel]);
 
   const flushLiveExchangeRef = useRef(flushLiveExchange);
@@ -954,7 +1064,7 @@ export function AIConversationInterface({
 
   const armLiveTimer = useCallback(() => {
     if (liveTimerRef.current) clearTimeout(liveTimerRef.current);
-    liveTimerRef.current = setTimeout(flushLiveExchange, LIVE_PAUSE_MS);
+    liveTimerRef.current = setTimeout(() => flushLiveExchange(false), LIVE_PAUSE_MS);
   }, [flushLiveExchange]);
 
   const onLiveSegment = useCallback((seg: LiveSegment) => {
@@ -1101,8 +1211,11 @@ export function AIConversationInterface({
     setBotState("starting");
     setBotStatusText("");
     try {
+      // (GET /me answers { user: { name, username } } — reading me.name
+      // found nothing, and every line fell back to "the host is the broker".)
       const me = await fetch("/api/broker-auth/me", { credentials: "include" }).then((r) => (r.ok ? r.json() : null)).catch(() => null);
-      brokerNameRef.current = (me?.name || me?.username || "").toString().trim().toLowerCase();
+      brokerNameRef.current = brokerNameFromMe(me);
+      botSpeakersRef.current = newBotSpeakerState();
       const r = await fetch(`/api/interview/${dealId}/call/bot/start`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -1113,8 +1226,10 @@ export function AIConversationInterface({
       if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || "Couldn't send the notetaker");
       botSeqRef.current = 0;
       botActiveRef.current = true;
-      brokerSpeakerRef.current = 0;
-      setBrokerSpeaker(0);
+      // Who the broker is comes from the lines (their name; the host only
+      // when no name is known) or the broker's own "this is me".
+      brokerSpeakerRef.current = null;
+      setBrokerSpeaker(null);
       setLiveActive(true);
       setBotState("joining");
     } catch (err: any) {
@@ -1138,9 +1253,15 @@ export function AIConversationInterface({
         const data = await r.json() as { lines: { seq: number; participantId: string | number; name: string | null; isHost: boolean | null; text: string }[]; seq: number; status: string | null };
         for (const l of data.lines) {
           botSeqRef.current = Math.max(botSeqRef.current, l.seq);
-          const name = (l.name || "").trim().toLowerCase();
-          const isBroker = (brokerNameRef.current && name && (name === brokerNameRef.current || name.includes(brokerNameRef.current))) || (!brokerNameRef.current && l.isHost === true);
-          onLiveSegment({ speaker: isBroker ? 0 : 1, text: l.text, isFinal: true, speechFinal: false });
+          const st = botSpeakersRef.current;
+          const speaker = botSpeakerFor(st, l, brokerNameRef.current);
+          // A name match settles who the broker is (over an echo guess); the
+          // host is only a fallback; the broker's own pick always stands.
+          if (st.broker !== null && st.broker !== brokerSpeakerRef.current && (st.brokerBy === "name" || brokerSpeakerRef.current === null)) {
+            brokerSpeakerRef.current = st.broker;
+            setBrokerSpeaker(st.broker);
+          }
+          onLiveSegment({ speaker, text: l.text, isFinal: true, speechFinal: false });
         }
         const st = data.status || "";
         if (st === "fatal" || st === "call_ended" || st === "done") {
@@ -1249,7 +1370,12 @@ export function AIConversationInterface({
                 type="button"
                 className={`shrink-0 font-medium ${brokerSpeaker === l.speaker ? "text-muted-foreground" : "text-teal"} hover:underline`}
                 title={brokerSpeaker === l.speaker ? "This is you" : "Click if this is you (the broker)"}
-                onClick={() => { brokerSpeakerRef.current = l.speaker; setBrokerSpeaker(l.speaker); }}
+                onClick={() => {
+                  brokerSpeakerRef.current = l.speaker;
+                  setBrokerSpeaker(l.speaker);
+                  botSpeakersRef.current.broker = l.speaker;
+                  botSpeakersRef.current.brokerBy = "picked";
+                }}
               >
                 {speakerLabel(l.speaker)}
               </button>
@@ -1490,8 +1616,12 @@ export function AIConversationInterface({
                 <CheckCircle className="h-4 w-4 text-success shrink-0" />
                 <div>
                   <p className="text-sm font-medium">Business Overview up to date</p>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    You can come back anytime to add or update details.
+                  <p className="text-xs text-muted-foreground mt-0.5" data-testid="text-finished-note">
+                    {inCimpleCall && callState === "live"
+                      ? "The interview is finished — the call stays open until you leave this page."
+                      : externalCall && (botState === "joining" || botState === "live")
+                        ? "The interview is finished — the notetaker leaves when you leave this page."
+                        : "You can come back anytime to add or update details."}
                   </p>
                 </div>
               </div>
@@ -1499,8 +1629,9 @@ export function AIConversationInterface({
                 <button
                   onClick={() => { void onComplete(); }}
                   className="shrink-0 px-3 py-1.5 text-xs font-medium rounded-md bg-teal text-teal-foreground hover:bg-teal/90 transition-colors"
+                  data-testid="button-finished-continue"
                 >
-                  Continue →
+                  {together ? "Return to deal →" : "Continue →"}
                 </button>
               )}
             </div>
@@ -1613,27 +1744,18 @@ export function AIConversationInterface({
                 >
                   {isRecording ? <MicOff className="h-3.5 w-3.5" /> : <Mic className="h-3.5 w-3.5" />}
                 </Button>
-                {isLoading && !isStreaming ? (
-                  <Button
-                    onClick={handleCancel}
-                    size="icon"
-                    variant="destructive"
-                    className="h-8 w-8"
-                    data-testid="button-cancel"
-                  >
-                    <StopCircle className="h-3.5 w-3.5" />
-                  </Button>
-                ) : (
-                  <Button
-                    onClick={() => void handleSend()}
-                    size="icon"
-                    disabled={!input.replace(/​/g, "").trim() || queuedSend || turnEnding}
-                    className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
-                    data-testid="button-send"
-                  >
-                    <Send className="h-3.5 w-3.5" />
-                  </Button>
-                )}
+                {/* No "cancel" while the advisor is thinking: it only stopped the
+                    page listening — the server still recorded the answer and
+                    replied, so a resend landed on a question never seen. */}
+                <Button
+                  onClick={() => void handleSend()}
+                  size="icon"
+                  disabled={(isLoading && !isStreaming) || !input.replace(/​/g, "").trim() || queuedSend || turnEnding}
+                  className="h-8 w-8 bg-teal text-teal-foreground hover:bg-teal/90"
+                  data-testid="button-send"
+                >
+                  <Send className="h-3.5 w-3.5" />
+                </Button>
               </div>
             </div>
 
@@ -1811,7 +1933,7 @@ export function AIConversationInterface({
                   type="button"
                   className="shrink-0 underline underline-offset-2 hover:text-foreground disabled:opacity-40"
                   disabled={isLoading}
-                  onClick={() => { if (liveTimerRef.current) clearTimeout(liveTimerRef.current); flushLiveExchangeRef.current(); }}
+                  onClick={() => { if (liveTimerRef.current) clearTimeout(liveTimerRef.current); flushLiveExchangeRef.current(true); }}
                   data-testid="button-send-exchange-now"
                 >
                   Send now

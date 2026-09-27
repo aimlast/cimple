@@ -33,6 +33,7 @@ import { questionPart, questionTokens, searchSourcesTop, valuesMateriallyDiffer,
 import { normaliseTableText } from "./table-text";
 import { modelAnswerVerifier, type AnswerVerifier } from "./answer-check";
 import { selfStatedFindings } from "./reply-guards";
+import { sellerQuestionFromMessage } from "./seller-intent";
 import type { Document } from "@shared/schema";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
@@ -133,6 +134,50 @@ export const figureTokens = (s: string) =>
     return scale ? String(Math.round(parseFloat(n) * scale)) : n;
   });
 const yearsIn = (s: string) => new Set((s.match(/(?<!\d)(?:19|20)\d{2}(?!\d)/g) ?? []).map(Number));
+
+/**
+ * The words a question and the file use for the same thing: "capital
+ * expenditure" is the fact capexRequirements (no word in common — the
+ * capex figures on file were never even a candidate: round A, Great
+ * Lakes), a lien is what a debt note calls "secured by". The question
+ * text gets the other form appended, for matching only.
+ */
+const TERM_ALIASES: Array<[RegExp, string]> = [
+  [/\bcapital (?:expenditures?|spend(?:ing)?|investments?)\b|\bcap[- ]ex\b/i, "capex"],
+  [/\bcapex\b/i, "capital expenditure"],
+  [/\bliens?\b|\bencumber\w*|\bpledged?\b|\bcollateral\b/i, "secured security"],
+  [/\bseller'?s discretionary earnings\b/i, "sde"],
+  [/\bnet working capital\b/i, "nwc"],
+  [/\baccounts receivable\b/i, "receivables ar"],
+  [/\baccounts payable\b/i, "payables ap"],
+];
+export function withTermAliases(text: string): string {
+  const extra = TERM_ALIASES.filter(([re]) => re.test(text)).map(([, alias]) => alias);
+  return extra.length ? `${text} (${extra.join(" ")})` : text;
+}
+
+/**
+ * The years a fact states a figure for: a by-year map's years, or the years
+ * written next to a figure in its value ("$2,960,000 in 2024; $3,420,000 in
+ * 2023" → 2024, 2023). A year alone ("since 2019") is not a figure for it.
+ */
+export function yearsWithFigures(raw: unknown): Set<number> {
+  const out = new Set<number>();
+  if (raw && typeof raw === "object" && !Array.isArray(raw)) {
+    for (const [k, v] of Object.entries(raw as Record<string, unknown>)) {
+      if (/^(?:19|20)\d{2}$/.test(k) && v !== null && v !== undefined && v !== "") out.add(Number(k));
+    }
+    return out;
+  }
+  const text = typeof raw === "string" ? raw : "";
+  const re = /(?<!\d)((?:19|20)\d{2})(?!\d)/g;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    const around = `${text.slice(Math.max(0, m.index - 28), m.index)} ${text.slice(m.index + 4, m.index + 32)}`;
+    if (figureTokens(around).some((n) => !/^(?:19|20)\d{2}$/.test(n) && n.replace(/\D/g, "").length >= 2)) out.add(Number(m[1]));
+  }
+  return out;
+}
 /** Acronyms and mid-sentence capitalised names — the words that pin a question to one topic (CARB, BBB, EV, Megan). */
 function distinctiveTokens(text: string): Set<string> {
   const out = new Set<string>();
@@ -786,6 +831,37 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
       }
     }
 
+    // 1b. A question over several years with some of them on file (capex
+    // "for 2022, 2023, and 2024" with 2023 and 2024 in the statements): ask
+    // only for the years missing, citing the ones on file. Sure — the
+    // answer check read the whole question as unanswered (2022 isn't on
+    // file) and it went out, re-asking two years the seller had sent.
+    {
+      const qYears = Array.from(yearsIn(question)).sort();
+      if (qYears.length >= 2 && !delta) {
+        const matchText = withTermAliases(questionWithLeadIn(draft));
+        for (const c of rankedFactCandidates(matchText, ctx.info, [], conflictKeys, docs, 4)) {
+          const key = c.detail.split(":")[0];
+          const raw = ctx.info[key];
+          const kind = String(sources[key]?.source ?? "");
+          if (["crm", "website", "social"].includes(kind)) continue;
+          const have = yearsWithFigures(raw);
+          const onFile = qYears.filter((y) => have.has(y));
+          const missing = qYears.filter((y) => !have.has(y));
+          if (onFile.length === 0 || missing.length === 0) continue;
+          // Already citing what is on file ("I have 2023 at $3.42M and 2024
+          // at $2.96M — what was 2022?"): that is the right question.
+          const onFileFigures = figureTokens(valueText(raw)).filter((n) => !/^(?:19|20)\d{2}$/.test(n) && n.length >= 2);
+          if (onFileFigures.some((n) => figureTokens(draft).includes(n))) continue;
+          findings.push({
+            kind: "fact",
+            detail: `${key}: ${relevantExcerpt(valueText(raw), question, 220)} [${sourceLabel(sources[key], docs)}] — on file for ${onFile.join(" and ")}; ask ONLY for ${missing.join(" and ")}, citing the ${onFile.length === 1 ? "year" : "years"} on file`,
+          });
+          break;
+        }
+      }
+    }
+
     // 2b. Ranked candidates the strict rules above can't see — reworded
     // questions, a fact under another key, an on-file item, what the
     // interviewer itself told the seller. The answer check decides each —
@@ -795,7 +871,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
     {
       const factKeys = new Set(findings.filter((f) => f.kind === "fact").map((f) => f.detail.split(":")[0].toLowerCase()));
       const exclude = new Set([...Array.from(conflictKeys), ...Array.from(factKeys)]);
-      findings.push(...rankedFactCandidates(questionWithLeadIn(draft), ctx.info, ctx.onFile ?? [], exclude, docs));
+      findings.push(...rankedFactCandidates(withTermAliases(questionWithLeadIn(draft)), ctx.info, ctx.onFile ?? [], exclude, docs));
       if (!Array.from(q).every((t) => seller.has(t))) findings.push(...rankedPriorCandidates(question, ctx.priorQA, matchedPrior));
       findings.push(...ownStatementFindings(draft, question, ctx.ownStatements ?? []));
     }
@@ -823,7 +899,7 @@ export function findReasks(draft: string, ctx: ReaskContext): ReaskFinding[] {
       // a lead-in can carry the subject — "of your 11 physiotherapists, how
       // many are T4?")
       const ask = askClause(draft);
-      const hits = [...searchSourcesTop(questionWithLeadIn(draft), ctx.documents, 4), ...(ask ? searchSourcesTop(ask, ctx.documents, 2) : [])];
+      const hits = [...searchSourcesTop(withTermAliases(questionWithLeadIn(draft)), ctx.documents, 4), ...(ask ? searchSourcesTop(withTermAliases(ask), ctx.documents, 2) : [])];
       let kept = 0;
       for (const [i, hit] of Array.from(hits.entries())) {
         if (kept >= 3) break;
@@ -965,13 +1041,30 @@ export function echoesPassage(text: string, passage: string): boolean {
 }
 
 /** The corrective instruction for one re-call. */
-export function reaskCorrection(findings: ReaskFinding[]): string {
+export function reaskCorrection(
+  findings: ReaskFinding[],
+  opts: {
+    /** The seller's message this turn answers (their own question in it is kept — see below). */
+    sellerMessage?: string | null;
+  } = {},
+): string {
   const facts = findings.filter((f) => f.kind === "fact").map((f) => `- ${f.detail}`);
   const prior = findings.filter((f) => f.kind === "prior_question").map((f) => `- ${f.detail}`);
   const own = findings.filter((f) => f.kind === "own_statement").map((f) => `- ${f.detail}`);
   const text = findings.filter((f) => f.kind === "source_text").map((f) => `- ${f.detail}`);
   const conflicts = findings.filter((f) => f.kind === "conflict").map((f) => `- ${f.detail}`);
   const parts: string[] = ["[SYSTEM CORRECTION:"];
+  // The seller's own question survives every rewrite. A rewrite told "a
+  // source on file already answers it" dropped the draft's answer to "who
+  // holds which licences — do you have that?" and switched topic (round A,
+  // Lakeshore); a conflict rewrite dropped "what happens to my personal
+  // guarantees at closing?" (Great Lakes).
+  const asked = opts.sellerMessage ? sellerQuestionFromMessage(opts.sellerMessage) : "";
+  if (asked) {
+    parts.push(
+      `THE SELLER ASKED YOU: "${asked.slice(0, 300)}" — your rewrite must still answer it, first, in a sentence of its own. When the file answers it (a source named below, or a fact on file), say so and give the answer from the file ("Yes — the staff roster lists …"); when it is the broker's to answer, say that plainly. Never drop it to change the topic, and never ask the seller for what the file already holds.`,
+    );
+  }
   // A contradicted figure comes first: the next question must reconcile it.
   if (conflicts.length) parts.push(`FIRST — the seller's figure conflicts with a document on file:\n${conflicts.join("\n")}\nYour next question must reconcile it: name both figures neutrally, attribute each only to its real source, and ask which is right and what explains the difference. Do not state either figure as settled.`);
   if (facts.length) parts.push(`Your question asks for something already on file:\n${facts.join("\n")}`);
@@ -1010,7 +1103,7 @@ export async function applyReaskGuard(
     all.push(...toFix);
     conversation.push(
       { role: "assistant" as const, content: current.message },
-      { role: "user" as const, content: reaskCorrection(attempt === 0 ? toFix : all) },
+      { role: "user" as const, content: reaskCorrection(attempt === 0 ? toFix : all, { sellerMessage: ctx.sellerMessage }) },
     );
     // A wording rewrite: only its head is used (the question, why we ask,
     // chips) — the model is stopped there instead of writing a tail that

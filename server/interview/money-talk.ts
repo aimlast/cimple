@@ -510,6 +510,16 @@ const AGREE_OBJECT_RE = /\b(?:items?|expenses?|costs?|sheet|list|schedule|breakd
 const PROMISE_RE =
   /\b(?:i'?ll|i will|we'?ll|we will|let me)\s+(?:make sure|ensure|include|add|capture|count|list|put)\b|\bi(?:'ve| have) (?:got|captured|included|added|listed)\b/i;
 
+/**
+ * Items routed into the earnings figure: "…is captured and goes to her for
+ * that calculation", "…all feed into the recast", "…factored into the SDE".
+ */
+const CALC_ROUTE_RE =
+  /\b(?:for|into|towards?) (?:that|the|this|your|her|his|their) (?:calculation|number|figure|recast|normali[sz]ation|earnings(?: figure| number)?|sde|adjustments?)\b|\b(?:factored|fed|feeds?|built|goes|go|went|passed|handed|flows?) (?:in(?:to)?|over|along|on|through|to)\b[^.?!]{0,60}?\b(?:calculation|number|figure|recast|earnings|sde|adjustments?|add[- ]?backs?)\b/i;
+/** The distinct expense items a sentence names ("compensation", "salary", "vehicle" → 3). */
+const expenseItems = (s: string): number =>
+  new Set((s.match(new RegExp(EXPENSE_WORD_RE.source, "gi")) ?? []).map((w) => w.toLowerCase().replace(/e?s$/, ""))).size;
+
 /** How many money figures a sentence states ("$180K" once, "85 grand" once). */
 const moneyCount = (s: string): number =>
   (s.match(/\$\s?\d[\d,.]*(?:\s?(?:k|m|mm|thousand|million|grand)\b)?|\b\d[\d,.]*\s?(?:k|m|mm|thousand|million|grand)\b/gi) ?? []).length;
@@ -541,6 +551,11 @@ export function candidateListStatements(message: string, sellerMessage?: string 
     if (money >= 2 && EXPENSE_WORD_RE.test(s) && (framed || prevFrames || EARNINGS_TERM_RE.test(s) || LIST_LEAD_RE.test(s.split(/\$/)[0]))) { out.push(s); return; }
     // "I'll make sure the owner vehicles ($28K), health and life insurance ($9K)…"
     if (PROMISE_RE.test(s) && money >= 1 && (sellerRaised || EARNINGS_TERM_RE.test(s))) { out.push(s); return; }
+    // No figures, the same list: "everything you've told me about your
+    // compensation, Maria's salary, and the vehicle costs is captured and
+    // goes to her for that calculation" (round A re-check, Lakeshore T6) —
+    // the items named as what the earnings figure is built from.
+    if (expenseItems(s) >= 2 && CALC_ROUTE_RE.test(s)) { out.push(s); return; }
     // "You're right — those items are in the documents Denise sent."
     if (sellerRaised && AGREE_START_RE.test(s) && AGREE_OBJECT_RE.test(s)) { out.push(s); return; }
   });

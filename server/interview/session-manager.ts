@@ -2029,7 +2029,7 @@ async function processTurnLocked(
       conversation = [
         ...conversation,
         { role: "assistant" as const, content: res.response.message },
-        { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings) },
+        { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings, { sellerMessage: intentMessage }) },
       ];
       reaskAttempt++;
       res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, gate, hooks);
