@@ -1579,6 +1579,8 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_approval_broker_approved: { teams: ["seller"], roles: ["owner", "representative"] },
   buyer_approval_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
+  // The seller finished (or ended) their AI interview.
+  interview_complete: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")

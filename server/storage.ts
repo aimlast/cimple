@@ -34,7 +34,8 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
@@ -661,14 +662,17 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  // A revoked invite (a removed seller-team member's link) never resolves:
+  // this lookup is the one gate every seller-token check goes through.
   async getSellerInviteByToken(token: string): Promise<SellerInvite | undefined> {
-    const result = await db.select().from(sellerInvites).where(eq(sellerInvites.token, token));
+    const result = await db.select().from(sellerInvites)
+      .where(and(eq(sellerInvites.token, token), ne(sellerInvites.status, REVOKED_INVITE_STATUS)));
     return result[0];
   }
 
   async getSellerInvitesByDealId(dealId: string): Promise<SellerInvite[]> {
     return db.select().from(sellerInvites)
-      .where(eq(sellerInvites.dealId, dealId))
+      .where(and(eq(sellerInvites.dealId, dealId), ne(sellerInvites.status, REVOKED_INVITE_STATUS)))
       .orderBy(desc(sellerInvites.createdAt));
   }
 

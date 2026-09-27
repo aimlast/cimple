@@ -1,8 +1,12 @@
 /**
  * TeamPanel — Manage deal teams (broker, seller, buyer).
  *
- * Firmex-style team management: add members by email, assign roles,
- * each role has specific permissions. Members get automatic notifications.
+ * Firmex-style team management: add members by email and assign roles.
+ * What a seat gives today: seller-team members get their own link to the
+ * seller workspace; broker- and buyer-team members get email updates only
+ * (no colleague sign-in or buyer access behind a seat yet — the copy here
+ * and in the invite email says exactly that). The deal's own broker always
+ * gets its updates (server/notifications/service.ts ownerGetsEvent).
  */
 import { useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
@@ -33,9 +37,27 @@ interface TeamPanelProps {
 }
 
 const TEAM_CONFIG = {
-  broker: { label: "Broker Team", icon: Briefcase, color: "text-teal" },
-  seller: { label: "Seller Team", icon: Building, color: "text-amber-400" },
-  buyer: { label: "Buyer Team", icon: ShoppingCart, color: "text-blue-400" },
+  broker: {
+    label: "Broker Team",
+    icon: Briefcase,
+    color: "text-teal",
+    hint: "Colleagues here get email updates about this deal. You get them anyway as the deal's broker — choose which in Settings → Notifications.",
+    added: "They'll get email updates about this deal.",
+  },
+  seller: {
+    label: "Seller Team",
+    icon: Building,
+    color: "text-amber-400",
+    hint: "Each person gets their own link to the seller workspace — questionnaire, documents and interview.",
+    added: "They've been emailed their own link to the seller workspace.",
+  },
+  buyer: {
+    label: "Buyer Team",
+    icon: ShoppingCart,
+    color: "text-blue-400",
+    hint: "People on the buyer's side get email updates only. To let someone read the CIM, give them access from the Buyers tab.",
+    added: "They'll get email updates about this opportunity.",
+  },
 } as const;
 
 type TeamType = keyof typeof TEAM_CONFIG;
@@ -89,9 +111,9 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
   const addMember = useMutation({
     mutationFn: (data: { email: string; name: string; phone: string; teamType: string; role: string }) =>
       requestJson<DealMember>("POST", `/api/deals/${dealId}/members`, data),
-    onSuccess: () => {
+    onSuccess: (_member, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
-      toast({ title: "Member added", description: "Invite notification sent." });
+      toast({ title: "Member added", description: TEAM_CONFIG[vars.teamType as TeamType]?.added ?? "They've been notified." });
       setAddingTo(null);
       setNewMember({ email: "", name: "", phone: "", role: "" });
       setFormError(null);
@@ -100,10 +122,19 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
   });
 
   const removeMember = useMutation({
-    mutationFn: (id: string) => requestJson("DELETE", `/api/members/${id}`),
-    onSuccess: () => {
+    mutationFn: (member: DealMember) =>
+      requestJson<{ success: boolean; linkRevoked?: boolean }>("DELETE", `/api/members/${member.id}`),
+    onSuccess: (result, member) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
-      toast({ title: "Member removed" });
+      toast({
+        title: "Member removed",
+        description:
+          member.teamType !== "seller"
+            ? undefined
+            : result?.linkRevoked
+              ? "Their seller workspace link no longer works."
+              : "Their link is the deal's main seller invite, so it still works.",
+      });
       setMemberToRemove(null);
     },
     onError: (e: Error) => toast({ title: "Couldn't remove member", description: e.message, variant: "destructive" }),
@@ -205,6 +236,8 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
 
         {isExpanded && (
           <div className="pl-5 space-y-1.5 pb-2">
+            <p className="text-[10px] text-muted-foreground/80 leading-snug pr-1">{config.hint}</p>
+
             {/* Add member form */}
             {addingTo === teamType && (
               <Card className="bg-muted/30 border-border/50">
@@ -415,8 +448,9 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
               {memberToRemove ? TEAM_CONFIG[memberToRemove.teamType as TeamType]?.label.toLowerCase() ?? "deal team" : "deal team"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They will stop receiving notifications for this deal immediately. This cannot be undone —
-              you would need to invite them again.
+              {memberToRemove?.teamType === "seller"
+                ? "The seller workspace link they were given stops working (the deal's main seller invite is never cut off this way) and they stop receiving notifications for this deal. To bring them back, add them again — they'll get a new link."
+                : "They will stop receiving notifications for this deal immediately. To bring them back, add them again."}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -426,7 +460,7 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
               disabled={removeMember.isPending}
               onClick={(e) => {
                 e.preventDefault();
-                if (memberToRemove) removeMember.mutate(memberToRemove.id);
+                if (memberToRemove) removeMember.mutate(memberToRemove);
               }}
             >
               {removeMember.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Remove"}

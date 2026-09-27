@@ -169,6 +169,7 @@ import {
   unansweredOpening,
 } from "./turn-release";
 import { withRewrittenHead, type StreamHead } from "./stream-head";
+import { notifyInterviewComplete, shouldAnnounceInterviewComplete } from "../notifications/interview-complete";
 
 // =====================
 // Types
@@ -3157,6 +3158,10 @@ export async function processTurn(
       // deal off phase 1 so the broker's Overview reflects reality.
       ...(deal.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
+    // Tell the deal's broker (once per finish; not for a broker-led session).
+    if (shouldAnnounceInterviewComplete({ wasCompleted: deal.interviewCompleted, conductedBy })) {
+      notifyInterviewComplete(dealId, "ai_closed").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
+    }
 
     // Close the loop on discrepancies the broker routed to this interview
     // (status ask_seller): they were on the agent's agenda, so hand them back
@@ -3563,6 +3568,10 @@ export async function endSessionManually(
     interviewCompleted: true,
     ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
   });
+  const conductedBy = (session.extractedInfo as Record<string, unknown> | null)?._conductedBy as string | undefined;
+  if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy })) {
+    notifyInterviewComplete(dealId, "seller_ended").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
+  }
 
   // The next session reads what this one answered as on file (background).
   refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});

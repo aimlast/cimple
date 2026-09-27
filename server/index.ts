@@ -10,6 +10,7 @@ import { registerRoutes } from "./routes";
 import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
+import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -153,14 +154,25 @@ for (const p of [
 // AI-backed endpoints: modest per-IP ceiling against cost abuse. Normal
 // interview usage is well under this (one call per conversational turn).
 const aiLimiter = rateLimit({
-  windowMs: 5 * 60 * 1000,
-  limit: 60,
+  ...AI_LIMIT,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: "Too many requests. Please slow down and try again shortly." },
 });
-app.use("/api/interview", aiLimiter);
-app.use("/api/deals/:dealId/questions", aiLimiter);
+// Only model-running interview/Q&A requests count against it: the
+// notetaker's transcript poll, call control and history get their own roomy
+// limit (server/rate-limit-scope.ts) — the poll used to exhaust the AI limit
+// in ~2 minutes and freeze a live call's transcript and turns.
+applyInterviewRateLimits(app, aiLimiter);
+// Recall's transcript webhook is public (a per-bot token authenticates it):
+// a cap per IP, roomy enough for several live calls at once.
+app.use("/api/calls/recall/webhook", rateLimit({
+  windowMs: 60 * 1000,
+  limit: 3000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { ok: false },
+}));
 app.use("/api/deals/:dealId/generate-content", aiLimiter);
 app.use("/api/deals/:dealId/generate-blind", aiLimiter);
 app.use("/api/deals/:dealId/generate-dd", aiLimiter);

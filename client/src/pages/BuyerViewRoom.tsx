@@ -80,8 +80,15 @@ interface ViewData {
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
   return res.json().catch(() => ({}));
+}
+
+/** A load failure that carries the server's reason code (e.g. not_published). */
+class ViewRoomError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+  }
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
@@ -232,7 +239,7 @@ export default function BuyerViewRoom() {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new Error(body.error || "Access denied");
+        throw new ViewRoomError(body.error || "Access denied", body.code);
       }
       return res.json();
     },
@@ -283,6 +290,19 @@ export default function BuyerViewRoom() {
       <div className="min-h-screen bg-background p-8 space-y-4 max-w-4xl mx-auto">
         <Skeleton className="h-12 w-48" />
         <Skeleton className="h-[500px] w-full" />
+      </div>
+    );
+  }
+
+  // Not published yet (or taken offline): a calm holding card, not an error.
+  if (error instanceof ViewRoomError && error.code === "not_published") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-sm text-center space-y-3" data-testid="view-room-not-published">
+          <Clock className="h-8 w-8 mx-auto text-muted-foreground/60" />
+          <h2 className="text-lg font-semibold">Not available yet</h2>
+          <p className="text-sm text-muted-foreground">Your broker will let you know as soon as this CIM is ready to view.</p>
+        </div>
       </div>
     );
   }

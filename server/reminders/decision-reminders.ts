@@ -232,7 +232,9 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   const action = reminderActionFor(access as any, now);
   if (action === "none") return action;
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
-  if (!deal) return "none";
+  // A CIM taken offline: the buyer can't open it, so no nudges and no
+  // lapsing (they resume where they stopped once it's published again).
+  if (!deal || !deal.isLive) return "none";
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
 

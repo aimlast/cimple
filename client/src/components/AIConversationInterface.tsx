@@ -223,6 +223,8 @@ export function AIConversationInterface({
   const [botMeetingUrl, setBotMeetingUrl] = useState(meetingLink || "");
   const [botState, setBotState] = useState<"idle" | "starting" | "joining" | "live" | "ended" | "error" | "unavailable">("idle");
   const [botStatusText, setBotStatusText] = useState<string>("");
+  /** Why the notetaker's live transcript is behind (a failed poll), or "". */
+  const [botPollNote, setBotPollNote] = useState<string>("");
   const botSeqRef = useRef(0);
   const botActiveRef = useRef(false);
   const brokerNameRef = useRef<string>("");
@@ -1131,10 +1133,23 @@ export function AIConversationInterface({
   useEffect(() => {
     if (!externalCall || !botActiveRef.current || (botState !== "joining" && botState !== "live")) return;
     let cancelled = false;
+    let failures = 0;
     const tick = async () => {
       try {
         const r = await fetch(`/api/interview/${dealId}/call/bot/lines?after=${botSeqRef.current}`, { credentials: "include" });
-        if (!r.ok || cancelled) return;
+        if (cancelled) return;
+        if (!r.ok) {
+          // Lines are buffered on the server (after=seq), so nothing is lost —
+          // but the broker must know the live transcript is behind, not
+          // silently frozen.
+          failures++;
+          if (r.status === 429) setBotPollNote("The live transcript is paused for a moment (too many requests) — it will catch up on its own.");
+          else if (r.status === 401) setBotPollNote("Your session has expired — sign in again to keep the live transcript running.");
+          else if (failures >= 3) setBotPollNote("Can't reach the live transcript right now — retrying.");
+          return;
+        }
+        failures = 0;
+        setBotPollNote("");
         const data = await r.json() as { lines: { seq: number; participantId: string | number; name: string | null; isHost: boolean | null; text: string }[]; seq: number; status: string | null };
         for (const l of data.lines) {
           botSeqRef.current = Math.max(botSeqRef.current, l.seq);
@@ -1152,7 +1167,11 @@ export function AIConversationInterface({
         } else if (st) {
           setBotStatusText(st.replace(/_/g, " "));
         }
-      } catch { /* transient */ }
+      } catch {
+        // Network blip — say so only if it persists.
+        failures++;
+        if (!cancelled && failures >= 3) setBotPollNote("Can't reach the live transcript right now — retrying.");
+      }
     };
     void tick();
     const id = setInterval(tick, 2000);
@@ -1871,6 +1890,9 @@ export function AIConversationInterface({
             )}
             {botState === "live" && (
               <p className="flex items-center gap-2"><span className="relative flex h-2 w-2"><span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-teal opacity-75" /><span className="relative inline-flex rounded-full h-2 w-2 bg-teal" /></span> In the call — transcribing. The seller's answers send automatically after a pause.</p>
+            )}
+            {botPollNote && (botState === "joining" || botState === "live") && (
+              <p className="text-amber-500 text-[11px]" role="status" data-testid="notetaker-poll-note">{botPollNote}</p>
             )}
           </div>
         </div>
