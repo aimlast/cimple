@@ -184,14 +184,61 @@ export function setBrokerMapEntry(info: Info, parent: string, sub: string, value
   unsuppress(info, parent);
 }
 
-/** Broker edits a fact's value. */
+/**
+ * Broker edits a fact's value. A by-year fact (revenue by year) is edited
+ * year by year: only the years whose figure the broker changed or added
+ * become the broker's (setBrokerMapEntry); every year left as it was keeps
+ * its own source — a statement year stays the statements', and a year from a
+ * broker-only CRM note stays broker-only, so it never reaches the seller's
+ * interview or the CIM because the broker fixed a typo in another year. A
+ * year the broker took out goes (kept as that year's other value, and that
+ * source's figure for the year stays out on a re-read).
+ */
 export function editFact(info: Info, key: string, input: unknown): void {
   if (key.startsWith("_")) throw new FactError("That isn't an editable fact");
-  const value = coerceBrokerValue(repairCharIndexedValue(info[key]), input);
+  const current = repairCharIndexedValue(info[key]);
+  const value = coerceBrokerValue(current, input);
   if (value === "" || (isPlainMap(value) && Object.keys(value).length === 0)) {
     throw new FactError("Enter a value — or delete the fact instead");
   }
+  if (isPlainMap(current) && isPlainMap(value)) {
+    editMapFact(info, key, current, value);
+    return;
+  }
   setBrokerFact(info, key, value);
+}
+
+/** The broker's edit of a by-year fact, year by year (see editFact). */
+function editMapFact(info: Info, key: string, current: Record<string, unknown>, next: Record<string, unknown>): void {
+  const note = "Edited by the broker";
+  const changedYears = Object.keys(next).filter((y) => current[y] === undefined || serialize(current[y]) !== serialize(next[y]));
+  const removedYears = Object.keys(current).filter((y) => next[y] === undefined);
+  for (const y of changedYears) setBrokerMapEntry(info, key, y, next[y], note);
+  if (removedYears.length === 0) {
+    unsuppress(info, key);
+    return;
+  }
+  const map: Record<string, unknown> = { ...(repairCharIndexedValue(info[key]) as Record<string, unknown>) };
+  const src = getFieldSources(info)[key];
+  const years: Record<string, FieldSource> = src
+    ? resolvedYearSources(src, map)
+    : Object.fromEntries(Object.keys(map).map((y) => [y, { source: "system", note: LEGACY_SOURCE_NOTE } as FieldSource]));
+  const suppressed = getSuppressedKeys(info);
+  for (const y of removedYears) {
+    const ys = years[y];
+    recordAlternate(info, `${key}.${y}`, map[y], ys && !isUntrackedSource(ys) ? ys : { source: "system", note: LEGACY_SOURCE_NOTE });
+    // That source's figure for the year stays out when it is read again.
+    if (ys && isRowBackedSource(ys) && ys.documentId) {
+      const k = `${key}.${y}@${ys.documentId}`;
+      if (!suppressed.includes(k)) suppressed.push(k);
+    }
+    delete map[y];
+    delete years[y];
+  }
+  info[key] = map;
+  if (suppressed.length > 0) info[BROKER_SUPPRESSED_KEY] = suppressed;
+  const summary = summariseMapSource(years);
+  if (summary) setFieldSource(info, key, summary);
 }
 
 /** camelCase key from a label ("Number of dental chairs" → numberOfDentalChairs). */

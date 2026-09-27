@@ -426,10 +426,113 @@ export async function linkUploadToRequirement(opts: {
       uploadedFileId: opts.docId,
       uploadedBy: opts.uploadedBy,
       uploadedAt: new Date(),
+      // (A new copy replaces the one that couldn't be read: that line goes.)
+      ...("notes" in target ? { notes: withoutUnreadableNote((target as { notes?: string | null }).notes) } : {}),
     });
     return { id: target.id, documentName: target.documentName, category: target.category };
   } catch (err) {
     console.warn(`[documents] could not link upload ${opts.docId} to a checklist row:`, err);
     return null;
   }
+}
+
+/**
+ * Takes a source off every checklist row it was credited to (the row goes
+ * back to "missing", with no file): used when the source is deleted — by the
+ * broker or the seller — and when it turns out to have no readable text (a
+ * scanned image, a .doc file). The seller's document count then shows the
+ * gap and the seller is asked again; a row the broker had verified can take
+ * a replacement upload. Never throws.
+ */
+export async function releaseRequirementsFor(
+  dealId: string,
+  docId: string,
+  /** Set when the source turned out to have no readable text: the seller's row says so. */
+  unreadable?: { fileName: string; reason: string },
+): Promise<number> {
+  try {
+    const requirements = await storage.getDocumentRequirementsByDeal(dealId);
+    const released = requirements.filter((r) => r.uploadedFileId === docId);
+    if (released.length === 0) return 0;
+    // Another source on the deal that is this document (the final statements
+    // after the draft was deleted): the row is credited to it instead of
+    // going back to "missing" — never ask the seller for a document the deal holds.
+    const remaining = (await storage.getDocumentsByDeal(dealId)).filter((d) => d.id !== docId);
+    const credited = new Set(requirements.filter((r) => r.uploadedFileId && r.uploadedFileId !== docId).map((r) => r.uploadedFileId as string));
+    let n = 0;
+    for (const r of released) {
+      const stand = replacementDocumentFor(r, remaining, credited);
+      if (stand) {
+        credited.add(stand.id);
+        await storage.updateDocumentRequirement(r.id, {
+          status: "uploaded",
+          uploadedFileId: stand.id,
+          uploadedBy: stand.uploadedBy === "seller" ? "seller" : "broker",
+          uploadedAt: stand.createdAt ? new Date(stand.createdAt) : new Date(),
+          notes: withoutUnreadableNote(r.notes),
+        } as any);
+      } else {
+        await storage.updateDocumentRequirement(r.id, {
+          status: "missing",
+          uploadedFileId: null,
+          uploadedBy: null,
+          uploadedAt: null,
+          ...(unreadable ? { notes: withUnreadableNote(r.notes, unreadable.fileName, unreadable.reason) } : {}),
+        } as any);
+      }
+      n++;
+    }
+    return n;
+  } catch (err) {
+    console.warn(`[documents] could not release checklist rows for ${docId}:`, err);
+    return 0;
+  }
+}
+
+/** The document categories the parser files sources under. */
+const KNOWN_DOC_CATEGORIES = new Set(["financials", "legal", "operations", "marketing", "transcripts", "other"]);
+
+/** A source row as the checklist sees it. */
+interface ChecklistSource {
+  id: string;
+  name: string;
+  category?: string | null;
+  sourceKind?: string | null;
+  status?: string | null;
+  uploadedBy?: string | null;
+  createdAt?: Date | string | null;
+}
+
+/**
+ * The remaining source that is the checklist row's document, or undefined:
+ * a document (not an e-mail or a call about it), readable (not failed), not
+ * already credited to another row, and one the row's own name would match
+ * on upload (findMatchingRequirement, the same rule). The newest wins.
+ */
+export function replacementDocumentFor<T extends ChecklistSource>(
+  row: Pick<LinkableRequirement, "id" | "documentName" | "category">,
+  remaining: T[],
+  credited: ReadonlySet<string> = new Set(),
+): T | undefined {
+  const asOpen = { ...row, status: "missing" };
+  // (A category the parser doesn't use is read as none — then every word of the row's name must match.)
+  const docCategory = (c: string | null | undefined) => (c && KNOWN_DOC_CATEGORIES.has(c) ? c : "other");
+  const fits = remaining.filter((d) =>
+    autoLinkableKind(d.sourceKind) && d.status !== "failed" && !credited.has(d.id) &&
+    findMatchingRequirement([asOpen], d.name, docCategory(d.category)) !== undefined);
+  return fits.sort((a, b) => +new Date(b.createdAt ?? 0) - +new Date(a.createdAt ?? 0))[0];
+}
+
+/** The line a checklist row carries when its upload couldn't be read. */
+const UNREADABLE_NOTE_RE = /^We couldn't read [^\n]*?Please upload a readable copy\.(?: · )?/;
+
+export function withUnreadableNote(notes: string | null | undefined, fileName: string, reason: string): string {
+  const rest = withoutUnreadableNote(notes);
+  const line = `We couldn't read "${fileName}" (${reason.replace(/[.\s]+$/, "")}). Please upload a readable copy.`;
+  return rest ? `${line} · ${rest}` : line;
+}
+
+export function withoutUnreadableNote(notes: string | null | undefined): string | null {
+  const rest = (notes ?? "").replace(UNREADABLE_NOTE_RE, "").trim();
+  return rest || null;
 }

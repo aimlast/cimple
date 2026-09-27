@@ -2078,6 +2078,14 @@ export interface DocumentSourceMeta {
   periodEnd?: string;
   /** The last re-read of this source failed (it keeps what it had): when, and why in plain words. */
   rereadFailed?: { at: string; reason: string };
+  /**
+   * The source's own reading failed or found nothing to read (a scanned
+   * image, a .doc file, an API outage, a restart mid-read): when and why, in
+   * plain words; `retryable` when reading it again may work.
+   */
+  readFailed?: { at: string; reason: string; retryable?: boolean };
+  /** A long source read only in part (some parts failed, or it is longer than Cimple reads). */
+  partialRead?: { at: string; reason: string; readParts: number; parts: number; readChars: number; totalChars: number; retryable?: boolean };
 }
 
 // @anchor:schema-tail:crm

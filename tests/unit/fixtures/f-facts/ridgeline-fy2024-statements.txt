@@ -1,0 +1,235 @@
+
+
+RIDGELINE METAL FABRICATION INC.
+FINANCIAL STATEMENTS
+YEAR ENDED DECEMBER 31, 2024
+(Unaudited — see Compilation Engagement Report)
+CONTENTS
+Compilation Engagement Report2
+Balance Sheet3
+Statement of Income and Retained Earnings4
+Statement of Cash Flows5
+Notes to the Financial Information6
+Schedule 1 — Cost of Sales; Schedule 2 — Operating Expenses8
+Kwan & Brodeur LLP
+Chartered Professional Accountants | 5012 - 50 Avenue, Suite 210, Leduc, Alberta T9E 6W3 | 780-555-0177
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 1 of 8
+
+COMPILATION ENGAGEMENT REPORT
+To the Management of Ridgeline Metal Fabrication Inc.
+On  the  basis  of  information  provided  by  management,  we  have  compiled  the  balance  sheet  of  Ridgeline  
+Metal Fabrication Inc. as at December 31, 2024, the statements of income and retained earnings and cash 
+flows for the year then ended, and Note 1, which describes the basis of accounting applied in the preparation 
+of the compiled financial information (“financial information”).
+Management  is  responsible  for  the  accuracy  and  completeness  of  the  underlying  information  used  to  
+compile the financial information and for the selection of the basis of accounting.
+We performed this engagement in accordance with Canadian Standard on Related Services (CSRS) 4200, 
+Compilation Engagements, which requires us to comply with relevant ethical requirements. Our responsibility 
+is to assist management in the preparation of the financial information.
+We  did  not  perform  an  audit  engagement  or  a  review  engagement,  nor  were  we  required  to  perform  
+procedures to verify the accuracy or completeness of the information provided by management. Accordingly, 
+we do not express an audit opinion or a review conclusion, or provide any form of assurance on the financial 
+information.
+Readers are cautioned that the financial information may not be appropriate for their purposes.
+Kwan & Brodeur LLP
+Chartered Professional Accountants
+Leduc, Alberta — March 28, 2025
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 2 of 8
+
+RIDGELINE METAL FABRICATION INC.
+Balance Sheet
+As at December 31, 2024
+(Unaudited — see Compilation Engagement Report)
+20242023
+ASSETS
+Current
+Cash642,130431,720
+Accounts receivable (Note 3)1,486,0001,392,000
+Contract assets — costs and earnings in excess of billings238,000196,000
+Inventory — steel, components & consumables544,000512,000
+Prepaid expenses & deposits46,00041,000
+2,956,1302,572,720
+Property and equipment (Note 4)2,184,0002,066,000
+5,140,1304,638,720
+LIABILITIES
+Current
+Accounts payable & accrued liabilities842,000781,000
+Contract liabilities — billings in excess of costs and earnings164,000142,000
+Income taxes payable38,00029,000
+Government remittances payable71,00066,000
+Current portion of long-term debt (Note 5)286,000274,000
+1,401,0001,292,000
+Long-term debt (Note 5)624,0001,068,000
+2,025,0002,360,000
+SHAREHOLDERS' EQUITY
+Share capital (Note 7)150,950150,950
+Retained earnings2,964,1802,127,770
+3,115,1302,278,720
+5,140,1304,638,720
+Approved on behalf of the Board:
+______________________________ Director        ______________________________ Director
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 3 of 8
+
+RIDGELINE METAL FABRICATION INC.
+Statement of Income and Retained Earnings
+Year ended December 31, 2024
+(Unaudited — see Compilation Engagement Report)
+20242023
+Revenue — contract & fabrication (Note 2)9,815,0009,160,000
+Cost of sales (Schedule 1)6,868,0006,410,000
+Gross profit2,947,0002,750,000
+Gross margin30.0%30.0%
+Operating expenses (Schedule 2)1,549,0001,468,000
+Earnings before interest, amortization and income taxes1,398,0001,282,000
+Amortization of property and equipment312,000286,000
+Interest on long-term debt58,00066,000
+Income before income taxes1,028,000930,000
+Income taxes — current131,590150,910
+Net income896,410779,090
+Retained earnings, beginning of year2,127,7701,408,680
+Dividends — Class D shares (Note 7)(60,000)(60,000)
+Retained earnings, end of year2,964,1802,127,770
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 4 of 8
+
+RIDGELINE METAL FABRICATION INC.
+Statement of Cash Flows
+Year ended December 31, 2024
+(Unaudited — see Compilation Engagement Report)
+20242023
+Operating activities
+Net income896,410779,090
+Amortization312,000286,000
+Changes in non-cash working capital:
+Accounts receivable(94,000)(124,000)
+Contract assets(42,000)(25,000)
+Inventory(32,000)(26,000)
+Prepaid expenses(5,000)(3,000)
+Accounts payable & accrued liabilities61,00069,000
+Contract liabilities22,00024,000
+Income taxes payable9,0008,000
+Government remittances5,0005,000
+Cash provided by operating activities1,132,410993,090
+Investing activities
+Purchase of property and equipment(430,000)(404,000)
+Financing activities
+Repayment of long-term debt(432,000)(262,000)
+Dividends paid(60,000)(60,000)
+(492,000)(322,000)
+Increase in cash210,410267,090
+Cash, beginning of year431,720164,630
+Cash, end of year642,130431,720
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 5 of 8
+
+RIDGELINE METAL FABRICATION INC.
+Notes to the Financial Information
+Year ended December 31, 2024
+(Unaudited — see Compilation Engagement Report)
+1. Basis of accounting
+The financial information has been compiled on the historical cost basis, using accounting policies selected 
+by management that are consistent with the company's income tax reporting except as follows: (a) revenue 
+on  fixed-price  contracts  over  $50,000  is  recognized  on  the  percentage-of-completion  basis  measured  by  
+costs  incurred  to  date  relative  to  estimated  total  costs;  smaller  jobs  and  repair  work  are  recognized  on  
+completion; (b) property and equipment are amortized on a declining-balance basis at rates of 10% to 20% 
+(shop equipment, cranes, vehicles and mobile equipment) and 45% (computer equipment and software), and 
+leasehold improvements straight-line over the term of the lease; assets not yet in use are not amortized; (c) 
+income taxes are recorded using the taxes payable method.
+2. Nature of operations
+The  company  was  incorporated  under  the  Business  Corporations  Act  (Alberta)  on  March  14,  1996  and  
+carries on business as a custom structural and miscellaneous steel fabricator and welding contractor from 
+leased premises in Nisku, Alberta, serving the oil & gas, agricultural and commercial construction sectors.
+3. Accounts receivable
+20242023
+Trade receivables1,368,0001,288,000
+Holdbacks receivable (commercial contracts)118,000104,000
+1,486,0001,392,000
+4. Property and equipment
+CostAccum. amort.Net 2024Net 2023
+Shop equipment & cranes5,150,0003,372,0001,778,0001,612,000
+Vehicles & trailers812,000562,000250,000302,000
+Forklifts & mobile equipment318,000220,00098,000112,000
+Computer equipment & software96,00074,00022,00018,000
+Leasehold improvements148,000112,00036,00022,000
+6,524,0004,340,0002,184,0002,066,000
+During  the  year  the  company  placed  in  service  a  CNC  high-definition  plasma  cutting  system  with  a  total  cost  of  
+$468,000, including the deposit of $140,000 paid in 2023. Fully amortized assets with a cost of $58,000 were written off.
+The land and building occupied by the company are owned by McAllister Properties Ltd., a company controlled by the 
+majority shareholder, and are not included in these financial statements (see Note 6).
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 6 of 8
+
+5. Long-term debt
+20242023
+Northreach Commercial Bank equipment term loan, fixed rate 
+4.25%, blended monthly payments, matures November 2027, 
+secured by a general security agreement and a limited personal 
+guarantee of the majority shareholder
+692,0001,058,000
+Vehicle and equipment loans, 4.9%-6.9%, secured by specific 
+assets, maturing 2026-2028
+218,000284,000
+910,0001,342,000
+Less: current portion(286,000)(274,000)
+624,0001,068,000
+The company also has an operating line of credit of $750,000 bearing interest at prime + 0.75%, undrawn at year end. 
+During  the  year  the  company  made  a  voluntary  prepayment  of  $158,000  on  the  equipment  term  loan  in  addition  to  
+scheduled payments.
+6. Related party transactions
+The  company  leases  its  premises  (28,000  square  feet  on  3.1  acres)  from  McAllister  Properties  Ltd.,  a  
+company wholly owned by the majority shareholder, under a triple-net lease expiring December 31, 2026. 
+Rent paid in the year was $336,000 (2023: $322,000). Wages of $62,000 were paid to a family member of 
+the majority shareholder for bookkeeping and office management. Management salary of $180,000 was paid 
+to the majority shareholder. These transactions are in the normal course of operations and are measured at 
+the exchange amount agreed to by the related parties.
+7. Share capital
+Authorized:  unlimited  Class  A  voting  common  shares;  unlimited  Class  B  non-voting  common  shares;  
+unlimited  Class  C  non-voting  preferred  shares,  redeemable  at  $1  per  share;  unlimited  Class  D  non-voting  
+common shares on which dividends may be declared at the discretion of the directors independently of other 
+classes.
+Issued20242023
+1,000 Class A common shares150,850150,850
+100 Class D common shares100100
+150,950150,950
+Dividends of $60,000 were declared and paid on the Class D shares during the year (2023: $60,000).
+8. Economic dependence
+Approximately 18% of revenue (2023: 17%) was earned from one customer, and the three largest customers 
+together accounted for 41% of revenue.
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 7 of 8
+
+RIDGELINE METAL FABRICATION INC.
+Schedules
+Year ended December 31, 2024
+(Unaudited — see Compilation Engagement Report)
+Schedule 1 — Cost of Sales
+20242023
+Materials — steel, plate & purchased components3,228,0003,046,000
+Direct labour — shop wages & benefits2,720,0002,560,000
+Subcontract services (galvanizing, blasting, coating)392,000364,000
+Shop supplies, gases & consumables236,000221,000
+Equipment repairs & maintenance184,000118,000
+Freight in & delivery108,000101,000
+Total cost of sales6,868,0006,410,000
+Schedule 2 — Operating Expenses
+20242023
+Salaries — office, estimating & project management560,000538,000
+Management salary — shareholder180,000180,000
+Rent — related party (Note 6)336,000322,000
+Property taxes61,00058,000
+Insurance94,00088,000
+Utilities74,00071,000
+Vehicle expenses63,00060,000
+Office & general40,00038,000
+Computer & software36,00033,000
+Professional fees44,00026,000
+Advertising, promotion & sponsorships26,00024,000
+Travel & meals14,00013,000
+Bad debts12,0009,000
+Bank charges9,0008,000
+Total operating expenses1,549,0001,468,000
+Ridgeline Metal Fabrication Inc. — Year ended December 31, 2024
+Sample document — fictional business for demonstrationPage 8 of 8

@@ -249,6 +249,8 @@ app.use((req, res, next) => {
       startReminderScheduler();
       // Re-sync CRM buyer contacts for brokers who switched automatic sync on.
       import("./crm/buyer-sync").then((m) => m.startBuyerSyncScheduler()).catch((err) => console.error("[buyer-sync] scheduler failed to start:", err));
+      // Sources a redeploy cut off mid-read are marked "couldn't read" (with "Read it again").
+      import("./documents/ingest").then((m) => m.startInterruptedReadRecovery()).catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
     }
   });
 
