@@ -6,7 +6,8 @@ import fs from "fs";
 import { storage } from "./storage";
 import Anthropic from "@anthropic-ai/sdk";
 import { z } from "zod";
-import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia } from "./interview";
+import { startOrResumeSession, processTurn, getSessionHistory, parseCorrectionOf, parseConductedVia, turnPrecheck } from "./interview";
+import { callerMode, contextSessions, parseAnsweringAt, TurnConflictError, type ConductedBy } from "./interview/session-mode";
 import { sellerSafeTurnResult } from "./interview/seller-safe-turn";
 import { regenerateCimSection } from "./cim/layout-engine.js";
 import { overlayResolvedFacts, resolvedNotes } from "./cim/resolved-block.js";
@@ -1347,6 +1348,15 @@ Return JSON only.`,
     !!req.session.brokerId && !!(await getOwnedDeal(dealId, req.session.brokerId));
   const interviewResultFor = async <T extends object>(req: Request, dealId: string, result: T): Promise<T> =>
     (await brokerOwnsInterview(req, dealId)) ? result : sellerSafeTurnResult(result as any);
+  // Who is calling, from the credential — never from the session or the
+  // body alone: the seller's invite token is always the seller (even when
+  // the browser also holds a broker session — "Preview seller view");
+  // otherwise it is the owning broker, running "Interview together" when
+  // asked, else their own session (session-mode.ts).
+  const interviewCallerMode = async (req: Request, dealId: string): Promise<ConductedBy> =>
+    callerMode(await sellerTokenMatchesDeal(req, dealId), req.body?.conductedBy);
+  /** A refused turn (session closed, someone else's, out of step) → 409 with what the client needs to re-sync. */
+  const turnConflictBody = (err: TurnConflictError) => ({ error: err.message, code: err.code });
 
   app.post("/api/interview/:dealId/start", async (req, res) => {
     try {
@@ -1354,7 +1364,7 @@ Return JSON only.`,
       if (!(await canAccessDeal(req, dealId))) {
         return res.status(401).json({ error: "Not authorized for this interview" });
       }
-      const conductedBy = req.body?.conductedBy === "broker_with_seller" ? ("broker_with_seller" as const) : undefined;
+      const conductedBy = await interviewCallerMode(req, dealId);
       // A finished interview is continued only on an explicit request
       // ("Continue interview" / "Add more detail") — loading the page alone
       // returns its finished state and starts nothing.
@@ -1676,11 +1686,13 @@ Return JSON only.`,
 
       const result = await processTurn(dealId, sessionId, message, undefined, {
         correctionOf: parseCorrectionOf(req.body.correctionOf),
-        conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+        conductedBy: await interviewCallerMode(req, dealId),
         conductedVia: parseConductedVia(req.body?.conductedVia),
+        answeringAt: parseAnsweringAt(req.body?.answeringAt),
       });
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
+      if (error instanceof TurnConflictError) return res.status(409).json(turnConflictBody(error));
       console.error("Interview message error:", error);
       res.status(500).json({ error: error.message || "Failed to process message" });
     }
@@ -1704,6 +1716,14 @@ Return JSON only.`,
       if (!sessionId || typeof sessionId !== "string") {
         return res.status(400).json({ error: "Session ID is required" });
       }
+      const conductedBy = await interviewCallerMode(req, dealId);
+      const answeringAt = parseAnsweringAt(req.body?.answeringAt);
+      // Refused before the stream opens when it is already clear (the
+      // session closed, isn't the caller's, or has moved on and nothing is
+      // running on it) — a plain 409 the client re-syncs from. A turn still
+      // running on the session is waited for inside processTurn.
+      const pre = await turnPrecheck(sessionId, { dealId, mode: conductedBy, answeringAt });
+      if (pre) return res.status(409).json(turnConflictBody(pre));
 
       res.setHeader("Content-Type", "text/event-stream");
       res.setHeader("Cache-Control", "no-cache, no-transform");
@@ -1721,8 +1741,9 @@ Return JSON only.`,
           (chunk) => send({ type: "delta", text: chunk }),
           {
             correctionOf: parseCorrectionOf(req.body.correctionOf),
-            conductedBy: req.body?.conductedBy === "broker_with_seller" ? "broker_with_seller" : undefined,
+            conductedBy,
             conductedVia: parseConductedVia(req.body?.conductedVia),
+            answeringAt,
             // The question on screen is final and its chips are ready: the
             // seller can answer while the turn finishes saving.
             onReady: (ready) => send({ type: "ready", ...ready }),
@@ -1733,8 +1754,12 @@ Return JSON only.`,
         );
         send({ type: "done", result: await interviewResultFor(req, dealId, result) });
       } catch (err: any) {
-        console.error("Interview stream error:", err);
-        send({ type: "error", error: err.message || "Failed to process message" });
+        if (err instanceof TurnConflictError) {
+          send({ type: "error", ...turnConflictBody(err) });
+        } else {
+          console.error("Interview stream error:", err);
+          send({ type: "error", error: err.message || "Failed to process message" });
+        }
       }
       res.end();
     } catch (error: any) {
@@ -1761,9 +1786,10 @@ Return JSON only.`,
         return res.status(400).json({ error: "Session ID is required" });
       }
       const { endSessionManually } = await import("./interview/session-manager");
-      const result = await endSessionManually(dealId, sessionId);
+      const result = await endSessionManually(dealId, sessionId, { mode: await interviewCallerMode(req, dealId) });
       res.json(result);
     } catch (error: any) {
+      if (error instanceof TurnConflictError) return res.status(409).json(turnConflictBody(error));
       console.error("Interview end error:", error);
       res.status(500).json({ error: error.message || "Failed to end interview" });
     }
@@ -1780,7 +1806,12 @@ Return JSON only.`,
       if (!dealId || !(await canAccessDeal(req, dealId))) {
         return res.status(401).json({ error: "Not authorized for this session" });
       }
-      const result = await getSessionHistory(sessionId);
+      // The seller reads only their own sessions — never the broker's own
+      // session (it can hold broker-private notes typed as answers) or a
+      // broker-led room transcript.
+      const viaSellerToken = await sellerTokenMatchesDeal(req, dealId);
+      const result = await getSessionHistory(sessionId, { forSeller: viaSellerToken });
+      if (!result) return res.status(403).json({ error: "This conversation isn't available here" });
       res.json(result);
     } catch (error: any) {
       console.error("Interview history error:", error);
@@ -4302,9 +4333,13 @@ Return JSON only.`,
       const { db } = await import("./db");
       const { interviewSessions, buyerQuestions } = await import("@shared/schema");
       const { eq: eqOp, desc: descOp } = await import("drizzle-orm");
-      const sessions = await db.select().from(interviewSessions)
-        .where(eqOp(interviewSessions.dealId, deal.id))
-        .orderBy(descOp(interviewSessions.lastActivityAt));
+      // (The seller's own and broker-led sessions — the broker's own sessions
+      // are not the seller's progress: session-mode.ts.)
+      const sessions = contextSessions(
+        await db.select().from(interviewSessions)
+          .where(eqOp(interviewSessions.dealId, deal.id))
+          .orderBy(descOp(interviewSessions.lastActivityAt)),
+      );
 
       // Interview coverage — built exactly as the interview header builds it
       // (the seller-safe knowledge base: nothing a broker-only source

@@ -29,6 +29,7 @@ import { claimConflicts } from "./claim-conflicts";
 import { onFileItems, type EvidenceTarget, type OnFileItem } from "./on-file-evidence";
 import { openSellerOnlyTopics } from "./completion-gaps";
 import { sellerNamesFrom } from "./seller-voice";
+import { sessionModeOf, type ConductedBy } from "./session-mode";
 
 // =====================
 // Types
@@ -52,8 +53,8 @@ export interface KnowledgeBase {
   sectionImportance: SectionImportanceMap;
   /** Broker's plain-language adjustments to the interview plan. */
   outline: InterviewOutline;
-  /** Who is running this session — the seller alone, or a broker with the seller on a call. */
-  conductedBy: "seller" | "broker_with_seller";
+  /** Who is running this session — the seller alone, a broker with the seller on a call, or the broker alone. */
+  conductedBy: ConductedBy;
 
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
@@ -639,7 +640,7 @@ export function assembleKnowledgeBase(
     sectionCoverage,
     sectionImportance,
     outline,
-    conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
+    conductedBy: sessionModeOf(latestSession),
     industryContext: null, // Set by the AI on first turn, stored on session
     // A profile built before broker-only sources were excluded keeps only
     // its style fields until it is rebuilt (its free text could quote them).

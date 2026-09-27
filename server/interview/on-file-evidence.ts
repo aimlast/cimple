@@ -40,10 +40,11 @@ import { agentConfig } from "./config/load-config";
 import type { Deal, Document, InterviewSession } from "@shared/schema";
 import { getFieldSources, isFactKey, repairCharIndexedValue } from "./info-merger";
 import { normaliseTableText } from "./table-text";
+import { isBrokerAloneSession } from "./session-mode";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "extractedText" | "extractedData" | "createdAt" | "updatedAt">>;
-type SessionLike = Pick<InterviewSession, "id" | "messages"> & Partial<Pick<InterviewSession, "startedAt" | "status">>;
+type SessionLike = Pick<InterviewSession, "id" | "messages"> & Partial<Pick<InterviewSession, "startedAt" | "status" | "extractedInfo">>;
 
 export type EvidenceTargetKind = "field" | "risk" | "topic" | "conflict";
 
@@ -127,7 +128,10 @@ const flat = (s: string) => s.replace(/[ \t]+/g, " ").replace(/\n{2,}/g, "\n").t
 
 function sessionsInOrder(sessions: SessionLike[], currentSessionId: string | null | undefined): SessionLike[] {
   return [...sessions]
-    .filter((s) => s.id !== currentSessionId && (Array.isArray(s.messages) ? s.messages : []).some((m: any) => m?.role === "user"))
+    // (Never the broker's own sessions: what the broker typed there is the
+    // broker's word — on file as the broker's facts — and can carry
+    // broker-private material. The evidence is read by the seller's interview.)
+    .filter((s) => s.id !== currentSessionId && !isBrokerAloneSession(s) && (Array.isArray(s.messages) ? s.messages : []).some((m: any) => m?.role === "user"))
     .sort((a, b) => new Date(String(a.startedAt ?? 0)).getTime() - new Date(String(b.startedAt ?? 0)).getTime());
 }
 

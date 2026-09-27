@@ -457,11 +457,18 @@ export function ensureEarningsAcknowledged(message: string, ctx: EarningsAckCont
 export function earningsNudge(
   sellerMessage: string | null | undefined,
   statements: StatementEarnings | null,
-  opts: { together?: boolean } = {},
+  opts: { together?: boolean; brokerAlone?: boolean } = {},
 ): string | null {
   // (Both readers take the seller's own lines of a broker-led exchange.)
   const talk = sellerEarningsTalk(sellerMessage);
   if (!talk && !sellerRaisesAddbacks(sellerMessage)) return null;
+  if (opts.brokerAlone) {
+    // The broker's own session: the person asking IS the broker.
+    return [
+      "# THE BROKER RAISED EARNINGS / SDE / ADD-BACKS",
+      "This is the broker's own session — the person typing is the broker, not the seller. The earnings figure and what is added back are theirs to work out (the financial analysis does it from the statements): do not compute, list or total add-backs and do not state an SDE or adjusted figure. Record what they said as their view, and ask your next question.",
+    ].join("\n");
+  }
   if (opts.together) {
     // Broker-led: the broker is in the room and answers it themselves.
     return [
