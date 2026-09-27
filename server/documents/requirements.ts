@@ -433,3 +433,27 @@ export async function linkUploadToRequirement(opts: {
     return null;
   }
 }
+
+/**
+ * Takes a source off every checklist row it was credited to (the row goes
+ * back to "missing", with no file): used when the source is deleted — by the
+ * broker or the seller — and when it turns out to have no readable text (a
+ * scanned image, a .doc file). The seller's document count then shows the
+ * gap and the seller is asked again; a row the broker had verified can take
+ * a replacement upload. Never throws.
+ */
+export async function releaseRequirementsFor(dealId: string, docId: string): Promise<number> {
+  try {
+    const requirements = await storage.getDocumentRequirementsByDeal(dealId);
+    let n = 0;
+    for (const r of requirements) {
+      if (r.uploadedFileId !== docId) continue;
+      await storage.updateDocumentRequirement(r.id, { status: "missing", uploadedFileId: null, uploadedBy: null, uploadedAt: null } as any);
+      n++;
+    }
+    return n;
+  } catch (err) {
+    console.warn(`[documents] could not release checklist rows for ${docId}:`, err);
+    return 0;
+  }
+}

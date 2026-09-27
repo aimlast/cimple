@@ -1222,6 +1222,13 @@ export function summariseMapSource(yearSources: Record<string, FieldSource>): Fi
 export function removeDocumentFields(
   info: Record<string, unknown>,
   documentId: string,
+  /**
+   * promoteAlternates: false leaves an emptied field empty for the caller to
+   * refill by the merge's own authority (merge-policy.ts
+   * removeSourceFromFacts) — the raw-rank pick below lets a call beat the
+   * statements.
+   */
+  opts: { promoteAlternates?: boolean } = {},
 ): { info: Record<string, unknown>; removed: string[]; changed: boolean } {
   const out = { ...info };
   const sources = { ...getFieldSources(out) };
@@ -1320,7 +1327,7 @@ export function removeDocumentFields(
     // Promote the best surviving alternate for every field this delete
     // emptied, so a second P&L's revenue figure steps in instead of the
     // field going blank and the interview re-asking it.
-    for (const key of removed) {
+    for (const key of opts.promoteAlternates === false ? [] : removed) {
       if (key.includes(":") || out[key] !== undefined) continue;
       if (isSuppressed(out, key)) continue;
       const list = alts[key] as FieldAlternate[] | undefined;

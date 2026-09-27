@@ -26,6 +26,8 @@ export interface DiscrepancyCandidateLike {
   severity?: string | null;
   /** The model's own verdict on the pair, when it gave one (see FindingRelation). */
   relation?: FindingRelation | string | null;
+  /** The fiscal year a by-year fact is disputed for, when the row names one. */
+  factYear?: string | null;
 }
 
 export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "proposed_vs_current" | "not_a_conflict" | "different_periods" | "different_measures";
@@ -493,6 +495,15 @@ const LACKED_FILLER = new Set([
 const DOC_CONFIRMS_FOR_YEAR_RE =
   /\b(?<!not |n't )(?:confirms?|matches|agrees with|supports)\s+(?:this|that|it|the (?:seller'?s?\s+)?(?:claim|figure|statement|value|number))\s+for\s+(?:fy\s?)?((?:19|20)\d{2})\b/i;
 
+/**
+ * "The seller's figure appears to refer to FY2024 (which matches the FY2024
+ * statements), not FY2023": the claim is another year's figure, and it
+ * agrees with that year (Ridgeline's call EBITDA paired with the FY2023
+ * statements blocked CIM generation — f-facts known-1).
+ */
+const CLAIM_IS_OTHER_YEAR_RE =
+  /\b(?:appears to |seems to |likely |probably |actually )?(?:refers?|relates?|belongs?|applies|is for)\s+(?:to\s+)?(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})\b[^.;]{0,80}?\b(?:match(?:es|ing)?|agrees? with|consistent with)\b/i;
+
 /** The model reasoned, in its own words, that the evidence lacks this measure or confirms the claim for its own year. */
 export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean {
   if ((item.severity ?? "").toLowerCase() === "critical") return false;
@@ -504,6 +515,12 @@ export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean
   if (confirms) {
     const ey = periodYears(evidence);
     if (ey.size > 0 && !ey.has(confirms[1])) return true;
+  }
+  const otherYear = text.match(CLAIM_IS_OTHER_YEAR_RE);
+  // (Not when it says the claim does NOT refer to that year.)
+  if (otherYear && otherYear.index !== undefined && !/\b(?:not|never)\b[^.;]{0,20}$|n't\b[^.;]{0,20}$/i.test(text.slice(Math.max(0, otherYear.index - 24), otherYear.index))) {
+    const disputed = new Set([...Array.from(periodYears(item.field ?? "")), ...Array.from(periodYears(evidence)), ...(item.factYear ? [String(item.factYear)] : [])]);
+    if (disputed.size > 0 && !disputed.has(otherYear[1])) return true;
   }
   const lacks = text.match(DOC_LACKS_MEASURE_RE);
   if (lacks) {

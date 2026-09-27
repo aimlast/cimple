@@ -172,7 +172,20 @@ function normaliseSourceDigits(text: string): string {
   // Commas and non-breaking / thin spaces group thousands ("1 199 100"); a
   // plain space separates two figures ("EBITDA 1,199,100 920,600" is two
   // columns, never 1199100920600).
-  return text.replace(/(\d)[,  ](?=\d{3}\b)/g, "$1");
+  return ungluedGroupedFigures(text).replace(/(\d)[,  ](?=\d{3}\b)/g, "$1");
+}
+
+/**
+ * PDF text often glues a statement's columns together: "Earnings before
+ * interest, amortization and income taxes1,398,0001,282,000" is 1,398,000
+ * (2024) and 1,282,000 (2023). A comma group is always three digits, so a
+ * group followed straight by more digits and another comma group is where
+ * one figure ends and the next begins — a plain space goes there
+ * ("1,398,000 1,282,000"). Bare figures with no comma ("20225893615.5%")
+ * can't be told apart this way and are left as they are.
+ */
+export function ungluedGroupedFigures(text: string): string {
+  return text.replace(/(,\d{3})(?=\d{1,3},\d{3}(?!\d))/g, "$1 ");
 }
 
 /** True when the value's leading figure is printed in the source ("$845,252" ↔ "845,252" / "845252"). */
@@ -484,7 +497,9 @@ function contentStems(text: string): string[] {
 }
 
 /** Every number the source states — printed digits, and (spoken sources) numbers said in words. */
-function sourceNumbers(text: string, spoken: boolean): number[] {
+function sourceNumbers(raw: string, spoken: boolean): number[] {
+  // Glued statement columns ("1,398,0001,282,000") are two figures.
+  const text = ungluedGroupedFigures(raw);
   const out = typedNumericValues(text).map((t) => t.value);
   // Commas only as thousands groups: a CSV row "972600,344800,1530400" is three figures.
   for (const m of text.match(/\d{1,3}(?:,\d{3}(?!\d))+(?:\.\d+)?|\d+(?:\.\d+)?/g) ?? []) {
@@ -638,15 +653,13 @@ function hasUnstatedFigure(v: string, sourceText: string, spoken: boolean): bool
   const stated = (n: number) =>
     inSource.some((s) => s === n || (!exact(n) && n !== 0 && Math.abs(s - n) / Math.abs(n) <= 0.005)) ||
     printedAsWritten(n) || asShare(n) || saidInThousands(n);
-  if (nums.every(stated)) return false;
-  // A table row whose columns PDF text glued together ("20225893615.5%8,420,000"):
-  // the value's figures, in order, run together exactly as printed.
-  const run = (v.match(/\d[\d,]*(?:\.\d+)?/g) ?? []).map((d) => d.replace(/,/g, ""));
-  if (run.length >= 2 && run.join("").replace(/\D/g, "").length >= 6) {
-    const glued = sourceText.replace(/(\d),(?=\d)/g, "$1");
-    if (glued.includes(run.join(""))) return false;
-  }
-  return true;
+  // A table row whose columns PDF text glued together ("20225893615.5%8,420,000")
+  // is NOT a source for the bare figures inside it: the misread "589
+  // inspections, 36 out-of-service" and the true "58 inspections, 9 OOS (3
+  // driver, 6 vehicle)" run together into the same digits, so a run of glued
+  // digits never grounds a value. (Comma-grouped figures are still found as
+  // written — printedAsWritten.)
+  return !nums.every(stated);
 }
 
 function clauseGrounded(key: string, v: string, sourceText: string, opts: GroundingOptions): boolean {

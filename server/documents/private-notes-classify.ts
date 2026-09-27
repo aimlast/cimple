@@ -102,7 +102,7 @@ const AMOUNT_RE = /\$\s?\d|\d\s?%|\b\d[\d,.]*\s?(?:k|m|mm|million|thousand|billi
  * process detail, not a business fact", "contact/process timeline only".
  */
 const COMMENTARY_CLAUSE_RE =
-  /^(?:this is (?:a |an )?[a-z /-]{0,40}?\b(?:matter|detail|fact|note|item)s?\b|(?:(?:deal|broker|contact)\/?\s?)?process(?:\/[a-z]+)? (?:notes?|details?|timeline|matter)\b|recorded (?:in|as|under)\b|not a (?:business )?fact\b|(?:contact|process)[a-z/ ]{0,24}\bonly\b)/i;
+  /^(?:this is (?:a |an )?[a-z /-]{0,40}?\b(?:matter|detail|fact|note|item)s?\b|(?:(?:deal|broker|contact)\/?\s?)?process(?:\/[a-z]+)? (?:notes?|details?|timeline|matter)\b|recorded (?:in|as|under)\b|not a (?:business )?fact\b|(?:contact|process)[a-z/ ]{0,24}\bonly\b|flag (?:this|it) (?:for|to) (?:potential |prospective |any )?buyers?\b)/i;
 /** The commentary says the note is process material, not the business. */
 const PROCESS_COMMENTARY_RE = /\bprocess (?:notes?|details?|timeline|matter)\b|\bnot a (?:business )?fact\b|\btimeline only\b/i;
 
@@ -169,7 +169,11 @@ export interface ChatterContext {
  * (withoutHousekeeping in shared/private-notes.ts).
  */
 export function chatterReason(raw: string, ctx: ChatterContext, isHousekeeping: (t: string) => boolean): string | null {
-  const { text: stripped, declaredProcess } = stripNoteCommentary(raw);
+  const { text: bare, declaredProcess } = stripNoteCommentary(raw);
+  // A document's own confidentiality line ("Minute book extract prepared June
+  // 2025 for corporation's advisers; confidential") is its stamp, not a
+  // privacy instruction about the business.
+  const stripped = DOC_MECHANICS_RE.test(bare) ? bare.replace(TRAILING_STAMP_RE, "").trim() : bare;
   if (!stripped) return "only commentary about the note";
   if (isSensitiveNote(stripped)) return null;
   // Fees, referral, a prior approach: the broker's business, kept (even when
@@ -195,8 +199,30 @@ export function chatterReason(raw: string, ctx: ChatterContext, isHousekeeping: 
     });
     if (have && ctx.figuresOf(text).every((n) => ctx.figureOnRecord(n))) return "asked for a document the deal now has";
   }
+  // The broker's own to-do list ("Broker's to-do list: seller interview in
+  // Cimple, run financial analysis, resolve discrepancies…").
+  if (!amount && TODO_LIST_RE.test(text)) return "the broker's to-do list";
+  // A placeholder that states nothing yet ("Revenue and EBITDA figures to be confirmed (TBC)").
+  if (!amount && PLACEHOLDER_NOTE_RE.test(text)) return "a placeholder — it states nothing yet";
+  // A discrepancy both of whose figures are on file ("Backlog discrepancy to
+  // resolve: $3.1M per WIP report vs $4.2M mentioned by Gord"): the facts hold
+  // both values and the discrepancy list tracks the dispute.
+  if (DISCREPANCY_NOTE_RE.test(text)) {
+    const figures = ctx.figuresOf(text);
+    if (figures.length >= 2 && figures.every((n) => ctx.figureOnRecord(n))) return "a discrepancy whose figures are both on file";
+  }
   return null;
 }
+
+/** A trailing confidentiality stamp: "…; confidential", "— strictly confidential." */
+const TRAILING_STAMP_RE = /[\s;,.—–-]+(?:marked\s+)?(?:strictly\s+)?(?:private\s+(?:and|&)\s+)?confidential\.?\s*$/i;
+/** "Broker's to-do list:", "To-do:", "Next steps —", "Action items:". */
+const TODO_LIST_RE = /^(?:(?:the\s+)?broker'?s?\s+|my\s+|our\s+)?(?:to-?do(?:\s+list)?|next\s+steps?|action\s+items?)\s*[:—–-]/i;
+/** "<something> figures to be confirmed (TBC)", "Numbers TBD", "Details to follow". */
+const PLACEHOLDER_NOTE_RE =
+  /^(?:the\s+)?(?:[\w&'’/-]+[\s,]+){0,6}?(?:figures?|numbers?|financials?|details?|amounts?|terms)\s+(?:are\s+|is\s+|still\s+)?(?:to be confirmed|to be determined|tbc|tbd|to follow|to come|pending)\b\s*(?:\((?:tbc|tbd)\))?[\s.]*$/i;
+/** A note about two values that disagree. */
+const DISCREPANCY_NOTE_RE = /\bdiscrepanc\w*|\bconflict(?:s|ing)?\b|\bdoesn'?t (?:match|tie)\b|\bmismatch\w*|\bdiffer(?:s|ence|ent figures?)?\b|\bvs\.?\s+\$/i;
 
 // ─── Coverage words ──────────────────────────────────────────────────────────
 

@@ -22,7 +22,7 @@ import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
-import type { DealSellerContact } from "@shared/schema";
+import type { DealSellerContact, DocumentSourceMeta } from "@shared/schema";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -98,8 +98,21 @@ import { CIM_SECTIONS } from "@shared/schema";
 
 // A document is "in flight" from upload until the parser writes a terminal
 // status; the document lists poll while any row is in this state.
-const isDocProcessing = (d: { status?: string | null }) =>
-  d.status === "pending" || d.status === "parsing";
+// (A row left "reading" for half an hour was cut off by a restart — not polled forever.)
+const isDocProcessing = (d: { status?: string | null; updatedAt?: string | Date | null }) =>
+  (d.status === "pending" || d.status === "parsing") &&
+  !(d.updatedAt && Date.now() - new Date(d.updatedAt).getTime() > 30 * 60_000);
+/** A source's chip: read, reading, read in part, or not read (with why, on hover). */
+function docChip(d: { status?: string | null; updatedAt?: string | Date | null; sourceMeta?: DocumentSourceMeta | null }): { className: string; title?: string } {
+  const meta = d.sourceMeta ?? null;
+  if (d.status === "failed" || ((d.status === "pending" || d.status === "parsing") && !isDocProcessing(d))) {
+    return { className: "bg-red-500/10 text-red-400", title: meta?.readFailed ? `Couldn't read: ${meta.readFailed.reason}` : "Couldn't read this source — open it on the Information tab" };
+  }
+  if (d.status === "extracted" && meta?.partialRead) return { className: "bg-amber-500/10 text-amber-600", title: `Read in part: ${meta.partialRead.reason}` };
+  if (d.status === "extracted") return { className: "bg-success-muted text-success-muted-foreground" };
+  if (d.status === "parsing") return { className: "bg-amber-500/10 text-amber-600", title: "Reading…" };
+  return { className: "bg-muted text-muted-foreground" };
+}
 const DOC_POLL_MS = 2500;
 const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
 const stripExt = (name?: string | null) => (name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
@@ -291,13 +304,8 @@ function DocumentUploadCard({
                 {docs.slice(0, 5).map((d: any) => (
                   <span
                     key={d.id}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${
-                      (d.status as string) === "extracted"
-                        ? "bg-success-muted text-success-muted-foreground"
-                        : (d.status as string) === "parsing"
-                          ? "bg-amber-500/10 text-amber-600"
-                          : "bg-muted text-muted-foreground"
-                    }`}
+                    title={docChip(d).title}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${docChip(d).className}`}
                   >
                     <FileText className="h-2.5 w-2.5" />
                     {stripExt(d.name).slice(0, 15) || "doc"}

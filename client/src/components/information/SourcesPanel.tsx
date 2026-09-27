@@ -58,17 +58,60 @@ function rereadFailedText(f: { at: string; reason: string }): string {
   return `Cimple couldn't re-read this source${on}: ${f.reason}. Its facts are the ones it gave before.`;
 }
 
-function StatusBit({ status }: { status?: string }) {
-  if (status === "pending" || status === "parsing")
+/** A source still "reading" this long after its row last changed was cut off (a restart mid-read). */
+const STUCK_READ_MS = 30 * 60_000;
+
+/** True when a source says it is being read but the read stopped (it is offered "Read it again"). */
+export function readStopped(s: Pick<InformationSource, "status" | "statusSince">, now = Date.now()): boolean {
+  return (s.status === "pending" || s.status === "parsing") && !!s.statusSince && now - new Date(s.statusSince).getTime() > STUCK_READ_MS;
+}
+
+/**
+ * What stopped Cimple reading a source in full, in plain words — or null.
+ * `retry`: reading it again may work (an outage, a restart); a scanned image
+ * or a .doc file needs a readable copy instead.
+ */
+export function readProblem(s: Pick<InformationSource, "status" | "statusSince" | "meta">): { kind: "failed" | "partial"; text: string; retry: boolean } | null {
+  const meta = s.meta;
+  if (readStopped(s)) return { kind: "failed", text: "Cimple stopped reading this source before it finished (it was restarted).", retry: true };
+  if (s.status === "failed") {
+    const f = meta?.readFailed;
+    return {
+      kind: "failed",
+      text: f ? `Cimple couldn't read this source: ${f.reason}.` : "Cimple couldn't read this source.",
+      retry: !f || !!f.retryable,
+    };
+  }
+  const p = meta?.partialRead;
+  if (p) {
+    const pct = p.totalChars > 0 ? Math.max(1, Math.min(99, Math.round((p.readChars / p.totalChars) * 100))) : null;
+    return {
+      kind: "partial",
+      text: `Only part of this source was read${pct ? ` (about ${pct}%)` : ""}: ${p.reason}. Facts from the rest of it are missing.`,
+      retry: !!p.retryable,
+    };
+  }
+  return null;
+}
+
+function StatusBit({ source }: { source: InformationSource }) {
+  const problem = readProblem(source);
+  if ((source.status === "pending" || source.status === "parsing") && !problem)
     return (
       <span className="inline-flex items-center gap-1 text-[10px] text-amber-500">
         <Loader2 className="h-2.5 w-2.5 animate-spin" /> Reading…
       </span>
     );
-  if (status === "failed")
+  if (problem?.kind === "failed")
     return (
-      <span className="inline-flex items-center gap-1 text-[10px] text-red-400">
+      <span className="inline-flex items-center gap-1 text-[10px] text-red-400" title={problem.text} data-testid={`source-read-failed-${source.id}`}>
         <AlertCircle className="h-2.5 w-2.5" /> Couldn't read
+      </span>
+    );
+  if (problem?.kind === "partial")
+    return (
+      <span className="inline-flex items-center gap-1 text-[10px] text-amber-500" title={problem.text} data-testid={`source-read-partial-${source.id}`}>
+        <AlertCircle className="h-2.5 w-2.5" /> Read in part
       </span>
     );
   return null;
@@ -139,7 +182,7 @@ export function SourcesPanel({
                       {s.visibility === "broker_only" && (
                         <span className="inline-flex items-center gap-0.5 text-teal"><Lock className="h-2.5 w-2.5" /> Broker only</span>
                       )}
-                      <StatusBit status={s.status} />
+                      <StatusBit source={s} />
                       {s.meta?.rereadFailed && (
                         <span
                           className="inline-flex items-center gap-1 text-amber-500"
@@ -296,6 +339,8 @@ export function SourceViewer({
   // to it (collected before source tracking) stay.
   const inferredFacts = source.inferredFactCount ?? 0;
   const recordedFacts = Math.max(0, source.factCount - inferredFacts);
+  // Why it wasn't read (in full), with "Read it again" when that may help.
+  const problem = readProblem(source);
 
   return (
     <>
@@ -325,6 +370,23 @@ export function SourceViewer({
             </div>
           )}
 
+          {problem && (
+            <div
+              className={`flex flex-wrap items-center justify-between gap-2 rounded-md border px-3 py-2 text-xs ${problem.kind === "failed" ? "border-red-500/30 bg-red-500/5" : "border-amber-500/30 bg-amber-500/5"}`}
+              data-testid="source-read-problem"
+            >
+              <p className={`min-w-0 flex-1 ${problem.kind === "failed" ? "text-red-400" : "text-amber-500/90"}`}>
+                <AlertCircle className="inline h-3 w-3 mr-1 -mt-0.5" />
+                {problem.text}
+              </p>
+              {problem.retry && (
+                <Button size="sm" variant="outline" className="h-7 text-xs gap-1" disabled={rereading} onClick={readAgain} data-testid="button-read-source-again">
+                  {rereading ? <Loader2 className="h-3 w-3 animate-spin" /> : null} {rereading ? "Reading…" : "Read it again"}
+                </Button>
+              )}
+            </div>
+          )}
+
           {h && (h.summary || h.keyFacts || h.redFlags || h.actionItems || h.sellerConcerns || h.followUpNeeded) && (
             <div className="rounded-md border border-border/60 bg-muted/20 p-3 space-y-1.5 text-xs">
               {h.summary && <p><span className="text-muted-foreground">Summary: </span>{h.summary}</p>}
@@ -345,7 +407,7 @@ export function SourceViewer({
               <pre className="whitespace-pre-wrap break-words font-sans text-[13px] leading-relaxed text-foreground/90">{data.text}</pre>
             ) : (
               <p className="text-xs text-muted-foreground">
-                {source.status === "pending" || source.status === "parsing" ? "Cimple is still reading this source." : "No readable text — open the original file."}
+                {(source.status === "pending" || source.status === "parsing") && !readStopped(source) ? "Cimple is still reading this source." : "No readable text — open the original file."}
               </p>
             )}
           </div>

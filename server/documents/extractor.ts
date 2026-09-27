@@ -55,9 +55,24 @@ import {
 import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
 import type { Deal } from "@shared/schema";
-import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, SPOKEN_KINDS } from "./extraction-guard";
+import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, STATED_METRICS_KEY, SPOKEN_KINDS } from "./extraction-guard";
 
-const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
+/** The slice of the SDK the extractor uses (a stand-in in tests). */
+export interface ExtractionClient {
+  messages: {
+    stream(
+      body: Anthropic.MessageCreateParamsNonStreaming,
+      options?: { timeout?: number },
+    ): { finalMessage(): Promise<{ content: Array<{ type: string; input?: unknown }>; stop_reason: string | null }> };
+  };
+}
+let client: ExtractionClient | null = null;
+const extractionClient = (): ExtractionClient =>
+  (client ??= new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 }) as unknown as ExtractionClient);
+/** For tests: a stand-in client (null → the real one). */
+export function _setExtractionClientForTests(c: ExtractionClient | null): void {
+  client = c;
+}
 
 export interface ExtractedDocumentData {
   // Financials
@@ -260,13 +275,18 @@ function buildExtractionPrompt(
   subcategory: string | null | undefined,
   kind: SourceKind,
   checklist?: ExtractionChecklistItem[],
+  /** One part of a long source (splitSourceText): which, of how many. */
+  part?: { index: number; total: number },
 ): string {
   const docType = subcategory ? `${category} / ${subcategory}` : category;
   const guidance = SOURCE_GUIDANCE[kind];
   const label = kind === "document" ? `${docType} document` : `${kind.replace("_", " ")} (${docType})`;
+  const partNote = part && part.total > 1
+    ? `\nTHIS IS PART ${part.index + 1} OF ${part.total} of one long source, read in parts (the parts overlap slightly). Extract what THIS part states; the other parts are read separately and the results combined. Put the fiscal year each figure is for in byYear — a later part may be a later year's return or statements.\n`
+    : "";
 
   return `Extract structured data from this ${label}.
-${guidance ? `\n${guidance}\n` : ""}
+${guidance ? `\n${guidance}\n` : ""}${partNote}
 SOURCE TEXT:
 ${text.slice(0, MAX_SOURCE_CHARS)}
 ${text.length > MAX_SOURCE_CHARS ? `\n[… source truncated after ${MAX_SOURCE_CHARS.toLocaleString()} characters]\n` : ""}
@@ -319,8 +339,52 @@ Company transactions that involve the owner or their family are BUSINESS facts, 
 Ignore document housekeeping — "sample" or "fictional" labels, page footers, confidentiality stamps: it is neither a fact nor a note.${checklistBlock(checklist)}`;
 }
 
-/** Long sources (full-year email threads, hour-long calls) are read in full up to this size. */
-const MAX_SOURCE_CHARS = 60_000;
+/**
+ * One read covers at most this much text. A longer source (three years of
+ * tax returns, a statement pack, a year-long email thread, a 90-minute call)
+ * is read in parts of this size (splitSourceText) and the parts' results are
+ * combined as one source (combineExtractions) — it used to be cut here, so
+ * the 2023 and 2024 returns of a 464K-character "Corporate Tax Returns 2022
+ * to 2024" were never read.
+ */
+export const MAX_SOURCE_CHARS = 60_000;
+/** Consecutive parts overlap by this much, so a table or a sentence cut at a boundary is read whole in one of them. */
+const PART_OVERLAP_CHARS = 1_500;
+/** At most this many parts are read (600K characters); anything beyond is recorded as not read. */
+export const MAX_SOURCE_PARTS = 10;
+/** Parts read at the same time. */
+const PART_CONCURRENCY = 3;
+/** Below this much text there is nothing to read (a scanned image, an empty file). */
+export const MIN_READABLE_CHARS = 50;
+
+/** Where a page, sheet or form feed starts — the preferred place to cut a long source. */
+const PAGE_BREAK_RE = /\f|\n(?=[^\n]{0,80}\bPage \d+ of \d+\b)|\n(?=--- Sheet: )|\n\n(?=\S)/g;
+
+/**
+ * A long text as the parts one read each covers: at most `size` characters
+ * each, cut at a page / sheet boundary (else a blank line, else a line
+ * break) in the last 40% of the window, each part starting `overlap`
+ * characters before the previous one ended. A text that fits is one part.
+ */
+export function splitSourceText(text: string, size = MAX_SOURCE_CHARS, overlap = PART_OVERLAP_CHARS): string[] {
+  if (text.length <= size) return [text];
+  const parts: string[] = [];
+  let start = 0;
+  while (start < text.length) {
+    let end = Math.min(text.length, start + size);
+    if (end < text.length) {
+      const window = text.slice(start + Math.floor(size * 0.6), end);
+      let cut = -1;
+      for (const m of Array.from(window.matchAll(PAGE_BREAK_RE))) cut = m.index ?? cut;
+      if (cut < 0) cut = window.lastIndexOf("\n");
+      if (cut >= 0) end = start + Math.floor(size * 0.6) + cut + 1;
+    }
+    parts.push(text.slice(start, end));
+    if (end >= text.length) break;
+    start = Math.max(end - overlap, start + 1);
+  }
+  return parts;
+}
 
 const EXTRACTION_TOOL = {
   name: "record_extraction",
@@ -687,38 +751,253 @@ export async function extractDocumentData(
   /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
   opts: { checklist?: ExtractionChecklistItem[] } = {},
 ): Promise<ExtractedDocumentData> {
-  if (!text || text.trim().length < 50) {
-    return { _documentType: "unreadable", _confidence: "low" };
+  if (!text || text.trim().length < MIN_READABLE_CHARS) return unreadableExtraction(text, kind);
+
+  const parts = splitSourceText(text);
+  if (parts.length === 1) {
+    const one = await readPart(text, category, subcategory, kind, opts.checklist);
+    return one.ok ? one.data : one.failure;
   }
 
+  // A long source: every part is read (a few at a time) and the parts'
+  // results are combined as ONE source's extraction.
+  const toRead = parts.slice(0, MAX_SOURCE_PARTS);
+  const results: Array<Awaited<ReturnType<typeof readPart>>> = new Array(toRead.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < toRead.length) {
+      const i = next++;
+      // A part that fails on a dropped connection or an overload is read again
+      // (with the usual waits) — the other parts' reads are not repeated.
+      let r = await readPart(toRead[i], category, subcategory, kind, opts.checklist, { index: i, total: toRead.length });
+      for (const wait of extractionRetryDelays()) {
+        if (r.ok || r.failure._failure !== "transient") break;
+        await new Promise((res) => setTimeout(res, wait));
+        r = await readPart(toRead[i], category, subcategory, kind, opts.checklist, { index: i, total: toRead.length });
+      }
+      results[i] = r;
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(PART_CONCURRENCY, toRead.length) }, worker));
+  const read = results.map((r, i) => ({ r, i })).filter((x) => x.r.ok);
+  if (read.length === 0) {
+    // Every part was already tried again: the caller doesn't repeat the whole source.
+    return { ...(results.find((r) => !r.ok) as { failure: ExtractedDocumentData }).failure, _partsRetried: "1" };
+  }
+  const combined = combineExtractions(read.map((x) => (x.r as { data: ExtractedDocumentData }).data));
+  const failed = results.map((r, i) => ({ r, i })).filter((x) => !x.r.ok);
+  const readChars = read.reduce((n, x) => n + toRead[x.i].length, 0) - PART_OVERLAP_CHARS * Math.max(0, read.length - 1);
+  if (failed.length > 0 || parts.length > toRead.length) {
+    const why = [
+      failed.length > 0 ? `${failed.length} of its ${toRead.length} parts couldn't be read (${(failed[0].r as { failure: ExtractedDocumentData }).failure._failureReason ?? "the read failed"})` : "",
+      parts.length > toRead.length ? `only the first ${toRead.length} of ${parts.length} parts are read` : "",
+    ].filter(Boolean).join("; ");
+    (combined as Record<string, unknown>)._partialRead = {
+      parts: parts.length,
+      readParts: read.length,
+      readChars: Math.max(0, Math.min(text.length, readChars)),
+      totalChars: text.length,
+      reason: why,
+      ...(failed.some((x) => (x.r as { failure: ExtractedDocumentData }).failure._failure === "transient") ? { retryable: true } : {}),
+    };
+    console.warn(`[extractor] long source read in part: ${why}`);
+  }
+  return combined;
+}
+
+/** Waits before each retry of a transient extraction failure (ms): the first try plus three more. */
+const DEFAULT_RETRY_DELAYS_MS = [5_000, 20_000, 60_000];
+let retryDelaysMs: number[] = DEFAULT_RETRY_DELAYS_MS;
+/** The waits between retries of a transient failure (ingestion, reprocess, parts of a long source). */
+export function extractionRetryDelays(): number[] {
+  return retryDelaysMs;
+}
+/** For tests: shorter waits (null → the real ones). */
+export function _setExtractionRetryDelaysForTests(delays: number[] | null): void {
+  retryDelaysMs = delays ?? DEFAULT_RETRY_DELAYS_MS;
+}
+
+/**
+ * Runs an extraction and, while it comes back as a TRANSIENT failure stub (a
+ * dropped connection, a rate limit, an overloaded API — see
+ * classifyExtractionFailure), runs it again after each of `delays`. A
+ * permanent failure (a refused key, no credits, nothing to read) is not
+ * retried, nor a long source whose parts were each retried already.
+ * Returns the last result and how many attempts were made.
+ */
+export async function extractWithRetries(
+  run: () => Promise<ExtractedDocumentData>,
+  delays: number[],
+  onRetry?: (attempt: number, waitMs: number, reason: string) => void,
+  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
+): Promise<{ data: ExtractedDocumentData; attempts: number }> {
+  let data = await run();
+  let attempts = 1;
+  for (const wait of delays) {
+    if (data.summary !== "Extraction failed" || data._failure !== "transient" || data._partsRetried) break;
+    onRetry?.(attempts, wait, String(data._failureReason ?? "transient failure"));
+    await sleep(wait);
+    data = await run();
+    attempts++;
+  }
+  return { data, attempts };
+}
+
+/** What a part-read of a long source leaves unread (extraction key `_partialRead`). */
+export interface PartialRead {
+  parts: number;
+  readParts: number;
+  readChars: number;
+  totalChars: number;
+  /** Why, in plain words. */
+  reason: string;
+  /** A part failed on a transient error — reading it again may complete it. */
+  retryable?: boolean;
+}
+
+/**
+ * The extraction of a source with no text to read: a failure the broker
+ * sees, with why (`reason` when the file itself couldn't be opened — a .doc,
+ * a damaged PDF). Never retried: reading it again finds the same nothing.
+ */
+export function unreadableExtraction(text: string | null | undefined, kind: SourceKind, reason?: string): ExtractedDocumentData {
+  reason ??= kind === "document"
+    ? "no text could be read from it — it looks like a scanned image or photo; upload a text PDF, a Word file or a typed copy"
+    : "there is too little text in it to read";
+  return {
+    _documentType: "unreadable",
+    _confidence: "low",
+    summary: "Extraction failed",
+    _failure: "unreadable",
+    _failureReason: reason,
+    ...(text && text.trim() ? { _textChars: String(text.trim().length) } : {}),
+  };
+}
+
+/**
+ * One model read of one text (a whole source or one part of it), streamed —
+ * a long read that sends nothing for minutes gets its connection cut
+ * (ETIMEDOUT: one long call transcript's re-read failed three times at 6–9
+ * minutes each), a stream keeps it alive.
+ */
+async function readPart(
+  text: string,
+  category: string,
+  subcategory: string | null | undefined,
+  kind: SourceKind,
+  checklist?: ExtractionChecklistItem[],
+  part?: { index: number; total: number },
+): Promise<{ ok: true; data: ExtractedDocumentData } | { ok: false; failure: ExtractedDocumentData }> {
   try {
     // Tool-forced JSON with a generous output budget: long transcripts used
     // to overflow 2,000 tokens mid-object and the whole extraction failed.
-    const response = await anthropic.messages.create({
-      model: agentConfig.models.supportingAgents,
-      max_tokens: 8000,
-      system: SYSTEM_PROMPT,
-      tools: [EXTRACTION_TOOL],
-      tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
-      messages: [{
-        role: "user",
-        content: buildExtractionPrompt(text, category, subcategory, kind, opts.checklist),
-      }],
-    });
-
+    const stream = extractionClient().messages.stream(
+      {
+        model: agentConfig.models.supportingAgents,
+        max_tokens: 8000,
+        system: SYSTEM_PROMPT,
+        tools: [EXTRACTION_TOOL],
+        tool_choice: { type: "tool", name: EXTRACTION_TOOL.name },
+        messages: [{
+          role: "user",
+          content: buildExtractionPrompt(text, category, subcategory, kind, checklist, part),
+        }],
+      },
+      { timeout: 600_000 },
+    );
+    const response = await stream.finalMessage();
     const block = response.content.find((b) => b.type === "tool_use");
-    if (!block || block.type !== "tool_use" || !block.input || typeof block.input !== "object") {
+    if (!block || !block.input || typeof block.input !== "object") {
       throw new Error(`no extraction returned (stop_reason ${response.stop_reason})`);
     }
     if (response.stop_reason === "max_tokens") {
       console.warn(`[extractor] extraction hit the output limit — keeping what was recorded`);
     }
-    return normaliseExtraction(block.input as Record<string, unknown>, text, kind);
+    return { ok: true, data: normaliseExtraction(block.input as Record<string, unknown>, text, kind) };
   } catch (err) {
-    console.error("[extractor] Claude extraction failed:", err);
+    console.error(`[extractor] Claude extraction failed${part ? ` (part ${part.index + 1} of ${part.total})` : ""}:`, err);
     const failure = classifyExtractionFailure(err);
-    return { _documentType: category, _confidence: "low", summary: "Extraction failed", _failure: failure.kind, _failureReason: failure.reason };
+    return { ok: false, failure: { _documentType: category, _confidence: "low", summary: "Extraction failed", _failure: failure.kind, _failureReason: failure.reason } };
   }
+}
+
+/** Keys of an extraction that describe the source in prose (joined across parts, never one part's only). */
+const JOINED_TEXT_KEYS = new Set(["summary", "keyFacts", "redFlags", "callNotes", "sellerConcerns", "actionItems", "buyerInterests", "followUpNeeded", "keyTopics", "keyFinancialNotes"]);
+
+/**
+ * The parts of one long source's reading, combined into one extraction
+ * (pure; each part already normalised):
+ *  - a figure or other single value: the part for the NEWEST fiscal period
+ *    wins (the 2024 return over the 2022 one), then the later part (a
+ *    transcript's later correction) — with its period and "worked out" flag;
+ *  - by-year maps year by year, the same way (a later return's restated
+ *    comparative over the earlier return's figure);
+ *  - prose about the source (summary, key facts, red flags…) and the
+ *    extraction's own notes (private notes, speakers, set-aside years) are
+ *    joined, each distinct line once;
+ *  - _periodEnd is the latest period any part reports.
+ */
+export function combineExtractions(list: ExtractedDocumentData[]): ExtractedDocumentData {
+  if (list.length === 1) return list[0];
+  const order = list
+    .map((d, i) => ({ d, i, p: typeof d._periodEnd === "string" ? d._periodEnd : "" }))
+    .sort((a, b) => (a.p === b.p ? a.i - b.i : a.p < b.p ? -1 : 1));
+  const out: ExtractedDocumentData = {};
+  const keyPeriods: Record<string, string> = {};
+  const inferred = new Set<string>();
+  const stated = new Set<string>();
+  const notes: string[] = [];
+  const speakers: Record<string, string> = {};
+  const setAside: Record<string, SetAsideYear[]> = {};
+  const joined: Record<string, string[]> = {};
+  let periodEnd = "";
+  for (const { d } of order) {
+    const periods = (d._keyPeriods as Record<string, string> | undefined) ?? {};
+    const inferredHere = new Set(String(d._inferredKeys ?? "").split(",").map((k) => k.trim()).filter(Boolean));
+    for (const [k, v] of Object.entries(d)) {
+      if (v === undefined || v === null || v === "") continue;
+      if (k === "_periodEnd") { if (typeof v === "string" && v > periodEnd) periodEnd = v; continue; }
+      if (k === "_privateNotes") { notes.push(...String(v).split("\n").map((n) => n.trim()).filter(Boolean)); continue; }
+      if (k === "_speakers" && isPlainObject(v)) { Object.assign(speakers, v); continue; }
+      if (k === "_yearsSetAside" && isPlainObject(v)) {
+        for (const [mk, entries] of Object.entries(v as Record<string, SetAsideYear[]>)) {
+          const have = setAside[mk] ?? [];
+          for (const e of Array.isArray(entries) ? entries : []) if (!have.some((h) => h.period === e.period && h.value === e.value)) have.push(e);
+          setAside[mk] = have;
+        }
+        continue;
+      }
+      if (k === STATED_METRICS_KEY) { for (const s of String(v).split(",")) if (s.trim()) stated.add(s.trim()); continue; }
+      if (k === "_keyPeriods" || k === "_inferredKeys") continue;
+      if (k === "_documentType" || k === "_confidence") { out[k] = v as string; continue; }
+      if (k.startsWith("_")) { out[k] = v as never; continue; }
+      if (JOINED_TEXT_KEYS.has(k) && typeof v === "string") {
+        const list = (joined[k] ??= []);
+        if (!list.some((x) => x === v || x.includes(v))) list.push(v);
+        continue;
+      }
+      if (isPlainObject(v) && isPlainObject(out[k])) {
+        // Year by year: this (newer, or later) part's years over the earlier ones.
+        out[k] = { ...(out[k] as Record<string, string>), ...(v as Record<string, string>) };
+        continue;
+      }
+      out[k] = v as never;
+      if (periods[k]) keyPeriods[k] = periods[k];
+      else delete keyPeriods[k];
+      if (inferredHere.has(k)) inferred.add(k);
+      else inferred.delete(k);
+    }
+  }
+  for (const [k, list] of Object.entries(joined)) out[k] = k === "summary" ? list.join(" ") : list.join("; ");
+  if (periodEnd) out._periodEnd = periodEnd;
+  if (Object.keys(keyPeriods).length > 0) out._keyPeriods = keyPeriods;
+  const inferredList = Array.from(inferred).filter((k) => out[k] !== undefined);
+  if (inferredList.length > 0) out._inferredKeys = inferredList.join(",");
+  if (stated.size > 0) out[STATED_METRICS_KEY] = Array.from(stated).join(",");
+  if (notes.length > 0) out._privateNotes = Array.from(new Set(notes)).join("\n");
+  if (Object.keys(speakers).length > 0) out._speakers = speakers;
+  if (Object.keys(setAside).length > 0) out._yearsSetAside = setAside;
+  return out;
 }
 
 /**

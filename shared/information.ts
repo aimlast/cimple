@@ -111,6 +111,8 @@ export interface InformationSource {
   /** documents rows only */
   documentId?: string;
   status?: string;
+  /** When the row last changed (a source still "reading" long after this was interrupted). */
+  statusSince?: string;
   uploadedBy?: string;
   fileUrl?: string;
   category?: string;

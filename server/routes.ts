@@ -63,6 +63,7 @@ import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
 import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
+import { unsupportedFormatReason } from "./documents/parser.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -2854,11 +2855,15 @@ Return JSON only.`,
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
     fileFilter: (req, file, cb) => {
-      const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls", ".pptx", ".ppt", ".docx", ".doc"];
+      // (.doc and .ppt — the old binary Office formats — can't be read: rejected with what to do instead.)
+      const allowed = [".pdf", ".txt", ".csv", ".md", ".xlsx", ".xls", ".pptx", ".docx"];
       const ext = path.extname(file.originalname).toLowerCase();
       if (!allowed.includes(ext)) {
         // Mark the rejection so the route can explain instead of a generic 400
-        (req as any).fileRejectionReason = `"${decodeUploadName(file.originalname)}" is a ${ext || "file"} — that format isn't supported.`;
+        const reason = unsupportedFormatReason(file.originalname);
+        (req as any).fileRejectionReason = reason
+          ? `"${decodeUploadName(file.originalname)}": ${reason}.`
+          : `"${decodeUploadName(file.originalname)}" is a ${ext || "file"} — that format isn't supported.`;
       }
       cb(null, allowed.includes(ext));
     },

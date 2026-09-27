@@ -483,6 +483,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       corroboratedCount: corroboratedByDoc.get(d.id)?.size ?? 0,
       alternateCount: alternatesByDoc.get(d.id)?.size ?? 0,
       status: d.status,
+      statusSince: d.updatedAt ? new Date(d.updatedAt).toISOString() : undefined,
       uploadedBy: d.uploadedBy,
       fileUrl: d.fileUrl,
       category: d.category,

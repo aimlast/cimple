@@ -18,8 +18,18 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
-import { extractTextFromFile } from "./parser";
-import { extractDocumentData, extractionChecklist, mergeExtractedData, type ExtractedDocumentData, type MergeSource } from "./extractor";
+import { extractTextFromFile, UnreadableFormatError } from "./parser";
+import {
+  extractDocumentData,
+  extractionChecklist,
+  extractionRetryDelays,
+  extractWithRetries,
+  mergeExtractedData,
+  unreadableExtraction,
+  type ExtractedDocumentData,
+  type MergeSource,
+} from "./extractor";
+import { releaseRequirementsFor } from "./requirements";
 import { recordFactSpeakers } from "../interview/fact-guards";
 import {
   addPrivateNote,
@@ -284,26 +294,136 @@ export interface IngestResult {
 }
 
 /**
+ * The row's sourceMeta after a read (pure): the fiscal period end
+ * remembered; a failed read says why (`readFailed`, `retryable` when
+ * reading it again may work — an outage, not a scanned image); a read that
+ * worked clears that and says whether only part of a long source was read
+ * (`partialRead`). Null when there's nothing to keep.
+ */
+export function sourceMetaAfterRead(
+  doc: Pick<Document, "sourceMeta">,
+  extracted: ExtractedDocumentData,
+  failed: boolean,
+  at: string = new Date().toISOString(),
+): DocumentSourceMeta | null {
+  const meta: DocumentSourceMeta = { ...(((doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta) };
+  if (failed) {
+    meta.readFailed = {
+      at,
+      reason: typeof extracted._failureReason === "string" ? extracted._failureReason : "the extraction returned nothing usable",
+      ...(extracted._failure === "transient" ? { retryable: true } : {}),
+    };
+  } else {
+    Object.assign(meta, rememberPeriodEnd(doc, extracted).sourceMeta ?? {});
+    delete meta.readFailed;
+    const partial = extracted._partialRead as unknown as Omit<NonNullable<DocumentSourceMeta["partialRead"]>, "at"> | undefined;
+    if (partial && typeof partial === "object") meta.partialRead = { ...partial, at };
+    else delete meta.partialRead;
+  }
+  return Object.keys(meta).length > 0 ? meta : null;
+}
+
+/** Sources being read by this server process right now (a row stuck "parsing" that isn't here was interrupted). */
+const activeReads = new Set<string>();
+
+/** A row left "reading" this long, by no live read, was interrupted (a redeploy mid-read). */
+export const STUCK_READ_MS = 30 * 60_000;
+
+/** True when a row still says it is being read but no read is running (pure). */
+export function isInterruptedRead(
+  doc: Pick<Document, "id" | "status" | "updatedAt">,
+  now: number = Date.now(),
+  active: ReadonlySet<string> = activeReads,
+): boolean {
+  if (doc.status !== "pending" && doc.status !== "parsing") return false;
+  if (active.has(doc.id)) return false;
+  return now - new Date(doc.updatedAt).getTime() > STUCK_READ_MS;
+}
+
+/** What an interrupted read tells the broker. */
+export const INTERRUPTED_READ_REASON = "Cimple was restarted while it was reading this source";
+
+/**
+ * On startup: every source left "reading" by a server that stopped mid-read
+ * (a redeploy sends SIGTERM and the process exits within seconds) is marked
+ * failed with why, so the Information tab stops polling forever and offers
+ * "Read it again". Only rows untouched for STUCK_READ_MS — another live
+ * instance's fresh read is never taken for a stuck one.
+ */
+export async function recoverInterruptedReads(): Promise<number> {
+  const { db } = await import("../db");
+  const { documents } = await import("@shared/schema");
+  const { inArray } = await import("drizzle-orm");
+  const rows = await db.select().from(documents).where(inArray(documents.status, ["pending", "parsing"]));
+  let n = 0;
+  for (const d of rows) {
+    if (!isInterruptedRead(d)) continue;
+    const meta = { ...(((d.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta), readFailed: { at: new Date().toISOString(), reason: INTERRUPTED_READ_REASON, retryable: true } };
+    await storage.updateDocument(d.id, { status: "failed", sourceMeta: meta } as any).catch(() => undefined);
+    n++;
+  }
+  if (n > 0) console.warn(`[ingest] ${n} source(s) were left mid-read by a restart — marked "couldn't read" (they can be read again)`);
+  return n;
+}
+
+/**
+ * Runs recoverInterruptedReads at startup, and once more when a read cut off
+ * just before the restart has been untouched long enough to count as stuck.
+ */
+export function startInterruptedReadRecovery(): void {
+  const run = () => recoverInterruptedReads().catch((err) => console.error("[ingest] interrupted-read recovery failed:", err));
+  void run();
+  const later = setTimeout(run, STUCK_READ_MS + 60_000);
+  later.unref?.();
+}
+
+/** Why a file couldn't be opened, in plain words (a format Cimple can't read, a damaged or locked file). */
+function parseProblem(err: unknown): string {
+  if (err instanceof UnreadableFormatError) return err.message;
+  return "the file couldn't be opened — it may be damaged or password-protected; save it again (or as a PDF) and upload that";
+}
+
+/**
  * (Re)ingests an existing documents row: parse the file (falling back to the
  * stored text), extract with the kind-aware prompt, merge into the deal with
  * provenance. The deal is re-read immediately before the write so an
  * interview turn or another upload finishing meanwhile is never clobbered.
+ * A dropped connection or an overloaded API is retried with growing waits
+ * (extractWithRetries, as a re-read is); a read that still fails, or finds
+ * nothing to read, says why on the row — and a source with no readable text
+ * (a scanned image, a .doc file) no longer counts as the checklist document
+ * it was uploaded for, so the seller is asked for a readable copy.
  */
 export async function ingestDocument(documentId: string): Promise<IngestResult> {
   const doc = await storage.getDocument(documentId);
   if (!doc) return { status: "missing", fieldsWritten: [] };
   const kind = documentKind(doc);
+  activeReads.add(doc.id);
   try {
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
+    let problem: string | null = null;
     const filePath = resolveDocumentPath(doc);
-    if (filePath && fs.existsSync(filePath)) text = await extractTextFromFile(filePath, doc.mimeType);
+    if (filePath && fs.existsSync(filePath)) {
+      try {
+        text = await extractTextFromFile(filePath, doc.mimeType);
+      } catch (err) {
+        console.error(`[ingest] couldn't open doc ${doc.id}:`, (err as Error)?.message ?? err);
+        problem = parseProblem(err);
+      }
+    }
     if (!text && doc.extractedText) text = doc.extractedText;
 
     const dealForChecklist = await storage.getDeal(doc.dealId);
-    const extracted: ExtractedDocumentData = await extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
-      checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
-    });
+    const extracted: ExtractedDocumentData = problem && !text
+      ? unreadableExtraction(text, kind, problem)
+      : (await extractWithRetries(
+          () => extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
+            checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+          }),
+          extractionRetryDelays(),
+          (attempt, wait, why) => console.warn(`[ingest] read of doc ${doc.id} failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
+        )).data;
     const failed = extracted.summary === "Extraction failed" && Object.keys(extracted).every((k) => k.startsWith("_") || k === "summary");
     // A failed extraction (an API error, no credits) never replaces the
     // extraction on file — reprocess can still replay it.
@@ -314,14 +434,21 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
       extractedText: text,
       ...(failed && hadExtraction ? {} : { extractedData: extracted }),
       isProcessed: failed ? (hadExtraction ? doc.isProcessed : false) : true,
-      ...(failed ? {} : rememberPeriodEnd(doc, extracted)),
+      sourceMeta: sourceMetaAfterRead(doc, extracted, failed),
     } as any);
-    if (failed) return { status: "failed", fieldsWritten: [] };
+    if (failed) {
+      // Nothing readable in it: it is not the checklist document it was uploaded for.
+      if (extracted._failure === "unreadable" && !hadExtraction) await releaseRequirementsFor(doc.dealId, doc.id);
+      return { status: "failed", fieldsWritten: [] };
+    }
     return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {
     console.error(`[ingest] failed for doc ${documentId}:`, err);
-    await storage.updateDocument(documentId, { status: "failed" } as any).catch(() => {});
+    const meta = { ...(((doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta), readFailed: { at: new Date().toISOString(), reason: "something went wrong while reading it", retryable: true } };
+    await storage.updateDocument(documentId, { status: "failed", sourceMeta: meta } as any).catch(() => {});
     return { status: "failed", fieldsWritten: [] };
+  } finally {
+    activeReads.delete(doc.id);
   }
 }
 
@@ -337,7 +464,15 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
   const conflicts: MergeConflict[] = [];
   let saved: Record<string, unknown> = {};
   const documents = await storage.getDocumentsByDeal(doc.dealId);
+  let gone = false;
   const result = await withDealFactsLock(doc.dealId, async () => {
+    // The source was deleted while it was being read (the broker's Delete on
+    // a "Reading…" source, a seller replacing an upload): its facts must not
+    // land — nothing could ever take them off again.
+    if (!(await storage.getDocument(doc.id))) {
+      gone = true;
+      return { status: "missing" as const, fieldsWritten: [] };
+    }
     const deal = await storage.getDeal(doc.dealId);
     if (!deal) return { status: "extracted" as const, fieldsWritten: [] };
     const before = (deal.extractedInfo as Record<string, unknown>) || {};
@@ -361,6 +496,10 @@ export async function mergeExtractionIntoDeal(doc: Document, extracted: Extracte
     saved = merged;
     return { status: "extracted" as const, fieldsWritten };
   });
+  if (gone) {
+    console.log(`[ingest] doc ${doc.id} was deleted while it was being read — its facts were not merged`);
+    return result;
+  }
   // Material conflicts still standing after the merge become discrepancies (deduplicated).
   await recordMergeConflicts(doc.dealId, conflicts, documents, saved).catch((err) =>
     console.error(`[ingest] recording merge conflicts failed for doc ${doc.id}:`, err));
