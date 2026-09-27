@@ -19,6 +19,7 @@ import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
 import { extractTextFromFile, UnreadableFormatError } from "./parser";
+import { resolveDocumentPath } from "./document-path";
 import {
   extractDocumentData,
   extractionChecklist,
@@ -96,12 +97,8 @@ export function cleanSourceMeta(raw: unknown): DocumentSourceMeta | null {
   return Object.keys(out).length > 0 ? out : null;
 }
 
-/** Absolute path of a row's file under the uploads volume, or null. */
-export function resolveDocumentPath(doc: Pick<Document, "fileUrl">): string | null {
-  const relative = (doc.fileUrl || "").replace(/^\/uploads\//, "");
-  if (!relative || relative.includes("..")) return null;
-  return path.join(uploadsDir(), relative);
-}
+/** Absolute path of a row's file under the uploads volume, or null (see document-path.ts). */
+export { resolveDocumentPath };
 
 function safeStem(title: string): string {
   return title.replace(/[^a-zA-Z0-9-_ ]/g, " ").replace(/\s+/g, "-").replace(/^-|-$/g, "").slice(0, 60) || "source";

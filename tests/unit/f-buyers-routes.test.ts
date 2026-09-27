@@ -138,6 +138,8 @@ async function main() {
   T.users.push({ id: "B2", role: "broker", username: "noemail", name: "No Email", email: null, settings: {} });
   const deal = {
     id: "D1", brokerId: "B1", businessName: "Harbour Point Dental Ltd", blindCodename: "Project Lighthouse",
+    // Published: every buyer path is closed until then (shared/buyer-publish-gate.ts).
+    isLive: true,
     industry: "Dental", ndaRequired: true, extractedInfo: { companyName: "Harbour Point Dental" }, designTemplateId: null,
   };
   const dealNoCode = { ...deal, id: "D2", businessName: "Seaside Plumbing Inc", blindCodename: null };
@@ -165,11 +167,11 @@ async function main() {
   reset();
   let r1 = await notify("D1", "buyer_decision_interested", { title: "Sam is interested", body: "x" });
   assert.equal(r1.recipients, 1, "F1: the owning broker is the fallback recipient");
-  assert.equal(r1.via, "owning_broker");
+  assert.equal(r1.via, "deal_owner");
   assert.equal(brokerEmails().length, 1, "F1: one email to the owning broker");
   const n1 = T.notifications.at(-1);
   assert.equal(n1.recipientId, "B1");
-  assert.equal(n1.metadata.fallbackRecipient, "owning_broker");
+  assert.equal(n1.metadata.fallbackRecipient, "deal_owner");
   assert.equal(n1.emailSent, true);
   // Muted by the broker's own preference → recorded, not emailed.
   reset();
@@ -178,12 +180,19 @@ async function main() {
   assert.equal(brokerEmails().length, 0, "F1: preference respected");
   assert.equal(T.notifications.at(-1).metadata.emailMutedByPreference, true);
   T.users[0].settings = {};
-  // A broker team member present → no fallback, the member is emailed.
+  // A broker team member present → the member is emailed, and the deal's
+  // owner too (they aren't on the team themselves — notifications/service.ts
+  // ownerGetsEvent); once each.
   reset();
   T.members.push({ id: "M-lead", dealId: "D1", teamType: "broker", role: "lead", email: "lead@team.invalid", inviteStatus: "accepted", emailNotifications: true });
   r1 = await notify("D1", "buyer_question", { title: "q", body: "b" });
   assert.equal(r1.via, "members");
-  assert.deepEqual(sent.map((m) => m.to[0]), ["lead@team.invalid"], "F1: no owner fallback when a broker member is routed");
+  assert.deepEqual(sent.map((m) => m.to[0]).sort(), ["lead@team.invalid", "morgan@brokerage.invalid"], "F1: the member and the owner, once each");
+  // The owner on the team themselves: that row governs — one email, not two.
+  reset();
+  T.members.push({ id: "M-own", dealId: "D1", teamType: "broker", role: "lead", email: "Morgan@Brokerage.invalid", inviteStatus: "accepted", emailNotifications: true });
+  await notify("D1", "buyer_question", { title: "q", body: "b" });
+  assert.equal(brokerEmails().length + sent.filter((m) => m.to.includes("Morgan@Brokerage.invalid")).length, 1, "F1: an owner on the team gets one email");
   T.members.length = 0;
   // Broker + seller routed (lapse): seller invite AND the owning broker.
   reset();
@@ -340,7 +349,10 @@ async function main() {
   const grant = T.access.at(-1);
   assert.ok(toCasey.every((m) => m.html.includes(`/view/${grant.accessToken}`)), "F8: both emails carry the view link");
   assert.ok(toCasey.some((m) => m.html.includes("/buyer/set-password/")));
-  assert.deepEqual(toCasey.find((m) => m.cc)?.cc, ["morgan@brokerage.invalid"], "the owning broker is CC'd when there's no broker team");
+  // No broker team: the owner isn't CC'd — they get the "granted access"
+  // notice instead (one email, honouring their notification settings).
+  assert.ok(!toCasey.some((m) => m.cc?.length), "no CC when there's no broker team");
+  assert.equal(brokerEmails().length, 1, "the owning broker gets one email about the grant");
 
   // No codename yet → neutral wording, still no name.
   reset();
@@ -581,12 +593,12 @@ async function main() {
 
   // ════ R2 — the broker isn't emailed about their own actions ════════════
   reset();
-  const r2a = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorBrokerId: "B1" });
+  const r2a = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorUserId: "B1" });
   assert.equal(r2a.recipients, 0, "R2: the owner submitted it — no email to themselves");
   assert.equal(sent.length, 0);
   // Someone else's action still reaches the owner.
-  const r2b = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorBrokerId: "B-other" });
-  assert.equal(r2b.via, "owning_broker");
+  const r2b = await notify("D1", "buyer_approval_requested", { title: "t", body: "b", actorUserId: "B-other" });
+  assert.equal(r2b.via, "deal_owner");
   assert.equal(brokerEmails().length, 1);
   // A broker-team member who is the actor is skipped; other members still hear.
   reset();
@@ -594,7 +606,7 @@ async function main() {
     { id: "M-self", dealId: "D1", teamType: "broker", role: "lead", email: "MORGAN@brokerage.invalid", inviteStatus: "accepted", emailNotifications: true },
     { id: "M-assoc", dealId: "D1", teamType: "broker", role: "associate", email: "assoc@team.invalid", inviteStatus: "accepted", emailNotifications: true },
   );
-  await notify("D1", "buyer_approval_rejected", { title: "t", body: "b", actorBrokerId: "B1" });
+  await notify("D1", "buyer_approval_rejected", { title: "t", body: "b", actorUserId: "B1" });
   assert.deepEqual(sent.map((m) => m.to[0]), ["assoc@team.invalid"], "R2: the acting broker is skipped, the associate is told");
   T.members.length = 0;
   // Through the real routes: submitting and rejecting a buyer as the owner sends no self-email.

@@ -1,10 +1,14 @@
 /**
  * TeamPanel — Manage deal teams (broker, seller, buyer).
  *
- * Firmex-style team management: add members by email, assign roles,
- * each role has specific permissions. Members get automatic notifications.
+ * Firmex-style team management: add members by email and assign roles.
+ * What a seat gives today: seller-team members get their own link to the
+ * seller workspace; broker- and buyer-team members get email updates only
+ * (no colleague sign-in or buyer access behind a seat yet — the copy here
+ * and in the invite email says exactly that). The deal's own broker always
+ * gets its updates (server/notifications/service.ts ownerGetsEvent).
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
@@ -21,7 +25,9 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import { TEAM_ROLES } from "@shared/schema";
-import type { DealMember } from "@shared/schema";
+import type { DealMember, SellerInvite } from "@shared/schema";
+import { sellerLinkOnRemoval } from "@shared/seller-invite-revocation";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Users, UserPlus, Mail, Phone, ChevronDown,
   ChevronRight, Trash2, Loader2,
@@ -33,9 +39,27 @@ interface TeamPanelProps {
 }
 
 const TEAM_CONFIG = {
-  broker: { label: "Broker Team", icon: Briefcase, color: "text-teal" },
-  seller: { label: "Seller Team", icon: Building, color: "text-amber-400" },
-  buyer: { label: "Buyer Team", icon: ShoppingCart, color: "text-blue-400" },
+  broker: {
+    label: "Broker Team",
+    icon: Briefcase,
+    color: "text-teal",
+    hint: "Colleagues here get email updates about this deal. You get them anyway as the deal's broker — choose which in Settings → Notifications.",
+    added: "They'll get email updates about this deal.",
+  },
+  seller: {
+    label: "Seller Team",
+    icon: Building,
+    color: "text-amber-400",
+    hint: "Each person gets their own link to the seller workspace — questionnaire, documents and interview.",
+    added: "They've been emailed their own link to the seller workspace.",
+  },
+  buyer: {
+    label: "Buyer Team",
+    icon: ShoppingCart,
+    color: "text-blue-400",
+    hint: "People on the buyer's side get email updates only. To let someone read the CIM, give them access from the Buyers tab.",
+    added: "They'll get email updates about this opportunity.",
+  },
 } as const;
 
 type TeamType = keyof typeof TEAM_CONFIG;
@@ -80,6 +104,10 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
   const [newMember, setNewMember] = useState({ email: "", name: "", phone: "", role: "" });
   const [formError, setFormError] = useState<string | null>(null);
   const [memberToRemove, setMemberToRemove] = useState<DealMember | null>(null);
+  // Removing a seller-team member: turn their own seller link off too?
+  // (Default yes; the dialog says when it's the link shown as the seller's.)
+  const [turnOffLink, setTurnOffLink] = useState(true);
+  useEffect(() => { setTurnOffLink(true); }, [memberToRemove?.id]);
 
   const { data: members = [], isLoading, error: loadError, refetch } = useQuery<DealMember[]>({
     queryKey: ["/api/deals", dealId, "members"],
@@ -89,9 +117,9 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
   const addMember = useMutation({
     mutationFn: (data: { email: string; name: string; phone: string; teamType: string; role: string }) =>
       requestJson<DealMember>("POST", `/api/deals/${dealId}/members`, data),
-    onSuccess: () => {
+    onSuccess: (_member, vars) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
-      toast({ title: "Member added", description: "Invite notification sent." });
+      toast({ title: "Member added", description: TEAM_CONFIG[vars.teamType as TeamType]?.added ?? "They've been notified." });
       setAddingTo(null);
       setNewMember({ email: "", name: "", phone: "", role: "" });
       setFormError(null);
@@ -99,11 +127,39 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
     onError: (e: Error) => toast({ title: "Couldn't add member", description: e.message, variant: "destructive" }),
   });
 
+  // The deal's seller invites (same query as the Overview), so the remove
+  // dialog can say what happens to this person's seller link.
+  const removingSeller = memberToRemove?.teamType === "seller";
+  const { data: invites, isLoading: invitesLoading } = useQuery<SellerInvite[]>({
+    queryKey: ["/api/deals", dealId, "invites"],
+    queryFn: () => requestJson<SellerInvite[]>("GET", `/api/deals/${dealId}/invites`),
+    enabled: removingSeller,
+  });
+  const removalLink = removingSeller && memberToRemove && invites ? sellerLinkOnRemoval(memberToRemove, invites) : null;
+
   const removeMember = useMutation({
-    mutationFn: (id: string) => requestJson("DELETE", `/api/members/${id}`),
-    onSuccess: () => {
+    mutationFn: ({ member, keepLink }: { member: DealMember; keepLink: boolean }) =>
+      requestJson<{ success: boolean; linkRevoked?: boolean; linkOutcome?: "revoked" | "kept" | "seller_invite" | "none" }>(
+        "DELETE",
+        `/api/members/${member.id}${keepLink ? "?keepLink=1" : ""}`,
+      ),
+    onSuccess: (result, { member }) => {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "members"] });
-      toast({ title: "Member removed" });
+      queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "invites"] });
+      const outcome = result?.linkOutcome;
+      toast({
+        title: "Member removed",
+        description:
+          member.teamType !== "seller"
+            ? undefined
+            : outcome === "revoked"
+              ? "Their seller workspace link no longer works."
+              : outcome === "kept"
+                ? "Their seller workspace link still works, as you chose."
+                : outcome === "seller_invite"
+                  ? "Their email is on the seller's own invite, which still works."
+                  : "They had no seller link of their own.",
+      });
       setMemberToRemove(null);
     },
     onError: (e: Error) => toast({ title: "Couldn't remove member", description: e.message, variant: "destructive" }),
@@ -205,6 +261,8 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
 
         {isExpanded && (
           <div className="pl-5 space-y-1.5 pb-2">
+            <p className="text-[10px] text-muted-foreground/80 leading-snug pr-1">{config.hint}</p>
+
             {/* Add member form */}
             {addingTo === teamType && (
               <Card className="bg-muted/30 border-border/50">
@@ -415,18 +473,61 @@ export function TeamPanel({ dealId }: TeamPanelProps) {
               {memberToRemove ? TEAM_CONFIG[memberToRemove.teamType as TeamType]?.label.toLowerCase() ?? "deal team" : "deal team"}?
             </AlertDialogTitle>
             <AlertDialogDescription>
-              They will stop receiving notifications for this deal immediately. This cannot be undone —
-              you would need to invite them again.
+              They will stop receiving notifications for this deal immediately. To bring them back, add them again.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {removingSeller && (
+            <div className="rounded-md border border-border bg-muted/30 p-3 text-sm" data-testid="remove-member-link">
+              {invitesLoading ? (
+                <span className="flex items-center gap-2 text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" /> Checking their seller link…
+                </span>
+              ) : !removalLink ? (
+                <p className="text-muted-foreground">
+                  Couldn't check their seller link. If they have one of their own, it will be turned off.
+                </p>
+              ) : removalLink.kind === "own_link" ? (
+                <div className="space-y-2">
+                  <label className="flex items-start gap-2 cursor-pointer">
+                    <Checkbox
+                      checked={turnOffLink}
+                      onCheckedChange={(v) => setTurnOffLink(v === true)}
+                      className="mt-0.5"
+                      data-testid="checkbox-turn-off-link"
+                    />
+                    <span>Turn off their seller workspace link</span>
+                  </label>
+                  {removalLink.isDealSellerLink ? (
+                    <p className="text-xs text-amber-400">
+                      This is also the link your Overview shows as the seller's link. If you copied it to the
+                      seller, untick this or the seller loses access too.
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground">
+                      This link was made for them when you added them. The seller's own invite isn't affected.
+                    </p>
+                  )}
+                </div>
+              ) : removalLink.kind === "seller_invite" ? (
+                <p className="text-muted-foreground">Their email is on the seller's own invite, which keeps working.</p>
+              ) : (
+                <p className="text-muted-foreground">They don't have a seller link of their own.</p>
+              )}
+            </div>
+          )}
           <AlertDialogFooter>
             <AlertDialogCancel disabled={removeMember.isPending}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={removeMember.isPending}
+              disabled={removeMember.isPending || (removingSeller && invitesLoading)}
               onClick={(e) => {
                 e.preventDefault();
-                if (memberToRemove) removeMember.mutate(memberToRemove.id);
+                if (memberToRemove) {
+                  removeMember.mutate({
+                    member: memberToRemove,
+                    keepLink: removalLink?.kind === "own_link" && !turnOffLink,
+                  });
+                }
               }}
             >
               {removeMember.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Remove"}

@@ -29,6 +29,7 @@ import { DEAL_PHASES, isDealPhase, phaseIndex } from "@shared/deal-progress";
 import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
+import { dealPublishedForBuyers, notPublishedBody, NOT_PUBLISHED_BROKER_MESSAGE, NOT_PUBLISHED_CODE } from "@shared/buyer-publish-gate";
 import { askerScope } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
@@ -50,7 +51,11 @@ import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
-import { notify, previewRecipients, sendDirectEmail, escapeHtml } from "./notifications/service.js";
+import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
+import { escapeHtml } from "./notifications/email-escape";
+import { teamInviteCopy } from "./notifications/team-invite-copy";
+import { sellerLinkOnRemoval, REVOKED_INVITE_STATUS, type SellerLinkOnRemoval } from "@shared/seller-invite-revocation";
+import { createWebhookTokenResolver, dealIdForWebhookToken } from "./calls/webhook-lookup";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
 import { registerBuyerAuthRoutes, inviteBuyerUser, reinviteBuyerWithoutPassword } from "./buyer-auth/routes.js";
 import { buildApprovalInviteEmail, type ApprovalEmailVariant } from "./buyers/approval-emails.js";
@@ -65,7 +70,13 @@ import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
 import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
 import { keepOutFor } from "./cim/keep-out";
-import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
+import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal, isDealOwnerSession } from "./broker-auth/routes.js";
+import {
+  pickBodyFields,
+  DOCUMENT_CREATE_FIELDS, DOCUMENT_PATCH_FIELDS, DOCUMENT_SERVER_OWNED,
+  TASK_PATCH_FIELDS, TASK_SERVER_OWNED,
+  INTEGRATION_CREATE_FIELDS, INTEGRATION_CREATE_SERVER_OWNED, INTEGRATION_PATCH_FIELDS, INTEGRATION_SERVER_OWNED, INTEGRATION_STATUSES,
+} from "./security/body-fields";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders, canSnoozeDecision, buyerFacingDealName } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
@@ -1587,6 +1598,7 @@ Return JSON only.`,
 
   // ── Notetaker bot for the broker's own Zoom / Meet / Teams call (Recall.ai) ──
   const webhookTokens = new Map<string, string>(); // token → dealId (rebuilt lazily after a restart)
+  const resolveWebhookToken = createWebhookTokenResolver(webhookTokens, dealIdForWebhookToken);
   const activeBot = (deal: any): InterviewBot | null => {
     const b = deal?.interviewBot as InterviewBot | null | undefined;
     return b && !b.endedAt ? b : null;
@@ -1666,15 +1678,11 @@ Return JSON only.`,
   app.post("/api/calls/recall/webhook/", async (req, res) => {
     try {
       const token = typeof req.query.token === "string" ? req.query.token : "";
-      if (!token) return res.status(401).end();
-      let dealId = webhookTokens.get(token);
-      if (!dealId) {
-        // After a restart the map is empty — find the deal that owns this token.
-        const match = (await storage.getAllDeals()).find((d) => (d as any).interviewBot?.webhookToken === token && !(d as any).interviewBot?.endedAt);
-        if (!match) return res.status(401).end();
-        dealId = match.id;
-        webhookTokens.set(token, dealId);
-      }
+      // After a restart the map is empty: the resolver finds the owning deal
+      // with a one-row query (never the whole deals table), refuses tokens
+      // that can't be ours, and remembers misses briefly.
+      const dealId = await resolveWebhookToken(token);
+      if (!dealId) return res.status(401).end();
       const event = req.body?.event;
       if (event === "transcript.data") {
         const line = lineFromWebhook(req.body);
@@ -1720,6 +1728,7 @@ Return JSON only.`,
         conductedBy: await interviewCallerMode(req, dealId),
         conductedVia: parseConductedVia(req.body?.conductedVia),
         answeringAt: parseAnsweringAt(req.body?.answeringAt),
+        byDealBroker: await isDealOwnerSession(req, dealId),
       });
       res.json(await interviewResultFor(req, dealId, result));
     } catch (error: any) {
@@ -1775,6 +1784,7 @@ Return JSON only.`,
             conductedBy,
             conductedVia: parseConductedVia(req.body?.conductedVia),
             answeringAt,
+            byDealBroker: await isDealOwnerSession(req, dealId),
             // The question on screen is final and its chips are ready: the
             // seller can answer while the turn finishes saving.
             onReady: (ready) => send({ type: "ready", ...ready }),
@@ -1817,7 +1827,10 @@ Return JSON only.`,
         return res.status(400).json({ error: "Session ID is required" });
       }
       const { endSessionManually } = await import("./interview/session-manager");
-      const result = await endSessionManually(dealId, sessionId, { mode: await interviewCallerMode(req, dealId) });
+      const result = await endSessionManually(dealId, sessionId, {
+        mode: await interviewCallerMode(req, dealId),
+        byDealBroker: await isDealOwnerSession(req, dealId),
+      });
       res.json(result);
     } catch (error: any) {
       if (error instanceof TurnConflictError) return res.status(409).json(turnConflictBody(error));
@@ -1850,82 +1863,9 @@ Return JSON only.`,
     }
   });
 
-  // CIM CRUD endpoints
-  app.get("/api/cims", requireBroker, async (req, res) => {
-    try {
-      const cims = await storage.getAllCims();
-      res.json(cims);
-    } catch (error: any) {
-      console.error("Error fetching CIMs:", error);
-      res.status(500).json({ error: "Failed to fetch CIMs" });
-    }
-  });
-
-  app.get("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      const cim = await storage.getCim(req.params.id);
-      if (!cim) {
-        return res.status(404).json({ error: "CIM not found" });
-      }
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error fetching CIM:", error);
-      res.status(500).json({ error: "Failed to fetch CIM" });
-    }
-  });
-
-  app.post("/api/cims", requireBroker, async (req, res) => {
-    try {
-      const cim = await storage.createCim(req.body);
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error creating CIM:", error);
-      res.status(500).json({ error: "Failed to create CIM" });
-    }
-  });
-
-  app.patch("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      // If updating extractedInfo, ensure businessName is included
-      if (req.body.extractedInfo && typeof req.body.extractedInfo === 'object' && !Array.isArray(req.body.extractedInfo)) {
-        const existingCim = await storage.getCim(req.params.id);
-        if (existingCim) {
-          const questionnaireData = existingCim.questionnaireData as Record<string, any> || {};
-          const businessName = questionnaireData["Business Name"] || existingCim.businessName;
-          
-          // Clone extractedInfo to avoid mutating original request body
-          const extractedInfo = { ...req.body.extractedInfo };
-          
-          // Ensure businessName is in extracted info
-          if (businessName && !extractedInfo.businessName) {
-            extractedInfo.businessName = businessName;
-          }
-          
-          // Update request body with modified extractedInfo
-          req.body = { ...req.body, extractedInfo };
-        }
-      }
-      
-      const cim = await storage.updateCim(req.params.id, req.body);
-      if (!cim) {
-        return res.status(404).json({ error: "CIM not found" });
-      }
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error updating CIM:", error);
-      res.status(500).json({ error: "Failed to update CIM" });
-    }
-  });
-
-  app.delete("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      await storage.deleteCim(req.params.id);
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error("Error deleting CIM:", error);
-      res.status(500).json({ error: "Failed to delete CIM" });
-    }
-  });
+  // (The legacy /api/cims CRUD routes are gone: they had no tenant scoping —
+  // any broker could list, edit or delete every row — and their UI was
+  // removed on 2026-07-08. Unknown /api paths answer a JSON 404.)
 
   // Branding Settings Routes
   app.get("/api/branding", requireBroker, async (req, res) => {
@@ -2777,6 +2717,12 @@ Return JSON only.`,
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
       }
+      // Publishing opens the CIM to buyers the seller approved while it was
+      // unpublished (their access + invite email were held until now).
+      if (dealPatch.isLive === true && req.session.brokerId) {
+        const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+        grantWaitingApprovals(req.params.id, baseUrl).catch((err) => console.error("[approvals] publish grants failed:", err));
+      }
       if (askingPriceSet) {
         const { setMirroredDealFact } = await import("./information/facts");
         const { MIRROR_NOTES } = await import("./information/deal-mirror");
@@ -2854,12 +2800,21 @@ Return JSON only.`,
     }
   });
 
+  // A placeholder row (a document that's expected but not uploaded yet).
+  // Files only ever arrive through /documents/upload or the source ingest,
+  // which own fileUrl, mimeType, extraction and status — see body-fields.ts.
   app.post("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      const picked = pickBodyFields(req.body, DOCUMENT_CREATE_FIELDS, DOCUMENT_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertDocumentSchema } = await import("@shared/schema");
       const validatedData = insertDocumentSchema.parse({
-        ...req.body,
+        ...picked.data,
+        originalName: picked.data.originalName ?? picked.data.name,
         dealId: req.params.dealId,
+        uploadedBy: "broker",
+        fileUrl: "",
+        status: "pending",
       });
       const document = await storage.createDocument(validatedData);
       res.json(document);
@@ -2876,14 +2831,22 @@ Return JSON only.`,
     try {
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
+      // Rename / re-file only: the deal, the file and its extraction are
+      // server-owned (a broker-set fileUrl read files off the server; a
+      // broker-set dealId moved the row into another brokerage's deal).
+      const picked = pickBodyFields(req.body, DOCUMENT_PATCH_FIELDS, DOCUMENT_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertDocumentSchema } = await import("@shared/schema");
-      const validatedData = insertDocumentSchema.partial().parse(req.body);
+      const validatedData = insertDocumentSchema.partial().parse(picked.data);
       const document = await storage.updateDocument(req.params.id, validatedData);
       if (!document) {
         return res.status(404).json({ error: "Document not found" });
       }
       res.json(document);
     } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid document data", details: error.errors });
+      }
       console.error("Error updating document:", error);
       res.status(500).json({ error: "Failed to update document" });
     }
@@ -3128,9 +3091,19 @@ Return JSON only.`,
 
   app.post("/api/integrations", requireBroker, async (req, res) => {
     try {
+      // Tokens only ever come from a connect flow (e.g. pipedrive/connect,
+      // which validates them) — never from a raw create body.
+      const picked = pickBodyFields(req.body, INTEGRATION_CREATE_FIELDS, INTEGRATION_CREATE_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
+      if (typeof picked.data.provider !== "string" || !picked.data.provider.trim()) {
+        return res.status(400).json({ error: "A provider is required" });
+      }
+      if (picked.data.status !== undefined && !(INTEGRATION_STATUSES as readonly unknown[]).includes(picked.data.status)) {
+        return res.status(400).json({ error: "Unknown status" });
+      }
       const integration = await storage.createIntegration({
-        ...req.body,
-        brokerId: req.session.brokerId,
+        ...(picked.data as { provider: string }),
+        brokerId: req.session.brokerId!,
       });
       const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
       res.json(safe);
@@ -3246,7 +3219,18 @@ Return JSON only.`,
     try {
       const owned = await getOwnedIntegration(req.params.id, req.session.brokerId);
       if (!owned) return res.status(404).json({ error: "Integration not found" });
-      const integration = await storage.updateIntegration(req.params.id, req.body);
+      // Settings only: a brokerId in the body used to hand this broker's
+      // CRM connection to another broker (their buyer sync then ran on it).
+      const picked = pickBodyFields(req.body, INTEGRATION_PATCH_FIELDS, INTEGRATION_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
+      if (picked.data.status !== undefined && !(INTEGRATION_STATUSES as readonly unknown[]).includes(picked.data.status)) {
+        return res.status(400).json({ error: "Unknown status" });
+      }
+      if (Object.keys(picked.data).length === 0) {
+        const { accessToken: _a, refreshToken: _r, ...unchanged } = owned as any;
+        return res.json(unchanged);
+      }
+      const integration = await storage.updateIntegration(req.params.id, picked.data as any);
       if (!integration) return res.status(404).json({ error: "Integration not found" });
       const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
       res.json(safe);
@@ -3281,8 +3265,16 @@ Return JSON only.`,
     try {
       const integration = await getOwnedIntegration(req.params.id, req.session.brokerId);
       if (!integration) return res.status(404).json({ error: "Integration not found" });
+      // The deal must be this broker's too — an address attached to another
+      // brokerage's deal would feed that deal's seller profiling.
+      const dealId = typeof req.body?.dealId === "string" ? req.body.dealId : "";
+      const emailAddress = typeof req.body?.emailAddress === "string" ? req.body.emailAddress.trim() : "";
+      if (!emailAddress) return res.status(400).json({ error: "An email address is required" });
+      if (!dealId || !(await getOwnedDeal(dealId, req.session.brokerId))) return res.status(404).json({ error: "Deal not found" });
       const email = await storage.createIntegrationEmail({
-        ...req.body,
+        dealId,
+        emailAddress,
+        label: typeof req.body?.label === "string" ? req.body.label : null,
         integrationId: req.params.id,
       });
       res.json(email);
@@ -3956,6 +3948,7 @@ Return JSON only.`,
       const validatedData = insertTaskSchema.parse({
         ...req.body,
         dealId: req.params.dealId,
+        createdBy: req.session.brokerId,
       });
       const task = await storage.createTask(validatedData);
       res.json(task);
@@ -3972,14 +3965,21 @@ Return JSON only.`,
     try {
       const existingTask = await storage.getTask(req.params.id);
       if (!existingTask || !(await ownsDeal(req, existingTask.dealId))) return res.status(404).json({ error: "Task not found" });
+      // Never the deal or the author: a task moved by dealId landed in
+      // another brokerage's deal.
+      const picked = pickBodyFields(req.body, TASK_PATCH_FIELDS, TASK_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertTaskSchema } = await import("@shared/schema");
-      const validatedData = insertTaskSchema.partial().parse(req.body);
+      const validatedData = insertTaskSchema.partial().parse(picked.data);
       const task = await storage.updateTask(req.params.id, validatedData);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
       }
       res.json(task);
     } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid task data", details: error.errors });
+      }
       console.error("Error updating task:", error);
       res.status(500).json({ error: "Failed to update task" });
     }
@@ -4072,9 +4072,9 @@ Return JSON only.`,
     inviteUrl: string,
   ) => `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
-      <h2 style="color: #14b8a6; margin-bottom: 16px;">Let's tell the story of ${businessName}</h2>
-      <p>Hello${sellerName ? ` ${sellerName}` : ""},</p>
-      <p>Your broker is preparing the confidential sale materials for <strong>${businessName}</strong> and has set up a secure workspace for you on Cimple.</p>
+      <h2 style="color: #14b8a6; margin-bottom: 16px;">Let's tell the story of ${escapeHtml(businessName)}</h2>
+      <p>Hello${sellerName ? ` ${escapeHtml(sellerName)}` : ""},</p>
+      <p>Your broker is preparing the confidential sale materials for <strong>${escapeHtml(businessName)}</strong> and has set up a secure workspace for you on Cimple.</p>
       <p>One link covers everything: a short questionnaire, document uploads, and a guided interview with an AI advisor that helps you present the business at its best.</p>
       <p style="margin: 32px 0;">
         <a href="${inviteUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Start your business profile</a>
@@ -4169,8 +4169,8 @@ Return JSON only.`,
         `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">Signature requested</h2>
-      <p>Hello${invite.sellerName ? ` ${invite.sellerName}` : ""},</p>
-      <p>Your broker has requested your signature on a confidentiality agreement for <strong>${deal.businessName}</strong>. It takes under a minute — review the agreement and sign by typing your name.</p>
+      <p>Hello${invite.sellerName ? ` ${escapeHtml(invite.sellerName)}` : ""},</p>
+      <p>Your broker has requested your signature on a confidentiality agreement for <strong>${escapeHtml(deal.businessName)}</strong>. It takes under a minute — review the agreement and sign by typing your name.</p>
       <p style="margin: 32px 0;">
         <a href="${url}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review &amp; sign</a>
       </p>
@@ -4254,7 +4254,7 @@ Return JSON only.`,
           `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">NDA signed</h2>
-      <p><strong>${signerName}</strong> just signed the confidentiality agreement for <strong>${deal.businessName}</strong>.</p>
+      <p><strong>${escapeHtml(signerName)}</strong> just signed the confidentiality agreement for <strong>${escapeHtml(deal.businessName)}</strong>.</p>
       <p style="color: #888; font-size: 12px;">Signed ${new Date().toLocaleString()} — recorded with timestamp and IP in the deal.</p>
     </div>
   `,
@@ -4489,6 +4489,11 @@ Return JSON only.`,
 
   app.post("/api/deals/:dealId/buyers", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      // A link handed out before publishing would open a draft the seller
+      // never approved (the publish step holds those gates).
+      if (!dealPublishedForBuyers(await storage.getDeal(req.params.dealId))) {
+        return res.status(409).json({ error: NOT_PUBLISHED_BROKER_MESSAGE, code: NOT_PUBLISHED_CODE });
+      }
       const accessToken = crypto.randomUUID();
       const body = { ...req.body };
       if (body.expiresAt && typeof body.expiresAt === 'string') {
@@ -4570,6 +4575,13 @@ Return JSON only.`,
       const deal = await storage.getDeal(access.dealId);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
+      }
+
+      // Nothing reaches a buyer until the CIM is published (the publish step
+      // holds the discrepancy + approval gates). Not a view either: no stamp,
+      // so the decision reminders don't start on a CIM nobody could read.
+      if (!dealPublishedForBuyers(deal)) {
+        return res.status(403).json(notPublishedBody());
       }
 
       // Stamp the view: firstViewedAt anchors the decision-reminder pipeline
@@ -4752,6 +4764,7 @@ Return JSON only.`,
       const access = await storage.getBuyerAccessByToken(req.params.token);
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
+      if (!dealPublishedForBuyers(await storage.getDeal(access.dealId))) return res.status(403).json(notPublishedBody());
       const buyer = await ndaProfileAccount(access);
       const c = (buyer?.buyerCriteria as Record<string, any>) || {};
       const ndaDeal = await storage.getDeal(access.dealId);
@@ -4788,6 +4801,7 @@ Return JSON only.`,
       const access = await storage.getBuyerAccessByToken(req.params.token);
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
+      if (!dealPublishedForBuyers(await storage.getDeal(access.dealId))) return res.status(403).json(notPublishedBody());
 
       // Signing the NDA and giving us your buyer profile are one step: either
       // a new/updated profile, or a confirmation of the one already on file.
@@ -4955,6 +4969,7 @@ Return JSON only.`,
 
       const deal = await storage.getDeal(access.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!dealPublishedForBuyers(deal)) return res.status(403).json(notPublishedBody());
       // A buyer who hasn't signed a required NDA has never seen the CIM: a
       // decision from them would move the broker's CRM and tell the broker
       // they "finished reviewing" it. The view room shows no decision panel
@@ -5253,7 +5268,7 @@ Return JSON only.`,
         businessName: deal.businessName,
         metadata: { approvalRequestId: request.id, category, riskLevel },
         // The broker who submitted it isn't emailed about their own request.
-        actorBrokerId: req.session.brokerId ?? null,
+        actorUserId: req.session.brokerId ?? null,
       });
 
       res.json(request);
@@ -5297,7 +5312,7 @@ Return JSON only.`,
           businessName: deal.businessName,
           metadata: { approvalRequestId: request.id },
           // The rejecting broker isn't emailed about their own rejection.
-          actorBrokerId: req.session.brokerId ?? null,
+          actorUserId: req.session.brokerId ?? null,
         });
 
         return res.json(updated);
@@ -5360,6 +5375,148 @@ Return JSON only.`,
     }
   });
 
+  /**
+   * A seller-approved buyer gets access: link or invite their Cimple account,
+   * create the access row, email the buyer (broker team CC'd) and tell the
+   * broker team. Runs when the seller approves on a published deal, or at
+   * publish for buyers the seller approved earlier. The access is "full" =
+   * the Blind CIM, so every email to the buyer names the deal the way the
+   * view room does: codename or neutral wording, never the business name.
+   */
+  async function grantApprovedBuyer(
+    request: NonNullable<Awaited<ReturnType<typeof storage.getBuyerApprovalRequest>>>,
+    deal: NonNullable<Awaited<ReturnType<typeof storage.getDeal>>>,
+    baseUrl: string,
+    review: Record<string, unknown> = {},
+  ) {
+    const grantedLevel = "full";
+    const dealLabel = buyerFacingDealName(deal, { accessLevel: grantedLevel });
+    const accessToken = crypto.randomUUID();
+    const viewUrl = `${baseUrl}/view/${accessToken}`;
+    const dashboardUrl = `${baseUrl}/buyer/dashboard`;
+
+    // Link to an existing account only when that account can't belong to
+    // someone else: verified, or never claimed (no password yet). An
+    // unverified self-signup under the buyer's address gets nothing — the
+    // buyer receives their own link and the access stays unlinked.
+    const existingAccount = await storage.getBuyerUserByEmail(request.buyerEmail.toLowerCase().trim());
+    let buyerUserId: string | null = null;
+    let variant: ApprovalEmailVariant;
+
+    if (existingAccount && isLinkableBuyerAccount(existingAccount)) {
+      buyerUserId = existingAccount.id;
+      if (existingAccount.passwordHash) {
+        variant = "existing_account";
+      } else {
+        // Nobody can sign in to it yet (CRM import, NDA-created, expired
+        // invite): send a fresh set-password invitation.
+        await reinviteBuyerWithoutPassword(existingAccount, { businessName: dealLabel.name, viewUrl, baseUrl });
+        variant = "set_password";
+      }
+    } else if (existingAccount) {
+      variant = "link_only";
+    } else {
+      // Create new account + send set-password email
+      const invited = await inviteBuyerUser({
+        email: request.buyerEmail,
+        name: request.buyerName,
+        phone: request.buyerPhone,
+        company: request.buyerCompany,
+        title: request.buyerTitle,
+        linkedinUrl: request.linkedinUrl,
+        invitedByBroker: deal.brokerId,
+        invitedByDeal: deal.id,
+        businessName: dealLabel.name,
+        viewUrl,
+        baseUrl,
+      });
+      buyerUserId = invited.user.id;
+      variant = "set_password";
+      if (invited.isNew) {
+        await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id, deal.brokerId) } as any).catch(() => {});
+      }
+    }
+
+    const buyerAccess = await storage.createBuyerAccess({
+      dealId: deal.id,
+      buyerUserId,
+      accessToken,
+      buyerEmail: request.buyerEmail,
+      buyerName: request.buyerName || null,
+      buyerCompany: request.buyerCompany || null,
+      accessLevel: grantedLevel,
+      expiresAt: await brokerLinkExpiry(deal.brokerId ?? undefined), // broker's configured default (30 days unless changed)
+    } as any);
+
+    const updated = await storage.updateBuyerApprovalRequest(request.id, {
+      status: "access_granted",
+      ...review,
+      grantedBuyerAccessId: buyerAccess.id,
+      grantedAt: new Date(),
+    } as any);
+
+    // CC the broker team. The deal's own broker (when not on the team) is
+    // told by the notice below instead — one email, honouring their
+    // Settings → Notifications switch — never both a CC and a notice.
+    const members = await storage.getDealMembers(deal.id);
+    const brokerEmails = members.filter(m => m.teamType === "broker" && m.email).map(m => m.email as string);
+    const ccList = Array.from(new Set(brokerEmails.map((e) => e.trim().toLowerCase())));
+    const copied = ccList.filter((e) => e !== request.buyerEmail.trim().toLowerCase());
+
+    const invite = buildApprovalInviteEmail({
+      variant,
+      buyerName: (variant === "existing_account" ? existingAccount?.name : null) || request.buyerName,
+      dealLabel,
+      viewUrl,
+      dashboardUrl,
+    });
+    await sendDirectEmail(request.buyerEmail, invite.subject, invite.html, copied);
+
+    // Also notify broker team that access was granted
+    await notify(deal.id, "buyer_approval_seller_approved", {
+      title: `Buyer approved & granted access — ${request.buyerName}`,
+      body:
+        `The seller has approved <strong>${escapeHtml(request.buyerName)}</strong>` +
+        (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
+        `. An invite email with their personal view link has been sent to ${escapeHtml(request.buyerEmail)}` +
+        (copied.length ? " with your broker team copied." : ".") +
+        (variant === "link_only"
+          ? " An unconfirmed Cimple account already uses this email, so the access was not added to that account's dashboard."
+          : ""),
+      actionUrl: `/deal/${deal.id}`,
+      businessName: deal.businessName,
+      metadata: { approvalRequestId: request.id, buyerAccessId: buyerAccess.id },
+    });
+
+    return { request: updated, access: buyerAccess };
+  }
+
+  /** At publish: buyers the seller approved while the CIM was unpublished get their access now. */
+  const grantingWaiting = new Set<string>();
+  async function grantWaitingApprovals(dealId: string, baseUrl: string): Promise<number> {
+    if (grantingWaiting.has(dealId)) return 0;
+    grantingWaiting.add(dealId);
+    try {
+      const deal = await storage.getDeal(dealId);
+      if (!deal || !dealPublishedForBuyers(deal)) return 0;
+      const waiting = (await storage.getBuyerApprovalRequestsByDeal(dealId)).filter(
+        (r) => r.status === "approved_by_seller" && !r.grantedBuyerAccessId,
+      );
+      let granted = 0;
+      for (const request of waiting) {
+        try {
+          await grantApprovedBuyer(request, deal, baseUrl);
+          granted++;
+        } catch (err) {
+          console.error(`[approvals] couldn't grant waiting approval ${request.id} at publish:`, err);
+        }
+      }
+      return granted;
+    } finally {
+      grantingWaiting.delete(dealId);
+    }
+  }
+
   // Seller review — approve or reject (tokenized, public)
   app.post("/api/buyer-approval-review/:token", async (req, res) => {
     try {
@@ -5398,118 +5555,36 @@ Return JSON only.`,
         return res.json(updated);
       }
 
-      // Approve → either link to existing buyer account or create one
-      //          + create buyerAccess + send invite email (Firmex-style)
-      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
-      // Approved buyers get "full" access — the Blind CIM. Every email to them
-      // names the deal the way the view room does: codename or neutral wording,
-      // never the business name.
-      const grantedLevel = "full";
-      const dealLabel = buyerFacingDealName(deal, { accessLevel: grantedLevel });
-      const accessToken = crypto.randomUUID();
-      const viewUrl = `${baseUrl}/view/${accessToken}`;
-      const dashboardUrl = `${baseUrl}/buyer/dashboard`;
-
-      // Link to an existing account only when that account can't belong to
-      // someone else: verified, or never claimed (no password yet). An
-      // unverified self-signup under the buyer's address gets nothing — the
-      // buyer receives their own link and the access stays unlinked.
-      const existingAccount = await storage.getBuyerUserByEmail(request.buyerEmail.toLowerCase().trim());
-      let buyerUserId: string | null = null;
-      let variant: ApprovalEmailVariant;
-
-      if (existingAccount && isLinkableBuyerAccount(existingAccount)) {
-        buyerUserId = existingAccount.id;
-        if (existingAccount.passwordHash) {
-          variant = "existing_account";
-        } else {
-          // Nobody can sign in to it yet (CRM import, NDA-created, expired
-          // invite): send a fresh set-password invitation.
-          await reinviteBuyerWithoutPassword(existingAccount, { businessName: dealLabel.name, viewUrl, baseUrl });
-          variant = "set_password";
-        }
-      } else if (existingAccount) {
-        variant = "link_only";
-      } else {
-        // Create new account + send set-password email
-        const invited = await inviteBuyerUser({
-          email: request.buyerEmail,
-          name: request.buyerName,
-          phone: request.buyerPhone,
-          company: request.buyerCompany,
-          title: request.buyerTitle,
-          linkedinUrl: request.linkedinUrl,
-          invitedByBroker: deal.brokerId,
-          invitedByDeal: deal.id,
-          businessName: dealLabel.name,
-          viewUrl,
-          baseUrl,
-        });
-        buyerUserId = invited.user.id;
-        variant = "set_password";
-        if (invited.isNew) {
-          await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id, deal.brokerId) } as any).catch(() => {});
-        }
-      }
-
-      const buyerAccess = await storage.createBuyerAccess({
-        dealId: deal.id,
-        buyerUserId,
-        accessToken,
-        buyerEmail: request.buyerEmail,
-        buyerName: request.buyerName || null,
-        buyerCompany: request.buyerCompany || null,
-        accessLevel: grantedLevel,
-        expiresAt: await brokerLinkExpiry(deal.brokerId ?? undefined), // broker's configured default (30 days unless changed)
-      } as any);
-
-      const updated = await storage.updateBuyerApprovalRequest(request.id, {
-        status: "access_granted",
+      const review = {
         sellerReviewedBy: reviewerName || null,
         sellerReviewedAt: new Date(),
         sellerReviewNotes: notes || null,
-        grantedBuyerAccessId: buyerAccess.id,
-        grantedAt: new Date(),
-      } as any);
+      };
+      const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
 
-      // Gather broker emails for CC (the deal's broker team, or the owning
-      // broker when nobody has been added to it).
-      const members = await storage.getDealMembers(deal.id);
-      const brokerEmails = members
-        .filter(m => m.teamType === "broker" && m.email)
-        .map(m => m.email as string);
-      if (brokerEmails.length === 0 && deal.brokerId) {
-        const owner = await storage.getUser(deal.brokerId).catch(() => undefined);
-        if (owner?.email && owner.email.includes("@")) brokerEmails.push(owner.email);
+      // Not published yet: the seller's approval is recorded and the buyer
+      // waits — access (and the buyer's email) goes out when the broker
+      // publishes, so nobody opens a draft the seller hasn't signed off.
+      if (!dealPublishedForBuyers(deal)) {
+        const updated = await storage.updateBuyerApprovalRequest(request.id, {
+          status: "approved_by_seller",
+          ...review,
+        } as any);
+        await notify(deal.id, "buyer_approval_seller_approved", {
+          title: `Seller approved ${request.buyerName || "a buyer"} — access waits for publishing`,
+          body:
+            `The seller has approved <strong>${escapeHtml(request.buyerName)}</strong>` +
+            (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
+            `. The CIM isn't published yet, so they haven't been sent anything. They get access and an invite email automatically when you publish.`,
+          actionUrl: `/deal/${deal.id}`,
+          businessName: deal.businessName,
+          metadata: { approvalRequestId: request.id, waitingForPublish: true },
+        });
+        return res.json(updated);
       }
-      const ccList = Array.from(new Set(brokerEmails));
 
-      const invite = buildApprovalInviteEmail({
-        variant,
-        buyerName: (variant === "existing_account" ? existingAccount?.name : null) || request.buyerName,
-        dealLabel,
-        viewUrl,
-        dashboardUrl,
-      });
-      await sendDirectEmail(request.buyerEmail, invite.subject, invite.html, ccList);
-
-      // Also notify broker team that access was granted
-      await notify(deal.id, "buyer_approval_seller_approved", {
-        title: `Buyer approved & granted access — ${request.buyerName}`,
-        body:
-          `The seller has approved <strong>${escapeHtml(request.buyerName)}</strong>` +
-          (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
-          `. An invite email with their personal view link has been sent to ${escapeHtml(request.buyerEmail)}` +
-          (ccList.length ? ` (CC: ${escapeHtml(ccList.join(", "))}).` : ".") +
-          (variant === "link_only"
-            ? " An unconfirmed Cimple account already uses this email, so the access was not added to that account's dashboard."
-            : ""),
-        actionUrl: `/deal/${deal.id}`,
-        businessName: deal.businessName,
-        metadata: { approvalRequestId: request.id, buyerAccessId: buyerAccess.id },
-      });
-
-      res.json(updated);
+      const granted = await grantApprovedBuyer(request, deal, baseUrl, review);
+      res.json(granted.request);
     } catch (error: any) {
       console.error("Error in seller review:", error);
       res.status(500).json({ error: "Failed to process seller review" });
@@ -5983,7 +6058,8 @@ Return JSON only.`,
         const e = viewLinkError(problem ?? "not_found");
         return res.status(e.status).json({ error: e.error });
       }
-      
+      if (!dealPublishedForBuyers(await storage.getDeal(buyerAccess.dealId))) return res.status(403).json(notPublishedBody());
+
       const eventSchema = z.object({
         eventType: z.enum(["view", "page_view", "scroll", "download_attempt", "time_on_page"]),
         pageNumber: z.number().optional(),
@@ -6886,33 +6962,37 @@ Return JSON only.`,
         smsNotifications: !!phone,
       } as any);
 
-      // Send invite notification
-      const teamLabel = teamType.charAt(0).toUpperCase() + teamType.slice(1);
-      // The member's inviteToken is not resolvable by any route (the old links
-      // were dead). Seller-team members get a real seller invite for the deal;
-      // broker/buyer team members land on their sign-in page.
-      let actionUrl = teamType === "buyer" ? "/buyer/login" : "/broker";
+      // Send invite notification — honest about what the person gets.
+      // Seller-team members get a real seller invite (the seller workspace).
+      // Broker- and buyer-team members get email updates only: there is no
+      // colleague sign-in or buyer access behind a team seat yet, so their
+      // email promises neither (it used to send them to a login they had no
+      // account for). A buyer-side person on a Blind deal never sees the
+      // business's name.
+      let actionUrl: string | undefined;
       if (teamType === "seller") {
         try {
           const sellerInvite = await findOrCreateSellerInvite(dealId, email.trim().toLowerCase(), name || null);
           actionUrl = `/seller/${sellerInvite.token}`;
         } catch (e) { console.warn("[members] could not create seller invite for team member:", e); }
       }
-      // A buyer-team member on a blind access level (teaser / full, the
-      // default) is pre-NDA: the deal is named by its codename, never the
-      // business name (buyerFacingDealName).
-      const inviteDealName = !deal
-        ? null
-        : teamType === "buyer"
-          ? buyerFacingDealName(deal, { accessLevel: member.accessLevel ?? "full" }).name
-          : deal.businessName;
-      if (notifyMember) await notify(dealId, "invite", {
-        title: `You've been added to a deal`,
-        body: `You've been added as ${escapeHtml(roleConfig.label)} (${escapeHtml(teamLabel)} team) for ${inviteDealName ? escapeHtml(inviteDealName) : "a confidential opportunity"}. Click below to get started.`,
-        actionUrl,
-        businessName: inviteDealName ?? undefined,
-        specificMemberIds: [member.id],
-      });
+      if (notifyMember) {
+        const copy = teamInviteCopy({
+          teamType,
+          roleLabel: roleConfig.label,
+          businessName: deal?.businessName ?? null,
+          blindCodename: deal?.blindCodename ?? null,
+          accessLevel: member.accessLevel ?? null,
+          hasSellerLink: !!actionUrl,
+        });
+        await notify(dealId, "invite", {
+          title: copy.title,
+          body: copy.body,
+          actionUrl,
+          businessName: copy.displayName,
+          specificMemberIds: [member.id],
+        });
+      }
 
       res.json(member);
     } catch (error: any) {
@@ -6953,8 +7033,26 @@ Return JSON only.`,
     try {
       const existingMember = await storage.getDealMember(req.params.memberId);
       if (!existingMember || !(await ownsDeal(req, existingMember.dealId))) return res.status(404).json({ error: "Member not found" });
+      // A seller-team member's own seller link stops working with them
+      // (a removed bookkeeper could otherwise still open every financial).
+      // The seller's own invite, if this was the seller, is left alone. The
+      // confirm dialog shows the broker which case this is (the same
+      // sellerLinkOnRemoval) and lets them keep a link they handed to the
+      // seller: ?keepLink=1.
+      const keepLink = req.query.keepLink === "1" || req.query.keepLink === "true";
+      let linkRevoked = false;
+      let link: SellerLinkOnRemoval = { kind: "none" };
+      if (existingMember.teamType === "seller") {
+        link = sellerLinkOnRemoval(existingMember, await storage.getSellerInvitesByDealId(existingMember.dealId));
+        if (link.kind === "own_link" && !keepLink) {
+          await storage.updateSellerInvite(link.inviteId, { status: REVOKED_INVITE_STATUS });
+          linkRevoked = true;
+        }
+      }
       await storage.deleteDealMember(req.params.memberId);
-      res.json({ success: true });
+      const linkOutcome =
+        link.kind === "own_link" ? (linkRevoked ? "revoked" : "kept") : link.kind; // "seller_invite" | "none"
+      res.json({ success: true, linkRevoked, linkOutcome });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to remove member" });
     }
@@ -7002,6 +7100,7 @@ Return JSON only.`,
       }
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!dealPublishedForBuyers(deal)) return res.status(403).json(notPublishedBody());
       // Same NDA rule as the view room: nothing CIM-derived (answers or the
       // shared Q&A) before a required NDA is signed.
       if (ndaBlocksBuyer(deal, access)) {
@@ -7173,6 +7272,7 @@ Do not speculate or add information not in the CIM.`,
       if (!access || access.dealId !== dealId || access.revokedAt || (access.expiresAt && new Date(access.expiresAt) < new Date())) return res.status(401).json({ error: "A valid view-room link is required" });
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      if (!dealPublishedForBuyers(deal)) return res.status(403).json(notPublishedBody());
       // Same NDA rule as the view room, which withholds this feed too.
       if (ndaBlocksBuyer(deal, access)) {
         return res.status(403).json({ error: "Sign the NDA to see questions and answers", code: "nda_required" });
@@ -7430,6 +7530,7 @@ Do not speculate or add information not in the CIM.`,
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
       if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
+      if (!dealPublishedForBuyers(await storage.getDeal(dealId))) return res.status(403).json(notPublishedBody());
       const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);

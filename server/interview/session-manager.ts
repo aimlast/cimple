@@ -194,6 +194,7 @@ import {
   unansweredOpening,
 } from "./turn-release";
 import { withRewrittenHead, type StreamHead } from "./stream-head";
+import { notifyInterviewComplete, shouldAnnounceInterviewComplete } from "../notifications/interview-complete";
 
 // =====================
 // Types
@@ -1084,6 +1085,8 @@ type ProcessTurnOpts = {
      * turn saves (an answer typed meanwhile would never be sent).
      */
     onEnding?: () => void;
+    /** The turn was sent from the deal's own broker session (no "seller finished" email). */
+    byDealBroker?: boolean;
 };
 
 /**
@@ -3339,6 +3342,10 @@ async function processTurnLocked(
       // deal off phase 1 so the broker's Overview reflects reality.
       ...(deal.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
+    // Tell the deal's broker (once per finish; not for a broker-led session).
+    if (shouldAnnounceInterviewComplete({ wasCompleted: deal.interviewCompleted, conductedBy, byDealBroker: opts.byDealBroker })) {
+      notifyInterviewComplete(dealId, "ai_closed").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
+    }
 
     // Close the loop on discrepancies the broker routed to this interview
     // (status ask_seller): they were on the agent's agenda, so hand them back
@@ -3803,6 +3810,8 @@ export async function endSessionManually(
   opts: {
     /** Who is ending it (routes: from the credential). A seller can end only their own session. */
     mode?: ConductedBy;
+    /** Ended from the deal's own broker session (no "seller finished" email). */
+    byDealBroker?: boolean;
   } = {},
 ): Promise<{ ok: true }> {
   const session = await getSession(sessionId);
@@ -3823,13 +3832,18 @@ export async function endSessionManually(
   // The broker ending their own session is not the interview ending (the
   // seller was never interviewed): the deal, its phase, routed
   // discrepancies and the learning loop are left alone.
-  const completes = endingCompletesInterview(sessionModeOf(session));
+  const mode = sessionModeOf(session);
+  const completes = endingCompletesInterview(mode);
   if (completes) {
     const dealRow = await storage.getDeal(dealId);
     await storage.updateDeal(dealId, {
       interviewCompleted: true,
       ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
     });
+    // Tell the deal's broker (once per finish; not for a broker-led session).
+    if (shouldAnnounceInterviewComplete({ wasCompleted: dealRow?.interviewCompleted, conductedBy: mode, byDealBroker: opts.byDealBroker })) {
+      notifyInterviewComplete(dealId, "seller_ended").catch((err) => console.warn("[session-manager] interview-complete email failed:", err));
+    }
 
     // Discrepancies the broker routed to the seller come back to the broker,
     // as when the AI ends the interview — before this, "End Overview" left a

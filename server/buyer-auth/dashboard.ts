@@ -18,6 +18,7 @@ import { requireBuyer } from "./routes.js";
 import { matchBuyerToDeal } from "../matching/engine.js";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
 import { dashboardShowsLinkedDeals, viewLinkProblem } from "../buyers/view-access.js";
+import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 
 interface DashboardDeal {
   dealId: string;
@@ -99,7 +100,8 @@ export function registerBuyerDashboardRoutes(app: Express) {
         seen.add(access.dealId);
 
         const deal = await storage.getDeal(access.dealId);
-        if (!deal) continue;
+        // Unpublished CIMs don't show on the buyer's dashboard (shared/buyer-publish-gate.ts).
+        if (!deal || !dealPublishedForBuyers(deal)) continue;
 
         // Try to pull broker firm name from branding settings
         let brokerFirm: string | null = null;

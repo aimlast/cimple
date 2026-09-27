@@ -19,6 +19,7 @@
  */
 import { storage } from "../storage";
 import { redactLogText } from "../log-redact";
+import { escapeHtml, sanitizeEmailFragment } from "./email-escape";
 import { NOTIFICATION_ROUTING } from "@shared/schema";
 import type { DealMember, SellerInvite, User } from "@shared/schema";
 
@@ -37,6 +38,7 @@ export const BROKER_EVENT_PREFERENCE: Record<string, string> = {
   buyer_approval_requested: "buyerApprovals",
   buyer_approval_seller_approved: "buyerApprovals",
   buyer_approval_rejected: "buyerApprovals",
+  interview_complete: "interviewUpdates",
 };
 
 /**
@@ -199,24 +201,13 @@ async function sendSms(to: string, body: string): Promise<boolean> {
 
 // ── Email template ───────────────────────────────────────────────────────
 
-/**
- * Escape text for an HTML email. Anything a buyer, seller or CRM record
- * typed (names, companies, questions, notes) must pass through this before it
- * is placed in a notification body — otherwise a buyer who enters a link as
- * their "name" gets a live link into a genuine Cimple email to the broker.
- */
-export function escapeHtml(value: unknown): string {
-  return String(value ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
+/** For callers that build their own email HTML (email-escape.ts). */
+export { escapeHtml };
 
 /**
- * `title` and `businessName` are plain text and are escaped here. `body` is
- * trusted HTML built by the caller, who escapes every user-typed value in it.
+ * `title` and `businessName` are plain text and are escaped here. `body`
+ * keeps only plain formatting tags (sanitizeEmailFragment) — callers still
+ * escape every user-typed value they put in it.
  */
 export function buildEmailHtml(opts: {
   title: string;
@@ -228,6 +219,12 @@ export function buildEmailHtml(opts: {
   const fullActionUrl = opts.actionUrl
     ? opts.actionUrl.startsWith("http") ? opts.actionUrl : `${baseUrl}${opts.actionUrl}`
     : null;
+  // Titles and names are text; the body keeps only plain formatting tags —
+  // a buyer's question or name can never become a link or markup here.
+  const title = escapeHtml(opts.title);
+  const businessName = opts.businessName ? escapeHtml(opts.businessName) : "";
+  const body = sanitizeEmailFragment(opts.body);
+  const href = fullActionUrl ? escapeHtml(fullActionUrl) : null;
 
   return `
 <!DOCTYPE html>
@@ -238,12 +235,12 @@ export function buildEmailHtml(opts: {
     <div style="background:#141414;border:1px solid #222;border-radius:12px;padding:32px;">
       <div style="margin-bottom:24px;">
         <span style="font-size:13px;font-weight:600;color:#2dd4bf;letter-spacing:0.5px;text-transform:uppercase;">Cimple</span>
-        ${opts.businessName ? `<span style="color:#666;font-size:12px;margin-left:8px;">· ${escapeHtml(opts.businessName)}</span>` : ""}
+        ${businessName ? `<span style="color:#666;font-size:12px;margin-left:8px;">· ${businessName}</span>` : ""}
       </div>
-      <h2 style="color:#f5f5f4;font-size:18px;font-weight:600;margin:0 0 12px;">${escapeHtml(opts.title)}</h2>
-      <p style="color:#a8a29e;font-size:14px;line-height:1.6;margin:0 0 24px;">${opts.body}</p>
-      ${fullActionUrl ? `
-      <a href="${fullActionUrl}" style="display:inline-block;background:#2dd4bf;color:#0a0a0a;font-size:14px;font-weight:600;text-decoration:none;padding:10px 24px;border-radius:8px;">
+      <h2 style="color:#f5f5f4;font-size:18px;font-weight:600;margin:0 0 12px;">${title}</h2>
+      <p style="color:#a8a29e;font-size:14px;line-height:1.6;margin:0 0 24px;">${body}</p>
+      ${href ? `
+      <a href="${href}" style="display:inline-block;background:#2dd4bf;color:#0a0a0a;font-size:14px;font-weight:600;text-decoration:none;padding:10px 24px;border-radius:8px;">
         Take action
       </a>` : ""}
     </div>
@@ -284,12 +281,12 @@ export interface NotifyOptions {
   // Override default routing — send to specific members instead
   specificMemberIds?: string[];
   /**
-   * The broker whose own action caused this event (e.g. they submitted or
-   * rejected a buyer). They aren't emailed about it — neither as the deal's
-   * owning broker nor as a broker-team member with their account email.
-   * Everyone else routed for the event still is.
-   */
-  actorBrokerId?: string | null;
+    * The signed-in broker whose own action raised this event (they submitted
+    * the approval, rejected it, ran the interview themselves). They aren't
+    * emailed about it — neither as the deal's owner nor as a broker-team
+    * member with their account email. Everyone else routed for it still is.
+    */
+   actorUserId?: string | null;
 }
 
 export interface NotifyResult {
@@ -297,8 +294,104 @@ export interface NotifyResult {
   recipients: number;
   /** How many emails the provider accepted (0 when RESEND_API_KEY is absent). */
   emailsSent: number;
-  /** Where the recipients came from. */
-  via: "members" | "seller_invite" | "owning_broker" | "none";
+  /** Where the recipients came from ("deal_owner" = only the deal's own broker). */
+  via: "members" | "seller_invite" | "deal_owner" | "none";
+}
+
+/**
+ * The deal's own broker is its lead broker whether or not anyone built a
+ * team: deal creation never adds them as a member (production: 0 broker-team
+ * rows on the demo and QA accounts' deals), so buyer decisions, escalated
+ * questions and approval requests used to email nobody. They get every
+ * event routed to the lead broker — unless the broker put themselves on the
+ * team explicitly, in which case that row (role, email/SMS toggles) governs.
+ */
+export function ownerGetsEvent(
+  eventType: string,
+  ownerEmail: string | null | undefined,
+  members: Pick<DealMember, "teamType" | "email">[],
+): boolean {
+  const routing = NOTIFICATION_ROUTING[eventType];
+  if (!routing || !routing.teams.includes("broker")) return false;
+  if (routing.roles && !routing.roles.includes("lead")) return false;
+  const email = ownerEmail?.trim().toLowerCase();
+  if (!email) return false;
+  return !members.some((m) => m.teamType === "broker" && m.email?.trim().toLowerCase() === email);
+}
+
+/** The owner's Settings → Notifications switch for this event (unset = send). */
+export function ownerMutedFor(settings: unknown, eventType: string): boolean {
+  const prefKey = BROKER_EVENT_PREFERENCE[eventType];
+  if (!prefKey) return false;
+  const prefs = (settings as { notifications?: Record<string, unknown> } | null)?.notifications;
+  return prefs?.[prefKey] === false;
+}
+
+/**
+ * Why the deal's owner is recorded but not emailed for this event (null =
+ * email them). Seeded demo / QA deals (`deals.demoKey`) never email their
+ * owner: their buyers and sellers are fictional, and a lapse notice for a
+ * made-up buyer in the founder's inbox is noise, not news.
+ */
+export function ownerEmailSkipReason(opts: {
+  settings: unknown;
+  eventType: string;
+  demoKey?: string | null;
+}): "muted_by_preference" | "demo_deal" | null {
+  if (ownerMutedFor(opts.settings, opts.eventType)) return "muted_by_preference";
+  if (opts.demoKey) return "demo_deal";
+  return null;
+}
+
+/** Email the deal's owning broker; records the notification either way. */
+async function notifyDealOwner(
+  dealId: string,
+  eventType: string,
+  opts: NotifyOptions,
+  members: DealMember[],
+): Promise<{ addressed: boolean; emailSent: boolean }> {
+  const deal = await storage.getDeal(dealId);
+  const owner = deal?.brokerId ? await storage.getUser(deal.brokerId) : undefined;
+  if (!owner || !ownerGetsEvent(eventType, owner.email, members)) return { addressed: false, emailSent: false };
+  // Their own action: nothing to tell them.
+  if (opts.actorUserId && opts.actorUserId === owner.id) {
+    console.log(`[notify] ${eventType}: raised by the deal's own broker — not notifying them`);
+    return { addressed: false, emailSent: false };
+  }
+  const email = owner.email!.trim();
+  const skip = ownerEmailSkipReason({
+    settings: owner.settings,
+    eventType,
+    demoKey: deal?.demoKey,
+  });
+  const muted = skip === "muted_by_preference";
+  let emailSent = false;
+  if (skip) {
+    console.log(`[notify:email] Not emailed (${skip === "muted_by_preference" ? `muted: ${BROKER_EVENT_PREFERENCE[eventType]}` : skip}) → deal owner: ${eventType}`);
+  } else {
+    emailSent = await sendEmail(email, opts.title, buildEmailHtml({ ...opts }));
+  }
+  await storage.createNotification({
+    dealId,
+    recipientId: owner.id,
+    recipientEmail: email,
+    recipientPhone: null,
+    type: eventType,
+    title: opts.title,
+    body: opts.body,
+    actionUrl: opts.actionUrl || null,
+    metadata: {
+      ...(opts.metadata || {}),
+      fallbackRecipient: "deal_owner",
+      ...(muted ? { emailMutedByPreference: true } : {}),
+      ...(skip && !muted ? { emailSkipped: skip } : {}),
+    },
+    emailSent,
+    emailSentAt: emailSent ? new Date() : null,
+    smsSent: false,
+    smsSentAt: null,
+  });
+  return { addressed: true, emailSent };
 }
 
 const NO_RECIPIENTS: NotifyResult = { recipients: 0, emailsSent: 0, via: "none" };
@@ -404,65 +497,6 @@ async function notifySellerInviteFallback(
 }
 
 /**
- * Broker-facing events must reach a broker even when nobody has been added
- * to the deal's broker team — which is most deals: creating a deal never
- * adds the owner as a team member. Without this, a buyer's "Interested",
- * an escalated question or an approval request reached no one while the
- * buyer was told it had been "forwarded to your broker". Email the deal's
- * owning broker (their account email), honouring their Settings →
- * Notifications switches, and record the notification against their user id.
- */
-async function notifyOwningBrokerFallback(
-  dealId: string,
-  eventType: string,
-  opts: NotifyOptions,
-): Promise<NotifyResult> {
-  const deal = await storage.getDeal(dealId);
-  if (!deal?.brokerId) return NO_RECIPIENTS;
-  if (opts.actorBrokerId && opts.actorBrokerId === deal.brokerId) {
-    // Their own action: nothing to tell them.
-    console.log(`[notify] ${eventType}: the owning broker did this themselves — not notified`);
-    return NO_RECIPIENTS;
-  }
-  const user = await storage.getUser(deal.brokerId);
-  const email = user?.email?.trim();
-  if (!user || !email || !email.includes("@")) {
-    console.warn(`[notify] ${eventType}: no broker team member and the owning broker has no email on file — nobody was notified`);
-    return NO_RECIPIENTS;
-  }
-  const prefKey = BROKER_EVENT_PREFERENCE[eventType];
-  const prefs = (user.settings as { notifications?: Record<string, unknown> } | null)?.notifications;
-  const muted = !!prefKey && prefs?.[prefKey] === false;
-  let emailSent = false;
-  if (muted) {
-    console.log(`[notify:email] Muted by preference (${prefKey}) → owning broker: ${eventType}`);
-  } else {
-    emailSent = await sendEmail(email, opts.title, buildEmailHtml({ ...opts }));
-  }
-  await storage.createNotification({
-    dealId,
-    recipientId: user.id,
-    recipientEmail: email,
-    recipientPhone: null,
-    type: eventType,
-    title: opts.title,
-    body: opts.body,
-    actionUrl: opts.actionUrl || null,
-    metadata: {
-      ...(opts.metadata || {}),
-      fallbackRecipient: "owning_broker",
-      ...(muted ? { emailMutedByPreference: true } : {}),
-    },
-    emailSent,
-    emailSentAt: emailSent ? new Date() : null,
-    smsSent: false,
-    smsSentAt: null,
-  });
-  console.log(`[notify] ${eventType}: no broker team member — notified the deal's owning broker instead`);
-  return { recipients: 1, emailsSent: emailSent ? 1 : 0, via: "owning_broker" };
-}
-
-/**
  * Send notifications for a deal event.
  *
  * Automatically routes to the right team members based on NOTIFICATION_ROUTING.
@@ -476,8 +510,8 @@ export async function notify(
 ): Promise<NotifyResult> {
   try {
     let sellerRouted = false;
-    let brokerRouted = false;
     let recipients: DealMember[] = [];
+    let owner = { addressed: false, emailSent: false };
 
     if (opts.specificMemberIds?.length) {
       // Send to specific members
@@ -491,37 +525,35 @@ export async function notify(
         return NO_RECIPIENTS;
       }
       sellerRouted = routing.teams.includes("seller");
-      brokerRouted = routing.teams.includes("broker");
 
-      recipients = routedMembers(await storage.getDealMembers(dealId), eventType);
+      const allMembers = await storage.getDealMembers(dealId);
+      recipients = routedMembers(allMembers, eventType);
+      // The deal's own broker, when they aren't on the team themselves.
+      owner = await notifyDealOwner(dealId, eventType, opts, allMembers).catch((err) => {
+        console.warn(`[notify] owner notification failed for ${eventType}:`, err);
+        return { addressed: false, emailSent: false };
+      });
     }
-
-    // No broker on the team for a broker-facing event → the owning broker.
-    const brokerFallback = brokerRouted && !recipients.some((m) => m.teamType === "broker")
-      ? await notifyOwningBrokerFallback(dealId, eventType, opts)
-      : NO_RECIPIENTS;
 
     // The broker who caused the event isn't told about it (matched to a
     // broker-team member by their account email).
-    if (opts.actorBrokerId && recipients.length > 0) {
-      const actorEmail = (await storage.getUser(opts.actorBrokerId).catch(() => undefined))?.email?.trim().toLowerCase();
+    if (opts.actorUserId && recipients.length > 0) {
+      const actorEmail = (await storage.getUser(opts.actorUserId).catch(() => undefined))?.email?.trim().toLowerCase();
       if (actorEmail) {
         recipients = recipients.filter((m) => !(m.teamType === "broker" && m.email?.trim().toLowerCase() === actorEmail));
       }
     }
 
     if (recipients.length === 0) {
-      if (sellerRouted) {
-        const fallback = await notifySellerInviteFallback(dealId, eventType, opts);
-        if (fallback.recipients > 0) {
-          return {
-            recipients: fallback.recipients + brokerFallback.recipients,
-            emailsSent: fallback.emailsSent + brokerFallback.emailsSent,
-            via: fallback.via,
-          };
-        }
+      const fallback = sellerRouted ? await notifySellerInviteFallback(dealId, eventType, opts) : NO_RECIPIENTS;
+      if (fallback.recipients > 0 || owner.addressed) {
+        if (owner.addressed) console.log(`[notify] ${eventType}: deal owner notified (no team recipients)`);
+        return {
+          recipients: fallback.recipients + (owner.addressed ? 1 : 0),
+          emailsSent: fallback.emailsSent + (owner.emailSent ? 1 : 0),
+          via: fallback.recipients > 0 ? "seller_invite" : "deal_owner",
+        };
       }
-      if (brokerFallback.recipients > 0) return brokerFallback;
       console.log(`[notify] No recipients for ${eventType} on deal ${dealId}`);
       return NO_RECIPIENTS;
     }
@@ -577,10 +609,10 @@ export async function notify(
 
     const sent = results.filter(r => r.status === "fulfilled").length;
     const emailsSent = results.filter(r => r.status === "fulfilled" && r.value === true).length;
-    console.log(`[notify] ${eventType}: ${sent}/${recipients.length} recipients notified`);
+    console.log(`[notify] ${eventType}: ${sent}/${recipients.length} recipients notified${owner.addressed ? " + deal owner" : ""}`);
     return {
-      recipients: recipients.length + brokerFallback.recipients,
-      emailsSent: emailsSent + brokerFallback.emailsSent,
+      recipients: recipients.length + (owner.addressed ? 1 : 0),
+      emailsSent: emailsSent + (owner.emailSent ? 1 : 0),
       via: "members",
     };
   } catch (err) {

@@ -261,6 +261,9 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
   if (!access.firstViewedAt || access.revokedAt) return "none";
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
+  // A CIM taken offline: the buyer can't open it, so no nudges and no
+  // lapsing (they resume where they stopped once it's published again).
+  if (!deal.isLive) return "none";
   // Demo and QA deals (seeded showcase data, fictional buyers) are never
   // automated: no reminders to .invalid buyers, no auto-lapse rewriting the
   // showcase, and no "opportunity lapsed" emails to the broker about people

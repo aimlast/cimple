@@ -15,7 +15,8 @@ import bcrypt from "bcryptjs";
 import crypto from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
-import { sendDirectEmail, escapeHtml } from "../notifications/service.js";
+import { sendDirectEmail } from "../notifications/service.js";
+import { escapeHtml } from "../notifications/email-escape";
 import { hashResetToken } from "./reset-token";
 import {
   calculateBuyerProfileCompletion,
@@ -88,11 +89,13 @@ function baseUrl(req: Request): string {
   return process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
 }
 
-function confirmEmailHtml(name: string, url: string): string {
+function confirmEmailHtml(rawName: string, rawUrl: string): string {
+  const name = escapeHtml(rawName);
+  const url = escapeHtml(rawUrl);
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">Confirm your email</h2>
-      <p>Hello ${escapeHtml(name)},</p>
+      <p>Hello ${name},</p>
       <p>Open the link below to confirm this is your email address and choose your password. Deals brokers share with this address will then appear on your Cimple dashboard.</p>
       <p style="margin: 32px 0;">
         <a href="${url}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Confirm my email</a>
@@ -106,15 +109,24 @@ function confirmEmailHtml(name: string, url: string): string {
  * `dealLabel` is how this buyer may see the deal named: the business name
  * only for a buyer on the named CIM; for a blind (pre-NDA) buyer the project
  * codename or null (neutral wording) — see buyerFacingDealName.
+ *
+ * The buyer's name comes from whoever typed it — a broker, a CRM import, the
+ * buyer at signup — so every value is escaped: a name like
+ * `Pat <a href=…>` can never become markup or a link in an email sent from
+ * notifications@cimple.ca.
  */
-export function setPasswordEmail(name: string, dealLabel: string | null, setPasswordUrl: string, viewUrl?: string | null): string {
+export function setPasswordEmail(rawName: string, rawDealLabel: string | null, rawUrl: string, rawViewUrl?: string | null): string {
+  const name = escapeHtml(rawName);
+  const dealLabel = rawDealLabel ? escapeHtml(rawDealLabel) : null;
+  const setPasswordUrl = escapeHtml(rawUrl);
+  const viewUrl = rawViewUrl ? escapeHtml(rawViewUrl) : null;
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to Cimple</h2>
-      <p>Hello ${escapeHtml(name)},</p>
+      <p>Hello ${name},</p>
       <p>
         ${dealLabel
-          ? `You've been added as a prospective buyer for <strong>${escapeHtml(dealLabel)}</strong>.`
+          ? `You've been added as a prospective buyer for <strong>${dealLabel}</strong>.`
           : `A broker has added you to their deal.`}
         To view the confidential information memorandum, please set your password and sign in.
       </p>

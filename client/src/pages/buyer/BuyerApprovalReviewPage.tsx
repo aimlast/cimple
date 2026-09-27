@@ -89,6 +89,8 @@ export default function BuyerApprovalReviewPage() {
   const [reviewerName, setReviewerName] = useState("");
   const [notes, setNotes] = useState("");
   const [done, setDone] = useState<Decision | null>(null);
+  // Approved while the CIM isn't published: access goes out at publish.
+  const [waitingForPublish, setWaitingForPublish] = useState(false);
   const [showRejectUi, setShowRejectUi] = useState(false);
 
   const { data, isLoading, error } = useQuery<ReviewData>({
@@ -122,7 +124,10 @@ export default function BuyerApprovalReviewPage() {
       }
       return res.json();
     },
-    onSuccess: (_d, vars) => setDone(vars.action),
+    onSuccess: (d: any, vars) => {
+      setWaitingForPublish(d?.status === "approved_by_seller");
+      setDone(vars.action);
+    },
     onError: (e: Error, vars) => {
       toast({
         title: vars.action === "approve" ? "Approval failed" : "Decline failed",
@@ -183,7 +188,9 @@ export default function BuyerApprovalReviewPage() {
                   {justNow ? "Buyer approved" : "Already approved"}
                 </h2>
                 <p className="text-sm text-muted-foreground">
-                  {justNow
+                  {waitingForPublish || data.request.status === "approved_by_seller"
+                    ? `${justNow ? "Thank you." : `You already approved ${data.request.buyerName}${reviewedAt ? ` on ${reviewedAt}` : ""}.`} ${data.request.buyerName} will get access to the CIM as soon as your broker publishes it — nothing more is needed from you.`
+                    : justNow
                     ? `${data.request.buyerName} has been granted access to the CIM. An invite email has been sent and both brokers have been notified.`
                     : `You already approved ${data.request.buyerName}${reviewedAt ? ` on ${reviewedAt}` : ""}. They have been granted access to the CIM and no further action is needed.`}
                 </p>
