@@ -20,6 +20,7 @@ import { blindLeakTerms } from "@shared/blind-guard";
 import { requireBroker, getOwnedDeal } from "../broker-auth/routes.js";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service";
+import { brokerDisplayName, outreachFromName } from "../buyers/outreach-reply";
 import {
   isBuyerInBrokerList, getContact, ensureContact, updateContact, recordBuyerEmail, getBuyerAccessOnBrokerDeals,
 } from "../buyers/profile-data";
@@ -279,7 +280,7 @@ export function registerBuyerProfileRoutes(app: Express): void {
       }
       const criteria = (display.buyerCriteria as Record<string, any>) || {};
       const draft = await draftBuyerEmail({
-        brokerName: brokerUser?.name || brokerUser?.username || "Your broker",
+        brokerName: brokerDisplayName(brokerUser) || (branding as any)?.companyName || "Your broker",
         brokerCompany: (branding as any)?.companyName || null,
         buyer: {
           firstName: (display.name || buyer.email).split(/\s+/)[0],
@@ -313,14 +314,15 @@ export function registerBuyerProfileRoutes(app: Express): void {
       if (!buyer) return res.status(404).json({ error: "Buyer not found" });
       if (body.dealId && !(await getOwnedDeal(body.dealId, brokerId))) return res.status(404).json({ error: "Deal not found" });
       const [brokerUser, branding] = await Promise.all([storage.getUser(brokerId), storage.getBrandingByBroker(brokerId)]);
-      const brokerName = brokerUser?.name || brokerUser?.username || null;
+      // Never the login username: the display name, else the brokerage.
+      const brokerName = brokerDisplayName(brokerUser);
       const company = (branding as any)?.companyName || null;
       const replyTo = brokerUser?.email && brokerUser.email.includes("@") ? brokerUser.email : null;
       const html = brokerEmailHtml(body.body, `Sent via Cimple on behalf of ${company || brokerName || "your broker"}`);
 
       const sent = await sendDirectEmail(buyer.email, body.subject, html, undefined, {
         replyTo,
-        fromName: brokerName ? `${brokerName} via Cimple` : null,
+        fromName: outreachFromName(brokerUser, company),
       });
       const record = await recordBuyerEmail({
         brokerId, buyerUserId: buyer.id, dealId: body.dealId ?? null, toEmail: buyer.email, replyTo,

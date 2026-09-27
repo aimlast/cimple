@@ -13,7 +13,8 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
-import { Lock, AlertCircle, Loader2, ArrowLeft, User, Building2, Landmark, Check } from "lucide-react";
+import { Lock, AlertCircle, Loader2, ArrowLeft, User, Building2, Landmark, Check, Download } from "lucide-react";
+import { validSignerName } from "@shared/buyer-nda";
 import {
   NDA_BUYER_TYPES, FINANCIAL_KINDS, FUNDING_OPTIONS, PROOF_OF_FUNDS_OPTIONS, TIMELINE_OPTIONS,
   OPERATE_OPTIONS, DEAL_ROLE_OPTIONS, PRICE_STEPS, formatPrice, ndaTypeFromStored,
@@ -25,7 +26,11 @@ interface OnFile {
   background?: string; lookingFor?: string; targetIndustries?: string[]; targetLocations?: string[];
   priceMin?: number | null; priceMax?: number | null; hasProofOfFunds?: boolean;
 }
-interface ProfileResponse { email: string; complete: boolean; onFile: OnFile }
+interface ProfileResponse {
+  email: string; complete: boolean; onFile: OnFile;
+  /** The brokerage's NDA exactly as this buyer signs it; `hash` goes back with the signature. */
+  nda?: { text: string; hash: string };
+}
 
 type Form = {
   buyerType: NdaBuyerType | null; financialKind: string; name: string; phone: string; company: string;
@@ -72,7 +77,7 @@ function Field({ label, hint, children, required }: { label: string; hint?: stri
 const priceSelect = "h-9 w-full rounded-md border border-input bg-background px-2 text-sm";
 
 export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName: string; token: string; onAccepted: () => void }) {
-  const { data, isLoading } = useQuery<ProfileResponse>({
+  const { data, isLoading, refetch } = useQuery<ProfileResponse>({
     queryKey: ["/api/view", token, "buyer-profile"],
     queryFn: async () => {
       const r = await fetch(`/api/view/${token}/buyer-profile`);
@@ -90,6 +95,9 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
   });
   const [error, setError] = useState<string | null>(null);
   const [signing, setSigning] = useState(false);
+  // The typed signature — the buyer's full name, typed, not prefilled.
+  const [signerName, setSignerName] = useState("");
+  const signerOk = !!validSignerName(signerName);
   // Signed: the parent is re-fetching the CIM — hold a calm "opening" state
   // rather than falling back into the form while that request is in flight.
   const [signed, setSigned] = useState(false);
@@ -155,11 +163,17 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
       const res = await fetch(`/api/view/${token}/sign-nda`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(confirmOnly ? { confirmProfile: true } : { profile: payload() }),
+        body: JSON.stringify({
+          ...(confirmOnly ? { confirmProfile: true } : { profile: payload() }),
+          signerName: signerName.trim(),
+          termsHash: data?.nda?.hash ?? null,
+        }),
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
+        // The terms changed since the page loaded — load the current text to read.
+        if (body?.code === "nda_terms_changed") await refetch();
         throw new Error(body.error || "Could not record your signature — please try again.");
       }
       setSigned(true);
@@ -185,13 +199,47 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
     </div>
   );
 
+  const downloadTerms = () => {
+    if (!data?.nda?.text) return;
+    const blob = new Blob([data.nda.text], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "nda.txt";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
+
+  // The brokerage's own NDA, in full, and a typed-name signature.
   const agreement = (
-    <p className="text-sm text-muted-foreground leading-relaxed">
-      By proceeding, you agree to keep all information contained in this Confidential Information Memorandum strictly
-      confidential. You agree not to disclose, reproduce, or use this information except for the purpose of evaluating
-      this business opportunity. This agreement is legally binding.
-    </p>
+    <div className="space-y-3">
+      <div className="flex items-center justify-between gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">Please read the agreement</p>
+        {data?.nda?.text && (
+          <button type="button" onClick={downloadTerms} className="inline-flex items-center gap-1 text-xs text-teal underline-offset-2 hover:underline" data-testid="button-nda-download">
+            <Download className="h-3 w-3" /> Download a copy
+          </button>
+        )}
+      </div>
+      <div
+        className="max-h-64 overflow-y-auto rounded-md border border-border bg-background/60 p-3 text-xs leading-relaxed text-foreground/85 whitespace-pre-line"
+        tabIndex={0}
+        data-testid="nda-terms"
+      >
+        {data?.nda?.text ?? "Loading the agreement…"}
+      </div>
+      <Field label="Type your full name to sign" required hint="Your typed name is your electronic signature, recorded with the date and time.">
+        <Input
+          value={signerName}
+          onChange={(e) => setSignerName(e.target.value)}
+          autoComplete="name"
+          placeholder="e.g. Jordan Lee"
+          data-testid="input-nda-signer-name"
+        />
+      </Field>
+    </div>
   );
+  const canSign = signerOk && !!data?.nda?.hash;
 
   const errorBox = error && (
     <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive" role="alert" data-testid="text-nda-error">
@@ -231,7 +279,7 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
                 </button>
               </div>
               {agreement}
-              <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(true)} disabled={signing} data-testid="button-sign-nda">
+              <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(true)} disabled={signing || !canSign} data-testid="button-sign-nda">
                 {signing ? "Signing…" : "I agree — View the CIM"}
               </Button>
               {errorBox}
@@ -376,7 +424,7 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
           ) : (
             <>
               {agreement}
-              <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(false)} disabled={signing} data-testid="button-sign-nda">
+              <Button className="w-full bg-teal text-teal-foreground hover:bg-teal/90" onClick={() => sign(false)} disabled={signing || !canSign} data-testid="button-sign-nda">
                 {signing ? "Signing…" : "I agree — View the CIM"}
               </Button>
               <button type="button" className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground" onClick={() => setStep("about")}>

@@ -48,6 +48,7 @@ interface ViewAccess {
   accessLevel: string;
   ndaSigned: boolean | null;
   ndaSignedAt: string | null;
+  ndaCopyAvailable?: boolean;
   canDownload: boolean | null;
   watermarkEnabled: boolean | null;
   firstViewedAt: string | null;
@@ -586,6 +587,13 @@ export default function BuyerViewRoom() {
           </p>
           {firmName && (
             <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {firmName}</p>
+          )}
+          {access.ndaCopyAvailable && (
+            <p className="text-xs mt-2">
+              <a href={`/api/view/${token}/nda.txt`} className="text-muted-foreground/70 underline underline-offset-2 hover:text-foreground" data-testid="link-signed-nda">
+                Download your signed NDA
+              </a>
+            </p>
           )}
         </div>
       </footer>

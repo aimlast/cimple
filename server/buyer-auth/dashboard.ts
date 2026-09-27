@@ -17,6 +17,7 @@ import { storage } from "../storage";
 import { requireBuyer } from "./routes.js";
 import { matchBuyerToDeal } from "../matching/engine.js";
 import { ndaBlocksBuyer } from "@shared/cim-buyer-view";
+import { dashboardShowsLinkedDeals, viewLinkProblem } from "../buyers/view-access.js";
 
 interface DashboardDeal {
   dealId: string;
@@ -71,8 +72,20 @@ export function registerBuyerDashboardRoutes(app: Express) {
       const buyer = await storage.getBuyerUser(buyerUserId);
       if (!buyer) return res.status(404).json({ error: "Account not found" });
 
-      // Find all buyerAccess rows linked to this buyer (by user id OR email)
-      const byUser = await storage.getBuyerAccessByBuyerUser(buyerUserId);
+      // Find all buyerAccess rows linked to this buyer. An account that never
+      // proved its inbox (self-signup, unverified) sees none: anyone can
+      // register someone else's address, and each card carries the link's
+      // view token.
+      const verified = dashboardShowsLinkedDeals(buyer);
+      // A verified account also picks up links shared with its email that
+      // were never linked (granted before it verified, or signed at the NDA
+      // while it wasn't) — the dashboard is where the buyer expects them.
+      if (verified) {
+        await storage.linkBuyerAccessToVerifiedBuyer(buyerUserId).catch((err) => {
+          console.warn("[buyer-dashboard] linking shared deals failed:", err?.message || err);
+        });
+      }
+      const byUser = verified ? await storage.getBuyerAccessByBuyerUser(buyerUserId) : [];
 
       // Dedupe + enrich
       const seen = new Set<string>();
@@ -81,8 +94,7 @@ export function registerBuyerDashboardRoutes(app: Express) {
       for (const access of byUser) {
         // Revoked or expired links are not opportunities — the card would
         // link straight into a view room that rejects the token.
-        if (access.revokedAt) continue;
-        if (access.expiresAt && new Date(access.expiresAt) < new Date()) continue;
+        if (viewLinkProblem(access)) continue;
         if (seen.has(access.dealId)) continue;
         seen.add(access.dealId);
 
@@ -171,6 +183,8 @@ export function registerBuyerDashboardRoutes(app: Express) {
       res.json({
         deals: dashboardDeals,
         profileCompletionPct: buyer.profileCompletionPct || 0,
+        // The dashboard explains how to confirm the email (password reset).
+        emailUnverified: !verified,
       });
     } catch (error: any) {
       console.error("Buyer dashboard error:", error);

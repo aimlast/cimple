@@ -14,6 +14,7 @@ import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
 import { ExternalAcquirersPanel } from "@/components/deal/ExternalAcquirersPanel";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
+import { BuyerNdaTermsCard } from "@/components/deal/BuyerNdaTermsCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -510,6 +511,11 @@ export function BuyersTab() {
           </p>
         </div>
         <BuyerApprovalsPanel dealId={dealId} />
+      </section>
+
+      {/* Buyer NDA — what buyers sign before the CIM opens */}
+      <section className="pt-4 border-t border-border">
+        <BuyerNdaTermsCard scope="deal" dealId={dealId} />
       </section>
 
       {/* Outreach & Matching */}

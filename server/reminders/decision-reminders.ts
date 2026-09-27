@@ -13,6 +13,9 @@
  * so each email is sent exactly once. Run on a schedule (cron / setInterval).
  *
  * Rules that keep it honest:
+ *   - Demo/QA deals (deals.demo_key) are skipped entirely.
+ *   - On an NDA deal the clock starts no earlier than the signature
+ *     (reminderClockStart).
  *   - A buyer is only ever lapsed after the warning email went out
  *     (reminderStage "warning_sent"); a buyer the pipeline reaches late
  *     (server down, scheduler off) is warned first and lapses 48h later.
@@ -24,10 +27,10 @@
  *     business's name by email: the project codename, or neutral wording.
  */
 import { storage } from "../storage";
-import { notify } from "../notifications/service";
+import { notify, escapeHtml as escapeEmailHtml } from "../notifications/service";
+import { ndaBlocksBuyer, cimHeldFromBuyers } from "@shared/cim-buyer-view";
 import type { BuyerAccess, Deal } from "@shared/schema";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
-import { cimHeldFromBuyers } from "@shared/cim-buyer-view";
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const REMINDER_AFTER_MS = 3 * DAY_MS; // day 3
@@ -39,19 +42,44 @@ const STALE_AFTER_MS = 30 * DAY_MS;   // never start a cycle this late
 export type ReminderAction = "none" | "reminder" | "warning" | "lapse";
 
 /**
+ * When this buyer's review clock started. Normally the first time CIM
+ * content was served (firstViewedAt). On a deal that requires an NDA the
+ * buyer can't have seen the CIM before signing, so a firstViewedAt older
+ * than the signature is a stamp from the NDA gate (rows stamped before the
+ * gate stopped counting as a view) — the clock starts at the signature, so a
+ * buyer never gets the day-6 "final follow-up" right after their first real
+ * look. Pure.
+ */
+export function reminderClockStart(
+  access: Pick<BuyerAccess, "firstViewedAt"> & { ndaSignedAt?: Date | string | null },
+  deal?: { ndaRequired?: boolean | null } | null,
+): number | null {
+  if (!access.firstViewedAt) return null;
+  const viewed = new Date(access.firstViewedAt).getTime();
+  if (deal?.ndaRequired && access.ndaSignedAt) {
+    const signed = new Date(access.ndaSignedAt).getTime();
+    if (Number.isFinite(signed) && signed > viewed) return signed;
+  }
+  return viewed;
+}
+
+/**
  * What the pipeline should do for one buyer-access row now. Pure — the
- * scheduler and the tests share it.
+ * scheduler and the tests share it. Pass the deal so the clock starts at
+ * the NDA signature where the deal requires one (reminderClockStart).
  */
 export function reminderActionFor(
-  access: Pick<BuyerAccess, "firstViewedAt" | "reminderStage" | "decision" | "revokedAt" | "expiresAt"> & { lastReminderAt?: Date | string | null },
+  access: Pick<BuyerAccess, "firstViewedAt" | "reminderStage" | "decision" | "revokedAt" | "expiresAt"> & { lastReminderAt?: Date | string | null; ndaSignedAt?: Date | string | null },
   now: number = Date.now(),
+  deal?: { ndaRequired?: boolean | null } | null,
 ): ReminderAction {
-  if (!access.firstViewedAt || access.revokedAt) return "none";
+  const clockStart = reminderClockStart(access, deal);
+  if (clockStart === null || access.revokedAt) return "none";
   // Only buyers still deciding ("under_review"; NULL is the legacy
   // need-more-time state) are ever reminded or lapsed.
   if (access.decision && access.decision !== "under_review") return "none";
   if (access.expiresAt && new Date(access.expiresAt).getTime() < now) return "none";
-  const age = now - new Date(access.firstViewedAt).getTime();
+  const age = now - clockStart;
   const stage = access.reminderStage || "none";
   if (stage === "warning_sent") {
     // Lapse only once the warning's 48 hours have passed.
@@ -230,14 +258,25 @@ export function canSnoozeDecision(decision: string | null | undefined): boolean 
  * without running the whole pipeline.
  */
 export async function processReminderForAccess(access: BuyerAccess, now: number, baseUrl: string): Promise<ReminderAction> {
-  const action = reminderActionFor(access as any, now);
-  if (action === "none") return action;
+  if (!access.firstViewedAt || access.revokedAt) return "none";
   const deal: Deal | undefined = await storage.getDeal(access.dealId);
   if (!deal) return "none";
+  // Demo and QA deals (seeded showcase data, fictional buyers) are never
+  // automated: no reminders to .invalid buyers, no auto-lapse rewriting the
+  // showcase, and no "opportunity lapsed" emails to the broker about people
+  // who don't exist.
+  if (deal.demoKey) return "none";
+  // A buyer who hasn't signed a required NDA has never seen the CIM or the
+  // decision panel — they can't be told they "reviewed" it, or lapsed.
+  // (The view room no longer starts the clock at the gate; this also covers
+  // rows stamped before it stopped.)
+  if (ndaBlocksBuyer(deal, access)) return "none";
   // A regenerated CIM waiting for the broker to publish it: the buyer can
   // only see "This document is being updated", so nobody is chased or
   // lapsed over it. Publishing restarts the clock (restartReminderClocks).
   if (cimHeldFromBuyers(deal)) return "none";
+  const action = reminderActionFor(access as any, now, deal);
+  if (action === "none") return action;
 
   const viewUrl = `${baseUrl}/view/${access.accessToken}`;
 
@@ -283,7 +322,8 @@ export async function processReminderForAccess(access: BuyerAccess, now: number,
     : access.buyerEmail;
   await notify(deal.id, "buyer_decision_lapsed", {
     title: `${buyerLabel} — opportunity lapsed (no response)`,
-    body: `${buyerLabel} reviewed the ${deal.businessName} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
+    // The buyer typed their own name/company at the NDA: escaped.
+    body: `${escapeEmailHtml(buyerLabel)} reviewed the ${escapeEmailHtml(deal.businessName)} CIM but did not record a decision within the review window. Following a reminder and warning email, the opportunity has been automatically marked as <strong>lapsed</strong>. The sell-side has been notified. No CRM stage change has been performed automatically for lapsed buyers — please update your pipeline manually if appropriate.`,
     actionUrl: `/deal/${deal.id}`,
     businessName: deal.businessName,
     metadata: {

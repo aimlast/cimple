@@ -50,9 +50,16 @@ import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
-import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
+import { notify, previewRecipients, sendDirectEmail, escapeHtml } from "./notifications/service.js";
 import { prefillBuyerFromCrm, searchBuyersInCrm } from "./crm/buyer-prefill.js";
-import { registerBuyerAuthRoutes, inviteBuyerUser } from "./buyer-auth/routes.js";
+import { registerBuyerAuthRoutes, inviteBuyerUser, reinviteBuyerWithoutPassword } from "./buyer-auth/routes.js";
+import { buildApprovalInviteEmail, type ApprovalEmailVariant } from "./buyers/approval-emails.js";
+import { sellerReviewPayload } from "./buyers/seller-review-payload.js";
+import { outreachReplyTo, outreachFromName, brokerDisplayName } from "./buyers/outreach-reply.js";
+import { answerNoticeDue, notifyBuyerQuestionAnswered } from "./qa/answer-notice.js";
+import { buyerNdaFor, signedNdaCopy, type BuyerNdaSignature } from "./buyers/buyer-nda.js";
+import { validSignerName } from "@shared/buyer-nda";
+import { registerBuyerNdaRoutes } from "./routes/buyer-nda.js";
 import { registerBuyerDashboardRoutes } from "./buyer-auth/dashboard.js";
 import { typedNumericValues } from "./interview/info-merger";
 import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./information/cim-facts";
@@ -60,12 +67,14 @@ import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensiti
 import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
-import { runDecisionReminders, canSnoozeDecision } from "./reminders/decision-reminders.js";
+import { runDecisionReminders, canSnoozeDecision, buyerFacingDealName } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
 import { TEAM_ROLES, BUYER_NEXT_STEPS, BUYER_CATEGORIES, riskLevelForCategory, insertBuyerApprovalRequestSchema, type BuyerUser, type InsertDealDocumentRequirement, CIM_SECTIONS, mergeBuyerProfile, type CrmBuyerProfile, type BuyerDeepCheck } from "@shared/schema";
 import { withFieldSources, initialFieldSources, type BrokerBuyerOverlay, type BuyerAccessEvent } from "@shared/schema";
 import { isBuyerInBrokerList, filterBuyersInBrokerList } from "./buyers/profile-data.js";
 import { unsupportedFormatReason } from "./documents/parser.js";
+import { viewLinkProblem, viewLinkError, viewStampFor, isLinkableBuyerAccount } from "./buyers/view-access.js";
+import { ndaProfileAccount } from "./buyers/nda-profile.js";
 
 const anthropic = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -953,7 +962,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // $2M revenue, $628K SDE" in a cold email). Bands + region only.
       const { blindDealSummary } = await import("./buyers/blind-deal-summary.js");
       const brokerUser = deal.brokerId ? await storage.getUser(deal.brokerId).catch(() => undefined) : undefined;
-      const brokerName = brokerUser?.name || "Your broker";
+      const brokerName = brokerDisplayName(brokerUser) || "Your broker";
       const dealSummary = blindDealSummary(deal);
       // Deterministic identity check on every draft (and on the deep-check
       // hook fed into it): a draft naming the business, owner, staff, city,
@@ -1060,7 +1069,8 @@ Return JSON only.`,
       }));
 
       const validDrafts = drafts.filter((d): d is NonNullable<typeof d> => !!d);
-      res.json({ drafts: validDrafts });
+      // Where buyers' replies will land (the drafts say "just reply").
+      res.json({ drafts: validDrafts, replyTo: outreachReplyTo(brokerUser) });
     } catch (err: any) {
       if (err.name === "ZodError") {
         return res.status(400).json({ error: "Invalid request", details: err.errors });
@@ -1093,6 +1103,20 @@ Return JSON only.`,
 
       const branding = await storage.getBrandingByBroker(deal.brokerId);
       const brokerCompany = (branding as any)?.companyName || "Cimple";
+      // The drafts end "just reply and I'll set up secure access": replies
+      // must reach the broker's own inbox, never Cimple's unmonitored sender.
+      // Without an email on the broker's account there is nowhere for them
+      // to go — refuse rather than send emails whose replies are lost.
+      const brokerUser = await storage.getUser(req.session.brokerId!).catch(() => undefined);
+      const replyTo = outreachReplyTo(brokerUser);
+      if (!replyTo) {
+        return res.status(400).json({
+          error: "Your account has no email address on file, so buyers' replies to these emails would reach no one. Ask Cimple support to add your email before sending.",
+          code: "no_reply_to",
+        });
+      }
+      // Never the login username on the From line: the display name, else the brokerage.
+      const fromName = outreachFromName(brokerUser, (branding as any)?.companyName);
       // Only buyers on this broker's own list can be emailed from here.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
       const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
@@ -1123,7 +1147,10 @@ Return JSON only.`,
 </body>
 </html>`;
 
-        const sent = await sendDirectEmail(buyer.email, item.subject, html);
+        const sent = await sendDirectEmail(buyer.email, item.subject, html, undefined, {
+          replyTo,
+          fromName,
+        });
 
         // Record the outreach regardless of email success — we want full audit
         const record = await storage.createDealOutreach({
@@ -1468,7 +1495,7 @@ Return JSON only.`,
         call = { roomName: room.name, roomUrl: room.url, startedAt: new Date().toISOString(), expiresAt: room.expiresAt };
         await storage.updateDeal(deal.id, { interviewCall: call } as any);
       }
-      const token = await createMeetingToken(call.roomName, broker?.name || broker?.username || "Broker", true);
+      const token = await createMeetingToken(call.roomName, brokerDisplayName(broker) || "Broker", true);
       res.json({ roomUrl: call.roomUrl, token, startedAt: call.startedAt, expiresAt: call.expiresAt });
     } catch (error: any) {
       console.error("[call] start failed:", error);
@@ -4171,7 +4198,7 @@ Return JSON only.`,
       const broker = deal.brokerId ? await storage.getUser(deal.brokerId) : null;
       res.json({
         businessName: deal.businessName,
-        brokerName: broker?.name || broker?.username || null,
+        brokerName: brokerDisplayName(broker),
         ndaText: deal.ndaText,
         ndaSigned: !!deal.ndaSigned,
         ndaSignedAt: deal.ndaSignedAt,
@@ -4361,8 +4388,9 @@ Return JSON only.`,
         { id: "review", label: "Review", status: currentStep === "review" ? "current" : "upcoming" },
       ];
 
-      // Broker contact
+      // Broker contact (their display name, else the brokerage — never the login username)
       const broker = await storage.getUser(deal.brokerId);
+      const sellerBrokerCompany = broker ? ((await storage.getBrandingByBroker(deal.brokerId).catch(() => undefined)) as any)?.companyName?.trim() || null : null;
 
       res.json({
         businessName: deal.businessName,
@@ -4402,7 +4430,7 @@ Return JSON only.`,
           }),
         },
         pendingApprovals: pendingSeller.length,
-        broker: broker ? { name: broker.name || broker.username, email: broker.email } : null,
+        broker: broker ? { name: brokerDisplayName(broker) || sellerBrokerCompany || "Your broker", email: broker.email } : null,
       });
     } catch (error: any) {
       console.error("Error fetching seller progress:", error);
@@ -4545,25 +4573,19 @@ Return JSON only.`,
       }
 
       // Stamp the view: firstViewedAt anchors the decision-reminder pipeline
-      // and viewCount drives the decision panel. These were never written
-      // before, which silently disabled both features.
+      // and viewCount drives the decision panel. Only a fetch that actually
+      // serves CIM content counts (viewStampFor) — the NDA gate and the
+      // "preparing" state only move lastAccessedAt. Every return below goes
+      // through stampAndBuild so the payload and the row agree.
       const now = new Date();
-      // A "view" is a session, not a fetch: NDA refetches and the preparing
-      // poll hit this endpoint repeatedly and inflated viewCount.
-      const lastAt = access.lastAccessedAt ? new Date(access.lastAccessedAt).getTime() : 0;
-      const newSession = now.getTime() - lastAt > 30 * 60 * 1000;
-      const viewStamp: Record<string, unknown> = {
-        lastAccessedAt: now,
-        viewCount: (access.viewCount ?? 0) + (newSession ? 1 : 0),
+      const stampAndBuild = async (served: boolean) => {
+        const viewStamp = viewStampFor(access, served, now);
+        await storage.updateBuyerAccess(access.id, viewStamp as any);
+        return { ...access, ...viewStamp };
       };
-      // A CIM held for the broker's review isn't viewed yet: the decision
-      // reminders (anchored to the first view) wait until it is published.
-      if (!access.firstViewedAt && !cimHeldFromBuyers(deal)) viewStamp.firstViewedAt = now;
-      await storage.updateBuyerAccess(access.id, viewStamp as any);
-      const fullAccess = { ...access, ...viewStamp };
       // Buyers receive only what the view room needs — never the broker's
       // private notes, match scoring, or internal criteria.
-      const freshAccess = {
+      const accessPayload = (fullAccess: typeof access) => ({
         id: fullAccess.id,
         dealId: fullAccess.dealId,
         buyerEmail: fullAccess.buyerEmail,
@@ -4578,7 +4600,9 @@ Return JSON only.`,
         decision: (fullAccess as any).decision ?? null,
         decisionAt: (fullAccess as any).decisionAt ?? null,
         expiresAt: fullAccess.expiresAt,
-      };
+        // A copy of the signed NDA can be downloaded (signatures recorded since typed names).
+        ndaCopyAvailable: !!fullAccess.ndaSigned && !!((fullAccess.ndaProfile as Record<string, unknown> | null)?.signature),
+      });
 
       // Determine CIM mode from buyer's access level
       const cimMode = (() => {
@@ -4628,7 +4652,7 @@ Return JSON only.`,
       // rule guards the chatbot, the Q&A feed and media (ndaBlocksBuyer).
       if (ndaBlocksBuyer(deal, access)) {
         return res.json({
-          access: freshAccess,
+          access: accessPayload(await stampAndBuild(false)),
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
@@ -4642,9 +4666,12 @@ Return JSON only.`,
       // A regenerated CIM is held from every buyer until the broker reviews
       // and publishes it (server/cim/generation-jobs.ts) — nothing from it,
       // or from the one it replaced, is served meanwhile.
+      // A CIM held for the broker's review isn't viewed yet (not served):
+      // the decision reminders, anchored to the first view, wait until it is
+      // published.
       if (cimHeldFromBuyers(deal)) {
         return res.json({
-          access: freshAccess,
+          access: accessPayload(await stampAndBuild(false)),
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
@@ -4680,7 +4707,7 @@ Return JSON only.`,
         // "preparing" holding state and generate; the client polls back.
         ensureBlindOverridesInBackground(deal);
         return res.json({
-          access: freshAccess,
+          access: accessPayload(await stampAndBuild(false)),
           deal: publicDeal,
           sections: [],
           publishedQuestions: [],
@@ -4698,8 +4725,11 @@ Return JSON only.`,
         console.warn(`[view] withheld ${buyerCim.leaked.length} blind section(s) on deal ${deal.id} that still named identifying details — re-redacting`);
         redoLeakedBlind(deal.id, buyerCim.leaked, buyerCim.leakReasons).catch((err) => console.error("[view] blind redo failed:", err));
       } else if (buyerCim.heldBack > 0) scheduleBlindRefresh(deal.id, 0);
+      // Every section held back (blind versions still being refreshed) is
+      // the same as "preparing" for the buyer: nothing to read yet.
+      const served = buyerCim.sections.length > 0 || publicDeal.cimContent != null;
       res.json({
-        access: freshAccess,
+        access: accessPayload(await stampAndBuild(served)),
         deal: publicDeal,
         sections: buyerCim.sections,
         pendingSections: buyerCim.heldBack,
@@ -4720,13 +4750,17 @@ Return JSON only.`,
   app.get("/api/view/:token/buyer-profile", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
-      if (!access || access.revokedAt) return res.status(404).json({ error: "Invalid token" });
-      const buyer = access.buyerUserId
-        ? await storage.getBuyerUser(access.buyerUserId)
-        : await storage.getBuyerUserByEmail(access.buyerEmail.toLowerCase().trim());
+      const problem = viewLinkProblem(access);
+      if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
+      const buyer = await ndaProfileAccount(access);
       const c = (buyer?.buyerCriteria as Record<string, any>) || {};
+      const ndaDeal = await storage.getDeal(access.dealId);
+      if (!ndaDeal) return res.status(404).json({ error: "Deal not found" });
+      // The brokerage's own NDA, exactly as this buyer will sign it.
+      const nda = await buyerNdaFor(ndaDeal, access);
       res.json({
         email: access.buyerEmail,
+        nda: { text: nda.text, hash: nda.hash },
         complete: !!buyer && hasMatchableProfile(buyer),
         onFile: buyer ? {
           name: buyer.name || access.buyerName || "",
@@ -4752,8 +4786,8 @@ Return JSON only.`,
   app.post("/api/view/:token/sign-nda", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
-      if (!access) return res.status(404).json({ error: "Invalid token" });
-      if (access.revokedAt) return res.status(403).json({ error: "Access revoked" });
+      const problem = viewLinkProblem(access);
+      if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
 
       // Signing the NDA and giving us your buyer profile are one step: either
       // a new/updated profile, or a confirmation of the one already on file.
@@ -4766,20 +4800,52 @@ Return JSON only.`,
         }
         profile = parsed.data;
       } else {
-        const buyer = access.buyerUserId
-          ? await storage.getBuyerUser(access.buyerUserId)
-          : await storage.getBuyerUserByEmail(access.buyerEmail.toLowerCase().trim());
+        const buyer = await ndaProfileAccount(access);
         if (!req.body?.confirmProfile || !buyer || !hasMatchableProfile(buyer)) {
           return res.status(400).json({ error: "Please tell us a little about yourself first", code: "profile_required" });
         }
       }
+      // The signature: a typed full name against the exact terms shown.
+      const signerName = validSignerName(req.body?.signerName);
+      if (!signerName) {
+        return res.status(400).json({ error: "Type your full name to sign the NDA", field: "signerName", code: "signer_name_required" });
+      }
+      const ndaDeal = await storage.getDeal(access.dealId);
+      if (!ndaDeal) return res.status(404).json({ error: "Deal not found" });
+      const nda = await buyerNdaFor(ndaDeal, access);
+      if (req.body?.termsHash !== nda.hash) {
+        // Changed since the page loaded (or an old page): show the current terms first.
+        return res.status(409).json({ error: "The NDA terms have been updated. Please read the current version and sign again.", code: "nda_terms_changed" });
+      }
+
       const { applyNdaProfile } = await import("./buyers/nda-profile.js");
       await applyNdaProfile(access, profile);
 
+      const signedAt = new Date();
+      const ip = req.ip || req.socket.remoteAddress || null;
+      const signature: BuyerNdaSignature = {
+        signerName,
+        signedAt: signedAt.toISOString(),
+        ip,
+        termsHash: nda.hash,
+        termsText: nda.text,
+        termsSource: nda.source,
+      };
+      // applyNdaProfile may have just written ndaProfile — keep its answers.
+      const afterProfile = await storage.getBuyerAccess(access.id);
+      const priorProfile = ((afterProfile ?? access).ndaProfile as Record<string, unknown> | null) ?? {};
+      // On a deal that requires the NDA nothing was served before this
+      // signature, so a view stamp already on the row came from the gate
+      // (rows stamped before the gate stopped counting): clear it, and the
+      // first real view that follows starts the reminder clock afresh.
+      const gateStamped = !!ndaDeal.ndaRequired && !access.ndaSigned && !!access.firstViewedAt;
       await storage.updateBuyerAccess(access.id, {
         ndaSigned: true,
-        ndaSignedAt: new Date(),
-        ndaSignedIp: req.ip || req.socket.remoteAddress || null,
+        ndaSignedAt: signedAt,
+        ndaSignedIp: ip,
+        ndaVersion: nda.hash,
+        ndaProfile: { ...priorProfile, signature },
+        ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
       storage.createAnalyticsEvent({
         dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,
@@ -4788,6 +4854,25 @@ Return JSON only.`,
       res.json({ success: true });
     } catch (error: any) {
       res.status(500).json({ error: "Failed to sign NDA" });
+    }
+  });
+
+  // The buyer's own copy of the NDA they signed (typed name, date, the exact
+  // terms). Only for a live link that has signed.
+  app.get("/api/view/:token/nda.txt", async (req, res) => {
+    try {
+      const access = await storage.getBuyerAccessByToken(req.params.token);
+      const problem = viewLinkProblem(access);
+      if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
+      const sig = ((access.ndaProfile as Record<string, unknown> | null)?.signature ?? null) as BuyerNdaSignature | null;
+      if (!access.ndaSigned || !sig?.termsText) return res.status(404).json({ error: "No signed NDA on file for this link" });
+      res.setHeader("Content-Type", "text/plain; charset=utf-8");
+      res.setHeader("Content-Disposition", 'attachment; filename="signed-nda.txt"');
+      res.setHeader("Cache-Control", "no-store");
+      res.send(signedNdaCopy(sig, access.buyerEmail));
+    } catch (err) {
+      console.error("[nda] copy failed:", err);
+      res.status(500).json({ error: "Couldn't prepare your copy" });
     }
   });
 
@@ -4858,8 +4943,8 @@ Return JSON only.`,
   app.post("/api/view/:token/decision", async (req, res) => {
     try {
       const access = await storage.getBuyerAccessByToken(req.params.token);
-      if (!access) return res.status(404).json({ error: "Invalid token" });
-      if (access.revokedAt) return res.status(403).json({ error: "Access revoked" });
+      const problem = viewLinkProblem(access);
+      if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
 
       const decisionSchema = z.object({
         decision: z.enum(["interested", "not_interested", "need_more_time"]),
@@ -4870,6 +4955,13 @@ Return JSON only.`,
 
       const deal = await storage.getDeal(access.dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
+      // A buyer who hasn't signed a required NDA has never seen the CIM: a
+      // decision from them would move the broker's CRM and tell the broker
+      // they "finished reviewing" it. The view room shows no decision panel
+      // before the NDA; the API refuses too.
+      if (ndaBlocksBuyer(deal, access)) {
+        return res.status(403).json({ error: "Please sign the NDA before sharing your decision.", code: "nda_required" });
+      }
 
       // Every decision (including "need more time") lands in the analytics
       // stream so it shows up in the broker's activity timeline.
@@ -4951,15 +5043,17 @@ Return JSON only.`,
 
       // Compose email body
       const bodyParts: string[] = [];
+      // Every value below that the buyer (or a CRM) typed is escaped — a
+      // buyer's "name" must never become a live link in the broker's inbox.
       bodyParts.push(
-        `<strong>${buyerLabel}</strong> has finished reviewing the ${deal.businessName} CIM and has shared their decision.`,
+        `<strong>${escapeHtml(buyerLabel)}</strong> has finished reviewing the ${escapeHtml(deal.businessName)} CIM and has shared their decision.`,
       );
       if (decision === "interested") {
         bodyParts.push(
           `<br/><br/><strong>Decision:</strong> Interested in moving forward.`,
         );
         if (nextStepLabel) {
-          bodyParts.push(`<br/><strong>Requested next step:</strong> ${nextStepLabel}`);
+          bodyParts.push(`<br/><strong>Requested next step:</strong> ${escapeHtml(nextStepLabel)}`);
         }
       } else {
         bodyParts.push(
@@ -4967,10 +5061,9 @@ Return JSON only.`,
         );
       }
       if (reason) {
-        const safeReason = reason.replace(/</g, "&lt;").replace(/>/g, "&gt;");
-        bodyParts.push(`<br/><br/><em>Buyer comment:</em> &ldquo;${safeReason}&rdquo;`);
+        bodyParts.push(`<br/><br/><em>Buyer comment:</em> &ldquo;${escapeHtml(reason)}&rdquo;`);
       }
-      bodyParts.push(`<br/><br/><strong>CRM update:</strong> ${crmMessage}`);
+      bodyParts.push(`<br/><br/><strong>CRM update:</strong> ${escapeHtml(crmMessage)}`);
 
       const eventType = decision === "interested"
         ? "buyer_decision_interested"
@@ -5149,16 +5242,18 @@ Return JSON only.`,
       await notify(deal.id, "buyer_approval_requested", {
         title: `Buyer approval requested — ${categoryLabel}`,
         body:
-          `<strong>${request.buyerName}</strong>` +
-          (request.buyerCompany ? ` of <strong>${request.buyerCompany}</strong>` : "") +
-          ` has been submitted for approval on the ${deal.businessName} deal.` +
-          `<br/><br/><strong>Category:</strong> ${categoryLabel}` +
-          `<br/><strong>Risk level:</strong> ${riskLevel}` +
-          (request.submittedByName ? `<br/><strong>Submitted by:</strong> ${request.submittedByName}` : "") +
-          (request.background ? `<br/><br/>${request.background}` : ""),
+          `<strong>${escapeHtml(request.buyerName)}</strong>` +
+          (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
+          ` has been submitted for approval on the ${escapeHtml(deal.businessName)} deal.` +
+          `<br/><br/><strong>Category:</strong> ${escapeHtml(categoryLabel)}` +
+          `<br/><strong>Risk level:</strong> ${escapeHtml(riskLevel)}` +
+          (request.submittedByName ? `<br/><strong>Submitted by:</strong> ${escapeHtml(request.submittedByName)}` : "") +
+          (request.background ? `<br/><br/>${escapeHtml(request.background)}` : ""),
         actionUrl: `/deal/${deal.id}?approval=${request.id}`,
         businessName: deal.businessName,
         metadata: { approvalRequestId: request.id, category, riskLevel },
+        // The broker who submitted it isn't emailed about their own request.
+        actorBrokerId: req.session.brokerId ?? null,
       });
 
       res.json(request);
@@ -5196,11 +5291,13 @@ Return JSON only.`,
 
         await notify(deal.id, "buyer_approval_rejected", {
           title: `Buyer approval rejected — ${request.buyerName}`,
-          body: `The buyer approval request for <strong>${request.buyerName}</strong> was rejected by the lead broker.` +
-            (notes ? `<br/><br/><em>Reason:</em> ${notes}` : ""),
+          body: `The buyer approval request for <strong>${escapeHtml(request.buyerName)}</strong> was rejected by the lead broker.` +
+            (notes ? `<br/><br/><em>Reason:</em> ${escapeHtml(notes)}` : ""),
           actionUrl: `/deal/${deal.id}`,
           businessName: deal.businessName,
           metadata: { approvalRequestId: request.id },
+          // The rejecting broker isn't emailed about their own rejection.
+          actorBrokerId: req.session.brokerId ?? null,
         });
 
         return res.json(updated);
@@ -5222,10 +5319,10 @@ Return JSON only.`,
         title: `Action needed: approve buyer for ${deal.businessName}`,
         body:
           `A new buyer has been approved by your broker and needs your final review before gaining access to the CIM.` +
-          `<br/><br/><strong>Buyer:</strong> ${request.buyerName}` +
-          (request.buyerCompany ? ` (${request.buyerCompany})` : "") +
-          `<br/><strong>Type:</strong> ${categoryLabel}` +
-          `<br/><strong>Risk level:</strong> ${request.riskLevel}` +
+          `<br/><br/><strong>Buyer:</strong> ${escapeHtml(request.buyerName)}` +
+          (request.buyerCompany ? ` (${escapeHtml(request.buyerCompany)})` : "") +
+          `<br/><strong>Type:</strong> ${escapeHtml(categoryLabel)}` +
+          `<br/><strong>Risk level:</strong> ${escapeHtml(request.riskLevel)}` +
           `<br/><br/>Click the link below to review the full profile and approve or decline.`,
         actionUrl: sellerReviewUrl,
         businessName: deal.businessName,
@@ -5250,7 +5347,10 @@ Return JSON only.`,
       const deal = await storage.getDeal(request.dealId);
       const branding = deal?.brokerId ? await storage.getBrandingByBroker(deal.brokerId) : null;
       res.json({
-        request,
+        // Only what the seller's review page renders — never the broker's raw
+        // CRM record (crmRawData: Pipedrive notes, custom fields, file names),
+        // the CRM ids, the broker's review notes or internal ids.
+        request: sellerReviewPayload(request),
         deal: deal ? { id: deal.id, businessName: deal.businessName } : null,
         // Whitelisted — never the settings row (ids, broker id, templates).
         branding: branding ? { companyName: branding.companyName ?? null, logoUrl: branding.logoUrl ?? null } : null,
@@ -5288,8 +5388,8 @@ Return JSON only.`,
 
         await notify(deal.id, "buyer_approval_rejected", {
           title: `Seller declined buyer — ${request.buyerName}`,
-          body: `The seller has declined the buyer approval for <strong>${request.buyerName}</strong>.` +
-            (notes ? `<br/><br/><em>Reason:</em> ${notes}` : ""),
+          body: `The seller has declined the buyer approval for <strong>${escapeHtml(request.buyerName)}</strong>.` +
+            (notes ? `<br/><br/><em>Reason:</em> ${escapeHtml(notes)}` : ""),
           actionUrl: `/deal/${deal.id}`,
           businessName: deal.businessName,
           metadata: { approvalRequestId: request.id },
@@ -5301,14 +5401,35 @@ Return JSON only.`,
       // Approve → either link to existing buyer account or create one
       //          + create buyerAccess + send invite email (Firmex-style)
       const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
+      // Approved buyers get "full" access — the Blind CIM. Every email to them
+      // names the deal the way the view room does: codename or neutral wording,
+      // never the business name.
+      const grantedLevel = "full";
+      const dealLabel = buyerFacingDealName(deal, { accessLevel: grantedLevel });
+      const accessToken = crypto.randomUUID();
+      const viewUrl = `${baseUrl}/view/${accessToken}`;
+      const dashboardUrl = `${baseUrl}/buyer/dashboard`;
 
-      // Check if a buyer account already exists for this email
+      // Link to an existing account only when that account can't belong to
+      // someone else: verified, or never claimed (no password yet). An
+      // unverified self-signup under the buyer's address gets nothing — the
+      // buyer receives their own link and the access stays unlinked.
       const existingAccount = await storage.getBuyerUserByEmail(request.buyerEmail.toLowerCase().trim());
-      let buyerUserId: string;
-      let isNewAccount = false;
+      let buyerUserId: string | null = null;
+      let variant: ApprovalEmailVariant;
 
-      if (existingAccount) {
+      if (existingAccount && isLinkableBuyerAccount(existingAccount)) {
         buyerUserId = existingAccount.id;
+        if (existingAccount.passwordHash) {
+          variant = "existing_account";
+        } else {
+          // Nobody can sign in to it yet (CRM import, NDA-created, expired
+          // invite): send a fresh set-password invitation.
+          await reinviteBuyerWithoutPassword(existingAccount, { businessName: dealLabel.name, viewUrl, baseUrl });
+          variant = "set_password";
+        }
+      } else if (existingAccount) {
+        variant = "link_only";
       } else {
         // Create new account + send set-password email
         const invited = await inviteBuyerUser({
@@ -5320,17 +5441,17 @@ Return JSON only.`,
           linkedinUrl: request.linkedinUrl,
           invitedByBroker: deal.brokerId,
           invitedByDeal: deal.id,
-          businessName: deal.businessName,
+          businessName: dealLabel.name,
+          viewUrl,
           baseUrl,
         });
         buyerUserId = invited.user.id;
-        isNewAccount = invited.isNew;
+        variant = "set_password";
         if (invited.isNew) {
           await storage.updateBuyerUser(buyerUserId, { fieldSources: initialFieldSources(invited.user, "approval", deal.id, deal.brokerId) } as any).catch(() => {});
         }
       }
 
-      const accessToken = crypto.randomUUID();
       const buyerAccess = await storage.createBuyerAccess({
         dealId: deal.id,
         buyerUserId,
@@ -5338,7 +5459,7 @@ Return JSON only.`,
         buyerEmail: request.buyerEmail,
         buyerName: request.buyerName || null,
         buyerCompany: request.buyerCompany || null,
-        accessLevel: "full",
+        accessLevel: grantedLevel,
         expiresAt: await brokerLinkExpiry(deal.brokerId ?? undefined), // broker's configured default (30 days unless changed)
       } as any);
 
@@ -5351,57 +5472,38 @@ Return JSON only.`,
         grantedAt: new Date(),
       } as any);
 
-      // Gather broker emails for CC (lead + submitter)
+      // Gather broker emails for CC (the deal's broker team, or the owning
+      // broker when nobody has been added to it).
       const members = await storage.getDealMembers(deal.id);
       const brokerEmails = members
         .filter(m => m.teamType === "broker" && m.email)
         .map(m => m.email as string);
+      if (brokerEmails.length === 0 && deal.brokerId) {
+        const owner = await storage.getUser(deal.brokerId).catch(() => undefined);
+        if (owner?.email && owner.email.includes("@")) brokerEmails.push(owner.email);
+      }
       const ccList = Array.from(new Set(brokerEmails));
 
-      // For existing accounts: send "added to deal" email pointing to dashboard.
-      // For brand-new accounts: inviteBuyerUser already sent a set-password email,
-      //   but we still want to CC brokers and mention this specific deal.
-      const dashboardUrl = `${baseUrl}/buyer/dashboard`;
-      const viewUrl = `${baseUrl}/view/${accessToken}`;
-      const inviteHtml = isNewAccount
-        ? `
-        <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
-          <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to view a confidential business overview</h2>
-          <p>Hello${request.buyerName ? ` ${request.buyerName}` : ""},</p>
-          <p>You've been approved to view the confidential information memorandum for <strong>${deal.businessName}</strong>.</p>
-          <p>You should have received a separate email asking you to set your password and create your Cimple account. Once you're signed in, this deal will appear on your dashboard along with any other deals matched to your profile.</p>
-          <p style="color: #888; font-size: 12px; margin-top: 32px;">If you'd prefer to skip creating an account for now, you can view this single CIM via the secure link below (NDA required):</p>
-          <p><a href="${viewUrl}" style="color: #14b8a6;">${viewUrl}</a></p>
-        </div>
-        `
-        : `
-        <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
-          <h2 style="color: #14b8a6; margin-bottom: 16px;">A new CIM has been added to your Cimple dashboard</h2>
-          <p>Hello ${existingAccount?.name || request.buyerName},</p>
-          <p>You've been granted access to <strong>${deal.businessName}</strong>. Sign in to your Cimple account to view it.</p>
-          <p style="margin: 32px 0;">
-            <a href="${dashboardUrl}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Go to dashboard</a>
-          </p>
-          <p style="color: #888; font-size: 12px;">You'll be asked to sign an NDA before accessing the full document.</p>
-        </div>
-        `;
-
-      await sendDirectEmail(
-        request.buyerEmail,
-        isNewAccount
-          ? `You've been invited to ${deal.businessName} on Cimple`
-          : `New CIM added to your Cimple dashboard: ${deal.businessName}`,
-        inviteHtml,
-        ccList,
-      );
+      const invite = buildApprovalInviteEmail({
+        variant,
+        buyerName: (variant === "existing_account" ? existingAccount?.name : null) || request.buyerName,
+        dealLabel,
+        viewUrl,
+        dashboardUrl,
+      });
+      await sendDirectEmail(request.buyerEmail, invite.subject, invite.html, ccList);
 
       // Also notify broker team that access was granted
       await notify(deal.id, "buyer_approval_seller_approved", {
         title: `Buyer approved & granted access — ${request.buyerName}`,
         body:
-          `The seller has approved <strong>${request.buyerName}</strong>` +
-          (request.buyerCompany ? ` of <strong>${request.buyerCompany}</strong>` : "") +
-          `. An invite email has been sent to ${request.buyerEmail} with both brokers CC'd.`,
+          `The seller has approved <strong>${escapeHtml(request.buyerName)}</strong>` +
+          (request.buyerCompany ? ` of <strong>${escapeHtml(request.buyerCompany)}</strong>` : "") +
+          `. An invite email with their personal view link has been sent to ${escapeHtml(request.buyerEmail)}` +
+          (ccList.length ? ` (CC: ${escapeHtml(ccList.join(", "))}).` : ".") +
+          (variant === "link_only"
+            ? " An unconfirmed Cimple account already uses this email, so the access was not added to that account's dashboard."
+            : ""),
         actionUrl: `/deal/${deal.id}`,
         businessName: deal.businessName,
         metadata: { approvalRequestId: request.id, buyerAccessId: buyerAccess.id },
@@ -5876,9 +5978,10 @@ Return JSON only.`,
     try {
       const { token } = req.params;
       const buyerAccess = await storage.getBuyerAccessByToken(token);
-      
-      if (!buyerAccess) {
-        return res.status(404).json({ error: "Access not found" });
+      const problem = viewLinkProblem(buyerAccess);
+      if (problem || !buyerAccess) {
+        const e = viewLinkError(problem ?? "not_found");
+        return res.status(e.status).json({ error: e.error });
       }
       
       const eventSchema = z.object({
@@ -5906,18 +6009,12 @@ Return JSON only.`,
         userAgent: req.get("User-Agent") || null,
       });
       
-      // Increment view count if it's a view event
+      // A view event counts as a view — but never before a required NDA is
+      // signed (firstViewedAt starts the reminder clock; see viewStampFor).
       if (eventData.eventType === "view") {
-        const currentViewCount = buyerAccess.viewCount || 0;
-        const updates: any = {
-          viewCount: currentViewCount + 1,
-          lastAccessedAt: new Date(),
-        };
-        // Stamp firstViewedAt on the very first view — anchors the reminder schedule
-        if (!buyerAccess.firstViewedAt) {
-          updates.firstViewedAt = new Date();
-        }
-        await storage.updateBuyerAccess(buyerAccess.id, updates);
+        const eventDeal = await storage.getDeal(buyerAccess.dealId);
+        const served = !!eventDeal && !ndaBlocksBuyer(eventDeal, buyerAccess);
+        await storage.updateBuyerAccess(buyerAccess.id, viewStampFor(buyerAccess, served) as any);
       }
       
       res.json({ success: true, eventId: event.id });
@@ -6801,11 +6898,19 @@ Return JSON only.`,
           actionUrl = `/seller/${sellerInvite.token}`;
         } catch (e) { console.warn("[members] could not create seller invite for team member:", e); }
       }
+      // A buyer-team member on a blind access level (teaser / full, the
+      // default) is pre-NDA: the deal is named by its codename, never the
+      // business name (buyerFacingDealName).
+      const inviteDealName = !deal
+        ? null
+        : teamType === "buyer"
+          ? buyerFacingDealName(deal, { accessLevel: member.accessLevel ?? "full" }).name
+          : deal.businessName;
       if (notifyMember) await notify(dealId, "invite", {
         title: `You've been added to a deal`,
-        body: `You've been added as ${roleConfig.label} (${teamLabel} team) for ${deal?.businessName || "a business"}. Click below to get started.`,
+        body: `You've been added as ${escapeHtml(roleConfig.label)} (${escapeHtml(teamLabel)} team) for ${inviteDealName ? escapeHtml(inviteDealName) : "a confidential opportunity"}. Click below to get started.`,
         actionUrl,
-        businessName: deal?.businessName,
+        businessName: inviteDealName ?? undefined,
         specificMemberIds: [member.id],
       });
 
@@ -7040,7 +7145,7 @@ Do not speculate or add information not in the CIM.`,
       if (needsEscalation) {
         notify(dealId, "buyer_question", {
           title: "New buyer question needs your response",
-          body: `A buyer asked: "${question.slice(0, 100)}${question.length > 100 ? "..." : ""}"`,
+          body: `A buyer asked: &ldquo;${escapeHtml(question.slice(0, 100))}${question.length > 100 ? "..." : ""}&rdquo;`,
           actionUrl: `/deal/${dealId}`,
           businessName: deal.businessName,
         }).catch(() => {});
@@ -7127,6 +7232,11 @@ Do not speculate or add information not in the CIM.`,
 
       const updated = await storage.updateBuyerQuestion(questionId, updates as any);
 
+      // Published by the broker → the buyer who asked is told (once).
+      if (answerNoticeDue(existingQ, updated)) {
+        void notifyBuyerQuestionAnswered(updated!, process.env.APP_URL || `${req.protocol}://${req.get("host")}`);
+      }
+
       // Notify the seller when a question needs approval. Awaited so the
       // broker learns whether anyone actually received the link — when the
       // seller team has no owner/representative, notify() falls back to the
@@ -7139,7 +7249,7 @@ Do not speculate or add information not in the CIM.`,
         try {
           const result = await notify(updated.dealId, "qa_needs_approval", {
             title: "A buyer question needs your approval",
-            body: `Question: "${updated.question.slice(0, 100)}${updated.question.length > 100 ? "..." : ""}"`,
+            body: `Question: &ldquo;${escapeHtml(updated.question.slice(0, 100))}${updated.question.length > 100 ? "..." : ""}&rdquo;`,
             actionUrl: `/approve/${updated.sellerApprovalToken}`,
             businessName: deal?.businessName,
           });
@@ -7194,7 +7304,7 @@ Do not speculate or add information not in the CIM.`,
 
       if (approved) {
         const publishedAnswer = revision || question.brokerDraft || question.aiAnswer || "";
-        await storage.updateBuyerQuestion(question.id, {
+        const published = await storage.updateBuyerQuestion(question.id, {
           sellerApproved: true,
           sellerApprovedAt: new Date(),
           status: "published",
@@ -7203,6 +7313,9 @@ Do not speculate or add information not in the CIM.`,
           addedToKnowledgeBase: true,
           answerScope: "all",
         } as any);
+        if (answerNoticeDue(question, published)) {
+          void notifyBuyerQuestionAnswered(published!, process.env.APP_URL || `${req.protocol}://${req.get("host")}`);
+        }
         res.json({ success: true, status: "published" });
       } else {
         await storage.updateBuyerQuestion(question.id, {
@@ -7217,8 +7330,8 @@ Do not speculate or add information not in the CIM.`,
           await notify(question.dealId, "buyer_question", {
             title: "Seller sent a Q&A answer back for revision",
             body:
-              `The seller asked for changes to the answer for: "${String(question.question).slice(0, 120)}"` +
-              (revision ? ` — their note: "${String(revision).slice(0, 200)}"` : ""),
+              `The seller asked for changes to the answer for: &ldquo;${escapeHtml(String(question.question).slice(0, 120))}&rdquo;` +
+              (revision ? ` — their note: &ldquo;${escapeHtml(String(revision).slice(0, 200))}&rdquo;` : ""),
             actionUrl: `/deal/${question.dealId}/qa`,
             businessName: dealForNotify?.businessName,
           });
@@ -7257,6 +7370,9 @@ Do not speculate or add information not in the CIM.`,
           await storage.updateBuyerQuestion(questionId, {
             publishedAnswer: question.brokerDraft,
           } as any);
+        }
+        if (answerNoticeDue(existingQ, question)) {
+          void notifyBuyerQuestionAnswered(question, process.env.APP_URL || `${req.protocol}://${req.get("host")}`);
         }
         res.json({ success: true, question });
       } else {
@@ -7313,7 +7429,7 @@ Do not speculate or add information not in the CIM.`,
       // to THAT access row (never a caller-supplied id); validate types; cap size.
       const batchToken = (req.body as any)?.accessToken;
       const batchAccess = typeof batchToken === "string" ? await storage.getBuyerAccessByToken(batchToken) : undefined;
-      if (!batchAccess || batchAccess.dealId !== dealId) return res.status(401).json({ error: "Invalid access token" });
+      if (!batchAccess || batchAccess.dealId !== dealId || viewLinkProblem(batchAccess)) return res.status(401).json({ error: "Invalid access token" });
       const ALLOWED_EVENTS = new Set(["view", "page_view", "section_enter", "section_exit", "scroll", "scroll_depth", "heat_map_sample", "element_hover", "download_attempt", "time_on_page", "nav_click"]);
       if (!Array.isArray(events)) return res.status(400).json({ error: "events must be an array" });
       const accepted = events.filter(e => e && ALLOWED_EVENTS.has(String(e.eventType))).slice(0, 200);
@@ -7359,6 +7475,7 @@ Do not speculate or add information not in the CIM.`,
   registerCimBuilderRoutes(app);
   registerCimMediaRoutes(app);
   registerCimTemplateRoutes(app);
+  registerBuyerNdaRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;
