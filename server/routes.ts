@@ -57,6 +57,12 @@ import { splitFactsForCim, factValueText, CIM_LEADS_HEADING } from "./informatio
 import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./cim/sensitive-facts";
 import { keepOutFor } from "./cim/keep-out";
 import { registerBrokerAuthRoutes, requireBroker, requireOwnedDeal, getOwnedDeal, canAccessDeal, sellerTokenMatchesDeal } from "./broker-auth/routes.js";
+import {
+  pickBodyFields,
+  DOCUMENT_CREATE_FIELDS, DOCUMENT_PATCH_FIELDS, DOCUMENT_SERVER_OWNED,
+  TASK_PATCH_FIELDS, TASK_SERVER_OWNED,
+  INTEGRATION_CREATE_FIELDS, INTEGRATION_CREATE_SERVER_OWNED, INTEGRATION_PATCH_FIELDS, INTEGRATION_SERVER_OWNED, INTEGRATION_STATUSES,
+} from "./security/body-fields";
 import { syncDealToCrm, describeCrmAction, crmProviderLabel, getConnectedCrmProvider } from "./crm/sync.js";
 import { runDecisionReminders, canSnoozeDecision } from "./reminders/decision-reminders.js";
 import { buildAnswerContext, buildBuyerQuestionFeed, publishedQuestionsFor, type AnswerSection } from "./qa/cim-context.js";
@@ -1788,82 +1794,9 @@ Return JSON only.`,
     }
   });
 
-  // CIM CRUD endpoints
-  app.get("/api/cims", requireBroker, async (req, res) => {
-    try {
-      const cims = await storage.getAllCims();
-      res.json(cims);
-    } catch (error: any) {
-      console.error("Error fetching CIMs:", error);
-      res.status(500).json({ error: "Failed to fetch CIMs" });
-    }
-  });
-
-  app.get("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      const cim = await storage.getCim(req.params.id);
-      if (!cim) {
-        return res.status(404).json({ error: "CIM not found" });
-      }
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error fetching CIM:", error);
-      res.status(500).json({ error: "Failed to fetch CIM" });
-    }
-  });
-
-  app.post("/api/cims", requireBroker, async (req, res) => {
-    try {
-      const cim = await storage.createCim(req.body);
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error creating CIM:", error);
-      res.status(500).json({ error: "Failed to create CIM" });
-    }
-  });
-
-  app.patch("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      // If updating extractedInfo, ensure businessName is included
-      if (req.body.extractedInfo && typeof req.body.extractedInfo === 'object' && !Array.isArray(req.body.extractedInfo)) {
-        const existingCim = await storage.getCim(req.params.id);
-        if (existingCim) {
-          const questionnaireData = existingCim.questionnaireData as Record<string, any> || {};
-          const businessName = questionnaireData["Business Name"] || existingCim.businessName;
-          
-          // Clone extractedInfo to avoid mutating original request body
-          const extractedInfo = { ...req.body.extractedInfo };
-          
-          // Ensure businessName is in extracted info
-          if (businessName && !extractedInfo.businessName) {
-            extractedInfo.businessName = businessName;
-          }
-          
-          // Update request body with modified extractedInfo
-          req.body = { ...req.body, extractedInfo };
-        }
-      }
-      
-      const cim = await storage.updateCim(req.params.id, req.body);
-      if (!cim) {
-        return res.status(404).json({ error: "CIM not found" });
-      }
-      res.json(cim);
-    } catch (error: any) {
-      console.error("Error updating CIM:", error);
-      res.status(500).json({ error: "Failed to update CIM" });
-    }
-  });
-
-  app.delete("/api/cims/:id", requireBroker, async (req, res) => {
-    try {
-      await storage.deleteCim(req.params.id);
-      res.json({ success: true });
-    } catch (error: any) {
-      console.error("Error deleting CIM:", error);
-      res.status(500).json({ error: "Failed to delete CIM" });
-    }
-  });
+  // (The legacy /api/cims CRUD routes are gone: they had no tenant scoping —
+  // any broker could list, edit or delete every row — and their UI was
+  // removed on 2026-07-08. Unknown /api paths answer a JSON 404.)
 
   // Branding Settings Routes
   app.get("/api/branding", requireBroker, async (req, res) => {
@@ -2770,12 +2703,21 @@ Return JSON only.`,
     }
   });
 
+  // A placeholder row (a document that's expected but not uploaded yet).
+  // Files only ever arrive through /documents/upload or the source ingest,
+  // which own fileUrl, mimeType, extraction and status — see body-fields.ts.
   app.post("/api/deals/:dealId/documents", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
+      const picked = pickBodyFields(req.body, DOCUMENT_CREATE_FIELDS, DOCUMENT_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertDocumentSchema } = await import("@shared/schema");
       const validatedData = insertDocumentSchema.parse({
-        ...req.body,
+        ...picked.data,
+        originalName: picked.data.originalName ?? picked.data.name,
         dealId: req.params.dealId,
+        uploadedBy: "broker",
+        fileUrl: "",
+        status: "pending",
       });
       const document = await storage.createDocument(validatedData);
       res.json(document);
@@ -2792,14 +2734,22 @@ Return JSON only.`,
     try {
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
+      // Rename / re-file only: the deal, the file and its extraction are
+      // server-owned (a broker-set fileUrl read files off the server; a
+      // broker-set dealId moved the row into another brokerage's deal).
+      const picked = pickBodyFields(req.body, DOCUMENT_PATCH_FIELDS, DOCUMENT_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertDocumentSchema } = await import("@shared/schema");
-      const validatedData = insertDocumentSchema.partial().parse(req.body);
+      const validatedData = insertDocumentSchema.partial().parse(picked.data);
       const document = await storage.updateDocument(req.params.id, validatedData);
       if (!document) {
         return res.status(404).json({ error: "Document not found" });
       }
       res.json(document);
     } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid document data", details: error.errors });
+      }
       console.error("Error updating document:", error);
       res.status(500).json({ error: "Failed to update document" });
     }
@@ -3031,9 +2981,19 @@ Return JSON only.`,
 
   app.post("/api/integrations", requireBroker, async (req, res) => {
     try {
+      // Tokens only ever come from a connect flow (e.g. pipedrive/connect,
+      // which validates them) — never from a raw create body.
+      const picked = pickBodyFields(req.body, INTEGRATION_CREATE_FIELDS, INTEGRATION_CREATE_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
+      if (typeof picked.data.provider !== "string" || !picked.data.provider.trim()) {
+        return res.status(400).json({ error: "A provider is required" });
+      }
+      if (picked.data.status !== undefined && !(INTEGRATION_STATUSES as readonly unknown[]).includes(picked.data.status)) {
+        return res.status(400).json({ error: "Unknown status" });
+      }
       const integration = await storage.createIntegration({
-        ...req.body,
-        brokerId: req.session.brokerId,
+        ...(picked.data as { provider: string }),
+        brokerId: req.session.brokerId!,
       });
       const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
       res.json(safe);
@@ -3149,7 +3109,18 @@ Return JSON only.`,
     try {
       const owned = await getOwnedIntegration(req.params.id, req.session.brokerId);
       if (!owned) return res.status(404).json({ error: "Integration not found" });
-      const integration = await storage.updateIntegration(req.params.id, req.body);
+      // Settings only: a brokerId in the body used to hand this broker's
+      // CRM connection to another broker (their buyer sync then ran on it).
+      const picked = pickBodyFields(req.body, INTEGRATION_PATCH_FIELDS, INTEGRATION_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
+      if (picked.data.status !== undefined && !(INTEGRATION_STATUSES as readonly unknown[]).includes(picked.data.status)) {
+        return res.status(400).json({ error: "Unknown status" });
+      }
+      if (Object.keys(picked.data).length === 0) {
+        const { accessToken: _a, refreshToken: _r, ...unchanged } = owned as any;
+        return res.json(unchanged);
+      }
+      const integration = await storage.updateIntegration(req.params.id, picked.data as any);
       if (!integration) return res.status(404).json({ error: "Integration not found" });
       const { accessToken: _a, refreshToken: _r, ...safe } = (integration || {}) as any;
       res.json(safe);
@@ -3957,14 +3928,21 @@ Return JSON only.`,
     try {
       const existingTask = await storage.getTask(req.params.id);
       if (!existingTask || !(await ownsDeal(req, existingTask.dealId))) return res.status(404).json({ error: "Task not found" });
+      // Never the deal or the author: a task moved by dealId landed in
+      // another brokerage's deal.
+      const picked = pickBodyFields(req.body, TASK_PATCH_FIELDS, TASK_SERVER_OWNED);
+      if (!picked.ok) return res.status(400).json({ error: picked.error, field: picked.field });
       const { insertTaskSchema } = await import("@shared/schema");
-      const validatedData = insertTaskSchema.partial().parse(req.body);
+      const validatedData = insertTaskSchema.partial().parse(picked.data);
       const task = await storage.updateTask(req.params.id, validatedData);
       if (!task) {
         return res.status(404).json({ error: "Task not found" });
       }
       res.json(task);
     } catch (error: any) {
+      if (error.name === "ZodError") {
+        return res.status(400).json({ error: "Invalid task data", details: error.errors });
+      }
       console.error("Error updating task:", error);
       res.status(500).json({ error: "Failed to update task" });
     }
