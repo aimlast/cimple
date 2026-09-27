@@ -51,6 +51,7 @@ import {
   numbersMateriallyConflict,
   typedNumericValues,
   sourceRank,
+  fieldSourceRank,
   SOURCE_RANK,
   LEGACY_SOURCE_NOTE,
   FIELD_SOURCES_KEY,
@@ -176,7 +177,8 @@ export function isSpecialistSource(key: string, sourceTitle: string | null | und
  */
 export function effectiveRank(key: string, src: Partial<FieldSource> | null | undefined): number {
   if (!src) return -1;
-  const base = sourceRank(src.source);
+  // (The broker's own AI-session notes rank below a broker edit — info-merger.ts fieldSourceRank.)
+  const base = fieldSourceRank(src);
   const isDoc = src.source === "document" || src.source === "email";
   if (src.specialist && isDoc) return Math.max(base, DOCUMENT_AUTHORITY_RANK + 0.25);
   if (src.source === "document" && isDocumentAuthoritativeField(key)) return Math.max(base, DOCUMENT_AUTHORITY_RANK);

@@ -15,6 +15,20 @@ import { eq, desc } from "drizzle-orm";
 import { assembleKnowledgeBase, sellerAnswered, type KnowledgeBase, type IndustryContext, type SectionCoverage } from "./knowledge-base";
 import { questionnaireFacts } from "./questionnaire-facts";
 import {
+  type ConductedBy,
+  sessionModeOf,
+  contextSessions,
+  togetherSessionLive,
+  sellerSideTasks,
+  endingCompletesInterview,
+  BROKER_SESSION_TASK_CREATOR,
+  sellerMayRead,
+  turnAdmission,
+  turnInFlight,
+  TurnConflictError,
+  withSessionTurnLock,
+} from "./session-mode";
+import {
   answerHash,
   getQuestionnaireScreen,
   keywordSplit,
@@ -65,11 +79,15 @@ import {
 } from "./seller-intent";
 import {
   HELD_BACK_NOTE_REASON,
+  SELLER_KEEP_OUT_REASON_RE,
   addSellerKeepOut,
   carriesPrivateDetail,
   getSellerKeepOut,
   isDistinctiveTerm,
 } from "./seller-keep-out";
+
+/** A private note from the broker's own session: why it is private. */
+const BROKER_KEEP_PRIVATE_REASON = "you asked that this stay private (your AI interview session)";
 import {
   applySellerRetractions,
   restatesWithdrawnValue,
@@ -94,6 +112,12 @@ import {
   isSuppressed,
   mergeAlternateMaps,
   sourceRank,
+  fieldSourceRank,
+  isBrokerFinalSource,
+  BROKER_SESSION_RANK,
+  BROKER_SESSION_SOURCE_NOTE,
+  isUntrackedSource,
+  SOURCE_RANK,
   noteSameValue,
   displaceCorroborations,
   BROKER_SUPPRESSED_KEY,
@@ -109,6 +133,7 @@ import {
   type FieldChange,
 } from "./info-merger";
 import { withDealFactsLock } from "../documents/facts-lock";
+import { effectiveRank } from "../documents/merge-policy";
 import { retireDeletedEntry } from "../information/facts";
 import { sellerProfileNeedsRebuild, carryBrokerProfileEdits } from "./eq-profiler";
 import {
@@ -155,7 +180,7 @@ import { screenLedgerForSeller } from "./source-privacy";
 import { questionPart, valuesMateriallyDiffer, sourceLabel } from "./source-context";
 import { getFieldAlternates } from "./info-merger";
 import { buildPolishContext, polishMessage, polishChips, polishRationale, describeReport, normalisationCallIn, type PolishContext, type PolishReport } from "./reply-polish";
-import { earningsNudge } from "./money-talk";
+import { earningsNudge, sellerSideOf } from "./money-talk";
 import { ensureQuestionRationale, prefetchQuestionLabel, sectionsForLabel, type PrefetchedLabel, type RationaleResult } from "./question-rationale";
 import {
   closingText,
@@ -256,8 +281,11 @@ export interface TurnResult {
   /**
    * "completed": the interview is finished and no session was started
    * (opening the page never starts one — the caller asks with resume).
+   * "together_live": the seller opened their page while the broker is
+   * running "Interview together" with them — nothing was started
+   * (sessionId is empty); the page says so and checks again.
    */
-  status?: "completed";
+  status?: "completed" | "together_live";
 }
 
 // =====================
@@ -279,7 +307,7 @@ const INTERVIEW_MODEL = agentConfig.models.interviewAgent;
  * Starts a new interview session or resumes an existing one.
  * Returns the opening message from the AI.
  */
-export type ConductedBy = "seller" | "broker_with_seller";
+export type { ConductedBy } from "./session-mode";
 
 /** How a broker-led session is happening — decides the provenance kind of what it captures. */
 export type ConductedVia = "person" | "cimple" | "zoom" | "meet" | "teams";
@@ -293,12 +321,18 @@ export function parseConductedVia(raw: unknown): ConductedVia | undefined {
 /**
  * Provenance kind for facts a session captures: the seller typing in the AI
  * interview → "interview"; a broker-led session in person → "call"; over the
- * Cimple call or Zoom / Meet / Teams → "video_call".
+ * Cimple call or Zoom / Meet / Teams → "video_call"; the broker alone
+ * ("Start AI Interview" on the deal) → "broker" — the broker's own word,
+ * never the seller's.
  */
 export function sessionSourceKind(conductedBy: ConductedBy, via: ConductedVia | undefined): SourceKind {
+  if (conductedBy === "broker") return "broker";
   if (conductedBy !== "broker_with_seller") return "interview";
   return via && via !== "person" ? "video_call" : "call";
 }
+
+/** How a fact the broker typed in their own AI interview session is described ("You · …") — info-merger.ts. */
+export { BROKER_SESSION_SOURCE_NOTE };
 
 /** Deal-level bookkeeping keys the turn's save merges explicitly (never copied wholesale). */
 const TURN_SAVE_BOOKKEEPING = new Set([
@@ -371,7 +405,7 @@ export function buildTurnSave(args: {
       recordAlternate(toSave, k, merged[k], statedSrc);
       continue;
     }
-    if (touchedMeanwhile && hasFactValue(fresh[k]) && freshSrc && sourceRank(freshSrc.source) > sourceRank(turnSrc.source)) {
+    if (touchedMeanwhile && hasFactValue(fresh[k]) && freshSrc && fieldSourceRank(freshSrc) > fieldSourceRank(turnSrc)) {
       // The broker set this fact during the turn — a broker value is final.
       if (!same(fresh[k], merged[k])) recordAlternate(toSave, k, merged[k], statedSrc);
       continue;
@@ -433,7 +467,9 @@ export function startOrResumeSession(
     onOpeningText?: (text: string) => void;
   } = {},
 ): Promise<TurnResult> {
-  const key = `${dealId}|${opts.resume ? "resume" : "open"}`;
+  // (Per kind of session: the seller's start never waits on — and is never
+  // handed — the broker's own session, or the reverse.)
+  const key = `${dealId}|${opts.conductedBy ?? "seller"}|${opts.resume ? "resume" : "open"}`;
   const running = startsInFlight.get(key);
   if (running) return running;
   const task = startOrResumeSessionOnce(dealId, opts).finally(() => startsInFlight.delete(key));
@@ -462,7 +498,7 @@ async function startOrResumeSessionOnce(
   };
   // Load the deal and all related data (side by side), with any existing
   // active/paused session among the deal's sessions.
-  const [loadedDeal, documents, tasks, resolvedDiscrepancies, existingSessions] = await Promise.all([
+  const [loadedDeal, documents, dealTasks, resolvedDiscrepancies, existingSessions] = await Promise.all([
     storage.getDeal(dealId),
     storage.getDocumentsByDeal(dealId),
     storage.getTasksByDeal(dealId),
@@ -472,9 +508,73 @@ async function startOrResumeSessionOnce(
   let deal = loadedDeal;
   if (!deal) throw new Error(`Deal ${dealId} not found`);
 
-  let session = existingSessions.find(
+  // Who this start is for — the caller's mode (routes take it from the
+  // credential: the seller's invite token is always the seller; see
+  // session-mode.ts). A broker-alone session lives beside the seller's
+  // conversation and only the broker alone ever resumes it; the seller's
+  // own sessions and "Interview together" are one line, and a sitting of
+  // one kind is never continued as the other.
+  const mode: ConductedBy = opts.conductedBy ?? "seller";
+  const sameLine = (s: InterviewSession) => (mode === "broker") === (sessionModeOf(s) === "broker");
+  // What this session may read of the others: never a broker-alone
+  // session's transcript (unless the broker is the one reading).
+  const inView = mode === "broker" ? existingSessions : contextSessions(existingSessions);
+  const inLine = existingSessions.filter(sameLine);
+  // (Nor the to-dos the broker's own session wrote from the broker's notes.)
+  const tasks = mode === "broker" ? dealTasks : sellerSideTasks(dealTasks);
+
+  let session = inLine.find(
     (s) => s.status === "active" || s.status === "paused",
   );
+  // The broker is running "Interview together" with the seller right now:
+  // the seller opening their own interview page must not close it under the
+  // broker mid-call (the broker's next exchange was refused, and their
+  // screen restarted). The seller is told what is happening; nothing is
+  // started, closed or asked. (A sitting gone quiet for longer is closed
+  // below, as before.)
+  if (mode === "seller") {
+    const live = inLine.find((s) => togetherSessionLive(s));
+    if (live) {
+      const kb = assembleKnowledgeBase(deal, documents, tasks, live, resolvedDiscrepancies, {
+        sessions: inView,
+        currentSessionId: live.id,
+      });
+      const meta = (live.extractedInfo as Record<string, unknown>) || {};
+      console.log(`[session-manager] Seller opened the interview on deal ${dealId} while "Interview together" session ${live.id} is live — left running`);
+      return {
+        message: "",
+        suggestedAnswers: [],
+        sessionId: "",
+        captured: { ...countExtractedFields(deal), newFields: [], updatedFields: [], changes: [] },
+        sectionCoverage: (kb.recordedCoverage ?? kb.sectionCoverage).map(coverageForClient),
+        industryContext: extractIndustryContextForFrontend((meta._industryContext as IndustryContext | undefined) ?? null),
+        deferredTopics: [],
+        shouldEnd: false,
+        status: "together_live",
+      };
+    }
+  }
+  // A sitting of the other kind with answers in it is closed, and this one
+  // starts fresh (the facts it captured are on file; its transcript is an
+  // earlier session). A seller returning after "Interview together" used to
+  // continue the broker-led session: every turn was written for the broker
+  // to read aloud, their earnings questions were left to a broker who wasn't
+  // there, and the room's transcript was shown to them.
+  if (session && sessionModeOf(session) !== mode && (session.messages as ConversationMessage[]).some((m) => m.role === "user")) {
+    const closedMeta = (session.extractedInfo as Record<string, unknown> | null) ?? {};
+    const closedAt = new Date();
+    await db
+      .update(interviewSessions)
+      .set({ status: "completed", completedAt: closedAt, extractedInfo: { ...closedMeta, _closedFor: mode } })
+      .where(eq(interviewSessions.id, session.id));
+    console.log(`[session-manager] Closed ${sessionModeOf(session)} session ${session.id} on deal ${dealId} — a ${mode} session starts fresh`);
+    const closed = { ...session, status: "completed", completedAt: closedAt, extractedInfo: { ...closedMeta, _closedFor: mode } } as InterviewSession;
+    for (const list of [existingSessions, inLine, inView]) {
+      const i = list.findIndex((s) => s.id === closed.id);
+      if (i >= 0) list[i] = closed;
+    }
+    session = undefined;
+  }
 
   // A finished interview is never reopened by merely loading a page: the
   // broker's interview page used to create a fresh session (and an Opus
@@ -483,7 +583,7 @@ async function startOrResumeSessionOnce(
   // (An empty session a previous visit left behind is closed.) Checked
   // before any model call — the finished page loads at once (it used to
   // run the questionnaire's privacy split first: 10–12s on first load).
-  const lastCompleted = existingSessions.find((s) => s.status === "completed");
+  const lastCompleted = inView.find((s) => s.status === "completed");
   const liveWithAnswers = session && (session.messages as ConversationMessage[]).some((m) => m.role === "user");
   if (!opts.resume && deal.interviewCompleted && lastCompleted && !liveWithAnswers) {
     if (session) {
@@ -559,17 +659,17 @@ async function startOrResumeSessionOnce(
   // (Who conducts the session is part of it: "Interview together" never
   // reopens an opening written for the seller alone, or the reverse. A start
   // that names no mode carries the last session's on, as a new one would.)
-  const basisNow = (mode: { by?: string | null; via?: string | null }) =>
+  const basisNow = (basisMode: { by?: string | null; via?: string | null }) =>
     openingBasis({
       extractedInfo: deal!.extractedInfo,
       questionnaireData: deal!.questionnaireData,
       interviewOutline: deal!.interviewOutline,
       documents,
-      sessions: existingSessions,
+      sessions: inView,
       openDiscrepancies,
       tasks,
-      conductedBy: mode.by,
-      conductedVia: mode.via,
+      conductedBy: basisMode.by,
+      conductedVia: basisMode.via,
       sourceReview: (deal as { interviewSourceReview?: unknown }).interviewSourceReview,
       evidence: (deal as { interviewEvidence?: unknown }).interviewEvidence,
     });
@@ -577,14 +677,13 @@ async function startOrResumeSessionOnce(
     if (!s || !unansweredOpening(s)) return false;
     const meta = (s.extractedInfo as Record<string, unknown> | null) ?? {};
     const stored = meta._openingBasis;
-    const mode = opts.conductedBy
-      ? { by: opts.conductedBy, via: opts.conductedVia }
-      : { by: meta._conductedBy as string | undefined, via: meta._conductedVia as string | undefined };
     const at = Date.parse(String((s.messages as ConversationMessage[])[0]?.timestamp ?? ""));
-    return typeof stored === "string" && stored === basisNow(mode) && !Number.isNaN(at) && Date.now() - at < OPENING_REUSE_MS;
+    // (Written for this kind of session: its mode is part of the basis.)
+    if (sessionModeOf(s) !== mode) return false;
+    return typeof stored === "string" && stored === basisNow({ by: mode, via: opts.conductedVia ?? (meta._conductedVia as string | undefined) }) && !Number.isNaN(at) && Date.now() - at < OPENING_REUSE_MS;
   };
-  if (!session && opts.resume && existingSessions[0]?.status === "completed" && reusableOpening(existingSessions[0])) {
-    const again = existingSessions[0];
+  if (!session && opts.resume && inLine[0]?.status === "completed" && reusableOpening(inLine[0])) {
+    const again = inLine[0];
     await db.update(interviewSessions).set({ status: "active", completedAt: null, lastActivityAt: new Date() }).where(eq(interviewSessions.id, again.id));
     session = { ...again, status: "active", completedAt: null };
     console.log(`[session-manager] Reopened the unanswered opening of session ${again.id} — nothing on file changed since it was written`);
@@ -601,11 +700,10 @@ async function startOrResumeSessionOnce(
     // and the deal already had a prior completed conversation, discard it
     // and create a fresh session with returning-seller context — unless
     // nothing that opening was written from has changed (then it stands).
-    const hasCompletedSession = existingSessions.some((s) => s.status === "completed" && s.id !== session!.id);
+    const hasCompletedSession = inView.some((s) => s.status === "completed" && s.id !== session!.id);
     // An unanswered opening written for the other mode (the seller alone vs
     // "Interview together") is rewritten in place for the mode asked for.
-    const storedMode = ((session.extractedInfo as Record<string, unknown> | null)?._conductedBy as string | undefined) ?? "seller";
-    const modeChanged = !!opts.conductedBy && opts.conductedBy !== storedMode;
+    const modeChanged = sessionModeOf(session) !== mode;
     if (messages.length === 0 || (userMessageCount === 0 && modeChanged && !hasCompletedSession)) {
       reuseSessionId = session.id;
     } else if (userMessageCount === 0 && hasCompletedSession && !reusableOpening(session)) {
@@ -617,7 +715,7 @@ async function startOrResumeSessionOnce(
     } else {
       // Resume existing session with real conversation history
       const kb = assembleKnowledgeBase(deal, documents, tasks, session, resolvedDiscrepancies, {
-        sessions: existingSessions,
+        sessions: inView,
         currentSessionId: session.id,
         openDiscrepancies,
       });
@@ -651,7 +749,7 @@ async function startOrResumeSessionOnce(
           kb,
           dealLocation: deal.location,
           questionnaireData: deal.questionnaireData,
-          sessions: existingSessions,
+          sessions: inView,
           sellerMessage: prevSeller,
           info: kb.extractedInfo as Record<string, unknown>,
         });
@@ -723,7 +821,7 @@ async function startOrResumeSessionOnce(
 
   // If there's a completed prior session, pass it so the AI knows this is
   // a returning seller and can welcome them back instead of starting fresh.
-  const priorCompletedSession = existingSessions.find((s) => s.status === "completed") || null;
+  const priorCompletedSession = inView.find((s) => s.status === "completed") || null;
 
   // The source review still running: give it up to SOURCE_REVIEW_WAIT_MS so
   // the opening can raise a conflict it finds (it keeps running either way,
@@ -743,7 +841,7 @@ async function startOrResumeSessionOnce(
     progress("reading");
     if (await seeding) deal = (await storage.getDeal(dealId)) ?? deal;
   }
-  const evidenceRun = ensureOnFileEvidenceFor(deal, documents, tasks, resolvedDiscrepancies, existingSessions, sessionId, openDiscrepancies);
+  const evidenceRun = ensureOnFileEvidenceFor(deal, documents, tasks, resolvedDiscrepancies, inView, sessionId, openDiscrepancies);
   const evidenceWait = within(evidenceRun, openingEvidenceWaitMs(evidenceBuildRemainingMs(dealId), !!storedEvidence(deal)));
   if (sourceReviewRun || evidenceRun) progress("checking_sources");
   const [review, evidence] = await Promise.all([reviewWait, evidenceWait]);
@@ -755,14 +853,14 @@ async function startOrResumeSessionOnce(
   // session's questions and answers, so a returning seller is never asked
   // them again.
   const kb = assembleKnowledgeBase(deal, documents, tasks, priorCompletedSession, resolvedDiscrepancies, {
-    sessions: existingSessions,
+    sessions: inView,
     currentSessionId: sessionId,
     openDiscrepancies,
   });
 
-  // Confidence map, ledger, conduct mode and industry from the most recent
-  // prior session (if any) — confirmed fields stay confirmed across sessions.
-  const priorMeta = existingSessions.find((s) => s.id !== sessionId)?.extractedInfo as
+  // Confidence map, ledger and industry from the most recent prior session
+  // this one may read (if any) — confirmed fields stay confirmed across sessions.
+  const priorMeta = inView.find((s) => s.id !== sessionId)?.extractedInfo as
     | Record<string, unknown>
     | null
     | undefined;
@@ -771,7 +869,7 @@ async function startOrResumeSessionOnce(
   // Who conducts the new session — the opening is written for it (a spoken
   // question when the broker reads it aloud) and it is part of the
   // opening's basis (reusableOpening).
-  const openingMode: ConductedBy = opts.conductedBy ?? (priorMeta?._conductedBy as ConductedBy | undefined) ?? "seller";
+  const openingMode: ConductedBy = mode;
   kb.conductedBy = openingMode;
 
   // The prior session's ledger (carried over — see below) and the items the
@@ -805,12 +903,14 @@ async function startOrResumeSessionOnce(
       // (A fact the broker settled is on file even where its value is held — as in processTurn.)
       info: withHeldFacts(kb.extractedInfo as Record<string, unknown>),
       documents,
-      priorQA: priorQAFromSessions(existingSessions, sessionId),
+      priorQA: priorQAFromSessions(inView, sessionId),
       openDeferralTopics: [],
       conflictKeys: (kb.sourceConflicts ?? []).map((c) => c.key),
       onFile: onFileFacts(kb),
     },
-    openingContinuityContext(existingSessions, sessionId),
+    // (A "welcome back" only for a sitting of the same kind — the broker's own
+    // session doesn't pick up where the seller left off, or the reverse.)
+    openingContinuityContext(inLine, sessionId),
     {
       // A returning seller's industry is already known (it is kept below):
       // the opening's own reading of it isn't needed.
@@ -952,22 +1052,22 @@ async function startOrResumeSessionOnce(
   };
 }
 
-/**
- * Processes a single turn of the interview: seller message in, AI response out.
- */
-export async function processTurn(
-  dealId: string,
-  sessionId: string,
-  sellerMessage: string,
-  /** Optional: stream the AI message text to the caller as it's generated.
-   *  Purely a display channel — the returned TurnResult is authoritative. */
-  onDelta?: (chunk: string) => void,
-  opts: {
+type ProcessTurnOpts = {
     /** Set when the seller is correcting an earlier answer via "Edit". */
     correctionOf?: CorrectionOf;
-    /** Broker-led ("Interview together"): the broker reads questions aloud and
-     *  the seller's spoken answers are captured. Changes phrasing rules. */
+    /** Who is sending the turn (routes derive it from the credential — see
+     *  session-mode.ts). It must be the session's own mode; omitted (tests,
+     *  internal callers), the session's mode is used. */
     conductedBy?: ConductedBy;
+    /**
+     * The timestamp of the AI question the caller is answering (the last
+     * one on their screen). When given, it must still be the session's last
+     * message — otherwise the turn is refused (TurnConflictError
+     * "out_of_sync") instead of pairing the answer with a question the
+     * caller never saw (a cancelled turn that finished on the server, a
+     * resend after a dropped connection, a second tab).
+     */
+    answeringAt?: string;
     /** How a broker-led session is happening (in person / Cimple call / Zoom…). */
     conductedVia?: ConductedVia;
     /**
@@ -984,17 +1084,43 @@ export async function processTurn(
      * turn saves (an answer typed meanwhile would never be sent).
      */
     onEnding?: () => void;
-  } = {},
+};
+
+/**
+ * Processes a single turn of the interview: seller message in, AI response out.
+ * One turn per session at a time (session-mode.ts withSessionTurnLock): a
+ * second message waits for the first to be saved, then is admitted only if
+ * it still answers the session's latest question.
+ */
+export function processTurn(
+  dealId: string,
+  sessionId: string,
+  sellerMessage: string,
+  /** Optional: stream the AI message text to the caller as it's generated.
+   *  Purely a display channel — the returned TurnResult is authoritative. */
+  onDelta?: (chunk: string) => void,
+  opts: ProcessTurnOpts = {},
 ): Promise<TurnResult> {
   // The seller's message is timestamped when it arrives, not when the AI
   // finishes replying — otherwise a reload shifts every answer later by the
   // model's thinking time.
   const receivedAt = new Date().toISOString();
+  return withSessionTurnLock(sessionId, () => processTurnLocked(dealId, sessionId, sellerMessage, onDelta, opts, receivedAt));
+}
+
+async function processTurnLocked(
+  dealId: string,
+  sessionId: string,
+  sellerMessage: string,
+  onDelta: ((chunk: string) => void) | undefined,
+  opts: ProcessTurnOpts,
+  receivedAt: string,
+): Promise<TurnResult> {
   const { correctionOf } = opts;
   const timer = new TurnTimer();
 
   // Load everything (side by side — the seller is waiting)
-  const [deal, session, documents, tasks, resolvedDiscrepancies, allDiscrepancies, dealSessions] = await Promise.all([
+  const [deal, session, documents, dealTasks, resolvedDiscrepancies, allDiscrepancies, dealSessions] = await Promise.all([
     storage.getDeal(dealId),
     getSession(sessionId),
     storage.getDocumentsByDeal(dealId),
@@ -1005,9 +1131,25 @@ export async function processTurn(
   ]);
   if (!deal) throw new Error(`Deal ${dealId} not found`);
   if (!session) throw new Error(`Session ${sessionId} not found`);
+  // The session must be this deal's, still open, the caller's own kind, and
+  // (when the caller says) still waiting on the question they answered —
+  // a stale tab used to append turns to a completed session, and a seller
+  // could write into a broker-led one.
+  const refused = turnAdmission({ session, dealId, mode: opts.conductedBy ?? sessionModeOf(session), answeringAt: opts.answeringAt });
+  if (refused) {
+    console.warn(`[session-manager] Turn refused on session ${sessionId} (deal ${dealId}): ${refused}`);
+    throw new TurnConflictError(refused);
+  }
   const openDiscrepancies = allDiscrepancies.filter((d) => d.status === "open");
   timer.mark("loaded");
-  const kbExtras = { sessions: dealSessions, currentSessionId: sessionId, openDiscrepancies };
+  // Whose session this is (the admission check above made sure the caller's
+  // mode is the session's). Earlier sessions this one may read: never a
+  // broker-alone session's transcript unless the broker is the one here.
+  const conductedBy: ConductedBy = sessionModeOf(session);
+  const sessionsInView = conductedBy === "broker" ? dealSessions : contextSessions(dealSessions, sessionId);
+  // (Nor the to-dos the broker's own session wrote, unless the broker is here.)
+  const tasks = conductedBy === "broker" ? dealTasks : sellerSideTasks(dealTasks);
+  const kbExtras = { sessions: sessionsInView, currentSessionId: sessionId, openDiscrepancies };
   // A source added mid-interview gets its conflicts reviewed for later turns.
   ensureSourceReview(deal, documents);
 
@@ -1019,9 +1161,6 @@ export async function processTurn(
   if (sessionMeta._industryContext) {
     kb.industryContext = sessionMeta._industryContext as IndustryContext;
   }
-  // The caller's mode wins over what the session was started with — a broker
-  // can pick up a seller-started session and run the rest together.
-  const conductedBy: ConductedBy = opts.conductedBy ?? (sessionMeta._conductedBy as ConductedBy | undefined) ?? "seller";
   kb.conductedBy = conductedBy;
   const conductedVia: ConductedVia | undefined = opts.conductedVia ?? parseConductedVia(sessionMeta._conductedVia);
   const confidenceLevels = (sessionMeta._confidenceLevels as Record<string, string>) || {};
@@ -1126,7 +1265,7 @@ export async function processTurn(
   // no-op otherwise); later turns pick it up.
   ensureOnFileEvidence(deal, {
     documents,
-    sessions: dealSessions,
+    sessions: sessionsInView,
     currentSessionId: sessionId,
     view: kb.extractedInfo as Record<string, unknown>,
     targets: kb.evidenceTargets ?? [],
@@ -1172,10 +1311,18 @@ export async function processTurn(
   // classifier fails or is late.
   const existingExtracted = (deal.extractedInfo || {}) as Record<string, unknown>;
   const sellerView = sellerInterviewView(existingExtracted, documents);
-  const quick = quickIntent(sellerMessage, prevAiMessage);
+  // Broker-led, the message is the room's labelled exchange: the stop
+  // patterns and the seller's own question read the SELLER's lines only (a
+  // broker who says "I've got to run to another meeting at four" is not the
+  // seller asking to stop; a question the broker rephrases is not one the
+  // seller asked), and the classifier is told which lines are the broker's.
+  const intentMessage = conductedBy === "broker_with_seller" ? (sellerSideOf(sellerMessage) ?? "") : sellerMessage;
+  const labelledExchange = conductedBy === "broker_with_seller" && intentMessage !== sellerMessage;
+  const quick = quickIntent(intentMessage, prevAiMessage);
   let modelIntent: SellerIntent | null | undefined; // undefined = not back yet
   const intentPromise = classifySellerIntent({
     sellerMessage,
+    ...(labelledExchange ? { labelledExchange: true } : {}),
     prevAiMessage,
     prevSellerMessage: [...existingMessages].reverse().find((m) => m.role === "user")?.content,
     recentFacts: sellerSpokenFacts(sellerView as Record<string, unknown>),
@@ -1326,15 +1473,17 @@ export async function processTurn(
     kb,
     dealLocation: deal.location,
     questionnaireData: deal.questionnaireData,
-    sessions: dealSessions,
-    sellerMessage,
+    sessions: sessionsInView,
+    // (Broker-led: what the SELLER said — the filler guard's question mode
+    // and the earnings hand-off answer the seller, not the broker's words.)
+    sellerMessage: labelledExchange ? intentMessage : sellerMessage,
     info: sellerView as Record<string, unknown>,
   });
   // The seller raised earnings, SDE or add-backs (money-talk.ts): the draft
   // hands it to the broker — never a dodge, never an add-back list — with
   // the seller-visible statements' own figure to note neutrally. (The polish
   // pass puts the hand-off in when a draft still misses it.)
-  const earningsBlock = earningsNudge(sellerMessage, polishCtx.statements ?? null, { together: polishCtx.together });
+  const earningsBlock = earningsNudge(polishCtx.sellerMessage, polishCtx.statements ?? null, { together: polishCtx.together, brokerAlone: conductedBy === "broker" });
   if (earningsBlock) systemBlocks.push({ type: "text", text: earningsBlock });
   // RE-ASK GUARD context: every earlier question the seller answered (all
   // sessions, in full, plus this transcript), the facts on file as the agent
@@ -1349,7 +1498,7 @@ export async function processTurn(
     info: withHeldFacts(sellerView as Record<string, unknown>),
     documents,
     priorQA: [
-      ...priorQAFromSessions(dealSessions, sessionId),
+      ...priorQAFromSessions(sessionsInView, sessionId),
       ...thisSessionQA.map((x, i, all) => ({
         ...x,
         where: "earlier in this session",
@@ -1926,7 +2075,7 @@ export async function processTurn(
       conversation = [
         ...conversation,
         { role: "assistant" as const, content: res.response.message },
-        { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings) },
+        { role: "user" as const, content: reaskCorrection(reaskAttempt === 0 ? pendingFindings : earlyFindings, { sellerMessage: intentMessage }) },
       ];
       reaskAttempt++;
       res = await callInterviewWithRecovery(anthropic, { ...callParams, messages: conversation }, shown.streaming, gate, hooks);
@@ -2851,7 +3000,13 @@ export async function processTurn(
     let added = 0;
     for (const n of aiResponse.privateNotes ?? []) {
       if (!n?.note) continue;
-      if (addPrivateNote(merged as Record<string, unknown>, n.note, { reason: n.reason, turn: userTurnCount })) added++;
+      // The broker's own session: a note is the broker's, never shown to
+      // the seller's interview (seller-view.ts drops brokerOnly sources) —
+      // and a "keep that quiet" was the broker's request, not the seller's.
+      const src = conductedBy === "broker"
+        ? { reason: n.reason && SELLER_KEEP_OUT_REASON_RE.test(n.reason) ? BROKER_KEEP_PRIVATE_REASON : n.reason, turn: userTurnCount, brokerOnly: true }
+        : { reason: n.reason, turn: userTurnCount };
+      if (addPrivateNote(merged as Record<string, unknown>, n.note, src)) added++;
     }
     if (added > 0) {
       console.log(
@@ -2861,8 +3016,10 @@ export async function processTurn(
   }
 
   // Provenance: everything this turn wrote is the seller's own word — typed
-  // in the interview, or spoken on a broker-led call / video call. Recorded
-  // with the session and turn so the broker can open the exact exchange.
+  // in the interview, or spoken on a broker-led call / video call — or, in
+  // the broker's own session, the broker's word (kind "broker", never the
+  // seller's). Recorded with the session and turn so the broker can open the
+  // exact exchange.
   // Two rules around it:
   // - A value the BROKER set (edit or discrepancy resolution) is final: the
   //   seller's differing statement is kept as an alternate for the broker to
@@ -2873,7 +3030,13 @@ export async function processTurn(
     const mergedInfo = merged as Record<string, unknown>;
     const kind = sessionSourceKind(conductedBy, conductedVia);
     const at = new Date().toISOString();
-    const turnSrc: FieldSource = { source: kind, sessionId, turn: userTurnCount, at };
+    const turnSrc: FieldSource = {
+      source: kind,
+      sessionId,
+      turn: userTurnCount,
+      at,
+      ...(kind === "broker" ? { note: BROKER_SESSION_SOURCE_NOTE } : {}),
+    };
     const priorSources = getFieldSources(existingExtracted);
     const kept: FieldChange[] = [];
     for (const c of changes) {
@@ -2883,7 +3046,17 @@ export async function processTurn(
       const prev = priorSources[c.fieldName];
       const priorValue = existingExtracted[c.fieldName];
       const hadValue = priorValue !== null && priorValue !== undefined && priorValue !== "";
-      if (prev?.source === "broker" && hadValue) {
+      // (The broker's notes from their own session are not final — the
+      // seller's answer replaces them, and they stay as another value.)
+      // The broker's own session, in turn, never writes over what the seller
+      // said themselves, a broker edit, or a document that is the authority
+      // for the fact (an untracked legacy value was most likely the seller's):
+      // the broker's differing note is kept beside it.
+      const priorOutranksBrokerNotes =
+        kind === "broker" &&
+        hadValue &&
+        (!prev || isUntrackedSource(prev) ? SOURCE_RANK.interview : effectiveRank(c.fieldName, prev)) > BROKER_SESSION_RANK;
+      if (priorOutranksBrokerNotes || (hadValue && isBrokerFinalSource(prev))) {
         mergedInfo[c.fieldName] = priorValue;
         // The broker's deal-row price is hidden from the interview, which
         // sees this seller answer in its place (interviewFactView) — so the
@@ -2892,6 +3065,7 @@ export async function processTurn(
           if (confidenceLevels[c.fieldName] !== undefined) updatedConfidence[c.fieldName] = confidenceLevels[c.fieldName];
           else delete updatedConfidence[c.fieldName];
         }
+        if (String(priorValue) === String(c.newValue)) continue;
         recordAlternate(mergedInfo, c.fieldName, c.newValue, turnSrc);
         continue;
       }
@@ -2939,6 +3113,7 @@ export async function processTurn(
         sessionId,
         turn: userTurnCount,
         at: new Date().toISOString(),
+        ...(conductedBy === "broker" ? { note: BROKER_SESSION_SOURCE_NOTE } : {}),
       },
     });
     // Withdrawn statements come out of the facts as they are NOW (the fresh
@@ -2998,7 +3173,8 @@ export async function processTurn(
   );
   const taskPlan = planTaskWrites({
     newTasks: aiResponse.newTasks,
-    existing: tasks,
+    // (The broker's own session never merges into or closes the seller's interview to-dos on the broker's word.)
+    existing: conductedBy === "broker" ? tasks.filter((t) => t.createdBy !== "ai_interview") : tasks,
     documents: documents.filter((d) => d.visibility !== "broker_only"),
     answeredKeys,
     resolvedTopics: aiResponse.reasoning.resolvedDeferrals,
@@ -3007,8 +3183,10 @@ export async function processTurn(
   for (const task of taskPlan.create) {
     await storage.createTask({
       dealId,
-      createdBy: "ai_interview",
-      assignedTo: deal.sellerId || null,
+      // The broker's own session: the broker's to-do, from the broker's
+      // notes — never assigned to the seller or read by their interview.
+      createdBy: conductedBy === "broker" ? BROKER_SESSION_TASK_CREATOR : "ai_interview",
+      assignedTo: conductedBy === "broker" ? deal.brokerId || null : deal.sellerId || null,
       type: task.type,
       title: task.title,
       description: task.description,
@@ -3149,8 +3327,12 @@ export async function processTurn(
     })
     .where(eq(interviewSessions.id, sessionId));
 
-  // If the interview is ending, mark the deal and trigger learning loop
-  if (aiResponse.shouldEnd) {
+  // If the interview is ending, mark the deal and trigger learning loop.
+  // (The broker's own session ending is not the interview ending: the
+  // seller was never interviewed — the deal, its phase and the CIM gate are
+  // left as they are, and the broker's typed notes teach the learning loop
+  // nothing about sellers. session-mode.ts endingCompletesInterview.)
+  if (aiResponse.shouldEnd && endingCompletesInterview(conductedBy)) {
     await storage.updateDeal(dealId, {
       interviewCompleted: true,
       // A finished interview means platform intake is underway — move the
@@ -3164,7 +3346,7 @@ export async function processTurn(
     // ignores ask_seller but blocks on seller_responded, so a routed critical
     // re-locks the CIM until the broker reviews the transcript and resolves —
     // nothing is silently accepted, and nothing stays "with the seller" forever.
-    await markRoutedDiscrepanciesRaised(dealId).catch((err) => {
+    await markRoutedDiscrepanciesRaised(dealId, updatedMessages).catch((err) => {
       console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
     });
 
@@ -3176,6 +3358,10 @@ export async function processTurn(
     runInterviewLearningLoop(dealId, sessionId).catch((err) => {
       console.error(`[session-manager] Learning loop failed for session ${sessionId}:`, err);
     });
+  } else if (aiResponse.shouldEnd) {
+    // The broker's own session: what it answered is still on file for the
+    // seller's next session (background).
+    refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
   }
 
   // Rebuild coverage with the updated extracted info
@@ -3215,20 +3401,80 @@ export async function processTurn(
 }
 
 /**
- * Flips every ask_seller discrepancy on the deal to seller_responded with a
- * note pointing the broker at the transcript. Called when an interview ends.
- * Returns the number of rows updated.
+ * Did the interview actually bring this routed discrepancy up? Pure and
+ * deliberately loose — it only picks the note's wording: an AI message
+ * names one of its figures (not a year), or the words of its label / key.
  */
-async function markRoutedDiscrepanciesRaised(dealId: string): Promise<number> {
+export function routedDiscrepancyDiscussed(
+  d: Pick<Discrepancy, "field" | "factKey" | "interviewValue" | "documentValue">,
+  messages: Pick<ConversationMessage, "role" | "content">[],
+): boolean {
+  const ai = messages.filter((m) => m.role === "ai").map((m) => m.content).join("\n").toLowerCase().replace(/(\d),(?=\d{3})/g, "$1");
+  if (!ai.trim()) return false;
+  const figures = [d.interviewValue, d.documentValue]
+    .flatMap((v) => (String(v ?? "").replace(/(\d),(?=\d{3})/g, "$1").match(/\d+(?:\.\d+)?/g) ?? []))
+    .filter((f) => f.replace(".", "").length >= 2 && !/^(?:19|20)\d{2}$/.test(f) && !/^0+(?:\.0+)?$/.test(f));
+  if (figures.some((f) => new RegExp(`(?<![\\d.])${f.replace(".", "\\.")}(?![\\d])`).test(ai))) return true;
+  const words = Array.from(
+    new Set(
+      `${d.field} ${d.factKey ?? ""}`
+        .replace(/([a-z])([A-Z])/g, "$1 $2")
+        .toLowerCase()
+        .match(/[a-z]{4,}/g) ?? [],
+    ),
+  ).filter((w) => !["with", "from", "year", "total", "annual", "value", "their", "this", "that", "amount"].includes(w));
+  if (words.length === 0) return false;
+  // (A word's stem: "concentration" → "concentr" also finds "concentrated".)
+  const hits = words.filter((w) => ai.includes(w.slice(0, Math.min(w.length, Math.max(5, Math.ceil(w.length * 0.6)))))).length;
+  return hits >= Math.min(2, words.length);
+}
+
+/** The note a routed discrepancy carries back to the broker when the interview ends. */
+export function routedDiscrepancyNote(discussed: boolean, date: string): string {
+  return discussed
+    ? `Raised with the seller in the AI interview on ${date} — review the transcript and resolve`
+    : `The interview ended on ${date} before this was raised with the seller — follow up with them and resolve`;
+}
+
+/**
+ * Flips every ask_seller discrepancy on the deal to seller_responded with a
+ * note pointing the broker at the transcript (worded by whether the
+ * interview actually brought it up). Called when an interview ends — by
+ * the AI or with the seller's "End Overview". Returns the number of rows updated.
+ */
+async function markRoutedDiscrepanciesRaised(dealId: string, transcript: Pick<ConversationMessage, "role" | "content">[] = []): Promise<number> {
   const routed = (await storage.getDiscrepanciesByDeal(dealId)).filter((d) => d.status === "ask_seller");
   if (routed.length === 0) return 0;
   const date = new Date().toLocaleDateString("en-US", { year: "numeric", month: "long", day: "numeric" });
-  const sellerResponse = `Raised with the seller in the AI interview on ${date} — review the transcript and resolve`;
   for (const d of routed) {
-    await storage.updateDiscrepancy(d.id, { status: "seller_responded", sellerResponse });
+    await storage.updateDiscrepancy(d.id, {
+      status: "seller_responded",
+      sellerResponse: routedDiscrepancyNote(routedDiscrepancyDiscussed(d, transcript), date),
+    });
   }
   console.log(`[session-manager] Handed ${routed.length} routed discrepanc${routed.length === 1 ? "y" : "ies"} back to the broker for deal ${dealId}`);
   return routed.length;
+}
+
+/**
+ * The route's check before a streamed turn opens its stream: a turn that is
+ * already certain to be refused (session closed, not the caller's, or moved
+ * on with nothing running on it) is answered with a plain 409. A turn still
+ * running on the session is left to processTurn, which waits for it.
+ */
+export async function turnPrecheck(
+  sessionId: string,
+  args: { dealId: string; mode: ConductedBy; answeringAt?: string },
+): Promise<TurnConflictError | null> {
+  const session = await getSession(sessionId);
+  if (!session) return new TurnConflictError("wrong_session");
+  const code = turnAdmission({
+    session,
+    dealId: args.dealId,
+    mode: args.mode,
+    answeringAt: turnInFlight(sessionId) ? undefined : args.answeringAt,
+  });
+  return code ? new TurnConflictError(code) : null;
 }
 
 /**
@@ -3240,12 +3486,21 @@ export async function getSessionDealId(sessionId: string): Promise<string | null
   return session?.dealId ?? null;
 }
 
-export async function getSessionHistory(sessionId: string): Promise<{
+export async function getSessionHistory(
+  sessionId: string,
+  opts: {
+    /** The caller is the seller (invite token): only their own sessions are theirs to read. */
+    forSeller?: boolean;
+  } = {},
+): Promise<{
   messages: ConversationMessage[];
   status: string;
-}> {
+} | null> {
   const session = await getSession(sessionId);
   if (!session) throw new Error(`Session ${sessionId} not found`);
+  // Never the broker's own session (their typed notes) or a broker-led room
+  // transcript ("Broker: …" lines the mic caught) to the seller.
+  if (opts.forSeller && !sellerMayRead(session)) return null;
 
   return {
     messages: session.messages as ConversationMessage[],
@@ -3545,10 +3800,17 @@ async function generateOpeningMessage(
 export async function endSessionManually(
   dealId: string,
   sessionId: string,
+  opts: {
+    /** Who is ending it (routes: from the credential). A seller can end only their own session. */
+    mode?: ConductedBy;
+  } = {},
 ): Promise<{ ok: true }> {
   const session = await getSession(sessionId);
   if (!session || session.dealId !== dealId) {
     throw new Error("Session not found for this deal");
+  }
+  if (opts.mode === "seller" && sessionModeOf(session) !== "seller") {
+    throw new TurnConflictError("mode_mismatch");
   }
 
   if (session.status !== "completed") {
@@ -3558,14 +3820,29 @@ export async function endSessionManually(
       .where(eq(interviewSessions.id, sessionId));
   }
 
-  const dealRow = await storage.getDeal(dealId);
-  await storage.updateDeal(dealId, {
-    interviewCompleted: true,
-    ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
-  });
+  // The broker ending their own session is not the interview ending (the
+  // seller was never interviewed): the deal, its phase, routed
+  // discrepancies and the learning loop are left alone.
+  const completes = endingCompletesInterview(sessionModeOf(session));
+  if (completes) {
+    const dealRow = await storage.getDeal(dealId);
+    await storage.updateDeal(dealId, {
+      interviewCompleted: true,
+      ...(dealRow?.phase === "phase1_info_collection" ? { phase: "phase2_platform_intake" } : {}),
+    });
+
+    // Discrepancies the broker routed to the seller come back to the broker,
+    // as when the AI ends the interview — before this, "End Overview" left a
+    // routed critical conflict "with the seller" forever, and the CIM could be
+    // generated without the broker ever reviewing it.
+    await markRoutedDiscrepanciesRaised(dealId, (session.messages as ConversationMessage[]) ?? []).catch((err) => {
+      console.error(`[session-manager] Could not hand routed discrepancies back for deal ${dealId}:`, err);
+    });
+  }
 
   // The next session reads what this one answered as on file (background).
   refreshOnFileEvidence(dealId, { currentSessionId: null }).catch(() => {});
+  if (!completes) return { ok: true };
 
   // Fire-and-forget: learn from the transcript like an AI-driven ending does
   runInterviewLearningLoop(dealId, sessionId).catch((err) => {

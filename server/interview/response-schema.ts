@@ -150,7 +150,10 @@ export const INTERVIEW_RESPONSE_TOOL = {
   description: "Structure your response to the seller, including the conversational message, extracted information, reasoning about next steps, and any tasks to create.",
   input_schema: {
     type: "object" as const,
-    required: ["message", "suggestedAnswers", "extractedFields", "reasoning", "newTasks", "shouldEnd"],
+    // (In writing order: the end decision right after the seller-facing
+    // fields — listed last, Opus wrote it after the whole tail, so a goodbye
+    // could only be released at the very end of the stream.)
+    required: ["message", "suggestedAnswers", "shouldEnd", "extractedFields", "reasoning", "newTasks"],
     properties: {
       message: {
         type: "string",

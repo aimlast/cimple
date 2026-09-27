@@ -17,6 +17,8 @@ export interface ScriptedReply {
   extractedFields?: Record<string, { value: string; confidence: string; source?: string; basis?: string }>;
   retractedFields?: { field: string; reason: string }[];
   newDeferrals?: { topic: string; reason: string; whereInfoLives: string }[];
+  /** Tasks the reply creates (response-schema NewTask). */
+  newTasks?: { type: string; title: string; description: string; relatedField?: string; sellerExplanation: string }[];
   nextIntent?: string;
   currentTopic?: string;
   suggestedAnswers?: string[];
@@ -57,7 +59,7 @@ export function toolInput(r: ScriptedReply) {
       industryContext: { identified: false, industry: "", subIndustry: "", location: "", activeIndustryTopics: [], coveredIndustryTopics: [], regulatoryNotes: [] },
     },
   };
-  const bookkeeping = { privateNotes: [], newTasks: [] };
+  const bookkeeping = { privateNotes: [], newTasks: r.newTasks ?? [] };
   if (r.chipsLast) return { message: r.message, ...tail, ...labels, ...end, ...bookkeeping };
   return r.endLast
     ? { message: r.message, ...labels, ...tail, ...bookkeeping, ...end }
@@ -188,13 +190,24 @@ export function installHarness(deal: any, opts: { messages?: ConversationMessage
   const d = db as any;
   const chain = (rows: () => any[]) => {
     let ordered = false;
+    // A where(eq(interviewSessions.id, …)) naming a known session reads that
+    // one row (the interview reads a session by id); any other condition
+    // (the deal's sessions) reads them all.
+    let byId: string | null = null;
     const c: any = {
-      where: () => c,
+      where: (cond: any) => {
+        const ids = new Set(h.sessions.map((s) => s.id));
+        const found = (cond?.queryChunks ?? []).find((q: any) => q && typeof q.value === "string" && ids.has(q.value));
+        if (found) byId = found.value;
+        return c;
+      },
       // (Every orderBy in the interview code is "most recent activity first".)
       orderBy: () => { ordered = true; return c; },
       limit: () => c,
-      then: (res: any, rej: any) =>
-        Promise.resolve(ordered ? [...rows()].sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()) : rows()).then(res, rej),
+      then: (res: any, rej: any) => {
+        const all = byId ? rows().filter((r) => r.id === byId) : rows();
+        return Promise.resolve(ordered ? [...all].sort((a, b) => new Date(b.lastActivityAt).getTime() - new Date(a.lastActivityAt).getTime()) : all).then(res, rej);
+      },
     };
     return c;
   };

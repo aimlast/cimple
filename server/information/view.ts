@@ -213,7 +213,9 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     const via = meta._conductedVia;
     sessionKinds.set(
       s.id,
-      meta._conductedBy === "broker_with_seller" ? (typeof via === "string" && via !== "person" ? "video_call" : "call") : "interview",
+      meta._conductedBy === "broker"
+        ? "broker"
+        : meta._conductedBy === "broker_with_seller" ? (typeof via === "string" && via !== "person" ? "video_call" : "call") : "interview",
     );
   }
   // Latest session's confidence map (interview-captured facts only).
@@ -501,7 +503,9 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
     const title =
       kind === "interview"
         ? `AI interview · session ${i + 1}`
-        : `Interview together${via ? ` · ${VIA_TITLE[via] ?? via}` : ""} · session ${i + 1}`;
+        : kind === "broker"
+          ? `Your AI interview session · session ${i + 1}`
+          : `Interview together${via ? ` · ${VIA_TITLE[via] ?? via}` : ""} · session ${i + 1}`;
     sourcesOut.push({
       id: `session:${s.id}`,
       sessionId: s.id,
@@ -509,7 +513,8 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       title,
       date: new Date(s.startedAt).toISOString(),
       meta: via ? { platform: via } : null,
-      visibility: "shared",
+      // (The broker's own session is never shown to the seller or read by the seller's interview.)
+      visibility: kind === "broker" ? "broker_only" : "shared",
       factCount: factCountWhere((src) => src.sessionId === s.id),
       inferredFactCount: inferredCountWhere((src) => src.sessionId === s.id),
       status: s.status,

@@ -9,6 +9,7 @@ import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { assembleKnowledgeBase } from "./knowledge-base";
 import { ensureOnFileEvidence, isEvidenceBuilding, type OnFileEvidence } from "./on-file-evidence";
+import { contextSessions, sellerSideTasks } from "./session-mode";
 
 const lastLook = new Map<string, number>();
 
@@ -51,12 +52,13 @@ export async function startOnFileEvidenceBuild(
     storage.getResolvedDiscrepancies(dealId),
     storage.getDiscrepanciesByDeal(dealId),
   ]);
-  const sessions = await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId));
+  // (What the seller interview may read: never a broker-alone session — session-mode.ts.)
+  const sessions = contextSessions(await db.select().from(interviewSessions).where(eq(interviewSessions.dealId, dealId)));
   const currentSessionId =
     opts.currentSessionId !== undefined
       ? opts.currentSessionId
       : (sessions.find((s) => s.status === "active" || s.status === "paused")?.id ?? null);
-  const kb = assembleKnowledgeBase(deal, documents, tasks, null, resolved, {
+  const kb = assembleKnowledgeBase(deal, documents, sellerSideTasks(tasks), null, resolved, {
     sessions,
     currentSessionId,
     openDiscrepancies: all.filter((d) => d.status === "open"),

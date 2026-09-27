@@ -142,7 +142,9 @@ export function buildPolishContext(args: {
     sellerNames: args.kb.seller?.names ?? [],
     priorAiText: aiSaid.filter((x, i) => aiSaid.indexOf(x) === i).join("\n"),
     statements: statementEarnings(args.info, (k) => sources[k]?.source),
-    together: args.kb.conductedBy === "broker_with_seller",
+    // (The broker is present — with the seller, or alone in their own
+    // session: an earnings question is theirs, never handed "to your broker".)
+    together: args.kb.conductedBy !== "seller",
   };
 }
 
