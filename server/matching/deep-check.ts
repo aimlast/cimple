@@ -164,14 +164,16 @@ async function runDeepCheck(deal: Deal) {
   const previous = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
   const reusable = previous && previous.dealKey === dealKey ? previous.results : {};
 
-  const [scored, outreach, access] = await Promise.all([
+  const [scored, outreach, access, approvals] = await Promise.all([
     scoreBuyersForDeal(deal),
     storage.getDealOutreachByDeal(deal.id),
     storage.getBuyerAccessByDeal(deal.id),
+    storage.getBuyerApprovalRequestsByDeal(deal.id),
   ]);
   // Exactly the buyers the Suggested list would show and the button counted:
-  // never those who already have access or who rule out the industry.
-  const { pool, candidates } = suggestionPools(scored, reachedBuyers(outreach, access));
+  // never those who already have access, are submitted for approval, or who
+  // rule out the industry.
+  const { pool, candidates } = suggestionPools(scored, reachedBuyers(outreach, access, approvals));
   const results: Record<string, BuyerDeepCheckResult> = {};
   const todo: Array<{ id: string; ref: string; card: Record<string, unknown>; key: string }> = [];
   candidates.forEach((s, i) => {

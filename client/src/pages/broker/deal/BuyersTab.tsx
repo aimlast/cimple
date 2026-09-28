@@ -1,63 +1,39 @@
 /**
- * BuyersTab — Active buyers, pending approvals, outreach & matching.
+ * BuyersTab — one buyer pipeline, four stages in the order a buyer moves:
  *
- * Active Buyers is actionable, not read-only: the broker can grant CIM access
- * directly (no email is sent — they share the link themselves), copy a
- * buyer's /view link, extend the link's expiry, or revoke access.
+ *   1. Find new buyers      — outside acquirers found on the web (ExternalAcquirersPanel)
+ *   2. Send it to next      — people in the broker's list without this CIM (SuggestedBuyersPanel)
+ *   3. Waiting for approval — submitted buyers, broker then seller sign-off (BuyerApprovalsPanel)
+ *   4. Have the CIM         — access holders: fit, decision, engagement, link actions (HaveCimStage)
+ *
+ * One stage shows at a time; the stage lives in the URL (?stage=) so links
+ * and Back work. Every change that moves a buyer refreshes all four lists
+ * (invalidateBuyerPipeline), so a buyer granted access or approved moves on
+ * by itself. "Grant access" and the deal's NDA terms sit at the top of the
+ * tab, whatever the stage.
  */
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useLocation, useSearch } from "wouter";
 import { PanelError } from "@/components/deal/PanelError";
 import { useDeal } from "@/contexts/DealContext";
 import { BuyerApprovalsPanel } from "@/components/deal/BuyerApprovalsPanel";
-import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
 import { ExternalAcquirersPanel } from "@/components/deal/ExternalAcquirersPanel";
-import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
 import { BuyerNdaTermsCard } from "@/components/deal/BuyerNdaTermsCard";
+import { HaveCimStage, copyToClipboard, viewLinkFor } from "@/components/deal/buyers/HaveCimStage";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Skeleton } from "@/components/ui/skeleton";
 import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
+  Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from "@/components/ui/alert-dialog";
 import { useToast } from "@/hooks/use-toast";
+import { UserPlus, Loader2, Copy, FileSignature, Lock, Globe, Send, Hourglass, FileCheck2 } from "lucide-react";
 import {
-  Eye,
-  Clock,
-  ThumbsUp,
-  ThumbsDown,
-  Timer,
-  MoreHorizontal,
-  Link2,
-  CalendarPlus,
-  Ban,
-  UserPlus,
-  Loader2,
-  Copy,
-  Lock,
-} from "lucide-react";
+  BUYER_STAGES, WAITING_APPROVAL_STATUSES, defaultBuyerStage, invalidateBuyerPipeline, isBuyerStage, type BuyerStage,
+} from "@/lib/buyer-pipeline";
 
 /** Read the server's JSON error body, falling back to a readable default. */
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -65,33 +41,12 @@ async function readError(res: Response, fallback: string): Promise<string> {
   return (body && typeof body.error === "string" && body.error) || fallback;
 }
 
-/**
- * Clipboard writes reject when the document isn't focused or the context
- * isn't secure. Returns whether the copy succeeded so the caller can show
- * the link itself instead of a false "copied" toast.
- */
-async function copyToClipboard(text: string): Promise<boolean> {
-  try {
-    if (!navigator.clipboard?.writeText) return false;
-    await navigator.clipboard.writeText(text);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function viewLinkFor(accessToken: string): string {
-  return `${window.location.origin}/view/${accessToken}`;
-}
-
-function shortDate(value: string | Date | null | undefined): string {
-  if (!value) return "";
-  const d = new Date(value);
-  if (isNaN(d.getTime())) return "";
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
-}
-
-const EXTEND_DAYS = 30;
+const STAGE_ICONS: Record<BuyerStage, typeof Globe> = {
+  find: Globe,
+  send: Send,
+  approval: Hourglass,
+  have: FileCheck2,
+};
 
 export function BuyersTab() {
   const { dealId, deal } = useDeal();
@@ -99,39 +54,53 @@ export function BuyersTab() {
   const published = !!deal?.isLive;
   const { toast } = useToast();
   const queryClient = useQueryClient();
+  const [location, setLocation] = useLocation();
+  const search = useSearch();
 
   const [grantOpen, setGrantOpen] = useState(false);
   const [grantForm, setGrantForm] = useState({ email: "", name: "", company: "" });
   const [grantResult, setGrantResult] = useState<{ url: string; email: string } | null>(null);
-  const [revokeTarget, setRevokeTarget] = useState<any | null>(null);
+  const [ndaOpen, setNdaOpen] = useState(false);
 
-  const buyersKey = ["/api/deals", dealId, "buyers"];
-
-  const { data: buyerAccessList = [], error: buyersError, refetch: refetchBuyers } = useQuery<any[]>({
-    queryKey: buyersKey,
+  // ── The four lists (shared cache with the panels, so counts and lists agree) ──
+  const { data: buyerAccessList, error: buyersError, refetch: refetchBuyers } = useQuery<any[]>({
+    queryKey: ["/api/deals", dealId, "buyers"],
     queryFn: async () => {
       const r = await fetch(`/api/deals/${dealId}/buyers`, { credentials: "include" });
       if (!r.ok) throw new Error("Failed to load buyers");
       return r.json();
     },
   });
-
-  const { data: buyerScores = [] } = useQuery<any[]>({
-    queryKey: ["/api/deals", dealId, "analytics/buyer-scores"],
-    queryFn: async () => {
-      const r = await fetch(
-        `/api/deals/${dealId}/analytics/buyer-scores`,
-        { credentials: "include" },
-      );
-      // Scores enrich the table but aren't essential — degrade quietly
-      return r.ok ? r.json() : [];
-    },
+  const { data: suggested } = useQuery<{ suggested: Array<{ alreadyHasAccess: boolean; inApproval?: boolean; excluded?: boolean }> }>({
+    queryKey: ["/api/deals", dealId, "suggested-buyers"],
+  });
+  const { data: approvals } = useQuery<Array<{ status: string }>>({
+    queryKey: [`/api/deals/${dealId}/buyer-approvals`],
+  });
+  const { data: outside } = useQuery<{ status: string; results?: Array<{ inYourList?: boolean }> }>({
+    queryKey: ["/api/deals", dealId, "external-acquirers"],
   });
 
-  const invalidateBuyers = () => {
-    queryClient.invalidateQueries({ queryKey: buyersKey });
-    queryClient.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
+  const activeBuyers = (buyerAccessList ?? []).filter((b: any) => !b.revokedAt);
+  const counts: Record<BuyerStage, number | null> = {
+    find: outside ? (outside.results ?? []).filter((a) => !a.inYourList).length : null,
+    send: suggested ? suggested.suggested.filter((b) => !b.alreadyHasAccess && !b.inApproval && !b.excluded).length : null,
+    approval: approvals ? approvals.filter((r) => WAITING_APPROVAL_STATUSES.has(r.status)).length : null,
+    have: buyerAccessList ? activeBuyers.length : null,
   };
+
+  // ── Stage: from the URL, else a sensible default once buyers have loaded ──
+  const urlStage = new URLSearchParams(search).get("stage");
+  const stage: BuyerStage | null = isBuyerStage(urlStage)
+    ? urlStage
+    : buyerAccessList ? defaultBuyerStage(published, activeBuyers.length) : null;
+  const goTo = (s: BuyerStage) => {
+    if (s !== stage) setLocation(`${location}?stage=${s}`);
+  };
+  // Settle the default into the URL (replace, so Back doesn't bounce here).
+  useEffect(() => {
+    if (!isBuyerStage(urlStage) && stage) setLocation(`${location}?stage=${stage}`, { replace: true });
+  }, [urlStage, stage, location, setLocation]);
 
   // ── Grant access directly (no email — the broker shares the link) ──
   const grant = useMutation({
@@ -150,7 +119,7 @@ export function BuyersTab() {
       return res.json();
     },
     onSuccess: (access) => {
-      invalidateBuyers();
+      invalidateBuyerPipeline(queryClient, dealId);
       setGrantResult({ url: viewLinkFor(access.accessToken), email: access.buyerEmail });
       toast({ title: "Access granted", description: `Share the secure link with ${access.buyerEmail}.` });
     },
@@ -158,64 +127,22 @@ export function BuyersTab() {
       toast({ title: "Couldn't grant access", description: err.message, variant: "destructive" }),
   });
 
-  // ── Extend expiry by 30 days from the later of now / current expiry ──
-  const extend = useMutation({
-    mutationFn: async (buyer: any) => {
-      const base = buyer.expiresAt ? new Date(buyer.expiresAt) : new Date();
-      const from = base.getTime() > Date.now() ? base : new Date();
-      const expiresAt = new Date(from.getTime() + EXTEND_DAYS * 24 * 60 * 60 * 1000);
-      const res = await fetch(`/api/buyers/${buyer.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        body: JSON.stringify({ expiresAt: expiresAt.toISOString() }),
-      });
-      if (!res.ok) throw new Error(await readError(res, "Couldn't extend access"));
-      return res.json();
-    },
-    onSuccess: (access) => {
-      invalidateBuyers();
-      toast({ title: "Access extended", description: `Link now expires ${shortDate(access.expiresAt)}.` });
-    },
-    onError: (err: Error) =>
-      toast({ title: "Couldn't extend access", description: err.message, variant: "destructive" }),
-  });
-
-  // ── Revoke (server soft-revokes — the row stays for the audit trail) ──
-  const revoke = useMutation({
-    mutationFn: async (buyer: any) => {
-      const res = await fetch(`/api/buyer-access/${buyer.id}`, {
-        method: "DELETE",
-        credentials: "include",
-      });
-      if (!res.ok) throw new Error(await readError(res, "Couldn't revoke access"));
-      return res.json();
-    },
-    onSuccess: (_data, buyer) => {
-      invalidateBuyers();
-      setRevokeTarget(null);
-      toast({ title: "Access revoked", description: `${buyer.buyerName || buyer.buyerEmail} can no longer open the CIM.` });
-    },
-    onError: (err: Error) =>
-      toast({ title: "Couldn't revoke access", description: err.message, variant: "destructive" }),
-  });
-
   const copyLink = async (url: string) => {
     const ok = await copyToClipboard(url);
-    toast(
-      ok
-        ? { title: "Link copied", description: "Paste it into your own email to the buyer." }
-        : { title: "Copy the link manually", description: url },
-    );
+    toast(ok
+      ? { title: "Link copied", description: "Paste it into your own email to the buyer." }
+      : { title: "Copy the link manually", description: url });
   };
-
-  const activeBuyers = buyerAccessList.filter((b: any) => !b.revokedAt);
-  const scoreMap = new Map(buyerScores.map((s: any) => [s.buyerId, s]));
 
   const openGrant = () => {
     setGrantForm({ email: "", name: "", company: "" });
     setGrantResult(null);
     setGrantOpen(true);
+  };
+  const closeGrant = (open: boolean) => {
+    setGrantOpen(open);
+    // A new link means a buyer who has the CIM — show them there.
+    if (!open && grantResult) goTo("have");
   };
 
   if (buyersError) {
@@ -226,334 +153,128 @@ export function BuyersTab() {
     );
   }
 
+  const current = BUYER_STAGES.find((s) => s.key === stage);
+
   return (
-    <div className="max-w-4xl mx-auto px-6 py-6 space-y-8">
-      {/* Active Buyers — status + engagement */}
-      <section>
-        <div className="mb-3 flex items-start justify-between gap-3">
-          <div>
-            <h2 className="text-base font-semibold">Active Buyers</h2>
-            <p className="text-sm text-muted-foreground mt-0.5">
-              Buyers with CIM access — their decision status and engagement.
-            </p>
-          </div>
+    <div className="max-w-5xl mx-auto px-4 sm:px-6 py-6 space-y-5">
+      {/* Header — what this tab is, plus the two actions that apply to every stage */}
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h2 className="text-base font-semibold">Buyers</h2>
+          <p className="text-sm text-muted-foreground mt-0.5">
+            Every buyer for this deal, from first finding them to having the CIM.
+          </p>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
           <Button
             size="sm"
             variant="outline"
-            className="h-8 text-xs gap-1.5 border-teal/30 text-teal hover:bg-teal/10 shrink-0"
+            className="h-9 gap-1.5"
+            onClick={() => setNdaOpen(true)}
+            data-testid="button-nda-terms"
+          >
+            <FileSignature className="h-3.5 w-3.5" /> NDA terms
+          </Button>
+          <Button
+            size="sm"
+            className="h-9 gap-1.5 bg-teal text-teal-foreground hover:bg-teal/90"
             onClick={openGrant}
             disabled={!published}
-            title={published ? undefined : "Publish the CIM first — buyers can only open a published CIM"}
+            title={published ? "Give a buyer a secure link to the CIM" : "Publish the CIM first — buyers can only open a published CIM"}
             data-testid="button-grant-access"
           >
-            <UserPlus className="h-3.5 w-3.5" />
-            Grant access
+            <UserPlus className="h-3.5 w-3.5" /> Grant access
           </Button>
         </div>
-        {!published && (
-          <div
-            className="mb-3 flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3.5 py-3"
-            data-testid="notice-not-published"
-          >
-            <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              <span className="font-medium text-foreground">The CIM isn&apos;t published yet.</span>{" "}
-              Buyers can only open it once it&apos;s live — publish it from the Overview tab when the design is approved.
-              Buyers the seller approves before then get their access automatically when you publish.
-            </p>
+      </div>
+
+      {!published && (
+        <div className="flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3.5 py-2.5" data-testid="notice-not-published">
+          <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+          <p className="text-xs text-muted-foreground leading-relaxed">
+            <span className="font-medium text-foreground">The CIM isn&apos;t published yet.</span>{" "}
+            You can line up buyers now. Nobody can open it until you publish it from the Overview tab — buyers the seller approves before then get it automatically when you do.
+          </p>
+        </div>
+      )}
+
+      {/* The pipeline — four stages, one visible at a time */}
+      <nav aria-label="Buyer stages" className="grid grid-cols-2 gap-2 md:grid-cols-4" data-testid="buyer-stages">
+        {BUYER_STAGES.map((s) => {
+          const Icon = STAGE_ICONS[s.key];
+          const active = s.key === stage;
+          const count = counts[s.key];
+          return (
+            <button
+              key={s.key}
+              type="button"
+              onClick={() => goTo(s.key)}
+              aria-current={active ? "step" : undefined}
+              className={`relative flex min-h-[64px] items-start gap-2.5 rounded-lg border px-3 py-2.5 text-left transition-colors ${
+                active
+                  ? "border-teal/60 bg-teal/10"
+                  : "border-border bg-card hover:border-foreground/20 hover:bg-muted/30"
+              }`}
+              data-testid={`stage-${s.key}`}
+            >
+              <Icon className={`mt-0.5 h-4 w-4 shrink-0 ${active ? "text-teal" : "text-muted-foreground"}`} />
+              <span className="min-w-0 flex-1">
+                <span className={`block text-[11px] ${active ? "text-teal" : "text-muted-foreground"}`}>Step {s.step}</span>
+                <span className={`block text-sm font-medium leading-tight ${active ? "text-foreground" : "text-foreground/85"}`}>{s.label}</span>
+              </span>
+              <span
+                className={`ml-1 shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold tabular-nums ${
+                  active ? "bg-teal text-teal-foreground" : "bg-muted text-muted-foreground"
+                }`}
+                data-testid={`stage-count-${s.key}`}
+              >
+                {count == null ? "·" : count}
+              </span>
+            </button>
+          );
+        })}
+      </nav>
+
+      {current && (
+        <p className="text-sm text-muted-foreground -mt-1" data-testid="stage-explain">{current.explain}</p>
+      )}
+
+      <section aria-live="polite">
+        {!stage ? (
+          <div className="space-y-2">
+            <Skeleton className="h-10 w-full" />
+            <Skeleton className="h-24 w-full" />
           </div>
-        )}
-        {activeBuyers.length === 0 ? (
-          <div className="rounded-lg border border-dashed border-border p-6 text-center">
-            <Eye className="h-5 w-5 mx-auto text-muted-foreground/40 mb-2" />
-            <p className="text-sm text-muted-foreground">
-              No buyers have access yet.
-            </p>
-            <p className="text-xs text-muted-foreground/60 mt-1">
-              Approve a buyer below, or grant access directly and share the link yourself.
-            </p>
-          </div>
+        ) : stage === "find" ? (
+          <ExternalAcquirersPanel dealId={dealId} embedded />
+        ) : stage === "send" ? (
+          <SuggestedBuyersPanel dealId={dealId} embedded />
+        ) : stage === "approval" ? (
+          <BuyerApprovalsPanel dealId={dealId} embedded onShowHaveCim={() => goTo("have")} />
         ) : (
-          <div className="relative rounded-lg border border-border overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-border bg-muted/30">
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Buyer
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Status
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Engagement
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    NDA
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Activity
-                  </th>
-                  <th className="text-left px-4 py-2.5 text-xs font-medium text-muted-foreground">
-                    Link
-                  </th>
-                  <th className="px-2 py-2.5">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {activeBuyers.map((buyer: any) => {
-                  const decision = buyer.decision || "under_review";
-                  const statusConfig: Record<
-                    string,
-                    {
-                      label: string;
-                      icon: any;
-                      className: string;
-                    }
-                  > = {
-                    under_review: {
-                      label: "Under Review",
-                      icon: Clock,
-                      className: "text-amber-600 bg-amber-500/10",
-                    },
-                    interested: {
-                      label: "Interested",
-                      icon: ThumbsUp,
-                      className: "text-success-muted-foreground bg-success-muted",
-                    },
-                    not_interested: {
-                      label: "Not Interested",
-                      icon: ThumbsDown,
-                      className: "text-red-500 bg-destructive/10",
-                    },
-                    lapsed: {
-                      label: "Lapsed",
-                      icon: Timer,
-                      className: "text-muted-foreground bg-muted",
-                    },
-                  };
-                  const status =
-                    statusConfig[decision] || statusConfig.under_review;
-                  const StatusIcon = status.icon;
-
-                  const score = scoreMap.get(buyer.id);
-                  const engagementScore = score?.engagementScore ?? 0;
-                  const intent = score?.intent ?? "minimal";
-                  const intentConfig: Record<
-                    string,
-                    { label: string; className: string }
-                  > = {
-                    high: {
-                      label: "High",
-                      className: "text-success-muted-foreground",
-                    },
-                    medium: {
-                      label: "Medium",
-                      className: "text-amber-600",
-                    },
-                    low: {
-                      label: "Low",
-                      className: "text-muted-foreground",
-                    },
-                    minimal: {
-                      label: "Minimal",
-                      className: "text-muted-foreground/50",
-                    },
-                  };
-                  const intentCfg =
-                    intentConfig[intent] || intentConfig.minimal;
-
-                  const views =
-                    score?.viewCount ?? buyer.viewCount ?? 0;
-                  const totalMin = Math.round(
-                    (score?.totalTimeSeconds ??
-                      buyer.totalTimeSeconds ??
-                      0) / 60,
-                  );
-                  const timeLabel =
-                    totalMin < 1 ? "<1m" : `${totalMin}m`;
-                  const lastActive = buyer.lastAccessedAt
-                    ? shortDate(buyer.lastAccessedAt)
-                    : "—";
-
-                  const expiresAt = buyer.expiresAt ? new Date(buyer.expiresAt) : null;
-                  const expired = !!expiresAt && expiresAt.getTime() < Date.now();
-                  const viewUrl = buyer.accessToken ? viewLinkFor(buyer.accessToken) : null;
-
-                  return (
-                    <tr
-                      key={buyer.id}
-                      className="border-b border-border last:border-0 hover:bg-muted/20 transition-colors"
-                    >
-                      <td className="px-4 py-3">
-                        <div>
-                          <p className="font-medium text-foreground">
-                            {buyer.buyerName || buyer.buyerEmail}
-                          </p>
-                          {buyer.buyerCompany && (
-                            <p className="text-xs text-muted-foreground mt-0.5">
-                              {buyer.buyerCompany}
-                            </p>
-                          )}
-                          {buyer.buyerName && (
-                            <p className="text-xs text-muted-foreground/60">
-                              {buyer.buyerEmail}
-                            </p>
-                          )}
-                          {/* Which CIM version this buyer sees (teaser → blind with locked
-                              sections, full → blind, LOI → named, DD → named + DD detail). */}
-                          <div className="mt-1.5 flex items-center gap-1.5">
-                            <span className="text-[11px] text-muted-foreground whitespace-nowrap">CIM access</span>
-                            <AccessLevelSelect dealId={dealId} buyer={buyer} />
-                          </div>
-                        </div>
-                      </td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs font-medium ${status.className}`}
-                        >
-                          <StatusIcon className="h-3 w-3" />
-                          {status.label}
-                        </span>
-                        {decision === "interested" &&
-                          buyer.decisionNextStep && (
-                            <p className="text-xs text-muted-foreground mt-1">
-                              Next:{" "}
-                              {buyer.decisionNextStep.replace(
-                                /_/g,
-                                " ",
-                              )}
-                            </p>
-                          )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 h-1.5 rounded-full bg-muted overflow-hidden">
-                            <div
-                              className="h-full rounded-full bg-teal transition-all"
-                              style={{
-                                width: `${Math.min(engagementScore, 100)}%`,
-                              }}
-                            />
-                          </div>
-                          <span className="text-xs tabular-nums text-muted-foreground">
-                            {engagementScore}
-                          </span>
-                        </div>
-                        <p
-                          className={`text-xs mt-0.5 ${intentCfg.className}`}
-                        >
-                          {intentCfg.label} intent
-                        </p>
-                      </td>
-                      <td className="px-4 py-3">
-                        {buyer.ndaSigned ? (
-                          <span className="text-xs text-success-muted-foreground font-medium">
-                            Signed
-                          </span>
-                        ) : (
-                          <span className="text-xs text-muted-foreground">
-                            Pending
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-4 py-3">
-                        <p className="text-xs text-muted-foreground">
-                          {views} views · {timeLabel}
-                        </p>
-                        <p className="text-xs text-muted-foreground/60">
-                          {lastActive}
-                        </p>
-                      </td>
-                      <td className="px-4 py-3">
-                        {expiresAt ? (
-                          <p className={`text-xs ${expired ? "text-red-500" : "text-muted-foreground"}`}>
-                            {expired ? "Expired" : "Expires"} {shortDate(expiresAt)}
-                          </p>
-                        ) : (
-                          <p className="text-xs text-muted-foreground/60">No expiry</p>
-                        )}
-                      </td>
-                      <td className="px-2 py-3 text-right">
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-7 w-7 text-muted-foreground"
-                              aria-label={`Actions for ${buyer.buyerName || buyer.buyerEmail}`}
-                              data-testid={`button-buyer-actions-${buyer.id}`}
-                            >
-                              <MoreHorizontal className="h-4 w-4" />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent align="end" className="w-48">
-                            <DropdownMenuItem
-                              disabled={!viewUrl}
-                              onClick={() => viewUrl && copyLink(viewUrl)}
-                            >
-                              <Link2 className="h-3.5 w-3.5 mr-2" /> Copy view link
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
-                              disabled={extend.isPending}
-                              onClick={() => extend.mutate(buyer)}
-                            >
-                              <CalendarPlus className="h-3.5 w-3.5 mr-2" /> Extend {EXTEND_DAYS} days
-                            </DropdownMenuItem>
-                            <DropdownMenuSeparator />
-                            <DropdownMenuItem
-                              className="text-red-500 focus:text-red-500"
-                              onClick={() => setRevokeTarget(buyer)}
-                            >
-                              <Ban className="h-3.5 w-3.5 mr-2" /> Revoke access
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+          <HaveCimStage
+            dealId={dealId}
+            published={published}
+            buyers={activeBuyers}
+            onGrant={openGrant}
+            onGoToSend={() => goTo("send")}
+          />
         )}
       </section>
 
-      {/* Pending Approvals */}
-      <section className="pt-4 border-t border-border">
-        <div className="mb-3">
-          <h2 className="text-base font-semibold">Pending Approvals</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Buyers awaiting broker and seller sign-off before CIM access.
-          </p>
-        </div>
-        <BuyerApprovalsPanel dealId={dealId} />
-      </section>
-
-      {/* Buyer NDA — what buyers sign before the CIM opens */}
-      <section className="pt-4 border-t border-border">
-        <BuyerNdaTermsCard scope="deal" dealId={dealId} />
-      </section>
-
-      {/* Outreach & Matching */}
-      <section className="pt-4 border-t border-border">
-        <div className="mb-3">
-          <h2 className="text-base font-semibold">Outreach & Matching</h2>
-          <p className="text-sm text-muted-foreground mt-0.5">
-            Find buyers by criteria match, then draft and send outreach
-            emails.
-          </p>
-        </div>
-        <div className="space-y-6">
-          <SuggestedBuyersPanel dealId={dealId} />
-          <ExternalAcquirersPanel dealId={dealId} />
-          <BuyerMatchingPanel dealId={dealId} />
-        </div>
-      </section>
+      {/* NDA terms — what buyers sign before the CIM opens */}
+      <Dialog open={ndaOpen} onOpenChange={setNdaOpen}>
+        <DialogContent className="max-w-2xl max-h-[88vh] overflow-y-auto p-0">
+          <DialogHeader className="sr-only">
+            <DialogTitle>NDA terms</DialogTitle>
+            <DialogDescription>What buyers of this deal sign before the CIM opens.</DialogDescription>
+          </DialogHeader>
+          <BuyerNdaTermsCard scope="deal" dealId={dealId} bare />
+        </DialogContent>
+      </Dialog>
 
       {/* Grant access dialog */}
-      <Dialog open={grantOpen} onOpenChange={setGrantOpen}>
+      <Dialog open={grantOpen} onOpenChange={closeGrant}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Grant CIM access</DialogTitle>
@@ -581,7 +302,7 @@ export function BuyersTab() {
                 </Button>
               </div>
               <div className="flex justify-end">
-                <Button size="sm" onClick={() => setGrantOpen(false)}>
+                <Button size="sm" onClick={() => closeGrant(false)}>
                   Done
                 </Button>
               </div>
@@ -631,7 +352,7 @@ export function BuyersTab() {
                 </div>
               </div>
               <div className="flex justify-end gap-2 pt-1">
-                <Button type="button" variant="outline" size="sm" onClick={() => setGrantOpen(false)}>
+                <Button type="button" variant="outline" size="sm" onClick={() => closeGrant(false)}>
                   Cancel
                 </Button>
                 <Button
@@ -649,33 +370,6 @@ export function BuyersTab() {
           )}
         </DialogContent>
       </Dialog>
-
-      {/* Revoke confirmation */}
-      <AlertDialog open={!!revokeTarget} onOpenChange={(open) => !open && setRevokeTarget(null)}>
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Revoke access?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {revokeTarget?.buyerName || revokeTarget?.buyerEmail} will no longer be able to
-              open the CIM. Their activity history is kept. You can grant a new link later.
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={revoke.isPending}>Cancel</AlertDialogCancel>
-            <AlertDialogAction
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              disabled={revoke.isPending}
-              onClick={(e) => {
-                e.preventDefault();
-                if (revokeTarget) revoke.mutate(revokeTarget);
-              }}
-              data-testid="button-revoke-access-confirm"
-            >
-              {revoke.isPending ? "Revoking…" : "Revoke access"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
     </div>
   );
 }

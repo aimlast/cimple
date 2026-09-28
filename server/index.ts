@@ -177,6 +177,7 @@ app.use("/api/deals/:dealId/generate-content", aiLimiter);
 app.use("/api/deals/:dealId/generate-blind", aiLimiter);
 app.use("/api/deals/:dealId/generate-dd", aiLimiter);
 app.use("/api/deals/:dealId/generate-layout", aiLimiter);
+app.use("/api/deals/:dealId/buyer-fit/:accessId/ai", aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {

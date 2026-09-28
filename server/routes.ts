@@ -815,14 +815,16 @@ export async function registerRoutes(app: Express): Promise<Server> {
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
 
-      const [scoredRaw, existingOutreach, existingAccess] = await Promise.all([
+      const [scoredRaw, existingOutreach, existingAccess, approvals] = await Promise.all([
         scoreBuyersForDeal(deal),
         storage.getDealOutreachByDeal(dealId),
         storage.getBuyerAccessByDeal(dealId),
+        storage.getBuyerApprovalRequestsByDeal(dealId),
       ]);
       // Matched on account id AND email: access rows aren't linked to the
-      // buyer's account until they verify, so id-only missed them.
-      const reached = reachedBuyers(existingOutreach, existingAccess);
+      // buyer's account until they verify, so id-only missed them. Buyers
+      // submitted for approval are further along the pipeline too.
+      const reached = reachedBuyers(existingOutreach, existingAccess, approvals);
       const deep = (deal.buyerDeepCheck as BuyerDeepCheck | null) || null;
       // One definition of who is suggested / deep-checked (suggestionPools),
       // shared with the deep-check job so every count agrees.
@@ -834,7 +836,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
         // A verdict is shown only for a buyer the list still suggests (an
         // older check may hold results for buyers who since got access).
         const aiCheck = inPool.has(buyerUser.id) ? deep?.results?.[buyerUser.id] ?? null : null;
-        const { alreadyHasAccess, alreadyContacted } = reached(buyerUser);
+        const { alreadyHasAccess, alreadyContacted, inApproval } = reached(buyerUser);
         const excluded = isExcludedBuyer(s);
         // With an AI verdict, rank on it (60%) blended with the lead score.
         const rankScore = aiCheck ? Math.round(aiCheck.fitScore * 0.6 + score.total * 0.4) : score.total;
@@ -852,6 +854,7 @@ export async function registerRoutes(app: Express): Promise<Server> {
           tags: contact?.tags ?? [],
           alreadyHasAccess,
           alreadyContacted,
+          inApproval,
           passesFirstPass: passesFirstPass(s),
           excluded,
           excludedBy: excluded ? (breakdown?.excludedBy ?? null) : null,
@@ -932,6 +935,42 @@ export async function registerRoutes(app: Express): Promise<Server> {
     } catch (err) {
       console.error("[external-acquirers] start failed:", err);
       res.status(500).json({ error: "Couldn't start the research" });
+    }
+  });
+
+  // Fit of every buyer who has the CIM (Buyers tab → "Have the CIM"). Kept
+  // current automatically: re-scored by the rule-based engine whenever the
+  // buyer's criteria or the deal's facts changed since the stored score
+  // (server/matching/access-fit.ts). Never calls the AI.
+  app.get("/api/deals/:dealId/buyer-fit", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const { loadDealBuyerFits } = await import("./matching/access-fit.js");
+      const { fits } = await loadDealBuyerFits(deal);
+      res.json({ fits });
+    } catch (err) {
+      console.error("[buyer-fit] load failed:", err);
+      res.status(500).json({ error: "Couldn't work out buyer fit" });
+    }
+  });
+
+  // The broker's "Check fit with AI" on one buyer (uses the AI; rate-limited
+  // in server/index.ts). The AI-inclusive score is kept until the buyer's
+  // criteria or the deal's facts change.
+  app.post("/api/deals/:dealId/buyer-fit/:accessId/ai", requireBroker, requireOwnedDeal, async (req, res) => {
+    try {
+      const deal = await storage.getDeal(req.params.dealId);
+      if (!deal) return res.status(404).json({ error: "Deal not found" });
+      const access = await storage.getBuyerAccess(req.params.accessId);
+      if (!access || access.dealId !== deal.id || access.revokedAt) return res.status(404).json({ error: "Buyer not found" });
+      const { loadDealBuyerFits } = await import("./matching/access-fit.js");
+      const { fits, aiUnavailable } = await loadDealBuyerFits(deal, { withAIFor: access.id });
+      const fit = fits.find((f) => f.accessId === access.id) ?? null;
+      res.json({ fit, aiUnavailable: aiUnavailable ?? null });
+    } catch (err) {
+      console.error("[buyer-fit] AI check failed:", err);
+      res.status(500).json({ error: "Couldn't check fit with AI" });
     }
   });
 

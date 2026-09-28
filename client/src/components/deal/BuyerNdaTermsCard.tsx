@@ -50,7 +50,8 @@ async function putTerms(url: string, terms: string | null) {
   return r.json();
 }
 
-export function BuyerNdaTermsCard(props: { scope: "brokerage" } | { scope: "deal"; dealId: string }) {
+/** `bare`: no card chrome — for showing inside a dialog (deal → Buyers tab → "NDA terms"). */
+export function BuyerNdaTermsCard(props: ({ scope: "brokerage" } | { scope: "deal"; dealId: string }) & { bare?: boolean }) {
   const scope = props.scope;
   const dealId = props.scope === "deal" ? props.dealId : null;
   const { toast } = useToast();
@@ -96,7 +97,7 @@ export function BuyerNdaTermsCard(props: { scope: "brokerage" } | { scope: "deal
   const canReset = scope === "deal" ? source === "deal" : source === "brokerage";
 
   return (
-    <Card data-testid={`card-buyer-nda-${scope}`}>
+    <Card className={props.bare ? "border-0 bg-transparent shadow-none" : undefined} data-testid={`card-buyer-nda-${scope}`}>
       <CardHeader>
         <CardTitle className="flex items-center gap-2 text-base">
           <FileSignature className="h-4 w-4" />

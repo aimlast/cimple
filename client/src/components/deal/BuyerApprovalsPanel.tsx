@@ -29,6 +29,7 @@ import {
   AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { PanelError } from "@/components/deal/PanelError";
+import { invalidateBuyerPipeline } from "@/lib/buyer-pipeline";
 import { useToast } from "@/hooks/use-toast";
 import {
   UserPlus, Loader2, Search, Building2, Mail, Phone, Shield,
@@ -86,10 +87,18 @@ const RISK_COLORS: Record<string, string> = {
   low: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30",
 };
 
-export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
+/**
+ * `embedded`: shown as the Buyers tab's "Waiting for approval" stage — the
+ * tab titles it, buyers who were approved and got access are counted (they
+ * live under "Have the CIM"), and turned-down ones are listed apart.
+ */
+export function BuyerApprovalsPanel({
+  dealId, embedded = false, onShowHaveCim,
+}: { dealId: string; embedded?: boolean; onShowHaveCim?: () => void }) {
   const qc = useQueryClient();
   const [submitOpen, setSubmitOpen] = useState(false);
   const [reviewing, setReviewing] = useState<ApprovalRequest | null>(null);
+  const [showDeclined, setShowDeclined] = useState(false);
 
   const { data: requests = [], isLoading, error: loadError, refetch } = useQuery<ApprovalRequest[]>({
     queryKey: [`/api/deals/${dealId}/buyer-approvals`],
@@ -101,21 +110,33 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
   });
 
   const pending = requests.filter(r => r.status === "pending_broker_review");
-  const inProgress = requests.filter(r => r.status === "pending_seller_review");
+  const inProgress = requests.filter(r => r.status === "pending_seller_review" || r.status === "approved_by_broker");
   // Seller approved while the CIM is unpublished — access goes out at publish.
   const waitingForPublish = requests.filter(r => r.status === "approved_by_seller");
-  const completed = requests.filter(r => r.status === "access_granted" || r.status === "rejected");
+  const granted = requests.filter(r => r.status === "access_granted");
+  const declined = requests.filter(r => r.status === "rejected");
+  const completed = [...granted, ...declined];
+  const waiting = pending.length + inProgress.length + waitingForPublish.length;
+
+  // A decision here moves the buyer: on to "Have the CIM", or out of the suggestions.
+  const refreshPipeline = () => invalidateBuyerPipeline(qc, dealId);
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-base font-semibold">Buyer approvals</h2>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Submit prospective buyers for broker + seller review before granting CIM access.
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {embedded ? (
+          <p className="text-xs text-muted-foreground">
+            {waiting === 0 ? "" : `${waiting} waiting · you review first, then the seller signs off.`}
           </p>
-        </div>
-        <Button size="sm" onClick={() => setSubmitOpen(true)}>
+        ) : (
+          <div>
+            <h2 className="text-base font-semibold">Buyer approvals</h2>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              Submit prospective buyers for broker + seller review before granting CIM access.
+            </p>
+          </div>
+        )}
+        <Button size="sm" onClick={() => setSubmitOpen(true)} data-testid="button-submit-buyer">
           <UserPlus className="h-3.5 w-3.5 mr-1.5" />
           Submit buyer
         </Button>
@@ -127,6 +148,53 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
         </div>
       ) : loadError ? (
         <PanelError what="buyer approvals" onRetry={() => refetch()} />
+      ) : embedded ? (
+        <div className="space-y-3">
+          {waiting === 0 && (
+            <div className="rounded-lg border border-dashed border-border p-8 text-center" data-testid="empty-waiting-approval">
+              <Clock className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" />
+              <p className="text-sm text-foreground">Nobody is waiting for approval</p>
+              <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+                When you want the seller to sign off on a buyer before they get the CIM, submit them here. You review first, then the seller gets a link to approve or decline.
+              </p>
+            </div>
+          )}
+          {pending.length > 0 && (
+            <Section title="Needs your review" items={pending} onReview={setReviewing} showReviewBtn />
+          )}
+          {inProgress.length > 0 && (
+            <Section title="With the seller" items={inProgress} onReview={setReviewing} />
+          )}
+          {waitingForPublish.length > 0 && (
+            <Section title="Approved — they get the CIM when you publish" items={waitingForPublish} onReview={setReviewing} />
+          )}
+          {granted.length > 0 && (
+            <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-border bg-muted/10 px-3 py-2 text-xs text-muted-foreground" data-testid="approved-have-cim-note">
+              <span>
+                {granted.length === 1 ? "1 approved buyer now has" : `${granted.length} approved buyers now have`} the CIM.
+              </span>
+              {onShowHaveCim && (
+                <Button variant="ghost" size="sm" className="h-7 text-xs text-teal" onClick={onShowHaveCim}>
+                  See who has the CIM
+                </Button>
+              )}
+            </div>
+          )}
+          {declined.length > 0 && (
+            <div>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-1 text-xs text-muted-foreground"
+                onClick={() => setShowDeclined((v) => !v)}
+                data-testid="button-toggle-declined"
+              >
+                {showDeclined ? "Hide" : "Show"} {declined.length} not approved
+              </Button>
+              {showDeclined && <div className="mt-2"><Section title="Not approved" items={declined} onReview={setReviewing} /></div>}
+            </div>
+          )}
+        </div>
       ) : requests.length === 0 ? (
         <Card>
           <CardContent className="p-8 text-center text-sm text-muted-foreground">
@@ -156,7 +224,7 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
         onClose={() => setSubmitOpen(false)}
         onSubmitted={() => {
           setSubmitOpen(false);
-          qc.invalidateQueries({ queryKey: [`/api/deals/${dealId}/buyer-approvals`] });
+          refreshPipeline();
         }}
       />
 
@@ -166,7 +234,7 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
           onClose={() => setReviewing(null)}
           onDone={() => {
             setReviewing(null);
-            qc.invalidateQueries({ queryKey: [`/api/deals/${dealId}/buyer-approvals`] });
+            refreshPipeline();
           }}
         />
       )}
@@ -204,7 +272,7 @@ function Section({
           return (
             <Card key={r.id}>
               <CardContent className="p-4">
-                <div className="flex items-start justify-between gap-3">
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2 flex-wrap">
                       <div className="font-medium truncate">{r.buyerName}</div>
@@ -222,14 +290,14 @@ function Section({
                       )}
                     </div>
                     <div className="text-xs text-muted-foreground mt-1 flex items-center gap-2 flex-wrap">
-                      <span className="flex items-center gap-1"><Mail className="h-3 w-3" />{r.buyerEmail}</span>
+                      <span className="flex min-w-0 items-center gap-1 break-all"><Mail className="h-3 w-3 shrink-0" />{r.buyerEmail}</span>
                       {r.submittedByName && <span>· submitted by {r.submittedByName}</span>}
                     </div>
                     {r.background && (
                       <div className="text-xs mt-2 line-clamp-2">{r.background}</div>
                     )}
                   </div>
-                  <div className="flex flex-col items-end gap-2">
+                  <div className="flex flex-row flex-wrap items-center gap-2 sm:flex-col sm:items-end">
                     <Badge className={`text-xs ${meta?.color || ""}`}>
                       <StatusIcon className="h-3 w-3 mr-1" />
                       {meta?.label || r.status}

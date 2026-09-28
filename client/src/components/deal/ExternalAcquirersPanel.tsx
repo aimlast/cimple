@@ -51,7 +51,8 @@ const host = (u: string) => {
   try { return new URL(u.startsWith("http") ? u : `https://${u}`).hostname.replace(/^www\./, ""); } catch { return u; }
 };
 
-export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
+/** `embedded`: shown as the Buyers tab's "Find new buyers" stage, which already titles and explains it. */
+export function ExternalAcquirersPanel({ dealId, embedded = false }: { dealId: string; embedded?: boolean }) {
   const { toast } = useToast();
   const key = ["/api/deals", dealId, "external-acquirers"];
   const { data } = useQuery<SearchState>({
@@ -87,13 +88,24 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
     <div className="space-y-3" data-testid="external-acquirers">
       <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
-          <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
-            <Globe className="h-4 w-4 text-teal" />
-            Buyers outside your list
-          </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">
-            Companies and investors actively buying in this space, found on the web with sources. The search only uses the industry, region and size — never the business's name.
-          </p>
+          {embedded ? (
+            <p className="text-xs text-muted-foreground">
+              {data?.status === "done" && data.finishedAt
+                ? `Last searched ${new Date(data.finishedAt).toLocaleDateString("en-US", { month: "short", day: "numeric" })}. `
+                : ""}
+              The search only uses the industry, region and size — never the business&apos;s name. Nothing is sent to anyone.
+            </p>
+          ) : (
+            <>
+              <h3 className="text-sm font-semibold text-foreground flex items-center gap-2">
+                <Globe className="h-4 w-4 text-teal" />
+                Buyers outside your list
+              </h3>
+              <p className="text-xs text-muted-foreground mt-0.5">
+                Companies and investors actively buying in this space, found on the web with sources. The search only uses the industry, region and size — never the business's name.
+              </p>
+            </>
+          )}
         </div>
         <div className="flex shrink-0 flex-col items-start gap-1 sm:items-end">
           <Button size="sm" variant="outline" disabled={running || start.isPending} onClick={() => start.mutate()} data-testid="button-find-external">
@@ -122,6 +134,16 @@ export function ExternalAcquirersPanel({ dealId }: { dealId: string }) {
               </li>
             ))}
           </ul>
+        </div>
+      )}
+
+      {(!data || data.status === "none") && !running && (
+        <div className="rounded-lg border border-dashed border-border p-8 text-center" data-testid="empty-find-buyers">
+          <Globe className="h-5 w-5 mx-auto text-muted-foreground/50 mb-2" />
+          <p className="text-sm text-foreground">No outside buyers yet</p>
+          <p className="text-xs text-muted-foreground mt-1 max-w-sm mx-auto">
+            Click “Find outside buyers” and Cimple researches companies and investors buying businesses like this one. It takes a minute or two — you can leave the page.
+          </p>
         </div>
       )}
 
