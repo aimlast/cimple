@@ -31,7 +31,8 @@ import {
   FactError,
 } from "../information/facts";
 import { findStaleFacts, proposeRewrites, type ResolutionSubject } from "../information/resolution-propagation";
-import { planResolution, valueAtTarget, resolutionSourceExtras } from "../information/resolution-write";
+import { planResolution, valueAtTarget, resolutionSourceExtras, isMapFact } from "../information/resolution-write";
+import { normalizeFactYear } from "../cim/discrepancy-filter";
 import { isFactKey } from "../interview/info-merger";
 import { numberTokens, tokensMatch } from "../cim/discrepancy-filter";
 import { GENERIC_FIELD_LABELS } from "../interview/interview-plan";
@@ -158,6 +159,7 @@ export function registerDiscrepancyRoutes(app: Express) {
             if (!written) {
               const plan = planResolution(info, target, d);
               if (plan.kind === "needs_mapping") target = null;
+              else if (plan.kind === "write") target = plan.target; // a map fact's year, worked out from the row
               else narrative = plan.kind === "narrative";
             }
           }
@@ -216,7 +218,9 @@ export function registerDiscrepancyRoutes(app: Express) {
           const info = ((deal?.extractedInfo as Record<string, unknown> | null) || {});
           if (!validFactKeyFor(info, key)) return res.status(400).json({ error: "That isn't a fact on this deal" });
           updates.factKey = key;
-          updates.factYear = typeof factYear === "string" && factYear.trim() ? factYear.trim() : null;
+          // "FY24", "FY2024" and 2024 are all the year 2024 of a by-year fact.
+          const year = normalizeFactYear(factYear) ?? (typeof factYear === "string" && factYear.trim() ? factYear.trim().slice(0, 16) : null);
+          updates.factYear = year;
         }
       }
       const updated = await storage.updateDiscrepancy(req.params.id, updates as any);
@@ -229,7 +233,7 @@ export function registerDiscrepancyRoutes(app: Express) {
       let factWrite:
         | { status: "written"; key: string }
         | { status: "narrative"; key: string }
-        | { status: "needs_mapping" }
+        | { status: "needs_mapping"; needsYear?: true }
         | { status: "not_linked" }
         | null = null;
       let staleFacts: ReturnType<typeof findStaleFacts> = [];
@@ -259,7 +263,13 @@ export function registerDiscrepancyRoutes(app: Express) {
         try {
           // A fact the broker just picked is trusted as is.
           const result = await applyDiscrepancyResolution(updated, { brokerChoseFact: factKey !== undefined });
-          if (result === NEEDS_MAPPING) factWrite = { status: "needs_mapping" };
+          if (result === NEEDS_MAPPING) {
+            // A list of values by year the broker picked without a year: ask which year.
+            const deal = await storage.getDeal(updated.dealId);
+            const info = ((deal?.extractedInfo as Record<string, unknown> | null) || {});
+            const needsYear = !!updated.factKey && updated.factKey !== NO_FACT_KEY && !updated.factYear && isMapFact(info, updated.factKey);
+            factWrite = needsYear ? { status: "needs_mapping", needsYear: true } : { status: "needs_mapping" };
+          }
           else if (result === null) factWrite = { status: "not_linked" };
           else if (result === NARRATIVE_FACT) {
             // A description the figure is part of: offer its rewrite instead of overwriting it.

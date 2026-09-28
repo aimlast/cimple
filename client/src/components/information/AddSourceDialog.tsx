@@ -110,7 +110,7 @@ export function AddSourceDialog({ dealId, open, onOpenChange, preset, onAdded }:
         if (!r.ok) throw new Error((body && body.error) || (r.status === 401 ? "Your session has expired — please sign in again." : `Upload failed (${r.status})`));
         return body;
       }
-      if (text.trim().length < 20) throw new Error("Paste the text of the source (at least a sentence)");
+      if (text.trim().length < 50) throw new Error("Paste the text of the source (at least a sentence or two)");
       const r = await fetch(`/api/deals/${dealId}/information/sources`, {
         method: "POST",
         credentials: "include",
@@ -139,7 +139,7 @@ export function AddSourceDialog({ dealId, open, onOpenChange, preset, onAdded }:
   });
 
   const isWebKind = kind === "website" || kind === "social";
-  const ready = tab === "file" ? !!file : text.trim().length >= 20;
+  const ready = tab === "file" ? !!file : text.trim().length >= 50;
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -204,11 +204,11 @@ export function AddSourceDialog({ dealId, open, onOpenChange, preset, onAdded }:
               <Label className="text-xs">File</Label>
               <Input
                 type="file"
-                accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.txt,.csv,.md"
+                accept=".pdf,.xlsx,.xls,.docx,.pptx,.txt,.csv,.md"
                 onChange={(e) => setFile(e.target.files?.[0] || null)}
                 className="h-9"
               />
-              <p className="text-[10px] text-muted-foreground">PDF, Excel, Word, PowerPoint or text · up to 20 MB</p>
+              <p className="text-[10px] text-muted-foreground">PDF, Excel, Word (.docx), PowerPoint (.pptx) or text · up to 20 MB</p>
             </div>
           ) : (
             <div className="space-y-1.5">

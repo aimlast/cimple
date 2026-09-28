@@ -27,9 +27,8 @@ import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
 import { storage } from "../storage";
-import { createAndIngestSource, withDealFactsLock } from "../documents/ingest";
-import { removeDocumentFields } from "../interview/info-merger";
-import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { createAndIngestSource } from "../documents/ingest";
+import { removeSourceFacts } from "../documents/cleanup";
 import {
   pdAll,
   pdData,
@@ -877,16 +876,11 @@ function summarise(s: CrmImportStatus): string {
 async function retireDocument(doc: Document): Promise<void> {
   try {
     await storage.deleteDocument(doc.id);
-    await withDealFactsLock(doc.dealId, async () => {
-      const deal = await storage.getDeal(doc.dealId);
-      if (!deal) return;
-      // Facts the new version repeats were recorded as corroborations when
-      // it was ingested, so they stay; only what the old version alone said
-      // goes. Saved whenever anything was cleaned (alternates, notes too).
-      const { info, changed } = removeDocumentFields((deal.extractedInfo as Record<string, unknown>) || {}, doc.id);
-      if (changed) await storage.updateDeal(doc.dealId, { extractedInfo: info } as any);
-    });
-    await settleMergeRowsQuietly(doc.dealId, "crm-seller");
+    // Facts the new version repeats were recorded as corroborations when it
+    // was ingested, so they stay; only what the old version alone said goes,
+    // and what it leaves empty is refilled by the merge's own authority
+    // (removeSourceFacts — the same clean-up as a broker's delete).
+    await removeSourceFacts(doc.dealId, doc.id);
   } catch (err) {
     console.warn(`[crm-seller] couldn't retire superseded source ${doc.id}:`, err);
   }

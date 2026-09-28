@@ -162,7 +162,9 @@ test("codename validation rejects a customer, a staff surname and a landlord", (
     assert.equal(v.ok, false, `accepted ${bad}`);
   }
   assert.equal(validateCodename(pacific, "Project Kingsway Harbour", none).ok, true);
-  assert.equal(validateCodename(pacific, "Project Coastline", none).ok, true);
+  // FREE round F7: "Coastline" stems from the business's own "Coast" — refused now.
+  assert.equal(validateCodename(pacific, "Project Coastline", none).ok, false);
+  assert.equal(validateCodename(pacific, "Project Quartz", none).ok, true);
 });
 
 test("an automatic codename never names the deal's customers", () => {

@@ -51,6 +51,8 @@ export interface NdaAnswerRow {
   dealId: string;
   businessName: string;
   signedAt: string | null;
+  /** The name the buyer typed as their signature (NDAs signed since typed names). */
+  signedBy?: string | null;
   summary: string;
   answers: Record<string, any>;
 }

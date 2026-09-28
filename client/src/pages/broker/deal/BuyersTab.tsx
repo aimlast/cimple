@@ -14,6 +14,7 @@ import { BuyerMatchingPanel } from "@/components/deal/BuyerMatchingPanel";
 import { SuggestedBuyersPanel } from "@/components/deal/SuggestedBuyersPanel";
 import { ExternalAcquirersPanel } from "@/components/deal/ExternalAcquirersPanel";
 import { AccessLevelSelect } from "@/components/cim-builder/AccessLevelSelect";
+import { BuyerNdaTermsCard } from "@/components/deal/BuyerNdaTermsCard";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -55,6 +56,7 @@ import {
   UserPlus,
   Loader2,
   Copy,
+  Lock,
 } from "lucide-react";
 
 /** Read the server's JSON error body, falling back to a readable default. */
@@ -92,7 +94,9 @@ function shortDate(value: string | Date | null | undefined): string {
 const EXTEND_DAYS = 30;
 
 export function BuyersTab() {
-  const { dealId } = useDeal();
+  const { dealId, deal } = useDeal();
+  // Buyers can only open a published CIM (the server enforces it too).
+  const published = !!deal?.isLive;
   const { toast } = useToast();
   const queryClient = useQueryClient();
 
@@ -238,12 +242,27 @@ export function BuyersTab() {
             variant="outline"
             className="h-8 text-xs gap-1.5 border-teal/30 text-teal hover:bg-teal/10 shrink-0"
             onClick={openGrant}
+            disabled={!published}
+            title={published ? undefined : "Publish the CIM first — buyers can only open a published CIM"}
             data-testid="button-grant-access"
           >
             <UserPlus className="h-3.5 w-3.5" />
             Grant access
           </Button>
         </div>
+        {!published && (
+          <div
+            className="mb-3 flex items-start gap-2.5 rounded-lg border border-border bg-muted/30 px-3.5 py-3"
+            data-testid="notice-not-published"
+          >
+            <Lock className="h-4 w-4 mt-0.5 shrink-0 text-muted-foreground" />
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              <span className="font-medium text-foreground">The CIM isn&apos;t published yet.</span>{" "}
+              Buyers can only open it once it&apos;s live — publish it from the Overview tab when the design is approved.
+              Buyers the seller approves before then get their access automatically when you publish.
+            </p>
+          </div>
+        )}
         {activeBuyers.length === 0 ? (
           <div className="rounded-lg border border-dashed border-border p-6 text-center">
             <Eye className="h-5 w-5 mx-auto text-muted-foreground/40 mb-2" />
@@ -510,6 +529,11 @@ export function BuyersTab() {
           </p>
         </div>
         <BuyerApprovalsPanel dealId={dealId} />
+      </section>
+
+      {/* Buyer NDA — what buyers sign before the CIM opens */}
+      <section className="pt-4 border-t border-border">
+        <BuyerNdaTermsCard scope="deal" dealId={dealId} />
       </section>
 
       {/* Outreach & Matching */}

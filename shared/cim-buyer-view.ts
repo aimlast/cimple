@@ -4,7 +4,8 @@
  * and the buyer Q&A chatbot, so the two can never disagree.
  *
  * Rules (server-side — the browser is never trusted to hide anything):
- *   - Hidden sections, and sections the AI is still writing, never leave
+ *   - Hidden sections, sections the AI is still writing, and placeholders
+ *     for sections it couldn't write (CIM_FALLBACK_REASONING) never leave
  *     the server.
  *   - Access level → version: teaser/full → Blind, loi → Normal,
  *     due_diligence → DD.
@@ -38,6 +39,7 @@ import type { CimSection, CimSectionOverride } from "./schema";
 import {
   LOCKED_LAYOUT_TYPE,
   applySectionOverride,
+  isCimFallbackSection,
   cimModeForAccessLevel,
   getCimLayout,
   sectionTier,
@@ -45,6 +47,7 @@ import {
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
+import { factAmounts, parseChartNumber, withStatedChartTotal } from "./cim-chart-values";
 
 export interface BuyerSection {
   id: string;
@@ -88,6 +91,71 @@ export function ndaBlocksBuyer(
   return !!deal.ndaRequired && !access.ndaSigned;
 }
 
+/**
+ * True while a regenerated CIM waits for the broker to publish it: it
+ * replaced one buyers could open, so no buyer path (view room, Q&A chatbot,
+ * media) serves anything from it until then (server/cim/generation-jobs.ts).
+ */
+export function cimHeldFromBuyers(deal: { cimGeneration?: unknown }): boolean {
+  const g = deal.cimGeneration as { buyerHold?: unknown } | null | undefined;
+  return !!g?.buyerHold;
+}
+
+/**
+ * The listed asking price, written as a figure ("$4,500,000"); null when
+ * there is none. Text that isn't one number is used as written.
+ */
+export function listedPriceText(price: string | null | undefined): string | null {
+  const t = (price ?? "").trim();
+  if (!t) return null;
+  const n = parseChartNumber(t);
+  return n !== null && n >= 1000 ? `$${Math.round(n).toLocaleString("en-US")}` : t;
+}
+
+/**
+ * A label that IS the asking price — "Asking Price", "List price (CAD)",
+ * "Listed price:" — and nothing else. "Asking Price / SDE" (9.4×), "Asking
+ * price as a multiple of SDE" and "List price per sq ft" are other figures
+ * that only mention the price; rewriting them showed buyers "$3,200,000" in
+ * place of a multiple.
+ */
+const ASKING_LABEL = /^\s*(?:the\s+)?(?:asking|list(?:ing|ed)?)\s+price\s*(?:\(\s*(?:cad|usd|c\$|us\$|\$)\s*\))?\s*[:*]?\s*$/i;
+
+/** The value shown is a dollar amount (never a multiple, a percentage or a rate). */
+function isPriceValue(v: unknown): boolean {
+  const t = String(v ?? "").trim();
+  if (!t || /[x×%]\s*\)?\s*$/i.test(t) || /\bper\b|\/\s*(?:sq|ft|yr|year|month)/i.test(t)) return false;
+  const n = parseChartNumber(t);
+  return /\$/.test(t) || (n !== null && n >= 1000) || /price upon request|offers?\b/i.test(t);
+}
+
+/**
+ * A section with its asking price shown as the broker lists it now: the
+ * cover's price and an "Asking price" key number or callout. The figure is
+ * stored when the CIM is written; a price the broker changed afterwards on
+ * the Information tab never reached buyers (Lakeshore scenario, 2026-09-26).
+ * Other sections' wording is the staleness check's to flag for the broker.
+ */
+export function withListedAskingPrice<T extends { layoutType: string; layoutData: unknown }>(section: T, price: string | null): T {
+  if (!price || !section.layoutData || typeof section.layoutData !== "object") return section;
+  const d = section.layoutData as Record<string, unknown>;
+  if (section.layoutType === "cover_page" && typeof d.askingPrice === "string" && d.askingPrice.trim()) {
+    return { ...section, layoutData: { ...d, askingPrice: price } };
+  }
+  if (section.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
+    const metrics = (d.metrics as unknown[]).map((m) =>
+      m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) && isPriceValue((m as Record<string, unknown>).value)
+        ? { ...(m as object), value: price }
+        : m,
+    );
+    return { ...section, layoutData: { ...d, metrics } };
+  }
+  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? "")) && isPriceValue(d.primaryValue)) {
+    return { ...section, layoutData: { ...d, primaryValue: price } };
+  }
+  return section;
+}
+
 /** The neutral key a blind buyer sees for a section (never derived from its title). */
 export function blindSectionKey(sectionId: string): string {
   return `s_${String(sectionId).replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
@@ -109,7 +177,11 @@ function writingInProgress(s: CimSection): boolean {
  * Pure: build the buyer's sections from the deal's rows. `overrides` must be
  * the rows for the buyer's mode (blind or dd; ignored for normal).
  */
-export function buildBuyerCim(input: {
+export function buildBuyerCim(input: BuyerCimInput): BuyerCim {
+  return buildBuyerSections(input);
+}
+
+interface BuyerCimInput {
   deal: DealLike;
   accessLevel: string | null | undefined;
   sections: CimSection[];
@@ -119,9 +191,32 @@ export function buildBuyerCim(input: {
    * Blind CIM then shows no uploads at all.
    */
   media?: MediaAssetRef[] | null;
-}): BuyerCim {
+  /** The broker's listed asking price now (server: listedAskingPrice) — the cover and key numbers show it. */
+  askingPrice?: string | null;
+}
+
+function buildBuyerSections(input: BuyerCimInput): BuyerCim {
   const { deal, accessLevel } = input;
   const mode = cimModeForAccessLevel(accessLevel);
+  // The figures as they stand now, applied to each section BEFORE the Blind
+  // identity check so the check sees exactly what the buyer receives:
+  // charts written before they carried their stated total get it back when
+  // the facts state the whole their slices make (withStatedChartTotal), and
+  // the cover / key numbers show the broker's listed price. In the Blind CIM
+  // a listed price the broker typed as words that identify the business
+  // ("$2.1M plus Harbourline Dental Group's building") is never injected —
+  // the redacted section keeps its own figure.
+  const amounts = factAmounts(deal.extractedInfo);
+  let price = listedPriceText(input.askingPrice);
+  if (price && mode === "blind") {
+    const terms = blindLeakTerms(deal as any, { codename: deal.blindCodename || "Confidential Opportunity" });
+    if (findBlindLeaks(price, terms).length > 0 || blindPlaceholders(price).length > 0) price = null;
+  }
+  const withCurrentFigures = (s: BuyerSection): BuyerSection => {
+    if (s.locked) return s;
+    const withTotal = withStatedChartTotal(s, amounts);
+    return price ? withListedAskingPrice(withTotal, price) : withTotal;
+  };
   const assets = input.media ? new Map(input.media.map((m) => [m.id, m])) : null;
   const mediaIdentifiers = mode === "blind"
     ? [...blindIdentifiers(deal as any), ...dealAddressFragments((deal as any).extractedInfo)]
@@ -132,7 +227,9 @@ export function buildBuyerCim(input: {
       ? buyerMediaLayoutData(s.layoutType, s.layoutData, override, mode, { assets, identifiers: mediaIdentifiers })
       : s.layoutData;
   const visible = [...input.sections]
-    .filter((s) => s.isVisible !== false && !writingInProgress(s))
+    // A placeholder for a section the AI couldn't write is broker
+    // instructions, not content — never served, even if made visible.
+    .filter((s) => s.isVisible !== false && !writingInProgress(s) && !isCimFallbackSection(s))
     .sort((a, b) => a.order - b.order);
 
   const base = (s: CimSection): BuyerSection => ({
@@ -152,7 +249,7 @@ export function buildBuyerCim(input: {
     const sections: BuyerSection[] = [];
     for (const s of visible) {
       const data = mediaData(s, null);
-      if (data) sections.push({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) });
+      if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: withoutAiPreparedBy(s.layoutType, data) }));
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
@@ -168,13 +265,13 @@ export function buildBuyerCim(input: {
     for (const s of visible) {
       if (isMediaLayout(s.layoutType)) {
         const data = mediaData(s, null);
-        if (data) sections.push({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null });
+        if (data) sections.push(withCurrentFigures({ ...base(s), layoutData: data, aiDraftContent: null, brokerEditedContent: null }));
         continue;
       }
       // A DD version written before the section's last edit is stale: the
       // current named content is served until the broker refreshes it.
       const o = s.ddStaleAt ? undefined : overrideMap.get(s.id);
-      sections.push(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s));
+      sections.push(withCurrentFigures(o ? { ...base(s), ...pick(applySectionOverride(s, o, "dd")) } : base(s)));
     }
     return { mode, sections, preparing: false, heldBack: 0, leaked: [], leakReasons: {} };
   }
@@ -195,7 +292,8 @@ export function buildBuyerCim(input: {
   // Real key → neutral key, for every section (relatedSections point at keys).
   const keyMap = new Map(visible.map((s) => [s.sectionKey, blindSectionKey(s.id)]));
   /** Serve it only if nothing identifying is left in what the buyer receives. */
-  const serve = (s: CimSection, section: BuyerSection) => {
+  const serve = (s: CimSection, served: BuyerSection) => {
+    const section = withCurrentFigures(served);
     // relatedSections carry the real (title-derived) keys — switch them to
     // neutral ones before the check; unknown keys are dropped.
     const data = section.layoutData as Record<string, unknown> | null;

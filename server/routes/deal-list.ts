@@ -11,7 +11,7 @@
  * plan, section importance, deep check…) bump it constantly.
  */
 import type { Express } from "express";
-import { and, desc, eq, inArray, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, ne, sql } from "drizzle-orm";
 import { db } from "../db";
 import {
   deals,
@@ -309,7 +309,8 @@ export async function loadDealSideFacts(
         acceptedAt: sellerInvites.acceptedAt,
       })
       .from(sellerInvites)
-      .where(inArray(sellerInvites.dealId, ids))
+      // A removed seller-team member's revoked link is not the deal's seller.
+      .where(and(inArray(sellerInvites.dealId, ids), ne(sellerInvites.status, "revoked")))
       .orderBy(sellerInvites.dealId, desc(sellerInvites.createdAt)),
   ]);
 

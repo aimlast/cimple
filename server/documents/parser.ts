@@ -7,6 +7,26 @@
 import fs from "fs";
 import path from "path";
 
+/**
+ * File types Cimple can't read, and what to do instead. officeparser reads
+ * only the XML Office formats (.docx / .pptx / .xlsx): a .doc or .ppt went
+ * to "Couldn't read" with no reason and still ticked the checklist row.
+ */
+const UNSUPPORTED_FORMATS: Record<string, string> = {
+  ".doc": "Cimple can't read old Word (.doc) files — save it as .docx (File → Save As) and upload that",
+  ".ppt": "Cimple can't read old PowerPoint (.ppt) files — save it as .pptx (File → Save As) or as a PDF and upload that",
+};
+
+/** Why a file of this name can't be read (a plain sentence), or null. */
+export function unsupportedFormatReason(fileName: string): string | null {
+  return UNSUPPORTED_FORMATS[path.extname(fileName || "").toLowerCase()] ?? null;
+}
+
+/** A file whose format the parser can't read — `message` is the plain reason for the broker or seller. */
+export class UnreadableFormatError extends Error {
+  readonly unreadable = true;
+}
+
 export async function extractTextFromFile(filePath: string, mimeType?: string | null): Promise<string> {
   const ext = path.extname(filePath).toLowerCase();
 
@@ -49,8 +69,12 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
     return lines.join("\n");
   }
 
-  // PowerPoint (.pptx / .ppt) and Word (.docx / .doc)
-  if ([".pptx", ".ppt", ".docx", ".doc"].includes(ext)) {
+  // The old binary Office formats: the parser reads only the XML ones.
+  const unsupported = unsupportedFormatReason(filePath);
+  if (unsupported) throw new UnreadableFormatError(unsupported);
+
+  // PowerPoint (.pptx) and Word (.docx)
+  if ([".pptx", ".docx"].includes(ext)) {
     const officeparser = await import("officeparser");
     const parse: (file: string) => Promise<string> =
       (officeparser as any).parseOfficeAsync ?? (officeparser as any).default?.parseOfficeAsync;

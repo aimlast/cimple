@@ -1,0 +1,68 @@
+
+
+SAFETY & COMPLIANCE SUMMARY
+Fiscal years 2022 – 2024
+Prepared by Tanya Beaulieu, Safety & Compliance Manager — November 2025
+1. Carrier credentials
+National Safety Code (BC)NSC BC 20-487-316 — Safety Certificate, rating: Satisfactory
+US operating authorityUSDOT 9318842; occasional Washington State lanes (bonded carrier, 22 
+FAST-card drivers)
+Port accessPort of Vancouver Truck Licensing System licence — 14 drayage units 
+tagged
+Food safetyBRCGS Storage & Distribution certification, Grade A (audits Jun 2023, Jun 
+2024, Jun 2025); Safe Food for Canadians licence for storage and handling
+Other programsPartners in Protection (CBSA) member since 2016; SmartWay Transport 
+Partner; WorkSafeBC Certificate of Recognition (COR) since 2019
+Safety systemsElectronic logging devices and forward/driver-facing AI dash cameras in 
+100% of tractors (Samsara); speed limiters set at 105 km/h; roll-stability 
+control on all tractors 2017+; reefer temperature telematics on all 46 reefer 
+trailers
+2. CVSA roadside inspections
+YearInspectionsOut-of-service 
+(OOS)
+Driver OOSVehicle OOSOOS rateKm travelled
+20225893615.5%8,420,000
+202371125716.9%8,610,000
+2024646159.4%8,930,000
+For  reference,  roadside  out-of-service  rates  for  Canadian  truck  inspections  have  historically  run  around  20%  for  
+vehicles;  the  Company's  rate  has  been  well  below  that  in  each  year.  The  2023  increase  in  driver  OOS  relates  to  
+hours-of-service log errors during the transition to electronic logging (see Section 4).
+3. Collisions
+YearReportable collisionsPreventablePreventable per million kmInjuriesFatalities
+2022420.2400
+2023520.231 (minor)0
+2024310.1100
+4. NSC profile and contraventions
+YearContraventions (convictions)Profile status at year end
+202211Satisfactory — below monitoring threshold
+202317Satisfactory (after compliance review, June 2023)
+20247Satisfactory — below monitoring threshold
+Q1  2023  NSC  warning  letter  (contraventions  score  above  the  warning  threshold,  driven  by  hours-of-service  log  
+errors during the move to electronic logging). Facility compliance review completed June 2023 — result: Satisfactory. 
+Profile back below threshold by Q4 2023.
+Corrective actions taken in 2023: ELD refresher training for all drivers (100% completion), weekly log audits by the 
+safety  department,  a  two-strike  coaching  policy,  and  dispatch  planning  rules  that  block  assignments  which  would  
+exceed available hours.
+Sample document — fictional business for demonstrationPage 1 of 2
+
+5. Workplace safety (WorkSafeBC)
+YearTime-loss claimsMain causes
+20226Strains during manual unloading (3), slips on trailer steps (2), forklift contact (1)
+20237Strains (4), slips/falls (2), minor collision injury (1)
+20244Strains (2), slip on ice in yard (1), forklift contact (1)
+Experience rating: the Company's WorkSafeBC experience-rating adjustment for 2025 is a 9% discount off the base 
+rate for its classification unit. COR audit results: 89% (2023), 91% (2025).
+6. Driver programs
+• Entry-level: all new Class 1 drivers complete a 3-week in-house onboarding with a driver trainer, in addition to 
+provincial MELT requirements.
+• Annual: winter-driving and chain-up certification (October), TDG refresher, reefer pre-trip and temperature-log 
+training for reefer drivers.
+• Safe-driving bonus: $0.02/km quarterly for zero preventable incidents and clean inspections; paid to 81 of 96 
+drivers in Q4 2024.
+•  Camera-based coaching: harsh-event and distraction alerts reviewed weekly; 2024 coaching sessions: 412.
+7. Open items
+•  No outstanding NSC audits, show-cause hearings or safety-related orders.
+•  One  cargo  claim  open  at  November  2025  (reefer  temperature  excursion,  $38,400;  insurer  has  accepted  
+coverage subject to the deductible of $10,000).
+Pacific Coast Logistics Ltd. — Safety & Compliance Summary 2022–2024 (internal)
+Sample document — fictional business for demonstrationPage 2 of 2

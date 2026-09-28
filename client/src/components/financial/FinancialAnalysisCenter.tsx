@@ -377,6 +377,29 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
   const latestIsRunning = latestAnalysis?.status === "running";
   const analysisComplete = analysis.status === "completed" || analysis.status === "reviewed";
   const latestVersion = latestAnalysis?.version ?? analysis.version;
+  // Server-computed: a statement deleted or added since this version ran.
+  const sourceStatus = (analysis as FinancialAnalysis & { sourceStatus?: { message: string | null; blocking: boolean } | null }).sourceStatus ?? null;
+  // Statement years / working capital only the broker's private material states (not yet approved).
+  type PrivateMarks = { privateYears?: string[]; privateEvidence?: boolean; privateApproved?: boolean };
+  const privPnl = pnlData as (ReclassifiedTableData & PrivateMarks) | null;
+  const privBs = bsData as (ReclassifiedTableData & PrivateMarks) | null;
+  const privNorm = normData as (NormalizationData & PrivateMarks) | null;
+  const privWc = wcData as (WorkingCapitalData & PrivateMarks) | null;
+  const heldYears = (x: PrivateMarks | null) => (x?.privateYears?.length && !x.privateApproved ? x.privateYears : null);
+  const privateHeld = [
+    heldYears(privPnl) ? `the ${heldYears(privPnl)!.join(", ")} income statement` : null,
+    heldYears(privBs) ? `the ${heldYears(privBs)!.join(", ")} balance sheet` : null,
+    heldYears(privNorm) ? `${heldYears(privNorm)!.join(", ")} reported net income` : null,
+    privWc?.privateEvidence && !privWc.privateApproved ? "working capital" : null,
+  ].filter((x): x is string => !!x);
+  const approvePrivateFigures = () => {
+    const updates: Record<string, unknown> = {};
+    if (heldYears(privPnl)) updates.reclassifiedPnl = { ...privPnl, privateApproved: true };
+    if (heldYears(privBs)) updates.reclassifiedBalanceSheet = { ...privBs, privateApproved: true };
+    if (heldYears(privNorm)) updates.normalization = { ...privNorm, privateApproved: true };
+    if (privWc?.privateEvidence && !privWc.privateApproved) updates.workingCapital = { ...privWc, privateApproved: true };
+    updateAnalysis.mutate(updates as Partial<FinancialAnalysis>);
+  };
   const versionLabel = (v: AnalysisVersionSummary) => {
     const status = (STATUS_BADGE[v.status] || STATUS_BADGE.draft).label;
     const when = v.createdAt ? new Date(v.createdAt).toLocaleDateString() : "";
@@ -507,6 +530,54 @@ export function FinancialAnalysisCenter({ dealId, onBack }: FinancialAnalysisCen
             disabled={runAnalysis.isPending}
           >
             <RefreshCw className="h-3 w-3" /> Retry
+          </Button>
+        </div>
+      )}
+
+      {/* Sources changed since this analysis ran (a statement deleted or added) */}
+      {analysisComplete && sourceStatus?.message && (
+        <div
+          className={`rounded-lg border px-4 py-3 flex items-start gap-3 ${sourceStatus.blocking ? "border-red-500/30 bg-red-500/5" : "border-amber-500/30 bg-amber-500/5"}`}
+          data-testid="analysis-sources-changed"
+        >
+          <AlertTriangle className={`h-4 w-4 shrink-0 mt-0.5 ${sourceStatus.blocking ? "text-red-400" : "text-amber-400"}`} />
+          <div className="flex-1 min-w-0">
+            <p className={`text-sm font-medium ${sourceStatus.blocking ? "text-red-400" : "text-amber-400"}`}>
+              {sourceStatus.blocking ? "Re-run needed before the CIM can be generated" : "Documents changed since this analysis"}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">{sourceStatus.message}</p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs gap-1 shrink-0"
+            onClick={() => setRerunOpen(true)}
+            disabled={runAnalysis.isPending || latestIsRunning}
+          >
+            <RefreshCw className="h-3 w-3" /> Re-run
+          </Button>
+        </div>
+      )}
+
+      {/* Figures only the broker's private material states — kept out of the CIM until approved */}
+      {analysisComplete && privateHeld.length > 0 && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-4 py-3 flex items-start gap-3" data-testid="analysis-private-figures">
+          <ShieldCheck className="h-4 w-4 text-amber-400 shrink-0 mt-0.5" />
+          <div className="flex-1 min-w-0">
+            <p className="text-sm font-medium text-amber-400">Kept out of the CIM: figures only your private notes state</p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {privateHeld.join("; ").replace(/^./, (c) => c.toUpperCase())} {privateHeld.length === 1 ? "comes" : "come"} only from your CRM notes or broker-only files.
+              Buyers won't see {privateHeld.length === 1 ? "it" : "them"} unless you include {privateHeld.length === 1 ? "it" : "them"}.
+            </p>
+          </div>
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs shrink-0"
+            onClick={approvePrivateFigures}
+            disabled={updateAnalysis.isPending || viewingOlder}
+          >
+            Include in the CIM
           </Button>
         </div>
       )}

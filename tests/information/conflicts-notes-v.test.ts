@@ -318,9 +318,11 @@ await (async () => {
   // First review: each its own note
   let review = recordPlacements(emptyReview(), { groups: items.map((_, i) => ({ text: items[i].text, notes: [`N${i + 1}`] })), notNotes: [] }, items, [], docs).review;
   // (The deterministic final pass moves Luis's 15% stake, from a shared
-  // email, into the facts: two notes stay.)
+  // email, into the facts, and — f-facts-r2 — folds the two seller-financing
+  // notes, one matter however each names the owner: one note, both wordings.)
   const first = applyNotesReview(info, review, docs).info;
-  assert.equal(getPrivateNotes(first).length, 2);
+  assert.equal(getPrivateNotes(first).length, 1);
+  assert.match(getPrivateNotes(first)[0].note, /most of purchase price at closing[\s\S]*not half/);
   assert.equal(first.ownershipStructure, "Luis confirmed 15% ownership stake");
   // A later review folds the two financing notes (existing) together; the first draft drops "Gord", the repair keeps it
   const current = currentGroups(items, review);

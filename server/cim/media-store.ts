@@ -15,7 +15,8 @@ import { eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { dealMedia, type BuyerAccess, type DealMedia } from "@shared/schema";
-import { buildBuyerCim, ndaBlocksBuyer } from "@shared/cim-buyer-view";
+import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer } from "@shared/cim-buyer-view";
+import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { mediaIdsIn, normalizeMediaLayoutData, type MediaAssetRef, type MediaLayoutKey } from "@shared/cim-media";
 import { businessBrandingMediaIds } from "./templates";
@@ -102,7 +103,9 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
   if (hit && Date.now() - hit.at < VISIBLE_TTL_MS && hit.dealId === access.dealId && hit.access === accessFingerprint(access)) return hit;
   const ids = new Set<string>();
   const deal = await storage.getDeal(access.dealId);
-  if (deal && !ndaBlocksBuyer(deal, access)) {
+  // Nothing CIM-derived before publishing (shared/buyer-publish-gate.ts),
+  // and nothing from a CIM held for the broker's review (generation-jobs).
+  if (deal && dealPublishedForBuyers(deal) && !ndaBlocksBuyer(deal, access) && !cimHeldFromBuyers(deal)) {
     const mode = cimModeForAccessLevel(access.accessLevel);
     const [sections, overrides, media] = await Promise.all([
       storage.getCimSectionsByDeal(deal.id),

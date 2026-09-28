@@ -296,6 +296,32 @@ function extractMessageSoFar(buf: string): { text: string; complete: boolean } |
   return { text: out, complete: false };
 }
 
+/**
+ * A model failure worth a quick retry: the API overloaded (529
+ * overloaded_error — arriving as a status, or inside the stream as an
+ * APIConnectionError carrying the error JSON), a 5xx, a rate limit, or a
+ * dropped connection. Never a billing or request error — those fail the
+ * same way every time.
+ */
+export function isTransientModelError(err: unknown): boolean {
+  const e = err as { status?: unknown; name?: unknown; message?: unknown; error?: { type?: unknown; error?: { type?: unknown } } } | null;
+  if (!e) return false;
+  const msg = `${String(e.name ?? "")} ${String(e.message ?? "")}`;
+  if (/credit balance|billing|invalid[_ ]request|authentication|permission/i.test(msg)) return false;
+  const status = typeof e.status === "number" ? e.status : null;
+  if (status !== null && [429, 500, 502, 503, 504, 529].includes(status)) return true;
+  const type = String(e.error?.type ?? e.error?.error?.type ?? "");
+  if (/overloaded_error|api_error|rate_limit_error/.test(type)) return true;
+  return /overloaded_error|"type"\s*:\s*"api_error"|\boverloaded\b|APIConnection(?:Timeout)?Error|ECONNRESET|ETIMEDOUT|socket hang up|fetch failed|terminated/i.test(msg);
+}
+
+/**
+ * Backoff before each retry of a transient failure — short, because the
+ * seller is waiting (a sustained outage still ends in the honest fault
+ * notice, after about 5s more). Tests shorten it.
+ */
+export const TRANSIENT_RETRY: { delaysMs: number[] } = { delaysMs: [1500, 4000] };
+
 export async function callInterviewWithRecovery(
   anthropic: Anthropic,
   params: InterviewCallParams,
@@ -332,6 +358,22 @@ export async function callInterviewWithRecovery(
     onEnd?: (end: { shouldEnd: boolean; endReason?: string }) => void;
   } = {},
 ): Promise<{ response: InterviewResponse; degraded: boolean; rejected?: boolean; headOnly?: boolean }> {
+  // Did the streamed attempt reach the seller or a hook (text shown, the
+  // gate checked, the head or end released)? Then it can't be retried.
+  let streamTouched = false;
+  const retryTransient = async <T,>(run: () => Promise<T>, canRetry: () => boolean): Promise<T> => {
+    for (let i = 0; ; i++) {
+      try {
+        return await run();
+      } catch (err) {
+        const wait = TRANSIENT_RETRY.delaysMs[i];
+        if (wait === undefined || !isTransientModelError(err) || !canRetry()) throw err;
+        const what = err instanceof Error ? `${err.name}: ${err.message}`.slice(0, 160) : String(err).slice(0, 160);
+        console.warn(`[turn-guard] Interview model call failed (${what}) — retry ${i + 1} in ${wait}ms`);
+        await new Promise((r) => setTimeout(r, wait));
+      }
+    }
+  };
   const attempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean }> => {
@@ -365,6 +407,7 @@ export async function callInterviewWithRecovery(
   const streamAttempt = async (
     messages: InterviewCallParams["messages"],
   ): Promise<{ response: InterviewResponse; valid: boolean; rejected?: boolean; headOnly?: boolean }> => {
+    streamTouched = false;
     const stream = anthropic.messages.stream({
       model: params.model,
       max_tokens: params.maxTokens,
@@ -388,11 +431,13 @@ export async function callInterviewWithRecovery(
         jsonBuf += event.delta.partial_json;
         const msg = extractMessageSoFar(jsonBuf);
         if (msg && msg.text.length > emitted) {
+          if (onDelta) streamTouched = true;
           onDelta?.(msg.text.slice(emitted));
           emitted = msg.text.length;
         }
         if (msg?.complete && !checked && onMessageComplete) {
           checked = true;
+          streamTouched = true;
           let keep = true;
           try {
             keep = await onMessageComplete(msg.text);
@@ -413,6 +458,7 @@ export async function callInterviewWithRecovery(
           const { head, complete } = headSoFar(jsonBuf);
           if (complete) {
             headDone = true;
+            streamTouched = true;
             try {
               hooks.onHead?.(head);
             } catch (err) {
@@ -430,6 +476,7 @@ export async function callInterviewWithRecovery(
           const end = endSoFar(jsonBuf);
           if (end.known) {
             endDone = true;
+            streamTouched = true;
             try {
               hooks.onEnd?.({ shouldEnd: end.shouldEnd === true, endReason: end.endReason });
             } catch (err) {
@@ -457,9 +504,16 @@ export async function callInterviewWithRecovery(
     // (A client without streaming — a test double — gets the plain call; a
     // head-only caller then simply receives the whole response.)
     const canStream = typeof (anthropic.messages as { stream?: unknown }).stream === "function";
-    const first = canStream && (onDelta || hooks.onHead || hooks.headOnly || hooks.onEnd)
-      ? await streamAttempt(params.messages)
-      : await attempt(params.messages);
+    const streamed = canStream && (onDelta || hooks.onHead || hooks.headOnly || hooks.onEnd);
+    // A transient failure (the API overloaded mid-turn) is retried after a
+    // short backoff — a streamed call only while nothing of it has reached
+    // the seller or the turn's hooks. It used to go straight to the fault
+    // notice ("I'm having a brief technical issue…"): two of eight turns
+    // lost to a 529 in the round A re-check.
+    const first = await retryTransient(
+      () => (streamed ? streamAttempt(params.messages) : attempt(params.messages)),
+      () => !streamed || !streamTouched,
+    );
     if ((first as { rejected?: boolean }).rejected) return { response: first.response, degraded: false, rejected: true };
     if ((first as { headOnly?: boolean }).headOnly) return { response: backfillSuggestedAnswers(first.response), degraded: false, headOnly: true };
     if (first.valid) return { response: backfillSuggestedAnswers(first.response), degraded: false };
@@ -477,7 +531,7 @@ export async function callInterviewWithRecovery(
           "[SYSTEM: Your previous response was invalid or truncated. Respond again now using the interview_response tool. Keep the conversational message concise, include suggestedAnswers where appropriate, and keep all structured fields complete.]",
       },
     ];
-    const second = await attempt(retryMessages);
+    const second = await retryTransient(() => attempt(retryMessages), () => true);
     if (second.valid) return { response: backfillSuggestedAnswers(second.response), degraded: false };
   } catch (err) {
     // A billing failure is not transient — every subsequent call will fail
@@ -1390,6 +1444,11 @@ const CONTRAST_RE = /^(?:but|though|although|whereas|yet)\b/i;
 // uploaded", "the call notes mention", "on file".
 const CITES_FILE_RE =
   /\b(?:your|the|their)\s(?:[\w&'’.-]+\s){0,4}?(?:t2s?|t4s?|p&l|pnl|statements?|financials?|documents?|docs|reports?|lease|leases|contracts?|agreements?|msa|schedules?|registers?|roster|returns?|filings?|notes|transcripts?|call|calls|emails?|questionnaire|files?|books|ledger|polic(?:y|ies)|certificates?|budget|forecast|invoices?|records|summary|sheets?|deck|website|appraisal|audit|letters?|log|add-?back list)\b(?:\s[\w&'’.,$%-]+){0,5}?\s(?:shows?|says?|lists?|mentions?|notes?|states?|indicates?|puts?|records?|has|had|runs?|ran|expires?|ends?|renews?|covers?|includes?|reports?|gives?)\b|\b(?:you|they) (?:uploaded|sent|shared|provided)\b|\baccording to\b|\bon file\b|\bin (?:your|the) (?:documents?|files?|statements?|p&l|t2|report|lease|contract|agreement|questionnaire)\b/i;
+// A lead sentence that only plays the seller's words back: "You mentioned
+// settling it at closing.", "On the employment agreements: you mentioned
+// it's never been an issue.", "As you said, the lease runs to 2027."
+const RECAP_MENTION_RE =
+  /^(?:(?:on|about|regarding|as for|re)\s+[^:—–?]{1,60}?(?::\s+|\s[—–]\s|,\s+))?(?:(?:and|so|earlier|previously|before)\s*,?\s+)?(?:as\s+)?you(?:'ve| have)?\s+(?:already\s+)?(?:mentioned|said|told me|noted|indicated|explained|shared|described)\b/i;
 // Something specific: a number, a month, or a mid-sentence proper name / acronym.
 const SPECIFIC_FACT_RE = /\d|\b(?:january|february|march|april|may|june|july|august|september|october|november|december)\b|(?<=\s)(?:[A-Z]{2,}|[A-Z][a-z]+)\b/;
 
@@ -1419,6 +1478,31 @@ function echoesSeller(text: string, sellerMessage: string | null): boolean {
   if (own.length < 4) return false;
   const said = new Set(echoTokens(sellerMessage));
   return own.filter((w) => said.has(w)).length / own.length >= 0.7;
+}
+
+/**
+ * "(On the employment agreements:) you mentioned it's never been an issue."
+ * — the seller's LAST answer played back as its own sentence before the
+ * next question (round A re-check, Lakeshore). True unless it sets up a
+ * contrast with the file ("You mentioned 14 staff, but the roster lists
+ * 16") or the question leans on it ("…Is that…?"). Context from an earlier
+ * turn that the question builds on is not this ("you mentioned the 110-ton
+ * brake needs replacing … Beyond that, …?"): only words the seller just
+ * said count.
+ */
+export function playsBackLastAnswer(sentence: string, sellerMessage: string | null | undefined, question: string | null | undefined): boolean {
+  const plain = sentence.trim().replace(/[’‘]/g, "'");
+  if (!plain || plain.includes("?") || !sellerMessage) return false;
+  const mention = plain.match(RECAP_MENTION_RE);
+  if (!mention) return false;
+  // (Word stems only — "it's" leaves "it", which says nothing.)
+  const own = echoTokens(plain.slice(mention[0].length)).filter((w) => w.length >= 3);
+  if (own.length === 0) return false;
+  const heard = new Set(echoTokens(sellerMessage));
+  const share = own.filter((w) => heard.has(w)).length / own.length;
+  if (share < 0.7 || (own.length < 2 && share < 1)) return false;
+  if (/\b(?:but|though|although|whereas|yet|however|while)\b/i.test(plain) || CITES_FILE_RE.test(plain)) return false;
+  return !(question && LEANS_ON_LEAD_RE.test(question.trim().replace(/[’‘]/g, "'")));
 }
 
 function clauseVerdict(raw: string, sellerMessage: string | null): ClauseVerdict {
@@ -1501,6 +1585,9 @@ export function trimLeadSentence(sentence: string, ctx: { sellerMessage: string 
     }
     return "";
   }
+  // The seller's last answer played back as its own sentence (see
+  // playsBackLastAnswer) — it goes.
+  if (playsBackLastAnswer(core, ctx.sellerMessage, ctx.question)) return "";
   const end = core.match(/[.!]+["')\]”]*$/)?.[0] ?? "";
   const body = core.slice(0, core.length - end.length);
   // An aside between dashes is part of the clause around it: "That
@@ -1810,6 +1897,10 @@ function stripInQuestionMode(message: string, sellerMessage: string): string {
     const answerStart = first && ANSWER_START_RE.test(h.replace(/^["'(]+/, ""));
     const filler =
       praiseOfQuestion ||
+      // The seller's last answer played back ("On the employment agreements:
+      // you mentioned it's never been an issue.") — never the answer to
+      // what they asked.
+      (!(first && answerExpected) && !answerStart && playsBackLastAnswer(h, sellerMessage, spans[q].text)) ||
       // "Good to know the landlord is receptive." opens with an
       // acknowledgement, not an answer — even when it names what was asked.
       (!answerExpected && !reportsRecord && !answerStart && ACK_START_RE.test(h) && isFillerSentence(h, null)) ||

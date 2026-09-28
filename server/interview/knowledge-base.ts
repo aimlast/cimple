@@ -7,7 +7,7 @@ import { getInterviewOutline, renderOutlineForPrompt } from "./outline";
 import { coverageAdjustmentsForDeal, fieldLabel } from "./interview-plan";
 import type { InterviewOutline } from "@shared/schema";
 import { profileSafeForInterview, type SellerCommunicationProfile, type InterviewSellerProfile } from "./eq-profiler";
-import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, type FieldSource } from "./info-merger";
+import { getFieldSources, isSourceKind, repairCharIndexedValue, isFactKey, isBrokerSessionSource, type FieldSource } from "./info-merger";
 import { sellerInterviewView, privateSourceMatcher, heldByBroker, withHeldFacts } from "./seller-view";
 import { resolvedNotes, settleResolvedFacts, currentResolvedNotes, resolvedNoteLabel, type ResolvedDiscrepancyNote as ResolvedNote } from "../cim/resolved-block";
 import {
@@ -29,6 +29,7 @@ import { claimConflicts } from "./claim-conflicts";
 import { onFileItems, type EvidenceTarget, type OnFileItem } from "./on-file-evidence";
 import { openSellerOnlyTopics } from "./completion-gaps";
 import { sellerNamesFrom } from "./seller-voice";
+import { sessionModeOf, type ConductedBy } from "./session-mode";
 
 // =====================
 // Types
@@ -52,8 +53,8 @@ export interface KnowledgeBase {
   sectionImportance: SectionImportanceMap;
   /** Broker's plain-language adjustments to the interview plan. */
   outline: InterviewOutline;
-  /** Who is running this session — the seller alone, or a broker with the seller on a call. */
-  conductedBy: "seller" | "broker_with_seller";
+  /** Who is running this session — the seller alone, a broker with the seller on a call, or the broker alone. */
+  conductedBy: ConductedBy;
 
   // Industry-specific context (populated once industry + location are known)
   industryContext: IndustryContext | null;
@@ -525,8 +526,10 @@ export function assembleKnowledgeBase(
         valueA: privateA ? null : d.interviewValue,
         valueB: privateB ? null : d.documentValue,
         severity: d.severity,
-        explanation: privateSource ? null : d.aiExplanation,
-        suggestedResolution: privateSource ? null : d.suggestedResolution,
+        // The broker's normalisation work in them (add-backs, SDE vs
+        // adjusted EBITDA, a market salary) never reaches the interview.
+        explanation: privateSource ? null : sellerSafeGuidance(d.aiExplanation),
+        suggestedResolution: privateSource ? null : sellerSafeGuidance(d.suggestedResolution),
         ...(privateSource ? { privateSource: true } : {}),
       };
     });
@@ -639,7 +642,7 @@ export function assembleKnowledgeBase(
     sectionCoverage,
     sectionImportance,
     outline,
-    conductedBy: sessionMeta._conductedBy === "broker_with_seller" ? "broker_with_seller" : "seller",
+    conductedBy: sessionModeOf(latestSession),
     industryContext: null, // Set by the AI on first turn, stored on session
     // A profile built before broker-only sources were excluded keeps only
     // its style fields until it is rebuilt (its free text could quote them).
@@ -951,6 +954,10 @@ function describeFactSource(
     case "questionnaire":
       return "from the seller's intake questionnaire";
     case "broker":
+      // The broker's notes from their own AI interview session are not a
+      // broker edit — typed from memory, the seller confirms them (their
+      // answer replaces the note, info-merger.ts isBrokerSessionSource).
+      if (isBrokerSessionSource(src)) return "from the broker's notes (their AI session) — confirm with the seller";
       return "confirmed by the broker";
     case "crm":
       return "from the broker's CRM notes — confirm with the seller; never mention the CRM or quote it";
@@ -966,6 +973,23 @@ function describeFactSource(
       if (brokerOnly) return "from the broker's private notes — confirm with the seller; never mention or quote the source";
       return doc ? `from document: ${doc.name}` : "from an uploaded document";
   }
+}
+
+/**
+ * A discrepancy's broker-facing guidance, as the seller interview may see
+ * it: sentences that carry the broker's normalisation work — add-backs, SDE
+ * or EBITDA, a market or replacement salary — are left out ("The correct
+ * owner compensation add-back is $180,000 (…adjusted EBITDA adds back only
+ * the $15,000 above a $165,000 market salary)" is the broker's, not a
+ * question for the seller). Null when nothing is left.
+ */
+export function sellerSafeGuidance(text: string | null | undefined): string | null {
+  if (!text) return null;
+  const kept = text
+    .split(/(?<=[.!?])\s+(?=[A-Z0-9"'(])/)
+    .filter((s) => !isBrokerWorkText(s) && !/\b(?:ebitda|added\s+back|adds?\s+back|market\s+(?:salary|rate|wage)|replacement\s+(?:salary|cost))\b/i.test(s));
+  const out = kept.join(" ").trim();
+  return out.length > 0 ? out : null;
 }
 
 // =====================

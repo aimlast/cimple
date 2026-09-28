@@ -22,7 +22,8 @@ import { TogetherSetupDialog } from "@/components/deal/TogetherSetupDialog";
 import { ChecklistStepTitle } from "@/components/deal/ChecklistStepTitle";
 import { AddSourceDialog, type AddSourcePreset } from "@/components/information/AddSourceDialog";
 import { CrmLinkCard } from "@/components/crm/CrmLinkCard";
-import type { DealSellerContact } from "@shared/schema";
+import type { DealSellerContact, DocumentSourceMeta } from "@shared/schema";
+import { primarySellerInvite } from "@shared/seller-invite-revocation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -82,7 +83,8 @@ import {
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSummaryCard } from "@/components/cim-builder/CimSummaryCard";
+import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
+import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
@@ -98,8 +100,21 @@ import { CIM_SECTIONS } from "@shared/schema";
 
 // A document is "in flight" from upload until the parser writes a terminal
 // status; the document lists poll while any row is in this state.
-const isDocProcessing = (d: { status?: string | null }) =>
-  d.status === "pending" || d.status === "parsing";
+// (A row left "reading" for half an hour was cut off by a restart — not polled forever.)
+const isDocProcessing = (d: { status?: string | null; updatedAt?: string | Date | null }) =>
+  (d.status === "pending" || d.status === "parsing") &&
+  !(d.updatedAt && Date.now() - new Date(d.updatedAt).getTime() > 30 * 60_000);
+/** A source's chip: read, reading, read in part, or not read (with why, on hover). */
+function docChip(d: { status?: string | null; updatedAt?: string | Date | null; sourceMeta?: DocumentSourceMeta | null }): { className: string; title?: string } {
+  const meta = d.sourceMeta ?? null;
+  if (d.status === "failed" || ((d.status === "pending" || d.status === "parsing") && !isDocProcessing(d))) {
+    return { className: "bg-red-500/10 text-red-400", title: meta?.readFailed ? `Couldn't read: ${meta.readFailed.reason}` : "Couldn't read this source — open it on the Information tab" };
+  }
+  if (d.status === "extracted" && meta?.partialRead) return { className: "bg-amber-500/10 text-amber-600", title: `Read in part: ${meta.partialRead.reason}` };
+  if (d.status === "extracted") return { className: "bg-success-muted text-success-muted-foreground" };
+  if (d.status === "parsing") return { className: "bg-amber-500/10 text-amber-600", title: "Reading…" };
+  return { className: "bg-muted text-muted-foreground" };
+}
 const DOC_POLL_MS = 2500;
 const plural = (n: number, word: string) => `${n} ${n === 1 ? word : `${word}s`}`;
 const stripExt = (name?: string | null) => (name || "").replace(/\.[a-z0-9]{1,5}$/i, "");
@@ -195,18 +210,10 @@ function useInvites(dealId: string) {
  * status card and "Copy invite link" to the wrong person. Prefer the invite
  * furthest along (opened > emailed > created), NEWEST on ties — a re-invite
  * sent to a corrected email must win over the typo'd one it replaced.
+ * Shared with the Team tab's remove dialog, which warns when a removed
+ * member's link is this one.
  */
-function pickPrimaryInvite(invites: SellerInvite[]): SellerInvite | undefined {
-  if (invites.length === 0) return undefined;
-  const newestFirst = [...invites].sort(
-    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
-  );
-  return (
-    newestFirst.find((i) => !!i.acceptedAt) ??
-    newestFirst.find((i) => !!i.sentAt) ??
-    newestFirst[0]
-  );
-}
+const pickPrimaryInvite = (invites: SellerInvite[]): SellerInvite | undefined => primarySellerInvite(invites);
 
 /* ═══════════════════════════════════════════
    DOCUMENT UPLOAD CARD
@@ -291,13 +298,8 @@ function DocumentUploadCard({
                 {docs.slice(0, 5).map((d: any) => (
                   <span
                     key={d.id}
-                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${
-                      (d.status as string) === "extracted"
-                        ? "bg-success-muted text-success-muted-foreground"
-                        : (d.status as string) === "parsing"
-                          ? "bg-amber-500/10 text-amber-600"
-                          : "bg-muted text-muted-foreground"
-                    }`}
+                    title={docChip(d).title}
+                    className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-2xs font-medium ${docChip(d).className}`}
                   >
                     <FileText className="h-2.5 w-2.5" />
                     {stripExt(d.name).slice(0, 15) || "doc"}
@@ -1523,6 +1525,13 @@ function Phase3Center() {
   const { toast } = useToast();
   const cimContent = deal.cimContent as Record<string, string> | null;
   const [regenConfirmOpen, setRegenConfirmOpen] = useState(false);
+  // What "Regenerate all" does to buyers who can open the CIM now.
+  const builderState = useBuilderState(dealId);
+  const regenImpact = regenerateBuyerImpact({
+    isLive: deal.isLive,
+    openBuyers: builderState.data?.buyers.total,
+    approved: !!(deal.contentApprovedByBroker || deal.contentApprovedBySeller || deal.designApprovedByBroker || deal.designApprovedBySeller),
+  });
 
   // Throws on failure: returning [] here would drop the broker into the
   // "nothing generated yet" branch with a live Generate button — a loading
@@ -1872,6 +1881,7 @@ function Phase3Center() {
                   <li>Any generated Blind and DD versions</li>
                 </ul>
                 <p>To redo one section, hover it and choose Regenerate instead.</p>
+                {regenImpact && <p className="text-foreground" data-testid="text-regenerate-buyer-impact">{regenImpact}</p>}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

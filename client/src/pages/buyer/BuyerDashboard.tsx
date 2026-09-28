@@ -54,6 +54,8 @@ interface DashboardDeal {
 interface DashboardData {
   deals: DashboardDeal[];
   profileCompletionPct: number;
+  /** The account hasn't confirmed its email yet — deals shared with it stay hidden until it does. */
+  emailUnverified?: boolean;
 }
 
 type SortMode = "best_match" | "recent" | "price_high" | "price_low";
@@ -102,6 +104,20 @@ export default function BuyerDashboard() {
   });
 
   const allDeals = useMemo(() => (Array.isArray(data?.deals) ? data!.deals : []), [data]);
+
+  // Unconfirmed email: deals shared with this address stay off the
+  // dashboard until the owner proves the inbox (anyone can sign up with any
+  // address). The emailed link confirms it and sets the password.
+  const [verifyState, setVerifyState] = useState<"idle" | "sending" | "sent" | "error">("idle");
+  const sendVerification = async () => {
+    setVerifyState("sending");
+    try {
+      const r = await fetch("/api/buyer-auth/send-verification", { method: "POST", credentials: "include" });
+      setVerifyState(r.ok ? "sent" : "error");
+    } catch {
+      setVerifyState("error");
+    }
+  };
 
   // Build filter option lists from dataset
   const industries = useMemo(() => {
@@ -248,6 +264,32 @@ export default function BuyerDashboard() {
             </Card>
           )}
         </div>
+
+        {data.emailUnverified && (
+          <Card className="border-teal/30" data-testid="card-confirm-email">
+            <CardContent className="p-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-start gap-3 min-w-0">
+                <Lock className="h-4 w-4 text-teal mt-0.5 shrink-0" />
+                <div className="min-w-0">
+                  <div className="text-sm font-medium">Confirm your email to see deals shared with you</div>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {verifyState === "sent"
+                      ? "Check your inbox — the link confirms your email. Your broker's deals appear here once you've used it."
+                      : verifyState === "error"
+                        ? "We couldn't send the email just now. Please try again."
+                        : "Brokers share confidential deals by email. We'll send you a link to confirm this address is yours."}
+                  </p>
+                </div>
+              </div>
+              {verifyState !== "sent" && (
+                <Button size="sm" variant="outline" className="shrink-0" onClick={sendVerification} disabled={verifyState === "sending"} data-testid="button-send-verification">
+                  {verifyState === "sending" ? <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" /> : null}
+                  Send confirmation email
+                </Button>
+              )}
+            </CardContent>
+          </Card>
+        )}
 
         {/* Filters */}
         {allDeals.length > 0 && (

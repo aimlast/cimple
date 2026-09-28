@@ -222,6 +222,24 @@ function Row({
                 <AlertTriangle className="h-2.5 w-2.5" /> Blind held back
               </span>
             )}
+            {s.placeholder && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-red-400 shrink-0"
+                title="The AI couldn't write this section. It's hidden and never shown to buyers — regenerate it, write it yourself or delete it before publishing."
+                data-testid={`chip-placeholder-${s.id}`}
+              >
+                <AlertTriangle className="h-2.5 w-2.5" /> Couldn't be written
+              </span>
+            )}
+            {(s.factsChanged?.length ?? 0) > 0 && !running && (
+              <span
+                className="inline-flex items-center gap-0.5 text-blue-400 shrink-0"
+                title={`Changed since the CIM was written: ${s.factsChanged!.join(", ")}. This section still shows the old value — regenerate or edit it.`}
+                data-testid={`chip-facts-changed-${s.id}`}
+              >
+                <RefreshCw className="h-2.5 w-2.5" /> Facts changed
+              </span>
+            )}
             {s.figureWarnings?.length > 0 && !running && (
               <span
                 className="inline-flex items-center gap-0.5 text-amber-500 shrink-0"

@@ -67,6 +67,8 @@ Seller stop signals are binding. The FIRST time the seller says they need to sto
 
 **endReason** — Required only when shouldEnd is true. A brief explanation.
 
+Write the fields in this order: message, whyItMatters, importance, targetSection, suggestedAnswers, shouldEnd, endReason — then extractedFields, reasoning and the rest. The end decision belongs with what the seller sees, not after the bookkeeping.
+
 ## Confidence levels for extractedFields
 
 - **confirmed** — The seller explicitly stated this fact (requires `basis: "verbatim"`)

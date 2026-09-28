@@ -16,13 +16,13 @@ import { storage } from "../storage";
 import { generateCimLayout, type CimLayoutParams, type LayoutProgress } from "./layout-engine";
 import type { CimDocument } from "./layout-types";
 import { templateForDeal } from "./templates";
-import type { CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
+import type { BuyerAccess, CimGenerationStatus, Deal, FinancialAnalysis } from "@shared/schema";
 import { phaseIndex } from "@shared/deal-progress";
 import { listedAskingPrice } from "../information/deal-mirror";
 import { brokerFactsView } from "../information/facts";
 import { settleResolvedFacts, currentResolvedNotes, resolvedNotes } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
-import { buildCimFinancials, pickAnalysisForCim } from "./cim-financials";
+import { cimFinancialsFor } from "./cim-financials";
 import { keepOutFor } from "./keep-out";
 import { hasMonthYear } from "./fact-dates";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
@@ -30,6 +30,7 @@ import { factValueText } from "../information/cim-facts";
 import { db } from "../db";
 import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
+import { writerFactsSnapshot } from "./cim-staleness";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -59,15 +60,22 @@ export function _setGeneratorForTests(g: Generator | null) {
   generator = g ?? generateCimLayout;
 }
 
+/** The status as the browser gets it (the facts snapshot stays on the server). */
 function toStatus(job: CimGenerationJob): CimGenerationStatus {
-  const { dealId: _d, brokerId: _b, businessName: _n, ...status } = job;
+  const { dealId: _d, brokerId: _b, businessName: _n, factsAt: _f, ...status } = job;
   return status;
+}
+
+/** The status as stored on the deal (the facts snapshot included). */
+function storedStatus(job: CimGenerationJob): CimGenerationStatus {
+  const { dealId: _d, brokerId: _b, businessName: _n, ...stored } = job;
+  return stored;
 }
 
 /** Best-effort persistence — a failed status write must never kill the run. */
 async function persist(job: CimGenerationJob) {
   try {
-    await storage.updateDeal(job.dealId, { cimGeneration: toStatus(job) } as any);
+    await storage.updateDeal(job.dealId, { cimGeneration: storedStatus(job) } as any);
   } catch (err) {
     console.warn(`[cim-generation] could not persist status for deal ${job.dealId}:`, err);
   }
@@ -129,7 +137,8 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
   // Every source entry stamped with its row's visibility (facts1): a
   // broker-only / CRM fact or year never reaches the writer, even on facts
   // recorded before the stamp existed.
-  const extractedInfo = stampSourceDetails(settled.facts, await storage.getDocumentsByDeal(deal.id));
+  const docs = await storage.getDocumentsByDeal(deal.id);
+  const extractedInfo = stampSourceDetails(settled.facts, docs);
   const [branding, insights, analyses, factSourceWords] = await Promise.all([
     storage.getBrandingByBroker(deal.brokerId),
     deal.industry ? storage.getEngagementInsightsByIndustry(deal.industry) : Promise.resolve([]),
@@ -161,8 +170,9 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
       : null,
     sectionOutline: template?.sectionOutline ?? null,
     // The broker-reviewed financial analysis (else the latest completed one):
-    // statement tables and bridges are copied from it, never rebuilt.
-    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
+    // statement tables and bridges are copied from it, never rebuilt. One
+    // built from a statement since deleted stops generation (cimFinancialsFor).
+    financials: cimFinancialsFor(analyses, docs),
     factSourceWords,
     // Items the broker's notes or the facts say must not reach buyers (AI
     // review + rules, cached per content).
@@ -179,12 +189,76 @@ export async function buildLayoutParams(deal: Deal, mode: CimGenerationMode): Pr
   };
 }
 
+/** Buyer links that can open the CIM right now (not revoked, not expired). */
+export function openBuyerLinks(access: Pick<BuyerAccess, "revokedAt" | "expiresAt">[], now = new Date()): number {
+  return access.filter((a) => !a.revokedAt && (!a.expiresAt || new Date(a.expiresAt) > now)).length;
+}
+
+/**
+ * Does replacing this deal's CIM need the broker's review before buyers see
+ * it? Yes when buyers could open the old one, or it was live or approved —
+ * "Regenerate all" on Pacific (live, 13 buyers) put an unreviewed AI CIM in
+ * front of LOI buyers within minutes, with the approvals still showing.
+ */
+export function replacementNeedsReview(
+  deal: Pick<Deal, "isLive" | "contentApprovedByBroker" | "contentApprovedBySeller" | "designApprovedByBroker" | "designApprovedBySeller" | "cimGeneration">,
+  openLinks: number,
+): boolean {
+  return (
+    !!deal.isLive ||
+    !!deal.contentApprovedByBroker || !!deal.contentApprovedBySeller ||
+    !!deal.designApprovedByBroker || !!deal.designApprovedBySeller ||
+    openLinks > 0 ||
+    !!(deal.cimGeneration as CimGenerationStatus | null | undefined)?.buyerHold
+  );
+}
+
 /**
  * Replace the deal's stored sections with the generated document. Blind/DD
  * overrides point at the old section ids, so they are cleared in both modes
  * (the old generate-content path left them dangling).
+ *
+ * When buyers could open the old CIM (or it was live / approved), the new
+ * one is held from every buyer until the broker publishes it again: the deal
+ * leaves live, its content and design approvals are cleared (the view room
+ * shows buyers a "being updated" state meanwhile — see cimHeldFromBuyers).
+ * The hold is written with those changes BEFORE a single section is
+ * replaced, and that write is not best-effort: if it fails the run fails
+ * and the old sections stay. (Written only in the job's final status
+ * write, which swallows errors, a failed write — or the moment before it —
+ * served the unreviewed CIM to every link holder.)
  */
-async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument) {
+async function persistDocument(deal: Deal, mode: CimGenerationMode, document: CimDocument, job: CimGenerationJob): Promise<CimGenerationStatus["buyerHold"] | null> {
+  // As the deal is now — it may have gone live while the run was writing.
+  const current = (await storage.getDeal(deal.id)) ?? deal;
+  const [access, ddBefore] = await Promise.all([
+    storage.getBuyerAccessByDeal(deal.id).catch((): BuyerAccess[] => []),
+    storage.getCimSectionOverrides(deal.id, "dd").catch(() => []),
+  ]);
+  const links = openBuyerLinks(access);
+  const previousHold = (current.cimGeneration as CimGenerationStatus | null | undefined)?.buyerHold ?? null;
+  const hold = replacementNeedsReview(current, links)
+    ? {
+        since: previousHold?.since ?? new Date().toISOString(),
+        wasLive: !!current.isLive || !!previousHold?.wasLive,
+        buyers: Math.max(links, previousHold?.buyers ?? 0),
+        ddCleared: ddBefore.length > 0 || !!previousHold?.ddCleared,
+      }
+    : null;
+  if (hold) {
+    // On the job only once it is on the deal: a failed write leaves the old
+    // CIM in place, live, and not held.
+    await storage.updateDeal(deal.id, {
+      cimGeneration: { ...storedStatus(job), buyerHold: hold },
+      // The approvals were for the CIM that is about to be replaced.
+      isLive: false,
+      contentApprovedByBroker: false,
+      contentApprovedBySeller: false,
+      designApprovedByBroker: false,
+      designApprovedBySeller: false,
+    } as any);
+    job.buyerHold = hold;
+  }
   await storage.deleteCimSectionsForDeal(deal.id);
   await storage.deleteCimSectionOverrides(deal.id, "blind");
   await storage.deleteCimSectionOverrides(deal.id, "dd");
@@ -217,6 +291,7 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
     if (phaseIndex(deal.phase) < phaseIndex("phase3_content_creation")) updates.phase = "phase3_content_creation";
   }
   await storage.updateDeal(deal.id, updates as any);
+  return hold;
 }
 
 /**
@@ -241,6 +316,9 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
       deal = (await storage.getDeal(deal.id)) ?? deal;
     }
     const params = await buildLayoutParams(deal, job.mode);
+    // What the writer is given, kept to show the broker later which sections
+    // still carry a value that has since changed (cim-staleness.ts).
+    const factsAt = await writerFactsSnapshot(deal).catch(() => null);
     const document = await generator(params, (p) => {
       job.phase = p.phase;
       job.total = p.total;
@@ -252,7 +330,11 @@ async function run(job: CimGenerationJob, deal: Deal, beforeWriting?: BeforeWrit
     job.phase = "saving";
     touch();
     await persist(job);
-    await persistDocument(deal, job.mode, document);
+    const hold = await persistDocument(deal, job.mode, document, job);
+    if (hold) {
+      if (hold.ddCleared) document.warnings = [...(document.warnings ?? []), "The due-diligence version was cleared with the old sections. Generate it again before due-diligence buyers see enriched content."];
+    }
+    if (factsAt) job.factsAt = factsAt;
     job.status = "done";
     job.phase = "finished";
     job.total = document.sections.length;
@@ -292,7 +374,12 @@ export async function startCimGeneration(
   const existing = jobs.get(deal.id);
   if (existing?.status === "running") throw new CimGenerationRunningError(existing);
   const now = new Date().toISOString();
+  // A hold from an earlier run stays until the broker publishes, whatever
+  // this run does (fails, stops at the gate); so do the facts it wrote from.
+  const previous = deal.cimGeneration as CimGenerationStatus | null | undefined;
   const job: CimGenerationJob = {
+    ...(previous?.buyerHold ? { buyerHold: previous.buyerHold } : {}),
+    ...(previous?.factsAt ? { factsAt: previous.factsAt } : {}),
     dealId: deal.id,
     brokerId: deal.brokerId,
     businessName: deal.businessName,
@@ -330,8 +417,9 @@ export function getLiveCimGenerationStatus(dealId: string): CimGenerationStatus 
 }
 
 function getStoredCimGenerationStatus(deal: Deal): CimGenerationStatus | null {
-  const stored = deal.cimGeneration as CimGenerationStatus | null | undefined;
-  if (!stored) return null;
+  const raw = deal.cimGeneration as CimGenerationStatus | null | undefined;
+  if (!raw) return null;
+  const { factsAt: _f, ...stored } = raw;
   if (stored.status === "running") {
     return {
       ...stored,
@@ -344,7 +432,42 @@ function getStoredCimGenerationStatus(deal: Deal): CimGenerationStatus | null {
   return stored;
 }
 
+/**
+ * The broker published the CIM: buyers may see it again. Clears the hold on
+ * the live job (so it isn't written back) and on the stored status.
+ */
+export async function releaseBuyerHold(dealId: string): Promise<void> {
+  const live = jobs.get(dealId);
+  const liveHold = live?.buyerHold ?? null;
+  if (live) delete live.buyerHold;
+  const deal = await storage.getDeal(dealId);
+  const stored = deal?.cimGeneration as CimGenerationStatus | null | undefined;
+  const hold = stored?.buyerHold ?? liveHold;
+  if (!hold) return;
+  if (stored?.buyerHold) {
+    const { buyerHold: _h, ...rest } = stored;
+    await storage.updateDeal(dealId, { cimGeneration: rest } as any);
+  }
+  // Buyers who were deciding on the replaced CIM get a fresh review window
+  // on the published one (no reminder or lapse was sent while it was held).
+  try {
+    const { restartReminderClocks } = await import("../reminders/decision-reminders");
+    await restartReminderClocks(dealId, hold.since);
+  } catch (err) {
+    console.warn(`[cim-generation] could not restart buyer review clocks for deal ${dealId}:`, err);
+  }
+}
+
+/** The facts the last finished run wrote from (null before the first, or on older runs). */
+export function lastGenerationFacts(deal: Deal): CimGenerationStatus["factsAt"] | null {
+  const live = jobs.get(deal.id);
+  if (live?.status === "done" && live.factsAt) return live.factsAt;
+  return (deal.cimGeneration as CimGenerationStatus | null | undefined)?.factsAt ?? null;
+}
+
 /** Live jobs (running, or finished recently) for one broker's deals. */
 export function listBrokerCimGeneration(brokerId: string): CimGenerationJob[] {
-  return Array.from(jobs.values()).filter((j) => j.brokerId === brokerId);
+  return Array.from(jobs.values())
+    .filter((j) => j.brokerId === brokerId)
+    .map(({ factsAt: _f, ...j }) => j as CimGenerationJob);
 }

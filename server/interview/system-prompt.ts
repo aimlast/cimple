@@ -151,6 +151,16 @@ export async function buildInterviewSystemBlocks(kb: KnowledgeBase): Promise<Sys
     );
   }
 
+  // The broker alone ("Start AI Interview" on the deal): the broker answers
+  // from their own notes; nothing they type is the seller's word.
+  if (kb.conductedBy === "broker") {
+    dynamicParts.push(
+      "# SESSION MODE: THE BROKER ALONE (the seller is not here)",
+      "The person answering is the BROKER, filling in what they know from their own calls, notes and files — not the business owner. Address them as the broker: refer to the owner in the third person (\"the seller\", or by name), never \"you\" for the owner and never \"your business\". What they tell you is the broker's account — never write that the seller said, mentioned or confirmed it. When they don't know something, it is a question for the seller: note it as a follow-up and move on. Sensitive personal details they share (health, family, the seller's price floor, their negotiating view) go to broker-private notes, never into a fact.",
+      "\n---\n",
+    );
+  }
+
   dynamicParts.push(
     "# CURRENT KNOWLEDGE BASE",
     "Everything below is what we currently know about this deal. Use it to guide your questions.\n",

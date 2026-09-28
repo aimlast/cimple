@@ -167,6 +167,28 @@ export interface CimGenerationStatus {
   /** "critical" = must be resolved first; "new" = the pre-run check just found conflicts to review. */
   stoppedReason?: "critical" | "new";
   blockingDiscrepancies?: Array<{ id: string; field: string }>;
+  /**
+   * Set when a full generation replaced a CIM that buyers could open (the
+   * deal was live, had approvals, or had buyer links): the new CIM is held
+   * from every buyer until the broker reviews it and publishes it again.
+   * Carried across later runs; cleared by publishing.
+   */
+  buyerHold?: {
+    since: string;
+    /** The deal was live — it was taken off live and its approvals cleared. */
+    wasLive: boolean;
+    /** Buyer links that could open the CIM when it was replaced. */
+    buyers: number;
+    /** The due-diligence version was cleared with the old sections. */
+    ddCleared: boolean;
+  };
+  /**
+   * The facts the finished run wrote from (server/cim/cim-staleness.ts):
+   * compared with the current facts to list sections that still show a
+   * value the broker has since changed. Broker-only; left out of the
+   * generation-status responses.
+   */
+  factsAt?: { values: Record<string, string>; askingPrice: string | null; notesKey: string };
 }
 
 /** One buyer's AI deep-check verdict for a deal. */
@@ -1579,6 +1601,8 @@ export const NOTIFICATION_ROUTING: Record<string, { teams: string[]; roles?: str
   buyer_approval_broker_approved: { teams: ["seller"], roles: ["owner", "representative"] },
   buyer_approval_seller_approved: { teams: ["broker"], roles: ["lead", "associate"] },
   buyer_approval_rejected: { teams: ["broker"], roles: ["lead", "associate"] },
+  // The seller finished (or ended) their AI interview.
+  interview_complete: { teams: ["broker"], roles: ["lead", "associate"] },
 };
 
 // Buyer decision next-step options (shown after "interested in moving forward")
@@ -2078,6 +2102,14 @@ export interface DocumentSourceMeta {
   periodEnd?: string;
   /** The last re-read of this source failed (it keeps what it had): when, and why in plain words. */
   rereadFailed?: { at: string; reason: string };
+  /**
+   * The source's own reading failed or found nothing to read (a scanned
+   * image, a .doc file, an API outage, a restart mid-read): when and why, in
+   * plain words; `retryable` when reading it again may work.
+   */
+  readFailed?: { at: string; reason: string; retryable?: boolean };
+  /** A long source read only in part (some parts failed, or it is longer than Cimple reads). */
+  partialRead?: { at: string; reason: string; readParts: number; parts: number; readChars: number; totalChars: number; retryable?: boolean };
 }
 
 // @anchor:schema-tail:crm
@@ -2513,6 +2545,8 @@ export interface CimSectionSnapshot {
   layoutData: unknown;
   aiDraftContent: string | null;
   brokerEditedContent: string | null;
+  /** The figure check's flags on this version (restored with it on undo). Absent on older snapshots. */
+  figureWarnings?: string[] | null;
 }
 
 // ── CIM media library (cim-media workstream) ──────────────────────────────

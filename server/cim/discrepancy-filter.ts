@@ -17,6 +17,8 @@
 
 export interface DiscrepancyCandidateLike {
   field: string;
+  /** The fact it is about ("sde", "adjustedEbitda") — says what metric the subject is. */
+  factKey?: string | null;
   suggestedResolution?: string | null;
   interviewValue?: string | null;
   documentValue?: string | null;
@@ -26,6 +28,8 @@ export interface DiscrepancyCandidateLike {
   severity?: string | null;
   /** The model's own verdict on the pair, when it gave one (see FindingRelation). */
   relation?: FindingRelation | string | null;
+  /** The fiscal year a by-year fact is disputed for, when the row names one. */
+  factYear?: string | null;
 }
 
 export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "proposed_vs_current" | "not_a_conflict" | "different_periods" | "different_measures";
@@ -33,6 +37,44 @@ export type DropReason = "equal" | "missing_side" | "adjusted_vs_reported" | "pr
 export interface FilterResult<T> {
   kept: T[];
   dropped: Array<{ item: T; reason: DropReason }>;
+}
+
+// ─── The fiscal year a finding is about ───────────────────────────────────────
+
+/** "2024", "FY2024", "FY 24", 2024 → "2024"; anything else → null. */
+export function normalizeFactYear(v: unknown): string | null {
+  const t = String(v ?? "").trim();
+  const full = t.match(/^(?:FY\s*'?)?((?:19|20)\d{2})$/i);
+  if (full) return full[1];
+  const short = t.match(/^(?:FY\s*'?)(\d{2})$/i);
+  return short ? `20${short[1]}` : null;
+}
+
+/**
+ * The fiscal year a discrepancy (row or finding) is about: its factYear,
+ * else the one year its field names ("Net income (2023)", "FY2024 revenue").
+ * Null when it names none, or more than one.
+ */
+export function discrepancyYear(d: { field?: string | null; factYear?: string | null }): string | null {
+  const own = normalizeFactYear(d.factYear);
+  if (own) return own;
+  const years = new Set(Array.from((d.field ?? "").matchAll(/\b(?:FY\s?'?)?((?:19|20)\d{2})\b/gi)).map((m) => m[1]));
+  return years.size === 1 ? Array.from(years)[0] : null;
+}
+
+/**
+ * Two findings about different fiscal years are never the same conflict,
+ * however alike their names: "Net income (2023)" settled must not hide
+ * "Net income (2024)", and an open 2023 row is never refreshed with 2024's
+ * figures. Only when both name a year.
+ */
+export function differentYears(
+  a: { field?: string | null; factYear?: string | null },
+  b: { field?: string | null; factYear?: string | null },
+): boolean {
+  const ya = discrepancyYear(a);
+  const yb = discrepancyYear(b);
+  return !!ya && !!yb && ya !== yb;
 }
 
 /** Strip the " — source" label the financial analysis appends to a value. */
@@ -214,10 +256,27 @@ export function isAdjustedVsReported(item: DiscrepancyCandidateLike): boolean {
   const a = stripLabel(item.interviewValue ?? "");
   const b = stripLabel(item.documentValue ?? "");
   if (!EARNINGS_RE.test(`${item.field} ${a} ${b}`)) return false;
-  if (ADJUSTED_RE.test(item.field)) return false;
+  // The subject is itself an adjusted metric ("SDE (2024)", "Seller's
+  // discretionary earnings", "2024 Adjusted EBITDA"): both sides are that
+  // metric, so "$1.1M" vs "$898,000 after add-backs" is a real conflict.
+  // Only a side that is plainly the REPORTED figure ("$512,000 net income
+  // before add-backs") is a different metric.
+  const subject = `${item.field} ${(item.factKey ?? "").replace(/([a-z])([A-Z])/g, "$1 $2")}`;
+  if (ADJUSTED_RE.test(subject) || ADJUSTED_SUBJECT_RE.test(subject)) {
+    return reportedSide(a) !== reportedSide(b);
+  }
   const adjA = ADJUSTED_RE.test(a) && !REPORTED_RE.test(a);
   const adjB = ADJUSTED_RE.test(b) && !REPORTED_RE.test(b);
   return adjA !== adjB;
+}
+
+/** Metrics that are adjusted by definition — SDE / seller's discretionary earnings / owner benefit / adjusted EBITDA. */
+const ADJUSTED_SUBJECT_RE = /\b(?:sde|seller'?s?\s+discretionary\s+(?:earnings|cash\s*flow)|discretionary\s+earnings|owner'?s?\s+(?:benefit|discretionary\s+(?:earnings|cash\s*flow))|adjusted\s+ebitda)\b/i;
+/** A side that states the reported (unadjusted) figure of the metric, not the metric itself. */
+function reportedSide(v: string): boolean {
+  if (REPORTED_RE.test(v)) return true;
+  // "$512,000 net income" alone — no add-backs, no adjusted metric named.
+  return /\b(?:net\s+(?:income|profit|earnings)|pre-?tax\s+(?:income|profit))\b/i.test(v) && !ADJUSTED_RE.test(v) && !ADJUSTED_SUBJECT_RE.test(v);
 }
 
 // The model's own explanation says the two sides don't actually conflict
@@ -493,6 +552,43 @@ const LACKED_FILLER = new Set([
 const DOC_CONFIRMS_FOR_YEAR_RE =
   /\b(?<!not |n't )(?:confirms?|matches|agrees with|supports)\s+(?:this|that|it|the (?:seller'?s?\s+)?(?:claim|figure|statement|value|number))\s+for\s+(?:fy\s?)?((?:19|20)\d{2})\b/i;
 
+/**
+ * "The seller's figure appears to refer to FY2024 (which matches the FY2024
+ * statements), not FY2023": the claim is another year's figure, and it
+ * agrees with that year (Ridgeline's call EBITDA paired with the FY2023
+ * statements blocked CIM generation — f-facts known-1).
+ */
+const CLAIM_IS_OTHER_YEAR_RE =
+  /\b(?:appears to |seems to |likely |probably |actually )?(?:refers?|relates?|belongs?|applies|is for)\s+(?:to\s+)?(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})\b([^.;]{0,80}?)\b(?:match(?:es|ing)?|agrees? with|consistent with)\b([^.;)]{0,60})/i;
+/**
+ * Words that turn the match into a mismatch ("but it does not match",
+ * "which matches neither year", "matches nothing on file", "still
+ * conflicts"): read between the year and the match word, and in the match
+ * clause itself.
+ */
+const MATCH_NEGATED_RE = /\b(?:not|never|no|neither|nor|nothing|none|either|inconsistent|conflicts?|conflicting|differs?|different|but|however|although|though|still|even)\b|n't\b/i;
+
+/**
+ * The model's own words that the claim is another year's figure AND agrees
+ * with that year's evidence, or null. The match clause must name the same
+ * year ("which matches the FY2024 statements"): "appears to refer to 2022,
+ * which matches nothing on file" or "…FY2024, but it does not match the
+ * FY2024 statements either" are conflicts, kept.
+ */
+function claimIsOtherYear(text: string): string | null {
+  const m = text.match(CLAIM_IS_OTHER_YEAR_RE);
+  if (!m || m.index === undefined) return null;
+  // Not when it says the claim does NOT refer to that year, or only supposes it does ("Even if …").
+  const before = text.slice(Math.max(0, m.index - 24), m.index);
+  if (/\b(?:not|never)\b[^.;]{0,20}$|n't\b[^.;]{0,20}$|\b(?:if|even if|whether|unless)\b[^.;]{0,20}$/i.test(before)) return null;
+  const [, year, gap, clause] = m;
+  if (MATCH_NEGATED_RE.test(gap) || MATCH_NEGATED_RE.test(clause)) return null;
+  // The match clause names the same year.
+  const clauseYears = Array.from(clause.matchAll(/(?:^|[^0-9])(?:fy\s?|fiscal (?:year )?)?((?:19|20)\d{2})(?![0-9])/gi)).map((y) => y[1]);
+  if (!clauseYears.includes(year) || clauseYears.some((y) => y !== year)) return null;
+  return year;
+}
+
 /** The model reasoned, in its own words, that the evidence lacks this measure or confirms the claim for its own year. */
 export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean {
   if ((item.severity ?? "").toLowerCase() === "critical") return false;
@@ -504,6 +600,11 @@ export function modelReasonedNoConflict(item: DiscrepancyCandidateLike): boolean
   if (confirms) {
     const ey = periodYears(evidence);
     if (ey.size > 0 && !ey.has(confirms[1])) return true;
+  }
+  const otherYear = claimIsOtherYear(text);
+  if (otherYear) {
+    const disputed = new Set([...Array.from(periodYears(item.field ?? "")), ...Array.from(periodYears(evidence)), ...(item.factYear ? [String(item.factYear)] : [])]);
+    if (disputed.size > 0 && !disputed.has(otherYear)) return true;
   }
   const lacks = text.match(DOC_LACKS_MEASURE_RE);
   if (lacks) {

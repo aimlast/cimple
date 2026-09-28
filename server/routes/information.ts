@@ -34,6 +34,9 @@ import {
 } from "../information/facts";
 import { isSourceKind } from "../interview/info-merger";
 import { createAndIngestSource, cleanSourceMeta, defaultVisibilityForKind, documentKind } from "../documents/ingest";
+import { MIN_READABLE_CHARS } from "../documents/extractor";
+import { keptReadState, restampSourceVisibility } from "../documents/source-visibility";
+import type { DocumentSourceMeta } from "@shared/schema";
 import { CIM_SECTIONS } from "@shared/schema";
 
 const FACT_KEY_RE = /^[A-Za-z][A-Za-z0-9_]{0,80}(\.[A-Za-z0-9_ -]{1,40})?$/;
@@ -160,7 +163,8 @@ export function registerInformationRoutes(app: Express): void {
         throw new FactError("Choose what kind of source this is");
       }
       const text = typeof req.body?.text === "string" ? req.body.text : "";
-      if (text.trim().length < 20) throw new FactError("Paste the text of the source (at least a sentence)");
+      // (The reader needs at least MIN_READABLE_CHARS to read anything at all.)
+      if (text.trim().length < MIN_READABLE_CHARS) throw new FactError("Paste the text of the source (at least a sentence or two)");
       if (text.length > MAX_SOURCE_TEXT) throw new FactError("That text is too long — upload it as a file instead");
       const meta = cleanSourceMeta(req.body?.meta);
       const fallbackTitle: Record<string, string> = {
@@ -220,9 +224,22 @@ export function registerInformationRoutes(app: Express): void {
       const updates: Record<string, unknown> = {};
       if (typeof req.body?.title === "string" && req.body.title.trim()) updates.name = req.body.title.trim().slice(0, 200);
       if (req.body?.visibility === "broker_only" || req.body?.visibility === "shared") updates.visibility = req.body.visibility;
-      if (req.body?.meta !== undefined) updates.sourceMeta = cleanSourceMeta(req.body.meta);
+      if (req.body?.meta !== undefined) {
+        // The broker's details replace the old ones; what Cimple recorded about
+        // reading the source (period end, a failed or partial read) stays.
+        const kept = keptReadState(doc.sourceMeta as DocumentSourceMeta | null);
+        const merged = { ...(cleanSourceMeta(req.body.meta) ?? {}), ...kept };
+        updates.sourceMeta = Object.keys(merged).length > 0 ? merged : null;
+      }
       if (Object.keys(updates).length === 0) throw new FactError("Nothing to change");
       await storage.updateDocument(doc.id, updates as any);
+      // Shared ↔ broker only: every fact, other value, confirmation and note
+      // this source gave is re-stamped with its new visibility at once — the
+      // interview and the CIM read the stamp, so a source made shared stops
+      // being hidden (and re-asked), and one made broker-only stops reaching the seller.
+      if (updates.visibility && updates.visibility !== doc.visibility) {
+        await restampSourceVisibility(req.params.dealId, doc.id, updates.visibility === "broker_only");
+      }
       res.json(await loadView(req.params.dealId));
     } catch (err) {
       fail(res, err, "Couldn't update the source");

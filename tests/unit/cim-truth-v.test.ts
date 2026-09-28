@@ -326,7 +326,10 @@ assert.equal(scrubHeldNames(byTitle("Reason for Sale"), ["Harvest Lane Markets"]
   const repair = bodies.find((b) => /failed the figure check/.test(b.messages?.[0]?.content ?? "") && /Cover/.test(b.messages[0].content));
   assert.ok(repair && /\$3,900,000 is not the CIM's EBITDA — use \$3,596,200/.test(repair.messages[0].content), "the rewrite is told the bridge's figure");
   const cover = doc.sections.find((s) => s.layoutType === "cover_page")!;
-  assert.ok((cover.figureWarnings ?? []).some((x) => /3,900,000/.test(x)), "a figure the rewrite didn't fix is shown to the broker");
+  // FREE round known-3: a figure with no source that the rewrite didn't fix
+  // is taken out (never shipped beside its warning) — and the broker is told.
+  assert.ok(!/3,900,000/.test(JSON.stringify(cover.layoutData)), "the untraced figure never reaches the cover");
+  assert.ok(doc.warnings!.some((x) => /^Taken out of "Cover" because no source on file has the figure: "\$3,900,000"/.test(x)), "a figure the rewrite didn't fix is shown to the broker");
   assert.ok(doc.warnings!.some((x) => /Earnings figures: the CIM uses Adjusted EBITDA \$3,596,200/.test(x)));
   assert.ok(!/Harvest Lane/.test(bodies[0].system[0].text), "the writer's knowledge base never had it");
 }

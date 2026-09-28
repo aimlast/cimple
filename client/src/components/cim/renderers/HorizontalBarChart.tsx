@@ -18,7 +18,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 
 interface HBarDataPoint {
@@ -33,6 +33,8 @@ interface HorizontalBarChartLayoutData {
   unit?: string;
   title?: string;
   showPercentages?: boolean;
+  /** The whole the bars are parts of, as the knowledge base states it. */
+  total?: number | string;
 }
 
 interface RendererProps {
@@ -81,13 +83,16 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
     value: parseChartNumber(d.value, scale) ?? 0,
   }));
 
-  // Percent labels are shares of the TOTAL (a 50/30/20 revenue split reads
-  // 50%/30%/20%). Dividing by the max made the largest bar always read
-  // "100%" — visibly wrong in customer-concentration contexts.
-  const totalValue = normalized.reduce((s, d) => s + d.value, 0);
-  const withPercent = normalized.map((d) => ({
+  // Percent labels: values in % are labelled as written; other values get a
+  // share only of a total the chart states and adds up to (chartShares) —
+  // never a share of the bars' own sum, which is false when the list is
+  // partial (and dividing by the max once made the largest bar read "100%").
+  const percentValues = isPercentUnit(data.unit);
+  const { shares } = chartShares(normalized.map((d) => d.value), data.unit, data.total);
+  const showLabels = !!data.showPercentages && (percentValues || shares !== null);
+  const withPercent = normalized.map((d, i) => ({
     ...d,
-    percent: totalValue > 0 ? ((d.value / totalValue) * 100).toFixed(0) + "%" : "0%",
+    percent: percentValues ? formatFullValue(d.value, "%") : shares ? `${shares[i].toFixed(0)}%` : "",
   }));
 
   // Dynamic height based on item count
@@ -104,7 +109,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
         <BarChart
           data={withPercent}
           layout="vertical"
-          margin={{ top: 4, right: data.showPercentages ? 48 : 16, left: 0, bottom: 4 }}
+          margin={{ top: 4, right: showLabels ? 48 : 16, left: 0, bottom: 4 }}
           barCategoryGap="25%"
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
@@ -136,7 +141,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
             {withPercent.map((_, index) => (
               <Cell key={index} fill={primaryColor} />
             ))}
-            {data.showPercentages && (
+            {showLabels && (
               <LabelList
                 dataKey="percent"
                 position="right"

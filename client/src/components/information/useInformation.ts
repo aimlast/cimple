@@ -8,7 +8,9 @@ import type { InformationView } from "@shared/information";
 
 export const informationKey = (dealId: string) => ["/api/deals", dealId, "information"] as const;
 
-const isProcessing = (status?: string) => status === "pending" || status === "parsing";
+/** Still being read — not one a restart cut off (readStopped), which would be polled forever. */
+const isProcessing = (s: { status?: string; statusSince?: string }) =>
+  (s.status === "pending" || s.status === "parsing") && !(s.statusSince && Date.now() - new Date(s.statusSince).getTime() > 30 * 60_000);
 
 export function useInformation(dealId: string) {
   return useQuery<InformationView>({
@@ -22,7 +24,7 @@ export function useInformation(dealId: string) {
       return (await r.json()) as InformationView;
     },
     // A source still being read will add facts in a moment — keep watching.
-    refetchInterval: (query) => (query.state.data?.sources.some((s) => isProcessing(s.status)) ? 2500 : false),
+    refetchInterval: (query) => (query.state.data?.sources.some((s) => isProcessing(s)) ? 2500 : false),
   });
 }
 

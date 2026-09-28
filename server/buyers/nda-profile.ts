@@ -15,17 +15,36 @@ import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import { initialFieldSources, withFieldSources, type BuyerAccess, type BuyerUser } from "@shared/schema";
 import { storedBuyerType, type NdaBuyerProfile } from "@shared/nda-buyer-profile";
+import { isLinkableBuyerAccount } from "./view-access";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-async function resolveBuyerUser(access: BuyerAccess, profile: NdaBuyerProfile | null, brokerId: string | null): Promise<BuyerUser | undefined> {
+/**
+ * The buyer account this view link belongs to, if one may be used: the
+ * linked account, else the account registered under the link's email — but
+ * only an account that can't have been claimed by someone else
+ * (isLinkableBuyerAccount). An unverified self-signup account under the
+ * buyer's address is treated as no account at all: it never receives the
+ * link, never gets the buyer's NDA answers and never prefills the form.
+ */
+export async function ndaProfileAccount(access: BuyerAccess): Promise<BuyerUser | undefined> {
   if (access.buyerUserId) {
     const u = await storage.getBuyerUser(access.buyerUserId);
-    if (u) return u;
+    if (u && isLinkableBuyerAccount(u)) return u;
   }
+  const existing = await storage.getBuyerUserByEmail(access.buyerEmail.toLowerCase().trim());
+  return isLinkableBuyerAccount(existing) ? existing : undefined;
+}
+
+async function resolveBuyerUser(access: BuyerAccess, profile: NdaBuyerProfile | null, brokerId: string | null): Promise<BuyerUser | undefined> {
+  const usable = await ndaProfileAccount(access);
+  if (usable) return usable;
   const email = access.buyerEmail.toLowerCase().trim();
+  // An account exists but may belong to whoever registered the address
+  // without proving it: leave it alone (the answers stay on this deal's
+  // access row only).
   const existing = await storage.getBuyerUserByEmail(email);
-  if (existing || !profile) return existing;
+  if (existing || !profile) return undefined;
   return storage.createBuyerUser({
     email, passwordHash: null, name: profile.name, phone: profile.phone, company: profile.company ?? null,
     title: profile.title ?? null, linkedinUrl: null, buyerCriteria: {}, targetIndustries: [] as any,
@@ -44,9 +63,11 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
   const deal = await storage.getDeal(access.dealId);
   const brokerId = deal?.brokerId ?? null;
   let buyer = await resolveBuyerUser(access, profile, brokerId);
+  let criteriaFromProfile: Record<string, any> | null = null;
 
-  if (buyer && profile) {
-    const criteria: Record<string, any> = { ...((buyer.buyerCriteria as Record<string, any>) || {}) };
+  if (profile) {
+    const base = buyer ? buyer.buyerCriteria : access.buyerCriteria;
+    const criteria: Record<string, any> = { ...((base as Record<string, any>) || {}) };
     if (profile.priceMin != null) criteria.askingPriceMin = String(Math.round(profile.priceMin));
     else delete criteria.askingPriceMin;
     if (profile.priceMax != null) criteria.askingPriceMax = String(Math.round(profile.priceMax));
@@ -56,6 +77,11 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     if (profile.dealRole === "add_on") { criteria.addOnAcquisition = true; criteria.platformAcquisition = false; }
     if (profile.dealRole === "either") { criteria.addOnAcquisition = true; criteria.platformAcquisition = true; }
     if (profile.operateSelf === "no" || profile.operateSelf === "hire_manager") criteria.managementTeamRequired = true;
+    criteriaFromProfile = criteria;
+  }
+
+  if (buyer && profile && criteriaFromProfile) {
+    const criteria = criteriaFromProfile;
     const updates: Partial<BuyerUser> = {
       name: profile.name,
       phone: profile.phone,
@@ -73,14 +99,16 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
   }
 
   await storage.updateBuyerAccess(access.id, {
-    ...(buyer ? { buyerUserId: buyer.id } : {}),
+    // Linked to the usable account — and unlinked from one that isn't (a
+    // link made before accounts had to prove their inbox).
+    ...(buyer ? { buyerUserId: buyer.id } : access.buyerUserId ? { buyerUserId: null } : {}),
     ...(profile ? {
       buyerName: profile.name,
       buyerCompany: profile.company ?? access.buyerCompany,
       buyerType: storedBuyerType(profile),
       proofOfFunds: profile.proofOfFunds === "yes",
       ndaProfile: { ...profile, submittedAt: new Date().toISOString() },
-      buyerCriteria: buyer?.buyerCriteria ?? access.buyerCriteria,
+      buyerCriteria: buyer?.buyerCriteria ?? criteriaFromProfile ?? access.buyerCriteria,
     } : {}),
   } as any);
 

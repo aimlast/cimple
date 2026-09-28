@@ -786,6 +786,36 @@ export function sourceRank(kind: unknown): number {
 }
 
 /**
+ * What the broker typed in their OWN AI interview session ("Start AI
+ * Interview" on the deal, the broker alone) is recorded as the broker's
+ * ("You · typed in your AI interview session") — but it is the broker's
+ * notes from memory, not a broker edit. A broker edit is final (rank 7);
+ * these notes rank with the questionnaire and emails: the seller's own
+ * answer in the interview or on a call replaces them (the notes stay as
+ * another value), and a document outranks them where documents are the
+ * authority (merge-policy.ts effectiveRank). An approximate "$2,000,000
+ * from memory" used to outrank the seller's confirmed "$2,340,000" forever.
+ */
+export const BROKER_SESSION_SOURCE_NOTE = "typed in your AI interview session";
+export const BROKER_SESSION_RANK = SOURCE_RANK.questionnaire;
+
+/** A value the broker typed in their own AI interview session (not a broker edit). */
+export function isBrokerSessionSource(src: Partial<FieldSource> | null | undefined): boolean {
+  return !!src && src.source === "broker" && src.note === BROKER_SESSION_SOURCE_NOTE;
+}
+
+/** A value the broker set deliberately (an edit, a resolution) — final against every other source. */
+export function isBrokerFinalSource(src: Partial<FieldSource> | null | undefined): boolean {
+  return !!src && src.source === "broker" && !isBrokerSessionSource(src);
+}
+
+/** Authority of a recorded source (its kind — except the broker's own session notes, see above). */
+export function fieldSourceRank(src: Partial<FieldSource> | null | undefined): number {
+  if (!src) return 0;
+  return isBrokerSessionSource(src) ? BROKER_SESSION_RANK : sourceRank(src.source);
+}
+
+/**
  * Kinds that are never a documents row — the broker's own edit, the live
  * interview, the intake form, the system. A source of one of these kinds
  * never "belongs" to a document, whatever documentId an older bug stamped
@@ -895,7 +925,7 @@ export function sourceAllowsOverwrite(info: Record<string, unknown>, key: string
   // statement (or the broker) may replace it — never a document, a call
   // transcript or the older intake form.
   if (isUntrackedSource(cur)) return sourceRank(incoming) >= SOURCE_RANK.interview;
-  return sourceRank(incoming) >= sourceRank(cur.source);
+  return sourceRank(incoming) >= fieldSourceRank(cur);
 }
 
 export interface FieldAlternate extends FieldSource {
@@ -985,7 +1015,7 @@ export function noteSameValue(
   if (isUntrackedSource(cur)) return;
   if (originKey(cur!) === originKey(src)) return; // the same source re-read
   const value = serializeFactValue(repairCharIndexedValue(opts.current !== undefined ? opts.current : info[key]));
-  const takesOver = opts.outranks ? opts.outranks(src, cur!) : sourceRank(src.source) > sourceRank(cur!.source);
+  const takesOver = opts.outranks ? opts.outranks(src, cur!) : fieldSourceRank(src) > fieldSourceRank(cur!);
   if (takesOver) {
     if (opts.setRecorded) opts.setRecorded(src);
     else setFieldSource(info, key, src);
@@ -1222,6 +1252,13 @@ export function summariseMapSource(yearSources: Record<string, FieldSource>): Fi
 export function removeDocumentFields(
   info: Record<string, unknown>,
   documentId: string,
+  /**
+   * promoteAlternates: false leaves an emptied field empty for the caller to
+   * refill by the merge's own authority (merge-policy.ts
+   * removeSourceFromFacts) — the raw-rank pick below lets a call beat the
+   * statements.
+   */
+  opts: { promoteAlternates?: boolean } = {},
 ): { info: Record<string, unknown>; removed: string[]; changed: boolean } {
   const out = { ...info };
   const sources = { ...getFieldSources(out) };
@@ -1234,7 +1271,7 @@ export function removeDocumentFields(
     const list = (corr[corrKey] ?? []).filter((c) => c.documentId !== documentId);
     const candidates = list.filter((c) => c.value === serialized);
     if (candidates.length === 0) return null;
-    const best = [...candidates].sort((a, b) => sourceRank(b.source) - sourceRank(a.source))[0];
+    const best = [...candidates].sort((a, b) => fieldSourceRank(b) - fieldSourceRank(a))[0];
     corr[corrKey] = list.filter((c) => c !== best);
     return best;
   };
@@ -1320,12 +1357,12 @@ export function removeDocumentFields(
     // Promote the best surviving alternate for every field this delete
     // emptied, so a second P&L's revenue figure steps in instead of the
     // field going blank and the interview re-asking it.
-    for (const key of removed) {
+    for (const key of opts.promoteAlternates === false ? [] : removed) {
       if (key.includes(":") || out[key] !== undefined) continue;
       if (isSuppressed(out, key)) continue;
       const list = alts[key] as FieldAlternate[] | undefined;
       if (!list || list.length === 0) continue;
-      const best = [...list].sort((a, b) => sourceRank(b.source) - sourceRank(a.source))[0];
+      const best = [...list].sort((a, b) => fieldSourceRank(b) - fieldSourceRank(a))[0];
       const { value, ...bestSrc } = best;
       out[key] = parseAlternateValue(value);
       sources[key] = bestSrc as FieldSource;

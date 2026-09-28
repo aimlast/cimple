@@ -80,7 +80,8 @@ export interface EmailDraftInput {
 export async function draftBuyerEmail(input: EmailDraftInput): Promise<{ subject: string; body: string }> {
   const fallback = () => {
     const d = input.deal;
-    const sign = `${input.brokerName}${input.brokerCompany ? `\n${input.brokerCompany}` : ""}`;
+    // One line when the brokerage stands in for a broker with no display name.
+    const sign = `${input.brokerName}${input.brokerCompany && input.brokerCompany !== input.brokerName ? `\n${input.brokerCompany}` : ""}`;
     if (d) {
       return {
         subject: `A ${d.industry || "business"} opportunity${d.region ? ` in ${d.region}` : ""}`,

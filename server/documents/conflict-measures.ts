@@ -260,6 +260,47 @@ export function shareClaimsConflict(a: string, b: string, yearA?: string, yearB?
   return differ && !agree;
 }
 
+// ─── Customer concentration: which customers a share is of ───────────────────
+
+const COUNT_WORDS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, fifteen: 15, twenty: 20, "twenty-five": 25, fifty: 50,
+};
+const COUNT_RE = String.raw`(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|fifteen|twenty(?:-five)?|fifty)`;
+const toCount = (w: string) => (/^\d+$/.test(w) ? Number(w) : COUNT_WORDS[w.toLowerCase()]);
+
+/**
+ * Facts about how concentrated the customer base is (customerConcentration,
+ * topCustomers, largestCustomer, receivablesConcentration) — never any fact
+ * that merely names customers or accounts: an AR aging ("18% over 90 days"),
+ * a retention rate or a customer mix states other shares, whose conflicts
+ * are real.
+ */
+const CONCENTRATION_KEY = /concentration|^(?:top|largest|biggest|major|key|main)\d*(?:customer|client|account|payer)s?$|^(?:customer|client)s?(?:share|dependen\w*)$/i;
+
+/**
+ * Which slice of the customer base each share in a value is of: 1 for one
+ * customer ("Larkspur 18% of revenue", "largest customer 22%", "no customer
+ * over 10%"), N for a top-N group ("Top 3 customers: 41%", "our five biggest
+ * clients"). A value with no share says nothing (empty set).
+ */
+export function concentrationMeasures(value: string): Set<number> {
+  const out = new Set<number>();
+  if (percents(value).length === 0) return out;
+  for (const m of Array.from(value.matchAll(new RegExp(String.raw`\btop[- ]${COUNT_RE}\b`, "gi")))) {
+    const n = toCount(m[1]);
+    if (n) out.add(n);
+  }
+  for (const m of Array.from(value.matchAll(new RegExp(String.raw`\b${COUNT_RE}\s+(?:largest|biggest|top|major|main|leading)\s+(?:customers|clients|accounts|payers)\b`, "gi")))) {
+    const n = toCount(m[1]);
+    if (n) out.add(n);
+  }
+  if (/\b(?:largest|biggest|top|single|one|any|no)\s+(?:single\s+)?(?:customer|client|account|payer)\b(?!s)/i.test(value)) out.add(1);
+  // A share with no group named at all is one customer's ("Larkspur 18% of
+  // revenue"): only a plural "customers" without a count leaves it unknown.
+  if (out.size === 0 && !/\b(?:customers|clients|accounts|payers)\b/i.test(value)) out.add(1);
+  return out;
+}
+
 // ─── The verdict ─────────────────────────────────────────────────────────────
 
 const periodYear = (p?: string) => (p && /^\d{4}/.test(p) ? p.slice(0, 4) : undefined);
@@ -307,6 +348,15 @@ export function falseConflictReason(factKey: string, x: ConflictSideInfo, y: Con
     const pa = percentBases(a);
     const pb = percentBases(b);
     if (pa.size > 0 && pb.size > 0 && !Array.from(pa).some((p) => pb.has(p))) return "shares of different things (e.g. of receivables vs of revenue)";
+  }
+  // Two slices of the customer base: one customer's share against the top
+  // three's ("Larkspur 18% of revenue" vs "Top 3 customers: 41%") — both true.
+  if (CONCENTRATION_KEY.test(factKey)) {
+    const ma = concentrationMeasures(a);
+    const mb = concentrationMeasures(b);
+    if (ma.size > 0 && mb.size > 0 && !Array.from(ma).some((n) => mb.has(n))) {
+      return "shares of different groups of customers (one customer vs the top few)";
+    }
   }
   // Two definitions: a tax return against the statements (or another document).
   const taxA = x.kind === "document" && !!x.title && TAX_RETURN_TITLE.test(x.title);

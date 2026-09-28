@@ -170,6 +170,9 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   const { toast } = useToast();
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [drafts, setDrafts] = useState<Draft[]>([]);
+  // Where buyers' replies go (the broker's own email). null = none on file:
+  // sending is blocked, since the drafts invite a reply.
+  const [replyTo, setReplyTo] = useState<string | null | undefined>(undefined);
   const [draftSheetOpen, setDraftSheetOpen] = useState(false);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [showContacted, setShowContacted] = useState(false);
@@ -207,10 +210,11 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
   const draftMutation = useMutation({
     mutationFn: async (buyerUserIds: string[]) => {
       const r = await apiRequest("POST", `/api/deals/${dealId}/draft-outreach`, { buyerUserIds });
-      return r.json() as Promise<{ drafts: Draft[] }>;
+      return r.json() as Promise<{ drafts: Draft[]; replyTo?: string | null }>;
     },
     onSuccess: (resp) => {
       setDrafts(resp.drafts);
+      setReplyTo(resp.replyTo ?? null);
       setDraftSheetOpen(true);
       toast({ description: `Drafted ${resp.drafts.length} email${resp.drafts.length === 1 ? "" : "s"} — review and edit before sending.` });
     },
@@ -251,8 +255,12 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "outreach-history"] });
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId, "suggested-buyers"] });
     },
-    onError: () => {
-      toast({ variant: "destructive", description: "Failed to send outreach. Try again." });
+    onError: (e: Error) => {
+      // apiRequest errors read "400: {json}" — show the server's own words.
+      const m = /^\d{3}: ([\s\S]*)$/.exec(e.message || "");
+      let description = "Failed to send outreach. Try again.";
+      try { description = (m ? JSON.parse(m[1]).error : null) || description; } catch { /* keep default */ }
+      toast({ variant: "destructive", description });
       setConfirmOpen(false);
     },
   });
@@ -570,6 +578,20 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
             </SheetDescription>
           </SheetHeader>
 
+          {replyTo === null ? (
+            <div className="mt-3 flex items-start gap-2 rounded-md border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-foreground/90" data-testid="text-outreach-no-reply-to">
+              <AlertCircle className="h-3.5 w-3.5 mt-px shrink-0 text-amber-500" />
+              <span>
+                Buyers will reply to these emails, but your account has no email address on file, so their replies would reach no one.
+                Ask Cimple support to add your email before sending.
+              </span>
+            </div>
+          ) : replyTo ? (
+            <p className="mt-3 text-xs text-muted-foreground" data-testid="text-outreach-reply-to">
+              Sent from your name via Cimple. Replies go straight to <span className="text-foreground">{replyTo}</span>.
+            </p>
+          ) : null}
+
           <div className="mt-4 space-y-4">
             {drafts.map((d, i) => (
               <Card key={d.buyerUserId} className="border-border">
@@ -616,7 +638,7 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
                 size="sm"
                 className="bg-teal text-teal-foreground hover:bg-teal/90"
                 onClick={() => setConfirmOpen(true)}
-                disabled={drafts.length === 0}
+                disabled={drafts.length === 0 || replyTo === null}
                 data-testid="button-send-outreach"
               >
                 <Send className="h-3 w-3 mr-1" />
@@ -633,8 +655,8 @@ export function SuggestedBuyersPanel({ dealId }: { dealId: string }) {
           <AlertDialogHeader>
             <AlertDialogTitle>Send {drafts.length} outreach email{drafts.length === 1 ? "" : "s"}?</AlertDialogTitle>
             <AlertDialogDescription>
-              Cimple will dispatch these emails on your behalf via Resend. Each recipient will receive
-              their personalised message immediately. This action cannot be undone.
+              Each buyer receives their personalised message immediately, from your name via Cimple.
+              {replyTo ? ` Their replies go to ${replyTo}.` : ""} This can't be undone.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

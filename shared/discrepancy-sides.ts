@@ -32,6 +32,12 @@ export interface DiscrepancySideSources {
   document?: DiscrepancySideSource;
 }
 
+/**
+ * Label of a side that is the broker's notes from their own AI interview
+ * session — checked like a claim, never final like a broker edit.
+ */
+export const BROKER_SESSION_SIDE_LABEL = "Your notes (your AI interview session)";
+
 type SideRow = {
   field?: string | null;
   factKey?: string | null;
@@ -163,7 +169,7 @@ export function discrepancySideHeading(d: SideRow, side: "interview" | "document
   if (s) {
     if (s.brokerOnly || s.kind === "crm") return "Your private notes";
     // A merge row (facts1) can set the broker's own earlier value against a source.
-    if (s.kind === "broker") return "Your edit";
+    if (s.kind === "broker") return s.label === BROKER_SESSION_SIDE_LABEL ? "Your session notes said" : "Your edit";
     const kind = KIND_LABELS[s.kind] ?? "Source";
     return side === "interview" ? `${kind} said` : `${kind} shows`;
   }

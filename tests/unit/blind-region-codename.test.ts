@@ -230,7 +230,9 @@ test("a blind section with a leftover placeholder is held back and reported with
 console.log("codenames");
 test("a codename must be blind-safe, name-like and unique", () => {
   const none = new Set<string>();
-  assert.deepEqual(validateCodename(pacific, "  Project   Coastline ", none), { ok: true, codename: "Project Coastline" });
+  assert.deepEqual(validateCodename(pacific, "  Project   Quartz ", none), { ok: true, codename: "Project Quartz" });
+  // FREE round F7: "Coastline" stems from Pacific Coast's own name.
+  assert.equal(validateCodename(pacific, "Project Coastline", none).ok, false);
   const biz = validateCodename(pacific, "Pacific Coast Logistics", none);
   assert.equal(biz.ok, false);
   const city = validateCodename(pacific, "Project Surrey", none);

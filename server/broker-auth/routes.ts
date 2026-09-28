@@ -103,6 +103,17 @@ export async function canAccessDeal(
   return sellerTokenMatchesDeal(req, dealId);
 }
 
+/**
+ * True when the request comes from the broker who owns the deal (their
+ * session), e.g. a broker-mode interview or "Preview seller view" — used to
+ * keep the broker from being emailed about their own actions. A seller
+ * never holds the broker's session, so a seller-token request is never this.
+ */
+export async function isDealOwnerSession(req: Request, dealId: string): Promise<boolean> {
+  if (!req.session.brokerId) return false;
+  return !!(await getOwnedDeal(dealId, req.session.brokerId));
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────
 
 function toPublicUser(user: User) {

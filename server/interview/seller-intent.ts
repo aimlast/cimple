@@ -288,7 +288,17 @@ export interface IntentInput {
   prevSellerMessage?: string;
   /** Facts the seller gave in their own words (key → value), most recent first. */
   recentFacts: Array<{ key: string; value: string }>;
+  /**
+   * Broker-led ("Interview together"): the message is the room's labelled
+   * exchange ("Broker: …" / "Seller: …"). Only the seller's lines carry the
+   * seller's intent.
+   */
+  labelledExchange?: boolean;
 }
+
+/** What the classifier is told about a labelled broker-led exchange. */
+export const LABELLED_EXCHANGE_NOTE =
+  "THIS IS A BROKER-LED SESSION. The seller's new message is the room's conversation, one line per speaker. Lines starting \"Broker:\" are the BROKER's own words, not the seller's: a broker who says they have to run, wants to keep it short or to wrap up is NOT the seller asking to stop, and a question the broker asks or rephrases is NOT the seller's question. Judge only the lines starting \"Seller:\" (or an unlabelled speaker who is plainly the owner). A broker relaying the seller's own wish in the third person (\"he has to go\", \"she'd rather keep that out\") counts as the seller's.";
 
 /** What the classifier sees (exported for the live evaluation). */
 export function intentPrompt(input: IntentInput): string {
@@ -296,6 +306,7 @@ export function intentPrompt(input: IntentInput): string {
     ? input.recentFacts.map((f) => `- ${f.key}: ${f.value.replace(/\s+/g, " ").slice(0, 500)}`).join("\n")
     : "(none)";
   return (
+    (input.labelledExchange ? `${LABELLED_EXCHANGE_NOTE}\n\n` : "") +
     `FACTS THE SELLER GAVE EARLIER (key: value):\n${facts}\n\n` +
     (input.prevSellerMessage ? `SELLER'S EARLIER MESSAGE:\n${input.prevSellerMessage.slice(0, 1500)}\n\n` : "") +
     `INTERVIEWER'S PREVIOUS MESSAGE:\n${(input.prevAiMessage ?? "(start of the interview)").slice(0, 1500)}\n\n` +

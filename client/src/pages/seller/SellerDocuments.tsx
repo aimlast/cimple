@@ -175,7 +175,7 @@ export default function SellerDocuments() {
       // Silent-failure fix: unsupported/oversized files used to just vanish
       toast({
         title: "Upload failed",
-        description: err.message + " Accepted formats: PDF, Excel, Word, PowerPoint, CSV, text — up to 20MB.",
+        description: err.message + " Accepted formats: PDF, Excel, Word (.docx), PowerPoint (.pptx), CSV, text — up to 20MB.",
         variant: "destructive",
       });
     },
@@ -394,14 +394,14 @@ export default function SellerDocuments() {
           </button>
         </p>
         <p className="text-xs text-muted-foreground/60">
-          PDF, Excel, Word, PowerPoint, CSV — up to 20MB
+          PDF, Excel, Word (.docx), PowerPoint (.pptx), CSV — up to 20MB
         </p>
         <input
           ref={fileInputRef}
           type="file"
           className="hidden"
           multiple
-          accept=".pdf,.xlsx,.xls,.docx,.doc,.pptx,.ppt,.csv,.txt,.md"
+          accept=".pdf,.xlsx,.xls,.docx,.pptx,.csv,.txt,.md"
           onChange={(e) => {
             handleFileSelect(e.target.files, uploadingFor || undefined);
             // Reset so re-selecting the same file (retry, or assigning it to

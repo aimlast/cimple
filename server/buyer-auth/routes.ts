@@ -16,6 +16,7 @@ import crypto from "crypto";
 import { z } from "zod";
 import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service.js";
+import { escapeHtml } from "../notifications/email-escape";
 import { hashResetToken } from "./reset-token";
 import {
   calculateBuyerProfileCompletion,
@@ -88,14 +89,44 @@ function baseUrl(req: Request): string {
   return process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
 }
 
-function setPasswordEmail(name: string, businessName: string | null, setPasswordUrl: string): string {
+function confirmEmailHtml(rawName: string, rawUrl: string): string {
+  const name = escapeHtml(rawName);
+  const url = escapeHtml(rawUrl);
+  return `
+    <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
+      <h2 style="color: #14b8a6; margin-bottom: 16px;">Confirm your email</h2>
+      <p>Hello ${name},</p>
+      <p>Open the link below to confirm this is your email address and choose your password. Deals brokers share with this address will then appear on your Cimple dashboard.</p>
+      <p style="margin: 32px 0;">
+        <a href="${url}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Confirm my email</a>
+      </p>
+      <p style="color: #888; font-size: 12px;">This link expires in 7 days. If you didn't create a Cimple account, you can ignore this email.</p>
+    </div>
+  `;
+}
+
+/**
+ * `dealLabel` is how this buyer may see the deal named: the business name
+ * only for a buyer on the named CIM; for a blind (pre-NDA) buyer the project
+ * codename or null (neutral wording) — see buyerFacingDealName.
+ *
+ * The buyer's name comes from whoever typed it — a broker, a CRM import, the
+ * buyer at signup — so every value is escaped: a name like
+ * `Pat <a href=…>` can never become markup or a link in an email sent from
+ * notifications@cimple.ca.
+ */
+export function setPasswordEmail(rawName: string, rawDealLabel: string | null, rawUrl: string, rawViewUrl?: string | null): string {
+  const name = escapeHtml(rawName);
+  const dealLabel = rawDealLabel ? escapeHtml(rawDealLabel) : null;
+  const setPasswordUrl = escapeHtml(rawUrl);
+  const viewUrl = rawViewUrl ? escapeHtml(rawViewUrl) : null;
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to Cimple</h2>
       <p>Hello ${name},</p>
       <p>
-        ${businessName
-          ? `You've been added as a prospective buyer for <strong>${businessName}</strong>.`
+        ${dealLabel
+          ? `You've been added as a prospective buyer for <strong>${dealLabel}</strong>.`
           : `A broker has added you to their deal.`}
         To view the confidential information memorandum, please set your password and sign in.
       </p>
@@ -104,6 +135,7 @@ function setPasswordEmail(name: string, businessName: string | null, setPassword
       </p>
       <p style="color: #888; font-size: 12px;">This link expires in 7 days. If you already have a Cimple account, just log in with your existing password.</p>
       <p style="color: #888; font-size: 12px;">Once signed in, you'll see all deals you've been given access to — plus new opportunities matched to your investment profile.</p>
+      ${viewUrl ? `<p style="color: #888; font-size: 12px;">Or open this opportunity directly (NDA required): <a href="${viewUrl}" style="color: #14b8a6;">${viewUrl}</a></p>` : ""}
     </div>
   `;
 }
@@ -122,7 +154,13 @@ export async function inviteBuyerUser(opts: {
   linkedinUrl?: string | null;
   invitedByBroker?: string | null;
   invitedByDeal?: string | null;
+  /**
+   * How the deal is named to THIS buyer — never the business name for a
+   * buyer on the Blind CIM (pass buyerFacingDealName(deal, access).name).
+   */
   businessName?: string | null;
+  /** The buyer's tokenized view link, so the email works on its own. */
+  viewUrl?: string | null;
   baseUrl: string;
 }): Promise<{ user: BuyerUser; isNew: boolean }> {
   // Idempotent: if the email already has an account, return it — without
@@ -164,10 +202,35 @@ export async function inviteBuyerUser(opts: {
     opts.businessName
       ? `You've been invited to view ${opts.businessName} on Cimple`
       : "You've been invited to Cimple",
-    setPasswordEmail(opts.name, opts.businessName || null, url),
+    setPasswordEmail(opts.name, opts.businessName || null, url, opts.viewUrl ?? null),
   );
 
   return { user, isNew: true };
+}
+
+/**
+ * An existing account nobody has set a password on yet (broker-invited
+ * whose link expired, CRM-imported, created at an NDA) can't be signed in
+ * to, so a "sign in to your dashboard" email is useless. Issue a fresh
+ * set-password link (hashed at rest; the newest link is the one that works)
+ * and send the invitation email instead.
+ */
+export async function reinviteBuyerWithoutPassword(user: BuyerUser, opts: {
+  businessName?: string | null;
+  viewUrl?: string | null;
+  baseUrl: string;
+}): Promise<void> {
+  const resetToken = generateResetToken();
+  await storage.updateBuyerUser(user.id, {
+    resetToken: hashResetToken(resetToken),
+    resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+  } as any);
+  const url = `${opts.baseUrl}/buyer/set-password/${resetToken}`;
+  await sendDirectEmail(
+    user.email,
+    opts.businessName ? `You've been invited to view ${opts.businessName} on Cimple` : "You've been invited to Cimple",
+    setPasswordEmail(user.name, opts.businessName || null, url, opts.viewUrl ?? null),
+  );
 }
 
 // ── Route registration ──────────────────────────────────────────────────
@@ -357,6 +420,11 @@ export function registerBuyerAuthRoutes(app: Express) {
         emailVerified: true,
         lastLoginAt: new Date(),
       } as any);
+      // The inbox is proven: links shared with this email that were left
+      // unlinked while it wasn't (grants, NDA signings) now reach the dashboard.
+      await storage.linkBuyerAccessToVerifiedBuyer(user.id).catch((err) => {
+        console.warn("[buyer-auth] linking shared deals after verification failed:", err?.message || err);
+      });
 
       req.session.buyerId = user.id;
       res.json({ user: toPublicBuyerUser(updated!) });
@@ -366,6 +434,28 @@ export function registerBuyerAuthRoutes(app: Express) {
       }
       console.error("Set password error:", error);
       res.status(500).json({ error: "Failed to set password" });
+    }
+  });
+
+  // CONFIRM EMAIL — a self-signup account proves its inbox the same way a
+  // reset does (the emailed set-password link marks it verified). Until then
+  // deals a broker shares with that address are not linked to it.
+  app.post("/api/buyer-auth/send-verification", requireBuyer, async (req, res) => {
+    try {
+      const user = await storage.getBuyerUser(req.session.buyerId!);
+      if (!user) return res.status(404).json({ error: "Account not found" });
+      if (user.emailVerified) return res.json({ success: true, alreadyVerified: true });
+      const resetToken = generateResetToken();
+      await storage.updateBuyerUser(user.id, {
+        resetToken: hashResetToken(resetToken),
+        resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
+      } as any);
+      const url = `${baseUrl(req)}/buyer/set-password/${resetToken}`;
+      await sendDirectEmail(user.email, "Confirm your email for Cimple", confirmEmailHtml(user.name, url));
+      res.json({ success: true });
+    } catch (error: any) {
+      console.error("Send verification error:", error);
+      res.status(500).json({ error: "Couldn't send the confirmation email" });
     }
   });
 

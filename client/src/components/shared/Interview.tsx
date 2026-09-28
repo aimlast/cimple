@@ -314,6 +314,9 @@ export function Interview({
             onTurnResult={handleTurnResult}
             onComplete={handleComplete}
             variant={isTogether ? "together" : "chat"}
+            // The broker's own page: a session of their own, recorded as
+            // the broker's word — never resumed or read by the seller.
+            conductedBy={mode === "broker" ? "broker" : undefined}
             via={via}
             meetingLink={meetingLink}
             resume={resume}

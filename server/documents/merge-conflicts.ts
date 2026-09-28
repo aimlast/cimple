@@ -34,6 +34,7 @@
  */
 import { storage } from "../storage";
 import type { Discrepancy, Document, DocumentSourceMeta, InsertDiscrepancy } from "@shared/schema";
+import { BROKER_SESSION_SIDE_LABEL } from "@shared/discrepancy-sides";
 import { fieldLabel } from "../interview/interview-plan";
 import { isDocumentAuthoritativeField, isPeriodFigure, materiallyDifferent, settleConflicts, HEADLINE_MAPS, type MergeConflict } from "./merge-policy";
 import {
@@ -44,6 +45,7 @@ import {
   repairCharIndexedValue,
   typedNumericValues,
   type FieldSource,
+  isBrokerSessionSource,
 } from "../interview/info-merger";
 import { falseConflictReason, isTaxVsBook, shareClaimsConflict, type ConflictSideInfo } from "./conflict-measures";
 
@@ -233,9 +235,11 @@ export function discrepancyForConflict(c: MergeConflict, docName: (id: string) =
     kind: s.source,
     ...(s.documentId ? { documentId: s.documentId } : {}),
     ...(s.brokerOnly ? { brokerOnly: true } : {}),
+    // (The broker's notes from their own AI session are not a broker edit.)
+    ...(isBrokerSessionSource(s) ? { label: BROKER_SESSION_SIDE_LABEL } : {}),
   });
   const describe = (s: FieldSource) => {
-    const kind = KIND_TEXT[String(s.source)] ?? "a source";
+    const kind = isBrokerSessionSource(s) ? "your AI interview session notes" : KIND_TEXT[String(s.source)] ?? "a source";
     if (!s.documentId || s.brokerOnly) return kind;
     const name = docName(s.documentId);
     return name ? `${kind} ("${name}")` : kind;

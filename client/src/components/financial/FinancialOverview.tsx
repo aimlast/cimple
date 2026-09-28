@@ -116,7 +116,10 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
   const latestAdjusted = adjustedForYear(latestNormYearKey);
   const prevAdjusted = normYears.length > 1 ? adjustedForYear(normYears[normYears.length - 2]) : undefined;
 
-  const sourceDocIds = (analysis.sourceDocumentIds as string[]) || [];
+  // Stored as ids (older runs) or { id, name, role } (each document the run read).
+  const sourceDocs = (Array.isArray(analysis.sourceDocumentIds) ? (analysis.sourceDocumentIds as unknown[]) : [])
+    .map((x) => (typeof x === "string" ? { id: x, name: undefined as string | undefined } : x && typeof x === "object" && typeof (x as { id?: unknown }).id === "string" ? { id: (x as { id: string }).id, name: (x as { name?: string }).name } : null))
+    .filter((x): x is { id: string; name: string | undefined } => !!x);
 
   return (
     <div className="space-y-4">
@@ -188,22 +191,27 @@ export function FinancialOverview({ analysis, dealId }: FinancialOverviewProps) 
       </div>
 
       {/* Source documents */}
-      {sourceDocIds.length > 0 && (
+      {sourceDocs.length > 0 && (
         <Card>
           <CardHeader className="pb-3">
             <CardTitle className="text-sm">Source Documents</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="space-y-1.5">
-              {sourceDocIds.map((docId, i) => {
-                const name = docNameById.get(docId);
+              {sourceDocs.map(({ id: docId, name: recorded }, i) => {
+                const current = docNameById.get(docId);
+                // Loaded, and the document isn't on the deal any more.
+                const deleted = documents.length > 0 && !current;
+                const name = current ?? recorded;
                 return (
                   <div key={docId} className="flex items-center gap-2 text-xs text-muted-foreground">
                     <FileText className="h-3.5 w-3.5 shrink-0" />
-                    <span className="truncate text-foreground/90">{name ?? `Document ${i + 1}`}</span>
-                    {!name && (
+                    <span className={`truncate ${deleted ? "line-through text-muted-foreground" : "text-foreground/90"}`}>{name ?? `Document ${i + 1}`}</span>
+                    {deleted ? (
+                      <span className="text-2xs text-amber-400 ml-auto shrink-0">Deleted since this analysis</span>
+                    ) : !name ? (
                       <span className="text-2xs text-muted-foreground/50 ml-auto font-mono" title={docId}>{docId.slice(0, 8)}</span>
-                    )}
+                    ) : null}
                   </div>
                 );
               })}
