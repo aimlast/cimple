@@ -18,7 +18,7 @@
 import fs from "fs";
 import path from "path";
 import { storage } from "../storage";
-import { extractTextFromFile, UnreadableFormatError } from "./parser";
+import { extractTextWithPages, UnreadableFormatError } from "./parser";
 import { resolveDocumentPath } from "./document-path";
 import {
   extractDocumentData,
@@ -26,6 +26,8 @@ import {
   extractionRetryDelays,
   extractWithRetries,
   mergeExtractedData,
+  readFoundNothing,
+  SCANNED_REASON,
   unreadableExtraction,
   type ExtractedDocumentData,
   type MergeSource,
@@ -432,11 +434,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
   try {
     await storage.updateDocument(doc.id, { status: "parsing" } as any);
     let text = "";
+    let pages: number | undefined;
     let problem: string | null = null;
     const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
-        text = await extractTextFromFile(filePath, doc.mimeType);
+        ({ text, pages } = await extractTextWithPages(filePath, doc.mimeType));
       } catch (err) {
         console.error(`[ingest] couldn't open doc ${doc.id}:`, (err as Error)?.message ?? err);
         problem = parseProblem(err);
@@ -450,6 +453,7 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
       : (await extractWithRetries(
           () => extractDocumentData(text, doc.category || "other", doc.subcategory, kind, {
             checklist: dealForChecklist ? extractionChecklist(dealForChecklist) : undefined,
+            pages,
           }),
           extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[ingest] read of doc ${doc.id} failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
@@ -475,6 +479,12 @@ export async function ingestDocument(documentId: string): Promise<IngestResult> 
         });
       }
       return { status: "failed", fieldsWritten: [] };
+    }
+    // Read, but nothing about the business came out of a text this thin (a
+    // scan with a typed cover page): it is not yet the checklist document it
+    // was uploaded for — the row asks for a readable copy again.
+    if (kind === "document" && !hadExtraction && readFoundNothing(extracted, text, pages)) {
+      await releaseRequirementsFor(doc.dealId, doc.id, { fileName: doc.originalName || doc.name, reason: SCANNED_REASON });
     }
     return await mergeExtractionIntoDeal(doc, extracted);
   } catch (err) {

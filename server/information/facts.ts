@@ -43,6 +43,7 @@ import {
 import { GENERIC_FIELD_LABELS, fieldLabel } from "../interview/interview-plan";
 import { KNOWN_EXTRACTED_FIELDS } from "../interview/knowledge-base";
 import { withDealFactsLock } from "../documents/facts-lock";
+import { splitMultiYearValue } from "../documents/merge-policy";
 import { LEAD_SOURCE_KINDS, WEBSITE_ACCEPTED_NOTE } from "./cim-facts";
 import {
   reconcileMirroredFacts,
@@ -721,11 +722,22 @@ export function applyResolutionToInfo(
   // bare figures (the " — source" label stripped) under their real kind.
   // A broker-only side stays broker-only as an alternate (FieldSource.brokerOnly
   // is what the seller view and the CIM inputs filter on).
+  // (Several years resolved at once: each year's ruled-out figure is that year's alternate.)
+  const yearWrites = !target.sub ? plan.writes.filter((w) => w.key === target.key && w.sub) : [];
   for (const side of ["interview", "document"] as const) {
     const raw = side === "interview" ? d.interviewValue : d.documentValue;
     if (!raw || !raw.trim()) continue;
     const value = labelled ? bareDiscrepancyValue(raw) : raw.trim();
-    if (value && value !== resolved) recordAlternate(info, altKey, value, sideSrc[side]);
+    if (!value || value === resolved) continue;
+    if (yearWrites.length > 0) {
+      const byYear = splitMultiYearValue(value) ?? {};
+      for (const w of yearWrites) {
+        const lost = byYear[w.sub!];
+        if (lost && !sameFigure(lost, w.value)) recordAlternate(info, `${target.key}.${w.sub}`, lost, sideSrc[side]);
+      }
+      continue;
+    }
+    recordAlternate(info, altKey, value, sideSrc[side]);
   }
   // Settled on the broker's own private figure: the fact is hidden from the
   // seller view, which would otherwise show the best other value in its

@@ -105,11 +105,36 @@ const MISSING_RE = new RegExp(
   "i",
 );
 
-/** One side is absent, or says only that a document isn't there. */
+/** Words that carry no claim of their own in a "not stated" side ("the", "document", "verify"). */
+const MISSING_FILLER = new Set([
+  "the", "and", "but", "for", "any", "this", "that", "its", "per", "was", "were", "are", "has", "have", "been", "not", "nor",
+  "document", "documents", "documentation", "uploaded", "provided", "file", "records", "record", "source", "sources",
+  "verify", "verified", "confirm", "confirmed", "claim", "information", "data", "available", "stated", "specified",
+  "disclosed", "given", "mentioned", "found", "included", "supplied", "received", "none", "unknown", "also", "yet",
+]);
+
+/**
+ * One side is absent, or says only that a document isn't there. A side that
+ * states its own figure, date or claim and ALSO notes some detail is missing
+ * ("Largest customer 31% of 2024 revenue (customer name not disclosed)",
+ * "Lease expires August 31, 2029; renewal options not stated") is a real
+ * side: judged clause by clause, it is missing only when every clause with
+ * content says something isn't there.
+ */
 export function isMissingSide(v: string | null | undefined): boolean {
   const t = stripLabel(v ?? "").trim();
   if (!t) return true;
-  return MISSING_RE.test(t);
+  if (!MISSING_RE.test(t)) return false;
+  const clauses = t
+    .split(/[;()[\]]|\.(?:\s+|$)|,\s*(?=(?:but|although|though|however|while|whereas)\b)|\s+[—–-]\s+|\s+(?:but|although|however|whereas)\s+/i)
+    .map((c) => c.trim())
+    .filter(Boolean);
+  const stated = clauses.filter((c) => !MISSING_RE.test(c));
+  return !stated.some((c) => {
+    if (/\d/.test(c)) return true;
+    const words = c.toLowerCase().split(/[^a-z']+/).filter((w) => w.length >= 3 && !MISSING_FILLER.has(w));
+    return words.length >= 2;
+  });
 }
 
 const MONTHS = "jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec";

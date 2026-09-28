@@ -3777,7 +3777,7 @@ Return JSON only.`,
       // Run analysis in background
       (async () => {
         try {
-          const { parseTransactionData, matchAddbacksToTransactions, identifyAddbacksFromTransactions, generateSellerQuestions } = await import("./financial/addback-verifier");
+          const { parseTransactionDataWithCoverage, matchAddbacksToTransactions, identifyAddbacksFromTransactions, generateSellerQuestions } = await import("./financial/addback-verifier");
 
           // Gather source documents — look for GL, bank statements, QB exports
           const allDocs = await storage.getDocumentsByDeal(req.params.dealId);
@@ -3804,6 +3804,8 @@ Return JSON only.`,
 
           // Parse all transaction data
           let allTransactions: any[] = [];
+          // Sources read only in part (a very long PDF statement): said on every add-back.
+          const partlyRead: string[] = [];
           for (const doc of sourceDocs) {
             if (!doc.extractedText) continue;
             const sourceType = doc.subcategory === "bank_statement"
@@ -3811,7 +3813,10 @@ Return JSON only.`,
               : doc.subcategory === "quickbooks_export" || doc.subcategory === "pnl_detail"
               ? "quickbooks"
               : "gl";
-            const parsed = await parseTransactionData(doc.extractedText, sourceType as any, doc.id);
+            const { transactions: parsed, readChars, totalChars } = await parseTransactionDataWithCoverage(doc.extractedText, sourceType as any, doc.id);
+            if (readChars < totalChars) {
+              partlyRead.push(`"${doc.name}" (the first ${Math.round((100 * readChars) / Math.max(1, totalChars))}% was read)`);
+            }
             if (parsed.length === 0) {
               console.warn(`[addback-verification] No transactions could be read from "${doc.name}" (${doc.id}, ${sourceType}, ${doc.extractedText.length} chars)`);
             }
@@ -3833,6 +3838,7 @@ Return JSON only.`,
 
           let updatedAddbacks: any[];
           let questions: any[];
+          const partlyReadNote = partlyRead.length > 0 ? `Only part of ${partlyRead.join(", ")} could be read for matching.` : "";
 
           if (verification.workflow === "provided") {
             // Workflow A — match existing addbacks
@@ -3856,11 +3862,17 @@ Return JSON only.`,
             updatedAddbacks = currentAddbacks.map((ab) => {
               const match = matchResults.find((m) => m.addbackId === ab.id);
               if (!match) return ab;
+              // A partial match stays partial ("Partly supported"), with what the
+              // linked transactions actually add up to — worked out in code.
+              const coverage = [match.coverageNote, partlyReadNote].filter(Boolean).join(" ");
               return {
                 ...ab,
-                verificationStatus: match.verificationStatus === "matched" ? "matched" : match.verificationStatus === "partial_match" ? "matched" : "no_match",
+                verificationStatus: partlyReadNote && match.verificationStatus === "no_match" ? "unverified" : match.verificationStatus,
                 matchedTransactions: match.matchedTransactions,
+                totalMatchedAmount: match.totalMatchedAmount,
+                claimedAmount: match.claimedAmount,
                 aiNotes: match.aiNotes,
+                coverageNote: coverage || null,
               };
             });
 
@@ -3886,7 +3898,7 @@ Return JSON only.`,
 
             updatedAddbacks = identified.map((ab) => ({
               ...ab,
-              verificationStatus: "matched",
+              coverageNote: [ab.coverageNote, partlyReadNote].filter(Boolean).join(" ") || null,
               sellerNotes: null,
             }));
 

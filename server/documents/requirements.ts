@@ -9,6 +9,7 @@
  * times for the same deal (skips existing entries by documentName).
  */
 import { storage } from "../storage";
+import { isEquipmentLeaseTitle } from "./lease-kind";
 
 interface DocRequirement {
   documentName: string;
@@ -336,8 +337,9 @@ function fileKeywords(fileName: string): Set<string> {
  * Words too common in document names to identify a checklist row on their
  * own: "Financial statements FY2023" shares "statements" with "Bank
  * Statements (3 Months)". A match needs two shared words, or one
- * distinguishing word. ("Lease" and "licence" do identify a row: any lease
- * file is the lease. An e-mail about a yard lease is kept out by its kind —
+ * distinguishing word. ("Lease" and "licence" do identify a row: a lease
+ * file is the lease of its kind — premises or equipment, see
+ * findMatchingRequirement. An e-mail about a yard lease is kept out by its kind —
  * only documents are matched by name.)
  */
 const GENERIC_NAME_WORDS = new Set([
@@ -389,7 +391,17 @@ export function findMatchingRequirement<T extends LinkableRequirement>(
     (r) => r.status === "missing" && (uncategorised || docCategoryForRequirement(r.category) === docCategory),
   );
 
+  // An equipment or vehicle lease is not the premises lease, and the premises
+  // lease is not an equipment lease: a lease file only counts for the kind
+  // of lease row it is ("Equipment lease - Toyota forklift" never ticks
+  // "Commercial Lease Agreement").
+  const fileIsLease = /\bleas(?:e|es|ing)\b/i.test(fileName);
+  const fileIsEquipmentLease = fileIsLease && isEquipmentLeaseTitle(fileName);
   const scored = candidates
+    .filter((r) => {
+      if (!fileIsLease || !/\bleas(?:e|es|ed|ing)\b/i.test(r.documentName)) return true;
+      return isEquipmentLeaseTitle(r.documentName) === fileIsEquipmentLease;
+    })
     .map((r) => {
       const words = Array.from(new Set(keywords(r.documentName)));
       const shared = words.filter((w) => fileWords.has(w));

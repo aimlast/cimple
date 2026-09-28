@@ -25,7 +25,7 @@
  */
 import fs from "fs";
 import { storage } from "../storage";
-import { extractTextFromFile } from "./parser";
+import { extractTextWithPages } from "./parser";
 import { classifyExtractionFailure, extractDocumentData, extractionChecklist, extractionRetryDelays, extractWithRetries, mergeExtractedData, normaliseExtraction, _setExtractionRetryDelaysForTests, type ExtractedDocumentData } from "./extractor";
 import type { DocumentSourceMeta } from "@shared/schema";
 import { groundedInSource, groundedValue, guardExtraction, restates, SPOKEN_KINDS } from "./extraction-guard";
@@ -180,13 +180,14 @@ export async function reprocessDealDocuments(
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
+    let pages: number | undefined;
     let openProblem: string | null = null;
     // The shared resolver: only "/uploads/docs/<name>", never outside the
     // docs folder (a broker-set fileUrl once read /proc/self/environ).
     const filePath = resolveDocumentPath(doc);
     if (filePath && fs.existsSync(filePath)) {
       try {
-        text = await extractTextFromFile(filePath, doc.mimeType);
+        ({ text, pages } = await extractTextWithPages(filePath, doc.mimeType));
       } catch (err) {
         console.error(`[reprocess] parse failed for doc ${doc.id} (${doc.name}):`, err);
         openProblem = parseProblem(err);
@@ -203,7 +204,7 @@ export async function reprocessDealDocuments(
         // failure stub: tried again with a growing wait (a multi-minute
         // outage outlasts one quick retry) before the source keeps what it had.
         const read = await extractWithRetries(
-          () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist }),
+          () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist, pages }),
           extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[reprocess] re-read of doc ${doc.id} (${doc.name}) failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
         );
@@ -939,7 +940,7 @@ export function overlayExistingFacts(
       const same = JSON.stringify(fresh) === JSON.stringify(value) || String(fresh) === String(value);
       if (!same) {
         recordAlternate(rebuilt, key, value, keptSrc);
-        noteConflict(ctx, key, undefined, { value: String(fresh), src: freshSrc }, { value: String(value), src: keptSrc });
+        noteConflict(ctx, key, undefined, { value: String(fresh), src: freshSrc }, { value: String(value), src: keptSrc }, rebuilt);
         continue;
       }
     }
@@ -952,7 +953,7 @@ export function overlayExistingFacts(
       if (!same) {
         displaceCorroborations(rebuilt, key, value);
         recordAlternate(rebuilt, key, fresh, freshSrc);
-        if (keptSrc) noteConflict(ctx, key, undefined, { value: String(value), src: keptSrc }, { value: String(fresh), src: freshSrc });
+        if (keptSrc) noteConflict(ctx, key, undefined, { value: String(value), src: keptSrc }, { value: String(fresh), src: freshSrc }, rebuilt);
       } else if (src) noteSameValue(rebuilt, key, freshSrc, { outranks: (a, b) => effectiveRank(key, a) > effectiveRank(key, b) });
     }
   }

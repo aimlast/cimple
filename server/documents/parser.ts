@@ -28,17 +28,26 @@ export class UnreadableFormatError extends Error {
 }
 
 export async function extractTextFromFile(filePath: string, mimeType?: string | null): Promise<string> {
+  return (await extractTextWithPages(filePath, mimeType)).text;
+}
+
+/**
+ * The file's text, and for a PDF its page count — how much text each page
+ * holds tells a scanned document (a watermark or a typed cover page over
+ * image pages) from a readable one (thinTextLayer).
+ */
+export async function extractTextWithPages(filePath: string, mimeType?: string | null): Promise<{ text: string; pages?: number }> {
   const ext = path.extname(filePath).toLowerCase();
 
   // PDF
   if (ext === ".pdf" || mimeType === "application/pdf") {
     const pdfMod = await import("pdf-parse");
-    const pdfParse: (buf: Buffer, options?: Record<string, unknown>) => Promise<{ text: string }> =
+    const pdfParse: (buf: Buffer, options?: Record<string, unknown>) => Promise<{ text: string; numpages?: number }> =
       (pdfMod as any).default ?? (pdfMod as any);
     const buffer = fs.readFileSync(filePath);
     try {
       const data = await pdfParse(buffer, { pagerender: renderPdfPage });
-      return data.text || "";
+      return { text: data.text || "", ...(typeof data.numpages === "number" ? { pages: data.numpages } : {}) };
     } catch (err) {
       // pdf-parse's pdf.js (v1.10, loaded once per process) rejects some
       // valid PDFs with "bad XRef entry" — e.g. every PDF made with PDFKit.
@@ -50,6 +59,10 @@ export async function extractTextFromFile(filePath: string, mimeType?: string | 
       }
     }
   }
+  return { text: await extractNonPdfText(filePath, ext, mimeType) };
+}
+
+async function extractNonPdfText(filePath: string, ext: string, mimeType?: string | null): Promise<string> {
 
   // Excel (.xlsx / .xls)
   if ([".xlsx", ".xls"].includes(ext) ||
@@ -137,7 +150,7 @@ async function renderPdfPage(pageData: { getTextContent: (o: Record<string, bool
 }
 
 /** Text of every page via pdf-parse's bundled pdf.js v2 (same line-joining as pdf-parse). */
-async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
+async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<{ text: string; pages: number }> {
   const mod: any = await import("module");
   const req = (mod.createRequire ?? mod.default.createRequire)(import.meta.url);
   const pdfjs = req("pdf-parse/lib/pdf.js/v2.0.550/build/pdf.js");
@@ -154,5 +167,5 @@ async function extractPdfWithNewerPdfjs(buffer: Buffer): Promise<string> {
   } finally {
     doc.destroy?.();
   }
-  return text;
+  return { text, pages: doc.numPages };
 }

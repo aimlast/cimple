@@ -28,6 +28,7 @@
  */
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { isMediaLayout } from "@shared/cim-media";
+import { addbackEvidenceLine } from "@shared/addback-support";
 import Anthropic from "@anthropic-ai/sdk";
 import { cimSections, cimSectionOverrides, type CimSection, type Deal } from "@shared/schema";
 import { db } from "../db";
@@ -162,9 +163,8 @@ export function buildDdContext(input: {
       ab && typeof ab.label === "string" && (bridgeLabels ? isBridgeAddback(ab.label, bridgeLabels) : !isDistributionLine({ label: ab.label, amounts: ab.yearAmounts ?? {} })),
     );
     if (addbacks.length > 0) {
-      parts.push(`## Add-back verification\nStatus: ${av.status}\n${addbacks.map((ab: any) =>
-        `- ${ab.label}: ${ab.verificationStatus} (${ab.matchedTransactions?.length || 0} supporting transactions)`
-      ).join("\n")}`);
+      // Claimed vs what the ledger shows: a partly supported add-back is never "matched".
+      parts.push(`## Add-back verification\nStatus: ${av.status}\n${addbacks.map((ab: any) => addbackEvidenceLine(ab)).join("\n")}`);
     }
   }
 

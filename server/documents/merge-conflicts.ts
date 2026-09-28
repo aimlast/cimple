@@ -46,6 +46,7 @@ import {
   typedNumericValues,
   type FieldSource,
   isBrokerSessionSource,
+  sourceRowLookup,
 } from "../interview/info-merger";
 import { falseConflictReason, isTaxVsBook, shareClaimsConflict, type ConflictSideInfo } from "./conflict-measures";
 
@@ -369,7 +370,7 @@ export async function recordMergeConflicts(
   /** The facts as saved — only conflicts still standing against them are raised. */
   finalInfo?: Record<string, unknown>,
 ): Promise<number> {
-  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)]) : collected;
+  const conflicts = finalInfo ? settleConflicts(finalInfo, [...collected, ...shareDisputesOnFile(finalInfo)], sourceRowLookup(documents)) : collected;
   if (conflicts.length === 0) return 0;
   const docs = new Map(documents.map((d) => [d.id, d]));
   const rows = comparableRows(await storage.getDiscrepanciesByDeal(dealId));

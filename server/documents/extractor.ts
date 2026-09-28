@@ -34,6 +34,7 @@ import {
   mergeMapEntryInto,
   isBrokerProcessKey,
   isSpecialistSource,
+  premisesKey,
   isYearMapKey,
   mergeScalarInto,
   mergeYearMapInto,
@@ -56,6 +57,7 @@ import { agentConfig } from "../interview/config/load-config";
 import { coverageAdjustmentsForDeal } from "../interview/interview-plan";
 import type { Deal } from "@shared/schema";
 import { guardExtraction, statedMetricKeys, STATED_METRIC_NOTE, STATED_METRICS_KEY, SPOKEN_KINDS } from "./extraction-guard";
+import { equipmentLeaseKey, isEquipmentLeaseTitle, PREMISES_LEASE_KEY } from "./lease-kind";
 
 /** The slice of the SDK the extractor uses (a stand-in in tests). */
 export interface ExtractionClient {
@@ -310,7 +312,7 @@ FISCAL PERIODS (any source that states figures):
 
 BROKER PROCESS: how the business reached the broker (who referred it, the lead source), the broker's fee, commission, listing or engagement terms, earlier approaches or offers — these are not facts about the business: put them ONLY in _privateNotes.
 
-For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, contracts, legalNotes, permitsLicenses (all licenses and permits)
+For LEASE / LEGAL documents, extract: leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, contracts, legalNotes, permitsLicenses (all licenses and permits). The lease fields (leaseExpiry, monthlyRent, leaseSqft, leaseRenewalOptions, leaseAddress, leaseDetails, landlord) are ONLY for the lease of the business's premises (the building, unit, yard or land it occupies). A lease of equipment or vehicles (a forklift, truck, tractor, trailer, van, copier, machine) goes under equipmentLeases (or vehicleLeases for vehicles) as one line with what is leased, the payment and the term — never under the premises-lease fields — and set _documentType to say so (e.g. "Equipment lease - forklift").
 
 For OPERATIONS / HR documents, extract: employees (total headcount), fullTimeCount, partTimeCount, keyPersonnel, ownerInvolvement (incl. hours/week), suppliers, inventory, assetsIncluded (equipment and assets), operationsNotes
 
@@ -356,6 +358,67 @@ export const MAX_SOURCE_PARTS = 10;
 const PART_CONCURRENCY = 3;
 /** Below this much text there is nothing to read (a scanned image, an empty file). */
 export const MIN_READABLE_CHARS = 50;
+/** A page of a readable document holds more text than this (after repeated lines — a scanner's watermark — are set aside). */
+export const MIN_USEFUL_CHARS_PER_PAGE = 150;
+
+/**
+ * The text a source holds of its own: letters and digits outside lines that
+ * repeat page after page ("Scanned with CamScanner", a running header, a
+ * page number) — and how many pages those repeats suggest when the page
+ * count isn't known.
+ */
+export function usefulText(text: string): { chars: number; repeatedPages: number } {
+  const lines = (text || "").split(/\r?\n|\f/).map((l) => l.trim()).filter(Boolean);
+  // The same short line, word for word (a ledger's rows differ in their
+  // dates and amounts; a watermark or running header does not).
+  const norm = (l: string) => l.toLowerCase().replace(/\s+/g, " ");
+  const counts = new Map<string, number>();
+  for (const l of lines) counts.set(norm(l), (counts.get(norm(l)) ?? 0) + 1);
+  let chars = 0;
+  let repeatedPages = 0;
+  for (const l of lines) {
+    const n = counts.get(norm(l)) ?? 0;
+    if (n >= 3 && l.length <= 80 && /[a-z]/i.test(l)) { repeatedPages = Math.max(repeatedPages, n); continue; }
+    if (/^(?:page\s*)?#?\s*\d+(?:\s*(?:of|\/)\s*\d+)?$|^[-–—]\s*\d+\s*[-–—]$/i.test(l)) continue;
+    chars += l.replace(/[^A-Za-z0-9]/g, "").length;
+  }
+  return { chars, repeatedPages };
+}
+
+/**
+ * True when a document's text layer is too thin to have been read — a
+ * scanned PDF whose only text is a scanner's watermark or a typed cover
+ * page: under MIN_USEFUL_CHARS_PER_PAGE characters of its own per page, on
+ * a document of three or more pages (the page count from the PDF, else the
+ * number of pages a repeated watermark suggests). A one- or two-page
+ * document is judged by MIN_READABLE_CHARS alone.
+ */
+export function thinTextLayer(text: string, pages?: number): boolean {
+  const { chars, repeatedPages } = usefulText(text);
+  const pageCount = pages && pages > 0 ? pages : repeatedPages;
+  if (pageCount < 3) return false;
+  return chars / pageCount < MIN_USEFUL_CHARS_PER_PAGE;
+}
+
+/** The reason given for a scanned document with a thin text layer. */
+export const SCANNED_REASON = "most of its pages have no readable text — it looks like a scanned document; upload a text PDF, a Word file or a typed copy";
+
+/**
+ * A read that found nothing, of a text with little of its own: under 300
+ * characters a page (or 300 in all). With hasNoBusinessFacts, the source is
+ * not counted as the checklist document it was uploaded for.
+ */
+export function readFoundNothing(data: ExtractedDocumentData, text: string, pages?: number): boolean {
+  if (!hasNoBusinessFacts(data)) return false;
+  const { chars, repeatedPages } = usefulText(text);
+  const pageCount = Math.max(1, pages && pages > 0 ? pages : repeatedPages);
+  return chars < 300 || chars / pageCount < 300;
+}
+
+/** True when an extraction holds no fact about the business (only its summary and bookkeeping). */
+export function hasNoBusinessFacts(data: ExtractedDocumentData): boolean {
+  return Object.entries(data).every(([k, v]) => k.startsWith("_") || k === "summary" || k === "keyFacts" || v === undefined || v === null || v === "");
+}
 
 /** Where a page, sheet or form feed starts — the preferred place to cut a long source. */
 const PAGE_BREAK_RE = /\f|\n(?=[^\n]{0,80}\bPage \d+ of \d+\b)|\n(?=--- Sheet: )|\n\n(?=\S)/g;
@@ -749,9 +812,12 @@ export async function extractDocumentData(
   /** What kind of source this is — an email or call is read differently from a P&L. */
   kind: SourceKind = "document",
   /** The deal's checklist keys, so answers land where the interview and coverage look (see extractionChecklist). */
-  opts: { checklist?: ExtractionChecklistItem[] } = {},
+  opts: { checklist?: ExtractionChecklistItem[]; pages?: number } = {},
 ): Promise<ExtractedDocumentData> {
   if (!text || text.trim().length < MIN_READABLE_CHARS) return unreadableExtraction(text, kind);
+  // A scanned PDF whose text layer is a watermark or a cover page: not read
+  // (nothing in it is), and said so — it is not the document it was sent as.
+  if (kind === "document" && thinTextLayer(text, opts.pages)) return unreadableExtraction(text, kind, SCANNED_REASON);
 
   const parts = splitSourceText(text);
   if (parts.length === 1) {
@@ -991,7 +1057,13 @@ const DOC_NOUN = "(?:database|export|report|file|document|spreadsheet|workbook|s
 const PART_LABEL_START = /^\s*(?:this is\s+)?(\()?part\s+(\d{1,3})\s*(?:of|\/)\s*(\d{1,3})\b(?:\s*(\)))?/i;
 /** What may follow an unbracketed label: a delimiter, or "of a/an/the <the source>". */
 const AFTER_LABEL_DELIM = /^\s*[:\-–—,]\s*/;
-const AFTER_LABEL_OF_DOC = new RegExp(`^\\s*of\\s+(?:a|an|the)\\s+(?=(?:[\\w'&/-]+\\s+){0,5}?${DOC_NOUN}\\b)`, "i");
+/**
+ * Words that end the noun phrase after "of the": an article, "to", a verb.
+ * "Part 2 of 5 of the lease requires the tenant to file returns" names no
+ * source — "returns" is five words on, past a verb — and is kept as written.
+ */
+const NOT_IN_SOURCE_NAME = "(?:the|a|an|to|is|are|was|were|be|been|being|has|have|had|and|or|of|that|which|who|it|its|this|these|requires?|required|shows?|showed|states?|stated|says|said|includes?|included|provides?|provided|lists?|listed|covers?|covered|contains?|contained|describes?|described|indicates?|indicated|notes?|noted|sets?|gives?|gave|must|shall|will|would|can|could|may|might|should|files?|filed|pays?|paid|runs?|ran)";
+const AFTER_LABEL_OF_DOC = new RegExp(`^\\s*of\\s+(?:a|an|the)\\s+(?=(?:(?!${NOT_IN_SOURCE_NAME}\\b)[\\w'&/-]+\\s+){0,5}?${DOC_NOUN}\\b)`, "i");
 /** "Part 4 of customer membership database…" — a part's own number without the count (summaries only). */
 const OWN_PART_LEAD = /^\s*(?:this is\s+)?\(?part\s+(\d+)\)?\s*(?:[:\-–—,.]\s*|of\s+)(?:(?:the|a|an)\s+)?/i;
 
@@ -1108,7 +1180,7 @@ const ROW_ID_RANGE = new RegExp(
   "i",
 );
 /** A finding about the records ("… show no major failures", "… were reconciled", "…: no late payments"): a fact, not a row range. */
-const FINDING_AFTER = /^(?:\s*:\s*\S|[^.;]*?\b(?:show(?:s|ed)?|indicate[sd]?|confirm(?:s|ed)?|reveal(?:s|ed)?|demonstrate[sd]?|contain(?:s|ed)?|reflect(?:s|ed)?|total(?:s|led|ed)?|averag(?:e|es|ed)|grew|declined|increased|decreased|doubled|tripled|has|have|had|was|were|is|are)\b)/i;
+const FINDING_AFTER = /^(?:\s*:\s*\S|[^.;]*?\b(?:show(?:s|ed)?|indicate[sd]?|confirm(?:s|ed)?|reveal(?:s|ed)?|demonstrate[sd]?|contain(?:s|ed)?|reflect(?:s|ed)?|total(?:s|led|ed)?|averag(?:e|es|ed)|grew|declined|increased|decreased|doubled|tripled|has|have|had|was|were|is|are|reconcile[sd]?|match(?:es|ed)?|agree[sd]?|tie[sd]?|support(?:s|ed)?|balance[sd]?|exceed(?:s|ed)?|verif(?:y|ies|ied)|prove[sd]?|remain(?:s|ed)?|equal(?:s|led|ed)?|include[sd]?|document(?:s|ed)|record(?:s|ed)|list(?:s|ed)|cover(?:s|ed)|net(?:s|ted)?|came|come|comes|run|runs|ran|went|go|goes)\b)/i;
 /** The business doing something with the records ("The practice has retained patient records from …"): a fact. */
 const FINDING_BEFORE = /\b(?:has|have|had|retain(?:s|ed)?|digiti[sz](?:e|es|ed)|kept|keeps?|maintain(?:s|ed)?|holds?|held|stor(?:e|es|ed)|occup(?:y|ies|ied)|stock(?:s|ed)?|owns?|owned|audit(?:s|ed)?|archiv(?:e|es|ed))\b/i;
 
@@ -1164,8 +1236,11 @@ export function combinePartSummaries(summaries: PartSummary[], opts: { total?: n
   if (findings.length === 0) return items[0] ?? "";
   const scores = findings.map(headlineScore);
   const best = scores.indexOf(Math.max(...scores));
-  const ordered = scores[best] > 0 ? [findings[best], ...findings.filter((_, i) => i !== best)] : findings;
-  return ordered.join(" ");
+  // A part that only describes its rows is left out only when another part
+  // states the source's headline; otherwise every part's summary stays, in
+  // order (a sentence misread as row prose is never lost to a plain one).
+  if (scores[best] <= 0) return items.join(" ");
+  return [findings[best], ...findings.filter((_, i) => i !== best)].join(" ");
 }
 
 /** Keys of an extraction that describe the source in prose (joined across parts, never one part's only). */
@@ -1331,6 +1406,48 @@ const LEASE_COMPOSITE_PARTS: Array<{ key: string; label: string }> = [
   { key: "leaseRenewalOptions", label: "Renewal options" },
 ];
 
+/** How an equipment lease's terms read once moved off the premises-lease keys. */
+const EQUIPMENT_LEASE_LABELS: Record<string, string> = {
+  monthlyRent: "Payment", rent: "Payment", annualRent: "Annual payment", leaseExpiry: "Expires", leaseTerm: "Term",
+  leaseStart: "Starts", leaseStartDate: "Starts", leaseRenewalOptions: "Options", landlord: "Lessor", leaseAddress: "Location",
+};
+
+/**
+ * An equipment or vehicle lease (a forklift, a tractor, a copier): the terms
+ * the reader filed under the premises-lease keys (leaseExpiry, monthlyRent,
+ * leaseDetails, …) move to one equipmentLeases / vehicleLeases line naming
+ * the source ("Equipment lease - Toyota forklift: Payment $1,150 per month;
+ * Expires March 31, 2027"). The premises lease's facts are never touched.
+ */
+function rerouteEquipmentLease(data: ExtractedDocumentData, title: string, sourceTitle: string | undefined, inferredKeys: Set<string>): void {
+  const target = equipmentLeaseKey(title);
+  const parts: string[] = [];
+  let summary: string | undefined;
+  let inferred = false;
+  for (const key of Object.keys(data)) {
+    if (key.startsWith("_")) continue;
+    const canonical = canonicalFieldName(key);
+    if (!PREMISES_LEASE_KEY.test(key) && !PREMISES_LEASE_KEY.test(canonical)) continue;
+    const value = data[key];
+    delete data[key];
+    if (typeof value !== "string" || !value.trim()) continue;
+    if (inferredKeys.has(key)) inferred = true;
+    if (canonical === "leaseDetails" || key === "leaseDetails" || canonical === "propertyInfo") summary = summary ? `${summary}; ${value.trim()}` : value.trim();
+    else {
+      const label = EQUIPMENT_LEASE_LABELS[key] ?? EQUIPMENT_LEASE_LABELS[canonical];
+      parts.push(label ? `${label}: ${value.trim()}` : value.trim());
+    }
+  }
+  // (A summary that already says a term is not repeated.)
+  const terms = [summary, ...parts.filter((p) => !summary || !summary.includes(p.replace(/^[^:]+:\s*/, "")))].filter(Boolean).join("; ");
+  if (!terms) return;
+  const name = (sourceTitle ?? "").trim();
+  const line = name && !terms.toLowerCase().includes(name.toLowerCase()) ? `${name}: ${terms}` : terms;
+  const existing = typeof data[target] === "string" ? (data[target] as string).trim() : "";
+  data[target] = existing ? `${existing}; ${line}` : line;
+  if (inferred) inferredKeys.add(target);
+}
+
 /** The latest fiscal period a normalised extraction's figures are for (its by-year maps and tagged headlines), if any. */
 function latestFigurePeriod(data: ExtractedDocumentData): string | undefined {
   const periods: string[] = Object.values((data._keyPeriods as Record<string, string> | undefined) ?? {});
@@ -1418,11 +1535,16 @@ export function mergeExtractedData(
   const keyPeriods = (data._keyPeriods as Record<string, string> | undefined) ?? {};
   const inferredKeys = new Set(String(data._inferredKeys ?? "").split(",").map((k) => k.trim()).filter(Boolean));
   const title = [o.title, typeof data._documentType === "string" ? data._documentType : ""].filter(Boolean).join(" · ");
+  // A forklift, truck or copier lease: its term and payment are that
+  // equipment's lease, never the premises lease's expiry and rent.
+  if (isEquipmentLeaseTitle(title)) rerouteEquipmentLease(data, title, o.title, inferredKeys);
 
+  // The premises a lease document is for (its address, else the place its title names).
+  const premises = kind === "document" ? premisesKey(o.title ?? title, typeof data.leaseAddress === "string" ? data.leaseAddress : null) : undefined;
   const srcFor = (rawKey: string, key: string): FieldSource => ({
     ...base,
     ...(keyPeriods[rawKey] ? { period: keyPeriods[rawKey] } : {}),
-    ...(isSpecialistSource(key, title) ? { specialist: true } : {}),
+    ...(isSpecialistSource(key, title) ? { specialist: true, ...(premises && PREMISES_LEASE_KEY.test(key) ? { premises } : {}) } : {}),
     ...(inferredKeys.has(rawKey) ? { valueInferred: true } : {}),
   });
 
@@ -1453,7 +1575,11 @@ export function mergeExtractedData(
     mergeScalarInto(merged, key, value, src, ctx);
   };
 
-  for (const [key, value] of Object.entries(data)) {
+  // The lease's address first: a second premises' lease is told from a
+  // disputed one by its address (noteConflict), so it must be on file
+  // before that lease's expiry and rent are weighed.
+  const entries = Object.entries(data).sort(([a], [b]) => Number(b === "leaseAddress") - Number(a === "leaseAddress"));
+  for (const [key, value] of entries) {
     if (!value || key.startsWith("_")) continue;
     mergeValue(key, canonicalFieldName(key), value);
   }

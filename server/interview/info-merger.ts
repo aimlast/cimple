@@ -723,6 +723,11 @@ export interface FieldSource {
   /** A dedicated source for this fact (the org chart for key employees, the lease for lease terms). */
   specialist?: boolean;
   /**
+   * The premises a lease document is for ("addr:240 bayfront", "name:seton
+   * clinic") — two leases disagreeing are two premises only when these differ.
+   */
+  premises?: string;
+  /**
    * The reader worked the value out ("implied", "calculated", a vague
    * "Barrie area (address not stated)") rather than the source stating it:
    * it fills an empty field but never displaces a value, and any explicit

@@ -11,6 +11,7 @@
  */
 
 import Anthropic from "@anthropic-ai/sdk";
+import { splitSourceText } from "../documents/extractor";
 
 const anthropic = new Anthropic({ timeout: 600_000 });
 
@@ -40,14 +41,142 @@ export interface ExtractedStatement {
 
 // ── Extraction ──
 
+/** One read covers at most this much of a statement pack; a longer one is read in parts. */
+export const FIN_PART_CHARS = 80_000;
+/** At most this many parts are read (about 480K characters); anything beyond is noted as not read. */
+export const FIN_MAX_PARTS = 6;
+
 export async function extractFinancialData(
   documentText: string,
   documentId: string,
   documentName: string,
 ): Promise<ExtractedStatement[]> {
+  return extractFinancialDataInParts(documentText, documentId, documentName, extractFinancialPart);
+}
+
+type PartReader = (text: string, documentId: string, documentName: string, partLabel?: string) => Promise<ExtractedStatement[]>;
+
+const RECAST = /\b(?:recast|normali[sz]ed|adjusted|pro ?forma)\b/i;
+const isRecast = (s: ExtractedStatement) => RECAST.test([...(s.notes ?? []), ...s.lineItems.map((l) => l.label)].join(" "));
+const labelKey = (l: LineItem) => `${l.category}|${String(l.label ?? "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim()}`;
+
+/**
+ * One statement from two parts of the same pack: the periods of both, each
+ * line item once with every period's amount (the one already read wins a
+ * period both state — the overlap between parts).
+ */
+function mergeStatement(a: ExtractedStatement, b: ExtractedStatement): ExtractedStatement {
+  const items = a.lineItems.map((l) => ({ ...l, amounts: { ...l.amounts } }));
+  const byKey = new Map(items.map((l) => [labelKey(l), l]));
+  for (const l of b.lineItems) {
+    const hit = byKey.get(labelKey(l));
+    if (hit) {
+      for (const [p, v] of Object.entries(l.amounts ?? {})) if (!(p in hit.amounts)) hit.amounts[p] = v;
+    } else {
+      const copy = { ...l, amounts: { ...l.amounts } };
+      items.push(copy);
+      byKey.set(labelKey(copy), copy);
+    }
+  }
+  const periods = Array.from(new Set([...(a.periods ?? []), ...(b.periods ?? [])]));
+  return {
+    ...a,
+    periods,
+    lineItems: items,
+    confidence: Math.min(a.confidence ?? 1, b.confidence ?? 1),
+    notes: Array.from(new Set([...(a.notes ?? []), ...(b.notes ?? [])])),
+  };
+}
+
+/**
+ * The statements of a long pack, read part by part: the same statement read
+ * in two parts (FY2022 in the first, FY2024 in the third — or a table cut at
+ * a boundary) becomes one statement with every period. Raw and recast
+ * versions of a statement are never merged into each other, and two
+ * statements one part read stay two.
+ */
+export function combinePartStatements(parts: ExtractedStatement[][]): ExtractedStatement[] {
+  const out: ExtractedStatement[] = [];
+  for (const statements of parts) {
+    const fromThisPart = new Set<number>();
+    for (const s of statements) {
+      const i = out.findIndex((e, k) => {
+        if (fromThisPart.has(k)) return false;
+        if (e.statementType !== s.statementType || (e.currency || "") !== (s.currency || "") || isRecast(e) !== isRecast(s)) return false;
+        const ep = new Set(e.periods ?? []);
+        const shared = (s.periods ?? []).filter((p) => ep.has(p));
+        if (shared.length === 0) return true; // other years of the same statement
+        // The same years again (the overlap, or a table cut in two): the same statement when their lines agree.
+        const ek = new Set(e.lineItems.map(labelKey));
+        const common = s.lineItems.filter((l) => ek.has(labelKey(l))).length;
+        return common >= Math.min(3, s.lineItems.length) && common / Math.max(1, Math.min(e.lineItems.length, s.lineItems.length)) >= 0.5;
+      });
+      if (i >= 0) {
+        out[i] = mergeStatement(out[i], s);
+        fromThisPart.add(i);
+      } else {
+        out.push(s);
+        fromThisPart.add(out.length - 1);
+      }
+    }
+  }
+  return out;
+}
+
+/**
+ * Reads a statement document in full: up to FIN_PART_CHARS in one read, a
+ * longer pack (three years of audited statements, a combined tax pack) in
+ * parts at page / sheet boundaries (splitSourceText), combined per
+ * statement. It used to read only the first 80,000 characters, so the
+ * latest years of a chronological pack never reached the analysis. Text
+ * beyond FIN_MAX_PARTS parts is noted on every statement as not read
+ * (unreadFinancialText gives it to the analysis as raw text).
+ */
+export async function extractFinancialDataInParts(
+  documentText: string,
+  documentId: string,
+  documentName: string,
+  readPart: PartReader,
+): Promise<ExtractedStatement[]> {
   if (!documentText || documentText.trim().length < 50) {
     return [];
   }
+  const all = splitSourceText(documentText, FIN_PART_CHARS);
+  if (all.length === 1) return readPart(documentText, documentId, documentName);
+  const parts = all.slice(0, FIN_MAX_PARTS);
+  const results: ExtractedStatement[][] = [];
+  for (let i = 0; i < parts.length; i++) {
+    try {
+      results.push(await readPart(parts[i], documentId, documentName, `part ${i + 1} of ${all.length}`));
+    } catch (err: any) {
+      // One part failing must not lose the others.
+      console.error(`Financial extraction of "${documentName}" part ${i + 1}/${all.length} failed — continuing:`, err?.message ?? err);
+      results.push([]);
+    }
+  }
+  const combined = combinePartStatements(results);
+  const unread = unreadFinancialText(documentText);
+  const note = unread
+    ? `Read in ${parts.length} parts; the last ${all.length - parts.length} part(s) of "${documentName}" (about ${Math.round((100 * unread.length) / documentText.length)}% of the text) were not read as statements.`
+    : `Read in ${parts.length} parts.`;
+  return combined.map((s) => ({ ...s, notes: [...(s.notes ?? []), note] }));
+}
+
+/** The text of a statement document past what the structured read covers ("" when it read it all). */
+export function unreadFinancialText(documentText: string): string {
+  const all = splitSourceText(documentText || "", FIN_PART_CHARS);
+  if (all.length <= FIN_MAX_PARTS) return "";
+  const lastRead = all[FIN_MAX_PARTS - 1];
+  const end = documentText.indexOf(lastRead) + lastRead.length;
+  return end > 0 ? documentText.slice(end) : all.slice(FIN_MAX_PARTS).join("");
+}
+
+async function extractFinancialPart(
+  documentText: string,
+  documentId: string,
+  documentName: string,
+  partLabel?: string,
+): Promise<ExtractedStatement[]> {
 
   // Streamed to keep the connection alive — these generations run for minutes
   // and idle non-streaming requests get killed by network timeouts.
@@ -62,10 +191,10 @@ export async function extractFinancialData(
         role: "user",
         content: `You are a senior M&A financial analyst. Extract structured financial data from the following document text.
 
-DOCUMENT NAME: ${documentName}
+DOCUMENT NAME: ${documentName}${partLabel ? `\n\nThis is ${partLabel} of a long document read in parts: extract every statement, or part of a statement, in THIS text with the periods it shows.` : ""}
 
 DOCUMENT TEXT:
-${documentText.slice(0, 80000)}
+${documentText.slice(0, FIN_PART_CHARS)}
 
 INSTRUCTIONS:
 1. Identify every financial statement present. This includes:
