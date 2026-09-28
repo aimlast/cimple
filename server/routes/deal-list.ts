@@ -24,6 +24,7 @@ import {
   type Deal,
 } from "@shared/schema";
 import { computeCimReadiness, type CimReadiness } from "@shared/cim-readiness";
+import { CIM_FALLBACK_REASONING } from "@shared/cim-layouts";
 import {
   computeNextStep,
   phaseLabel,
@@ -285,6 +286,10 @@ export async function loadDealSideFacts(
       .select({
         dealId: cimSections.dealId,
         count: sql<number>`count(*)::int`,
+        // Shown, written, unticked: shared/cim-approvals sectionsAwaitingApproval
+        // (the pre-rule live treatment doesn't matter here — a live deal's
+        // next step never looks at it).
+        awaitingApproval: sql<number>`count(*) filter (where ${cimSections.isVisible} is not false and ${cimSections.brokerApproved} is not true and ${cimSections.aiLayoutReasoning} is distinct from ${CIM_FALLBACK_REASONING})::int`,
         latest: sql<string | null>`max(${cimSections.updatedAt})`,
       })
       .from(cimSections)
@@ -344,6 +349,7 @@ export async function loadDealSideFacts(
         invited: !!inv,
         interviewStarted: !!s,
         hasCimSections: toNum(sec?.count) > 0,
+        sectionsAwaitingApproval: toNum(sec?.awaitingApproval),
         cimGenerating: getLiveCimGenerationStatus(d.id)?.status === "running",
         openCriticalDiscrepancies: toNum(disc?.critical),
         buyersWithAccess: toNum(b?.active),

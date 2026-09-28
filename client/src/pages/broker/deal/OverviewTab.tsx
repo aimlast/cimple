@@ -85,7 +85,7 @@ import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
-import { publishReadiness } from "@shared/cim-approvals";
+import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
@@ -2395,11 +2395,14 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
   // A CIM made only in the builder (sections, no generation stamp) is still
-  // a draft — the checklist counts it like the deal list does. Only fetched
-  // when the deal row alone can't tell.
+  // a draft — the checklist counts it like the deal list does. Fetched when
+  // the deal row alone can't tell, and always in Design: the "Broker
+  // approved" row follows the publish card's rule (sections changed since the
+  // approval, or never approved, keep it unticked).
   const needsSectionCount =
-    (deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
-    !deal.cimContent && !deal.cimLayoutGeneratedAt;
+    ((deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
+      !deal.cimContent && !deal.cimLayoutGeneratedAt) ||
+    deal.phase === "phase4_design_finalization";
   const { data: checklistSections } = useQuery<CimSection[]>({
     queryKey: ["/api/deals", dealId, "cim-sections"],
     enabled: needsSectionCount,
@@ -2433,6 +2436,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
         const items = phase.items(deal, {
           invited: invitesError ? undefined : invites.length > 0,
           hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
+          sectionsAwaitingApproval: checklistSections ? sectionsAwaitingApproval(checklistSections, deal).length : undefined,
           cimGenerating: checklistGeneration.isRunning,
         });
         const required = items.filter((i) => !i.optional);

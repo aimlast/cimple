@@ -25,10 +25,16 @@
  *  - Publishing needs both design approvals AND every shown section ticked
  *    (so a CIM approved before this rule, with a section changed since, is
  *    held too). The Overview lists the sections that need approval.
+ *  - One rule everywhere: publishReadiness is built on deal-progress
+ *    designApprovalState, which the checklist, the deal list and the
+ *    dashboard's next step use with the same count of sections awaiting.
+ *  - A live CIM approved before this rule (its sections were never ticked)
+ *    counts its untouched sections as approved (legacyLiveApprovedIds); a
+ *    change after publishing still needs approving.
  *
  * Pure — no server or browser dependencies.
  */
-import { phaseIndex } from "./deal-progress";
+import { designApprovalState, phaseIndex } from "./deal-progress";
 import { isCimFallbackSection } from "./cim-layouts";
 
 export type DealApprovalFlag =
@@ -53,6 +59,8 @@ export interface ApprovalSection {
   brokerApproved?: boolean | null;
   aiLayoutReasoning?: string | null;
   contentHistory?: unknown;
+  /** Last write to the section (ISO string from the API, Date on the server). */
+  updatedAt?: string | Date | null;
 }
 
 export interface SectionAwaitingApproval {
@@ -110,10 +118,55 @@ export function editNeedsReapproval(
   return set.isVisible === true && before.isVisible === false;
 }
 
-/** Shown, written sections the broker hasn't approved as they stand now. */
-export function sectionsAwaitingApproval(sections: readonly ApprovalSection[]): SectionAwaitingApproval[] {
+/**
+ * When the per-section rule started (before any deploy of it). A CIM that
+ * went live before then was approved as a whole — the broker's design
+ * approval didn't tick its sections — so its sections were never ticked.
+ */
+export const PER_SECTION_APPROVAL_SINCE = "2026-09-28T04:00:00.000Z";
+
+const toMs = (v: unknown): number => {
+  if (v instanceof Date) return v.getTime();
+  if (typeof v === "string" && v) {
+    const ms = Date.parse(v);
+    return Number.isFinite(ms) ? ms : NaN;
+  }
+  return NaN;
+};
+
+/**
+ * Sections of a live CIM approved before the per-section rule that count as
+ * approved: the deal is live with both design approvals, and the section —
+ * shown, written, unticked — hasn't been written to (updatedAt) or changed
+ * (its latest history entry) since the rule started. A change after
+ * publishing is newer than that, so it still needs approving; a section
+ * with no write time on record can't be proved untouched and isn't
+ * included. The server ticks them on the broker's first read of the
+ * sections (server/cim/approvals.ts backfillLegacyLiveApprovals).
+ */
+export function legacyLiveApprovedIds(deal: ApprovalDeal | null | undefined, sections: readonly ApprovalSection[]): string[] {
+  if (!deal?.isLive || !deal.designApprovedByBroker || !deal.designApprovedBySeller) return [];
+  const since = Date.parse(PER_SECTION_APPROVAL_SINCE);
   return sections
-    .filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s))
+    .filter((s) => {
+      if (s.isVisible === false || s.brokerApproved || isCimFallbackSection(s)) return false;
+      const written = toMs(s.updatedAt);
+      if (!Number.isFinite(written) || written >= since) return false;
+      const history = Array.isArray(s.contentHistory) ? (s.contentHistory as Array<{ at?: unknown }>) : [];
+      return !history.some((h) => toMs(h?.at) >= since);
+    })
+    .map((s) => s.id);
+}
+
+/**
+ * Shown, written sections the broker hasn't approved as they stand now.
+ * With the deal, a live CIM's sections from before the per-section rule
+ * count as approved (legacyLiveApprovedIds).
+ */
+export function sectionsAwaitingApproval(sections: readonly ApprovalSection[], deal?: ApprovalDeal | null): SectionAwaitingApproval[] {
+  const legacy = new Set(legacyLiveApprovedIds(deal, sections));
+  return sections
+    .filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s) && !legacy.has(s.id))
     .map((s) => {
       const history = Array.isArray(s.contentHistory) ? (s.contentHistory as Array<{ reason?: unknown }>) : [];
       const last = history[history.length - 1];
@@ -143,8 +196,7 @@ export interface PublishReadiness {
 
 /** Can this CIM be published? (Discrepancies and placeholders are gated separately.) */
 export function publishReadiness(deal: ApprovalDeal, sections: readonly ApprovalSection[]): PublishReadiness {
-  const awaiting = sectionsAwaitingApproval(sections);
-  const brokerApproved = !!deal.designApprovedByBroker && awaiting.length === 0;
-  const sellerApproved = !!deal.designApprovedBySeller;
-  return { brokerApproved, sellerApproved, awaiting, ready: brokerApproved && sellerApproved };
+  const awaiting = sectionsAwaitingApproval(sections, deal);
+  // One rule with the checklist, the deal list and the dashboard (shared/deal-progress).
+  return { ...designApprovalState(deal, awaiting.length), awaiting };
 }

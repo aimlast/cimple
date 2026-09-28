@@ -9,11 +9,20 @@
  *    same write as the content.
  *  - approveSectionsWithDesign: the broker's design approval ticks every
  *    shown section.
- *  - publishBlock: the publish gate's section check.
+ *  - sectionsBlockingPublish: the publish gate's section check.
+ *  - backfillLegacyLiveApprovals: a live CIM approved before the per-section
+ *    rule gets its untouched sections ticked on the broker's first read.
+ *  - legacySectionInsert: the legacy "create a section" body, through the
+ *    same rule as the builder's "Add section".
  */
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "../db";
 import { storage } from "../storage";
+import { cimSections, type CimSection, type Deal, type InsertCimSection } from "@shared/schema";
+import { CIM_ACCESS_TIERS, isCimLayoutKey } from "@shared/cim-layouts";
 import {
   approvalsWithdrawnByChange,
+  legacyLiveApprovedIds,
   sectionsApprovedWithDesign,
   sectionsAwaitingApproval,
   type SectionAwaitingApproval,
@@ -49,7 +58,78 @@ export async function approveSectionsWithDesign(dealId: string): Promise<number>
 
 /** Sections that still need the broker's approval before the CIM can go live (empty = none). */
 export async function sectionsBlockingPublish(dealId: string): Promise<SectionAwaitingApproval[]> {
-  return sectionsAwaitingApproval(await storage.getCimSectionsByDeal(dealId));
+  const [deal, sections] = await Promise.all([storage.getDeal(dealId), storage.getCimSectionsByDeal(dealId)]);
+  return sectionsAwaitingApproval(sections, deal);
+}
+
+/**
+ * A live CIM approved before the per-section rule (legacyLiveApprovedIds):
+ * tick its untouched sections so the Overview, the builder and the deal list
+ * don't show a published CIM as unapproved. One-off per deal in effect —
+ * once ticked they no longer qualify, and a change after publishing is newer
+ * than the rule so it still needs approving. The write leaves updatedAt
+ * alone (it is the deal list's "last activity" and the rule's own test).
+ * Returns the sections as they now stand. Never throws: on a failed write
+ * the sections come back as read (the shared rule still counts them as
+ * approved).
+ */
+export async function backfillLegacyLiveApprovals(deal: Pick<Deal, "id" | "isLive" | "designApprovedByBroker" | "designApprovedBySeller">): Promise<CimSection[]> {
+  const sections = await storage.getCimSectionsByDeal(deal.id);
+  const ids = legacyLiveApprovedIds(deal, sections);
+  if (ids.length === 0) return sections;
+  try {
+    await db
+      .update(cimSections)
+      .set({ brokerApproved: true })
+      .where(and(eq(cimSections.dealId, deal.id), inArray(cimSections.id, ids)));
+    const ticked = new Set(ids);
+    console.log(`[approvals] live deal ${deal.id}: ${ids.length} section(s) approved before the per-section rule ticked`);
+    return sections.map((s) => (ticked.has(s.id) ? { ...s, brokerApproved: true } : s));
+  } catch (err) {
+    console.error(`[approvals] couldn't tick the pre-rule sections of live deal ${deal.id}:`, err);
+    return sections;
+  }
+}
+
+/**
+ * The legacy POST /api/deals/:dealId/sections body as a new section, by the
+ * same rule as the builder's "Add section": never approved on arrival (the
+ * body can't set brokerApproved / sellerApproved), held back from blind
+ * buyers until redacted, hidden on a live CIM until the broker shows it, and
+ * none of the server-owned columns (blind title, AI task, history, figure
+ * warnings, DD state, order, deal) from the body. The caller inserts it with
+ * insertSectionAt and withdraws the approvals it voids.
+ */
+export function legacySectionInsert(
+  body: unknown,
+  deal: Pick<Deal, "isLive">,
+): { ok: true; fields: Omit<InsertCimSection, "dealId" | "order" | "sectionKey"> & { sectionKey?: string } } | { ok: false; error: string } {
+  const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+  const title = typeof b.sectionTitle === "string" ? b.sectionTitle.replace(/\s+/g, " ").trim() : "";
+  if (!title || title.length > 200) return { ok: false, error: "Give the section a title (up to 200 characters)" };
+  const layoutType = b.layoutType === undefined ? "prose_highlight" : b.layoutType;
+  if (!isCimLayoutKey(layoutType)) return { ok: false, error: "Unknown layout type" };
+  const text = (v: unknown) => (typeof v === "string" && v.trim() ? v : null);
+  const tier = (CIM_ACCESS_TIERS as readonly string[]).includes(b.accessTier as string) ? (b.accessTier as string) : "teaser";
+  return {
+    ok: true,
+    fields: {
+      ...(typeof b.sectionKey === "string" && b.sectionKey.trim() ? { sectionKey: b.sectionKey.trim().slice(0, 80) } : {}),
+      sectionTitle: title,
+      layoutType,
+      layoutData: (b.layoutData && typeof b.layoutData === "object" ? b.layoutData : null) as InsertCimSection["layoutData"],
+      aiLayoutReasoning: "Added by the broker.",
+      tags: (Array.isArray(b.tags) ? b.tags.filter((t) => typeof t === "string") : []) as InsertCimSection["tags"],
+      aiDraftContent: text(b.aiDraftContent),
+      brokerEditedContent: text(b.brokerEditedContent),
+      brokerApproved: false,
+      sellerApproved: false,
+      // A live CIM doesn't show a section nobody has approved.
+      isVisible: deal.isLive ? false : b.isVisible !== false,
+      accessTier: tier,
+      blindStaleAt: new Date(),
+    },
+  };
 }
 
 /** The 409 body for a publish held back by sections awaiting approval. */

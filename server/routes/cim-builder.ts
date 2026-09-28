@@ -78,7 +78,7 @@ async function staleFinancialsBlock(dealId: string): Promise<string | null> {
 import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
-import { withdrawApprovalsAfterChange } from "../cim/approvals";
+import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -190,7 +190,8 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const deal = res.locals.deal as Deal;
       const [sections, blindOverrides, ddOverrides, buyers] = await Promise.all([
-        storage.getCimSectionsByDeal(deal.id),
+        // A live CIM approved before the per-section rule gets its untouched sections ticked.
+        backfillLegacyLiveApprovals(deal),
         storage.getCimSectionOverrides(deal.id, "blind"),
         storage.getCimSectionOverrides(deal.id, "dd"),
         storage.getBuyerAccessByDeal(deal.id),

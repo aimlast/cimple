@@ -281,7 +281,12 @@ await test("row-range prose is recognised; a headline with figures never is", ()
   assert.equal(isRowRangeDescription(PARTS[4]), false);
   assert.equal(isRowRangeDescription("Income statement records revenue from $1.2M to $1.4M between 2023 and 2024."), false, "figures about the business");
   assert.equal(isRowRangeDescription("Customer membership records from February 2023 through November 2023."), true);
-  assert.equal(stripPartLabel("Part 4 of customer membership database"), "Customer membership database");
+  // Round 2: a bare "Part 4 of …" is only a label in part 4's own row prose
+  // ("Part 2 of the lease requires…" is a fact — smoke-followups-r2 test 2).
+  assert.equal(
+    stripPartLabel("Part 4 of customer membership database showing member records from February 2023 through November 2023.", { lead: true, part: 4 }),
+    "Customer membership database showing member records from February 2023 through November 2023.",
+  );
   assert.equal(stripPartLabel("Part 1 of 5: Comfort Club report as at March 31, 2025."), "Comfort Club report as at March 31, 2025.");
   // A business fact's own "part 2 of the lease" is not a label.
   assert.equal(withoutRowRangeProse("Renewal is set out in part 2 of the lease."), "Renewal is set out in part 2 of the lease.");

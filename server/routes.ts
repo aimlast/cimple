@@ -5630,7 +5630,10 @@ Return JSON only.`,
   
   app.get("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const sections = await storage.getCimSectionsByDeal(req.params.dealId);
+      // A live CIM approved before the per-section rule: its untouched
+      // sections are ticked (server/cim/approvals.ts).
+      const { backfillLegacyLiveApprovals } = await import("./cim/approvals");
+      const sections = await backfillLegacyLiveApprovals(res.locals.deal);
       res.json(sections);
     } catch (error: any) {
       console.error("Error fetching sections:", error);
@@ -5638,19 +5641,22 @@ Return JSON only.`,
     }
   });
 
+  // Legacy create — the same rule as the builder's "Add section"
+  // (server/cim/approvals.ts legacySectionInsert): never approved on
+  // arrival, held back from blind buyers until redacted, hidden on a live
+  // CIM, and a new shown section withdraws the approvals it voids.
   app.post("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { insertCimSectionSchema } = await import("@shared/schema");
-      const validatedData = insertCimSectionSchema.parse({
-        ...req.body,
-        dealId: req.params.dealId,
-      });
-      const section = await storage.createCimSection(validatedData);
-      res.json(section);
+      const { legacySectionInsert, withdrawApprovalsAfterChange } = await import("./cim/approvals");
+      const { insertSectionAt } = await import("./cim/section-ops");
+      const { scheduleBlindRefresh } = await import("./cim/blind-sync");
+      const parsed = legacySectionInsert(req.body, res.locals.deal);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const created = await insertSectionAt(req.params.dealId, parsed.fields, {});
+      if (created.isVisible !== false) await withdrawApprovalsAfterChange(req.params.dealId);
+      scheduleBlindRefresh(req.params.dealId);
+      res.json(created);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ error: "Invalid section data", details: error.errors });
-      }
       console.error("Error creating section:", error);
       res.status(500).json({ error: "Failed to create section" });
     }
@@ -5664,7 +5670,10 @@ Return JSON only.`,
 
   app.get("/api/deals/:dealId/cim-sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const sections = await storage.getCimSectionsByDeal(req.params.dealId);
+      // A live CIM approved before the per-section rule: its untouched
+      // sections are ticked (server/cim/approvals.ts).
+      const { backfillLegacyLiveApprovals } = await import("./cim/approvals");
+      const sections = await backfillLegacyLiveApprovals(res.locals.deal);
       res.json(sections);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch sections" });
