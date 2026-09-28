@@ -2681,6 +2681,15 @@ Return JSON only.`,
             sections: placeholders.map((p) => ({ id: p.id, title: p.sectionTitle })),
           });
         }
+        // Every shown section approved as it stands (shared/cim-approvals.ts)
+        // — a section regenerated or edited since the approvals were given
+        // never goes live unseen. The broker's design approval in this same
+        // request approves them.
+        if (dealPatch.designApprovedByBroker !== true) {
+          const { sectionsBlockingPublish, sectionsNeedApprovalResponse } = await import("./cim/approvals");
+          const awaiting = await sectionsBlockingPublish(req.params.id);
+          if (awaiting.length > 0) return res.status(409).json(sectionsNeedApprovalResponse(awaiting));
+        }
       }
       // A seller finishing the intake wizard completes the questionnaire
       // step — this flag drove broker checklists but was never set. The
@@ -2716,6 +2725,12 @@ Return JSON only.`,
       let deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
+      }
+      // The broker's design approval approves every shown section as it
+      // stands (the builder's ticks follow; see shared/cim-approvals.ts).
+      if (req.session.brokerId && dealPatch.designApprovedByBroker === true) {
+        const { approveSectionsWithDesign } = await import("./cim/approvals");
+        await approveSectionsWithDesign(req.params.id);
       }
       // Publishing opens the CIM to buyers the seller approved while it was
       // unpublished (their access + invite email were held until now).
@@ -5736,6 +5751,11 @@ Return JSON only.`,
         // under the existing codename. The view room holds a stale section
         // back from blind buyers until then (it is never served un-redacted).
         await invalidateBlind(dealId, [String(target.id)]);
+        // New content the deal's approvals never covered (shared/cim-approvals.ts).
+        if (updatedSection?.isVisible !== false) {
+          const { withdrawApprovalsAfterChange } = await import("./cim/approvals");
+          await withdrawApprovalsAfterChange(dealId);
+        }
         if (regenerated.aiDraftContent) {
           const existingContent = (deal.cimContent as Record<string, string>) || {};
           await storage.updateDeal(deal.id, { cimContent: { ...existingContent, [target.sectionKey]: regenerated.aiDraftContent } });
@@ -5769,7 +5789,13 @@ Return JSON only.`,
         if (matchingSection) {
           await storage.updateCimSection(String(matchingSection.id), {
             aiDraftContent: content,
+            brokerApproved: false,
           });
+        }
+        // Rewritten content the deal's approvals never covered.
+        {
+          const { withdrawApprovalsAfterChange } = await import("./cim/approvals");
+          await withdrawApprovalsAfterChange(dealId);
         }
 
         res.json({ sectionKey, content });

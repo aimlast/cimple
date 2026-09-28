@@ -282,7 +282,7 @@ function buildExtractionPrompt(
   const guidance = SOURCE_GUIDANCE[kind];
   const label = kind === "document" ? `${docType} document` : `${kind.replace("_", " ")} (${docType})`;
   const partNote = part && part.total > 1
-    ? `\nTHIS IS PART ${part.index + 1} OF ${part.total} of one long source, read in parts (the parts overlap slightly). Extract what THIS part states; the other parts are read separately and the results combined. Put the fiscal year each figure is for in byYear — a later part may be a later year's return or statements.\n`
+    ? `\nTHIS IS PART ${part.index + 1} OF ${part.total} of one long source, read in parts (the parts overlap slightly). Extract what THIS part states; the other parts are read separately and the results combined. Put the fiscal year each figure is for in byYear — a later part may be a later year's return or statements. Write the summary about what the source says about the business (its totals and headline figures) — never "Part N of M", and never which rows, record IDs or date range this part happens to hold; if this part is only rows of a table, keep the summary to one short line and leave the business fields to what the rows actually establish.\n`
     : "";
 
   return `Extract structured data from this ${label}.
@@ -962,6 +962,101 @@ async function readPartNow(
   }
 }
 
+// ── Parts of a long source: part labels and row-range prose ──────────────────
+// A long table read in parts (smoke test 2026-09-27: a 293K-character
+// membership export in 5 parts) gave "Part 2 of 5 of a customer membership
+// database showing member IDs CC-10620 through CC-11280…" as its summary and
+// lost the report's headline (2,900 active members, $75,835 MRR); a row-only
+// part's "Customer membership records from February 2023 through November
+// 2023" became the customerBase fact.
+
+/** "Part 2 of 5", "part 3/5", "(part 4 of 5)" — the reader's own bookkeeping. */
+const PART_LABEL_LEAD = /^\s*(?:this is\s+)?\(?part\s+\d+(?:\s*(?:of|\/)\s*\d+)?\)?\s*(?:[:\-–—,.]\s*)?(?:of\s+)?(?:(?:the|a|an)\s+)?/i;
+const PART_LABEL_ANY = /\s*\(?\bPart\s+\d+\s*(?:of|\/)\s*\d+\b\)?/g;
+
+/**
+ * Text without the reader's "Part N of M" labels. Prose about the source
+ * (a summary, key facts) also loses a leading "Part 4 of …" and its "of a";
+ * a business fact only loses a full "Part N of M" (its own "part 2 of the
+ * lease" is not a label).
+ */
+export function stripPartLabel(text: string, opts: { lead?: boolean } = { lead: true }): string {
+  const lead = opts.lead === false ? text : text.replace(PART_LABEL_LEAD, "");
+  const out = (lead === text ? text : lead).replace(PART_LABEL_ANY, "").replace(/\s{2,}/g, " ").trim();
+  return out && lead !== text ? out.charAt(0).toUpperCase() + out.slice(1) : out;
+}
+
+/** Figures that describe the business: amounts of 1,000+, $-amounts, percentages — never a year or a record ID ("CC-10620"). */
+function headlineFigureCount(text: string): number {
+  let n = 0;
+  // A number is "1,234,567" or "1234.5" — never with a trailing comma ("2021, status").
+  const re = /(?<![A-Za-z0-9][-–]?)(\$\s?)?(\d{1,3}(?:,\d{3})+(?:\.\d+)?|\d+(?:\.\d+)?)\s?(k|m|mm|million|thousand|b|bn|billion)?\b(\s?%)?/gi;
+  for (const m of Array.from(text.matchAll(re))) {
+    const [, dollar, num, scale, pct] = m;
+    const v = Number(num.replace(/,/g, ""));
+    if (!Number.isFinite(v)) continue;
+    if (pct) { n++; continue; }
+    const isYear = !dollar && !scale && !num.includes(",") && v >= 1900 && v <= 2100;
+    if (isYear) continue;
+    if ((dollar && (scale || v >= 1000)) || v >= 1000 || scale) n++;
+  }
+  return n;
+}
+
+const ROW_NOUN = /\b(?:records?|rows?|entries|IDs?|listings?|list|database|register|ledger|line items?)\b/i;
+const ROW_RANGE = /\b(?:from|between)\b[^.;]{0,80}?\b(?:through|to|until|and)\b|\b[A-Z]{1,4}-?\d{3,}\s*(?:through|to|–|-)\s*[A-Z]{0,4}-?\d{3,}/i;
+
+/**
+ * Prose that only says which rows a part holds ("customer records from
+ * February 2023 through November 2023", "member IDs CC-10620 through
+ * CC-11280") — row words and a range, with no figure about the business.
+ */
+export function isRowRangeDescription(text: string): boolean {
+  const t = stripPartLabel(text);
+  return ROW_NOUN.test(t) && ROW_RANGE.test(t) && headlineFigureCount(t) === 0;
+}
+
+/** How strongly a part's summary states the source's headline (totals, figures). 0 = row prose. */
+export function headlineScore(text: string): number {
+  const t = stripPartLabel(text);
+  if (!t || isRowRangeDescription(t)) return 0;
+  const words = t.match(/\b(?:total|active|annual(?:i[sz]ed)?|recurring|revenue|mrr|arr|as (?:at|of)|year[- ]end|summary|overall|average)\b/gi)?.length ?? 0;
+  return headlineFigureCount(t) + words;
+}
+
+/** A business fact without its "Part N of M" labels and row-range sentences ("" when that is all it was). */
+export function withoutRowRangeProse(value: string): string {
+  const clean = stripPartLabel(value, { lead: false });
+  const sentences = clean.split(/(?<=[.!?])\s+(?=[A-Z])/);
+  const kept = sentences.filter((s) => s.trim() && !isRowRangeDescription(s));
+  return kept.length === sentences.length ? clean : kept.join(" ").trim();
+}
+
+/**
+ * The combined summary of a long source's parts: the part that states the
+ * headline (totals, figures) first, then the others' own findings; a part
+ * that only describes its rows adds nothing when another part says what the
+ * source is. "Part N of M" labels never reach it.
+ */
+export function combinePartSummaries(summaries: string[]): string {
+  const items: string[] = [];
+  for (const raw of summaries) {
+    const s = stripPartLabel(raw.trim());
+    if (!s) continue;
+    const low = s.toLowerCase();
+    if (items.some((x) => x.toLowerCase() === low || x.toLowerCase().includes(low))) continue;
+    const shorter = items.findIndex((x) => low.includes(x.toLowerCase()));
+    if (shorter >= 0) items[shorter] = s;
+    else items.push(s);
+  }
+  const findings = items.filter((s) => !isRowRangeDescription(s));
+  if (findings.length === 0) return items[0] ?? "";
+  const scores = findings.map(headlineScore);
+  const best = scores.indexOf(Math.max(...scores));
+  const ordered = scores[best] > 0 ? [findings[best], ...findings.filter((_, i) => i !== best)] : findings;
+  return ordered.join(" ");
+}
+
 /** Keys of an extraction that describe the source in prose (joined across parts, never one part's only). */
 const JOINED_TEXT_KEYS = new Set(["summary", "keyFacts", "redFlags", "callNotes", "sellerConcerns", "actionItems", "buyerInterests", "followUpNeeded", "keyTopics", "keyFinancialNotes"]);
 
@@ -980,9 +1075,13 @@ const JOINED_TEXT_KEYS = new Set(["summary", "keyFacts", "redFlags", "callNotes"
  */
 export function combineExtractions(list: ExtractedDocumentData[]): ExtractedDocumentData {
   if (list.length === 1) return list[0];
+  // Same period: a part that only lists rows comes first, so a part that
+  // says what the source is wins its values.
+  const rowOnly = (d: ExtractedDocumentData) => typeof d.summary === "string" && isRowRangeDescription(d.summary);
   const order = list
-    .map((d, i) => ({ d, i, p: typeof d._periodEnd === "string" ? d._periodEnd : "" }))
-    .sort((a, b) => (a.p === b.p ? a.i - b.i : a.p < b.p ? -1 : 1));
+    .map((d, i) => ({ d, i, p: typeof d._periodEnd === "string" ? d._periodEnd : "", r: rowOnly(d) ? 0 : 1 }))
+    .sort((a, b) => (a.p === b.p ? a.r - b.r || a.i - b.i : a.p < b.p ? -1 : 1));
+  const summaries: string[] = [];
   const out: ExtractedDocumentData = {};
   const keyPeriods: Record<string, string> = {};
   const inferred = new Set<string>();
@@ -1012,6 +1111,7 @@ export function combineExtractions(list: ExtractedDocumentData[]): ExtractedDocu
       if (k === "_keyPeriods" || k === "_inferredKeys") continue;
       if (k === "_documentType" || k === "_confidence") { out[k] = v as string; continue; }
       if (k.startsWith("_")) { out[k] = v as never; continue; }
+      if (k === "summary" && typeof v === "string") { summaries.push(v); continue; }
       if (JOINED_TEXT_KEYS.has(k) && typeof v === "string") {
         // Item by item ("Customer concentration" then "Customer concentration;
         // tax arrears" is each once); a fuller wording replaces one it contains.
@@ -1031,14 +1131,18 @@ export function combineExtractions(list: ExtractedDocumentData[]): ExtractedDocu
         out[k] = { ...(out[k] as Record<string, string>), ...(v as Record<string, string>) };
         continue;
       }
-      out[k] = v as never;
+      // A business fact is what the rows establish, never which rows a part held.
+      const value = typeof v === "string" ? withoutRowRangeProse(v) : v;
+      if (value === "") continue;
+      out[k] = value as never;
       if (periods[k]) keyPeriods[k] = periods[k];
       else delete keyPeriods[k];
       if (inferredHere.has(k)) inferred.add(k);
       else inferred.delete(k);
     }
   }
-  for (const [k, list] of Object.entries(joined)) out[k] = k === "summary" ? list.join(" ") : list.join("; ");
+  for (const [k, list] of Object.entries(joined)) out[k] = list.map((x) => stripPartLabel(x)).filter(Boolean).join("; ");
+  if (summaries.length > 0) out.summary = combinePartSummaries(summaries);
   if (periodEnd) out._periodEnd = periodEnd;
   if (Object.keys(keyPeriods).length > 0) out._keyPeriods = keyPeriods;
   const inferredList = Array.from(inferred).filter((k) => out[k] !== undefined);

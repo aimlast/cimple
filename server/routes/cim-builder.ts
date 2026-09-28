@@ -78,6 +78,7 @@ async function staleFinancialsBlock(dealId: string): Promise<string | null> {
 import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
+import { withdrawApprovalsAfterChange } from "../cim/approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -322,6 +323,8 @@ export function registerCimBuilderRoutes(app: Express): void {
         if (err?.message === "not_in_deal") return res.status(400).json({ error: "That position isn't in this CIM" });
         throw err;
       }
+      // A new shown section: the CIM's approvals no longer cover all of it.
+      if (created.isVisible !== false) await withdrawApprovalsAfterChange(deal.id);
 
       if (mode === "ai") {
         const task = await startSectionTask(created, deal, "write", { brief: brief || undefined });
@@ -387,11 +390,15 @@ export function registerCimBuilderRoutes(app: Express): void {
               ? {}
               : { layoutData: defaultLayoutData(layoutType, blankContext(deal, section.sectionTitle)) as any }),
             contentHistory: historyWith(section, "Changed layout"),
+            // A different layout is a change the approvals didn't cover.
+            brokerApproved: false,
             updatedAt: new Date(),
           })
           .where(eq(cimSections.id, section.id))
           .returning();
-        return res.json({ section: withStaleStamps(updated, await invalidateBlind(deal.id, [section.id])) });
+        const at = await invalidateBlind(deal.id, [section.id]);
+        if (updated.isVisible !== false) await withdrawApprovalsAfterChange(deal.id);
+        return res.json({ section: withStaleStamps(updated, at) });
       }
 
       const blocked = await discrepancyBlock(deal.id);

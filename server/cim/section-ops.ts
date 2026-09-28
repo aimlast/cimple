@@ -29,6 +29,8 @@ import { invalidateBlind } from "./blind-sync";
 import { uniqueSectionKey } from "./section-ops-keys";
 import { isMediaLayout } from "@shared/cim-media";
 import { cleanMediaLayoutForDeal } from "./media-store";
+import { withdrawApprovalsAfterChange } from "./approvals";
+import { editNeedsReapproval } from "@shared/cim-approvals";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -148,7 +150,10 @@ export async function duplicateSection(section: CimSection, opts: { hidden: bool
     },
     { afterSectionId: section.id },
   );
-  return withStaleStamps(created, await invalidateBlind(section.dealId, [created.id]));
+  const at = await invalidateBlind(section.dealId, [created.id]);
+  // A shown copy is new content the approvals never covered.
+  if (created.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
+  return withStaleStamps(created, at);
 }
 
 // ── Undo stack ───────────────────────────────────────────────────────────
@@ -198,11 +203,14 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
       layoutData: last.layoutData as any,
       figureWarnings,
       contentHistory: history,
+      // The restored version is a change the approvals didn't cover.
+      brokerApproved: false,
       updatedAt: new Date(),
     })
     .where(eq(cimSections.id, section.id))
     .returning();
   const at = await invalidateBlind(section.dealId, [section.id]);
+  if (updated && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
   return updated ? withStaleStamps(updated, at) : null;
 }
 
@@ -300,6 +308,12 @@ export async function patchCimSection(req: Request, res: Response) {
 
     const contentChanged = ["sectionTitle", "brokerEditedContent", "layoutData", "layoutType"].some((k) => k in set);
     if (Object.keys(set).length === 0) return res.json(section);
+    // A change to what a section says (or showing a hidden one) needs the
+    // section approved again, unless this same request approves it — the
+    // broker's own edit included: the seller hasn't seen it
+    // (shared/cim-approvals.ts).
+    const reapprove = editNeedsReapproval(section, set);
+    if (reapprove && approved === undefined) set.brokerApproved = false;
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);
@@ -321,7 +335,9 @@ export async function patchCimSection(req: Request, res: Response) {
       .set({ ...set, updatedAt: new Date() })
       .where(eq(cimSections.id, section.id))
       .returning();
-    res.json(contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated);
+    const stamped = contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated;
+    if (reapprove && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
+    res.json(stamped);
   } catch (err) {
     console.error("[cim-sections] update failed:", err);
     res.status(500).json({ error: "Failed to update section" });

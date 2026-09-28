@@ -30,12 +30,12 @@ export function SourceChip({
   const Icon = meta.icon;
   const openable = !!onOpen && (!!source.documentId || !!source.sessionId || source.kind === "website");
   const tone =
-    source.kind === "broker"
+    source.kind === "broker" && !source.brokerSessionNotes
       ? "border-teal/40 bg-teal/10 text-teal"
       : source.kind === "unknown"
         // Quiet, not alarming: plain text with no border.
         ? "border-transparent bg-muted/30 text-muted-foreground"
-        : ((source.kind === "crm" || source.kind === "website" || source.kind === "social") && !source.acceptedByBroker) || source.inferred
+        : ((source.kind === "crm" || source.kind === "website" || source.kind === "social") && !source.acceptedByBroker) || source.inferred || source.brokerSessionNotes
           ? "border-dashed border-border text-muted-foreground"
           : "border-border bg-muted/40 text-foreground/80";
   const text = sourceChipText(source);
@@ -44,7 +44,8 @@ export function SourceChip({
       ? UNTRACKED_HINT
       : [
           source.label,
-          source.note && !source.label.includes(source.note) ? source.note : null,
+          source.note && !source.label.includes(source.note) && !source.brokerSessionNotes ? source.note : null,
+          source.brokerSessionNotes ? "Typed from memory — not confirmed by the seller yet" : null,
           source.at ? `Recorded ${formatShortDate(source.at, true)}` : null,
           source.inferred ? INFERRED_HINT : null,
           source.brokerOnly ? "Private to you: the seller never sees it and the interview doesn't use it" : null,

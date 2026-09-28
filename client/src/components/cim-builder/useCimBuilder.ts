@@ -69,6 +69,9 @@ export function useCimBuilder(dealId: string) {
         const now = s.aiTask;
         if (!now || now.id !== before.id) {
           toast({ title: `${TASK_LABEL[before.kind]} finished`, description: `“${s.sectionTitle}” is updated. Undo is available in the editor.` });
+          // The new content withdrew the deal's approvals (shared/cim-approvals.ts).
+          qc.invalidateQueries({ queryKey: ["/api/deals", dealId], exact: true });
+          qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
         } else if (now.status === "ready") {
           toast({ title: "Rewrite ready", description: `Preview it on “${s.sectionTitle}”, then apply or discard.` });
         } else if (now.status === "failed") {
@@ -84,6 +87,8 @@ export function useCimBuilder(dealId: string) {
     // Other screens that show this CIM (Overview, CIM tab) read these.
     qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-sections"] });
     qc.invalidateQueries({ queryKey: ["/api/deals", dealId, "cim-overrides"] });
+    // A changed section withdraws the deal's approvals (shared/cim-approvals.ts).
+    qc.invalidateQueries({ queryKey: ["/api/deals", dealId], exact: true });
   };
 
   /** A mutation that refreshes the builder and toasts the server's error. */

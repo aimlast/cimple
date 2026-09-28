@@ -31,6 +31,7 @@ import { MEDIA_LIMITS, isMediaId, mediaIdsIn, withoutMedia } from "@shared/cim-m
 import { requireBroker, requireOwnedDeal, getOwnedDeal, sellerTokenMatchesDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "../cim/blind-sync";
 import { historyWith } from "../cim/section-ops";
+import { withdrawApprovalsAfterChange } from "../cim/approvals";
 import {
   PRIVATE_MEDIA_DIR,
   canBuyerSeeMedia,
@@ -287,10 +288,12 @@ export function registerCimMediaRoutes(app: Express): void {
         if (!next) continue;
         await db
           .update(cimSections)
-          .set({ layoutData: next as any, contentHistory: historyWith(s, "Removed a photo or video"), updatedAt: new Date() })
+          .set({ layoutData: next as any, contentHistory: historyWith(s, "Removed a photo or video"), brokerApproved: false, updatedAt: new Date() })
           .where(eq(cimSections.id, s.id));
       }
       if (using.length > 0) await invalidateBlind(deal.id, using.map((s) => s.id));
+      // Those sections changed since they were approved (shared/cim-approvals.ts).
+      if (using.some((s) => s.isVisible !== false)) await withdrawApprovalsAfterChange(deal.id);
       await db.delete(dealMedia).where(eq(dealMedia.id, row.id));
       await removeQuietly(mediaFilePath(row));
       await detachFromBusinessBranding(deal, row.id);
