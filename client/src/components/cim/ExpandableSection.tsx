@@ -17,6 +17,7 @@ import { FinancialToggle } from "./FinancialToggle";
 import { renderInline, stripMarkup } from "./richText";
 import { useCimTheme, useSectionNumber, useThemeStyle } from "./CimDesignContext";
 import { CimSectionHeading } from "./CimSectionHeading";
+import { CimBlockScope, useBlockAttrs, useCimInteraction, usePageAttrs } from "./blocks";
 
 interface ExpandableSectionProps {
   section: CimSection;
@@ -102,6 +103,11 @@ export function ExpandableSection({
   const [expanded, setExpanded] = useState(!config.isExpandable);
   const themeVars = useThemeStyle();
   const number = useSectionNumber(section.id);
+  // Reading analytics (blocks.tsx): the page wrapper, the collapsed summary
+  // block and the expand/collapse interaction — all no-ops outside the view room.
+  const pageAttrs = usePageAttrs(section.id);
+  const ba = useBlockAttrs();
+  const interaction = useCimInteraction();
 
   // Auto-expand in print mode
   useEffect(() => {
@@ -141,12 +147,14 @@ export function ExpandableSection({
     const next = !expanded;
     setExpanded(next);
     onToggle?.(section.sectionKey, next);
+    interaction(next ? "expand" : "collapse");
   };
 
   const summaryText = config.summary ? stripMarkup(config.summary) : autoSummary(section);
 
   return (
-    <div className="cim-expandable-section">
+    <CimBlockScope pageId={section.id}>
+    <div className="cim-expandable-section" {...pageAttrs}>
       {/* Always render the full section (controls visibility via CSS) */}
       <div className={expanded ? "" : "hidden print:block"}>
         {/* A long income statement is exactly the table that is marked
@@ -177,6 +185,7 @@ export function ExpandableSection({
           data-section-key={section.sectionKey}
           data-layout-type={section.layoutType}
           data-track-section={section.sectionKey}
+          {...ba("summary")}
         >
           {/* Section title */}
           {section.layoutType !== "cover_page" &&
@@ -184,12 +193,14 @@ export function ExpandableSection({
               <CimSectionHeading title={section.sectionTitle} number={number} />
             )}
 
-          {/* Summary content — intelligent preview */}
-          <SummaryPreview
-            section={section}
-            branding={branding}
-            summaryText={summaryText}
-          />
+          {/* Summary content — intelligent preview (read as one "summary" block) */}
+          <CimBlockScope off>
+            <SummaryPreview
+              section={section}
+              branding={branding}
+              summaryText={summaryText}
+            />
+          </CimBlockScope>
         </div>
       )}
 
@@ -211,6 +222,7 @@ export function ExpandableSection({
         )}
       </button>
     </div>
+    </CimBlockScope>
   );
 }
 

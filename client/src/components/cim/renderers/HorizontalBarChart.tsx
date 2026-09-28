@@ -20,6 +20,7 @@ import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
 import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface HBarDataPoint {
   name: string;
@@ -65,6 +66,8 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 
 export function HorizontalBarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: HorizontalBarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -105,12 +108,15 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       <ResponsiveContainer width="100%" height={height}>
         <BarChart
           data={withPercent}
           layout="vertical"
           margin={{ top: 4, right: showLabels ? 48 : 16, left: 0, bottom: 4 }}
           barCategoryGap="25%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex)}
+          onMouseLeave={() => point(null)}
         >
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
@@ -154,6 +160,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
       {data.yLabel && (
         <p className="text-xs text-muted-foreground text-center mt-1">{data.yLabel}</p>
       )}
+      </div>
     </div>
   );
 }

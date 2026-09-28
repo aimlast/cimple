@@ -27,6 +27,7 @@ import { FinancialsTab } from "./FinancialsTab";
 import { InterviewReviewTab } from "./InterviewReviewTab";
 import { InformationTab } from "./InformationTab";
 import { CimTab } from "./CimTab";
+import { EngagementTab } from "./EngagementTab";
 import type { Deal } from "@shared/schema";
 
 /* ═══════════════════════════════════════════
@@ -37,6 +38,7 @@ const TABS = [
   { key: "information", label: "Information" },
   { key: "cim", label: "CIM" },
   { key: "buyers", label: "Buyers" },
+  { key: "engagement", label: "Engagement" },
   { key: "qa", label: "Q&A" },
   { key: "team", label: "Team" },
   { key: "financials", label: "Financials" },
@@ -188,6 +190,7 @@ function DealShellInner({ activeTab }: { activeTab: TabKey }) {
         {activeTab === "information" && <InformationTab />}
         {activeTab === "cim" && <CimTab />}
         {activeTab === "buyers" && <BuyersTab />}
+        {activeTab === "engagement" && <EngagementTab />}
         {activeTab === "qa" && <QATab />}
         {activeTab === "team" && <TeamTab />}
         {activeTab === "financials" && <FinancialsTab />}

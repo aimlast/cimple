@@ -15,6 +15,7 @@ import type { CimSection } from "@shared/schema";
 import { comparisonTableView } from "@shared/cim-chart-values";
 import { ProseFallback } from "../richText";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface ComparisonRow {
   label: string;
@@ -38,6 +39,7 @@ interface RendererProps {
 }
 
 export function ComparisonTableRenderer({ layoutData, content }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: ComparisonTableLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const rows = data.rows || [];
 
@@ -58,7 +60,7 @@ export function ComparisonTableRenderer({ layoutData, content }: RendererProps) 
       <div className="max-w-full overflow-x-auto rounded-lg border border-card-border">
         <table className="w-full text-sm border-collapse">
           <thead>
-            <tr className="border-b border-card-border bg-muted/50">
+            <tr {...ba("head")} className="border-b border-card-border bg-muted/50">
               <th className={cn("text-left text-xs font-semibold text-muted-foreground py-2.5", many ? "pl-3 pr-2" : "px-4", many ? "w-auto" : "w-[40%]")}>
                 {view.labelHeader}
               </th>
@@ -74,6 +76,7 @@ export function ComparisonTableRenderer({ layoutData, content }: RendererProps) 
             {view.rows.map((row, i) => (
               <tr
                 key={i}
+                {...ba(`row:${i}`)}
                 className={cn(
                   "border-b border-border/40 last:border-0 transition-colors",
                   row.highlight

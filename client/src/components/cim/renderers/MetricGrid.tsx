@@ -13,6 +13,7 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { compactFigure } from "./chartFormat";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs } from "../blocks";
 
 interface Metric {
   label: string;
@@ -82,6 +83,7 @@ export function metricDisplayValue(metric: { value: unknown; unit?: string }, co
 }
 
 export function MetricGridRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: MetricGridLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const metrics = data.metrics || [];
   const cols = data.columns || 3;
@@ -106,6 +108,7 @@ export function MetricGridRenderer({ layoutData, content, branding, section }: R
         {metrics.map((metric, i) => (
           <div
             key={i}
+            {...ba(`metric:${i}`)}
             className={cn(
               "relative min-w-0 bg-card rounded-lg px-4 sm:px-5 py-4 border",
               metric.highlight

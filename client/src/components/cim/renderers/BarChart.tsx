@@ -20,6 +20,7 @@ import { ProseFallback } from "../richText";
 import { axisWidthFor, formatAxisTick, formatFullValue } from "./chartFormat";
 import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 interface BarDataPoint {
   name: string;
@@ -72,6 +73,8 @@ function CustomTooltip({ active, payload, label, unit }: CustomTooltipProps) {
 
 export function BarChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const theme = useCimTheme();
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
   const data: BarChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const chartData = data.data || [];
 
@@ -102,6 +105,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
   return (
     <div>
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+      <div {...ba("chart")}>
       {data.yLabel && (
         // Axis caption sits above the plot — a rotated label inside the axis
         // column collides with the tick numbers (worst on phones).
@@ -109,7 +113,9 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
       )}
       <ResponsiveContainer width="100%" height={280}>
         <BarChart data={normalized} margin={{ top: 4, right: 16, left: 4, bottom: data.xLabel ? 24 : 8 }}
-          barCategoryGap="30%">
+          barCategoryGap="30%"
+          onMouseMove={(s) => point(s?.activeTooltipIndex)}
+          onMouseLeave={() => point(null)}>
           {/* Explicit paper-palette hex — charts must read identically in both app themes */}
           <CartesianGrid
             strokeDasharray="3 3"
@@ -174,6 +180,7 @@ export function BarChartRenderer({ layoutData, content, branding, section }: Ren
           )}
         </BarChart>
       </ResponsiveContainer>
+      </div>
     </div>
   );
 }

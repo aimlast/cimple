@@ -23,6 +23,7 @@ import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
 import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { useBlockAttrs, useChartPointReporter } from "../blocks";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
 const SIDE_BY_SIDE_MIN = 480;
@@ -96,8 +97,10 @@ function renderActiveShape(props: any) {
 export function PieChartRenderer({ layoutData, content, branding, section }: RendererProps) {
   const [activeIndex, setActiveIndex] = useState<number | undefined>(undefined);
   const theme = useCimTheme();
-  const onPieEnter = useCallback((_: any, index: number) => setActiveIndex(index), []);
-  const onPieLeave = useCallback(() => setActiveIndex(undefined), []);
+  const ba = useBlockAttrs();
+  const point = useChartPointReporter();
+  const onPieEnter = useCallback((_: any, index: number) => { setActiveIndex(index); point(index); }, [point]);
+  const onPieLeave = useCallback(() => { setActiveIndex(undefined); point(null); }, [point]);
   const { ref: boxRef, width: boxWidth } = useElementWidth<HTMLDivElement>();
   const data: PieChartLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const rawData = data.data || [];
@@ -127,6 +130,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
     return (
       <div>
         <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <div {...ba("chart")}>
         {data.totalLabel && total !== null && (
           <div className="mb-3 pb-2 border-b border-border">
             <p className="text-xs text-muted-foreground">{data.totalLabel}</p>
@@ -134,6 +138,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
           </div>
         )}
         <PercentBars items={normalized} unit={data.unit} shares={shares} />
+        </div>
       </div>
     );
   }
@@ -143,6 +148,7 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       <div
         ref={boxRef}
+        {...ba("chart")}
         className={cn("flex gap-6", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "flex-col items-center" : "items-center")}
       >
         {/* Chart */}
@@ -211,8 +217,8 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
                   "flex items-start gap-2.5 min-w-0 rounded px-1 -mx-1 py-0.5 transition-colors cursor-pointer",
                   isHighlighted && "bg-muted/50",
                 )}
-                onMouseEnter={() => setActiveIndex(i)}
-                onMouseLeave={() => setActiveIndex(undefined)}
+                onMouseEnter={() => { setActiveIndex(i); point(i); }}
+                onMouseLeave={() => { setActiveIndex(undefined); point(null); }}
               >
                 <span className="w-2.5 h-2.5 rounded-sm flex-shrink-0 mt-1" style={{ backgroundColor: entry.color }} />
                 <span className="text-xs text-foreground/80 flex-1 min-w-0 break-words">{entry.name}</span>

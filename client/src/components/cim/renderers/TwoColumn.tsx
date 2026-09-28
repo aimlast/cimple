@@ -15,6 +15,7 @@ import type { CimSection } from "@shared/schema";
 import { resolveTwoColumnColumn, type TwoColumnColumn } from "@shared/cim-layouts";
 import { ProseFallback, renderInline, renderProse } from "../richText";
 import { findProseColumnIndex } from "../editableText";
+import { CimBlockScope, useBlockAttrs } from "../blocks";
 
 /** Error boundary that catches render crashes in sub-renderers */
 class ColumnErrorBoundary extends Component<
@@ -102,6 +103,8 @@ function SafeColumnBlock({ col, branding, section }: { col: TwoColumnColumn; bra
 }
 
 function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; branding: CimBranding; section: CimSection }) {
+  // Inside the column's CimBlockScope: keys come out as "left/…" / "right/…".
+  const ba = useBlockAttrs();
   const type = col.layoutType || "prose";
   const content = col.content;
 
@@ -129,7 +132,7 @@ function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; br
         <ColumnTitle title={col.title} />
         <ul className="space-y-1.5">
           {lines.map((line, i) => (
-            <li key={i} className="flex items-start gap-2">
+            <li key={i} {...ba(`item:${i}`)} className="flex items-start gap-2">
               <span className="w-1.5 h-1.5 rounded-full bg-teal flex-shrink-0 mt-1.5" />
               <span className="text-sm text-foreground/80 leading-relaxed">{renderInline(line.replace(/^\s*[-•*·–]\s*/, ""), `li${i}`)}</span>
             </li>
@@ -146,7 +149,7 @@ function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; br
         <ColumnTitle title={col.title} />
         <div className="space-y-2">
           {pairs.map((pair, i) => (
-            <div key={i} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0">
+            <div key={i} {...ba(`metric:${i}`)} className="flex items-baseline justify-between gap-4 border-b border-border/40 pb-1.5 last:border-0">
               <span className="text-xs text-muted-foreground">{renderInline(pair.label, `ml${i}`)}</span>
               <span className="text-sm font-semibold tabular-nums text-foreground">{renderInline(pair.value, `mv${i}`)}</span>
             </div>
@@ -161,13 +164,14 @@ function ColumnBlockInner({ col, branding, section }: { col: TwoColumnColumn; br
     <div>
       <ColumnTitle title={col.title} />
       <div className="text-foreground/80">
-        {renderProse(textContent, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
+        {renderProse(textContent, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0", blockAttrs: ba })}
       </div>
     </div>
   );
 }
 
 export function TwoColumnRenderer({ layoutData, content, branding, section }: RendererProps) {
+  const ba = useBlockAttrs();
   const data: TwoColumnLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
 
   if (!data.left && !data.right) {
@@ -187,7 +191,16 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
   if (edited && proseIdx === 1) right = { ...(right ?? { layoutType: "prose" }), layoutType: "prose", content: edited };
   const editedAbove = edited && proseIdx === -1;
 
-  const columns = [left, right].filter((c): c is TwoColumnColumn => !!c);
+  // Each column keeps its side's name ("left" / "right") for reading analytics,
+  // even when only one of them is drawn.
+  const sides = ([["left", left], ["right", right]] as const)
+    .filter((s): s is readonly ["left" | "right", TwoColumnColumn] => !!s[1]);
+  const columns = sides.map(([, c]) => c);
+  const column = (i: number) => (
+    <CimBlockScope prefix={sides[i][0]}>
+      <SafeColumnBlock col={columns[i]} branding={branding} section={section} />
+    </CimBlockScope>
+  );
   if (columns.length === 0 && !editedAbove) {
     if (!content) return null;
     return <ProseFallback content={content} />;
@@ -198,22 +211,22 @@ export function TwoColumnRenderer({ layoutData, content, branding, section }: Re
       <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
       {editedAbove && (
         <div className="mb-6 max-w-prose text-foreground/80">
-          {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0" })}
+          {renderProse(edited, { paragraphClassName: "text-sm leading-relaxed mb-2 last:mb-0", blockAttrs: ba })}
         </div>
       )}
       {columns.length === 1 ? (
         // Only one column holds anything: it takes the full width.
-        <div className="min-w-0">
-          <SafeColumnBlock col={columns[0]} branding={branding} section={section} />
+        <div className="min-w-0" {...ba(sides[0][0])}>
+          {column(0)}
         </div>
       ) : columns.length === 2 ? (
         // Stacks on phones (a rule between the two), side by side from md.
         <div className="grid grid-cols-1 gap-6 md:grid-cols-2 md:gap-8">
-          <div className="min-w-0">
-            <SafeColumnBlock col={columns[0]} branding={branding} section={section} />
+          <div className="min-w-0" {...ba(sides[0][0])}>
+            {column(0)}
           </div>
-          <div className="min-w-0 border-t border-border pt-6 md:border-t-0 md:border-l md:pl-8 md:pt-0">
-            <SafeColumnBlock col={columns[1]} branding={branding} section={section} />
+          <div className="min-w-0 border-t border-border pt-6 md:border-t-0 md:border-l md:pl-8 md:pt-0" {...ba(sides[1][0])}>
+            {column(1)}
           </div>
         </div>
       ) : null}

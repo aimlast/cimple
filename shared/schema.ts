@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { pgTable, text, varchar, jsonb, timestamp, integer, boolean } from "drizzle-orm/pg-core";
+import { pgTable, text, varchar, jsonb, timestamp, integer, boolean, bigint, index, uniqueIndex } from "drizzle-orm/pg-core";
 import { createInsertSchema } from "drizzle-zod";
 import { z } from "zod";
 
@@ -607,6 +607,11 @@ export const cimSections = pgTable("cim_sections", {
   // version was written. The DD override is kept (not deleted) but a DD
   // buyer is served the current Normal content until it is refreshed.
   ddStaleAt: timestamp("dd_stale_at"),
+  // @anchor:cim-sections-cols:analytics
+  // Reading analytics: the section this one continues across a CIM
+  // regeneration (server/analytics/lineage.ts), so page-level reading history
+  // survives new section ids. Null = its own id.
+  analyticsLineage: text("analytics_lineage"),
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
@@ -694,6 +699,11 @@ export const buyerQuestions = pgTable("buyer_questions", {
   // Who may read the answer (shared/buyer-qa-scope.ts): "all" | "full" |
   // "private". Null on rows answered before scopes were recorded.
   answerScope: text("answer_scope"),
+  // @anchor:buyer-questions-cols:analytics
+  // The CIM page the buyer was on when asking (a section id, or
+  // "cim-disclaimer"/"cim-contact") and the rendition they were reading.
+  sectionId: text("section_id"),
+  renditionId: text("rendition_id"),
 
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -877,9 +887,24 @@ export const analyticsEvents = pgTable("analytics_events", {
 
   ipAddress: text("ip_address"),
   userAgent: text("user_agent"),
-  
+
+  // @anchor:analytics-events-cols:analytics
+  // Reading analytics v2 (shared/analytics-v2.ts): discrete interactions
+  // (expand, financial_view, locked_click…) of a visit. (visit_id,
+  // client_seq) is unique, so a resent event is stored once. New rows leave
+  // ip_address / user_agent empty.
+  visitId: varchar("visit_id"),
+  renditionId: text("rendition_id"),
+  pageId: text("page_id"),
+  blockKey: text("block_key"),
+  clientSeq: integer("client_seq"),
+
   createdAt: timestamp("created_at").defaultNow().notNull(),
-});
+}, (t) => [
+  index("analytics_events_deal_created_idx").on(t.dealId, t.createdAt),
+  index("analytics_events_access_idx").on(t.buyerAccessId),
+  uniqueIndex("analytics_events_visit_seq_uq").on(t.visitId, t.clientSeq).where(sql`${t.visitId} IS NOT NULL`),
+]);
 
 export const insertAnalyticsEventSchema = createInsertSchema(analyticsEvents).omit({
   id: true,
@@ -2247,7 +2272,9 @@ export interface BuyerAiSummary { text: string; at: string; key: string }
 
 /** One broker action on a buyer_access row (buyer_access.access_events). */
 export interface BuyerAccessEvent {
-  type: "extended" | "level_changed" | "revoked";
+  // "contacted" = the broker's "Mark contacted" on the Engagement tab
+  // (POST /api/deals/:dealId/engagement/buyers/:accessId/contacted).
+  type: "extended" | "level_changed" | "revoked" | "contacted";
   at: string;
   expiresAt?: string | null;
   accessLevel?: string | null;
@@ -2616,3 +2643,129 @@ export type CimTemplateRow = typeof cimTemplates.$inferSelect;
 // @anchor:schema-tail:h-interview
 // @anchor:schema-tail:h-cim
 // @anchor:schema-tail:h-misc
+
+// @anchor:schema-tail:analytics
+// ── Buyer reading analytics v2 (shared/analytics-v2.ts) ────────────────────
+// What each buyer actually read, as reading time per page part, replacing
+// the cursor-sample heat map. No raw IP or user agent is stored here.
+
+/**
+ * Exactly what a buyer was served (the buildBuyerCim output after every
+ * blind guard, locked stubs included) — the broker's heat-map viewer
+ * renders this, so the heat sits on the version the buyer saw. id = first
+ * 32 hex of sha256 over {mode, variant, design, sections}: identical
+ * servings share a row. Deleted with the deal; unread ones pruned after 30 days.
+ */
+export const cimRenditions = pgTable("cim_renditions", {
+  id: varchar("id").primaryKey(),
+  dealId: varchar("deal_id").notNull(),
+  mode: text("mode").notNull(),           // blind | normal | dd
+  variant: text("variant").notNull(),     // teaser | full
+  cimLayoutVersion: integer("cim_layout_version"),
+  sections: jsonb("sections").notNull(),  // BuyerSection[] as served
+  design: jsonb("design"),                // the view room's `design` payload
+  pageIndex: jsonb("page_index").notNull().$type<import("./analytics-v2").RenditionPage[]>(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("cim_renditions_deal_created_idx").on(t.dealId, t.createdAt),
+]);
+export type CimRendition = typeof cimRenditions.$inferSelect;
+export type InsertCimRendition = typeof cimRenditions.$inferInsert;
+
+/**
+ * One buyer visit to the view room (a gap of 30 min starts a new one).
+ * id is the client's visit uuid. Clocks are cumulative ms, merged with
+ * GREATEST so resends and out-of-order beacons can't corrupt them.
+ */
+export const buyerVisits = pgTable("buyer_visits", {
+  id: varchar("id").primaryKey(),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  renditionId: varchar("rendition_id"),
+  mode: text("mode"),                     // blind | normal | dd
+  accessLevel: text("access_level"),
+  deviceClass: text("device_class"),      // desktop | tablet | phone
+  viewportW: integer("viewport_w"),
+  viewportH: integer("viewport_h"),
+  uaFamily: text("ua_family"),            // "Chrome/Mac" — never the raw user agent
+  // Keyed HMAC of the network address (ANALYTICS_HASH_KEY, else derived from
+  // SESSION_SECRET) — only for "opened from N places". Never the raw IP.
+  ipHash: text("ip_hash"),
+  startedAt: timestamp("started_at").defaultNow().notNull(),
+  lastSeenAt: timestamp("last_seen_at").defaultNow().notNull(),
+  wallMs: integer("wall_ms").notNull().default(0),
+  activeMs: integer("active_ms").notNull().default(0),
+  idleMs: integer("idle_ms").notNull().default(0),
+  hiddenMs: integer("hidden_ms").notNull().default(0),
+  awayMs: integer("away_ms").notNull().default(0),
+  outsideMs: integer("outside_ms").notNull().default(0),
+  // Furthest page reached (index in the rendition's page order); null = none yet.
+  maxPageIndex: integer("max_page_index"),
+  // [[secondsSinceStart, pageId], …] — dominant page changes, ≤ 2,000 entries.
+  path: jsonb("path").$type<Array<[number, string]>>().default(sql`'[]'::jsonb`),
+  selfView: boolean("self_view").notNull().default(false),   // the owning broker previewing
+  clamped: boolean("clamped").notNull().default(false),      // scaled to the server's elapsed time
+  legacy: boolean("legacy").notNull().default(false),        // backfilled from section_exit events
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+}, (t) => [
+  index("buyer_visits_deal_seen_idx").on(t.dealId, t.lastSeenAt),
+  index("buyer_visits_access_idx").on(t.buyerAccessId),
+]);
+export type BuyerVisit = typeof buyerVisits.$inferSelect;
+export type InsertBuyerVisit = typeof buyerVisits.$inferInsert;
+
+/**
+ * Reading time per (visit, page, block). block_key "" = on the page but
+ * outside every block. Upserted with GREATEST per measure (cumulative
+ * counters) on the unique (visit_id, page_id, block_key) — ON CONFLICT
+ * (visit_id, page_id, block_key). Usually < 100 rows per visit.
+ * (A surrogate id + unique index rather than a composite primary key:
+ * drizzle-kit push re-creates composite keys on every deploy.)
+ */
+export const readingRollups = pgTable("reading_rollups", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  visitId: varchar("visit_id").notNull(),
+  pageId: text("page_id").notNull(),
+  blockKey: text("block_key").notNull().default(""),
+  dealId: varchar("deal_id").notNull(),
+  buyerAccessId: varchar("buyer_access_id").notNull(),
+  renditionId: varchar("rendition_id"),
+  lineageId: text("lineage_id"),
+  attentionMs: integer("attention_ms").notNull().default(0),
+  skimMs: integer("skim_ms").notNull().default(0),
+  visibleMs: integer("visible_ms").notNull().default(0),
+  pointerMs: integer("pointer_ms").notNull().default(0),
+  firstAt: timestamp("first_at").defaultNow().notNull(),
+  lastAt: timestamp("last_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("reading_rollups_visit_page_block_uq").on(t.visitId, t.pageId, t.blockKey),
+  index("reading_rollups_deal_rendition_page_idx").on(t.dealId, t.renditionId, t.pageId),
+  index("reading_rollups_deal_lineage_idx").on(t.dealId, t.lineageId),
+]);
+export type ReadingRollup = typeof readingRollups.$inferSelect;
+export type InsertReadingRollup = typeof readingRollups.$inferInsert;
+
+/**
+ * Cross-deal learning input, per deal (recomputed from that deal's rollups,
+ * so it is idempotent and deleted with the deal): reading time by page role,
+ * layout and block kind. Never a section key, title or any CIM text — only
+ * these generic dimensions reach other brokers' layout prompts, and only
+ * aggregated over enough deals. Demo deals never write here.
+ */
+export const readingBenchmarks = pgTable("reading_benchmarks", {
+  id: varchar("id").primaryKey().default(sql`gen_random_uuid()`),
+  dealId: varchar("deal_id").notNull(),
+  industry: text("industry").notNull(),
+  pageRole: text("page_role").notNull(),
+  layoutType: text("layout_type").notNull(),
+  blockKind: text("block_kind").notNull(),
+  readers: integer("readers").notNull().default(0),
+  blocks: integer("blocks").notNull().default(0),
+  attentionMs: bigint("attention_ms", { mode: "number" }).notNull().default(0),
+  expectedMs: bigint("expected_ms", { mode: "number" }).notNull().default(0),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+}, (t) => [
+  uniqueIndex("reading_benchmarks_deal_dims_uq").on(t.dealId, t.pageRole, t.layoutType, t.blockKind),
+  index("reading_benchmarks_industry_idx").on(t.industry, t.pageRole),
+]);
+export type ReadingBenchmark = typeof readingBenchmarks.$inferSelect;

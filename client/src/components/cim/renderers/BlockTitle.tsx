@@ -10,6 +10,7 @@
 import { isParagraphTitle } from "@shared/cim-layouts";
 import { renderInline } from "../richText";
 import { cn } from "@/lib/utils";
+import { useBlockAttrs } from "../blocks";
 
 interface BlockTitleProps {
   title?: unknown;
@@ -19,6 +20,7 @@ interface BlockTitleProps {
 }
 
 export function BlockTitle({ title, intro, spacing = "mb-4" }: BlockTitleProps) {
+  const ba = useBlockAttrs();
   const t = typeof title === "string" ? title.trim() : "";
   const i = typeof intro === "string" ? intro.trim() : "";
   const paragraph = !!t && isParagraphTitle(t);
@@ -26,10 +28,10 @@ export function BlockTitle({ title, intro, spacing = "mb-4" }: BlockTitleProps) 
   return (
     <>
       {t && !paragraph && (
-        <h3 className={cn("text-sm font-semibold text-foreground/60 uppercase tracking-widest", i ? "mb-2" : spacing)}>{t}</h3>
+        <h3 {...ba("caption")} className={cn("text-sm font-semibold text-foreground/60 uppercase tracking-widest", i ? "mb-2" : spacing)}>{t}</h3>
       )}
       {(paragraph || i) && (
-        <div className={cn("space-y-2 max-w-3xl", spacing)} data-testid="block-intro">
+        <div {...ba("intro")} className={cn("space-y-2 max-w-3xl", spacing)} data-testid="block-intro">
           {paragraph && <p className="text-sm leading-relaxed text-foreground/80">{renderInline(t, "bt")}</p>}
           {i && <p className="text-sm leading-relaxed text-foreground/80">{renderInline(i, "bi")}</p>}
         </div>

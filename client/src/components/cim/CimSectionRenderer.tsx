@@ -15,6 +15,8 @@ import { LOCKED_LAYOUT_TYPE, type CimLayoutKey } from "@shared/cim-layouts";
 import type { CimBranding } from "./CimBrandingContext";
 import { useSectionNumber, useThemeStyle } from "./CimDesignContext";
 import { CimSectionHeading } from "./CimSectionHeading";
+import { CimBlockScope, useBlockAttrs, usePageAttrs } from "./blocks";
+import { withoutRepeatedCaption } from "@shared/cim-blocks";
 
 import { MetricGridRenderer }         from "./renderers/MetricGrid";
 import { BarChartRenderer }           from "./renderers/BarChart";
@@ -95,11 +97,6 @@ function isEmptyProse(section: CimSection, layoutData: Record<string, any>, cont
   return false;
 }
 
-/** Case/punctuation/whitespace-insensitive form of a heading, for comparison. */
-function headingKey(v: unknown): string {
-  return typeof v === "string" ? v.toLowerCase().replace(/&/g, "and").replace(/[^a-z0-9]+/g, "") : "";
-}
-
 /**
  * The section heading is always printed above the renderer, so a renderer
  * caption (`title` / `caption`) that just repeats it is dropped — otherwise
@@ -107,22 +104,18 @@ function headingKey(v: unknown): string {
  * the stored layoutData (and the data editor) keep the field.
  */
 export function dropRepeatedCaption<T extends Record<string, any>>(layoutData: T, sectionTitle: string | null | undefined): T {
-  const key = headingKey(sectionTitle);
-  if (!key || !layoutData || typeof layoutData !== "object") return layoutData;
-  let out = layoutData;
-  for (const field of ["title", "caption"] as const) {
-    if (headingKey(out[field]) === key) {
-      if (out === layoutData) out = { ...layoutData };
-      delete (out as any)[field];
-    }
-  }
-  return out;
+  // Shared with the reading registry (shared/cim-blocks.ts), which must
+  // know whether the caption block is drawn.
+  return withoutRepeatedCaption(layoutData, sectionTitle);
 }
 
 export function CimSectionRenderer({ section, branding, brokerMode = false, hideTitle = false }: CimSectionRendererProps) {
   // Hooks first (the early returns below must not change the hook order).
   const themeVars = useThemeStyle();
   const number = useSectionNumber(section.id);
+  // Reading analytics (blocks.tsx): the page id and the heading block, when on.
+  const pageAttrs = usePageAttrs(section.id);
+  const ba = useBlockAttrs();
   if (!section.isVisible && !brokerMode) return null;
 
   // Prose fields keep their markup (renderers run them through renderInline /
@@ -171,12 +164,14 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
       data-section-key={section.sectionKey}
       data-layout-type={section.layoutType}
       data-track-section={section.sectionKey}
+      {...pageAttrs}
     >
       {/* Section title — not shown for cover_page or divider */}
       {!hideTitle && !UNTITLED.has(section.layoutType) && (
         <CimSectionHeading
           title={section.sectionTitle}
           number={number}
+          attrs={ba("heading")}
           aside={brokerMode && !section.isVisible ? (
             <div className="flex items-center gap-2 shrink-0 mt-0.5">
               <span className="text-[10px] font-medium text-muted-foreground bg-muted px-1.5 py-0.5 rounded">
@@ -186,7 +181,7 @@ export function CimSectionRenderer({ section, branding, brokerMode = false, hide
           ) : undefined}
         />
       )}
-      {inner}
+      <CimBlockScope pageId={section.id}>{inner}</CimBlockScope>
     </div>
   );
 }

@@ -52,6 +52,9 @@ import { settleMergeRowsQuietly } from "./documents/merge-conflicts.js";
 import { registerCimMediaRoutes } from "./routes/cim-media.js";
 import { loadMediaAssets } from "./cim/media-store.js";
 import { registerCimTemplateRoutes } from "./routes/cim-templates.js";
+import { registerEngagementRoutes } from "./routes/engagement.js";
+import { registerEngagementInsightRoutes } from "./routes/engagement-insights.js";
+import { registerReadingRoutes } from "./routes/reading.js";
 import { notify, previewRecipients, sendDirectEmail } from "./notifications/service.js";
 import { escapeHtml } from "./notifications/email-escape";
 import { teamInviteCopy } from "./notifications/team-invite-copy";
@@ -7617,6 +7620,11 @@ Do not speculate or add information not in the CIM.`,
   registerCimMediaRoutes(app);
   registerCimTemplateRoutes(app);
   registerBuyerNdaRoutes(app);
+  // Buyer reading analytics v2 (shared/analytics-v2.ts): capture → broker
+  // engagement APIs (capture stream) and cross-deal insights (intelligence stream).
+  registerReadingRoutes(app);
+  registerEngagementRoutes(app);
+  registerEngagementInsightRoutes(app);
 
   const httpServer = createServer(app);
   return httpServer;

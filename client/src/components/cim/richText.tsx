@@ -19,6 +19,8 @@
  * legacy literal "[DD]" prefix (older overrides) is stripped.
  */
 import { Fragment, type ReactNode } from "react";
+import { parseProseBlocks } from "@shared/cim-prose";
+import { useBlockAttrs } from "./blocks";
 
 export const DD_OPEN = "[[dd]]";
 export const DD_CLOSE = "[[/dd]]";
@@ -33,9 +35,6 @@ const PROSE_KEYS = new Set([
 const LEGACY_DD_TAG = /\[DD(?::\s*[^\]]*)?\]\s*/g;
 const DD_MARK = /\[\[\/?dd\]\]/g;
 const BOLD = /\*\*(.+?)\*\*|__(.+?)__/g;
-const INLINE_BULLET = /\s+[•·]\s+/;
-const BULLET_LINE = /^\s*(?:[-*•·–]|•)\s+/;
-const NUMBERED_LINE = /^\s*\d+[.)]\s+/;
 const HEADING_LINE = /^\s*#{1,6}\s+/;
 
 /** Plain text: markdown markers and DD sentinels removed, legacy [DD] tags dropped. */
@@ -100,68 +99,19 @@ function renderBold(text: string, keyPrefix: string): ReactNode {
   return out.length === 1 ? out[0] : out;
 }
 
-type Block =
-  | { kind: "p"; text: string }
-  | { kind: "h"; text: string }
-  | { kind: "ul"; items: string[] }
-  | { kind: "ol"; items: string[] };
-
-/** Turn free text into blocks: blank-line paragraphs, bullet/numbered lists, headings, inline "•" runs. */
-export function parseProseBlocks(text: string): Block[] {
-  if (!text) return [];
-  const blocks: Block[] = [];
-  const chunks = text.replace(LEGACY_DD_TAG, "").replace(/\r\n/g, "\n").split(/\n\s*\n/);
-  for (const chunk of chunks) {
-    const lines = chunk.split("\n").map((l) => l.trimEnd()).filter((l) => l.trim().length > 0);
-    if (lines.length === 0) continue;
-    let para: string[] = [];
-    const flushPara = () => {
-      if (para.length === 0) return;
-      const joined = para.join(" ");
-      // "Point one • Point two • Point three" inside one paragraph → bullets.
-      // "Key points: • A • B" keeps the intro as its own line above the list.
-      const inlineParts = joined.split(INLINE_BULLET).map((s) => s.trim()).filter(Boolean);
-      if (inlineParts.length >= 3) {
-        const [first, ...rest] = inlineParts;
-        if (/[:：]$/.test(first)) {
-          blocks.push({ kind: "p", text: first });
-          blocks.push({ kind: "ul", items: rest });
-        } else {
-          blocks.push({ kind: "ul", items: inlineParts });
-        }
-      } else {
-        blocks.push({ kind: "p", text: joined.replace(/^\s*[•·]\s*/, "") });
-      }
-      para = [];
-    };
-    let list: Block | null = null;
-    const flushList = () => { if (list) { blocks.push(list); list = null; } };
-    for (const line of lines) {
-      if (HEADING_LINE.test(line)) {
-        flushPara(); flushList();
-        blocks.push({ kind: "h", text: line.replace(HEADING_LINE, "").trim() });
-      } else if (BULLET_LINE.test(line)) {
-        flushPara();
-        if (!list || list.kind !== "ul") { flushList(); list = { kind: "ul", items: [] }; }
-        list.items.push(line.replace(BULLET_LINE, "").trim());
-      } else if (NUMBERED_LINE.test(line)) {
-        flushPara();
-        if (!list || list.kind !== "ol") { flushList(); list = { kind: "ol", items: [] }; }
-        list.items.push(line.replace(NUMBERED_LINE, "").trim());
-      } else {
-        flushList();
-        para.push(line.trim());
-      }
-    }
-    flushPara(); flushList();
-  }
-  return blocks;
-}
+// The parser is shared with the reading registry (shared/cim-blocks.ts), which
+// names each block it returns ("para:0", "para:1"…).
+export { parseProseBlocks };
 
 interface ProseOptions {
   paragraphClassName?: string;
   listClassName?: string;
   headingClassName?: string;
+  /**
+   * Reading-analytics attributes for each block ("para:i"): pass the
+   * renderer's useBlockAttrs() result. Omitted → no attributes.
+   */
+  blockAttrs?: (key: string) => Record<string, string>;
 }
 
 /** Block pass: paragraphs, lists and headings. Wrap the result in a block container. */
@@ -172,14 +122,15 @@ export function renderProse(text: string | null | undefined, opts: ProseOptions 
     listClassName = "space-y-1.5 mb-3 last:mb-0",
     headingClassName = "text-xs font-semibold uppercase tracking-widest text-foreground/70 mt-4 mb-2 first:mt-0",
   } = opts;
+  const ba = opts.blockAttrs ?? (() => undefined);
   return parseProseBlocks(text).map((block, i) => {
     switch (block.kind) {
       case "h":
-        return <p key={i} className={headingClassName}>{renderInline(block.text, `h${i}`)}</p>;
+        return <p key={i} {...ba(`para:${i}`)} className={headingClassName}>{renderInline(block.text, `h${i}`)}</p>;
       case "ul":
       case "ol":
         return (
-          <ul key={i} className={listClassName}>
+          <ul key={i} {...ba(`para:${i}`)} className={listClassName}>
             {block.items.map((item, j) => (
               <li key={j} className="flex items-start gap-2.5 text-sm leading-relaxed">
                 {block.kind === "ol" ? (
@@ -193,17 +144,18 @@ export function renderProse(text: string | null | undefined, opts: ProseOptions 
           </ul>
         );
       default:
-        return <p key={i} className={paragraphClassName}>{renderInline(block.text, `p${i}`)}</p>;
+        return <p key={i} {...ba(`para:${i}`)} className={paragraphClassName}>{renderInline(block.text, `p${i}`)}</p>;
     }
   });
 }
 
 /** Shared fallback used by every structured renderer when its data is empty but prose exists. */
 export function ProseFallback({ content }: { content: string }) {
+  const ba = useBlockAttrs();
   if (!content) return null;
   return (
     <div className="text-sm text-foreground/70 leading-relaxed max-w-prose">
-      {renderProse(content)}
+      {renderProse(content, { blockAttrs: ba })}
     </div>
   );
 }
