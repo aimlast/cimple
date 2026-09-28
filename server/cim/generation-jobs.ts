@@ -31,6 +31,7 @@ import { db } from "../db";
 import { interviewSessions } from "@shared/schema";
 import { eq } from "drizzle-orm";
 import { writerFactsSnapshot } from "./cim-staleness";
+import { dropPublishedVersions } from "./published-versions";
 
 export type CimGenerationMode = CimGenerationStatus["mode"];
 
@@ -262,6 +263,8 @@ async function persistDocument(deal: Deal, mode: CimGenerationMode, document: Ci
   await storage.deleteCimSectionsForDeal(deal.id);
   await storage.deleteCimSectionOverrides(deal.id, "blind");
   await storage.deleteCimSectionOverrides(deal.id, "dd");
+  // The approved versions on record were of the sections just replaced.
+  await dropPublishedVersions(deal.id);
   const cimContent: Record<string, string> = {};
   for (const section of document.sections) {
     await storage.createCimSection({

@@ -28,6 +28,7 @@
  */
 import { and, eq, isNull, lt } from "drizzle-orm";
 import { isMediaLayout } from "@shared/cim-media";
+import { isCommonWord } from "@shared/blind-vocabulary";
 import Anthropic from "@anthropic-ai/sdk";
 import { cimSections, cimSectionOverrides, type CimSection, type Deal } from "@shared/schema";
 import { db } from "../db";
@@ -38,12 +39,13 @@ import { cimFinancialsFor, renderCimFinancialsBlock, type CimFinancials } from "
 import { isBridgeAddback } from "../financial/addback-seed";
 import { isDistributionLine } from "../financial/normalization-rules";
 import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
-import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./sensitive-facts";
+import { keepOutFromNotes, mentionsHeldName, neutralBridgeLabel, screenConfidentialText, screenFactsForCim, type KeepOut } from "./sensitive-facts";
 import { keepOutFor } from "./keep-out";
 import type { ResolvedDiscrepancyNote } from "./resolved-block";
 import { earningsCanon, screenEarningsFacts } from "./earnings-canon";
 import { currentResolvedNotes, resolvedNotes, settleResolvedFacts } from "./resolved-block";
 import { stampSourceDetails } from "../documents/merge-policy";
+import { recordPublishedDd } from "./published-versions";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY, timeout: 600_000 });
 
@@ -109,6 +111,11 @@ export interface DdInputs {
   context: string;
   /** Everything a revealed name or figure may come from (facts + context). */
   knownText: string;
+  /**
+   * Names the CIM must never mention (keep-out requests, confidential
+   * clauses): a DD version that names one is rejected. Absent = none.
+   */
+  heldNames?: string[];
 }
 
 type DdDocument = { name: string; category: string; visibility?: string | null };
@@ -145,7 +152,15 @@ export function buildDdContext(input: {
   const canon = earningsCanon(input.financials, null, { extractedInfo: input.extractedInfo, resolved: input.resolved });
   const financials = canon ? canon.financials : input.financials ?? null;
   const keepOut = input.keepOut ?? keepOutFromNotes(input.extractedInfo);
-  const safe = screenEarningsFacts(screenFactsForCim(confirmed, keepOut).safe, canon, (k) => k).safe;
+  const screened = screenFactsForCim(confirmed, keepOut);
+  // The people and parties the seller or broker asked to keep out of the
+  // CIM (and those a confidential clause is about). The facts above are
+  // screened; the add-back labels, the statement lines and document names
+  // below are built from other data, so they are screened here too — a DD
+  // Financial Overview named the owner's wife through "Salary paid to
+  // Maria Chen (owner's wife): verified" (free round 2, C2).
+  const heldNames = screened.heldNames;
+  const safe = screenEarningsFacts(screened.safe, canon, (k) => k).safe;
 
   const customerFacts = safe.filter(([k]) => CUSTOMER_KEY.test(k));
   if (customerFacts.length > 0) {
@@ -163,16 +178,16 @@ export function buildDdContext(input: {
     );
     if (addbacks.length > 0) {
       parts.push(`## Add-back verification\nStatus: ${av.status}\n${addbacks.map((ab: any) =>
-        `- ${ab.label}: ${ab.verificationStatus} (${ab.matchedTransactions?.length || 0} supporting transactions)`
+        `- ${heldLabel(ab.label, heldNames)}: ${ab.verificationStatus} (${ab.matchedTransactions?.length || 0} supporting transactions)`
       ).join("\n")}`);
     }
   }
 
-  const fin = renderCimFinancialsBlock(financials);
+  const fin = withoutHeldLines(renderCimFinancialsBlock(financialsWithoutHeldNames(financials, heldNames)), heldNames);
   if (fin) parts.push(`## Verified financials (from the financial statements)\n${fin}`);
 
   const financialDocs = (input.documents ?? []).filter((d) =>
-    d.visibility !== "broker_only" && (d.category === "financials" || d.category === "tax_returns" || d.category === "bank_statements"),
+    d.visibility !== "broker_only" && (d.category === "financials" || d.category === "tax_returns" || d.category === "bank_statements") && !mentionsHeldName(d.name, heldNames),
   );
   if (financialDocs.length > 0) {
     parts.push(`## Supporting documents on file\n${financialDocs.map((d) => `- ${d.name} (${d.category})`).join("\n")}`);
@@ -180,7 +195,36 @@ export function buildDdContext(input: {
 
   const context = parts.join("\n\n") || "No additional DD data available.";
   const factsText = safe.map(([k, v]) => `${k}: ${factValueText(v)}`).join("\n");
-  return { context, knownText: `${factsText}\n${context}` };
+  return { context, knownText: `${factsText}\n${context}`, heldNames };
+}
+
+/** A label without the held names in it (unchanged when it names none). */
+function heldLabel(label: string, heldNames: readonly string[], type = ""): string {
+  return mentionsHeldName(label, heldNames) ? neutralBridgeLabel(label, heldNames, type) : label;
+}
+
+/** The analysis's rows with no held name in a line or add-back label (the bridge keeps every step). */
+export function financialsWithoutHeldNames(fin: CimFinancials | null | undefined, heldNames: readonly string[]): CimFinancials | null {
+  if (!fin || heldNames.length === 0) return fin ?? null;
+  const bridge = fin.bridge
+    ? {
+        ...fin.bridge,
+        addbacks: fin.bridge.addbacks.map((a) => ({ ...a, label: heldLabel(a.label, heldNames) })),
+        sdeOnly: fin.bridge.sdeOnly.map((a) => ({ ...a, label: heldLabel(a.label, heldNames) })),
+      }
+    : fin.bridge;
+  return {
+    ...fin,
+    lines: fin.lines.map((l) => ({ ...l, name: heldLabel(l.name, heldNames) })),
+    bridge,
+    bridgeWithheld: fin.bridgeWithheld && mentionsHeldName(fin.bridgeWithheld, heldNames) ? screenConfidentialText(fin.bridgeWithheld, heldNames) : fin.bridgeWithheld,
+  };
+}
+
+/** A rendered block with any line that still names a held party left out (a backstop — labels are neutral already). */
+function withoutHeldLines(text: string, heldNames: readonly string[]): string {
+  if (!text || heldNames.length === 0) return text;
+  return text.split("\n").filter((line) => !mentionsHeldName(line, heldNames)).join("\n");
 }
 
 /** Load a deal's DD inputs: shared documents only, the CIM's financial analysis, verified add-backs. */
@@ -236,18 +280,173 @@ function namesIn(text: string): string[] {
   return Array.from(stripDdMarkers(text).matchAll(NAME_RE)).map((m) => m[1].trim());
 }
 
+// ── Revealed labels and names ────────────────────────────────────────────
+
+/** Row fields that name what the row is (a chart slice, a table row, a card). */
+const LABEL_KEYS = ["name", "label", "title", "customer", "client", "company", "supplier", "vendor"];
+/** Row fields that hold the row's own figure. */
+const ROW_VALUE_KEYS = ["value", "secondaryValue", "percent", "percentage", "share", "amount", "revenue"];
+
+/** An anonymised or generic label ("Customer A", "Top 5 customers", "Other") — not a name. */
+const GENERIC_ROW_LABEL =
+  /^(?:customer|client|supplier|vendor|account|payer|carrier|contractor|distributor)s?\s+(?:[a-z]|\d{1,2}|#\d{1,2})$|\bothers?\b|\bremaining\b|\ball other|\brest of\b|\btop \d+|\blong tail\b|^\d/i;
+
+interface ChangedLabel {
+  label: string;
+  /** The row the label names (its figures are the label's). */
+  row: Record<string, unknown>;
+}
+
+/**
+ * Labels the enrichment changed or added, row by row (charts, tables, cards):
+ * a revealed customer name sits here, where the prose check can't see it.
+ */
+function changedLabels(base: unknown, next: unknown, out: ChangedLabel[] = [], depth = 0): ChangedLabel[] {
+  if (depth > 8 || next == null) return out;
+  if (Array.isArray(next)) {
+    const b = Array.isArray(base) ? base : [];
+    next.forEach((row, i) => {
+      if (row && typeof row === "object" && !Array.isArray(row)) {
+        const r = row as Record<string, unknown>;
+        const br = (b[i] && typeof b[i] === "object" ? b[i] : {}) as Record<string, unknown>;
+        for (const k of LABEL_KEYS) {
+          const v = r[k];
+          if (typeof v === "string" && v.trim() && stripDdMarkers(v).trim() !== stripDdMarkers(String(br[k] ?? "")).trim()) {
+            out.push({ label: stripDdMarkers(v).trim(), row: r });
+          }
+        }
+      }
+      changedLabels(b[i], row, out, depth + 1);
+    });
+    return out;
+  }
+  if (typeof next === "object") {
+    const b = (base && typeof base === "object" ? base : {}) as Record<string, unknown>;
+    for (const [k, v] of Object.entries(next as Record<string, unknown>)) changedLabels(b[k], v, out, depth + 1);
+  }
+  return out;
+}
+
+/** The name part of a label: "Acme Logistics (MSA to 2027)", "Acme — 31%", "Acme: anchor" → "Acme Logistics" / "Acme". */
+function labelName(label: string): string {
+  return label
+    .replace(/\s*\(.*?\)\s*$/, "")
+    .replace(/\s*[—–-]\s*\d.*$/, "")
+    .replace(/\s+[—–]\s.*$|\s+-\s.*$|:\s.*$/, "")
+    .replace(/\b(?:co-op|incorporated|inc|ltd|limited|llc|llp|lp|plc|corp|corporation|company|co)\b\.?/gi, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Is the name written in the file (whole, as a phrase — not just its first word)? */
+function onFile(name: string, knownNorm: string): boolean {
+  const norm = normalizeForLookup(name).trim();
+  return !norm || knownNorm.includes(` ${norm} `);
+}
+
+const figureClose = (a: number, b: number) => Math.abs(a - b) <= Math.max(0.05, Math.abs(b) * 0.005);
+
+/**
+ * The share or amount the file states next to a name ("Acme Logistics
+ * 31%", "31% — Acme Logistics", "Acme Logistics ($2.1M)"): per mention, the
+ * first such figure after it in the same clause, else the last one before
+ * it. Counts and years don't pair ("Acme, a client for 12 years"). Empty
+ * when the file gives the name no figure.
+ */
+function statedFigureFor(name: string, knownText: string): number[] {
+  const out: number[] = [];
+  const clauses = stripDdMarkers(knownText).split(/[;\n]|(?<=[.!?])\s+/);
+  const re = new RegExp(String.raw`(?<![\p{L}\p{N}])${name.trim().split(/\s+/).map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(String.raw`\s+`)}(?![\p{L}\p{N}])`, "iu");
+  const figs = (t: string) => parseFigures(t).filter((f) => f.kind !== "plain");
+  for (const clause of clauses) {
+    const m = re.exec(clause);
+    if (!m) continue;
+    const after = figs(clause.slice(m.index + m[0].length, m.index + m[0].length + 60));
+    if (after.length > 0) {
+      out.push(after[0].value);
+      continue;
+    }
+    const before = figs(clause.slice(Math.max(0, m.index - 40), m.index));
+    if (before.length > 0) out.push(before[before.length - 1].value);
+  }
+  return out;
+}
+
+/** The prose fields of a section's data (where [[dd]] spans may sit). */
+function proseTexts(value: unknown, parentKey = "", out: string[] = [], depth = 0): string[] {
+  if (depth > 8 || value == null) return out;
+  if (typeof value === "string") {
+    if (PROSE_KEYS.has(parentKey)) out.push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach((v) => proseTexts(v, parentKey, out, depth + 1));
+  } else if (typeof value === "object") {
+    for (const [k, v] of Object.entries(value as Record<string, unknown>)) proseTexts(v, k, out, depth + 1);
+  }
+  return out;
+}
+
+/** Every figure a row shows (its value fields, and a table row's cells). */
+function rowFigures(row: Record<string, unknown>): number[] {
+  const texts: string[] = [];
+  for (const k of ROW_VALUE_KEYS) if (row[k] != null && row[k] !== "") texts.push(String(row[k]));
+  if (Array.isArray(row.values)) for (const v of row.values) if (v != null && v !== "") texts.push(String(v));
+  const out: number[] = [];
+  for (const t of texts) {
+    const n = Number(String(t).replace(/[,$%\s]/g, ""));
+    if (/^\s*-?[\d,.]+\s*%?\s*$/.test(t) && Number.isFinite(n)) out.push(n);
+    else out.push(...parseFigures(t).map((f) => f.value));
+  }
+  return out;
+}
+
+/**
+ * Capitalised words the enrichment added to its prose that aren't on file:
+ * a one-word customer ("Sysco") slips past the two-word name pattern. Words
+ * at the start of a sentence are ordinary capitals — except the first word
+ * of a revealed [[dd]] span, which is exactly where a name goes.
+ */
+function unknownSingleNames(rawText: string, baseWords: Set<string>, knownWords: Set<string>): string[] {
+  const out = new Set<string>();
+  const WORD = /\[\[dd\]\]|\[\[\/dd\]\]|[A-Za-z][A-Za-z0-9&'’-]*|[.!?:]/g;
+  let prev = "."; // start of text = start of a sentence
+  let afterOpen = false;
+  for (const m of Array.from(rawText.matchAll(WORD))) {
+    const tok = m[0];
+    if (tok === "[[dd]]") { afterOpen = true; continue; }
+    if (tok === "[[/dd]]") continue;
+    if (/^[.!?:]$/.test(tok)) { prev = tok; continue; }
+    const sentenceStart = /^[.!?:]$/.test(prev);
+    const checked = afterOpen || !sentenceStart;
+    afterOpen = false;
+    prev = tok;
+    if (!checked || !/^[A-Z]/.test(tok) || tok.length < 3) continue;
+    const w = tok.replace(/['’]s$/i, "").toLowerCase();
+    if (baseWords.has(w) || knownWords.has(w) || isCommonWord(w)) continue;
+    if (/^[A-Z0-9&-]+$/.test(tok) && tok.length <= 5) continue; // an acronym (EBITDA, CRA, HST)
+    out.add(tok.replace(/['’]s$/i, ""));
+  }
+  return Array.from(out);
+}
+
+const wordSet = (text: string) => new Set(stripDdMarkers(text).toLowerCase().match(/[a-z][a-z0-9&'’-]*/g) ?? []);
+
 /**
  * Check a DD enrichment against its base section. Problems (empty = safe):
  *  - a figure of the base section changed or disappeared (DD never changes
  *    an approved figure);
  *  - a new figure that isn't in the facts or the DD context;
- *  - a new name (company, person) that isn't on file — no invented entities;
+ *  - a new name (company, person) that isn't on file — no invented entities,
+ *    one word or several, in prose or as a chart / table label;
+ *  - a revealed name shown with a figure the file doesn't give it (the
+ *    right names paired with the wrong shares);
+ *  - a name the seller or broker asked to keep out of the CIM (`heldNames`);
  *  - internal process wording ("per confirmed facts", "teaser", …).
  */
 export function validateDdOverride(
   base: { layoutData: unknown; content: string },
   enriched: { layoutData: unknown; contentOverride: string },
   knownText: string,
+  heldNames: readonly string[] = [],
 ): string[] {
   const problems: string[] = [];
   const baseText = [...textsOf(base.layoutData), base.content || ""].join("\n");
@@ -275,6 +474,34 @@ export function validateDdOverride(
     if (words.length > 0 && words.every((w) => knownNorm.includes(` ${w} `))) continue;
     problems.push(`named "${name}", which isn't on file`);
   }
+  // 3b. Labels it changed (a revealed customer in a chart or table row) are
+  // on file as written, and carry the figure the file gives that name.
+  const flagged = new Set(problems.map((p) => p.match(/^named "(.+)", which/)?.[1] ?? "").filter(Boolean));
+  for (const { label, row } of changedLabels(base.layoutData, enriched.layoutData)) {
+    const name = labelName(label);
+    if (!name || GENERIC_ROW_LABEL.test(name) || !/[A-Za-z]{2,}/.test(name)) continue;
+    if (!onFile(name, knownNorm) && !baseNames.has(normalizeForLookup(name))) {
+      if (!flagged.has(name)) problems.push(`named "${name}", which isn't on file`);
+      flagged.add(name);
+      continue;
+    }
+    const stated = statedFigureFor(name, knownText);
+    const shown = rowFigures(row);
+    if (stated.length > 0 && shown.length > 0 && !shown.some((v) => stated.some((s) => figureClose(Math.abs(v), Math.abs(s))))) {
+      problems.push(`shows "${name}" at ${shown.map((v) => v.toLocaleString("en-US")).join(" / ")}, but the file gives it ${stated.map((v) => v.toLocaleString("en-US")).join(" / ")}`);
+    }
+  }
+  // 3c. One-word names in the prose it added.
+  const proseNew = [...proseTexts(enriched.layoutData), enriched.contentOverride || ""].join("\n");
+  const baseWords = wordSet(baseText);
+  const knownWords = wordSet(knownText);
+  for (const w of unknownSingleNames(proseNew, baseWords, knownWords)) {
+    if (!flagged.has(w)) problems.push(`named "${w}", which isn't on file`);
+    flagged.add(w);
+  }
+  // 3d. Never a name the seller or broker asked to keep out.
+  const held = mentionsHeldName(stripDdMarkers(newText), heldNames);
+  if (held) problems.push(`named "${held}", whom the CIM must leave out`);
   // 4. No internal wording.
   const internal = stripDdMarkers(newText).match(INTERNAL_WORDING);
   if (internal && !INTERNAL_WORDING.test(stripDdMarkers(baseText))) problems.push(`used internal wording ("${internal[0]}")`);
@@ -406,7 +633,7 @@ Return the enriched section via the dd_section tool.`,
   }
 
   const clean = sanitizeDdOutput(parsed.layoutData, typeof parsed.contentOverride === "string" ? parsed.contentOverride : content);
-  const problems = validateDdOverride({ layoutData, content }, clean, inputs.knownText);
+  const problems = validateDdOverride({ layoutData, content }, clean, inputs.knownText, inputs.heldNames ?? []);
   if (problems.length > 0) {
     console.warn(`[dd-enrichment] section ${section.id} rejected: ${problems.join("; ")}`);
     return keep(`DD version of "${section.sectionTitle}" kept as the named CIM — the enrichment ${problems.slice(0, 3).join("; ")}.`);
@@ -442,6 +669,8 @@ export async function refreshSectionDd(section: CimSection, deal: Deal): Promise
     return true;
   });
   if (!committed) throw new Error("changed");
+  // Approved as it stands: the DD version a live CIM's DD buyers keep (shared/cim-published.ts).
+  if (section.brokerApproved) await recordPublishedDd(section.dealId);
   return result.warning ? { warning: result.warning } : {};
 }
 

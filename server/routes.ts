@@ -34,12 +34,13 @@ import { askerScope } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
-import { cimModeForAccessLevel, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, hasSampleData, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
 import { withApprovalRuleMark } from "@shared/cim-approvals";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
 import { listedAskingPrice } from "./information/deal-mirror";
+import { loadPublishedVersions } from "./cim/published-versions";
 import { brokerFactsView } from "./information/facts";
 import { withoutFactsSnapshot } from "./cim/cim-staleness";
 import { checkCimGenerationGate, computeDealReadiness } from "./cim/generation-gate";
@@ -2674,12 +2675,24 @@ Return JSON only.`,
         // A section the AI couldn't write is a placeholder of instructions to
         // the broker: it is never served, and the CIM doesn't go live with a
         // hole in it until each one is written, regenerated or deleted.
-        const placeholders = (await storage.getCimSectionsByDeal(req.params.id)).filter(isCimFallbackSection);
+        const publishSections = await storage.getCimSectionsByDeal(req.params.id);
+        const placeholders = publishSections.filter(isCimFallbackSection);
         if (placeholders.length > 0) {
           return res.status(409).json({
             error: `${placeholders.length === 1 ? "One section" : `${placeholders.length} sections`} couldn't be written by the AI (${placeholders.slice(0, 3).map((p) => `"${p.sectionTitle}"`).join(", ")}). Regenerate, write or delete ${placeholders.length === 1 ? "it" : "them"} in the CIM builder before publishing.`,
             code: "cim_placeholders",
             sections: placeholders.map((p) => ({ id: p.id, title: p.sectionTitle })),
+          });
+        }
+        // A blank layout's sample data ("Category A 60 / B 40") reads to a
+        // buyer as real figures: a shown section still holding it blocks
+        // publishing like a placeholder does.
+        const sample = publishSections.filter((s) => s.isVisible !== false && hasSampleData(s));
+        if (sample.length > 0) {
+          return res.status(409).json({
+            error: `${sample.length === 1 ? "One section still shows" : `${sample.length} sections still show`} the layout's sample data (${sample.slice(0, 3).map((p) => `"${p.sectionTitle}"`).join(", ")}). Replace it with the business's own figures, or hide or delete ${sample.length === 1 ? "the section" : "them"}, before publishing.`,
+            code: "cim_sample_data",
+            sections: sample.map((p) => ({ id: p.id, title: p.sectionTitle })),
           });
         }
         // Every shown section approved as it stands (shared/cim-approvals.ts)
@@ -2738,6 +2751,12 @@ Return JSON only.`,
       if (dealPatch.isLive === true && req.session.brokerId) {
         const baseUrl = process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
         grantWaitingApprovals(req.params.id, baseUrl).catch((err) => console.error("[approvals] publish grants failed:", err));
+        // What goes live is the approved version buyers keep through later,
+        // unapproved changes (shared/cim-published.ts) — recorded now for any
+        // section approved before those records existed.
+        const { recordPublishedVersions } = await import("./cim/published-versions");
+        const shown = (await storage.getCimSectionsByDeal(req.params.id)).filter((s) => s.isVisible !== false && s.brokerApproved);
+        await recordPublishedVersions(shown.map((s) => s.id));
       }
       if (askingPriceSet) {
         const { setMirroredDealFact } = await import("./information/facts");
@@ -4723,12 +4742,16 @@ Return JSON only.`,
       // enforced here (shared/cim-buyer-view.ts). Buyers get only what
       // the renderer needs: never aiLayoutReasoning (internal AI notes that
       // name the owners), seller edits, approval flags or AI task state.
-      const [overrides, media] = await Promise.all([
+      const [overrides, media, published] = await Promise.all([
         cimMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, cimMode),
         // Media blocks: only this deal's uploads, blind-safe ones in blind mode.
         loadMediaAssets(deal.id),
+        // A live CIM's changes wait for the broker's approval: the approved
+        // versions are served meanwhile (shared/cim-published.ts). On a
+        // failed read nothing unapproved is served ([] = no records).
+        loadPublishedVersions(deal).catch(() => []),
       ]);
-      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal) });
+      const buyerCim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: baseSections, overrides, media, askingPrice: listedAskingPrice(deal), published });
       if (buyerCim.preparing) {
         // No redacted version exists yet. Do NOT serve the real, un-redacted
         // sections — that would leak identity to the first viewer. Serve a
@@ -5743,6 +5766,11 @@ Return JSON only.`,
           refs.find(r => r.sectionKey === target.sectionKey)!,
           { layoutType: target.layoutType, brief: typeof req.body.brief === "string" ? req.body.brief : undefined },
         );
+        // A live CIM's buyers keep the approved version until this is approved (shared/cim-published.ts).
+        {
+          const { keepPublishedBeforeChange } = await import("./cim/published-versions");
+          await keepPublishedBeforeChange(target, deal);
+        }
         const updatedSection = await storage.updateCimSection(String(target.id), {
           // Usually unchanged; a scorecard of words comes back as highlight cards.
           layoutType: regenerated.layoutType,
@@ -5799,6 +5827,8 @@ Return JSON only.`,
         const existingSections = await storage.getCimSectionsByDeal(dealId);
         const matchingSection = existingSections.find(s => s.sectionKey === sectionKey);
         if (matchingSection) {
+          const { keepPublishedBeforeChange } = await import("./cim/published-versions");
+          await keepPublishedBeforeChange(matchingSection, deal);
           await storage.updateCimSection(String(matchingSection.id), {
             aiDraftContent: content,
             brokerApproved: false,
@@ -5906,6 +5936,12 @@ Return JSON only.`,
       }
       // Sections edited while this ran keep their stale mark.
       await markDdFresh(dealId, startedAt);
+      // For sections approved as they stand, this is the DD version a live
+      // CIM's DD buyers keep through a later unapproved change.
+      {
+        const { recordPublishedDd } = await import("./cim/published-versions");
+        await recordPublishedDd(dealId);
+      }
 
       const warnings = overrides.map((o) => o.warning).filter((w): w is string => !!w);
       res.json({ success: true, overrideCount: overrides.length, warnings });
@@ -7162,10 +7198,43 @@ Return JSON only.`,
         eventData: { question: String(question).slice(0, 200) },
       } as any).catch(() => {});
 
+      // The CIM this buyer gets now (their version, the sections they may
+      // open, a live CIM's approved versions) — what earlier answers are
+      // checked against and what a new answer is written from. A CIM held
+      // for the broker's review answers nothing, not even from earlier
+      // answers (they escalate).
+      const held = cimHeldFromBuyers(deal);
+      let chatBaseSections: Awaited<ReturnType<typeof storage.getCimSectionsByDeal>> = [];
+      let chatSections: ReturnType<typeof buildBuyerCim>["sections"] = [];
+      if (!held) {
+        const [sections, chatOverrides, chatMedia, chatPublished] = await Promise.all([
+          storage.getCimSectionsByDeal(dealId),
+          chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
+          loadMediaAssets(dealId),
+          loadPublishedVersions(deal).catch(() => []),
+        ]);
+        chatBaseSections = sections;
+        chatSections = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal), published: chatPublished }).sections;
+      }
+      const answerSections: AnswerSection[] = chatSections
+        .filter(s => !s.locked)
+        .map(s => ({
+          title: s.sectionTitle,
+          body: s.brokerEditedContent || s.aiDraftContent || "",
+          layoutType: s.layoutType,
+          layoutData: s.layoutData,
+        }));
+      // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
+      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
+      const changedAt = chatBaseSections.reduce<Date | null>((m, s) => (s.updatedAt && (!m || new Date(s.updatedAt) > m) ? new Date(s.updatedAt) : m), null);
+
       // ── Step 1: Check knowledge base — has a similar question been answered
       // before? Only answers THIS buyer may read (scope + identity check):
-      // a teaser is never answered from a full-access buyer's answer.
-      const publishedQs = await publishedQuestionsFor(deal, reader);
+      // a teaser is never answered from a full-access buyer's answer. An AI
+      // answer nobody reviewed is reused only while it still holds for this
+      // CIM (qa/cim-context answerStillHolds): never after the CIM changed,
+      // and never from a held CIM.
+      const publishedQs = held ? [] : await publishedQuestionsFor(deal, reader, { text: cimText, changedAt, held });
       if (publishedQs.length > 0) {
         const kbContext = publishedQs
           .map(q => `Q: ${q.question}\nA: ${q.publishedAnswer || q.aiAnswer}`)
@@ -7228,27 +7297,8 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
       // rent?" escalated even though the Facility section shows it.
       // Same authority as the view room (shared/cim-buyer-view.ts):
       // hidden, locked (above the buyer's tier) and not-yet-redacted
-      // sections never feed the answer.
-      const [chatBaseSections, chatOverrides, chatMedia] = await Promise.all([
-        storage.getCimSectionsByDeal(dealId),
-        chatMode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(dealId, chatMode),
-        loadMediaAssets(dealId),
-      ]);
-      // A CIM held for the broker's review answers nothing (it escalates).
-      const chatCim = cimHeldFromBuyers(deal)
-        ? { sections: [] as ReturnType<typeof buildBuyerCim>["sections"] }
-        : buildBuyerCim({ deal, accessLevel: access.accessLevel, sections: chatBaseSections, overrides: chatOverrides, media: chatMedia, askingPrice: listedAskingPrice(deal) });
-      const answerSections: AnswerSection[] = chatCim.sections
-        .filter(s => !s.locked)
-        .map(s => ({
-          title: s.sectionTitle,
-          body: s.brokerEditedContent || s.aiDraftContent || "",
-          layoutType: s.layoutType,
-          layoutData: s.layoutData,
-        }));
-      // DD overrides carry [[dd]] highlight sentinels for the renderer — plain text for the model.
-      const cimText = stripDdMarkers(buildAnswerContext(answerSections));
-
+      // sections never feed the answer (cimText, built above). A CIM held
+      // for the broker's review answers nothing (it escalates).
       const aiResponse = cimText.trim().length === 0 ? { content: [] as any[] } : await anthropic.messages.create({
         model: "claude-sonnet-4-5",
         max_tokens: 500,

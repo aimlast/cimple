@@ -55,7 +55,8 @@ export interface BuilderState {
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
   dd: { generated: boolean; outOfDate: number; running: boolean };
   buyers: { total: number; byLevel: Record<string, number> };
-  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
+  /** listedAskingPrice: the price buyers see now (null = none listed); the previews apply it like the view room. */
+  deal: { isLive: boolean; cimLayoutGeneratedAt: string | null; listedAskingPrice?: string | null };
   review?: CimReview;
 }
 

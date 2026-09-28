@@ -134,11 +134,16 @@ export interface DealProgressExtras {
  * never approved) needs approving first.
  */
 export function designApprovalState(
-  deal: { designApprovedByBroker?: boolean | null; designApprovedBySeller?: boolean | null },
+  deal: { designApprovedByBroker?: boolean | null; designApprovedBySeller?: boolean | null; isLive?: boolean | null },
   sectionsAwaitingApproval: number | undefined,
 ): { brokerApproved: boolean; sellerApproved: boolean; ready: boolean } {
-  const brokerApproved = !!deal.designApprovedByBroker && !((sectionsAwaitingApproval ?? 0) > 0);
-  const sellerApproved = !!deal.designApprovedBySeller;
+  // A live CIM was approved when it was published — even one that went live
+  // before the flags were recorded (the demo's TrueNorth has neither): it is
+  // never shown as unapproved with "Approve as Broker / Seller" beside "CIM
+  // is live". A change since publishing still needs the broker's approval
+  // (sectionsAwaitingApproval — the per-section rule).
+  const brokerApproved = (!!deal.designApprovedByBroker || !!deal.isLive) && !((sectionsAwaitingApproval ?? 0) > 0);
+  const sellerApproved = !!deal.designApprovedBySeller || !!deal.isLive;
   return { brokerApproved, sellerApproved, ready: brokerApproved && sellerApproved };
 }
 

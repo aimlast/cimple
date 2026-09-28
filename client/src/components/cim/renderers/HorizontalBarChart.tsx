@@ -18,8 +18,9 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatAxisTick, formatFullValue } from "./chartFormat";
-import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartSeriesRows, chartShares, isPercentUnit } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
+import { NotCharted } from "./NotCharted";
 
 interface HBarDataPoint {
   name: string;
@@ -77,11 +78,19 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
 
   // Values written as text ("$13,560,000") are read as numbers — parseFloat
   // gave NaN for them and drew every bar at zero.
-  const scale = unitScale(data.unit);
-  const normalized = chartData.map((d) => ({
-    ...d,
-    value: parseChartNumber(d.value, scale) ?? 0,
-  }));
+  // A value that isn't one amount ("TBD") is listed under the chart, never
+  // drawn as a $0 bar (shared/cim-chart-values chartSeriesRows).
+  const series = chartSeriesRows(chartData, data.unit);
+  const normalized = series.rows;
+  if (normalized.length === 0) {
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        <NotCharted items={series.unreadable} />
+        {content ? <ProseFallback content={content} /> : null}
+      </div>
+    );
+  }
 
   // Percent labels: values in % are labelled as written; other values get a
   // share only of a total the chart states and adds up to (chartShares) —
@@ -96,10 +105,10 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
   }));
 
   // Dynamic height based on item count
-  const height = Math.max(200, chartData.length * 44 + 40);
+  const height = Math.max(200, normalized.length * 44 + 40);
 
   // Calculate left margin to accommodate long labels
-  const maxLabelLen = Math.max(...chartData.map((d) => d.name.length));
+  const maxLabelLen = Math.max(...normalized.map((d) => d.name.length));
   const leftMargin = Math.min(Math.max(maxLabelLen * 6, 80), 180);
 
   return (
@@ -151,6 +160,7 @@ export function HorizontalBarChartRenderer({ layoutData, content, branding, sect
           </Bar>
         </BarChart>
       </ResponsiveContainer>
+      <NotCharted items={series.unreadable} />
       {data.yLabel && (
         <p className="text-xs text-muted-foreground text-center mt-1">{data.yLabel}</p>
       )}

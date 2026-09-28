@@ -68,6 +68,68 @@ export function parseChartNumber(v: unknown, scale = 1): number | null {
   return neg ? -n : n;
 }
 
+/**
+ * A chart value that is an amount followed by a note: "$1,850,000 (9 months
+ * YTD)", "$1.2M (YTD)", "1.2M est.", "$1,200,000*". The amount is drawn and
+ * the note stays with the label; parseChartNumber alone returned null for
+ * these and the renderers drew them as $0 — FY2025 revenue "collapsing to
+ * nothing" (free round 2, C6).
+ */
+const VALUE_NOTE = /^(.*?\d[^()]*?)\s*(\(([^()]{1,60})\)|\*{1,3}|[†‡]|\b(est\.?|estimated|approx\.?|projected|forecast|budget|annuali[sz]ed|ytd|unaudited|prelim(?:inary)?\.?))\s*$/i;
+
+export interface ChartValue {
+  /** The number to draw; null when the text isn't a readable amount (a range, "TBD", words). */
+  value: number | null;
+  /** What was written after the amount ("9 months YTD", "est.", "*") — shown with the label. */
+  note: string | null;
+}
+
+/** A chart value as its number plus any note written after it (see VALUE_NOTE). */
+export function readChartValue(v: unknown, scale = 1): ChartValue {
+  const n = parseChartNumber(v, scale);
+  if (n !== null || typeof v !== "string") return { value: n, note: null };
+  const m = v.trim().match(VALUE_NOTE);
+  if (!m) return { value: null, note: null };
+  const amount = parseChartNumber(m[1], scale);
+  if (amount === null) return { value: null, note: null };
+  const note = (m[3] ?? m[2]).trim();
+  return { value: amount, note };
+}
+
+/** A label with its value's note: "FY2025" + "9 months YTD" → "FY2025 (9 months YTD)"; "*" → "FY2025*". */
+export function labelWithNote(label: unknown, note: string | null): string {
+  const l = String(label ?? "").trim();
+  if (!note) return l;
+  if (/^[*†‡]+$/.test(note)) return `${l}${note}`;
+  return l.toLowerCase().includes(note.toLowerCase()) ? l : `${l} (${note})`;
+}
+
+/**
+ * Series chart rows as drawn: each value read as a number (with its note
+ * moved onto the label), and the rows whose value can't be read set apart —
+ * never drawn as a zero bar or a vanished slice. `unreadable` lists them as
+ * written, for a line under the chart.
+ */
+export function chartSeriesRows<T extends { name?: unknown; value?: unknown }>(
+  rows: readonly T[],
+  unit: unknown,
+): { rows: Array<T & { name: string; value: number }>; unreadable: Array<{ name: string; value: string }> } {
+  const scale = unitScale(unit);
+  const out: Array<T & { name: string; value: number }> = [];
+  const unreadable: Array<{ name: string; value: string }> = [];
+  for (const r of rows) {
+    const read = readChartValue(r?.value, scale);
+    if (read.value === null) {
+      const written = String(r?.value ?? "").trim();
+      // An empty value is a row with nothing to show, not a figure to explain.
+      if (written) unreadable.push({ name: String(r?.name ?? "").trim(), value: written });
+      continue;
+    }
+    out.push({ ...r, name: labelWithNote(r?.name, read.note), value: read.value });
+  }
+  return { rows: out, unreadable };
+}
+
 /** Which unit a set of text values implies, when every one agrees: "$" or "%". */
 function impliedUnit(raw: unknown[]): string | null {
   const texts = raw.filter((v): v is string => typeof v === "string" && v.trim() !== "");
@@ -107,7 +169,11 @@ export function normalizeChartValues(layoutType: string, data: unknown): AnyReco
       ...data,
       data: rows.map((r) => {
         if (!isRecord(r)) return r;
-        const next: AnyRecord = { ...r, value: num(r.value) };
+        // "$1,850,000 (9 months YTD)": the amount is the value, the note joins the label.
+        const read = typeof r.value === "string" ? readChartValue(r.value, scale) : null;
+        const next: AnyRecord = read && read.value !== null
+          ? { ...r, name: labelWithNote(r.name, read.note), value: read.value }
+          : { ...r, value: num(r.value) };
         if (r.secondaryValue != null) next.secondaryValue = num(r.secondaryValue);
         return next;
       }),
@@ -133,7 +199,17 @@ export function normalizeChartValues(layoutType: string, data: unknown): AnyReco
     return out;
   }
   if (layoutType === "waterfall_chart" && Array.isArray(data.items)) {
-    return { ...data, items: (data.items as unknown[]).map((it) => (isRecord(it) ? { ...it, value: num(it.value) } : it)) };
+    return {
+      ...data,
+      items: (data.items as unknown[]).map((it) => {
+        if (!isRecord(it)) return it;
+        const value = num(it.value);
+        // A negative amount on an "add" step is a deduction: saved as one, so
+        // the bridge, its label and the figure check all read it the same way.
+        if (it.type === "add" && typeof value === "number" && value < 0) return { ...it, type: "subtract", value: Math.abs(value) };
+        return { ...it, value };
+      }),
+    };
   }
   return data;
 }

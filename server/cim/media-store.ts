@@ -20,6 +20,7 @@ import { dealPublishedForBuyers } from "@shared/buyer-publish-gate";
 import { cimModeForAccessLevel } from "@shared/cim-layouts";
 import { mediaIdsIn, normalizeMediaLayoutData, type MediaAssetRef, type MediaLayoutKey } from "@shared/cim-media";
 import { businessBrandingMediaIds } from "./templates";
+import { loadPublishedVersions } from "./published-versions";
 
 export const PRIVATE_MEDIA_DIR = "private-media";
 
@@ -107,12 +108,14 @@ async function visibleMediaFor(token: string, access: BuyerAccess): Promise<Visi
   // and nothing from a CIM held for the broker's review (generation-jobs).
   if (deal && dealPublishedForBuyers(deal) && !ndaBlocksBuyer(deal, access) && !cimHeldFromBuyers(deal)) {
     const mode = cimModeForAccessLevel(access.accessLevel);
-    const [sections, overrides, media] = await Promise.all([
+    const [sections, overrides, media, published] = await Promise.all([
       storage.getCimSectionsByDeal(deal.id),
       mode === "normal" ? Promise.resolve([]) : storage.getCimSectionOverrides(deal.id, mode),
       loadMediaAssets(deal.id),
+      // The versions a live CIM's buyers actually get (shared/cim-published.ts).
+      loadPublishedVersions(deal).catch(() => []),
     ]);
-    const cim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections, overrides, media });
+    const cim = buildBuyerCim({ deal, accessLevel: access.accessLevel, sections, overrides, media, published });
     for (const s of cim.sections) {
       if (s.locked) continue;
       for (const id of mediaIdsIn(s.layoutType, s.layoutData)) ids.add(id);

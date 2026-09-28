@@ -22,6 +22,7 @@ import { checkSectionFigures, figureWarningText, isUntracedIssue, knownFiguresFr
 import {
   keepOutFromNotes,
   mentionsHeldName,
+  neutralBridgeLabel,
   screenConfidentialText,
   screenFactsForCim,
   screenText,
@@ -749,29 +750,9 @@ export function scrubHeldNames(
   return names.size > 0 ? { layoutData, aiDraftContent, names: Array.from(names) } : null;
 }
 
-/**
- * A bridge step's label without the confidential name: the name and the
- * words that only pointed at it go ("Salary paid to Maria Chen" → "Salary
- * paid"; "Maria Chen — owner's spouse wages" → "Owner's spouse wages").
- * When nothing descriptive is left: "Other add-back" / "Other deduction".
- */
-export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
-  let t = label;
-  for (const name of heldNames) {
-    const words = name.trim().split(/\s+/).map(escapeRegExp).join(String.raw`\s+`);
-    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
-  }
-  t = t
-    .replace(/\(\s*\)/g, " ")
-    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
-    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
-    .replace(/\s{2,}/g, " ")
-    .trim();
-  // Trailing connectors can stack ("paid to" after "for").
-  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
-  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
-  return t.charAt(0).toUpperCase() + t.slice(1);
-}
+// A bridge step's label without the confidential name — shared with the DD
+// context (dd-enrichment.ts), so it lives in sensitive-facts.ts.
+export { neutralBridgeLabel };
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -944,7 +925,9 @@ ${def.aiSpec}
   if (!result) throw new Error("The AI couldn't rewrite this section. Nothing was changed — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today) };
+  // The writer is told the reclassification footnote is added for it — so
+  // it is, here too (known-4: a rewritten or converted table had none).
+  return { ...final, layoutData: withReclassificationNote(layoutType, finalizeLayoutData(layoutType, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 /**
@@ -979,7 +962,7 @@ Rules:
   if (!result) throw new Error("The AI couldn't convert this section. The current layout was kept — please try again.");
   const scrubbed = scrubHeldNames({ ...result, layoutType: target }, sharedSystem.heldNames);
   const final = scrubbed ? { layoutData: scrubbed.layoutData, aiDraftContent: scrubbed.aiDraftContent } : result;
-  return { ...final, layoutData: finalizeLayoutData(target, final.layoutData, sharedSystem.today) };
+  return { ...final, layoutData: withReclassificationNote(target, finalizeLayoutData(target, final.layoutData, sharedSystem.today), params.financials) };
 }
 
 // ── Phase 1: manifest ──────────────────────────────────────────────────────

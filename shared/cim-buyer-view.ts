@@ -7,6 +7,9 @@
  *   - Hidden sections, sections the AI is still writing, and placeholders
  *     for sections it couldn't write (CIM_FALLBACK_REASONING) never leave
  *     the server.
+ *   - A live CIM serves each section as last approved (shared/cim-published.ts):
+ *     a change waits for the broker's approval. A blank layout's sample
+ *     data is never served.
  *   - Access level → version: teaser/full → Blind, loi → Normal,
  *     due_diligence → DD.
  *   - Blind: a section is served only with an up-to-date redacted override
@@ -39,11 +42,13 @@ import type { CimSection, CimSectionOverride } from "./schema";
 import {
   LOCKED_LAYOUT_TYPE,
   applySectionOverride,
+  hasSampleData,
   isCimFallbackSection,
   cimModeForAccessLevel,
   getCimLayout,
   sectionTier,
 } from "./cim-layouts";
+import { servedVersions } from "./cim-published";
 import { blindIdentifiers, blindTitleRedactor } from "./blind-identifiers";
 import { blindLeakTerms, blindPlaceholders, collectStrings, findBlindLeaks } from "./blind-guard";
 import { buyerMediaLayoutData, dealAddressFragments, isMediaLayout, type MediaAssetRef } from "./cim-media";
@@ -156,6 +161,34 @@ export function withListedAskingPrice<T extends { layoutType: string; layoutData
   return section;
 }
 
+/** What an asking-price callout says when the deal has no listed price. */
+export const PRICE_ON_REQUEST = "Price on request";
+
+/**
+ * A section with the stored asking price taken off: the cover's price, an
+ * "Asking price" key number (dropped), an "Asking price" callout ("Price on
+ * request"). For a deal whose listed price was removed (free round 2, C7).
+ */
+export function withoutAskingPrice<T extends { layoutType: string; layoutData: unknown }>(section: T): T {
+  if (!section.layoutData || typeof section.layoutData !== "object") return section;
+  const d = section.layoutData as Record<string, unknown>;
+  // "Contact broker" / "Offers invited" on the cover isn't a price: it stays.
+  if (section.layoutType === "cover_page" && "askingPrice" in d && isPriceValue(d.askingPrice) && !/offers?\b|request|contact/i.test(String(d.askingPrice))) {
+    const { askingPrice: _p, ...rest } = d;
+    return { ...section, layoutData: rest };
+  }
+  if (section.layoutType === "metric_grid" && Array.isArray(d.metrics)) {
+    const metrics = (d.metrics as unknown[]).filter((m) =>
+      !(m && typeof m === "object" && ASKING_LABEL.test(String((m as Record<string, unknown>).label ?? "")) && isPriceValue((m as Record<string, unknown>).value)),
+    );
+    return metrics.length === (d.metrics as unknown[]).length ? section : { ...section, layoutData: { ...d, metrics } };
+  }
+  if (section.layoutType === "stat_callout" && ASKING_LABEL.test(String(d.primaryLabel ?? "")) && isPriceValue(d.primaryValue)) {
+    return { ...section, layoutData: { ...d, primaryValue: PRICE_ON_REQUEST } };
+  }
+  return section;
+}
+
 /** The neutral key a blind buyer sees for a section (never derived from its title). */
 export function blindSectionKey(sectionId: string): string {
   return `s_${String(sectionId).replace(/[^a-z0-9]/gi, "").slice(0, 12).toLowerCase()}`;
@@ -166,7 +199,7 @@ export function realSectionKeyMap(sections: Array<{ id: string; sectionKey: stri
   return new Map(sections.map((s) => [blindSectionKey(s.id), s.sectionKey]));
 }
 
-type DealLike = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null };
+type DealLike = { id: string; businessName?: string | null; extractedInfo?: unknown; blindCodename?: string | null; isLive?: boolean | null };
 
 function writingInProgress(s: CimSection): boolean {
   const t = s.aiTask as { kind?: string; status?: string } | null;
@@ -191,13 +224,29 @@ interface BuyerCimInput {
    * Blind CIM then shows no uploads at all.
    */
   media?: MediaAssetRef[] | null;
-  /** The broker's listed asking price now (server: listedAskingPrice) — the cover and key numbers show it. */
+  /**
+   * The broker's listed asking price now (server: listedAskingPrice) — the
+   * cover and key numbers show it. `null` means the deal has no listed price
+   * any more: a price the CIM stored is taken off them. Omitted = unknown
+   * (the CIM's own figures are shown).
+   */
   askingPrice?: string | null;
+  /**
+   * The recorded approved versions of the deal's sections (overrides under
+   * the "published*" modes — shared/cim-published.ts). On a live CIM a
+   * section changed since its approval is served from them. Omitted (a
+   * broker preview) = every section as it stands.
+   */
+  published?: CimSectionOverride[] | null;
 }
 
-function buildBuyerSections(input: BuyerCimInput): BuyerCim {
+function buildBuyerSections(raw: BuyerCimInput): BuyerCim {
+  const mode = cimModeForAccessLevel(raw.accessLevel);
+  // On a live CIM, changes the broker hasn't approved yet stay off buyers:
+  // the section's last approved version is served instead (cim-published).
+  const served = servedVersions({ deal: raw.deal, mode, sections: raw.sections, overrides: raw.overrides, published: raw.published });
+  const input: BuyerCimInput = { ...raw, sections: served.sections, overrides: served.overrides };
   const { deal, accessLevel } = input;
-  const mode = cimModeForAccessLevel(accessLevel);
   // The figures as they stand now, applied to each section BEFORE the Blind
   // identity check so the check sees exactly what the buyer receives:
   // charts written before they carried their stated total get it back when
@@ -212,9 +261,14 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
     const terms = blindLeakTerms(deal as any, { codename: deal.blindCodename || "Confidential Opportunity" });
     if (findBlindLeaks(price, terms).length > 0 || blindPlaceholders(price).length > 0) price = null;
   }
+  // No listed price any more (the broker deleted it — the seller went
+  // unpriced): the figure the CIM stored is taken off the cover and the key
+  // numbers, never left in front of buyers until a regenerate.
+  const priceRemoved = input.askingPrice === null;
   const withCurrentFigures = (s: BuyerSection): BuyerSection => {
     if (s.locked) return s;
     const withTotal = withStatedChartTotal(s, amounts);
+    if (priceRemoved) return withoutAskingPrice(withTotal);
     return price ? withListedAskingPrice(withTotal, price) : withTotal;
   };
   const assets = input.media ? new Map(input.media.map((m) => [m.id, m])) : null;
@@ -228,8 +282,9 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
       : s.layoutData;
   const visible = [...input.sections]
     // A placeholder for a section the AI couldn't write is broker
-    // instructions, not content — never served, even if made visible.
-    .filter((s) => s.isVisible !== false && !writingInProgress(s) && !isCimFallbackSection(s))
+    // instructions, not content — never served, even if made visible. Nor is
+    // a blank layout's sample data ("Category A 60 / B 40" reads as a real split).
+    .filter((s) => s.isVisible !== false && !writingInProgress(s) && !isCimFallbackSection(s) && !hasSampleData(s))
     .sort((a, b) => a.order - b.order);
 
   const base = (s: CimSection): BuyerSection => ({
@@ -277,7 +332,9 @@ function buildBuyerSections(input: BuyerCimInput): BuyerCim {
   }
 
   // ── Blind ──
-  if (input.overrides.length === 0) {
+  // No Blind version at all yet (a live CIM's section held back for want of
+  // an approved Blind version is not that — raw.overrides has the deal's).
+  if (input.overrides.length === 0 && raw.overrides.length === 0) {
     return { mode, sections: [], preparing: visible.length > 0, heldBack: 0, leaked: [], leakReasons: {} };
   }
   const codename = deal.blindCodename || "Confidential Opportunity";

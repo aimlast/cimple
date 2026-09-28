@@ -83,7 +83,7 @@ import {
 } from "lucide-react";
 import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
-import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
+import { CimStaleNotice, CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
 import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
@@ -1982,6 +1982,8 @@ function Phase4Center() {
   const readiness = publishReadiness(deal, sections);
   // A failed load can't prove every section is approved: Publish stays off.
   const publishReady = readiness.ready && !sectionsError;
+  // Facts corrected since the CIM was written (the builder's staleness check).
+  const builderState = useBuilderState(dealId);
 
   const publish = useMutation({
     mutationFn: () =>
@@ -2096,7 +2098,8 @@ function Phase4Center() {
                 title={reasonFor("approving the design") ?? undefined}
                 data-testid={`button-design-approve-${item.action}`}
               >
-                Approve as {item.action === "broker" ? "Broker" : "Seller"}
+                {/* Live: the CIM was approved when published; what is left is the changes since. */}
+                {deal.isLive && item.action === "broker" ? "Approve the changes" : `Approve as ${item.action === "broker" ? "Broker" : "Seller"}`}
               </Button>
             )}
           </div>
@@ -2105,6 +2108,7 @@ function Phase4Center() {
       {sectionsError && (
         <PanelError what="CIM sections" onRetry={() => refetchSections()} />
       )}
+      <CimStaleNotice state={builderState.data} />
       {!sectionsError && readiness.awaiting.length > 0 && (
         <SectionsAwaitingApproval
           awaiting={readiness.awaiting}
@@ -2178,7 +2182,7 @@ function SectionsAwaitingApproval({
             </p>
             <p className="text-xs text-muted-foreground mt-0.5">
               {live
-                ? `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder.`
+                ? `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Buyers keep seeing the approved version until you approve ${one ? "it" : "them"} in the CIM builder.`
                 : `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder, then approve the design again as broker and for the seller.`}
             </p>
             <ul className="mt-2 space-y-1">

@@ -53,7 +53,8 @@ import { ChangeLayoutDialog } from "@/components/cim-builder/ChangeLayoutDialog"
 import { builderRequest, errorText, type BuilderSection } from "@/components/cim-builder/api";
 import { useDealDesign } from "@/components/cim-design/api";
 import { DesignPanel } from "@/components/cim-design/DesignPanel";
-import { cimModeForAccessLevel } from "@shared/cim-layouts";
+import { cimModeForAccessLevel, hasSampleData } from "@shared/cim-layouts";
+import { sectionsAwaitingApproval } from "@shared/cim-approvals";
 
 const PREVIEWS: Array<{ key: PreviewAs; label: string; hint: string }> = [
   { key: "editor", label: "Editing", hint: "Everything, with your edit controls" },
@@ -141,6 +142,8 @@ export default function CIMDesigner() {
   const branding = buildBranding(brandingSettings as any, deal ?? null);
   const selected = sections.find((s) => s.id === selectedId) ?? null;
   const approvedCount = sections.filter((s) => s.brokerApproved).length;
+  // Shown sections not approved as they stand (one rule with the Overview and the server).
+  const awaitingCount = sectionsAwaitingApproval(sections, deal ?? null).length;
   // What "Regenerate all" does to buyers who can open the CIM now.
   const regenImpact = regenerateBuyerImpact({
     isLive: state?.deal.isLive,
@@ -289,7 +292,8 @@ export default function CIMDesigner() {
             variant="ghost"
             size="sm"
             className="w-full h-7 text-xs text-teal hover:text-teal"
-            onClick={() => sections.filter((s) => !s.brokerApproved).forEach((s) => builder.patch.mutate({ id: s.id, brokerApproved: true }))}
+            // A section still showing sample data can't be approved (the inspector says why).
+            onClick={() => sections.filter((s) => !s.brokerApproved && !hasSampleData(s)).forEach((s) => builder.patch.mutate({ id: s.id, brokerApproved: true }))}
           >
             Approve all sections
           </Button>
@@ -301,6 +305,18 @@ export default function CIMDesigner() {
   const pagePane = (
     <div className="h-full min-h-0 overflow-y-auto scrollbar-thin bg-muted/20" id="cim-builder-page">
       <div className="max-w-[900px] mx-auto px-3 py-5 sm:px-6 sm:py-8 space-y-4">
+        {/* A live CIM: say plainly what an edit does to buyers (shared/cim-published.ts). */}
+        {!readOnly && state?.deal.isLive && (
+          <div className="rounded-lg border border-teal/30 bg-teal-muted/30 px-3 py-2 text-xs" data-testid="live-cim-notice">
+            <p className="font-medium text-foreground">This CIM is live.</p>
+            <p className="text-muted-foreground mt-0.5">
+              Buyers keep seeing each section as you last approved it. A change — yours or the AI's — reaches them once you approve that section.
+              {awaitingCount > 0 && (
+                <span className="text-amber-500"> {awaitingCount === 1 ? "1 changed section is" : `${awaitingCount} changed sections are`} waiting for your approval.</span>
+              )}
+            </p>
+          </div>
+        )}
         {/* App chrome above the paper: what this preview is */}
         {readOnly && (
           <PreviewBanner
@@ -342,6 +358,7 @@ export default function CIMDesigner() {
             deal={deal}
             branding={branding}
             design={designPayload}
+            askingPrice={state?.deal.listedAskingPrice}
             selectedId={selectedId}
             onSelect={(id) => select(id, "page")}
             onAddAfter={(id) => openAdd(id)}

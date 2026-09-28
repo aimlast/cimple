@@ -609,3 +609,33 @@ export function mergeKeepOut(...parts: Array<KeepOut | null | undefined>): KeepO
   out.names = Array.from(new Set(out.names));
   return out;
 }
+
+// ── Labels that name a held party ─────────────────────────────────────────
+
+/**
+ * A bridge step's (or statement line's) label without the confidential
+ * name: the name and the words that only pointed at it go ("Salary paid to
+ * Maria Chen" → "Salary paid"; "Maria Chen — owner's spouse wages" →
+ * "Owner's spouse wages"). When nothing descriptive is left: "Other
+ * add-back" / "Other deduction". Used by the named CIM's scrub
+ * (layout-engine scrubHeldNames) and the DD writer's context.
+ */
+export function neutralBridgeLabel(label: string, heldNames: readonly string[], type = ""): string {
+  let t = label;
+  for (const name of heldNames) {
+    const words = name.trim().split(/\s+/).map(escapeRe).join(String.raw`\s+`);
+    t = t.replace(new RegExp(String.raw`(?<![\p{L}\p{N}])${words}(?:'s|’s)?(?![\p{L}\p{N}])`, "giu"), " ");
+  }
+  t = t
+    .replace(/\(\s*\)/g, " ")
+    // "Salary paid to (owner's wife)": the connector pointed at the name.
+    .replace(/\s+(?:to|for|of|by|from|with|re)\s+(?=\()/gi, " ")
+    .replace(/\s+(?:to|for|of|by|from|with|re|—|–|-|:|,)\s*$/i, "")
+    .replace(/^\s*(?:—|–|-|:|,)\s*/, "")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+  // Trailing connectors can stack ("paid to" after "for").
+  for (let i = 0; i < 2; i++) t = t.replace(/\s+(?:to|for|of|by|from|with)$/i, "").trim();
+  if (!/[A-Za-z]{3,}/.test(t)) return type === "subtract" ? "Other deduction" : "Other add-back";
+  return t.charAt(0).toUpperCase() + t.slice(1);
+}
