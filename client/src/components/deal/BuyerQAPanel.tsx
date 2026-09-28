@@ -27,10 +27,11 @@ import {
 import { useToast } from "@/hooks/use-toast";
 import { queryClient } from "@/lib/queryClient";
 import type { BuyerQuestion } from "@shared/schema";
+import { approvedForSharing } from "@shared/buyer-qa-scope";
 import {
   MessageCircle, Clock, CheckCircle2, AlertCircle,
   Send, ChevronDown, ChevronRight, Bot, User,
-  XCircle, Loader2, Copy, Link2, Undo2, Users,
+  XCircle, Loader2, Copy, Link2, Undo2, Users, Lock, Share2,
 } from "lucide-react";
 
 interface BuyerQAPanelProps {
@@ -44,6 +45,8 @@ const STATUS_CONFIG = {
   declined: { label: "Declined", color: "bg-red-500/10 text-red-400 border-0", icon: XCircle },
   pending_ai: { label: "Processing", color: "bg-muted text-muted-foreground border-0", icon: Bot },
 };
+/** Answered by the AI for the buyer who asked; not shown to other buyers. */
+const PRIVATE_ANSWER = { label: "Answered · asker only", color: "bg-muted text-muted-foreground border-0", icon: Lock };
 
 /** Read the server's JSON error body, falling back to a readable default. */
 async function readError(res: Response, fallback: string): Promise<string> {
@@ -227,6 +230,10 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
   const pendingSeller = questions.filter(q => q.status === "pending_seller");
   const published = questions.filter(q => q.status === "published");
   const declined = questions.filter(q => q.status === "declined");
+  // Shared with every buyer only once a person approved it (the same rule
+  // the server applies — an AI answer is the asker's alone until then).
+  const isShared = (q: BuyerQuestion) => q.status === "published" && !!q.isPublished && approvedForSharing(q);
+  const sharedCount = published.filter(isShared).length;
 
   if (isLoading) {
     return (
@@ -256,7 +263,10 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
 
   const renderQuestion = (q: BuyerQuestion) => {
     const isExpanded = expandedId === q.id;
-    const config = STATUS_CONFIG[q.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending_ai;
+    const answeredPrivately = q.status === "published" && !isShared(q);
+    const config = answeredPrivately
+      ? PRIVATE_ANSWER
+      : STATUS_CONFIG[q.status as keyof typeof STATUS_CONFIG] || STATUS_CONFIG.pending_ai;
     const Icon = config.icon;
     const sentBack = wasSentBackBySeller(q);
     // The broker's last draft is what they revise — never the stale AI answer.
@@ -318,12 +328,33 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
               )}
 
               {/* Published answer */}
-              {q.publishedAnswer && q.status === "published" && (
+              {q.publishedAnswer && q.status === "published" && !(answeredPrivately && q.publishedAnswer === q.aiAnswer) && (
                 <div className="rounded bg-emerald-500/5 border border-emerald-500/20 p-2.5">
                   <p className="text-[10px] text-emerald-400 font-medium mb-1 flex items-center gap-1">
-                    <CheckCircle2 className="h-2.5 w-2.5" /> Published Answer
+                    <CheckCircle2 className="h-2.5 w-2.5" /> {answeredPrivately ? "Answer given" : "Published Answer"}
                   </p>
                   <p className="text-xs">{q.publishedAnswer}</p>
+                </div>
+              )}
+
+              {/* Answered by the AI for the asker only — other buyers never see a
+                  buyer's own words until the broker chooses to share them. */}
+              {answeredPrivately && (
+                <div className="flex flex-wrap items-center gap-2 rounded bg-muted/30 px-2.5 py-2">
+                  <Lock className="h-3 w-3 text-muted-foreground shrink-0" />
+                  <span className="text-[11px] text-muted-foreground flex-1 min-w-[12rem]">
+                    Only the buyer who asked sees this. Share it if the question and answer are fine for every buyer to read.
+                  </span>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="h-6 text-[10px] gap-1 px-2"
+                    disabled={busy}
+                    onClick={() => updateQuestion.mutate({ id: q.id, updates: { isPublished: true } })}
+                    data-testid={`button-share-question-${q.id}`}
+                  >
+                    <Share2 className="h-2.5 w-2.5" /> Share with all buyers
+                  </Button>
                 </div>
               )}
 
@@ -406,7 +437,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
               )}
 
               {/* Knowledge base indicator */}
-              {q.addedToKnowledgeBase && (
+              {q.addedToKnowledgeBase && isShared(q) && (
                 <p className="text-[10px] text-muted-foreground flex items-center gap-1">
                   <CheckCircle2 className="h-2.5 w-2.5 text-emerald-400" />
                   Added to knowledge base — future similar questions answered instantly
@@ -434,7 +465,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
             </Badge>
           )}
           <span className="text-xs text-muted-foreground">
-            {published.length}/{questions.length} published
+            {sharedCount}/{questions.length} shared with all buyers
           </span>
         </div>
       </div>
@@ -458,7 +489,7 @@ export function BuyerQAPanel({ dealId }: BuyerQAPanelProps) {
       {/* Published */}
       {published.length > 0 && (
         <div className="space-y-2">
-          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Published</p>
+          <p className="text-[10px] font-semibold uppercase tracking-wider text-emerald-400">Answered</p>
           {published.map(renderQuestion)}
         </div>
       )}

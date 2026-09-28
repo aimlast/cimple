@@ -171,6 +171,8 @@ export function NdaBuyerProfileGate({ dealName, token, onAccepted }: { dealName:
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
+        // Signed already (another tab, a double click): that signature stands — carry on.
+        if (body?.code === "nda_already_signed") { setSigned(true); onAccepted(); return; }
         if (body?.code === "profile_required") { setStep("about"); setEditing(true); }
         // The terms changed since the page loaded — load the current text to read.
         if (body?.code === "nda_terms_changed") await refetch();

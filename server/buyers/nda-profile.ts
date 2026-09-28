@@ -80,6 +80,10 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     criteriaFromProfile = criteria;
   }
 
+  // The words the background criteria read works from, as they stood before
+  // this signing: unchanged words → nothing new to read (no repeat AI call).
+  const wordsBefore = buyer ? extractionInputOf(buyer) : null;
+
   if (buyer && profile && criteriaFromProfile) {
     const criteria = criteriaFromProfile;
     const updates: Partial<BuyerUser> = {
@@ -116,7 +120,7 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
     await storage.upsertBrokerBuyerContact({ brokerId, buyerUserId: buyer.id, source: "nda", tags: [] as any, notes: null } as any);
   }
 
-  if (buyer && profile) {
+  if (buyer && profile && wordsBefore !== extractionInputFromProfile(profile)) {
     const buyerId = buyer.id;
     void extractCriteria(profile)
       .then(async (x) => {
@@ -134,6 +138,17 @@ export async function applyNdaProfile(access: BuyerAccess, profile: NdaBuyerProf
       })
       .catch((err) => console.error("[nda-profile] criteria extraction failed:", err));
   }
+}
+
+/** What the criteria read depends on, from the NDA answers. */
+export function extractionInputFromProfile(p: Pick<NdaBuyerProfile, "lookingFor" | "background">): string {
+  return JSON.stringify([String(p.lookingFor ?? "").trim(), String(p.background ?? "").trim()]);
+}
+
+/** The same, from the buyer's stored profile (what the last NDA left there). */
+export function extractionInputOf(b: Pick<BuyerUser, "buyerCriteria" | "background">): string {
+  const lookingFor = ((b.buyerCriteria as Record<string, unknown> | null) ?? {}).lookingFor;
+  return JSON.stringify([String(lookingFor ?? "").trim(), String(b.background ?? "").trim()]);
 }
 
 const CRITERIA_TOOL: Anthropic.Tool = {

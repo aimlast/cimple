@@ -300,8 +300,18 @@ test("answer scope follows the asker's level", () => {
   assert.equal(askerScope("due_diligence"), "private");
 });
 
+test("an answer nobody approved is the asker's alone — whatever its scope", () => {
+  const row = qa({ answerScope: "all", buyerAccessId: "t2", question: "We're Apex Mechanical — how many contracts?" });
+  assert.equal(readerMaySeeRow(row, "all", teaser, terms), false);
+  assert.equal(readerMaySeeRow(row, "all", full, terms), false);
+  assert.equal(readerMaySeeRow(row, "all", loi, terms), false);
+  assert.equal(readerMaySeeRow(row, "all", { id: "t2", accessLevel: "teaser" }, terms), true, "the asker");
+  assert.equal(readerMaySeeRow({ ...row, brokerDraft: "14 vans." }, "all", teaser, terms), true, "broker adopted it");
+  assert.equal(readerMaySeeRow({ ...row, sellerApproved: true }, "all", teaser, terms), true, "seller approved it");
+});
+
 test("a full-access buyer's answer never reaches a teaser; full and named readers see it", () => {
-  const row = qa({ answerScope: "full", buyerAccessId: "f2" });
+  const row = qa({ answerScope: "full", buyerAccessId: "f2", brokerDraft: "14 vans." });
   assert.equal(readerMaySeeRow(row, rowScope(row, "full"), teaser, terms), false);
   assert.equal(readerMaySeeRow(row, rowScope(row, "full"), full, terms), true);
   assert.equal(readerMaySeeRow(row, rowScope(row, "full"), loi, terms), true);

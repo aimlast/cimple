@@ -26,6 +26,7 @@
 import fs from "fs";
 import path from "path";
 import { createHash } from "crypto";
+import { newDocumentFileName } from "../documents/document-path";
 import { storage } from "../storage";
 import { createAndIngestSource } from "../documents/ingest";
 import { removeSourceFacts } from "../documents/cleanup";
@@ -643,7 +644,7 @@ function fileItem(token: string, f: any, dealId: string, skipped: (why: string) 
       const { buffer } = await pdDownload(token, `/v1/files/${f.id}/download`, MAX_FILE_BYTES);
       const docsDir = path.join(uploadsDir(), "docs");
       fs.mkdirSync(docsDir, { recursive: true });
-      const filePath = path.join(docsDir, `crm_${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`);
+      const filePath = path.join(docsDir, newDocumentFileName("crm", `.${ext}`));
       fs.writeFileSync(filePath, buffer);
       const { category, subcategory } = guessCategory(name);
       return {

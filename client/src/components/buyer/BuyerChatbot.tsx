@@ -32,6 +32,7 @@ import {
   type BuyerQuestionFeedItem,
   type ChatMessage,
 } from "./chat-feed";
+import { MAX_BUYER_QUESTION_CHARS } from "@shared/buyer-qa-scope";
 
 export type { BuyerQuestionFeedItem } from "./chat-feed";
 
@@ -335,6 +336,7 @@ export function BuyerChatbot({
                 onChange={(e) => setInput(e.target.value)}
                 onKeyDown={handleKeyDown}
                 placeholder="Ask a question..."
+                maxLength={MAX_BUYER_QUESTION_CHARS}
                 rows={1}
                 className="flex-1 min-w-0 resize-none rounded-lg border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-1 focus:ring-teal placeholder:text-muted-foreground/60 max-h-24"
                 style={{ minHeight: "36px" }}

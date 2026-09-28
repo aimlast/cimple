@@ -11,6 +11,7 @@ import { setupVite, serveStatic, log } from "./vite";
 import { startReminderScheduler } from "./reminders/decision-reminders";
 import { formatRequestLogLine, scrubSentryEvent } from "./log-redact";
 import { AI_LIMIT, applyInterviewRateLimits } from "./rate-limit-scope";
+import { applyBulkRateLimits } from "./security/bulk-limits";
 
 // Error monitoring — activates only when SENTRY_DSN is set (free tier is
 // plenty for beta). Without it this is a no-op.
@@ -146,6 +147,7 @@ for (const p of [
   "/api/buyer-auth/login",
   "/api/buyer-auth/signup",
   "/api/buyer-auth/request-reset",
+  "/api/buyer-auth/send-verification",
   "/api/early-access",
 ]) {
   app.use(p, authLimiter);
@@ -177,6 +179,9 @@ app.use("/api/deals/:dealId/generate-content", aiLimiter);
 app.use("/api/deals/:dealId/generate-blind", aiLimiter);
 app.use("/api/deals/:dealId/generate-dd", aiLimiter);
 app.use("/api/deals/:dealId/generate-layout", aiLimiter);
+// Bulk buyer actions: drafting / AI matching on the AI limit, sending on
+// the email limit (server/security/bulk-limits.ts).
+applyBulkRateLimits(app, aiLimiter);
 
 // Session type augmentation
 declare module "express-session" {

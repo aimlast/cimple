@@ -1,6 +1,8 @@
 import type { Express, Request, Response, NextFunction } from "express";
 import { createServer, type Server } from "http";
 import crypto from "crypto";
+import { newDocumentFileName } from "./documents/document-path";
+import { BULK_AI_CONCURRENCY, BULK_OUTREACH_MAX, mapWithConcurrency } from "./security/bulk-limits";
 import path from "path";
 import fs from "fs";
 import { storage } from "./storage";
@@ -30,7 +32,7 @@ import { stripDdMarkers } from "./cim/dd-enrichment.js";
 import { aggregateEngagementInsights } from "./cim/learning-loop.js";
 import { buildBuyerCim, cimHeldFromBuyers, ndaBlocksBuyer, realSectionKeyMap } from "@shared/cim-buyer-view";
 import { dealPublishedForBuyers, notPublishedBody, NOT_PUBLISHED_BROKER_MESSAGE, NOT_PUBLISHED_CODE } from "@shared/buyer-publish-gate";
-import { askerScope } from "@shared/buyer-qa-scope";
+import { askerScope, MAX_BUYER_QUESTION_CHARS } from "@shared/buyer-qa-scope";
 import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
@@ -302,53 +304,19 @@ export async function registerRoutes(app: Express): Promise<Server> {
 
   // Confidential documents (tax returns, financials, leases) are NOT public:
   // access requires the broker session that owns the deal, or the deal's
-  // seller invite token (?token= / X-Seller-Token). Everything else under
-  // /uploads (branding logos) stays public.
-  app.use("/uploads/docs", async (req, res, next) => {
-    try {
-      const filename = decodeURIComponent(req.path.replace(/^\//, ""));
-      if (!filename || filename.includes("..")) return res.status(404).json({ error: "Not found" });
-      const doc = await storage.getDocumentByFileUrl(`/uploads/docs/${filename}`);
-      if (!doc) return res.status(404).json({ error: "Not found" });
-
-      if (req.session.brokerId) {
-        const deal = await storage.getDeal(doc.dealId);
-        if (deal && deal.brokerId === req.session.brokerId) return next();
-      }
-      // Broker-only sources (CRM notes, private emails) are never served to
-      // the seller, whatever token they hold.
-      if ((doc as any).visibility === "broker_only") return res.status(401).json({ error: "Not authorized" });
-      const token = (req.query.token as string) || (req.headers["x-seller-token"] as string);
-      if (token) {
-        const invite = await storage.getSellerInviteByToken(token);
-        if (invite && invite.dealId === doc.dealId) return next();
-      }
-      return res.status(401).json({ error: "Not authorized" });
-    } catch (err) {
-      console.error("Document access check failed:", err);
-      return res.status(500).json({ error: "Access check failed" });
-    }
-  });
-
-  // CIM photos/videos (private-media/) are NEVER served statically — only
-  // through GET /api/media/:id (server/routes/cim-media.ts), which checks the
-  // broker session, seller token or buyer view token. The path is decoded
-  // and normalised first so "%2D", "./" or case tricks can't slip past.
-  app.use("/uploads", (req, res, next) => {
-    let p: string;
-    try {
-      p = decodeURIComponent(req.path);
-    } catch {
-      return res.status(404).json({ error: "Not found" });
-    }
-    const norm = path.posix.normalize(p.replace(/\\/g, "/")).toLowerCase();
-    if (norm === "/private-media" || norm.startsWith("/private-media/")) {
-      return res.status(404).json({ error: "Not found" });
-    }
-    next();
-  });
-
-  app.use("/uploads", (await import("express")).default.static(uploadsDir));
+  // seller invite token (?token= / X-Seller-Token). CIM photos/videos
+  // (private-media/) are never served statically — only through
+  // GET /api/media/:id. Everything else under /uploads (branding logos)
+  // stays public. The gate classifies the DECODED, normalised path — the
+  // one the static server resolves — so "//docs", "%64ocs" or "docs%2F"
+  // can't slip past it (server/security/uploads-gate.ts).
+  const { registerUploadsGate } = await import("./security/uploads-gate.js");
+  const expressStatic = (await import("express")).default.static;
+  registerUploadsGate(app, uploadsDir, {
+    getDocumentsByFileUrl: (u) => storage.getDocumentsByFileUrl(u) as any,
+    getDeal: (id) => storage.getDeal(id) as any,
+    getSellerInviteByToken: (t) => storage.getSellerInviteByToken(t) as any,
+  }, (root) => expressStatic(root));
 
   // ── Broker + buyer authentication, buyer dashboard ────────────────────
   registerBrokerAuthRoutes(app);
@@ -958,10 +926,15 @@ export async function registerRoutes(app: Express): Promise<Server> {
     try {
       const { dealId } = req.params;
       const schema = z.object({
-        buyerUserIds: z.array(z.string()).min(1),
-        template: z.string().optional(),  // optional broker template / instructions
+        buyerUserIds: z.array(z.string().max(100)).min(1),
+        template: z.string().max(4000).optional(),  // optional broker template / instructions
       });
-      const { buyerUserIds, template } = schema.parse(req.body);
+      const parsed = schema.parse(req.body);
+      const buyerUserIds = Array.from(new Set(parsed.buyerUserIds));
+      const { template } = parsed;
+      if (buyerUserIds.length > BULK_OUTREACH_MAX) {
+        return res.status(400).json({ error: `Draft up to ${BULK_OUTREACH_MAX} buyers at a time — select fewer and draft the rest next.`, code: "too_many_buyers" });
+      }
 
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -988,8 +961,9 @@ export async function registerRoutes(app: Express): Promise<Server> {
       // Only buyers on this broker's own list can be drafted to.
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, buyerUserIds);
 
-      // Draft each email in parallel
-      const drafts = await Promise.all(buyerUserIds.map(async (buyerUserId) => {
+      // Draft the emails a few at a time (one model call each): all at once
+      // could hit the organisation's model rate limit mid-interview.
+      const drafts = await mapWithConcurrency(buyerUserIds, BULK_AI_CONCURRENCY, async (buyerUserId) => {
         if (!listed.has(buyerUserId)) return null;
         const ownBuyer = await storage.getBuyerUser(buyerUserId);
         if (!ownBuyer) return null;
@@ -1078,7 +1052,7 @@ Return JSON only.`,
           subject,
           body,
         };
-      }));
+      });
 
       const validDrafts = drafts.filter((d): d is NonNullable<typeof d> => !!d);
       // Where buyers' replies will land (the drafts say "just reply").
@@ -1099,16 +1073,22 @@ Return JSON only.`,
       const { dealId } = req.params;
       const schema = z.object({
         outreach: z.array(z.object({
-          buyerUserId: z.string(),
-          subject: z.string().min(1),
-          body: z.string().min(1),
+          buyerUserId: z.string().max(100),
+          subject: z.string().min(1).max(300),
+          body: z.string().min(1).max(20000),
           // Optional snapshot data captured at suggestion time
           qualifiedScore: z.number().optional(),
           matchScore: z.number().optional(),
-          topDimensions: z.array(z.string()).optional(),
+          topDimensions: z.array(z.string().max(80)).max(20).optional(),
         })).min(1),
       });
-      const { outreach } = schema.parse(req.body);
+      const parsedOutreach = schema.parse(req.body).outreach;
+      // One email per buyer per send, and a ceiling per request.
+      const seenBuyers = new Set<string>();
+      const outreach = parsedOutreach.filter((o) => !seenBuyers.has(o.buyerUserId) && !!seenBuyers.add(o.buyerUserId));
+      if (outreach.length > BULK_OUTREACH_MAX) {
+        return res.status(400).json({ error: `Send to up to ${BULK_OUTREACH_MAX} buyers at a time — send the rest in a second batch.`, code: "too_many_buyers" });
+      }
 
       const deal = await storage.getDeal(dealId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
@@ -1133,7 +1113,7 @@ Return JSON only.`,
       const listed = await filterBuyersInBrokerList(req.session.brokerId!, outreach.map((o) => o.buyerUserId));
       const esc = (t: string) => t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
 
-      const results = await Promise.all(outreach.map(async (item) => {
+      const results = await mapWithConcurrency(outreach, BULK_AI_CONCURRENCY, async (item) => {
         const buyer = listed.has(item.buyerUserId) ? await storage.getBuyerUser(item.buyerUserId) : undefined;
         if (!buyer) {
           return { buyerUserId: item.buyerUserId, status: "failed", error: "Buyer not found" };
@@ -1192,7 +1172,7 @@ Return JSON only.`,
           buyerEmail: buyer.email,
           status: record.status,
         };
-      }));
+      });
 
       const sent = results.filter(r => r.status === "sent").length;
       res.json({
@@ -2794,7 +2774,11 @@ Return JSON only.`,
     try {
       const deal = await getOwnedDeal(req.params.id, req.session.brokerId);
       if (!deal) return res.status(404).json({ error: "Deal not found" });
-      await storage.deleteDeal(req.params.id);
+      // Everything: every row carrying the deal's id, its documents' files
+      // and its private media (server/deals/delete-deal.ts). The list-page
+      // "Archive" is the reversible option.
+      const { deleteDealEverywhere } = await import("./deals/delete-deal.js");
+      await deleteDealEverywhere(req.params.id);
       res.json({ success: true });
     } catch (error: any) {
       console.error("Error deleting deal:", error);
@@ -2872,15 +2856,12 @@ Return JSON only.`,
     try {
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
-      await storage.deleteDocument(req.params.id);
-      // The dialog promises "any data extracted from it will be removed" —
-      // honour it via field provenance.
-      try {
-        const { removeSourceFacts } = await import("./documents/cleanup");
-        const removed = await removeSourceFacts(existingDoc.dealId, existingDoc.id);
-        return res.json({ success: true, removedFields: removed });
-      } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
-      res.json({ success: true });
+      // The dialog promises "any data extracted from it will be removed":
+      // the row, the facts it contributed (field provenance) AND the file on
+      // disk — deleting used to leave the PDF on the volume, still servable.
+      const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
+      const removed = await deleteDocumentAndProvenance(existingDoc.id);
+      res.json({ success: true, removedFields: removed });
     } catch (error: any) {
       console.error("Error deleting document:", error);
       res.status(500).json({ error: "Failed to delete document" });
@@ -2911,8 +2892,8 @@ Return JSON only.`,
         cb(null, dir);
       },
       filename: (req, file, cb) => {
-        const ext = path.extname(file.originalname);
-        cb(null, `doc_${Date.now()}${ext}`);
+        // Unguessable name (the old doc_<timestamp> could be enumerated).
+        cb(null, newDocumentFileName("doc", path.extname(file.originalname)));
       },
     }),
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB
@@ -2989,7 +2970,7 @@ Return JSON only.`,
             : requestedCategory || "other";
 
       // Pasted text carries its own title; keep it verbatim as the display
-      // name. Only the on-disk filename (doc_<ts>.ext) needs sanitising.
+      // name. Only the on-disk filename (doc_<random>.ext) needs sanitising.
       const displayName = (rawTitle || decodeUploadName(req.file.originalname)).slice(0, 200);
       // Provenance v2: the broker says what kind of source this is (email,
       // call transcript, CRM note…) and who may see it. A seller's upload is
@@ -4818,6 +4799,11 @@ Return JSON only.`,
       const problem = viewLinkProblem(access);
       if (problem || !access) { const e = viewLinkError(problem ?? "not_found"); return res.status(e.status).json({ error: e.error }); }
       if (!dealPublishedForBuyers(await storage.getDeal(access.dealId))) return res.status(403).json(notPublishedBody());
+      // A signature is a record: who agreed to which terms, when, from where.
+      // Signing again used to overwrite it (and re-ran the AI criteria read).
+      if (access.ndaSigned) {
+        return res.status(409).json({ error: "You've already signed the NDA for this business.", code: "nda_already_signed", alreadySigned: true });
+      }
 
       // Signing the NDA and giving us your buyer profile are one step: either
       // a new/updated profile, or a confirmation of the one already on file.
@@ -4869,7 +4855,7 @@ Return JSON only.`,
       // (rows stamped before the gate stopped counting): clear it, and the
       // first real view that follows starts the reminder clock afresh.
       const gateStamped = !!ndaDeal.ndaRequired && !access.ndaSigned && !!access.firstViewedAt;
-      await storage.updateBuyerAccess(access.id, {
+      const recorded = await storage.recordBuyerNdaSignature(access.id, {
         ndaSigned: true,
         ndaSignedAt: signedAt,
         ndaSignedIp: ip,
@@ -4877,6 +4863,10 @@ Return JSON only.`,
         ndaProfile: { ...priorProfile, signature },
         ...(gateStamped ? { firstViewedAt: null, viewCount: 0, reminderStage: "none", lastReminderAt: null } : {}),
       } as any);
+      // A concurrent signing got there first: that signature stands.
+      if (!recorded) {
+        return res.status(409).json({ error: "You've already signed the NDA for this business.", code: "nda_already_signed", alreadySigned: true });
+      }
       storage.createAnalyticsEvent({
         dealId: access.dealId, buyerAccessId: access.id, eventType: "nda_signed", sectionKey: null,
       } as any).catch(() => {});
@@ -6618,12 +6608,13 @@ Return JSON only.`,
       };
       // One buyer failing (odd criteria, an AI hiccup, a write error) never
       // fails the batch — that buyer comes back with an error instead.
-      const results = await Promise.all(buyers.filter((b: any) => !b.revokedAt).map((buyer: any) =>
+      // A few buyers at a time: with AI on, each is a model call.
+      const results = await mapWithConcurrency(buyers.filter((b: any) => !b.revokedAt), BULK_AI_CONCURRENCY, (buyer: any) =>
         matchBuyerDealRow(buyer, dealForMatch, {
           skipAI: req.query.skipAI === "true",
           persist: (id, patch) => storage.updateBuyerAccess(id, patch as any).then(() => undefined),
         }),
-      ));
+      );
 
       results.sort((a, b) => (b.matchScore ?? -1) - (a.matchScore ?? -1));
       res.json(results);
@@ -7130,6 +7121,11 @@ Return JSON only.`,
       const { dealId } = req.params;
       const { question, accessToken } = req.body;
       if (typeof question !== "string" || !question.trim()) return res.status(400).json({ error: "Question required" });
+      // A question is a question: a page of text would ride into every
+      // later model call (and was once shown to every other buyer).
+      if (question.length > MAX_BUYER_QUESTION_CHARS) {
+        return res.status(400).json({ error: `Please keep your question under ${MAX_BUYER_QUESTION_CHARS.toLocaleString("en-US")} characters.`, code: "question_too_long" });
+      }
 
       // The buyer proves access with their view-room token. Previously this
       // endpoint was unauthenticated and answered from the UNREDACTED CIM —
@@ -7152,10 +7148,12 @@ Return JSON only.`,
       // a full-access buyer's → full-access buyers and up (it may quote
       // sections locked for teasers); a named-CIM answer → the asker only.
       const scope = askerScope(access.accessLevel);
-      const blindTerms = blindLeakTerms(deal, { codename: deal.blindCodename });
-      /** Shared (published to other buyers) only within scope and only if it names nothing identifying. */
-      const shareableText = (answer: string) =>
-        scope !== "private" && findBlindLeaks([question, answer], blindTerms).length === 0;
+      // An answer the AI gives on its own is the asker's alone: the buyer's
+      // own words (who they are, their strategy, or text planted for other
+      // bidders) never reach another buyer or the knowledge base without a
+      // person approving them. The broker can share it from the Q&A tab
+      // (it then counts as the broker's answer); escalated questions are
+      // shared once the seller approves (shared/buyer-qa-scope.ts).
       const reader = { id: access.id, accessLevel: access.accessLevel };
       storage.createAnalyticsEvent({
         dealId, buyerAccessId, eventType: "question_asked", sectionKey: null,
@@ -7193,17 +7191,15 @@ If no existing answer covers it, respond with exactly: NO_MATCH`,
           const matchedQ = publishedQs.find(q =>
             matchedAnswer.includes((q.publishedAnswer || q.aiAnswer)?.slice(0, 50) || "___none___")
           );
-          const share = shareableText(matchedAnswer);
-
           const saved = await storage.createBuyerQuestion({
             dealId,
             buyerAccessId: buyerAccessId || null,
             question,
             aiAnswer: matchedAnswer,
             status: "published",
-            isPublished: share,
+            isPublished: false,
             publishedAnswer: matchedAnswer,
-            addedToKnowledgeBase: share,
+            addedToKnowledgeBase: false,
             answerScope: scope,
             similarQuestionIds: matchedQ ? [matchedQ.id] : [],
           } as any);
@@ -7263,20 +7259,17 @@ Do not speculate or add information not in the CIM.`,
       // The model sometimes writes "ESCALATE" and then explains — still an escalation.
       const needsEscalation = !aiAnswer || /^\s*ESCALATE\b/.test(aiAnswer);
 
-      // An answer drawn from the NAMED CIM (LOI / DD buyer) can hold the
-      // business name, address or people — it goes to the asker only, never
-      // into the shared feed / knowledge base that blind buyers read. A full-
-      // access buyer's answer is shared with full-access buyers only.
-      const shareable = !needsEscalation && shareableText(aiAnswer!);
+      // Answered for the asker only (see above). answer_scope still records
+      // what fed the answer, for when a person shares it later.
       const saved = await storage.createBuyerQuestion({
         dealId,
         buyerAccessId: buyerAccessId || null,
         question,
         aiAnswer: needsEscalation ? null : aiAnswer,
         status: needsEscalation ? "pending_broker" : "published",
-        isPublished: shareable,
+        isPublished: false,
         publishedAnswer: needsEscalation ? null : aiAnswer,
-        addedToKnowledgeBase: shareable,
+        addedToKnowledgeBase: false,
         answerScope: scope,
       } as any);
 
@@ -7363,7 +7356,18 @@ Do not speculate or add information not in the CIM.`,
       if (isPublished !== undefined) updates.isPublished = isPublished;
       // Published by the broker on purpose → for every buyer (a Blind buyer
       // still never sees it if it names the business — buyer-qa-scope.ts).
-      if (isPublished === true) updates.answerScope = "all";
+      if (isPublished === true) {
+        updates.answerScope = "all";
+        // Sharing an AI answer makes it the broker's answer: recorded as
+        // their draft, which is what lets other buyers read it
+        // (approvedForSharing in shared/buyer-qa-scope.ts).
+        const adopted = (typeof brokerDraft === "string" && brokerDraft.trim()) || existingQ.brokerDraft
+          || (typeof publishedAnswer === "string" && publishedAnswer.trim()) || existingQ.publishedAnswer || existingQ.aiAnswer;
+        if (!adopted) return res.status(400).json({ error: "There is no answer to share yet" });
+        if (!existingQ.brokerDraft && brokerDraft === undefined) updates.brokerDraft = adopted;
+        if (!existingQ.publishedAnswer && publishedAnswer === undefined) updates.publishedAnswer = adopted;
+        updates.addedToKnowledgeBase = true;
+      }
 
       // Generate approval token when sending to seller
       if (status === "pending_seller") {

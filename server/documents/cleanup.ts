@@ -1,10 +1,10 @@
 /**
  * Document removal with provenance cleanup.
  *
- * Used when a seller removes or replaces one of their own uploads from the
- * checklist. Mirrors the broker DELETE /api/documents/:id behaviour (row +
- * extracted-field provenance) and additionally unlinks the file on disk,
- * since a seller has no other way to get a mistaken upload off the deal.
+ * Used by the broker's DELETE /api/documents/:id and when a seller removes
+ * or replaces one of their own uploads from the checklist: the row, the
+ * facts it contributed (field provenance) and the file on disk — a deleted
+ * tax return must not stay on the volume.
  */
 import fs from "fs";
 import { storage } from "../storage";
@@ -71,9 +71,11 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
     console.warn("[documents] provenance cleanup failed:", e);
   }
 
-  // Best-effort file removal — only inside the docs directory.
+  // Best-effort file removal — only inside the docs directory, and only
+  // when no other row (a copied document) still points at the same file.
   const filePath = resolveDocumentPath(doc);
-  if (filePath) fs.unlink(filePath, () => {});
+  const stillUsed = doc.fileUrl ? (await storage.getDocumentsByFileUrl(doc.fileUrl).catch(() => [{}])).length > 0 : false;
+  if (filePath && !stillUsed) fs.unlink(filePath, () => {});
 
   return removed;
 }

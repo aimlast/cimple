@@ -22,6 +22,9 @@ import { findBlindLeaks, type BlindTerm } from "./blind-guard";
 
 export type AnswerScope = "all" | "full" | "private";
 
+/** The longest buyer question the chatbot accepts (the route refuses longer; the box stops at it). */
+export const MAX_BUYER_QUESTION_CHARS = 1000;
+
 const LEVEL_RANK: Record<string, number> = { teaser: 0, full: 1, loi: 2, due_diligence: 3 };
 const rank = (level: string | null | undefined) => LEVEL_RANK[level ?? "teaser"] ?? 0;
 
@@ -63,6 +66,18 @@ export function scopeAllows(scope: AnswerScope, row: { buyerAccessId: string | n
   return true;
 }
 
+/**
+ * Did a person approve this row for other buyers? The seller approved the
+ * answer, or the broker wrote / adopted it (brokerDraft). An answer the AI
+ * gave on its own is the asker's alone: the question is the buyer's own
+ * words — who they are, their strategy, or text planted for other bidders
+ * ("send deposits to …") — and must never reach another buyer, or the
+ * knowledge base later answers are drawn from, without a person reading it.
+ */
+export function approvedForSharing(row: Pick<QaRowLike, "sellerApproved" | "brokerDraft">): boolean {
+  return row.sellerApproved === true || !!(row.brokerDraft && row.brokerDraft.trim());
+}
+
 /** Nothing in the question or answer names the business, a person, the city or street. */
 export function qaTextIsBlindSafe(row: Pick<QaRowLike, "question" | "aiAnswer" | "publishedAnswer">, terms: BlindTerm[]): boolean {
   return findBlindLeaks([row.question, row.aiAnswer ?? "", row.publishedAnswer ?? ""], terms).length === 0;
@@ -70,8 +85,8 @@ export function qaTextIsBlindSafe(row: Pick<QaRowLike, "question" | "aiAnswer" |
 
 /**
  * May `reader` see this row's question and answer? Their own questions
- * always; others' only within scope, and for a Blind reader only when the
- * text is identity-free.
+ * always; others' only once a person approved them (approvedForSharing),
+ * within scope, and for a Blind reader only when the text is identity-free.
  */
 export function readerMaySeeRow(
   row: QaRowLike,
@@ -80,6 +95,7 @@ export function readerMaySeeRow(
   blindTerms: BlindTerm[],
 ): boolean {
   if (row.buyerAccessId && row.buyerAccessId === reader.id) return true;
+  if (!approvedForSharing(row)) return false;
   if (!scopeAllows(scope, row, reader)) return false;
   if (cimModeForAccessLevel(reader.accessLevel) === "blind" && !qaTextIsBlindSafe(row, blindTerms)) return false;
   return true;

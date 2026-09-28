@@ -18,6 +18,7 @@ import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service.js";
 import { escapeHtml } from "../notifications/email-escape";
 import { hashResetToken } from "./reset-token";
+import { createPerKeyLimiter } from "../security/per-key-limit";
 import {
   calculateBuyerProfileCompletion,
   toPublicBuyerUser,
@@ -85,6 +86,23 @@ function generateResetToken(): string {
   return crypto.randomBytes(32).toString("hex");
 }
 
+/**
+ * Emails Cimple sends to one address on request (confirm / reset): at most
+ * 3 an hour, whichever IPs ask — otherwise anyone could sign up with a
+ * stranger's address and loop "send again" to flood it from cimple.ca.
+ */
+export const accountEmailLimiter = createPerKeyLimiter({ limit: 3, windowMs: 60 * 60 * 1000 });
+
+/**
+ * The name to greet in an email. An unverified self-signup's name was typed
+ * by whoever signed up — possibly not the address's owner, possibly a
+ * message ("Your deal room is suspended — call …") — so it is left out.
+ */
+export function greetingNameFor(user: Pick<BuyerUser, "name" | "emailVerified" | "source">): string {
+  if (!user.emailVerified && user.source === "self_signup") return "";
+  return user.name || "";
+}
+
 function baseUrl(req: Request): string {
   return process.env.APP_URL || `${req.protocol}://${req.get("host")}`;
 }
@@ -95,7 +113,7 @@ function confirmEmailHtml(rawName: string, rawUrl: string): string {
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">Confirm your email</h2>
-      <p>Hello ${name},</p>
+      <p>Hello${name ? ` ${name}` : ""},</p>
       <p>Open the link below to confirm this is your email address and choose your password. Deals brokers share with this address will then appear on your Cimple dashboard.</p>
       <p style="margin: 32px 0;">
         <a href="${url}" style="background: #14b8a6; color: #0a0a0a; padding: 12px 24px; border-radius: 6px; text-decoration: none; font-weight: 600;">Confirm my email</a>
@@ -123,7 +141,7 @@ export function setPasswordEmail(rawName: string, rawDealLabel: string | null, r
   return `
     <div style="font-family: Inter, system-ui, sans-serif; max-width: 600px; margin: 0 auto; padding: 24px; background: #0a0a0a; color: #e5e5e5;">
       <h2 style="color: #14b8a6; margin-bottom: 16px;">You've been invited to Cimple</h2>
-      <p>Hello ${name},</p>
+      <p>Hello${name ? ` ${name}` : ""},</p>
       <p>
         ${dealLabel
           ? `You've been added as a prospective buyer for <strong>${dealLabel}</strong>.`
@@ -240,9 +258,9 @@ export function registerBuyerAuthRoutes(app: Express) {
   app.post("/api/buyer-auth/signup", async (req, res) => {
     try {
       const schema = z.object({
-        email: z.string().email(),
-        password: z.string().min(8),
-        name: z.string().min(1),
+        email: z.string().max(254).email(),
+        password: z.string().min(8).max(200),
+        name: z.string().trim().min(1).max(160),
       });
       const { email, password, name } = schema.parse(req.body);
       const normalized = email.toLowerCase().trim();
@@ -445,13 +463,17 @@ export function registerBuyerAuthRoutes(app: Express) {
       const user = await storage.getBuyerUser(req.session.buyerId!);
       if (!user) return res.status(404).json({ error: "Account not found" });
       if (user.emailVerified) return res.json({ success: true, alreadyVerified: true });
+      if (!accountEmailLimiter.take(user.email.toLowerCase())) {
+        return res.status(429).json({ error: "We've sent several confirmation emails already. Check your inbox (and spam), or try again in an hour.", code: "too_many_emails" });
+      }
       const resetToken = generateResetToken();
       await storage.updateBuyerUser(user.id, {
         resetToken: hashResetToken(resetToken),
         resetTokenExpiresAt: new Date(Date.now() + RESET_TOKEN_TTL_MS),
       } as any);
       const url = `${baseUrl(req)}/buyer/set-password/${resetToken}`;
-      await sendDirectEmail(user.email, "Confirm your email for Cimple", confirmEmailHtml(user.name, url));
+      // The address isn't proven yet, so the typed name stays out of the email.
+      await sendDirectEmail(user.email, "Confirm your email for Cimple", confirmEmailHtml("", url));
       res.json({ success: true });
     } catch (error: any) {
       console.error("Send verification error:", error);
@@ -464,8 +486,9 @@ export function registerBuyerAuthRoutes(app: Express) {
     try {
       const { email } = z.object({ email: z.string().email() }).parse(req.body);
       const user = await storage.getBuyerUserByEmail(email.toLowerCase().trim());
-      // Always return success (don't leak which emails exist)
-      if (user) {
+      // Always return success (don't leak which emails exist). Past the
+      // per-address ceiling nothing more is sent — still a success.
+      if (user && accountEmailLimiter.take(user.email.toLowerCase())) {
         const resetToken = generateResetToken();
         await storage.updateBuyerUser(user.id, {
           resetToken: hashResetToken(resetToken),
@@ -475,7 +498,7 @@ export function registerBuyerAuthRoutes(app: Express) {
         await sendDirectEmail(
           user.email,
           "Reset your Cimple password",
-          setPasswordEmail(user.name, null, url),
+          setPasswordEmail(greetingNameFor(user), null, url),
         );
       }
       res.json({ success: true });

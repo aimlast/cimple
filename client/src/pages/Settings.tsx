@@ -192,7 +192,7 @@ export default function Settings() {
     onSuccess: () => {
       setPwDialogOpen(false);
       setPwCurrent(""); setPwNew(""); setPwConfirm("");
-      toast({ title: "Password changed", description: "Use your new password next time you sign in." });
+      toast({ title: "Password changed", description: "You've been signed out on every other device. Use your new password next time you sign in." });
     },
     onError: (e: Error) =>
       toast({ title: "Couldn't change password", description: e.message, variant: "destructive" }),
