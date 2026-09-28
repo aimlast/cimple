@@ -358,14 +358,19 @@ const crm = (id: string) => ({ source: "crm" as const, documentId: id });
   {
     const soup = Object.fromEntries([...JSON.stringify({ "2023": "$1.75M" })].map((ch, i) => [String(i), ch]));
     const info: Info = { revenueByYear: { ...soup, FY2022: "$1.6M" }, _fieldSources: { revenueByYear: { source: "document", documentId: "Z" } } };
+    // (A by-year edit is applied year by year — f-facts F-MAPEDIT-PRIVACY — so the
+    // displaced figures are kept per year, repaired.)
     editFact(info, "revenueByYear", "2023: $1.8M\n2024: $1.9M");
-    const alt = getFieldAlternates(info).revenueByYear[0];
-    assert.deepEqual(JSON.parse(alt.value), { "2023": "$1.75M", FY2022: "$1.6M" }, "stored repaired");
+    assert.deepEqual(info.revenueByYear, { "2023": "$1.8M", "2024": "$1.9M" });
+    const alts = getFieldAlternates(info);
+    assert.equal(alts["revenueByYear.2023"][0].value, "$1.75M", "stored repaired");
+    assert.equal(alts["revenueByYear.FY2022"][0].value, "$1.6M");
+    assert.doesNotMatch(JSON.stringify(alts), /"0":/, "no character soup anywhere");
     const view = buildInformationView({ deal: { id: "d", extractedInfo: info, questionnaireData: null, scrapedData: null, industry: "Dental" } as any, documents: [], sessions: [] });
     const fact = [...view.sections.flatMap((s) => s.facts), ...view.other].find((x) => x.key === "revenueByYear")!;
     assert.doesNotMatch(fact.alternates.map((a) => a.displayValue).join(" "), /0: \{/);
-    useAlternate(info, "revenueByYear", 0);
-    assert.deepEqual(info.revenueByYear, { "2023": "$1.75M", FY2022: "$1.6M" }, "adopting it writes the clean map");
+    useAlternate(info, "revenueByYear.2023", 0);
+    assert.deepEqual(info.revenueByYear, { "2023": "$1.75M", "2024": "$1.9M" }, "adopting it writes the clean figure");
     // older rows already holding soup as an alternate are repaired on read
     const legacyAlt: Info = { revenueByYear: { "2024": "$1.9M" }, _fieldAlternates: { revenueByYear: [{ source: "document", value: JSON.stringify(soup) }] } };
     const v2 = buildInformationView({ deal: { id: "d", extractedInfo: legacyAlt, questionnaireData: null, scrapedData: null, industry: "Dental" } as any, documents: [], sessions: [] });

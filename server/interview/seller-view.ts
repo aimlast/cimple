@@ -67,19 +67,22 @@ export function brokerPrivacy(documents: DocLike[]) {
   /** A value asserted by a broker-only row (or a CRM row that no longer exists). */
   const isPrivateSource = (src: Partial<FieldSource> | null | undefined): boolean => {
     if (!src) return false;
-    if (src.brokerOnly === true) return true;
     // The broker's figure taken from their private material (a resolution
     // to a CRM note's value) — private like the source it came from.
     if (src.hiddenFromSeller === true) return true;
-    if (src.documentId && visibility.get(src.documentId) === "broker_only") return true;
+    // A row that exists is private exactly when it is broker-only NOW — the
+    // stamp recorded at merge time is out of date once the broker switched it
+    // to shared (its facts were hidden, and re-asked).
+    if (src.documentId && visibility.has(src.documentId)) return visibility.get(src.documentId) === "broker_only";
+    if (src.brokerOnly === true) return true;
     // CRM material is the broker's by default; one whose row is gone can't
     // be shown to have been shared.
     return src.source === "crm" && (!src.documentId || !visibility.has(src.documentId));
   };
   /** A private-note source the agent may hold: the seller in a session, or a shared row that exists. */
   const isSellerSideNoteSource = (s: PrivateNoteSource): boolean => {
-    if (s.brokerOnly) return false;
-    if (!s.documentId) return true;
+    if (!s.documentId) return !s.brokerOnly;
+    // (The row's visibility now, not the stamp recorded when the note was added.)
     const vis = visibility.get(s.documentId);
     return vis !== undefined && vis !== "broker_only";
   };

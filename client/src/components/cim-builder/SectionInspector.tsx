@@ -129,6 +129,28 @@ export function SectionInspector({ section, api, aiBlockedReason, onChangeLayout
         </div>
       )}
 
+      {/* A section the AI couldn't write during a generation */}
+      {!running && section.placeholder && (
+        <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 text-xs space-y-2" data-testid="placeholder-banner">
+          <p className="flex items-start gap-1.5 font-medium text-red-400"><AlertTriangle className="h-3.5 w-3.5 mt-0.5 shrink-0" /> The AI couldn't write this section</p>
+          <p className="text-muted-foreground">It's a placeholder: hidden, and never shown to buyers even if you show it. Regenerate it, or replace the text with your own. The CIM can't be published until it's done or deleted.</p>
+          <Button size="sm" className="h-7 text-xs w-full gap-1.5" onClick={onRegenerate} disabled={!!aiBlockedReason} title={aiBlockedReason ?? undefined}>
+            <RefreshCw className="h-3.5 w-3.5" /> Regenerate it
+          </Button>
+        </div>
+      )}
+
+      {/* Facts that changed since the CIM was written, still shown here */}
+      {!running && (section.factsChanged?.length ?? 0) > 0 && (
+        <div className="rounded-lg border border-blue-500/40 bg-blue-500/10 p-3 text-xs space-y-2" data-testid="facts-changed-banner">
+          <p className="flex items-start gap-1.5 font-medium text-blue-400"><RefreshCw className="h-3.5 w-3.5 mt-0.5 shrink-0" /> Facts changed since this was written</p>
+          <p className="text-muted-foreground">It still shows the old {section.factsChanged!.join(", ").toLowerCase()}. Regenerate it from the current facts, or edit it below.</p>
+          <Button size="sm" variant="outline" className="h-7 text-xs w-full gap-1.5" onClick={onRegenerate} disabled={!!aiBlockedReason} title={aiBlockedReason ?? undefined}>
+            <RefreshCw className="h-3.5 w-3.5" /> Regenerate from the current facts
+          </Button>
+        </div>
+      )}
+
       {/* Figures the check couldn't trace to the deal's information */}
       {!running && section.figureWarnings?.length > 0 && (
         <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-xs space-y-1.5" data-testid="figure-warnings">

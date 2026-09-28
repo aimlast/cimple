@@ -9,6 +9,12 @@ import type { CimSection } from "@shared/schema";
 import { ProseFallback, renderInline } from "../richText";
 import { financialLabelHeader, normalizeFinancialTable } from "@shared/financial-table";
 import { BlockTitle } from "./BlockTitle";
+import { useCimTheme } from "../CimDesignContext";
+
+/** A hex colour at low opacity ("#9e752e" → "#9e752e1f"); other colour forms are left as they are. */
+export function tint(color: string, alpha = 0.12): string {
+  return /^#[0-9a-f]{6}$/i.test(color) ? `${color}${Math.round(alpha * 255).toString(16).padStart(2, "0")}` : color;
+}
 
 interface TableRow {
   label: string;
@@ -63,6 +69,7 @@ function useHiddenRight() {
 export function FinancialTableRenderer({ layoutData, content, branding, section }: RendererProps) {
   const data: FinancialTableLayoutData = layoutData && Object.keys(layoutData).length > 0 ? layoutData : {};
   const scroller = useHiddenRight();
+  const theme = useCimTheme();
 
   // One shared reading of headers vs. values (see shared/financial-table.ts):
   // the leading header names the label column, so each figure sits under its
@@ -129,6 +136,10 @@ export function FinancialTableRenderer({ layoutData, content, branding, section 
               return (
                 <tr
                   key={i}
+                  data-adjusted={row.isAdjusted ? "true" : undefined}
+                  // An adjustment from the reported figures (the Normalized view)
+                  // is highlighted, as the view's footnote says.
+                  style={row.isAdjusted ? { backgroundColor: tint(theme.accent), boxShadow: `inset 3px 0 0 ${theme.accent}` } : undefined}
                   className={cn(
                     "border-b border-border/50 last:border-0",
                     isTotal && "border-t border-border bg-muted/40",

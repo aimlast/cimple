@@ -347,6 +347,8 @@ const stillBad = await runWith([
   tableTool([["Operating expenses", ["$25,100,000", "$26,480,000"]]]),
 ]);
 const fin3 = stillBad.doc.sections.find((s) => s.sectionKey === "fin")!;
+// FREE round known-3: a section whose every figure is untraced is held back from buyers as written (flagged, for the broker to correct).
+assert.equal(fin3.isVisible, false, "held back from buyers");
 assert.ok(fin3.figureWarnings?.some((w) => /26,480,000/.test(w)), "unresolved figures stay flagged on the section");
 assert.ok(stillBad.doc.warnings?.some((w) => /Check the figures in "Historical Financial Performance"/.test(w) && /26,480,000/.test(w)), "and named in document.warnings");
 _setAnthropicForTests(null);

@@ -32,7 +32,7 @@ import type { Document } from "@shared/schema";
 import { privateSourceMatcher } from "./seller-view";
 import { sourceLabel, type SourceConflict } from "./source-context";
 import type { DeferralEntry } from "./deferral-ledger";
-import { isUntrackedSource, type FieldSource } from "./info-merger";
+import { isUntrackedSource, isBrokerFinalSource, type FieldSource } from "./info-merger";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> &
   Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt">>;
@@ -276,7 +276,8 @@ export function screenBrokerWork(key: string, value: unknown, src: Partial<Field
  * fact as settled by the broker, never showing a value the broker replaced.
  */
 export function isBrokerSettledSource(src: Partial<FieldSource> | null | undefined): boolean {
-  return !!src && (src.source === "broker" || (src.source === "system" && !isUntrackedSource(src)));
+  // (The broker's notes from their own AI interview session are not settled.)
+  return !!src && (isBrokerFinalSource(src) || (src.source === "system" && !isUntrackedSource(src)));
 }
 
 /** A list of short items ("a; b; c") with every item that carries the broker's work left out. */

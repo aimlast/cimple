@@ -19,17 +19,23 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useToast } from "@/hooks/use-toast";
 import { requestJson } from "./types";
+import { dealPublishedForBuyers, NOT_PUBLISHED_BROKER_MESSAGE } from "@shared/buyer-publish-gate";
 
 const NO_DEAL = "__none";
 
-interface DealOption { id: string; businessName: string; archivedAt?: string | null }
+interface DealOption { id: string; businessName: string; archivedAt?: string | null; published: boolean }
 
 function useMyDeals(enabled: boolean) {
   return useQuery<DealOption[]>({
     queryKey: ["/api/deals"],
     queryFn: () => requestJson("GET", "/api/deals"),
     enabled,
-    select: (rows) => (rows || []).filter((d: any) => !d.archivedAt).map((d: any) => ({ id: d.id, businessName: d.businessName })),
+    select: (rows) => (rows || []).filter((d: any) => !d.archivedAt).map((d: any) => ({
+      id: d.id,
+      businessName: d.businessName,
+      // Buyers can only open a published CIM (shared/buyer-publish-gate.ts).
+      published: dealPublishedForBuyers(d),
+    })),
   });
 }
 
@@ -144,7 +150,12 @@ export function GrantAccessDialog({
   const [link, setLink] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   useEffect(() => { if (open) { setDealId(""); setLink(null); setCopied(false); } }, [open]);
-  const available = (deals.data ?? []).filter((d) => !existingDealIds.includes(d.id));
+  // Published deals first; unpublished ones are listed but can't be chosen —
+  // the server refuses access to a CIM buyers can't open yet.
+  const available = (deals.data ?? [])
+    .filter((d) => !existingDealIds.includes(d.id))
+    .sort((a, b) => Number(b.published) - Number(a.published));
+  const publishedCount = available.filter((d) => d.published).length;
 
   const grant = useMutation({
     mutationFn: () => requestJson<{ accessToken: string }>("POST", `/api/deals/${dealId}/buyers`, { buyerEmail, buyerName, buyerCompany }),
@@ -179,11 +190,24 @@ export function GrantAccessDialog({
             <Label className="text-xs">Deal</Label>
             <Select value={dealId} onValueChange={setDealId}>
               <SelectTrigger className="h-9" data-testid="select-grant-deal"><SelectValue placeholder={deals.isLoading ? "Loading your deals…" : "Choose a deal"} /></SelectTrigger>
-              <SelectContent>
-                {available.map((d) => <SelectItem key={d.id} value={d.id}>{d.businessName}</SelectItem>)}
+              <SelectContent className="max-w-[calc(100vw-2rem)]">
+                {available.map((d) => (
+                  <SelectItem key={d.id} value={d.id} disabled={!d.published} className="whitespace-normal" data-testid={`grant-deal-${d.id}`}>
+                    {d.businessName}
+                    {!d.published && <span className="block text-2xs text-muted-foreground">Not published yet</span>}
+                  </SelectItem>
+                ))}
               </SelectContent>
             </Select>
             {!deals.isLoading && available.length === 0 && <p className="text-2xs text-muted-foreground">They already have access to all of your deals.</p>}
+            {!deals.isLoading && available.length > 0 && publishedCount < available.length && (
+              <p className="text-2xs text-muted-foreground" data-testid="text-grant-unpublished">
+                {publishedCount === 0
+                  ? "None of these deals is published yet. "
+                  : "Deals that aren't published yet can't be chosen. "}
+                {NOT_PUBLISHED_BROKER_MESSAGE}
+              </p>
+            )}
           </div>
         )}
         <DialogFooter className="gap-2 sm:gap-0">

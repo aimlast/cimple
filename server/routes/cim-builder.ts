@@ -14,13 +14,14 @@ import rateLimit from "express-rate-limit";
 import { and, eq } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
-import { cimSections, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
+import { cimSections, type CimGenerationStatus, type CimSection, type CimSectionAiTask, type Deal } from "@shared/schema";
 import {
   BUYER_ACCESS_LEVELS,
   canAiRewriteLayout,
   canAiWriteLayout,
   defaultLayoutData,
   getCimLayout,
+  isCimFallbackSection,
   isCimLayoutKey,
   sameLayoutFamily,
   sectionTier,
@@ -37,7 +38,8 @@ import {
   dealHasBlindVersion,
 } from "../cim/blind-sync";
 import { buildBuyerCim } from "@shared/cim-buyer-view";
-import { renameDealCodename } from "../cim/codenames";
+import { factAmounts, withStatedChartTotal } from "@shared/cim-chart-values";
+import { codenameProblem, renameDealCodename } from "../cim/codenames";
 import {
   deleteSection,
   duplicateSection,
@@ -56,7 +58,26 @@ import {
 } from "../cim/section-tasks";
 import { REWRITE_TONES } from "../cim/layout-engine";
 import { refreshSectionDd } from "../cim/dd-enrichment";
+import { cimFinancialsFor, StaleFinancialAnalysisError } from "../cim/cim-financials";
+
+/**
+ * Why the DD version can't be refreshed now: the financial analysis the CIM
+ * uses was built from a statement since deleted (the same stop as CIM
+ * generation) — said plainly instead of a generic failure.
+ */
+async function staleFinancialsBlock(dealId: string): Promise<string | null> {
+  const [analyses, docs] = await Promise.all([storage.getFinancialAnalysesByDeal(dealId), storage.getDocumentsByDeal(dealId)]);
+  try {
+    cimFinancialsFor(analyses, docs);
+    return null;
+  } catch (err) {
+    if (err instanceof StaleFinancialAnalysisError) return err.message.replace(/Generation is stopped until then\.$/, "The DD version can't be refreshed until then.");
+    throw err;
+  }
+}
 import { dealStreetAddress } from "@shared/cim-media";
+import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
+import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -137,6 +158,8 @@ function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: b
     ddStatus: ddStatusOf(s, dd.generated, dd.has),
     /** Figures/names the check couldn't trace to the deal's data (empty = clean). */
     figureWarnings: Array.isArray(s.figureWarnings) ? s.figureWarnings : [],
+    /** A section the AI couldn't write: a hidden placeholder, never served to buyers. */
+    placeholder: isCimFallbackSection(s),
   };
 }
 
@@ -144,6 +167,13 @@ function sendTaskError(res: Response, err: unknown) {
   if (err instanceof SectionTaskRunningError) return res.status(409).json({ error: err.message });
   console.error("[cim-builder] task start failed:", err);
   return res.status(500).json({ error: "Couldn't start the AI. Please try again." });
+}
+
+/** A fact value short enough for a banner line. */
+function clip(v: string | null): string | null {
+  if (!v) return v;
+  const t = v.replace(/\s+/g, " ").trim();
+  return t.length > 90 ? `${t.slice(0, 87)}…` : t;
 }
 
 const TITLE_MAX = 200;
@@ -178,7 +208,24 @@ export function registerCimBuilderRoutes(app: Express): void {
           for (const id of check.leaked) withOverride.delete(id);
         }
       }
-      const rows = sections.map((s) => toBuilderSection(s, blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }));
+      // Facts changed since the CIM was written: which sections still show an
+      // old value (cim-staleness.ts). Best-effort — never blocks the builder.
+      const factsThen = lastGenerationFacts(deal);
+      const staleness = factsThen
+        ? await writerFactsSnapshot(deal).then((now) => cimStaleness(factsThen, now, sections)).catch((err) => {
+            console.warn("[cim-builder] staleness check failed:", err);
+            return null;
+          })
+        : null;
+      const staleBy = new Map((staleness?.sections ?? []).map((x) => [x.id, x.facts]));
+      // The same chart totals buyers get (a chart written before it carried its stated total).
+      const amounts = factAmounts(deal.extractedInfo);
+      const rows = sections.map((s) => ({
+        ...toBuilderSection(withStatedChartTotal(s, amounts), blindGenerated, withOverride.has(s.id), { generated: ddGenerated, has: withDd.has(s.id) }),
+        /** Changed facts whose old value this section still shows. */
+        factsChanged: staleBy.get(s.id) ?? [],
+      }));
+      const generation = deal.cimGeneration as CimGenerationStatus | null | undefined;
       const active = buyers.filter((b) => !b.revokedAt);
       const byLevel = Object.fromEntries(BUYER_ACCESS_LEVELS.map((l) => [l.key, 0])) as Record<string, number>;
       for (const b of active) byLevel[b.accessLevel || "teaser"] = (byLevel[b.accessLevel || "teaser"] ?? 0) + 1;
@@ -188,6 +235,8 @@ export function registerCimBuilderRoutes(app: Express): void {
         blind: {
           generated: blindGenerated,
           codename: deal.blindCodename ?? null,
+          /** Why the codename (chosen before a stricter check, or before a fact changed) would point at the business; null when it is neutral. */
+          codenameProblem: deal.blindCodename ? codenameProblem(deal, deal.blindCodename) : null,
           running: blind.running,
           error: blind.error,
           /** Sections waiting for their redaction (not held back). */
@@ -201,8 +250,26 @@ export function registerCimBuilderRoutes(app: Express): void {
           outOfDate: rows.filter((r) => r.ddStatus === "stale" || r.ddStatus === "missing").length,
           running: ddRefreshRunning.has(deal.id),
         },
-        buyers: { total: active.length, byLevel },
+        // `total` = links that can open the CIM now (not revoked, not expired):
+        // the count the regenerate dialogs quote and the hold is decided on.
+        buyers: { total: openBuyerLinks(buyers), byLevel },
         deal: { isLive: !!deal.isLive, cimLayoutGeneratedAt: deal.cimLayoutGeneratedAt ?? null },
+        // What the broker must look at before publishing: the last run's
+        // notes, placeholders, a hold from buyers, facts changed since.
+        review: {
+          heldFromBuyers: generation?.buyerHold ?? null,
+          warnings: generation?.status === "done" ? generation.warnings ?? [] : [],
+          warningsAt: generation?.status === "done" ? generation.finishedAt ?? null : null,
+          placeholders: rows.filter((r) => r.placeholder).length,
+          facts: staleness && (staleness.changes.length > 0 || staleness.notesChanged)
+            ? {
+                changes: staleness.changes.slice(0, 12).map((c) => ({ label: c.label, before: clip(c.before), after: clip(c.after) })),
+                more: Math.max(0, staleness.changes.length - 12),
+                sections: staleness.sections.length,
+                notesChanged: staleness.notesChanged,
+              }
+            : null,
+        },
       });
     } catch (err) {
       console.error("[cim-builder] state failed:", err);
@@ -452,7 +519,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
       }
       if (isTaskRunning(section.id)) return res.status(409).json({ error: "The AI is working on this section — wait for it to finish." });
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const { warning } = await refreshSectionDd(section, deal);
       res.json({ success: true, warning: warning ?? null });
@@ -460,6 +527,7 @@ export function registerCimBuilderRoutes(app: Express): void {
       if (err?.message === "changed") {
         return res.status(409).json({ error: "The section changed while its DD version was being written. Refresh it again." });
       }
+      if (err instanceof StaleFinancialAnalysisError) return res.status(409).json({ error: err.message });
       console.error("[cim-builder] DD refresh failed:", err);
       res.status(500).json({ error: "Couldn't refresh the DD version" });
     }
@@ -475,7 +543,7 @@ export function registerCimBuilderRoutes(app: Express): void {
         storage.getCimSectionOverrides(deal.id, "dd"),
       ]);
       if (ddOverrides.length === 0) return res.status(400).json({ error: "This CIM has no due-diligence version yet — generate it first." });
-      const blocked = await discrepancyBlock(deal.id);
+      const blocked = (await discrepancyBlock(deal.id)) ?? (await staleFinancialsBlock(deal.id));
       if (blocked) return res.status(409).json({ error: blocked });
       const withDd = new Set(ddOverrides.map((o) => o.cimSectionId));
       const todo = sections.filter((s) => {

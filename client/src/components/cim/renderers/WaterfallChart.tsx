@@ -82,14 +82,24 @@ export function buildWaterfallData(items: WaterfallItem[], unit?: string): Water
         rawValue: numValue,
       });
     } else if (type === "total") {
+      // A total is drawn at the figure it states — the adjusted EBITDA / SDE
+      // on file — never at the renderer's own running sum: with a step
+      // missing (a held name's add-back scrubbed, a row the broker deleted)
+      // the sum is a figure that exists nowhere and contradicts the cover.
+      // A mismatch is the figure check's to flag to the broker
+      // (figure-check.ts reconcileWaterfall). Only a total with no figure
+      // (blank, or the editor's 0 placeholder) falls back to the sum of its steps.
+      const stated = parseChartNumber(item.value, scale);
+      const amount = stated !== null && stated !== 0 ? stated : runningTotal;
       result.push({
         name: item.label,
         base: 0,
-        value: runningTotal,
-        total: runningTotal,
+        value: amount,
+        total: amount,
         type: "total",
-        rawValue: runningTotal,
+        rawValue: amount,
       });
+      runningTotal = amount;
     } else {
       const absValue = Math.abs(numValue);
       if (numValue >= 0) {

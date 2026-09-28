@@ -24,6 +24,8 @@ export interface FinancialTableRowInput {
   isSectionHeader?: boolean;
   indent?: number;
   bold?: boolean;
+  /** A normalized row that differs from the reported figure (FinancialToggle). */
+  isAdjusted?: boolean;
   [k: string]: unknown;
 }
 
@@ -35,6 +37,8 @@ export interface NormalizedFinancialRow {
   isSectionHeader: boolean;
   indent: number;
   bold: boolean;
+  /** Highlighted: an adjustment from the reported figures. */
+  isAdjusted: boolean;
 }
 
 export interface NormalizedFinancialTable {
@@ -108,6 +112,7 @@ export function normalizeFinancialTable(data: { headers?: unknown; rows?: unknow
       isSectionHeader: !!r.isSectionHeader && !hasFigures,
       indent: typeof r.indent === "number" && Number.isFinite(r.indent) ? Math.max(0, Math.min(4, r.indent)) : 0,
       bold: !!r.bold || (!!r.isSectionHeader && hasFigures),
+      isAdjusted: !!r.isAdjusted,
     };
   });
 

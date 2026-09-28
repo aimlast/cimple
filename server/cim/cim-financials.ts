@@ -23,6 +23,8 @@ import {
   type UiWorkingCapitalItem,
 } from "../financial/shape";
 import { isExcludedWorkingCapitalAsset, isExcludedWorkingCapitalLiability, workingCapitalHistory } from "../financial/normalization-rules";
+import { expenseCategorySigns } from "@shared/pnl-sign";
+import { analysisSourceStatus, type SourceDocLike } from "../financial/source-status";
 
 type AnalysisLike = Pick<FinancialAnalysis, "id" | "version" | "status" | "brokerReviewedAt"> & {
   reclassifiedPnl?: unknown;
@@ -119,6 +121,10 @@ export interface CimFinancials {
    * overrules the bridge (earnings-canon.ts). Absent when unknown.
    */
   bridgeChangedAt?: Record<string, string> | null;
+  /** What was left out because only the broker's private material states it (not yet approved). */
+  privateWithheld?: string[];
+  /** The analysis's sources changed since it ran (analysisSourceStatus) — the broker is told to re-run it. */
+  sourceWarnings?: string[];
 }
 
 const sum = (xs: number[]) => xs.reduce((s, x) => s + x, 0);
@@ -291,12 +297,16 @@ export function cimDebt(balanceSheet: UiReclassifiedTable | null | undefined): C
 
 function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>): Record<string, CimPnlYear> {
   const computedNi = computePnlNetIncome(table);
+  // An expense category's amount as a cost, signed: a negative one is a
+  // recovery (an income-tax recovery), never turned into a cost
+  // (shared/pnl-sign.ts — the same rule as the Income Statement's net income).
+  const signs = expenseCategorySigns(table.rows);
   const out: Record<string, CimPnlYear> = {};
   for (const year of table.years) {
     const rowsOf = (c: string) => table.rows.filter((r) => r.category === c && typeof r.values?.[year] === "number");
     const cat = (c: string) => {
       const vals = rowsOf(c).map((r) => r.values[year]);
-      return { has: vals.length > 0, total: sum(vals) };
+      return { has: vals.length > 0, total: sum(vals), category: c };
     };
     const revenue = cat("Revenue");
     if (!revenue.has) continue;
@@ -304,7 +314,7 @@ function pnlByYear(table: UiReclassifiedTable, reported: Record<string, number>)
     const opex = cat("Operating Expenses");
     const owner = cat("Owner Compensation");
     const nonRec = cat("Non-Recurring");
-    const abs = (x: { total: number }) => Math.abs(x.total);
+    const abs = (x: { total: number; category: string }) => (signs[x.category] ?? 1) * x.total;
     const cogsAbs = cogs.has ? abs(cogs) : null;
     const operatingExpenses = abs(opex) + abs(owner);
     const dep = cat("Depreciation"), interest = cat("Interest"), taxes = cat("Taxes");
@@ -543,12 +553,18 @@ export function earningsChangedAt(analysis: AnalysisLike, history: AnalysisLike[
 export function buildCimFinancials(analysis: AnalysisLike | null | undefined, history?: AnalysisLike[] | null): CimFinancials | null {
   if (!analysis) return null;
   const row = normalizeFinancialAnalysisRow({ ...(analysis as Record<string, unknown>) }) as Record<string, any>;
-  const table = row.reclassifiedPnl as UiReclassifiedTable | null;
-  const norm = row.normalization as UiNormalization | null;
+  // Figures only the broker's private material states (private-figures.ts
+  // markPrivateStatements) reach the CIM only once the broker approves them.
+  const withheld: string[] = [];
+  const table = withoutPrivateYears(row.reclassifiedPnl as UiReclassifiedTable | null, "income statement", withheld);
+  const norm = withoutPrivateNetIncome(row.normalization as UiNormalization | null, withheld);
   const hasTable = !!table && Array.isArray(table.rows) && table.rows.length > 0 && Array.isArray(table.years);
   const hasNorm = !!norm && Array.isArray(norm.addbacks);
-  const balanceSheet = (row.reclassifiedBalanceSheet ?? null) as UiReclassifiedTable | null;
-  const wc = cimWorkingCapital(row.workingCapital as UiWorkingCapital | null, balanceSheet);
+  const balanceSheet = withoutPrivateYears((row.reclassifiedBalanceSheet ?? null) as UiReclassifiedTable | null, "balance sheet", withheld);
+  const rawWc = row.workingCapital as UiWorkingCapital | null;
+  const privateWc = !!rawWc?.privateEvidence && !rawWc.privateApproved;
+  if (privateWc) withheld.push("working capital (a line rests only on your private notes)");
+  const wc = privateWc ? null : cimWorkingCapital(rawWc, balanceSheet);
   const debt = cimDebt(balanceSheet);
   if (!hasTable && !hasNorm && !wc && !debt) return null;
   const pnl = hasTable ? pnlByYear(table!, norm?.netIncome ?? {}) : null;
@@ -569,6 +585,78 @@ export function buildCimFinancials(analysis: AnalysisLike | null | undefined, hi
     workingCapital: wc,
     ...(debt ? { debt } : {}),
     ...(Object.keys(changedAt).length > 0 ? { bridgeChangedAt: changedAt } : {}),
+    ...(withheld.length > 0 ? { privateWithheld: withheld } : {}),
+  };
+}
+
+/** Thrown when the CIM's analysis was built from a statement that has since been deleted. */
+export class StaleFinancialAnalysisError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "StaleFinancialAnalysisError";
+  }
+}
+
+/**
+ * The CIM's financials from the deal's analyses and its documents now: the
+ * analysis pickAnalysisForCim chooses, checked against the documents it was
+ * built from (financial/source-status.ts). A statement or tax return it used
+ * that has since been deleted stops generation (its figures can't reach a
+ * buyer); a statement added since is a warning to re-run it.
+ */
+export function cimFinancialsFor(
+  analyses: AnalysisLike[] | null | undefined,
+  docs: SourceDocLike[],
+): CimFinancials | null {
+  const picked = pickAnalysisForCim(analyses);
+  if (!picked) return null;
+  const status = analysisSourceStatus(picked as { sourceDocumentIds?: unknown }, docs);
+  if (status.blocking) {
+    // The broker already re-ran it: a newer completed run built from the
+    // documents on file is used (flagged as not yet reviewed) — the stale
+    // reviewed one never is, and generation isn't stopped for a re-run that
+    // has been done.
+    const newer = [...(analyses ?? [])]
+      .filter((a) => a.status === "completed" && (a.version ?? 0) > (picked.version ?? 0))
+      .sort((a, b) => (b.version ?? 0) - (a.version ?? 0))
+      .find((a) => !analysisSourceStatus(a as { sourceDocumentIds?: unknown }, docs).blocking);
+    if (!newer) throw new StaleFinancialAnalysisError(`${status.message} Generation is stopped until then.`);
+    const fin = buildCimFinancials(newer, analyses);
+    const newerStatus = analysisSourceStatus(newer as { sourceDocumentIds?: unknown }, docs);
+    if (fin) {
+      fin.sourceWarnings = [
+        `The reviewed financial analysis (v${picked.version}) was built from a document that has since been deleted, so the CIM uses the newer run (v${newer.version}), which hasn't been reviewed yet — review it on the Financials tab.`,
+        ...(newerStatus.message ? [newerStatus.message] : []),
+      ];
+    }
+    return fin;
+  }
+  const fin = buildCimFinancials(picked, analyses);
+  if (fin && status.message) fin.sourceWarnings = [status.message];
+  return fin;
+}
+
+/** A table without the years only private material states (unless the broker approved them). */
+function withoutPrivateYears(t: UiReclassifiedTable | null, what: string, withheld: string[]): UiReclassifiedTable | null {
+  if (!t || !t.privateYears?.length || t.privateApproved) return t;
+  const drop = new Set(t.privateYears);
+  withheld.push(`the ${t.privateYears.join(", ")} ${what} ${t.privateYears.length === 1 ? "column" : "columns"}`);
+  return {
+    ...t,
+    years: (t.years ?? []).filter((y) => !drop.has(y)),
+    rows: (t.rows ?? []).map((r) => ({ ...r, values: Object.fromEntries(Object.entries(r.values ?? {}).filter(([y]) => !drop.has(y))) })),
+  };
+}
+
+/** The normalization without the years whose reported net income only private material states. */
+function withoutPrivateNetIncome(n: UiNormalization | null, withheld: string[]): UiNormalization | null {
+  if (!n || !n.privateYears?.length || n.privateApproved) return n;
+  const drop = new Set(n.privateYears);
+  withheld.push(`the ${n.privateYears.join(", ")} earnings bridge (reported net income)`);
+  return {
+    ...n,
+    years: (n.years ?? []).filter((y) => !drop.has(y)),
+    netIncome: Object.fromEntries(Object.entries(n.netIncome ?? {}).filter(([y]) => !drop.has(y))),
   };
 }
 
@@ -599,6 +687,190 @@ function yearRow(label: string, years: string[], get: (y: string) => number | nu
 export const CIM_FINANCIALS_HEADING = "AUTHORITATIVE FINANCIALS";
 
 /**
+ * The analysis's figures are a reclassification of the statements: one-time
+ * items are taken out of cost of sales and operating expenses and shown on
+ * their own. A table copied from them then differs line by line from the
+ * statements as issued — Ridgeline's FY2024 cost of sales $6,804,000 and
+ * gross profit $3,011,000 against the compiled statements' $6,868,000 and
+ * $2,947,000 (the $64,000 crane rebuild moved) — and the writer labelled it
+ * "Compiled financial statements". The footnote that says so is written per
+ * table (tableReclassificationNote): it describes the lines THAT table uses.
+ * A generic "shown apart from cost of sales and operating expenses" was false
+ * for Ridgeline's table, whose operating expenses ($1,613,000) are the
+ * block's "incl. one-time items" line, and contradicted the writer's own
+ * footnote beside it.
+ */
+export interface OneTimeItem {
+  name: string;
+  values: Record<string, number>;
+  /** Where the statements book it, read from the line's place among the analysis's lines (null when unclear). */
+  from: "cogs" | "opex" | null;
+}
+
+const NON_RECURRING = /non-?recurring|one-?time/i;
+
+function lineKind(category: string): "cogs" | "opex" | "other" | "one_time" {
+  if (NON_RECURRING.test(category)) return "one_time";
+  if (/^cogs$|cost of (?:sales|goods|revenue)|direct cost/i.test(category)) return "cogs";
+  if (/operating expense|owner compensation|opex/i.test(category)) return "opex";
+  return "other";
+}
+
+/** The analysis's one-time lines, each with where the statements book it. */
+export function oneTimeItems(fin: CimFinancials | null | undefined): OneTimeItem[] {
+  if (!fin?.pnl) return [];
+  const years = new Set(Object.keys(fin.pnl));
+  const kinds = fin.lines.map((l) => lineKind(l.category));
+  const out: OneTimeItem[] = [];
+  fin.lines.forEach((l, i) => {
+    if (kinds[i] !== "one_time") return;
+    const values: Record<string, number> = {};
+    for (const [y, v] of Object.entries(l.values)) if (years.has(y) && typeof v === "number" && v) values[y] = Math.abs(v);
+    if (Object.keys(values).length === 0) return;
+    // The statement's own order: the item sits among the lines it was booked with.
+    let prev: string | undefined;
+    for (let j = i - 1; j >= 0 && !prev; j--) if (kinds[j] !== "one_time") prev = kinds[j];
+    let next: string | undefined;
+    for (let j = i + 1; j < kinds.length && !next; j++) if (kinds[j] !== "one_time") next = kinds[j];
+    // Between a cost-of-sales line and an operating-expense line it is unclear.
+    const near = [prev, next].filter((k): k is "cogs" | "opex" => k === "cogs" || k === "opex");
+    const from = near.length > 0 && near.every((k) => k === near[0]) ? near[0] : null;
+    out.push({ name: l.name.replace(/\s*\([^)]*\)\s*$/, "").trim(), values, from });
+  });
+  return out;
+}
+
+function itemsText(items: OneTimeItem[]): string {
+  return items.map((it) => `${it.name} (${Object.keys(it.values).sort().map((y) => `FY${y} ${money(it.values[y])}`).join(", ")})`).join("; ");
+}
+
+/** The general description (the knowledge-base block): what moved where. Null when nothing moved. */
+export function reclassificationNote(fin: CimFinancials | null | undefined): string | null {
+  const items = oneTimeItems(fin);
+  if (items.length === 0) return null;
+  const fromCogs = items.filter((i) => i.from === "cogs");
+  const fromOpex = items.filter((i) => i.from === "opex");
+  const unclear = items.filter((i) => i.from === null);
+  const parts = [
+    fromCogs.length ? `out of cost of sales: ${itemsText(fromCogs)}` : "",
+    fromOpex.length ? `out of operating expenses: ${itemsText(fromOpex)}` : "",
+    unclear.length ? `${fromCogs.length || fromOpex.length ? "also " : ""}${itemsText(unclear)}` : "",
+  ].filter(Boolean);
+  return `one-time items are taken out of the lines the statements book them in and listed on their own — ${parts.join("; ")}`;
+}
+
+type RowRole = "cogs_excl" | "cogs_issued" | "opex_excl" | "opex_incl_all" | "opex_issued";
+
+const money0 = (v: unknown): number | null => {
+  const t = String(v ?? "").trim();
+  if (!/\d/.test(t) || /%/.test(t)) return null;
+  const n = Number(t.replace(/[$,()\s]|CAD|USD|US\$/gi, ""));
+  return Number.isFinite(n) && n !== 0 ? Math.abs(n) : null;
+};
+
+/**
+ * Which of the analysis's reclassified lines a financial table shows (per
+ * row, per year column): cost of sales / gross profit without the one-time
+ * items, operating expenses without them, or operating expenses with every
+ * one-time item added back in — or the statements' own figures.
+ */
+function tableRoles(layoutData: Record<string, unknown>, fin: CimFinancials): Set<RowRole> {
+  const roles = new Set<RowRole>();
+  const pnl = fin.pnl;
+  if (!pnl) return roles;
+  const items = oneTimeItems(fin);
+  const headers = Array.isArray(layoutData.headers) ? (layoutData.headers as unknown[]).map(String) : [];
+  const valueHeaders = headers.length > 0 ? headers.slice(1) : [];
+  const yearOf = (col: number): string | null => valueHeaders[col]?.match(/(?:19|20)\d{2}/)?.[0] ?? null;
+  const near = (a: number, b: number | null | undefined) => typeof b === "number" && b !== 0 && Math.abs(a - Math.abs(b)) <= 1;
+  const rows = [...(Array.isArray(layoutData.rows) ? layoutData.rows : []), ...(Array.isArray(layoutData.normalizedRows) ? layoutData.normalizedRows : [])];
+  for (const r of rows) {
+    const label = String((r as { label?: unknown })?.label ?? "");
+    const isCogs = /cost of (?:sales|goods|revenue|services)|\bcogs\b|direct costs?/i.test(label);
+    const isGp = /gross (?:profit|margin)/i.test(label);
+    const isOpex = /operating expenses|\bopex\b/i.test(label) && !/incl(?:uding|\.)? one-?time|non-?recurring|before/i.test(label.replace(/operating expenses/i, ""));
+    if (!isCogs && !isGp && !isOpex) continue;
+    const values = Array.isArray((r as { values?: unknown })?.values) ? ((r as { values: unknown[] }).values) : [];
+    values.forEach((v, col) => {
+      const n = money0(v);
+      if (n === null) return;
+      const ys = yearOf(col) ? [yearOf(col)!] : Object.keys(pnl);
+      for (const y of ys) {
+        const p = pnl[y];
+        if (!p) continue;
+        const sumFrom = (f: OneTimeItem["from"] | "any") => items.filter((i) => f === "any" || i.from === f).reduce((s, i) => s + (i.values[y] ?? 0), 0);
+        const c = sumFrom("cogs");
+        const o = sumFrom("opex");
+        const all = sumFrom("any");
+        if (all === 0) continue;
+        if (isCogs && near(n, p.cogs)) roles.add(c + sumFrom(null) > 0 ? "cogs_excl" : "cogs_issued");
+        else if (isCogs && p.cogs !== null && near(n, p.cogs + c)) roles.add("cogs_issued");
+        else if (isGp && near(n, p.grossProfit)) roles.add(c + sumFrom(null) > 0 ? "cogs_excl" : "cogs_issued");
+        else if (isGp && p.grossProfit !== null && near(n, p.grossProfit - c)) roles.add("cogs_issued");
+        else if (isOpex && near(n, p.operatingExpenses)) roles.add(o + sumFrom(null) > 0 ? "opex_excl" : "opex_issued");
+        else if (isOpex && o !== all && near(n, p.operatingExpenses + all)) roles.add("opex_incl_all");
+        else if (isOpex && near(n, p.operatingExpenses + o)) roles.add("opex_issued");
+      }
+    });
+  }
+  return roles;
+}
+
+/**
+ * The footnote for one financial table, describing the lines it actually
+ * shows. Null when the table shows none of the reclassified lines (or only
+ * the statements' own figures).
+ */
+export function tableReclassificationNote(layoutData: Record<string, unknown>, fin: CimFinancials | null | undefined): string | null {
+  if (!fin?.pnl) return null;
+  const items = oneTimeItems(fin);
+  if (items.length === 0) return null;
+  const roles = tableRoles(layoutData, fin);
+  const cogsOut = roles.has("cogs_excl");
+  const opexOut = roles.has("opex_excl");
+  const opexAll = roles.has("opex_incl_all");
+  if (!cogsOut && !opexOut && !opexAll) return null;
+  const outOfCogs = items.filter((i) => i.from !== "opex");
+  const outOfOpex = items.filter((i) => i.from !== "cogs");
+  // "the one-time item Crane rebuild (FY2024 $64,000), which is" / "the one-time items — A; B — which are"
+  const named = (list: OneTimeItem[]) => (list.length === 1 ? `the one-time item ${itemsText(list)},` : `the one-time items — ${itemsText(list)} —`);
+  const isAre = (list: OneTimeItem[]) => (list.length === 1 ? "is" : "are");
+  let what: string;
+  if (cogsOut && opexOut) what = `${named(items)} ${isAre(items)} shown apart from cost of sales and operating expenses`;
+  else if (cogsOut && opexAll) {
+    const others = items.length > outOfCogs.length;
+    what = `cost of sales leaves out ${named(outOfCogs)} which ${isAre(outOfCogs)} counted in operating expenses${others ? " with the other one-time items" : " instead"}`;
+  } else if (cogsOut) what = `cost of sales leaves out ${named(outOfCogs)} which ${isAre(outOfCogs)} shown on ${outOfCogs.length === 1 ? "its" : "their"} own`;
+  else if (opexOut) what = `operating expenses leave out ${named(outOfOpex)} which ${isAre(outOfOpex)} shown on ${outOfOpex.length === 1 ? "its" : "their"} own`;
+  else what = `operating expenses include every one-time item — ${itemsText(items)} — including those the statements book in cost of sales`;
+  return `Figures as reclassified in the financial analysis: ${what}, so these lines can differ from the financial statements as issued.`;
+}
+
+const OWN_NOTE = /^Figures as reclassified in the financial analysis\b/i;
+
+/**
+ * A financial table built from the analysis's reclassified lines, with the
+ * footnote that says which lines are reclassified — replacing an earlier
+ * copy of that footnote, never duplicating a note that already explains it —
+ * and a source line citing the statements marked "as reclassified".
+ */
+export function withReclassificationNote(layoutType: string, layoutData: Record<string, unknown>, fin: CimFinancials | null | undefined): Record<string, unknown> {
+  if (layoutType !== "financial_table" || !fin) return layoutData;
+  const note = tableReclassificationNote(layoutData, fin);
+  const footnotes = Array.isArray(layoutData.footnotes) ? (layoutData.footnotes as unknown[]).map(String) : [];
+  const kept = footnotes.filter((f) => !OWN_NOTE.test(f.trim()));
+  if (!note) return kept.length === footnotes.length ? layoutData : { ...layoutData, footnotes: kept };
+  // "Compiled financial statements (CSRS 4200) prepared by …" names the
+  // statements as the table's source: it is qualified, not left to say the
+  // lines are theirs as issued.
+  const sourced = kept.map((f) =>
+    /financial statements/i.test(f) && !/reclassif/i.test(f) && f.length <= 200 ? `${f.trim().replace(/[.;:]\s*$/, "")}, as reclassified in the financial analysis (see note).` : f,
+  );
+  if (sourced.some((f) => /reclassif/i.test(f) && !/as reclassified in the financial analysis \(see note\)/.test(f))) return { ...layoutData, footnotes: sourced };
+  return { ...layoutData, footnotes: [...sourced, note] };
+}
+
+/**
  * The knowledge-base block. Statement and bridge sections copy these rows
  * and totals verbatim; a figure that isn't here or in the facts is left out.
  */
@@ -612,6 +884,12 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
     "Use these for every financial table, EBITDA/SDE bridge (waterfall), earnings chart and statement figure. Copy line names, amounts and totals exactly. Never add, subtract, estimate or re-derive a figure, and never add a year or line that is not listed. Where a statement figure differs from a fact elsewhere in the knowledge base, these statement figures win inside tables and bridges.",
   );
   const pnl = fin.pnl;
+  const reclassified = reclassificationNote(fin);
+  if (reclassified) {
+    out.push(
+      `These are the analysis's RECLASSIFIED figures, not the statements' own lines: ${reclassified}. A statement table built from them never says it shows the financial statements as issued (no "per the compiled statements" caption or footnote). Don't write a footnote about the reclassification yourself — one that describes exactly the lines the table uses is added automatically.`,
+    );
+  }
   if (pnl) {
     const years = Object.keys(pnl).sort();
     out.push(`\nINCOME STATEMENT SUMMARY (fiscal years ${years.join(", ")}):`);
@@ -654,7 +932,11 @@ export function renderCimFinancialsBlock(fin: CimFinancials | null | undefined):
       hasBelowTheLine
         ? yearRow("Income before income taxes (= EBITDA before other income + other income − other expense − D&A − interest)", years, (y) => (untied.includes(y) ? null : pnl[y].incomeBeforeTaxes))
         : null,
-      yearRow("Income taxes", years, (y) => (pnl[y].taxes ? pnl[y].taxes : null)),
+      yearRow(
+        years.some((y) => pnl[y].taxes < 0) ? "Income taxes (a recovery — money back from taxes — is shown in parentheses and adds to net income)" : "Income taxes",
+        years,
+        (y) => (pnl[y].taxes ? pnl[y].taxes : null),
+      ),
       yearRow("Net income (as reported)", years, (y) => pnl[y].netIncomeReported ?? pnl[y].netIncomeFromRows),
     ].filter(Boolean) as string[];
     out.push(...rows);
@@ -914,8 +1196,12 @@ export function untiedYears(fin: CimFinancials | null | undefined): string[] {
  * income (restateFromReported) and years that don't tie at all.
  */
 export function restatementWarnings(fin: CimFinancials | null | undefined): string[] {
+  const held = (fin?.privateWithheld ?? []).map(
+    (w) => `Financial analysis: ${w} rests only on your private notes (CRM or broker-only files), so the CIM leaves it out. Approve it on the Financials tab to include it.`,
+  );
+  const sources = fin?.sourceWarnings ?? [];
   const pnl = fin?.pnl;
-  if (!pnl) return [];
+  if (!pnl) return [...sources, ...held];
   const untied = untiedYears(fin).map((y) => {
     const gap = (pnl[y].netIncomeFromRows ?? 0) - (pnl[y].netIncomeReported ?? 0);
     return `Financial analysis, ${y}: the Income Statement lines give net income of ${money(pnl[y].netIncomeFromRows ?? 0)}, but the reported net income is ${money(pnl[y].netIncomeReported ?? 0)} (${money(Math.abs(gap))} apart). The CIM's statement table shows ${y} only down to EBITDA. Correct the Income Statement on the Financials tab so it ties.`;
@@ -928,5 +1214,5 @@ export function restatementWarnings(fin: CimFinancials | null | undefined): stri
       const cause = r.likelyCause ? ` — most likely ${r.likelyCause} was taken out of its original expense line as well as listed as one-time` : "";
       return `Financial analysis, ${y}: the expense lines add up to EBITDA of ${money(r.rowEbitda)}, but the reported net income gives ${money(pnl[y].ebitda)} (a ${money(Math.abs(r.gap))} difference${cause}). The CIM states ${y} from the reported net income so every table adds up. Correct the Income Statement on the Financials tab to make the lines match.`;
     })
-    .concat(untied);
+    .concat(untied, sources, held);
 }

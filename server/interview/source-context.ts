@@ -30,6 +30,7 @@ import {
   type FieldSource,
 } from "./info-merger";
 import { normaliseTableText } from "./table-text";
+import { documentTermNotDealTerm, isDealDocument, isDealTermTopic } from "./deal-terms";
 
 type DocLike = Pick<Document, "id" | "name" | "visibility"> & Partial<Pick<Document, "sourceKind" | "sourceMeta" | "createdAt" | "extractedData" | "extractedText" | "isProcessed" | "status" | "category" | "updatedAt">>;
 
@@ -496,6 +497,10 @@ export function detectAlternateConflicts(viewInfo: Record<string, unknown>, docu
       const spokenVsDoc =
         (SPOKEN_KINDS.has(winKind) && altKind === "document") || (winKind === "document" && SPOKEN_KINDS.has(altKind));
       if (!spokenVsDoc) continue;
+      // A document's own term for a deal term (a shareholders' agreement's
+      // covenant vs the non-compete the seller would sign) is not a conflict
+      // (deal-terms.ts).
+      if (documentTermNotDealTerm({ key, docName: (winKind === "document" ? winDoc : altDoc)?.name })) continue;
       if (!valuesMateriallyDiffer(key, win, alt.value, { a: winDoc?.name, b: altDoc?.name, asOf })) continue;
       if (conflicting.some((c) => c.value === alt.value)) continue;
       conflicting.push(alt);
@@ -883,8 +888,8 @@ const TABLE_ROW_RE = /\t|(?:[^,\s][^,]*,(?!\s)){2,}|^[^,]{1,40},\d/;
 const SUBSET_AFTER_RE = /^\s*(?:over|under|with|who|that|which|having|of (?:them|those|these|our|the)|in (?:the|our)\s+\w+ (?:team|department|shop|crew)|on (?:the|our) \w+ (?:shift|team|crew)|at (?:the|our) \w+ (?:location|site|clinic|branch))\b/i;
 
 /** (figure, unit) pairs a text states: "3,100 members", "26 trucks", "18% of revenue". */
-export function figuresWithUnits(text: string): { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean }[] {
-  const out: { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean }[] = [];
+export function figuresWithUnits(text: string): { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean; at: number }[] {
+  const out: { value: number; unit: string; context: Set<string>; subset?: boolean; hedged?: boolean; at: number }[] = [];
   const clean = stripLabelNumbers(text);
   const re = /(\d[\d,]*(?:\.\d+)?)\s*(%|percent\b|[a-z]+)(?:\s+(?:of\s+)?([a-z]+))?(?:\s+([a-z]+))?/gi;
   let m: RegExpExecArray | null;
@@ -908,8 +913,28 @@ export function figuresWithUnits(text: string): { value: number; unit: string; c
     // "probably 10 or 11", "about 26", "maybe 3,000", "25-30 people".
     const before = clean.slice(Math.max(0, m.index - 30), m.index);
     const hedged = HEDGE_BEFORE_RE.test(before) || /^\s*(?:or|to|-|–)\s*\d/.test(clean.slice(m.index + m[1].length)) || /\d\s*(?:or|to|-|–)\s*$/.test(before);
-    out.push({ value, unit: unit.startsWith("%") ? unit : unitFamily(unit), context, ...(subset ? { subset: true } : {}), ...(hedged ? { hedged: true } : {}) });
+    out.push({ value, unit: unit.startsWith("%") ? unit : unitFamily(unit), context, ...(subset ? { subset: true } : {}), ...(hedged ? { hedged: true } : {}), at: m.index });
   }
+  return out;
+}
+
+/**
+ * A text's clauses with their offsets: split at sentence ends, semicolons,
+ * and at a comma or conjunction that starts a new clause ("…branches, and
+ * I'd stay on…", "…branches but we…"). A thousands comma ("1,200") never
+ * splits.
+ */
+export function clauseSpans(text: string): { start: number; end: number; text: string }[] {
+  const out: { start: number; end: number; text: string }[] = [];
+  const re = /[.!?;\n]+(?=\s|$)|,\s+(?=(?:and|but|while|whereas|though|although|plus|so)\b)|,\s+(?=(?:i|i['’]d|i['’]ll|i['’]m|we|we['’]d|my|our)\b)|\s+(?:but|whereas|while|although)\s+/gi;
+  let start = 0;
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > start) out.push({ start, end: m.index, text: text.slice(start, m.index) });
+    start = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  if (start < text.length) out.push({ start, end: text.length, text: text.slice(start) });
   return out;
 }
 
@@ -929,12 +954,22 @@ export function spokenFigureConflicts(sellerMessage: string, documents: DocLike[
   // isn't the headline count of anything a document lists.
   const said = figuresWithUnits(sellerMessage).filter((f) => f.value >= 2 && !f.unit.startsWith("%") && !f.subset);
   if (said.length === 0) return [];
+  // A figure the seller states about a term of the sale (the non-compete
+  // they'd sign, a transition period, a holdback on the price) is compared
+  // only with a document that sets the sale's terms — never with an
+  // existing agreement's own clause (deal-terms.ts). Decided per figure, by
+  // the clause it sits in: "52 technicians …, and I'd stay on for six
+  // months" still checks the 52 against the roster.
+  const clauses = clauseSpans(stripLabelNumbers(sellerMessage));
   const out: { said: string; docName: string; snippet: string }[] = [];
   for (const f of said) {
+    const clause = clauses.find((c) => f.at >= c.start && f.at < c.end)?.text ?? "";
+    const aboutDealTerm = isDealTermTopic(clause);
     let best: { docName: string; snippet: string; score: number } | null = null;
     let agrees = false;
     for (const d of documents) {
       if (!isSellerVisible(d) || String(d.sourceKind || "document") !== "document") continue;
+      if (aboutDealTerm && !isDealDocument(d.name)) continue;
       // A document about the thing counted ("Fleet list" for trucks) is
       // compared on its headline count only — its first figure of that kind
       // (a roster's 96 drivers, not its 38 linehaul drivers).

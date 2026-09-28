@@ -2,7 +2,7 @@
  * CIM builder — data types and fetch helpers for GET /api/deals/:id/cim-builder
  * and the section endpoints (server/routes/cim-builder.ts).
  */
-import type { CimSection, CimSectionAiTask } from "@shared/schema";
+import type { CimGenerationStatus, CimSection, CimSectionAiTask } from "@shared/schema";
 
 /** "held" = the last redaction failed; blind buyers don't get the section until one succeeds. */
 export type BlindStatus = "fresh" | "updating" | "held" | "none" | "excluded";
@@ -19,6 +19,27 @@ export interface BuilderSection extends Omit<CimSection, "aiTask" | "contentHist
   ddStatus: DdStatus;
   /** Figures or names the check couldn't trace to the deal's information. */
   figureWarnings: string[];
+  /** The AI couldn't write this section: a hidden placeholder, never shown to buyers. */
+  placeholder?: boolean;
+  /** Facts changed since the CIM was written whose old value this section still shows. */
+  factsChanged?: string[];
+}
+
+/** What the broker must look at before publishing (GET …/cim-builder `review`). */
+export interface CimReview {
+  /** Set while a regenerated CIM is held from buyers until it is published again. */
+  heldFromBuyers: CimGenerationStatus["buyerHold"] | null;
+  /** The last finished generation's notes (placeholders, figures, things taken out, rebuilt sections). */
+  warnings: string[];
+  warningsAt: string | null;
+  placeholders: number;
+  /** Facts changed since the CIM was written (null = none). */
+  facts: {
+    changes: Array<{ label: string; before: string | null; after: string | null }>;
+    more: number;
+    sections: number;
+    notesChanged: boolean;
+  } | null;
 }
 
 export type DdStatus = "none" | "fresh" | "stale" | "missing" | "excluded";
@@ -30,11 +51,12 @@ export interface BuilderState {
    * redaction failed — blind buyers don't get them until one succeeds (their
    * reason is in `error`, and on the row's `blindError`).
    */
-  blind: { generated: boolean; codename: string | null; running: boolean; error: string | null; updating: number; held: number };
+  blind: { generated: boolean; codename: string | null; codenameProblem?: string | null; running: boolean; error: string | null; updating: number; held: number };
   /** outOfDate: sections whose DD version is stale or missing; running: a refresh is under way. */
   dd: { generated: boolean; outOfDate: number; running: boolean };
   buyers: { total: number; byLevel: Record<string, number> };
   deal: { isLive: boolean; cimLayoutGeneratedAt: string | null };
+  review?: CimReview;
 }
 
 export const builderKey = (dealId: string) => ["/api/deals", dealId, "cim-builder"] as const;

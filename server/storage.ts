@@ -34,7 +34,8 @@ import {
 } from "@shared/schema";
 import { randomUUID } from "crypto";
 import { db } from "./db";
-import { eq, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
+import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
@@ -219,6 +220,7 @@ export interface IStorage {
   searchBuyerUsers(query: string, brokerId: string): Promise<BuyerUser[]>;
   getBuyerAccessByBuyerUser(buyerUserId: string): Promise<any[]>;
   linkBuyerAccessToBuyerUsers(brokerId: string): Promise<number>;
+  linkBuyerAccessToVerifiedBuyer(buyerUserId: string): Promise<number>;
 
   // Deal outreach (broker-controlled buyer notifications)
   createDealOutreach(data: InsertDealOutreach): Promise<DealOutreach>;
@@ -491,6 +493,7 @@ export class MemStorage implements IStorage {
   async searchBuyerUsers(): Promise<BuyerUser[]> { return []; }
   async getBuyerAccessByBuyerUser(): Promise<any[]> { return []; }
   async linkBuyerAccessToBuyerUsers(): Promise<number> { return 0; }
+  async linkBuyerAccessToVerifiedBuyer(): Promise<number> { return 0; }
 
   // Deal outreach (stubs — DbStorage is the real implementation)
   async createDealOutreach(): Promise<DealOutreach> { throw new Error("Not implemented"); }
@@ -661,14 +664,17 @@ export class DbStorage implements IStorage {
     return result[0];
   }
 
+  // A revoked invite (a removed seller-team member's link) never resolves:
+  // this lookup is the one gate every seller-token check goes through.
   async getSellerInviteByToken(token: string): Promise<SellerInvite | undefined> {
-    const result = await db.select().from(sellerInvites).where(eq(sellerInvites.token, token));
+    const result = await db.select().from(sellerInvites)
+      .where(and(eq(sellerInvites.token, token), ne(sellerInvites.status, REVOKED_INVITE_STATUS)));
     return result[0];
   }
 
   async getSellerInvitesByDealId(dealId: string): Promise<SellerInvite[]> {
     return db.select().from(sellerInvites)
-      .where(eq(sellerInvites.dealId, dealId))
+      .where(and(eq(sellerInvites.dealId, dealId), ne(sellerInvites.status, REVOKED_INVITE_STATUS)))
       .orderBy(desc(sellerInvites.createdAt));
   }
 
@@ -1420,6 +1426,28 @@ export class DbStorage implements IStorage {
         AND bu.email_verified = true
     `);
     // postgres-js exposes affected rows as `count`; node-pg style is `rowCount`.
+    return Number((result as any)?.count ?? (result as any)?.rowCount ?? 0);
+  }
+
+  /**
+   * A buyer account that has just proved its inbox (or opens its dashboard
+   * verified) gets the links shared with its email that were left unlinked —
+   * granted while the account was unverified, or signed at the NDA before it
+   * was confirmed (isLinkableBuyerAccount refuses those). The SQL itself
+   * requires email_verified, so an unverified account never captures a link.
+   * Idempotent; returns rows linked.
+   */
+  async linkBuyerAccessToVerifiedBuyer(buyerUserId: string): Promise<number> {
+    if (!buyerUserId) return 0;
+    const result = await db.execute(sql`
+      UPDATE ${buyerAccess} AS ba
+      SET buyer_user_id = bu.id
+      FROM ${buyerUsers} AS bu
+      WHERE bu.id = ${buyerUserId}
+        AND bu.email_verified = true
+        AND ba.buyer_user_id IS NULL
+        AND LOWER(ba.buyer_email) = LOWER(bu.email)
+    `);
     return Number((result as any)?.count ?? (result as any)?.rowCount ?? 0);
   }
 

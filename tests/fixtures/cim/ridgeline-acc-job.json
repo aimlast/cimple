@@ -1,0 +1,11 @@
+{
+ "warnings": [
+  "Kept out of the CIM because the facts mark it confidential: \"Permit Transfer Notes\" (Heather (accountant) may know of any obscure registrations not mentioned.). If a buyer may see it, remove the confidential note from the fact on the Information tab and regenerate.",
+  "Debt figures on file are from an earlier year than the latest statements: \"Debt Details\": $274,000 is the 2023 year-end current portion of term debt (2024: $286,000); \"Debt And Liabilities\": $262,000 is the 2022 year-end current portion of term debt (2024: $286,000). The CIM states debt with the year the balance sheet gives it. Update the fact on the Information tab if it should describe the latest year.",
+  "\"Working Capital\" set net working capital beside the peg on a different basis; it was rebuilt from the financial analysis on the cash-free, debt-free basis the peg uses. Review its wording before publishing.",
+  "\"Transaction Overview\" stated working capital on a different basis from the peg; taken out: \"Working Capital: Cash-free, debt-free transaction with working capital peg of $1,096,250 (average of year-end net working capital 2021\u201320\u2026\". The rest of the section is as written \u2014 review it before publishing.",
+  "Check the figures in \"Transaction Overview\" before publishing \u2014 4.2\u00d7 is not the CIM's multiple \u2014 use 3.8\u00d7 (multiple of FY2024 SDE) ($6,500,000 \u2014 representing 3.8\u00d7 FY2024 Seller's Discretionary Earnings of $1,717,000 and 4.2\u00d7 FY2024 Adjuste\u2026).",
+  "Check the figures in \"Equipment & Assets\" before publishing \u2014 no source for \"$1,633,000\" (Original cost $1,633,000, net book value $806,000 per financial statements.); no source for \"$806,000\" (Original cost $1,633,000, net book value $806,000 per financial statements.)."
+ ],
+ "sectionCount": 24
+}

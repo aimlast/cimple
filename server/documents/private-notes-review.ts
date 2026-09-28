@@ -744,7 +744,25 @@ function coveringFact(raw: string, facts: FactEntry[], common: Set<string>, opts
 function familyCovers(text: string, info: Info, common: Set<string>): string | null {
   const keys = new Set(familyKeysOnFile(info, text));
   if (keys.size === 0) return null;
-  return coveringFact(text, factEntries(info).filter((f) => keys.has(f.key)), common, { moneyOnly: true, minShare: 1 / 3 });
+  const family = factEntries(info).filter((f) => keys.has(f.key));
+  const one = coveringFact(text, family, common, { moneyOnly: true, minShare: 1 / 3 });
+  if (one || family.length < 2) return one;
+  // The facts of its kind together: the minute book's dividend note ("Class
+  // D dividend of $60,000 declared December 16, 2024 payable only to Gord
+  // McAllister…") is said by dividendsDeclared (amount, date, class) and
+  // dividendDetails (to whom) between them.
+  // (Reported under the family's fact that shares the most of the note's words.)
+  const noteWords = coverWords(coverNoteText(text));
+  const lead = [...family].sort((x, y) =>
+    Array.from(noteWords).filter((w) => y.words.has(w)).length - Array.from(noteWords).filter((w) => x.words.has(w)).length)[0];
+  const joined: FactEntry = {
+    key: lead.key,
+    text: family.map((f) => f.text).join("; "),
+    lower: family.map((f) => f.lower).join(" "),
+    numbers: family.flatMap((f) => f.numbers),
+    words: new Set(family.flatMap((f) => Array.from(f.words))),
+  };
+  return coveringFact(text, [joined], common, { moneyOnly: true, minShare: 1 / 3 });
 }
 
 /** Capitalised words that are nobody's name. */
@@ -912,10 +930,26 @@ function tieFigures(texts: string[]): number[] {
  * Kelowna" and "wants to spend time with grandkids in Kelowna"; the Jackpine
  * approach at ~3x in two notes).
  */
-function sameMatter(a: string[], b: string[], rare: Set<string>, common: Set<string>): boolean {
+function sameMatter(a: string[], b: string[], rare: Set<string>, common: Set<string>, owner: OwnerRef = NO_OWNER): boolean {
   for (const x of a) for (const y of b) if (sameNoteContent(x, y)) return true;
   const namesA = new Set(a.flatMap((t) => Array.from(properNames(t, common))));
   const namesB = new Set(b.flatMap((t) => Array.from(properNames(t, common))));
+  // One person's deal matter noted twice in other words ("will consult with
+  // wife before deciding on equity rollover" / "would consider rolling some
+  // or all of his 15% into new owner"): the same person and the same deal
+  // topic, however common the name is on the deal.
+  const topicsA = dealTopics(a);
+  if (topicsA.size > 0) {
+    const topicsB = dealTopics(b);
+    const shared = Array.from(topicsA).filter((t) => topicsB.has(t));
+    // The company's own matter (the premises leased from the owner's holdco) needs no name in common.
+    if (shared.some((t) => COMPANY_TOPICS.has(t))) return true;
+    if (shared.length > 0 && Array.from(namesA).some((n) => namesB.has(n))) return true;
+    // The owner, however each note calls him ("Gord", "the seller", "Owner"):
+    // "Seller had a cardiac event…" and "Seller stated 'don't want it in any
+    // brochure' regarding health episode" are one matter.
+    if (shared.length > 0 && a.some((t) => owner.named(t)) && b.some((t) => owner.named(t))) return true;
+  }
   if (!Array.from(namesA).some((n) => namesB.has(n) && rare.has(n))) return false;
   const fa = tieFigures(a);
   const fb = tieFigures(b);
@@ -927,6 +961,55 @@ function sameMatter(a: string[], b: string[], rare: Set<string>, common: Set<str
   if (small.size === 0) return false;
   const hit = Array.from(small).filter((w) => large.has(w)).length;
   return hit >= 1 && hit / small.size >= 0.3;
+}
+
+/** Who the owner is in a note: the role words, or the owner's own first or last name. */
+interface OwnerRef { named: (text: string) => boolean }
+const NO_OWNER: OwnerRef = { named: () => false };
+const OWNER_ROLE_RE = /\b(?<!(?:new|next|future|incoming|minority|co-?)[ -])(?:seller|owner|vendor|founder)(?:'s)?\b/i;
+
+/** The owner as the deal's facts name him or her (ownerName / founderName), plus the role words. */
+function ownerRefFor(info: Info): OwnerRef {
+  const names = new Set<string>();
+  for (const key of ["ownerName", "founderName", "ownerFullName"]) {
+    const v = info[key];
+    if (typeof v !== "string") continue;
+    // (Only the first person a value names: "Gord McAllister (100%), Luis Ortega (15%)" is Gord.)
+    const first = v.split(/[,;(/&]|\band\b/i)[0];
+    for (const w of first.match(/\b[A-Z][a-z'’-]{2,}\b/g) ?? []) names.add(w.toLowerCase());
+  }
+  const nameRe = names.size > 0 ? new RegExp(`\\b(?:${Array.from(names).map((n) => n.replace(/[^a-z'’-]/g, "")).join("|")})(?:'s)?\\b`, "i") : null;
+  return { named: (text) => OWNER_ROLE_RE.test(text) || (!!nameRe && nameRe.test(text)) };
+}
+
+/** Deal matters a note about one person can be about, each in its usual words. */
+const DEAL_TOPICS: Array<[string, RegExp]> = [
+  ["rollover", /\broll(?:s|ed|ing)?\s+(?:over\s+)?(?:some|all|part|his|her|their|a|an|\d)|\brollover\b|\bretain(?:s|ed|ing)?\s+(?:an?\s+|some\s+|his\s+|her\s+|their\s+)?(?:equity|shares|stake)\b|\bequity stake with (?:the )?new\b/i],
+  ["non-compete", /\bnon-?compet\w*/i],
+  ["retention", /\b(?:retention|stay)[- ](?:bonus\w*|agreement|package)\b/i],
+  ["earn-out", /\bearn-?outs?\b/i],
+  // Seller financing, however it is said ("carry 15-20% seller financing", "will carry 15-20% financing but 'not half'").
+  ["seller financing", /\bvendor take-?back\b|\bvtb\b|\b(?:seller|vendor|owner) (?:financ\w*|note|paper)\b|\bcarry (?:some )?paper\b|\bcarry\b[^.;]{0,24}\b(?:financ\w*|paper|note)\b/i],
+  // A person's health ("cardiac event, stent placed"; "don't want it in any brochure regarding health episode").
+  ["health", /\b(?:cardiac|heart (?:attack|episode|event|condition)|stent|stroke|cancer|surgery|diagnos\w*|health (?:episode|event|issue|scare|problem|condition)s?)\b/i],
+  // When the owner wants to be done ("wants out by early 2026"; "target timing: done by end of Q1 2026").
+  // An earlier approach to buy the company ("approached by Jackpine in 2023 at ~3x"; "Competitor sniffed around a couple yrs ago with insulting number").
+  ["prior approach", /\bsniff(?:ed|ing)? around\b|\b(?:insulting|lowball|low-?ball) (?:number|offer|price|bid)\b|\bapproach(?:ed|es)?\b[^.;]{0,40}\b(?:offer\w*|to buy|purchase|acquir\w*|\d(?:\.\d+)?\s?x)\b|\bapproached by\b/i],
+  // (Not the bare word "timing": "timing and logistics only" is the broker's process.)
+  ["sale timing", /\bwants? out\b|\b(?:target|desired|preferred|ideal) (?:timing|timeline)\b|\b(?:wants?|hopes?|plans?|aims?) to (?:be )?(?:done|out|exit\w*)\b|\b(?:done|out|exit(?:ed)?) by (?:the )?(?:end of |early |mid-?|late )?(?:q[1-4]|20\d{2}|spring|summer|fall|autumn|winter|january|february|march|april|may|june|july|august|september|october|november|december)\b/i],
+  // The premises leased from (or owned by) the owner's holding company.
+  ["related-party lease", /\brelated[- ]party lease\b|\blease\b[^.;]{0,30}\b(?:holdco|holding compan(?:y|ies)|shareholder'?s? compan(?:y|ies))\b|\b(?:holdco|holding compan(?:y|ies))\b[^.;]{0,30}\blease\b|\b(?:building|property|premises|real estate|land)\b[^.;]{0,20}\bowned by\b[^.;]{0,30}\b(?:holdco|holding compan(?:y|ies)|shareholder'?s? compan(?:y|ies))\b/i],
+  // Someone playing a risk down ("waved off Larkspur consolidation risk";
+  // "dismissive of operational concerns raised by Luis") — one person's stance, noted twice.
+  ["risk played down", /\b(?:waved|brushed|shrugged|laughed)\s+off\b[^.;]{0,50}\b(?:risks?|concerns?|worr\w*)\b|\b(?:dismissive|dismiss(?:es|ed)?|minimi[sz](?:es|ed|ing)|downplay(?:s|ed|ing)?|played down|plays down)\b[^.;]{0,50}\b(?:risks?|concerns?)\b/i],
+];
+/** Topics about the company itself, not one person: two notes on one need no name in common. */
+const COMPANY_TOPICS: ReadonlySet<string> = new Set(["related-party lease", "prior approach"]);
+
+function dealTopics(texts: string[]): Set<string> {
+  const out = new Set<string>();
+  for (const t of texts) for (const [topic, re] of DEAL_TOPICS) if (re.test(t)) out.add(topic);
+  return out;
 }
 
 /** At most this many notes fold into one. */
@@ -962,12 +1045,22 @@ export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info:
   let facts = factEntries(next);
   // Figures on record: the facts and every other value a source gave for them.
   const onRecord: number[] = facts.flatMap((f) => f.numbers);
-  for (const list of Object.values(getFieldAlternates(next))) for (const a of list) onRecord.push(...numberValues(String(a?.value ?? "")));
+  // Per fact: its own figures and every other source's (the value and its alternates).
+  const perFact = new Map<string, number[]>(facts.map((f) => [f.key, [...f.numbers]]));
+  for (const [key, list] of Object.entries(getFieldAlternates(next))) {
+    for (const a of list) {
+      const nums = numberValues(String(a?.value ?? ""));
+      onRecord.push(...nums);
+      perFact.set(key, [...(perFact.get(key) ?? []), ...nums]);
+    }
+  }
+  const near = (p: number, n: number) => Math.abs(p - n) <= Math.max(Math.abs(p), Math.abs(n)) * 0.06;
   const ctx = {
     docNames: Array.from(docs.values()).map((d) => d.name),
-    figureOnRecord: (n: number) => onRecord.some((p) => Math.abs(p - n) <= Math.max(Math.abs(p), Math.abs(n)) * 0.06),
+    figureOnRecord: (n: number) => onRecord.some((p) => near(p, n)),
     figuresOf: (t: string) => numberValues(t).filter((n) => !(Number.isInteger(n) && n >= 1900 && n <= 2100)),
     substantive: (t: string) => SUBSTANCE_RE.test(t),
+    oneFactHolds: (a: number, b: number) => Array.from(perFact.values()).some((ns) => ns.some((p) => near(p, a)) && ns.some((p) => near(p, b))),
   };
   const kept: BrokerPrivateNote[] = [];
   for (const n of notes) {
@@ -1017,6 +1110,7 @@ export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info:
   }
   // 4: notes about one matter fold together.
   const textsOf = kept.map(noteTexts);
+  const owner = ownerRefFor(next);
   const nameCount = new Map<string, number>();
   for (const ts of textsOf) {
     for (const nm of Array.from(new Set(ts.flatMap((t) => Array.from(properNames(t, common)))))) nameCount.set(nm, (nameCount.get(nm) ?? 0) + 1);
@@ -1031,7 +1125,7 @@ export function finalizeNotes(info: Info, docs: Map<string, ReviewDoc>): { info:
       const a = find(i);
       const b = find(j);
       if (a === b || (size.get(a) ?? 1) + (size.get(b) ?? 1) > MAX_FOLD) continue;
-      if (!sameMatter(textsOf[i], textsOf[j], rare, common)) continue;
+      if (!sameMatter(textsOf[i], textsOf[j], rare, common, owner)) continue;
       groupOf[b] = a;
       size.set(a, (size.get(a) ?? 1) + (size.get(b) ?? 1));
     }
@@ -1380,26 +1474,49 @@ export interface ReviewResult {
 }
 
 const running = new Map<string, Promise<ReviewResult>>();
-const rerun = new Set<string>();
+/** A run requested while one was running: which sources' new wordings it is for ("all" = the whole deal). */
+const rerun = new Map<string, Set<string> | "all">();
+
+/** What a review run looks at: every new wording on the deal, or only those a few re-read sources gave. */
+export interface ReviewScope {
+  /**
+   * Only these sources were re-read (a single-source "Read it again"): only
+   * the new wordings they gave go to the model, and the whole-deal fold is
+   * left to the next full review — a one-document re-read used to send the
+   * whole deal's notes through three model passes.
+   */
+  onlyDocumentIds?: string[];
+}
+
+/** Pure: the new wordings a run asks the model about. */
+export function wordingsInScope(pending: NoteItem[], scope: ReviewScope = {}): NoteItem[] {
+  const ids = scope.onlyDocumentIds && scope.onlyDocumentIds.length > 0 ? new Set(scope.onlyDocumentIds) : null;
+  return ids ? pending.filter((it) => it.sources.some((s) => !!s.documentId && ids.has(s.documentId))) : pending;
+}
 
 /**
  * Reviews the deal's private notes: known wordings get their recorded
  * decision, new ones go to the model (outside the facts lock), then the
  * notes are rebuilt under the lock from the notes as they are by then.
- * One run per deal at a time; a request during a run runs once more after it.
+ * One run per deal at a time; a request during a run runs once more after
+ * it, for everything that was asked meanwhile.
  */
-export function reviewPrivateNotes(dealId: string): Promise<ReviewResult> {
+export function reviewPrivateNotes(dealId: string, scope: ReviewScope = {}): Promise<ReviewResult> {
+  const want: Set<string> | "all" = scope.onlyDocumentIds && scope.onlyDocumentIds.length > 0 ? new Set(scope.onlyDocumentIds) : "all";
   const inflight = running.get(dealId);
   if (inflight) {
-    rerun.add(dealId);
+    const had = rerun.get(dealId);
+    rerun.set(dealId, had === "all" || want === "all" ? "all" : new Set([...Array.from(had ?? []), ...Array.from(want)]));
     return inflight;
   }
   const task = (async () => {
     let result: ReviewResult = { before: 0, after: 0, askedModel: false, pending: 0 };
-    do {
+    let next: Set<string> | "all" | undefined = want;
+    while (next !== undefined) {
       rerun.delete(dealId);
-      result = await reviewOnce(dealId);
-    } while (rerun.has(dealId));
+      result = await reviewOnce(dealId, next === "all" ? {} : { onlyDocumentIds: Array.from(next) });
+      next = rerun.get(dealId);
+    }
     return result;
   })().finally(() => running.delete(dealId));
   running.set(dealId, task);
@@ -1441,7 +1558,7 @@ async function placeBatch(
   return settleRejects(placed.review, placed.rejects, repaired, common);
 }
 
-async function reviewOnce(dealId: string): Promise<ReviewResult> {
+async function reviewOnce(dealId: string, scope: ReviewScope = {}): Promise<ReviewResult> {
   const deal = await storage.getDeal(dealId);
   if (!deal) return { before: 0, after: 0, askedModel: false, pending: 0 };
   const docs = new Map((await storage.getDocumentsByDeal(dealId)).map((d) => [d.id, d as ReviewDoc]));
@@ -1459,8 +1576,9 @@ async function reviewOnce(dealId: string): Promise<ReviewResult> {
     .join("\n");
   const allItems = collectNoteItems(info, docs);
   const common = commonWordsOf(allItems.map((i) => i.text));
-  for (let i = 0; i < first.pending.length && !modelFailed; i += BATCH) {
-    const batch = first.pending.slice(i, i + BATCH);
+  const asked = wordingsInScope(first.pending, scope);
+  for (let i = 0; i < asked.length && !modelFailed; i += BATCH) {
+    const batch = asked.slice(i, i + BATCH);
     try {
       review = await placeBatch(dealId, review, batch, currentGroups(allItems, review), facts(), docs, common);
       askedModel = true;
@@ -1472,7 +1590,9 @@ async function reviewOnce(dealId: string): Promise<ReviewResult> {
   }
   // Still many notes: fold the ones about one matter — asked once per set of
   // notes (at most twice in a row, while a fold still brings the count down).
-  for (let round = 0; round < 2 && !modelFailed; round++) {
+  // (Not in a run about a few re-read sources: the fold is the whole deal's, for the next full review.)
+  const scoped = !!scope.onlyDocumentIds && scope.onlyDocumentIds.length > 0;
+  for (let round = 0; round < 2 && !modelFailed && !scoped; round++) {
     first = applyNotesReview(info, review, docs);
     const groups = currentGroups(allItems, review);
     const count = getPrivateNotes(first.info).length;

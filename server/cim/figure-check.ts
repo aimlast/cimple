@@ -220,6 +220,8 @@ function cellsOf(section: SectionLike): Cell[] {
         if (it?.secondaryValue !== undefined) cells.push({ where: `"${str(it?.name)}" (second value)`, text: str(it.secondaryValue), allowPlain: true });
       });
       if (d.centerValue) cells.push({ where: "centre figure", text: str(d.centerValue), allowPlain: false });
+      // The whole the renderer prints under totalLabel and takes shares of.
+      if (d.total !== undefined && d.total !== null && str(d.total).trim()) cells.push({ where: "total", text: str(d.total), allowPlain: true });
       break;
     case "line_chart": {
       const keys = asArr(d.series).map((s) => str(s?.key)).filter(Boolean);
@@ -670,6 +672,192 @@ export function checkSectionFigures(section: SectionLike, known: KnownFigures): 
     ...consistencyProblems(section, known.consistency),
   ];
   return Array.from(new Set(issues));
+}
+
+// ── Repair: take out what has no source ──────────────────────────────────
+
+/** An issue saying a figure has no source ("no source for …"). */
+export function isUntracedIssue(issue: string): boolean {
+  return /^no source for /.test(issue);
+}
+
+/**
+ * The figures named in "no source for …" issues, as written in the section:
+ * prose issues quote the figure ('no source for "$1,633,000" (Original
+ * cost …)'), table and chart issues end with it ('no source for row
+ * "Operating expenses", FY2024: $26,480,000').
+ */
+export function untracedFigureTexts(issues: string[]): string[] {
+  const out = new Set<string>();
+  for (const issue of issues) {
+    if (!isUntracedIssue(issue)) continue;
+    const prose = /^no source for "(.+?)" \(/.exec(issue);
+    if (prose && /\d/.test(prose[1])) {
+      out.add(prose[1]);
+      continue;
+    }
+    const cell = /^no source for .+: (.+)$/.exec(issue);
+    if (cell && /\d/.test(cell[1])) out.add(cell[1].trim());
+  }
+  return Array.from(out);
+}
+
+/** Does `text` contain the figure as written (not as part of a longer number)? */
+function hasFigureText(text: string, fig: string): boolean {
+  if (!fig) return false;
+  let at = text.indexOf(fig);
+  while (at >= 0) {
+    const before = at > 0 ? text[at - 1] : "";
+    const after = text.slice(at + fig.length, at + fig.length + 2);
+    if (!/\d/.test(before) && !/^(?:\d|[.,]\d)/.test(after)) return true;
+    at = text.indexOf(fig, at + 1);
+  }
+  return false;
+}
+
+/** Sentences (and "; " clauses of a one-sentence value) that don't state any of `figs`. */
+function withoutFigureSentences(text: string, figs: string[], removed: string[]): string {
+  if (!figs.some((f) => hasFigureText(text, f))) return text;
+  return text
+    .split(/\n{2,}/)
+    .map((para) =>
+      para
+        .split(/(?<=[.!?])\s+(?=[A-Z0-9"“(])/)
+        .filter((s) => {
+          if (!figs.some((f) => hasFigureText(s, f))) return true;
+          removed.push(s.trim());
+          return false;
+        })
+        .join(" "),
+    )
+    .filter((p) => p.trim())
+    .join("\n\n");
+}
+
+/** List entries whose own figure is the untraced one are dropped whole (a chart bar, a key number). */
+const VALUE_FIELDS = ["value", "secondaryValue"];
+const DROPPABLE_LISTS: ReadonlySet<string> = new Set(["data", "metrics", "secondaryStats", "stats"]);
+
+/**
+ * A section with every figure that has no source taken out: the sentence
+ * that states it (prose, card descriptions, notes), the cell that holds it
+ * (a table keeps its columns — the cell reads "—"), the chart bar or key
+ * number whose value it is. A bridge keeps its steps (dropping one breaks
+ * it) — the caller holds such a section back instead. Null when nothing
+ * was taken out.
+ *
+ * Why: the figure check rewrote a flagged section once and then served it
+ * whatever the rewrite said — Ridgeline's "Original cost $1,633,000, net
+ * book value $806,000 per financial statements" (no source has either
+ * figure) went live in the buyer CIM beside its own warning (2026-09-26).
+ */
+export function withoutUntracedFigures<T extends SectionLike>(
+  section: T,
+  issues: string[],
+): { section: T; removed: string[] } | null {
+  const figs = untracedFigureTexts(issues);
+  if (figs.length === 0) return null;
+  const removed: string[] = [];
+  const cellHas = (v: unknown) => (typeof v === "string" || typeof v === "number") && figs.some((f) => hasFigureText(String(v), f));
+  const walk = (v: unknown, key?: string): unknown => {
+    if (typeof v === "string") return withoutFigureSentences(v, figs, removed);
+    if (Array.isArray(v)) {
+      if (key === "items" && section.layoutType === "waterfall_chart") return v;
+      if (key === "values" || key === "headers" || key === "cells") {
+        return v.map((x) => {
+          if (!cellHas(x)) return x;
+          removed.push(String(x));
+          return "";
+        });
+      }
+      const out: unknown[] = [];
+      for (const x of v) {
+        if (x && typeof x === "object" && !Array.isArray(x) && DROPPABLE_LISTS.has(key ?? "")) {
+          const hit = VALUE_FIELDS.concat("primaryValue").find((k) => cellHas((x as Record<string, unknown>)[k]));
+          if (hit) {
+            const o = x as Record<string, unknown>;
+            removed.push(`${String(o.name ?? o.label ?? "")}: ${String(o[hit])}`.replace(/^: /, ""));
+            continue;
+          }
+        }
+        const w = walk(x);
+        // A table row whose every figure was taken out goes (a row of dashes says nothing).
+        const had = (o: unknown) => (o && typeof o === "object" && Array.isArray((o as Record<string, unknown>).values) ? ((o as Record<string, unknown>).values as unknown[]) : null);
+        const before = had(x), after = had(w);
+        if (before && after && before.some((c) => String(c ?? "").trim()) && after.every((c) => !String(c ?? "").trim())) continue;
+        out.push(w);
+      }
+      return out;
+    }
+    if (typeof v === "number") return v;
+    if (v && typeof v === "object") {
+      const out: Record<string, unknown> = {};
+      for (const [k, x] of Object.entries(v as Record<string, unknown>)) out[k] = walk(x, k);
+      return out;
+    }
+    return v;
+  };
+  const layoutData = walk(section.layoutData ?? {});
+  const draft = typeof section.aiDraftContent === "string" ? withoutFigureSentences(section.aiDraftContent, figs, removed) : section.aiDraftContent;
+  if (removed.length === 0) return null;
+  return { section: { ...section, layoutData, aiDraftContent: draft }, removed: Array.from(new Set(removed.filter(Boolean))) };
+}
+
+// ── After a broker's edit ────────────────────────────────────────────────
+
+/** Checks that need no knowledge base: tables that don't add up, bridges that don't reach their totals. */
+export function structuralFigureProblems(section: SectionLike): string[] {
+  if (section.layoutType === "financial_table") return reconcileTable(section);
+  if (section.layoutType === "waterfall_chart") return reconcileWaterfall(section);
+  return [];
+}
+
+/** Everything a section shows, as one text (for "is the flagged figure still there?"). */
+function sectionText(section: SectionLike & { brokerEditedContent?: unknown }): string {
+  return [
+    section.sectionTitle,
+    JSON.stringify(section.layoutData ?? {}),
+    typeof section.aiDraftContent === "string" ? section.aiDraftContent : "",
+    typeof section.brokerEditedContent === "string" ? section.brokerEditedContent : "",
+  ].join("\n");
+}
+
+/** The figures and quoted words an issue is about ("$26,480,000", "4.2×", "Maria Chen"). */
+function issueTokens(issue: string): string[] {
+  const head = issue.replace(/\s\((?:[^()]|\([^()]*\))*\)\s*$/, ""); // not the quoted context
+  const figures = parseFigures(head).filter((f) => f.kind !== "plain" || f.text.includes(",")).map((f) => f.text);
+  const tail = /: ([^:]+)$/.exec(head)?.[1]?.trim();
+  // A figure issue is about its figure (not the row it sits in: a corrected
+  // "Operating expenses" cell keeps its label); others about their quoted words.
+  if (figures.length > 0) return Array.from(new Set([...figures, ...(tail && /\d/.test(tail) ? [tail] : [])]));
+  return Array.from(head.matchAll(/"([^"]{2,80})"/g)).map((m) => m[1]);
+}
+
+/**
+ * A section's figure warnings after the broker changed its content — the
+ * check is not re-run against the knowledge base here, so:
+ *   - a warning whose figure (or quoted words) the section still shows is
+ *     kept — fixing a caption typo no longer wipes the flag on an untraced
+ *     $26,480,000 two rows down;
+ *   - a warning whose figure is gone is dropped (the broker corrected it);
+ *   - "doesn't add up" checks are re-run on the new content (they need no
+ *     knowledge base), so a bridge row the broker deleted is flagged.
+ * Null = no warnings.
+ */
+export function carryFigureWarnings(
+  before: SectionLike,
+  warnings: string[] | null | undefined,
+  after: SectionLike & { brokerEditedContent?: unknown },
+): string[] | null {
+  const oldStructural = new Set(structuralFigureProblems(before));
+  const text = sectionText(after);
+  const kept = (warnings ?? []).filter((w) => {
+    if (oldStructural.has(w)) return false;
+    const tokens = issueTokens(w);
+    return tokens.length === 0 || tokens.some((t) => hasFigureText(text, t));
+  });
+  const out = Array.from(new Set([...kept, ...structuralFigureProblems(after)]));
+  return out.length > 0 ? out : null;
 }
 
 /** One broker-facing warning line per flagged section. */

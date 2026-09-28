@@ -14,6 +14,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ToastAction } from "@/components/ui/toast";
 import { invalidateCimCaches } from "@/hooks/useCimGeneration";
 import type { CimGenerationStatus } from "@shared/schema";
+import { generationSummary } from "@shared/cim-generation-warnings";
 
 interface BrokerJob extends CimGenerationStatus {
   dealId: string;
@@ -52,19 +53,21 @@ export function CimGenerationWatcher() {
 
       invalidateCimCaches(job.dealId);
       const open = (
-        <ToastAction altText="Open deal" onClick={() => setLocation(`/deal/${job.dealId}/overview`)}>
+        <ToastAction altText="Open deal" onClick={() => setLocation(`/deal/${job.dealId}/${job.status === "done" ? "cim" : "overview"}`)}>
           Open
         </ToastAction>
       );
       if (job.status === "done") {
         const n = job.sectionCount ?? job.done;
-        const warn = job.warnings.length;
+        // Placeholders are counted apart from the other notes (every warning
+        // used to be called "fell back to a placeholder").
+        const summary = generationSummary(n, job.warnings);
         toast({
           title: `CIM ready — ${job.businessName}`,
-          description: warn > 0
-            ? `${n} sections generated, ${warn} fell back to a placeholder — review them.`
-            : `${n} sections designed. Review and edit them on the deal.`,
-          variant: warn > 0 ? "destructive" : undefined,
+          description: job.buyerHold
+            ? `${summary.text} Buyers don't see it until you publish it again.`
+            : summary.text,
+          variant: summary.attention ? "destructive" : undefined,
           duration: 12000,
           action: open,
         });

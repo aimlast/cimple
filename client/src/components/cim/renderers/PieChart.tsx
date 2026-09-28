@@ -21,7 +21,7 @@ import type { CimBranding } from "../CimBrandingContext";
 import type { CimSection } from "@shared/schema";
 import { ProseFallback } from "../richText";
 import { formatFullValue, useElementWidth } from "./chartFormat";
-import { parseChartNumber, unitScale } from "@shared/cim-chart-values";
+import { chartShares, isPercentUnit, parseChartNumber, unitScale } from "@shared/cim-chart-values";
 import { BlockTitle } from "./BlockTitle";
 
 /** Below this width the legend goes under the chart (200px chart + a readable legend). */
@@ -36,6 +36,8 @@ interface PieDataPoint {
 interface PieChartLayoutData {
   data?: PieDataPoint[];
   totalLabel?: string;
+  /** The whole the slices make up, as the knowledge base states it — the only total ever printed. */
+  total?: number | string;
   unit?: string;
   title?: string;
   centerLabel?: string;
@@ -118,7 +120,23 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
     color: palette[i % palette.length],
   }));
 
-  const total = normalized.reduce((sum, d) => sum + d.value, 0);
+  // Shares and the total are printed only against a whole the chart states
+  // (shared/cim-chart-values.ts chartShares) — never the sum of the slices.
+  const { shares, total, asBars } = chartShares(normalized.map((d) => d.value), data.unit, data.total);
+  if (asBars) {
+    return (
+      <div>
+        <BlockTitle title={data.title} intro={(data as { intro?: unknown }).intro} />
+        {data.totalLabel && total !== null && (
+          <div className="mb-3 pb-2 border-b border-border">
+            <p className="text-xs text-muted-foreground">{data.totalLabel}</p>
+            <p className="text-sm font-semibold tabular-nums">{formatFullValue(total, data.unit)}</p>
+          </div>
+        )}
+        <PercentBars items={normalized} unit={data.unit} shares={shares} />
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -156,7 +174,13 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
           {isDonut && (data.centerLabel || data.centerValue) && (
             <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none">
               {data.centerValue && (
-                <span className="text-xl font-semibold text-foreground leading-tight">
+                <span
+                  className={cn(
+                    "font-semibold text-foreground leading-tight tabular-nums",
+                    // The hole is ~110px: "$31,020,000" at text-xl ran over the ring.
+                    String(data.centerValue).length > 9 ? "text-sm" : String(data.centerValue).length > 6 ? "text-base" : "text-xl",
+                  )}
+                >
                   {data.centerValue}
                 </span>
               )}
@@ -171,14 +195,14 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
 
         {/* Legend */}
         <div className={cn("flex flex-col gap-2 min-w-0", boxWidth > 0 && boxWidth < SIDE_BY_SIDE_MIN ? "w-full" : "flex-1")}>
-          {data.totalLabel && total > 0 && (
+          {data.totalLabel && total !== null && (
             <div className="mb-2 pb-2 border-b border-border">
               <p className="text-xs text-muted-foreground">{data.totalLabel}</p>
               <p className="text-sm font-semibold tabular-nums">{formatFullValue(total, data.unit)}</p>
             </div>
           )}
           {normalized.map((entry, i) => {
-            const pct = total > 0 ? ((entry.value / total) * 100).toFixed(1) : "0";
+            const pct = shares ? shares[i].toFixed(1) : null;
             const isHighlighted = activeIndex === i;
             return (
               <div
@@ -196,13 +220,46 @@ export function PieChartRenderer({ layoutData, content, branding, section }: Ren
                   <span className="text-xs font-semibold tabular-nums text-foreground whitespace-nowrap">
                     {formatFullValue(entry.value, data.unit)}
                   </span>
-                  <span className="text-2xs text-muted-foreground whitespace-nowrap">({pct}%)</span>
+                  {pct !== null && <span className="text-2xs text-muted-foreground whitespace-nowrap">({pct}%)</span>}
                 </div>
               </div>
             );
           })}
         </div>
       </div>
+    </div>
+  );
+}
+
+/**
+ * Values that aren't all the parts of one whole, each drawn as its own bar
+ * on a 0–100% scale: percentages (a top customer's 22% and the top five's
+ * 47%) at their own value, and amounts that fall short of the stated total
+ * at their share of it — a pie would have drawn either as the full circle.
+ * Amounts that exceed the stated total have no share: their bars are scaled
+ * to the largest.
+ */
+function PercentBars({ items, unit, shares }: { items: Array<{ name: string; value: number }>; unit?: string; shares?: number[] | null }) {
+  const theme = useCimTheme();
+  const max = Math.max(...items.map((x) => Math.abs(x.value)), 0);
+  const width = (i: number, v: number) =>
+    shares ? shares[i] : isPercentUnit(unit) ? v : max > 0 ? (Math.abs(v) / max) * 100 : 0;
+  return (
+    <div className="flex flex-col gap-3" data-testid="percent-bars">
+      {items.map((entry, i) => (
+        <div key={i} className="min-w-0">
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-xs text-foreground/80 min-w-0 break-words">{entry.name}</span>
+            <span className="flex items-baseline gap-1.5 whitespace-nowrap">
+              <span className="text-xs font-semibold tabular-nums text-foreground">{formatFullValue(entry.value, unit)}</span>
+              {shares && <span className="text-2xs text-muted-foreground">({shares[i].toFixed(1)}%)</span>}
+            </span>
+          </div>
+          <div className="mt-1 h-2 rounded-sm" style={{ backgroundColor: theme.stripe }}>
+            <div className="h-2 rounded-sm" style={{ width: `${Math.max(0, Math.min(100, width(i, entry.value)))}%`, backgroundColor: theme.chart[0] }} />
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

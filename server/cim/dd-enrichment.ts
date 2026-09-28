@@ -34,7 +34,9 @@ import { db } from "../db";
 import { storage } from "../storage";
 import { agentConfig } from "../interview/config/load-config";
 import { splitFactsForCim, factValueText } from "../information/cim-facts";
-import { buildCimFinancials, pickAnalysisForCim, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
+import { cimFinancialsFor, renderCimFinancialsBlock, type CimFinancials } from "./cim-financials";
+import { isBridgeAddback } from "../financial/addback-seed";
+import { isDistributionLine } from "../financial/normalization-rules";
 import { isKnownFigure, knownFiguresFrom, normalizeForLookup, parseFigures, type Figure } from "./figure-check";
 import { keepOutFromNotes, screenFactsForCim, type KeepOut } from "./sensitive-facts";
 import { keepOutFor } from "./keep-out";
@@ -152,7 +154,13 @@ export function buildDdContext(input: {
 
   if (input.addbackVerification) {
     const av = input.addbackVerification;
-    const addbacks = (av.addbacks as any[]) || [];
+    // Only lines the CIM's analysis adds back: a dividend, a rejected line
+    // or a clawback the rules took out is never presented as an add-back.
+    const bridge = financials?.bridge;
+    const bridgeLabels = bridge ? [...bridge.addbacks, ...bridge.sdeOnly].map((a) => a.label) : null;
+    const addbacks = ((av.addbacks as any[]) || []).filter((ab: any) =>
+      ab && typeof ab.label === "string" && (bridgeLabels ? isBridgeAddback(ab.label, bridgeLabels) : !isDistributionLine({ label: ab.label, amounts: ab.yearAmounts ?? {} })),
+    );
     if (addbacks.length > 0) {
       parts.push(`## Add-back verification\nStatus: ${av.status}\n${addbacks.map((ab: any) =>
         `- ${ab.label}: ${ab.verificationStatus} (${ab.matchedTransactions?.length || 0} supporting transactions)`
@@ -193,7 +201,7 @@ export async function loadDdInputs(deal: Pick<Deal, "id" | "extractedInfo">): Pr
   const extractedInfo = stampSourceDetails(settled.facts, docs);
   return buildDdContext({
     extractedInfo,
-    financials: buildCimFinancials(pickAnalysisForCim(analyses), analyses),
+    financials: cimFinancialsFor(analyses, docs),
     addbackVerification,
     documents: docs.map((d) => ({ name: d.name, category: d.category || "other", visibility: (d as { visibility?: string | null }).visibility ?? null })),
     resolved: currentResolvedNotes(settled.notes),

@@ -18,7 +18,7 @@
  *    (status "ask_seller"), which raises it naturally with the seller. A side
  *    from the broker's private notes is never shown to the seller.
  */
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery, useMutation } from "@tanstack/react-query";
 import { PanelError } from "@/components/deal/PanelError";
 import { Button } from "@/components/ui/button";
@@ -70,13 +70,13 @@ type DiscrepancyRow = Discrepancy & {
 
 interface StaleFact { key: string; label: string; value: string; outdated: string[] }
 interface Proposal extends StaleFact { proposed: string; method: "ai" | "swap" | "manual" }
-interface FactOption { key: string; label: string; value: string }
+interface FactOption { key: string; label: string; value: string; /** A list of values by year: its years, newest first. */ years?: string[] }
 
 type ResolveResponse = Discrepancy & {
   factWrite:
     | { status: "written"; key: string }
     | { status: "narrative"; key: string }
-    | { status: "needs_mapping" }
+    | { status: "needs_mapping"; needsYear?: true }
     | { status: "not_linked" }
     | null;
   staleFacts: StaleFact[];
@@ -560,7 +560,9 @@ function LinkFactDialog({
 }) {
   const { toast } = useToast();
   const [search, setSearch] = useState("");
-  const { data, isLoading } = useQuery<{ suggestions: FactOption[]; all: FactOption[] }>({
+  // A fact that is a list of values by year: which year the figure is for.
+  const [pickYearFor, setPickYearFor] = useState<FactOption | null>(null);
+  const { data, isLoading } = useQuery<{ suggestions: FactOption[]; all: FactOption[]; suggestedYear?: string | null }>({
     queryKey: ["/api/discrepancies", disc?.id, "fact-targets"],
     enabled: !!disc,
     queryFn: async () => {
@@ -570,13 +572,20 @@ function LinkFactDialog({
     },
   });
   const link = useMutation({
-    mutationFn: async (choice: { factKey: string } | { newFactLabel: string }) => {
+    mutationFn: async (choice: { factKey: string; factYear?: string } | { newFactLabel: string }) => {
       const r = await apiRequest("PATCH", `/api/discrepancies/${disc!.id}`, choice);
       return (await r.json()) as ResolveResponse;
     },
-    onSuccess: (res) => {
+    onSuccess: (res, choice) => {
       invalidateFacts(dealId);
       const status = res.factWrite?.status;
+      if (status === "needs_mapping" && res.factWrite && "needsYear" in res.factWrite && res.factWrite.needsYear) {
+        // Picked a list of values by year without a year — ask for it; nothing was written.
+        const picked = "factKey" in choice ? (data?.all ?? []).find((o) => o.key === choice.factKey) : undefined;
+        if (picked) setPickYearFor(picked);
+        toast({ title: "Which year?", description: "That fact holds a figure for each year. Pick the year this value is for." });
+        return;
+      }
       toast({
         title: status === "written" ? "Fact updated" : status === "narrative" ? "Resolved — review the wording" : "Kept as a note",
         description:
@@ -585,6 +594,7 @@ function LinkFactDialog({
           : "The resolution stays on record without changing a fact.",
       });
       setSearch("");
+      setPickYearFor(null);
       onLinked(res);
     },
     onError: (e: unknown) => toast({ title: "Couldn't update the fact", description: apiErrorMessage(e, "Failed to link the fact"), variant: "destructive" }),
@@ -594,12 +604,23 @@ function LinkFactDialog({
     if (!q) return [];
     return (data?.all ?? []).filter((o) => o.label.toLowerCase().includes(q) || o.key.toLowerCase().includes(q) || o.value.toLowerCase().includes(q)).slice(0, 30);
   }, [search, data]);
+  // The row already names a list of values by year (only the year is missing): ask for the year straight away.
+  useEffect(() => {
+    if (!data || !disc?.factKey) return;
+    const own = data.all.find((o) => o.key === disc.factKey && (o.years?.length ?? 0) > 0);
+    if (own) setPickYearFor(own);
+  }, [data, disc?.id, disc?.factKey]);
+  // A list of values by year never takes one figure as a whole: the year is picked first.
+  const choose = (o: FactOption) => (o.years && o.years.length > 0 ? setPickYearFor(o) : link.mutate({ factKey: o.key }));
+  const yearChoices = pickYearFor
+    ? Array.from(new Set([...(data?.suggestedYear ? [data.suggestedYear] : []), ...(pickYearFor.years ?? [])]))
+    : [];
   const option = (o: FactOption) => (
     <button
       key={o.key}
       type="button"
       className="block w-full min-w-0 overflow-hidden text-left rounded border border-border/50 px-3 py-2 hover:bg-muted/40 disabled:opacity-50"
-      onClick={() => link.mutate({ factKey: o.key })}
+      onClick={() => choose(o)}
       disabled={link.isPending}
     >
       <p className="text-xs font-medium">{o.label}</p>
@@ -607,7 +628,7 @@ function LinkFactDialog({
     </button>
   );
   return (
-    <Dialog open={!!disc} onOpenChange={(open) => { if (!open) { setSearch(""); onClose(); } }}>
+    <Dialog open={!!disc} onOpenChange={(open) => { if (!open) { setSearch(""); setPickYearFor(null); onClose(); } }}>
       <DialogContent className="max-w-lg max-h-[85vh] overflow-y-auto grid-cols-1 [&>*]:min-w-0">
         <DialogHeader>
           <DialogTitle>Which fact should this update?</DialogTitle>
@@ -617,6 +638,30 @@ function LinkFactDialog({
         </DialogHeader>
         {isLoading ? (
           <div className="flex justify-center py-6"><Loader2 className="h-4 w-4 animate-spin text-muted-foreground" /></div>
+        ) : pickYearFor ? (
+          <div className="min-w-0 space-y-3" data-testid="fact-year-picker">
+            <p className="text-xs">
+              <span className="font-medium">{pickYearFor.label}</span> holds a figure for each year. Which year is{" "}
+              <span className="text-foreground">{disc?.resolvedValue}</span> for?
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {yearChoices.map((y) => (
+                <Button
+                  key={y}
+                  size="sm"
+                  variant={y === data?.suggestedYear ? "default" : "outline"}
+                  className="h-7 text-xs"
+                  disabled={link.isPending}
+                  onClick={() => link.mutate({ factKey: pickYearFor.key, factYear: y })}
+                >
+                  {y}{pickYearFor.years?.includes(y) ? "" : " (new year)"}
+                </Button>
+              ))}
+            </div>
+            <Button variant="ghost" size="sm" className="h-7 text-xs px-2" onClick={() => setPickYearFor(null)} disabled={link.isPending}>
+              ← Choose another fact
+            </Button>
+          </div>
         ) : (
           <div className="min-w-0 space-y-3">
             {(data?.suggestions.length ?? 0) > 0 && (

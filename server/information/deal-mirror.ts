@@ -39,6 +39,8 @@ import {
   parseAlternateValue,
   sourceRank,
   typedNumericValues,
+  isBrokerFinalSource,
+  isBrokerSessionSource,
   type FieldSource,
 } from "../interview/info-merger";
 
@@ -105,7 +107,14 @@ export function sameValue(a: string | null, b: string | null): boolean {
   return x !== null && y !== null && Math.abs(x - y) < 0.5;
 }
 
-const isBrokerFact = (info: Info, key: string) => getFieldSources(info)[key]?.source === "broker";
+/**
+ * The broker's deliberate value (an edit, a resolution, the deal row) — not
+ * the notes they typed in their own AI interview session: those rank with
+ * the questionnaire (info-merger.ts isBrokerSessionSource) and are never
+ * the listed price or copied onto the deal row. "Seller wants $5M" or "I'd
+ * list at $4.2M" typed in that session used to become the price buyers saw.
+ */
+const isBrokerFact = (info: Info, key: string) => isBrokerFinalSource(getFieldSources(info)[key]);
 
 /**
  * Brings the two copies into line before a change is applied. Mutates `info`
@@ -201,9 +210,22 @@ export function isDealRowFact(info: Info, key: string): boolean {
 }
 
 /**
- * The deal's facts as the seller interview reads them. The broker's listed
- * asking price from the deal row is the broker's pricing decision, not
- * something the seller has said: before the two copies were kept as one
+ * True when the interview never sees this fact's value: the broker's price
+ * from the deal row, or a price they typed in their own AI interview session
+ * ("seller wants $5M", "I'd list at $4.2M" — their pricing view or a relayed
+ * expectation, never something to quote to the seller). A price the broker
+ * typed on the Information tab reaches the interview as before.
+ */
+export function isInterviewHiddenFact(info: Info, key: string): boolean {
+  if (!(INTERVIEW_HIDDEN_COLUMNS as readonly string[]).includes(key)) return false;
+  return isDealRowFact(info, key) || isBrokerSessionSource(getFieldSources(info)[key]);
+}
+
+/**
+ * The deal's facts as the seller interview reads them. The broker's asking
+ * price (the deal row, or their own session notes — see
+ * isInterviewHiddenFact) is the broker's pricing decision, not something the
+ * seller has said: before the two copies were kept as one
  * value it never reached the interview, and it still doesn't — the agent
  * keeps asking for (and recording) the seller's OWN expectation and never
  * quotes the broker's price to the seller. In its place the interview sees
@@ -216,7 +238,7 @@ export function isDealRowFact(info: Info, key: string): boolean {
 export function interviewFactView<T extends Info>(info: T): T {
   let out: Info = info;
   for (const key of INTERVIEW_HIDDEN_COLUMNS) {
-    if (!isDealRowFact(info, key)) continue;
+    if (!isInterviewHiddenFact(info, key)) continue;
     if (out === info) out = { ...info };
     const best = (getFieldAlternates(info)[key] ?? [])
       .filter((a) => a && typeof a.value === "string" && a.value.trim() !== "" && a.source !== "broker")

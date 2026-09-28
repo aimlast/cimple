@@ -26,7 +26,7 @@
 import fs from "fs";
 import { storage } from "../storage";
 import { extractTextFromFile } from "./parser";
-import { classifyExtractionFailure, extractDocumentData, extractionChecklist, mergeExtractedData, normaliseExtraction, type ExtractedDocumentData } from "./extractor";
+import { classifyExtractionFailure, extractDocumentData, extractionChecklist, extractionRetryDelays, extractWithRetries, mergeExtractedData, normaliseExtraction, _setExtractionRetryDelaysForTests, type ExtractedDocumentData } from "./extractor";
 import type { DocumentSourceMeta } from "@shared/schema";
 import { groundedInSource, groundedValue, guardExtraction, restates, SPOKEN_KINDS } from "./extraction-guard";
 import { recordFactSpeakers } from "../interview/fact-guards";
@@ -61,7 +61,7 @@ import {
   type SourceRowLookup,
 } from "../interview/info-merger";
 import { resolveDocumentPath } from "./document-path";
-import { documentKind, mergeableExtraction, mergeSourceFor, refreshSourceNotes, rememberPeriodEnd } from "./ingest";
+import { documentKind, mergeableExtraction, mergeSourceFor, NO_COPY_REASON, parseProblem, refreshSourceNotes, sourceMetaAfterRead } from "./ingest";
 import { compactPrivateNotes } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
 import {
@@ -89,6 +89,7 @@ import {
 } from "./merge-policy";
 import { fieldLabel as fieldLabelText } from "../interview/interview-plan";
 import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts";
+import { removeSourceFromFacts } from "./source-removal";
 import { reviewPrivateNotes } from "./private-notes-review";
 import { reconcileMirroredFacts } from "../information/deal-mirror";
 import { setBrokerFact } from "../information/facts";
@@ -135,36 +136,11 @@ export interface ReprocessOptions {
   onlyDocumentIds?: string[];
 }
 
-/** Waits before each retry of a transient extraction failure (ms): the first try plus three more. */
-let retryDelaysMs: number[] = [5_000, 20_000, 60_000];
+// Retries of a transient extraction failure live with the extractor (ingestion uses them too).
+export { extractWithRetries } from "./extractor";
 /** For tests: shorter waits. */
 export function _setReprocessRetryDelaysForTests(delays: number[] | null): void {
-  retryDelaysMs = delays ?? [5_000, 20_000, 60_000];
-}
-
-/**
- * Runs an extraction and, while it comes back as a TRANSIENT failure stub (a
- * dropped connection, a rate limit, an overloaded API — see
- * classifyExtractionFailure), runs it again after each of `delays`. A
- * permanent failure (a refused key, no credits) is not retried. Returns the
- * last result and how many attempts were made.
- */
-export async function extractWithRetries(
-  run: () => Promise<ExtractedDocumentData>,
-  delays: number[],
-  onRetry?: (attempt: number, waitMs: number, reason: string) => void,
-  sleep: (ms: number) => Promise<void> = (ms) => new Promise((r) => setTimeout(r, ms)),
-): Promise<{ data: ExtractedDocumentData; attempts: number }> {
-  let data = await run();
-  let attempts = 1;
-  for (const wait of delays) {
-    if (data.summary !== "Extraction failed" || data._failure !== "transient") break;
-    onRetry?.(attempts, wait, String(data._failureReason ?? "transient failure"));
-    await sleep(wait);
-    data = await run();
-    attempts++;
-  }
-  return { data, attempts };
+  _setExtractionRetryDelaysForTests(delays);
 }
 
 export async function reprocessDealDocuments(
@@ -189,7 +165,7 @@ export async function reprocessDealDocuments(
   // stale phrasing under every narrative field (merge appends on difference).
   const checklist = extractionChecklist(deal);
   /** The row's extraction, and the text when it was freshly re-read from it. */
-  type Read = { data: ExtractedDocumentData | null; freshText: string | null; skipped?: boolean; failure?: { reason: string; attempts: number } };
+  type Read = { data: ExtractedDocumentData | null; freshText: string | null; skipped?: boolean; failure?: { reason: string; attempts: number; retryable?: boolean } };
   const extractForDoc = async (
     doc: (typeof documents)[number],
   ): Promise<Read> => {
@@ -204,6 +180,7 @@ export async function reprocessDealDocuments(
     if (onlyIds && !onlyIds.has(doc.id)) return { data: stored, freshText: null, skipped: true };
 
     let text: string | null = null;
+    let openProblem: string | null = null;
     // The shared resolver: only "/uploads/docs/<name>", never outside the
     // docs folder (a broker-set fileUrl once read /proc/self/environ).
     const filePath = resolveDocumentPath(doc);
@@ -212,13 +189,14 @@ export async function reprocessDealDocuments(
         text = await extractTextFromFile(filePath, doc.mimeType);
       } catch (err) {
         console.error(`[reprocess] parse failed for doc ${doc.id} (${doc.name}):`, err);
+        openProblem = parseProblem(err);
       }
     }
     // Parsed text is persisted on the row — lets the new prompt re-run even
     // when the file only exists on another machine's volume.
     if (!text && doc.extractedText) text = doc.extractedText;
 
-    let failure: { reason: string; attempts: number } | undefined;
+    let failure: { reason: string; attempts: number; retryable?: boolean } | undefined;
     if (text) {
       try {
         // A dropped connection, a rate limit or an overloaded API gives the
@@ -226,7 +204,7 @@ export async function reprocessDealDocuments(
         // outage outlasts one quick retry) before the source keeps what it had.
         const read = await extractWithRetries(
           () => extractDocumentData(text!, doc.category || "other", doc.subcategory, documentKind(doc), { checklist }),
-          retryDelaysMs,
+          extractionRetryDelays(),
           (attempt, wait, why) => console.warn(`[reprocess] re-read of doc ${doc.id} (${doc.name}) failed (${why}) — attempt ${attempt + 1} in ${Math.round(wait / 1000)}s`),
         );
         const fresh = read.data;
@@ -238,11 +216,11 @@ export async function reprocessDealDocuments(
           (k) => !k.startsWith("_") && !(k === "summary" && fresh.summary === "Extraction failed"),
         );
         if (substantiveKeys.length === 0) {
-          // A failed call is a failure the broker should see (and can retry);
-          // a text too short to read is what it is — kept as before, quietly.
+          // A failed call is a failure the broker should see (and can retry); a text
+          // with nothing to read (a scanned image) is one too, with why (never retried).
           const failed = fresh.summary === "Extraction failed";
           const reason = typeof fresh._failureReason === "string" ? fresh._failureReason : failed ? "the extraction returned nothing usable" : "no readable text";
-          if (failed) failure = { reason, attempts: read.attempts };
+          if (failed) failure = { reason, attempts: read.attempts, ...(fresh._failure === "transient" ? { retryable: true } : {}) };
           console.error(`[reprocess] extraction returned no data for doc ${doc.id} (${doc.name}) after ${read.attempts} attempt(s) (${reason}) — keeping stored extraction`);
         } else {
           await storage.updateDocument(doc.id, {
@@ -250,16 +228,24 @@ export async function reprocessDealDocuments(
             extractedText: text,
             extractedData: fresh,
             isProcessed: true,
-            ...rememberPeriodEnd(doc, fresh),
+            // (The period end remembered, a first-read failure cleared, a part-read long source said so.)
+            sourceMeta: sourceMetaAfterRead(doc, fresh, false),
           } as any);
           return { data: fresh, freshText: text };
         }
       } catch (err) {
         console.error(`[reprocess] re-extraction failed for doc ${doc.id} (${doc.name}) — falling back to stored extraction:`, err);
-        failure = { reason: classifyExtractionFailure(err).reason, attempts: 1 };
+        failure = { reason: classifyExtractionFailure(err).reason, attempts: 1, retryable: classifyExtractionFailure(err).kind === "transient" };
       }
     } else {
       console.log(`[reprocess] no file or stored text for doc ${doc.id} (${doc.name}) — replaying stored extraction only`);
+      // A source never read (an older failed row with no reason on it): "Read
+      // it again" must not look like it did something — the row says why it
+      // can't be read (the file couldn't be opened, or there is no copy left).
+      const storedSays = !!stored && Object.keys(stored).some((k) => !k.startsWith("_") && !(k === "summary" && stored.summary === "Extraction failed"));
+      if (!storedSays && (doc.status === "failed" || doc.status === "pending" || doc.status === "parsing")) {
+        failure = { reason: openProblem ?? NO_COPY_REASON, attempts: 0 };
+      }
     }
     return { data: stored, freshText: null, ...(failure ? { failure } : {}) };
   };
@@ -269,11 +255,21 @@ export async function reprocessDealDocuments(
   const BATCH_SIZE = 4;
   const results: Array<{ doc: (typeof documents)[number] } & Read> = [];
   onProgress?.({ phase: "reading", done: 0, total: documents.length });
-  for (let i = 0; i < documents.length; i += BATCH_SIZE) {
-    const batch = documents.slice(i, i + BATCH_SIZE);
-    results.push(...(await Promise.all(batch.map(async (d) => ({ doc: d, ...(await extractForDoc(d)) })))));
-    onProgress?.({ phase: "reading", done: results.length, total: documents.length });
-  }
+  // Progress moves as each source finishes, not per batch — one slow read
+  // (a long transcript) no longer freezes the count at 0/21.
+  // (A pool of BATCH_SIZE readers: a slow read holds up only its own slot.)
+  let finished = 0;
+  let nextDoc = 0;
+  const slots: Array<({ doc: (typeof documents)[number] } & Read) | undefined> = new Array(documents.length);
+  const reader = async () => {
+    while (nextDoc < documents.length) {
+      const i = nextDoc++;
+      slots[i] = { doc: documents[i], ...(await extractForDoc(documents[i])) };
+      onProgress?.({ phase: "reading", done: ++finished, total: documents.length });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(BATCH_SIZE, documents.length) }, reader));
+  for (const r of slots) if (r) results.push(r);
   onProgress?.({ phase: "merging", done: documents.length, total: documents.length });
   // Keys the broker deleted stay deleted — the merge skips them.
   const suppressed = (deal.extractedInfo as Record<string, unknown> | null)?.[BROKER_SUPPRESSED_KEY];
@@ -386,7 +382,17 @@ export async function reprocessDealDocuments(
     // now records it as a business fact (a dividend, a guarantee an older
     // prompt filed as private), or when it is no note at all ("NDA in
     // place", a sample-document label).
-    for (const { doc, data } of results) if (data) refreshSourceNotes(rebuilt, doc, data);
+    // A source deleted while this ran (the rebuild used the list from the
+    // start): nothing it said comes back — its facts, other values,
+    // confirmations and notes go now, and what that empties is refilled by
+    // the merge's own authority (source-removal.ts).
+    const stillOnDeal = new Set((await storage.getDocumentsByDeal(dealId)).map((d) => d.id));
+    const deletedMeanwhile = documents.filter((d) => !stillOnDeal.has(d.id)).map((d) => d.id);
+    for (const { doc, data } of results) if (data && stillOnDeal.has(doc.id)) refreshSourceNotes(rebuilt, doc, data);
+    for (const id of deletedMeanwhile) {
+      rebuilt = removeSourceFromFacts(rebuilt, id, { conflicts, lookup: sourceRowLookup(documents.filter((d) => stillOnDeal.has(d.id))) }).info;
+    }
+    if (deletedMeanwhile.length > 0) console.log(`[reprocess] ${dealId}: ${deletedMeanwhile.length} source(s) deleted while re-reading — their facts were taken off`);
     compactPrivateNotes(rebuilt);
 
     // The deal's own name, industry and listed price are the broker's facts
@@ -394,8 +400,11 @@ export async function reprocessDealDocuments(
     // stays another value — saved that way, not only shown that way.
     const { columnPatch } = reconcileMirroredFacts(latestDeal ?? deal, rebuilt, setBrokerFact);
     await storage.updateDeal(dealId, { extractedInfo: rebuilt, ...columnPatch } as any);
-    // Material conflicts the rebuild saw become discrepancies (deduplicated).
-    await recordMergeConflicts(dealId, conflicts, documents, rebuilt).catch((err) =>
+    // Material conflicts the rebuild saw become discrepancies (deduplicated) —
+    // never one with a side from a source deleted meanwhile.
+    const gone = new Set(deletedMeanwhile);
+    const standing = conflicts.filter((c) => !gone.has(c.winner.src.documentId ?? "") && !gone.has(c.loser.src.documentId ?? ""));
+    await recordMergeConflicts(dealId, standing, documents.filter((d) => !gone.has(d.id)), rebuilt).catch((err) =>
       console.error(`[reprocess] recording merge conflicts failed for ${dealId}:`, err));
     // Merge rows the rebuilt facts no longer bear out are superseded.
     await settleMergeRowsQuietly(dealId, "reprocess");
@@ -423,7 +432,15 @@ export async function reprocessDealDocuments(
   for (const r of results) {
     if (r.skipped) continue;
     const meta = ((r.doc.sourceMeta as DocumentSourceMeta | null) ?? {}) as DocumentSourceMeta;
-    if (r.failure) {
+    if (r.failure && (r.doc.status === "failed" || r.doc.status === "pending" || r.doc.status === "parsing")) {
+      // A source that was never read (its first read failed or was cut off by a
+      // restart): still not read — its row says why, and it is "Couldn't read".
+      const { rereadFailed: _r, ...rest } = meta;
+      await storage.updateDocument(r.doc.id, {
+        status: "failed",
+        sourceMeta: { ...rest, readFailed: { at: new Date().toISOString(), reason: r.failure.reason, ...(r.failure.retryable ? { retryable: true } : {}) } },
+      } as any).catch((err) => console.error(`[reprocess] couldn't mark doc ${r.doc.id} as failed:`, err));
+    } else if (r.failure) {
       await storage.updateDocument(r.doc.id, { sourceMeta: { ...meta, rereadFailed: { at: new Date().toISOString(), reason: r.failure.reason } } } as any)
         .catch((err) => console.error(`[reprocess] couldn't mark doc ${r.doc.id} as failed:`, err));
     } else if (r.freshText !== null && meta.rereadFailed) {
@@ -438,7 +455,8 @@ export async function reprocessDealDocuments(
   // The notes each source re-stated in new words, and what is no note at
   // all or a business fact, are consolidated by the supporting model (only
   // wordings it has never seen are asked about) — outside the facts lock.
-  await reviewPrivateNotes(dealId).catch((err) => console.error(`[reprocess] private-notes review failed for ${dealId}:`, err));
+  // A run for chosen sources asks only about their new wordings (and folds nothing deal-wide).
+  await reviewPrivateNotes(dealId, onlyIds ? { onlyDocumentIds: Array.from(onlyIds) } : {}).catch((err) => console.error(`[reprocess] private-notes review failed for ${dealId}:`, err));
   return result;
 }
 

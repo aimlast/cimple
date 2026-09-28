@@ -48,7 +48,10 @@ export const CODENAMES: readonly string[] = WORDS.map((w) => `Project ${w}`);
  */
 export function pickCodename(taken: Set<string>, deal?: CodenameDeal): string {
   const terms = deal ? blindLeakTerms(deal as any) : [];
-  const free = CODENAMES.filter((c) => !taken.has(c.toLowerCase()) && (terms.length === 0 || findBlindLeaks(c, terms).length === 0));
+  const stems = deal ? identifyingWords(deal) : new Map<string, string>();
+  const free = CODENAMES.filter(
+    (c) => !taken.has(c.toLowerCase()) && (terms.length === 0 || findBlindLeaks(c, terms).length === 0) && !stemClash(c, stems),
+  );
   if (free.length > 0) return free[Math.floor(Math.random() * free.length)];
   for (let n = 2; ; n++) {
     const c = `${CODENAMES[Math.floor(Math.random() * CODENAMES.length)]} ${n}`;
@@ -67,7 +70,102 @@ async function brokerCodenames(brokerId: string, exceptDealId: string): Promise<
   );
 }
 
-type CodenameDeal = { businessName?: string | null; extractedInfo?: unknown; employeeChart?: unknown };
+type CodenameDeal = { businessName?: string | null; extractedInfo?: unknown; employeeChart?: unknown; location?: string | null };
+
+/** Words too generic to point at a business ("Harbor Group" is about "Harbor"). */
+const GENERIC_WORDS = new Set([
+  "group", "holdings", "services", "service", "company", "limited", "corporation", "partners", "enterprises",
+  "solutions", "systems", "industries", "international", "associates", "consulting", "management", "canada",
+  "north", "south", "east", "west", "street", "road", "avenue", "drive", "suite", "unit",
+  // Dates in the facts (a lease ending "December 31") name nothing.
+  "january", "february", "march", "april", "june", "july", "august", "september", "october", "november", "december",
+  "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+]);
+
+/** A word as compared: letters only, one spelling ("harbour" → "harbor", "centre" → "center"). */
+function spelling(word: string): string {
+  return word
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z]/g, "")
+    // Inside compounds too ("Harbourline", "Centreville").
+    .replace(/our/g, "or")
+    .replace(/tre(?=s?$|[^aeiouy])/g, "ter");
+}
+
+const WORD_BREAK = new RegExp("[^\\p{L}'’]+", "u");
+
+/** Every word of the deal's identifying terms (names, people, places, the street), by spelling. */
+function identifyingWords(deal: CodenameDeal): Map<string, string> {
+  const texts = [
+    ...blindIdentifiers(deal as any),
+    ...blindLeakTerms(deal as any).filter((t) => t.kind !== "registry").map((t) => t.text),
+    ...(deal.location ? [deal.location] : []),
+  ];
+  const out = new Map<string, string>();
+  for (const text of texts) {
+    for (const raw of text.split(WORD_BREAK)) {
+      const n = spelling(raw);
+      if (n.length >= 4 && !GENERIC_WORDS.has(n)) out.set(n, raw);
+    }
+  }
+  return out;
+}
+
+/**
+ * The identifying word a codename's word is a prefix, suffix or stem of —
+ * "Project Harbor" for Harborview MSP, "Cedar" for Cedarbrook Dental,
+ * "Summit" for Summitview Physiotherapy, "Oak" for a business in
+ * Oakville, "Harbor" for Harbourline. The exact-word check (findBlindLeaks)
+ * let all of these through; the codename is the buyer's name for the deal
+ * before the NDA, so "Project Harbor — managed IT services, Ontario"
+ * pointed straight at Harborview. Null when nothing clashes.
+ *
+ * A compound name starts with its root: the codename word is the start of
+ * the identifying word (Harbor → Harborview, Oak → Oakville) or the
+ * identifying word the start of the codename (Coast → Coastline for Pacific
+ * Coast Logistics). A shared ENDING is not a shared root — "Ember" is not
+ * "December", "Aria" not "Maria", "Chinook" not "Nook", "Basalt" not
+ * "Salt", "Stonebridge" not "…ridge" — and refusing those only confused the
+ * broker ("contains “December”").
+ */
+function stemClash(codename: string, words: Map<string, string>): { word: string; codeWord: string } | null {
+  if (words.size === 0) return null;
+  for (const part of codename.split(/\s+/)) {
+    const w = spelling(part);
+    if (w.length < 3 || w === "project") continue;
+    for (const [v, raw] of Array.from(words)) {
+      if (v === w || v.startsWith(w) || (v.length >= 4 && w.startsWith(v))) return { word: raw, codeWord: part };
+    }
+  }
+  return null;
+}
+
+/** For a broker-typed or picked codename: the identifying word it stems from, or null. */
+export function codenameStemClash(codename: string, deal: CodenameDeal): string | null {
+  return stemClash(codename, identifyingWords(deal))?.word ?? null;
+}
+
+/**
+ * Why a codename would point at the business, in the broker's words — or
+ * null when it is neutral. Also used on the stored codename (a deal named
+ * before a stricter check, or before a fact changed, keeps its name — its
+ * buyers know it by it — so the CIM tab says so and the broker renames it).
+ */
+export function codenameProblem(deal: CodenameDeal, codename: string): string | null {
+  const leaks = findBlindLeaks(codename, blindLeakTerms(deal as any));
+  const ids = blindIdentifiers(deal as any).filter((id) => id.length >= 4 && codename.toLowerCase().includes(id.toLowerCase()));
+  const direct = leaks[0] ?? ids[0];
+  if (direct) return `It contains “${direct}”, which identifies the business.`;
+  const stem = stemClash(codename, identifyingWords(deal));
+  if (stem) {
+    return spelling(stem.codeWord) === spelling(stem.word)
+      ? `“${stem.codeWord}” is a word from the business's own details.`
+      : `“${stem.codeWord}” shares its root with “${stem.word}” from the business's own details.`;
+  }
+  return null;
+}
 
 /** A codename looks like a name: starts with a letter or digit; letters, digits, spaces, & ' . - after. */
 const CODENAME_SHAPE = new RegExp("^[\\p{L}\\p{N}][\\p{L}\\p{N} &'’.-]*$", "u");
@@ -94,13 +192,10 @@ export function validateCodename(
   }
   // The guard's terms without a codename exemption: the candidate itself
   // must not contain anything identifying — the business, its people (the
-  // staff list too), its customers, landlord and suppliers, its places.
-  const leaks = findBlindLeaks(codename, blindLeakTerms(deal as any));
-  const ids = blindIdentifiers(deal as any).filter((id) => id.length >= 4 && codename.toLowerCase().includes(id.toLowerCase()));
-  if (leaks.length > 0 || ids.length > 0) {
-    const what = leaks[0] ?? ids[0];
-    return { ok: false, error: `The codename would identify the business — it contains “${what}”. Pick a neutral word.` };
-  }
+  // staff list too), its customers, landlord and suppliers, its places —
+  // nor share a root with one ("Harbor" for Harborview).
+  const problem = codenameProblem(deal, codename);
+  if (problem) return { ok: false, error: `That codename would point at the business. ${problem} Pick a neutral word.` };
   if (taken.has(codename.toLowerCase())) return { ok: false, error: "Another of your deals already uses that codename." };
   return { ok: true, codename };
 }

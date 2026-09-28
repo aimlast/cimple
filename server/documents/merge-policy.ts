@@ -51,6 +51,8 @@ import {
   numbersMateriallyConflict,
   typedNumericValues,
   sourceRank,
+  fieldSourceRank,
+  isBrokerFinalSource,
   SOURCE_RANK,
   LEGACY_SOURCE_NOTE,
   FIELD_SOURCES_KEY,
@@ -176,7 +178,8 @@ export function isSpecialistSource(key: string, sourceTitle: string | null | und
  */
 export function effectiveRank(key: string, src: Partial<FieldSource> | null | undefined): number {
   if (!src) return -1;
-  const base = sourceRank(src.source);
+  // (The broker's own AI-session notes rank below a broker edit — info-merger.ts fieldSourceRank.)
+  const base = fieldSourceRank(src);
   const isDoc = src.source === "document" || src.source === "email";
   if (src.specialist && isDoc) return Math.max(base, DOCUMENT_AUTHORITY_RANK + 0.25);
   if (src.source === "document" && isDocumentAuthoritativeField(key)) return Math.max(base, DOCUMENT_AUTHORITY_RANK);
@@ -1033,7 +1036,7 @@ const isYearKey = (y: string) => /^(?:19|20)\d{2}$/.test(y);
  */
 function isClosedYearSource(head: string, src: Partial<FieldSource> | null | undefined): boolean {
   if (!src || isUntrackedSource(src)) return false;
-  return src.source === "document" || src.source === "interview" || src.source === "broker" ||
+  return src.source === "document" || src.source === "interview" || isBrokerFinalSource(src) ||
     effectiveRank(head, src) >= DOCUMENT_AUTHORITY_RANK;
 }
 /** A year's figure its source calls unfinished: an estimate, preliminary, pending, not final. */
@@ -1296,7 +1299,7 @@ function reconcileYearsOfData(info: Info, ctx: MergeContext): void {
   const derived = describeFiscalYears(years);
   const current = info[key];
   const curSrc = sources[key];
-  if (curSrc && (curSrc.source === "broker" || curSrc.source === "interview") && current !== undefined && current !== null && current !== "") return;
+  if (curSrc && (isBrokerFinalSource(curSrc) || curSrc.source === "interview") && current !== undefined && current !== null && current !== "") return;
   if (current !== derived) {
     const latest = found.get(years[0])!;
     const { years: _y, specialist: _s, valueInferred: _v, ...latestSrc } = latest;
@@ -1641,8 +1644,9 @@ export function relocateInterimYears(info: Info, ctx: MergeContext = {}): void {
       : isUnreviewedFigure(v) || saidBeforeStatements(periodYear(src?.period) ?? valueYear(v), src, v) ? UNREVIEWED_YEAR_NOTE
       : saidBeforeYearEnd(periodYear(src?.period) ?? valueYear(v), src) ? EARLY_YEAR_NOTE : null;
     if (!note) continue;
-    // The broker's own headline stays — it is their call.
-    if (src?.source === "broker") continue;
+    // The broker's own headline stays — it is their call. (Not their notes
+    // from their own AI interview session: those are notes, not a decision.)
+    if (isBrokerFinalSource(src)) continue;
     recordAlternate(info, head, v, { ...(src ?? LEGACY), note });
     delete info[head];
     const s = { ...getFieldSources(info) };

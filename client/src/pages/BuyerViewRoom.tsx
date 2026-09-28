@@ -48,6 +48,7 @@ interface ViewAccess {
   accessLevel: string;
   ndaSigned: boolean | null;
   ndaSignedAt: string | null;
+  ndaCopyAvailable?: boolean;
   canDownload: boolean | null;
   watermarkEnabled: boolean | null;
   firstViewedAt: string | null;
@@ -72,6 +73,8 @@ interface ViewData {
   ndaGate?: boolean;
   /** True when the blind (redacted) version is still being prepared */
   preparing?: boolean;
+  /** True while the broker reviews an updated CIM before publishing it again */
+  updating?: boolean;
   /** Sections held back until their redacted version is ready (just added/edited). */
   pendingSections?: number;
 }
@@ -80,8 +83,15 @@ interface ViewData {
 const isLocked = (s: CimSection) => (s as CimSection & { locked?: boolean }).locked === true;
 
 /** Parse an error body defensively — proxies return HTML during deploys. */
-async function readErrorBody(res: Response): Promise<{ error?: string }> {
+async function readErrorBody(res: Response): Promise<{ error?: string; code?: string }> {
   return res.json().catch(() => ({}));
+}
+
+/** A load failure that carries the server's reason code (e.g. not_published). */
+class ViewRoomError extends Error {
+  constructor(message: string, readonly code?: string) {
+    super(message);
+  }
 }
 
 // ── Watermark ──────────────────────────────────────────────────────────────
@@ -232,7 +242,7 @@ export default function BuyerViewRoom() {
       const res = await fetch(`/api/view/${token}`);
       if (!res.ok) {
         const body = await readErrorBody(res);
-        throw new Error(body.error || "Access denied");
+        throw new ViewRoomError(body.error || "Access denied", body.code);
       }
       return res.json();
     },
@@ -241,6 +251,7 @@ export default function BuyerViewRoom() {
     refetchInterval: (query) => {
       const d = query.state.data as ViewData | undefined;
       if (d?.preparing) return 4000;
+      if (d?.updating) return 60000;
       return d?.pendingSections ? 10000 : false;
     },
   });
@@ -270,10 +281,10 @@ export default function BuyerViewRoom() {
   const viewTracked = useRef(false);
   useEffect(() => {
     if (!data?.deal?.id || !data?.access?.id) return;
-    if (data.ndaGate || data.preparing || viewTracked.current) return;
+    if (data.ndaGate || data.preparing || data.updating || viewTracked.current) return;
     viewTracked.current = true;
     enqueue({ eventType: "view" });
-  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, enqueue]);
+  }, [data?.deal?.id, data?.access?.id, data?.ndaGate, data?.preparing, data?.updating, enqueue]);
 
   const formatTime = (s: number) => `${Math.floor(s / 60)}:${(s % 60).toString().padStart(2, "0")}`;
 
@@ -283,6 +294,19 @@ export default function BuyerViewRoom() {
       <div className="min-h-screen bg-background p-8 space-y-4 max-w-4xl mx-auto">
         <Skeleton className="h-12 w-48" />
         <Skeleton className="h-[500px] w-full" />
+      </div>
+    );
+  }
+
+  // Not published yet (or taken offline): a calm holding card, not an error.
+  if (error instanceof ViewRoomError && error.code === "not_published") {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-sm text-center space-y-3" data-testid="view-room-not-published">
+          <Clock className="h-8 w-8 mx-auto text-muted-foreground/60" />
+          <h2 className="text-lg font-semibold">Not available yet</h2>
+          <p className="text-sm text-muted-foreground">Your broker will let you know as soon as this CIM is ready to view.</p>
+        </div>
       </div>
     );
   }
@@ -332,6 +356,21 @@ export default function BuyerViewRoom() {
           <p className="text-sm text-muted-foreground">
             We're finalizing the secure version of this document. This only
             takes a moment — it will open automatically.
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  // The broker is reviewing an updated version before publishing it again.
+  if (data.updating) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center p-6">
+        <div className="max-w-sm text-center space-y-3" data-testid="view-room-updating">
+          <FileText className="h-8 w-8 mx-auto text-teal/60" />
+          <h2 className="text-lg font-semibold">This document is being updated</h2>
+          <p className="text-sm text-muted-foreground">
+            The broker is finalizing a new version. It opens here as soon as it's published — your access stays the same.
           </p>
         </div>
       </div>
@@ -568,6 +607,13 @@ export default function BuyerViewRoom() {
           </p>
           {firmName && (
             <p className="text-xs text-muted-foreground/40 mt-2">Prepared by {firmName}</p>
+          )}
+          {access.ndaCopyAvailable && (
+            <p className="text-xs mt-2">
+              <a href={`/api/view/${token}/nda.txt`} className="text-muted-foreground/70 underline underline-offset-2 hover:text-foreground" data-testid="link-signed-nda">
+                Download your signed NDA
+              </a>
+            </p>
           )}
         </div>
       </footer>

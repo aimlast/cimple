@@ -215,8 +215,10 @@ const alts = (info: Info, key: string) => getFieldAlternates(info)[key] ?? [];
     const CF = "Cash provided by operating activities975,216728,019 Purchase of property and equipment(118,600)(110,200) Increase in cash336,616197,819";
     assert.ok(!groundedInSource("freeCashFlowByYear", "$617,819 (operating cash flow $728,019 - capex $110,200)", CF));
     assert.ok(groundedInSource("operatingCashFlow", "$728,019", CF));
-    // A table row whose columns were glued together.
-    assert.ok(groundedInSource("roadsideInspectionsByYear", "589 inspections, 36 out-of-service, 15.5% OOS rate", "Roadside inspections YearInspectionsOut-of-service (OOS) Driver OOSVehicle OOSOOS rate 20225893615.5%8,420,000"));
+    // A table row whose columns were glued together is no source for the bare
+    // figures inside it: "589 inspections, 36 out-of-service" was the misread
+    // of "58 | 9 | 3 | 6" (f-facts known-2) — it must not survive a re-read.
+    assert.ok(!groundedInSource("roadsideInspectionsByYear", "589 inspections, 36 out-of-service, 15.5% OOS rate", "Roadside inspections YearInspectionsOut-of-service (OOS) Driver OOSVehicle OOSOOS rate 20225893615.5%8,420,000"));
     // Money said the way people say it.
     assert.ok(groundedInSource("keyRisks", "110-ton brake replacement ~$180k", "the old 110-ton brake — replace in a year or two, maybe one-eighty", { spoken: true }));
     assert.ok(groundedInSource("revenueByYear", "$61,500,000 (budget)", "Tom: Sixty-one and a half million of revenue is the budget.", { spoken: true }));

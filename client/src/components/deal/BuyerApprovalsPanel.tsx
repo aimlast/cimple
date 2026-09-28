@@ -75,6 +75,7 @@ interface ApprovalRequest {
 const STATUS_META: Record<string, { label: string; icon: any; color: string }> = {
   pending_broker_review:  { label: "Pending broker review",  icon: Clock,        color: "bg-amber-500/10 text-amber-400 border-amber-500/30" },
   pending_seller_review:  { label: "With seller",             icon: Users,        color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
+  approved_by_seller:     { label: "Approved · access at publish", icon: Clock,     color: "bg-blue-500/10 text-blue-400 border-blue-500/30" },
   access_granted:         { label: "Access granted",          icon: CheckCircle2, color: "bg-emerald-500/10 text-emerald-400 border-emerald-500/30" },
   rejected:               { label: "Rejected",                icon: XCircle,      color: "bg-red-500/10 text-red-400 border-red-500/30" },
 };
@@ -101,6 +102,8 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
 
   const pending = requests.filter(r => r.status === "pending_broker_review");
   const inProgress = requests.filter(r => r.status === "pending_seller_review");
+  // Seller approved while the CIM is unpublished — access goes out at publish.
+  const waitingForPublish = requests.filter(r => r.status === "approved_by_seller");
   const completed = requests.filter(r => r.status === "access_granted" || r.status === "rejected");
 
   return (
@@ -137,6 +140,9 @@ export function BuyerApprovalsPanel({ dealId }: { dealId: string }) {
           )}
           {inProgress.length > 0 && (
             <Section title="With seller" items={inProgress} onReview={setReviewing} />
+          )}
+          {waitingForPublish.length > 0 && (
+            <Section title="Approved — access when you publish" items={waitingForPublish} onReview={setReviewing} />
           )}
           {completed.length > 0 && (
             <Section title="Completed" items={completed} onReview={setReviewing} />

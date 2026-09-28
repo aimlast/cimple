@@ -96,6 +96,11 @@ const extractCalls: string[] = [];
   }
   return { stop_reason: "tool_use", content: [{ type: "tool_use", id: "t", name: tool, input: { groups: [], notNotes: [] } }] };
 };
+// Extraction is streamed (f-facts known-5): the stream's final message is the stubbed create's.
+(Anthropic as any).Messages.prototype.stream = function (params: any) {
+  const p = (Anthropic as any).Messages.prototype.create.call(this, params);
+  return { finalMessage: () => p };
+};
 _setReprocessRetryDelaysForTests([1, 1, 1]);
 
 // 1. The call fails twice, then reads: nothing kept as before, nothing failed.
