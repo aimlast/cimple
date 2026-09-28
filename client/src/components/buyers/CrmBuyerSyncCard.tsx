@@ -19,7 +19,7 @@ type Mode = "pipelines" | "labels" | "all";
 interface SyncSettings { mode: Mode; pipelineIds?: number[]; labelIds?: number[]; auto: boolean }
 interface SyncStatus {
   state: "idle" | "running" | "done" | "failed"; startedAt?: string; finishedAt?: string; total?: number; processed?: number;
-  created?: number; updated?: number; unchanged?: number; skippedNoEmail?: number; errors?: number; message?: string;
+  created?: number; updated?: number; unchanged?: number; skippedNoEmail?: number; skippedRemoved?: number; errors?: number; message?: string;
 }
 interface SyncInfo {
   connected: boolean; settings?: SyncSettings | null; status?: SyncStatus | null; lastSuccessAt?: string | null;
@@ -62,7 +62,7 @@ export function CrmBuyerSyncCard() {
       setWasRunning(false);
       qc.invalidateQueries({ queryKey: ["/api/broker/buyers"] });
       const s = data?.status;
-      if (s?.state === "done") toast({ title: "Pipedrive buyers synced", description: `${(s.created ?? 0) + (s.updated ?? 0)} profiles built or refreshed · ${s.unchanged ?? 0} unchanged.` });
+      if (s?.state === "done") toast({ title: "Pipedrive buyers synced", description: `${(s.created ?? 0) + (s.updated ?? 0)} profiles built or refreshed · ${s.unchanged ?? 0} unchanged${s.skippedRemoved ? ` · ${s.skippedRemoved} you removed left off` : ""}.` });
       if (s?.state === "failed") toast({ title: "Sync stopped", description: s.message || "Something went wrong reading Pipedrive.", variant: "destructive" });
     }
   }, [running]); // eslint-disable-line react-hooks/exhaustive-deps

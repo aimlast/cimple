@@ -345,11 +345,19 @@ export async function reprocessDealDocuments(
     const latestDeal = await storage.getDeal(dealId);
     const latest = (latestDeal?.extractedInfo as Record<string, unknown> | null) || {};
     const latestSources = getFieldSources(latest);
+    const startSources = getFieldSources(existing);
     const finalSources = { ...(rebuilt[FIELD_SOURCES_KEY] as Record<string, unknown>) };
     const carried: string[] = [];
     for (const key of Array.from(new Set([...Object.keys(latest), ...Object.keys(existing)]))) {
       if (key === FIELD_SOURCES_KEY || key === FIELD_ALTERNATES_KEY || key === FIELD_CORROBORATIONS_KEY) continue;
-      if (JSON.stringify(latest[key]) === JSON.stringify(existing[key])) continue;
+      // A change to who stands behind a fact counts even when the value is
+      // the same: the broker resolving a discrepancy (or confirming a fact)
+      // to the value already on file makes it the broker's — the rebuild,
+      // derived from the start-of-run sources, must not hand it back to the
+      // seller or the document (the next re-read could then replace it).
+      const sameValue = JSON.stringify(latest[key]) === JSON.stringify(existing[key]);
+      const sameSource = JSON.stringify(latestSources[key] ?? null) === JSON.stringify(startSources[key] ?? null);
+      if (sameValue && sameSource) continue;
       carried.push(key);
       if (latest[key] === undefined) { delete rebuilt[key]; delete finalSources[key]; continue; }
       rebuilt[key] = latest[key];

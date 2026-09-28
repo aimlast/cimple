@@ -7,7 +7,7 @@
  * not general storage primitives.
  */
 import { db } from "../db";
-import { and, desc, eq, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNotNull, isNull, or, sql } from "drizzle-orm";
 import {
   analyticsEvents, brokerBuyerContacts, buyerAccess, buyerApprovalRequests, buyerEmails,
   buyerQuestions, buyerUsers, cimSections, dealOutreach, deals,
@@ -25,7 +25,7 @@ export async function isBuyerInBrokerList(brokerId: string, buyerUserId: string)
     eq(buyerUsers.id, buyerUserId),
     or(
       eq(buyerUsers.invitedByBroker, brokerId),
-      sql`EXISTS (SELECT 1 FROM ${brokerBuyerContacts} c WHERE c.broker_id = ${brokerId} AND c.buyer_user_id = ${buyerUsers.id})`,
+      sql`EXISTS (SELECT 1 FROM ${brokerBuyerContacts} c WHERE c.broker_id = ${brokerId} AND c.buyer_user_id = ${buyerUsers.id} AND c.removed_at IS NULL)`,
       sql`EXISTS (SELECT 1 FROM ${buyerAccess} ba JOIN ${deals} d ON d.id = ba.deal_id WHERE d.broker_id = ${brokerId} AND ba.buyer_user_id = ${buyerUsers.id})`,
     ),
   )).limit(1);
@@ -40,25 +40,40 @@ export async function filterBuyersInBrokerList(brokerId: string, ids: string[]):
     inArray(buyerUsers.id, unique),
     or(
       eq(buyerUsers.invitedByBroker, brokerId),
-      sql`EXISTS (SELECT 1 FROM ${brokerBuyerContacts} c WHERE c.broker_id = ${brokerId} AND c.buyer_user_id = ${buyerUsers.id})`,
+      sql`EXISTS (SELECT 1 FROM ${brokerBuyerContacts} c WHERE c.broker_id = ${brokerId} AND c.buyer_user_id = ${buyerUsers.id} AND c.removed_at IS NULL)`,
       sql`EXISTS (SELECT 1 FROM ${buyerAccess} ba JOIN ${deals} d ON d.id = ba.deal_id WHERE d.broker_id = ${brokerId} AND ba.buyer_user_id = ${buyerUsers.id})`,
     ),
   ));
   return new Set(rows.map((r) => r.id));
 }
 
-/** The broker's contact row for a buyer (oldest wins if a race ever made two). */
+/** The broker's contact row for a buyer on their list (oldest wins if a race ever made two); never a removed one. */
 export async function getContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
   const rows = await db.select().from(brokerBuyerContacts)
-    .where(and(eq(brokerBuyerContacts.brokerId, brokerId), eq(brokerBuyerContacts.buyerUserId, buyerUserId)))
+    .where(and(eq(brokerBuyerContacts.brokerId, brokerId), eq(brokerBuyerContacts.buyerUserId, buyerUserId), isNull(brokerBuyerContacts.removedAt)))
     .orderBy(brokerBuyerContacts.addedAt);
   return rows[0];
 }
 
-/** Contact row, created (source "deal") when the buyer is only on the list through access or an invite. */
+/** The row the broker removed this buyer with (soft delete), newest first. */
+export async function getRemovedContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact | undefined> {
+  const rows = await db.select().from(brokerBuyerContacts)
+    .where(and(eq(brokerBuyerContacts.brokerId, brokerId), eq(brokerBuyerContacts.buyerUserId, buyerUserId), isNotNull(brokerBuyerContacts.removedAt)))
+    .orderBy(desc(brokerBuyerContacts.removedAt));
+  return rows[0];
+}
+
+/**
+ * Contact row, created (source "deal") when the buyer is only on the list
+ * through access or an invite. A buyer the broker removed earlier and is now
+ * editing again gets that row back (with the broker's earlier edits) rather
+ * than a second row.
+ */
 export async function ensureContact(brokerId: string, buyerUserId: string): Promise<BrokerBuyerContact> {
   const existing = await getContact(brokerId, buyerUserId);
   if (existing) return existing;
+  const removed = await getRemovedContact(brokerId, buyerUserId);
+  if (removed) return (await updateContact(removed.id, { removedAt: null })) ?? removed;
   const [row] = await db.insert(brokerBuyerContacts).values({ brokerId, buyerUserId, source: "deal", tags: [] as any, notes: null } as any).returning();
   return row;
 }

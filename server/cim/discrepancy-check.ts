@@ -29,6 +29,7 @@ import {
 } from "./discrepancy-engine";
 import { dropReason, differentYears } from "./discrepancy-filter";
 import { settleMergeRowsQuietly } from "../documents/merge-conflicts";
+import { updateDiscrepancyIfStill } from "./discrepancy-cas";
 
 export { recordsSameDispute };
 
@@ -187,17 +188,19 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
         // Rows raised by the fact merge or the financial analysis are theirs
         // to rewrite; a verification row keeps the broker's routing/status and
         // its original field name and gets fresh evidence.
+        // Only while the row is as this run found it: one the broker
+        // resolved or routed during the model call keeps what they decided.
         if (isCheckRow(openMatch)) {
-          await storage.updateDiscrepancy(openMatch.id, {
+          const wrote = await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], {
             ...values,
             // Keep a fact key the broker already linked.
             factKey: openMatch.factKey || values.factKey,
             factYear: openMatch.factKey ? openMatch.factYear ?? values.factYear : values.factYear,
           });
-          refreshed++;
+          if (wrote) refreshed++;
         } else if (severityRank(item.severity) > severityRank(openMatch.severity)) {
           // Their row stands for this very dispute, so it carries the higher severity.
-          await storage.updateDiscrepancy(openMatch.id, { severity: item.severity });
+          await updateDiscrepancyIfStill(storage, openMatch.id, [openMatch.status], { severity: item.severity });
         }
         continue;
       }
@@ -218,8 +221,9 @@ export function runAndPersistDiscrepancyCheck(dealId: string): Promise<CheckRunR
       const row = existing.find((d) => d.id === id);
       if (!row || touched.has(id) || (row.status !== "open" && row.status !== "seller_responded")) continue;
       if (row.source === "merge") continue;
-      await storage.updateDiscrepancy(id, { status: "superseded" });
-      cleared++;
+      // Still the status this run saw — a row the broker settled or routed
+      // meanwhile is never closed by the check.
+      if (await updateDiscrepancyIfStill(storage, id, [row.status], { status: "superseded" })) cleared++;
     }
 
     // One conflict, one row: an open row of this check that the financial

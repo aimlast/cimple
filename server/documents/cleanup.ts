@@ -1,12 +1,14 @@
 /**
  * Document removal with provenance cleanup.
  *
- * Used when a seller removes or replaces one of their own uploads from the
- * checklist. Mirrors the broker DELETE /api/documents/:id behaviour (row +
- * extracted-field provenance) and additionally unlinks the file on disk,
- * since a seller has no other way to get a mistaken upload off the deal.
+ * Every delete of a source — the broker's DELETE /api/documents/:id, a
+ * seller removing or replacing an upload, a CRM import replacing a changed
+ * item — goes through deleteDocumentAndProvenance: the row, the facts only
+ * it contributed, the discrepancies about it, and the file on disk (a
+ * deleted file must not stay on the volume).
  */
 import fs from "fs";
+import path from "path";
 import { storage } from "../storage";
 import { sourceRowLookup } from "../interview/info-merger";
 import { withDealFactsLock } from "./facts-lock";
@@ -14,7 +16,7 @@ import { recordMergeConflicts, settleMergeRowsQuietly } from "./merge-conflicts"
 import { removeSourceFromFacts } from "./source-removal";
 import { releaseRequirementsFor } from "./requirements";
 import type { MergeConflict } from "./merge-policy";
-import { resolveDocumentPath } from "./document-path";
+import { docsFileName, resolveDocumentPath, uploadsRoot } from "./document-path";
 
 /**
  * Takes a deleted source's facts off its deal (re-read under the deal's
@@ -58,6 +60,14 @@ export async function removeSourceFacts(dealId: string, docId: string): Promise<
   return removed;
 }
 
+/**
+ * Deletes a document everywhere: the row, the facts only it contributed (and
+ * the discrepancies about it), and the file on the uploads volume. Every
+ * delete goes through here — the broker's, the seller's, a CRM import
+ * replacing a changed item — so a mistaken upload (another client's tax
+ * return) never stays on disk once it's gone from the deal. Returns the
+ * removed field keys; throws only if the row itself can't be deleted.
+ */
 export async function deleteDocumentAndProvenance(docId: string): Promise<string[]> {
   const doc = await storage.getDocument(docId);
   if (!doc) return [];
@@ -71,9 +81,82 @@ export async function deleteDocumentAndProvenance(docId: string): Promise<string
     console.warn("[documents] provenance cleanup failed:", e);
   }
 
-  // Best-effort file removal — only inside the docs directory.
-  const filePath = resolveDocumentPath(doc);
-  if (filePath) fs.unlink(filePath, () => {});
+  await removeDocumentFile(doc);
+  return removed;
+}
 
+/**
+ * Best-effort removal of a deleted row's file — only inside the docs folder,
+ * and never while another row still points at the same file (a source
+ * re-created from a file already in the docs folder keeps its name).
+ */
+export async function removeDocumentFile(doc: { id: string; fileUrl?: string | null }): Promise<boolean> {
+  const filePath = resolveDocumentPath(doc);
+  if (!filePath || !doc.fileUrl) return false;
+  try {
+    const other = await storage.getDocumentByFileUrl(doc.fileUrl);
+    if (other && other.id !== doc.id) return false;
+    await fs.promises.unlink(filePath);
+    return true;
+  } catch (err: any) {
+    if (err?.code !== "ENOENT") console.warn(`[documents] couldn't remove the file of deleted source ${doc.id}:`, err?.message ?? err);
+    return false;
+  }
+}
+
+/**
+ * Files in the docs folder that no documents row points at — left behind by
+ * deletes before every delete removed its file. `referenced` is the set of
+ * file names rows still use; only files older than `minAgeMs` count (a file
+ * is written a moment before its row is created). Pure over the folder.
+ */
+export function orphanDocumentFiles(
+  docsDir: string,
+  referenced: ReadonlySet<string>,
+  now: number = Date.now(),
+  minAgeMs: number = 60 * 60 * 1000,
+): string[] {
+  let names: string[] = [];
+  try { names = fs.readdirSync(docsDir); } catch { return []; }
+  const out: string[] = [];
+  for (const name of names) {
+    if (referenced.has(name) || name.startsWith(".")) continue;
+    try {
+      const st = fs.statSync(path.join(docsDir, name));
+      if (!st.isFile() || now - st.mtimeMs < minAgeMs) continue;
+    } catch { continue; }
+    out.push(name);
+  }
+  return out;
+}
+
+const SWEEP_MARKER = ".orphan-sweep-v1";
+
+/**
+ * One-off clean-up of the files earlier deletes left on the volume (before
+ * every delete removed its file): each docs-folder file no documents row
+ * points at, older than an hour, is removed. Runs once per volume (a marker
+ * file records it). Never empties the folder wholesale: with no referenced
+ * file at all it does nothing. Returns how many files it removed.
+ */
+export async function sweepOrphanDocumentFilesOnce(
+  root: string = uploadsRoot(),
+  now: number = Date.now(),
+  fileUrls: () => Promise<Array<string | null>> = () => storage.getAllDocumentFileUrls(),
+): Promise<number> {
+  const docsDir = path.join(root, "docs");
+  const marker = path.join(docsDir, SWEEP_MARKER);
+  if (!fs.existsSync(docsDir) || fs.existsSync(marker)) return 0;
+  const referenced = new Set((await fileUrls()).map(docsFileName).filter((n): n is string => !!n));
+  if (referenced.size === 0) return 0;
+  let removed = 0;
+  for (const name of orphanDocumentFiles(docsDir, referenced, now)) {
+    try {
+      fs.unlinkSync(path.join(docsDir, name));
+      removed++;
+    } catch { /* gone already */ }
+  }
+  fs.writeFileSync(marker, JSON.stringify({ at: new Date(now).toISOString(), removed }));
+  console.log(`[documents] removed ${removed} file(s) left on the volume by earlier deletes`);
   return removed;
 }

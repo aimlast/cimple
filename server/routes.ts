@@ -1259,12 +1259,10 @@ Return JSON only.`,
   app.post("/api/deals/:dealId/seller-profile/generate", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
       const { dealId } = req.params;
-      const { generateSellerProfile, carryBrokerProfileEdits } = await import("./interview/eq-profiler");
-      const prior = ((await storage.getDeal(dealId))?.sellerProfile as Record<string, unknown> | null) || null;
-      // The broker's own notes and corrections survive a regenerate.
-      const profile = carryBrokerProfileEdits(await generateSellerProfile(dealId), prior);
-      // Store on deal record
-      await storage.updateDeal(dealId, { sellerProfile: profile } as any);
+      const { generateSellerProfile, saveRegeneratedSellerProfile } = await import("./interview/eq-profiler");
+      // The broker's own notes and corrections survive a regenerate — as they
+      // are when it lands (a note saved while it ran is kept).
+      const profile = await saveRegeneratedSellerProfile(dealId, await generateSellerProfile(dealId));
       res.json(profile);
     } catch (error: any) {
       console.error("[EQ profiler] Generation failed:", error);
@@ -2872,15 +2870,11 @@ Return JSON only.`,
     try {
       const existingDoc = await storage.getDocument(req.params.id);
       if (!existingDoc || !(await ownsDeal(req, existingDoc.dealId))) return res.status(404).json({ error: "Document not found" });
-      await storage.deleteDocument(req.params.id);
       // The dialog promises "any data extracted from it will be removed" —
-      // honour it via field provenance.
-      try {
-        const { removeSourceFacts } = await import("./documents/cleanup");
-        const removed = await removeSourceFacts(existingDoc.dealId, existingDoc.id);
-        return res.json({ success: true, removedFields: removed });
-      } catch (e) { console.warn("[documents] provenance cleanup failed:", e); }
-      res.json({ success: true });
+      // honoured via field provenance; the file itself goes too.
+      const { deleteDocumentAndProvenance } = await import("./documents/cleanup");
+      const removed = await deleteDocumentAndProvenance(existingDoc.id);
+      res.json({ success: true, removedFields: removed });
     } catch (error: any) {
       console.error("Error deleting document:", error);
       res.status(500).json({ error: "Failed to delete document" });
@@ -3339,16 +3333,13 @@ Return JSON only.`,
 
       // Create the "running" placeholder BEFORE responding so the client's
       // invalidation refetch always sees the new version and starts polling.
-      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
-      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
-
-      // Fire-and-forget: the heavy work runs in the background
-      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
-        console.error("Background financial analysis failed:", err);
-      });
+      // The heavy work runs in the background; one run per deal at a time.
+      const { startFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await startFinancialAnalysis(req.params.dealId, storage);
 
       res.json({ message: "Financial analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
+      if (error?.status === 409) return res.status(409).json({ error: error.message });
       console.error("Error starting financial analysis:", error);
       res.status(500).json({ error: "Failed to start financial analysis" });
     }
@@ -3474,14 +3465,12 @@ Return JSON only.`,
         return res.status(404).json({ error: "Financial analysis not found" });
       }
 
-      const { createAnalysisPlaceholder, runFinancialAnalysis } = await import("./financial/analyzer");
-      const placeholder = await createAnalysisPlaceholder(req.params.dealId, storage);
-      runFinancialAnalysis(req.params.dealId, storage, { analysisId: placeholder.id }).catch((err: any) => {
-        console.error("Background financial re-analysis failed:", err);
-      });
+      const { startFinancialAnalysis } = await import("./financial/analyzer");
+      const placeholder = await startFinancialAnalysis(req.params.dealId, storage);
 
       res.json({ message: "Financial re-analysis started", dealId: req.params.dealId, analysisId: placeholder.id, version: placeholder.version });
     } catch (error: any) {
+      if (error?.status === 409) return res.status(409).json({ error: error.message });
       console.error("Error re-running financial analysis:", error);
       res.status(500).json({ error: "Failed to re-run financial analysis" });
     }

@@ -22,14 +22,14 @@ import { storage } from "../storage";
 import { sendDirectEmail } from "../notifications/service";
 import { brokerDisplayName, outreachFromName } from "../buyers/outreach-reply";
 import {
-  isBuyerInBrokerList, getContact, ensureContact, updateContact, recordBuyerEmail, getBuyerAccessOnBrokerDeals,
+  isBuyerInBrokerList, getContact, getRemovedContact, ensureContact, updateContact, recordBuyerEmail, getBuyerAccessOnBrokerDeals,
 } from "../buyers/profile-data";
 import { buildBuyerProfileView, buildBuyerTimeline, loadSummaryInput, mergedForBroker } from "../buyers/profile-view";
 import { loadBrokerScope } from "../buyers/provenance-scope";
 import { generateBuyerSummary, draftBuyerEmail, aiAvailable } from "../buyers/profile-ai";
 import { blindDealSummary } from "../buyers/blind-deal-summary";
 import { db } from "../db";
-import { buyerUsers } from "@shared/schema";
+import { brokerBuyerContacts, buyerUsers } from "@shared/schema";
 import { and, eq } from "drizzle-orm";
 
 const aiLimiter = rateLimit({
@@ -201,8 +201,16 @@ export function registerBuyerProfileRoutes(app: Express): void {
       const brokerId = req.session.brokerId!;
       const buyer = await storage.getBuyerUser(req.params.id);
       if (!buyer) return res.status(404).json({ error: "Buyer not found" });
+      // Soft delete: the row stays as the record that the broker removed this
+      // buyer, so the CRM buyer sync never adds them back and "Add back"
+      // restores the broker's own notes and edits. Off the list, matching,
+      // deep check and outreach meanwhile.
       const contact = await getContact(brokerId, buyer.id);
-      if (contact) await storage.deleteBrokerBuyerContact(contact.id);
+      if (contact) await updateContact(contact.id, { removedAt: new Date() });
+      else if (!(await getRemovedContact(brokerId, buyer.id))) {
+        // Listed only through an invite or deal access: remember the removal all the same.
+        await db.insert(brokerBuyerContacts).values({ brokerId, buyerUserId: buyer.id, source: "deal", tags: [] as any, notes: null, removedAt: new Date() } as any);
+      }
       // "Invited by this broker" also puts a buyer on the list — that marker is
       // this broker's, so clearing it is part of removing them.
       if (buyer.invitedByBroker === brokerId) {
@@ -215,6 +223,24 @@ export function registerBuyerProfileRoutes(app: Express): void {
     } catch (err) {
       console.error("[buyer-profile] remove failed:", err);
       res.status(500).json({ error: "Couldn't remove this buyer" });
+    }
+  });
+
+  // ── Add back (undo a removal — the broker's notes and edits return) ──
+  app.post("/api/broker/buyers/:id/restore", requireBroker, async (req, res) => {
+    try {
+      const brokerId = req.session.brokerId!;
+      // Only a buyer this broker removed: the removal row is the tenancy check.
+      const removed = await getRemovedContact(brokerId, req.params.id);
+      if (!removed) {
+        if (await getContact(brokerId, req.params.id)) return res.json({ restored: true });
+        return res.status(404).json({ error: "Buyer not found" });
+      }
+      await updateContact(removed.id, { removedAt: null });
+      res.json({ restored: true });
+    } catch (err) {
+      console.error("[buyer-profile] restore failed:", err);
+      res.status(500).json({ error: "Couldn't add this buyer back" });
     }
   });
 
