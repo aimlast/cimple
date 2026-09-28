@@ -243,3 +243,32 @@ export const CONTEXT: Array<{ prevAi: string; message: string; stop: boolean }> 
   { prevAi: "Anything else about the lease I should know?", message: "Nothing else on the lease, the landlord handles maintenance.", stop: false },
   { prevAi: "Is there anything else about your customers buyers should know?", message: "No, that's about it for customers.", stop: false },
 ];
+
+// ── Short breaks and returns (review F2-INT-2) ──────────────────────────
+/** The interviewer's offer of a short break (prompts/handling-difficulty.md, emotional-intelligence.md). */
+export const PAUSE_OFFER = "Want to take a few minutes? Everything so far is saved, and we'll carry on from here when you're back.";
+/** Stepping away for a moment — a pause, never a stop. */
+export const PAUSES: string[] = [
+  "brb",
+  "Be right back",
+  "Give me five minutes",
+  "Hang on, let me grab the lease. It's in the office.",
+  "Sorry, I have to take this call — back in 10.",
+  "Can we take a quick break?",
+  "One sec, a customer just walked in.",
+  "Hold on, let me look that up.",
+];
+/** Accepting the interviewer's offer (after PAUSE_OFFER). */
+export const PAUSE_ACCEPTS: string[] = ["yes, a short break would help", "Yes please", "Sure, that would help", "A few minutes would help"];
+/** The stop's one closing turn the returns below answer. */
+export const CLOSING_PREV =
+  "Before you go, the one thing I'd most like to pin down is your asking-price expectation — a rough number now, or shall we start there next time?";
+/** Back from a break (after CLOSING_PREV): carrying on, never the closing turn's answer. */
+export const RETURNS: string[] = [
+  "OK I'm back. The lease runs to 2031 with two five-year renewals.",
+  "Back now. Got the lease — it runs to 2031.",
+  "Ok, ready.",
+  "Sorry about that. Asking price — around $2.5M.",
+];
+/** Answers to the closing turn (after CLOSING_PREV): the interview ends. */
+export const CLOSING_ANSWERS: string[] = ["Around $2.5M.", "Let's start there next time.", "Next time is fine."];

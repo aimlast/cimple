@@ -25,7 +25,7 @@
  * a word is shown, and the final reply must come out identical).
  */
 import { splitSentences } from "./turn-guard";
-import { brokerWorkAssertions, SAFE_GENERAL_RE } from "./normalisation-guard";
+import { brokerWorkAssertions } from "./normalisation-guard";
 import { candidateListStatements, sellerRaisesAddbacks, handsOffEarnings } from "./money-talk";
 
 // ═══════════════════════ Normalisation assertions ═══════════════════════
@@ -91,13 +91,12 @@ const HANDOFF_LINE_RE =
   /^(?:[^.?!]{0,80}?\s[—–-]\s)?(?:your|the) broker(?:'ll| will| is going to)\s+(?:go through|walk you through|confirm|review|work out|decide)\b/i;
 
 export function assertsNormalisation(text: string): boolean {
-  // (The one safe general statement the rules allow — "a market-rate owner
-  // salary on the P&L is the classic add-back" — is set aside, so a call
-  // tacked onto it is still caught.)
+  // (No treatment statement is "safe" — "a market-rate owner salary on the
+  // P&L is the classic add-back" is a yes to "my salary gets added back,
+  // right?", and the normalization may keep a market salary as a cost.)
   const t = text
     .replace(/[’‘]/g, "'")
-    .replace(CITED_FIGURE_RE, "the figure on file")
-    .replace(SAFE_GENERAL_RE, "the owner's salary");
+    .replace(CITED_FIGURE_RE, "the figure on file");
   const hedged = TREATMENT_HEDGE_RE.test(t) && !HEDGE_THEN_CALL_RE.test(t);
   if (OWNER_COST_CALL_RE.test(t) || NEGATIVE_OR_ITEM_CALL_RE.test(t)) return !hedged;
   if (NORM_TERM_RE.test(t) && TREATMENT_RE.test(t) && !hedged) return true;

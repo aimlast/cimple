@@ -3,7 +3,10 @@
 // suite (no .test.ts suffix).
 // Run: ANTHROPIC_API_KEY=… DATABASE_URL=postgres://unused/x npx tsx tests/interview/seller-intent-live.ts
 import { classifySellerIntent, combineIntent, quickIntent, planIntentEdits, type SellerIntent } from "../../server/interview/seller-intent";
-import { STOP_FIRM, STOP_SOFT, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT, DEFERRALS, DEFERRAL_PREV } from "./seller-intent-corpus.data";
+import {
+  STOP_FIRM, STOP_SOFT, BUSINESS, NEUTRAL, CORRECTIONS, RETRACTIONS, PRIVACY, CONTEXT, DEFERRALS, DEFERRAL_PREV,
+  PAUSES, PAUSE_ACCEPTS, PAUSE_OFFER, RETURNS, CLOSING_ANSWERS, CLOSING_PREV,
+} from "./seller-intent-corpus.data";
 
 type Case = { kind: string; message: string; prevAi?: string; facts?: Array<{ key: string; value: string }>; check: (i: SellerIntent) => string | null };
 
@@ -11,7 +14,7 @@ const PREV = "What's the lease term on the main location, and who holds it?";
 const cases: Case[] = [
   ...STOP_FIRM.map((m) => ({ kind: "stop-firm", message: m, check: (i: SellerIntent) => (i.stop === "firm" ? null : `stop=${i.stop}`) })),
   ...STOP_SOFT.map((m) => ({ kind: "stop-soft", message: m, check: (i: SellerIntent) => (i.stop !== "none" ? null : "stop=none") })),
-  ...BUSINESS.map((m) => ({ kind: "business", message: m, check: (i: SellerIntent) => (i.stop === "none" && !i.retractions.length && !i.privacyRequests.length ? null : `stop=${i.stop} r=${i.retractions.length} p=${i.privacyRequests.length}`) })),
+  ...BUSINESS.map((m) => ({ kind: "business", message: m, check: (i: SellerIntent) => (i.stop === "none" && !i.pause && !i.retractions.length && !i.privacyRequests.length ? null : `stop=${i.stop} pause=${i.pause} r=${i.retractions.length} p=${i.privacyRequests.length}`) })),
   ...NEUTRAL.map((m) => ({ kind: "neutral", message: m, check: (i: SellerIntent) => (i.stop === "none" && !i.retractions.length && !i.corrections.length && !i.privacyRequests.length ? null : JSON.stringify(i)) })),
   ...CORRECTIONS.map((c) => ({
     kind: "correction", message: c.message, facts: c.facts,
@@ -58,6 +61,11 @@ const cases: Case[] = [
   ...CONTEXT.map((c) => ({ kind: "context", message: c.message, prevAi: c.prevAi, check: (i: SellerIntent) => ((i.stop !== "none") === c.stop ? null : `stop=${i.stop}`) })),
   // A task promised for later / one question set aside: the interview goes on.
   ...DEFERRALS.map((m) => ({ kind: "deferral", message: m, prevAi: DEFERRAL_PREV, check: (i: SellerIntent) => (i.stop === "none" && !i.retractions.length ? null : `stop=${i.stop} r=${i.retractions.length}`) })),
+  // A short break is a pause, never a stop; a return after one is carrying on (F2-INT-2).
+  ...PAUSES.map((m) => ({ kind: "pause", message: m, check: (i: SellerIntent) => (i.pause && i.stop === "none" ? null : `stop=${i.stop} pause=${i.pause}`) })),
+  ...PAUSE_ACCEPTS.map((m) => ({ kind: "pause-accept", message: m, prevAi: PAUSE_OFFER, check: (i: SellerIntent) => (i.pause && i.stop === "none" ? null : `stop=${i.stop} pause=${i.pause}`) })),
+  ...RETURNS.map((m) => ({ kind: "return", message: m, prevAi: CLOSING_PREV, check: (i: SellerIntent) => (i.stop === "none" && i.continueRequest ? null : `stop=${i.stop} continue=${i.continueRequest}`) })),
+  ...CLOSING_ANSWERS.map((m) => ({ kind: "closing-answer", message: m, prevAi: CLOSING_PREV, check: (i: SellerIntent) => (!i.continueRequest && !i.pause ? null : `continue=${i.continueRequest} pause=${i.pause}`) })),
 ];
 
 (async () => {

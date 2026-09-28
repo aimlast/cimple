@@ -37,10 +37,19 @@ export interface StopState {
 export function resolveStopState(
   start: StopState,
   priorStopCount: number,
-  intent: Pick<SellerIntent, "stop" | "continueRequest">,
-): StopState & { forcedEnd: boolean; change: "classifier_stop" | "classifier_cleared" | null } {
+  intent: Pick<SellerIntent, "stop" | "continueRequest"> & { pause?: boolean },
+): StopState & { forcedEnd: boolean; paused: boolean; change: "classifier_stop" | "classifier_cleared" | null } {
   let { stopNow, stopSignalCount, stopLevel, closingAnswerTurn } = start;
   let change: "classifier_stop" | "classifier_cleared" | null = null;
+  // A short break ("be right back", "give me five minutes") is not a stop
+  // and never the answer to a closing turn: nothing ends, and the stop count
+  // a closing turn is waiting on carries over unchanged (the answer after
+  // the break is still that turn's answer). combineIntent never pairs a
+  // pause with a firm stop.
+  if (intent.pause && intent.stop !== "firm") {
+    if (stopNow) change = "classifier_cleared";
+    return { stopNow: false, stopSignalCount: priorStopCount, stopLevel: "none", closingAnswerTurn: false, forcedEnd: false, paused: true, change };
+  }
   if (intent.stop !== "none" && !stopNow) {
     stopNow = true;
     stopSignalCount = priorStopCount + 1;
@@ -63,7 +72,7 @@ export function resolveStopState(
   // twice in a row, asked for the questions to stop now (a firm stop), or
   // has just answered the one closing turn a stop allowed.
   const forcedEnd = (stopNow && (stopSignalCount >= 2 || stopLevel === "firm")) || closingAnswerTurn;
-  return { stopNow, stopSignalCount, stopLevel, closingAnswerTurn, forcedEnd, change };
+  return { stopNow, stopSignalCount, stopLevel, closingAnswerTurn, forcedEnd, paused: false, change };
 }
 
 /** A forced goodbye asks nothing: the question the model slipped in goes (it would hang on an ended interview). */
