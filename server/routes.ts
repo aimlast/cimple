@@ -35,6 +35,7 @@ import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
 import { cimModeForAccessLevel, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
+import { withApprovalRuleMark } from "@shared/cim-approvals";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
@@ -2681,6 +2682,15 @@ Return JSON only.`,
             sections: placeholders.map((p) => ({ id: p.id, title: p.sectionTitle })),
           });
         }
+        // Every shown section approved as it stands (shared/cim-approvals.ts)
+        // — a section regenerated or edited since the approvals were given
+        // never goes live unseen. The broker's design approval in this same
+        // request approves them.
+        if (dealPatch.designApprovedByBroker !== true) {
+          const { sectionsBlockingPublish, sectionsNeedApprovalResponse } = await import("./cim/approvals");
+          const awaiting = await sectionsBlockingPublish(req.params.id);
+          if (awaiting.length > 0) return res.status(409).json(sectionsNeedApprovalResponse(awaiting));
+        }
       }
       // A seller finishing the intake wizard completes the questionnaire
       // step — this flag drove broker checklists but was never set. The
@@ -2716,6 +2726,12 @@ Return JSON only.`,
       let deal = await storage.updateDeal(req.params.id, validatedData);
       if (!deal) {
         return res.status(404).json({ error: "Deal not found" });
+      }
+      // The broker's design approval approves every shown section as it
+      // stands (the builder's ticks follow; see shared/cim-approvals.ts).
+      if (req.session.brokerId && dealPatch.designApprovedByBroker === true) {
+        const { approveSectionsWithDesign } = await import("./cim/approvals");
+        await approveSectionsWithDesign(req.params.id);
       }
       // Publishing opens the CIM to buyers the seller approved while it was
       // unpublished (their access + invite email were held until now).
@@ -5615,7 +5631,10 @@ Return JSON only.`,
   
   app.get("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const sections = await storage.getCimSectionsByDeal(req.params.dealId);
+      // A live CIM approved before the per-section rule: its untouched
+      // sections are ticked (server/cim/approvals.ts).
+      const { backfillLegacyLiveApprovals } = await import("./cim/approvals");
+      const sections = await backfillLegacyLiveApprovals(res.locals.deal);
       res.json(sections);
     } catch (error: any) {
       console.error("Error fetching sections:", error);
@@ -5623,19 +5642,22 @@ Return JSON only.`,
     }
   });
 
+  // Legacy create — the same rule as the builder's "Add section"
+  // (server/cim/approvals.ts legacySectionInsert): never approved on
+  // arrival, held back from blind buyers until redacted, hidden on a live
+  // CIM, and a new shown section withdraws the approvals it voids.
   app.post("/api/deals/:dealId/sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const { insertCimSectionSchema } = await import("@shared/schema");
-      const validatedData = insertCimSectionSchema.parse({
-        ...req.body,
-        dealId: req.params.dealId,
-      });
-      const section = await storage.createCimSection(validatedData);
-      res.json(section);
+      const { legacySectionInsert, withdrawApprovalsAfterChange } = await import("./cim/approvals");
+      const { insertSectionAt } = await import("./cim/section-ops");
+      const { scheduleBlindRefresh } = await import("./cim/blind-sync");
+      const parsed = legacySectionInsert(req.body, res.locals.deal);
+      if (!parsed.ok) return res.status(400).json({ error: parsed.error });
+      const created = await insertSectionAt(req.params.dealId, parsed.fields, {});
+      if (created.isVisible !== false) await withdrawApprovalsAfterChange(req.params.dealId);
+      scheduleBlindRefresh(req.params.dealId);
+      res.json(created);
     } catch (error: any) {
-      if (error.name === "ZodError") {
-        return res.status(400).json({ error: "Invalid section data", details: error.errors });
-      }
       console.error("Error creating section:", error);
       res.status(500).json({ error: "Failed to create section" });
     }
@@ -5649,7 +5671,10 @@ Return JSON only.`,
 
   app.get("/api/deals/:dealId/cim-sections", requireBroker, requireOwnedDeal, async (req, res) => {
     try {
-      const sections = await storage.getCimSectionsByDeal(req.params.dealId);
+      // A live CIM approved before the per-section rule: its untouched
+      // sections are ticked (server/cim/approvals.ts).
+      const { backfillLegacyLiveApprovals } = await import("./cim/approvals");
+      const sections = await backfillLegacyLiveApprovals(res.locals.deal);
       res.json(sections);
     } catch (error: any) {
       res.status(500).json({ error: "Failed to fetch sections" });
@@ -5728,6 +5753,8 @@ Return JSON only.`,
           ...(regenerated.isVisible === false ? { isVisible: false } : {}),
           brokerEditedContent: null,
           brokerApproved: false,
+          // Un-ticked under the per-section approval rule (shared/cim-approvals).
+          contentHistory: withApprovalRuleMark(target.contentHistory),
           // Written now: no longer a placeholder (placeholders never reach buyers).
           ...(isCimFallbackSection(target) ? { aiLayoutReasoning: "Regenerated from the deal's information." } : {}),
         });
@@ -5736,6 +5763,11 @@ Return JSON only.`,
         // under the existing codename. The view room holds a stale section
         // back from blind buyers until then (it is never served un-redacted).
         await invalidateBlind(dealId, [String(target.id)]);
+        // New content the deal's approvals never covered (shared/cim-approvals.ts).
+        if (updatedSection?.isVisible !== false) {
+          const { withdrawApprovalsAfterChange } = await import("./cim/approvals");
+          await withdrawApprovalsAfterChange(dealId);
+        }
         if (regenerated.aiDraftContent) {
           const existingContent = (deal.cimContent as Record<string, string>) || {};
           await storage.updateDeal(deal.id, { cimContent: { ...existingContent, [target.sectionKey]: regenerated.aiDraftContent } });
@@ -5769,7 +5801,15 @@ Return JSON only.`,
         if (matchingSection) {
           await storage.updateCimSection(String(matchingSection.id), {
             aiDraftContent: content,
+            brokerApproved: false,
+            // Un-ticked under the per-section approval rule (shared/cim-approvals).
+            contentHistory: withApprovalRuleMark(matchingSection.contentHistory),
           });
+        }
+        // Rewritten content the deal's approvals never covered.
+        {
+          const { withdrawApprovalsAfterChange } = await import("./cim/approvals");
+          await withdrawApprovalsAfterChange(dealId);
         }
 
         res.json({ sectionKey, content });

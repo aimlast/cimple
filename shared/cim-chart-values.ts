@@ -138,6 +138,47 @@ export function normalizeChartValues(layoutType: string, data: unknown): AnyReco
   return data;
 }
 
+const SHARE_LAYOUTS = new Set(["pie_chart", "donut_chart"]);
+/** A catch-all slice ("Other", "All other customers", "Remaining") — drawn last. */
+const REST_SLICE = /^(?:all\s+)?(?:other|others|remaining|rest|misc(?:ellaneous)?)\b/i;
+
+/**
+ * A share chart's slices largest first (smoke test 2026-09-27: a regenerated
+ * revenue donut listed reefer $8.41M before dry van $13.56M, so its legend
+ * no longer read as a ranking). A catch-all "Other" slice stays last; slices
+ * named as an ordered scale ("0-5 yrs", "2023", "Under $1M" — every name
+ * has a number) keep their order, as does a chart whose values aren't all
+ * numbers. Colours stay with their position, so a shaded palette still runs
+ * darkest to lightest. Two-column sections are handled column by column.
+ */
+export function orderShareSlices(layoutType: string, data: unknown): AnyRecord {
+  if (!isRecord(data)) return {};
+  if (layoutType === "two_column") {
+    const out: AnyRecord = { ...data };
+    for (const side of ["left", "right"] as const) {
+      const col = data[side];
+      if (isRecord(col) && typeof col.layoutType === "string" && isRecord(col.content)) {
+        out[side] = { ...col, content: orderShareSlices(col.layoutType, col.content) };
+      }
+    }
+    return out;
+  }
+  if (!SHARE_LAYOUTS.has(layoutType) || !Array.isArray(data.data)) return data;
+  const rows = data.data as unknown[];
+  if (rows.length < 2 || !rows.every((r) => isRecord(r) && typeof r.value === "number" && Number.isFinite(r.value))) return data;
+  const slices = rows as AnyRecord[];
+  // An ordered scale (tenure bands, years, size brackets) is not a ranking.
+  if (slices.every((r) => /\d/.test(String(r.name ?? "")))) return data;
+  const indexed = slices.map((r, i) => ({ r, i, rest: REST_SLICE.test(String(r.name ?? "").trim()) }));
+  const sorted = [...indexed].sort((a, b) =>
+    a.rest !== b.rest ? (a.rest ? 1 : -1) : (b.r.value as number) - (a.r.value as number) || a.i - b.i,
+  );
+  if (sorted.every((x, i) => x.i === i)) return data;
+  const colours = slices.map((r) => r.color);
+  const positional = colours.every((c) => typeof c === "string" && c !== "");
+  return { ...data, data: sorted.map((x, i) => (positional ? { ...x.r, color: colours[i] } : x.r)) };
+}
+
 // ── Comparison tables ───────────────────────────────────────────────────
 
 /** "2022 → 2023 → 2024", "589 -> 711 -> 646": the parts of a series packed into one cell. */

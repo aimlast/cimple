@@ -236,6 +236,7 @@ export function buildInformationView({ deal, documents, sessions }: InformationI
       ...(src.inferred ? { inferred: true } : {}),
       ...(brokerAcceptedSource(src) ? { acceptedByBroker: true } : {}),
       ...(isPrivateSource(src) ? { brokerOnly: true } : {}),
+      ...(isBrokerSessionSource(src) ? { brokerSessionNotes: true } : {}),
       ...(src.documentId ? { documentId: src.documentId } : {}),
       ...(documentName ? { documentName } : {}),
       ...(src.sessionId ? { sessionId: src.sessionId } : {}),

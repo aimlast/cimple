@@ -117,6 +117,29 @@ export interface DealProgressExtras {
   buyersViewing?: number;
   /** Information quality (0–100, shared/cim-readiness). Unknown → the interview decides. */
   readinessScore?: number | null;
+  /**
+   * Shown CIM sections not approved as they stand (shared/cim-approvals
+   * sectionsAwaitingApproval). Unknown → the deal's design flags alone.
+   */
+  sectionsAwaitingApproval?: number;
+}
+
+/* ─── Is the design approved? ────────────────────────────────────────── */
+
+/**
+ * THE rule for the design approvals — the Overview's publish card
+ * (shared/cim-approvals publishReadiness), its checklist, the deal list and
+ * the dashboard's next step. The broker's approval covers the CIM only while
+ * every shown section is approved as it stands; a section changed since (or
+ * never approved) needs approving first.
+ */
+export function designApprovalState(
+  deal: { designApprovedByBroker?: boolean | null; designApprovedBySeller?: boolean | null },
+  sectionsAwaitingApproval: number | undefined,
+): { brokerApproved: boolean; sellerApproved: boolean; ready: boolean } {
+  const brokerApproved = !!deal.designApprovedByBroker && !((sectionsAwaitingApproval ?? 0) > 0);
+  const sellerApproved = !!deal.designApprovedBySeller;
+  return { brokerApproved, sellerApproved, ready: brokerApproved && sellerApproved };
 }
 
 /* ─── Can the AI write the CIM now? ──────────────────────────────────── */
@@ -218,8 +241,9 @@ export function phaseChecklist(
         // It stays as an "auto" row for legacy text-only CIMs; computeNextStep
         // never reports it as anyone's move while a draft exists.
         { label: "Visual layout", actor: "auto", done: hasCimDraft(deal, extras) || !!deal.cimDesignData },
-        { label: "Broker approved", actor: "broker", done: !!deal.designApprovedByBroker },
-        { label: "Seller approved", actor: "seller", done: !!deal.designApprovedBySeller },
+        // The publish card's rule (designApprovalState).
+        { label: "Broker approved", actor: "broker", done: designApprovalState(deal, extras?.sectionsAwaitingApproval).brokerApproved },
+        { label: "Seller approved", actor: "seller", done: designApprovalState(deal, extras?.sectionsAwaitingApproval).sellerApproved },
       ];
     default:
       return [];
@@ -311,6 +335,12 @@ export function computeNextStep(deal: DealProgressInput, extras: DealProgressExt
       if (extras.cimGenerating) return { label: "Cimple is laying out the CIM", owner: "none", href: designer };
       if (!hasCimDraft(deal, extras) && !deal.cimDesignData) return you("generate the design", designer);
       if (!deal.designApprovedByBroker) return you("approve the design");
+      // Same rule as the Overview's publish card: sections changed since the
+      // approval (or never approved) come first — never "publish" past them.
+      const awaiting = extras.sectionsAwaitingApproval ?? 0;
+      if (!designApprovalState(deal, awaiting).brokerApproved) {
+        return you(`approve ${awaiting} section${awaiting === 1 ? "" : "s"}`, designer);
+      }
       if (!deal.designApprovedBySeller) return seller("design sign-off");
       if (openCritical > 0) return conflicts();
       return you("publish to buyers");

@@ -37,6 +37,11 @@ export interface FactSourceInfo {
    * file): the seller never sees it and the interview doesn't use it.
    */
   brokerOnly?: boolean;
+  /**
+   * The broker's own notes from their AI interview session (kind "broker"):
+   * typed from memory and unconfirmed — not a broker edit.
+   */
+  brokerSessionNotes?: boolean;
 }
 
 export interface FactAlternate {

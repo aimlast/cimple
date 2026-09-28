@@ -9,7 +9,8 @@ import {
   plannerLayouts,
   tidyGeneratedLayout,
 } from "@shared/cim-layouts";
-import { normalizeChartValues } from "@shared/cim-chart-values";
+import { normalizeChartValues, orderShareSlices } from "@shared/cim-chart-values";
+import { reconcileRelatedSections } from "./related-sections";
 import { agentConfig } from "../interview/config/load-config";
 import { getFieldSources, isFactKey } from "../interview/info-merger";
 import { splitFactsForCim, factValueText, isLeadFact, CIM_LEADS_HEADING } from "../information/cim-facts";
@@ -329,6 +330,9 @@ export async function generateCimLayout(
     .map((s) => (s.layoutType === "location_map" ? { ...s, layoutData: groundLocationMap(s.layoutData, params) } : s))
     .filter((s) => s.layoutType !== "location_map" || ((s.layoutData as { locations?: unknown[] }).locations?.length ?? 0) > 0);
   sections.forEach((s, i) => { s.order = i + 1; });
+  // "Related" links point at sections of this CIM (a guessed key is mapped
+  // to the section it means, or dropped).
+  sections = sections.map((s) => ({ ...s, layoutData: reconcileRelatedSections(s.layoutData, sections, s.sectionKey) }));
 
   // Ensure cover_page is first
   const coverIdx = sections.findIndex(s => s.layoutType === "cover_page");
@@ -383,7 +387,8 @@ export function coverMonth(today: Date): string {
 export function finalizeLayoutData(layoutType: string, rawLayoutData: Record<string, unknown>, today: Date): Record<string, unknown> {
   // Chart values the writer returned as text ("$13,560,000") become numbers:
   // a chart can't draw text, and drew every such bar at zero (2026-09-26).
-  const layoutData = normalizeChartValues(layoutType, rawLayoutData);
+  // A share chart (pie / donut) reads as a ranking: largest slice first.
+  const layoutData = orderShareSlices(layoutType, normalizeChartValues(layoutType, rawLayoutData));
   if (layoutType !== "cover_page") return layoutData;
   const { preparedBy: _preparedBy, ...rest } = layoutData as Record<string, unknown> & { preparedBy?: unknown };
   return { ...rest, date: coverMonth(today) };
@@ -667,9 +672,12 @@ export async function writeOneSection(
   // these notes were dropped — the caller saved a visible section with the
   // untraced figures still in it.
   const repairNotes = checkNotes.filter(isRepairNote);
+  // "Related" links point at this CIM's real sections — the writer made up
+  // keys from their titles (smoke test 2026-09-27).
+  const related = reconcileRelatedSections((out.layoutData || {}) as Record<string, unknown>, manifest, target.sectionKey);
   return {
     ...out,
-    layoutData: withReclassificationNote(out.layoutType, finalizeLayoutData(out.layoutType, (out.layoutData || {}) as Record<string, unknown>, sharedSystem.today), params.financials) as any,
+    layoutData: withReclassificationNote(out.layoutType, finalizeLayoutData(out.layoutType, related, sharedSystem.today), params.financials) as any,
     ...(repairNotes.length > 0 ? { figureWarnings: [...(out.figureWarnings ?? []), ...repairNotes] } : {}),
   };
 }
@@ -1134,7 +1142,8 @@ async function writeSectionContent(
 ): Promise<{ layoutData: Record<string, unknown>; aiDraftContent?: string } | null> {
   const entry: ManifestEntry = { ...rawEntry, layoutType: normalizeLayoutType(rawEntry.layoutType) };
   const siblingList = manifest
-    .map((m) => `${m.order}. ${m.sectionTitle} (${m.layoutType}) — ${m.contentBrief}`)
+    // The key is what relatedSections must name.
+    .map((m) => `${m.order}. ${m.sectionTitle} [sectionKey: ${m.sectionKey}] (${m.layoutType}) — ${m.contentBrief}`)
     .join("\n");
 
   // `final`: the last try — data the renderer can't draw truthfully (a
@@ -1261,7 +1270,7 @@ Any section's layoutData can include these optional interactive flags:
 - summary: string — optional custom summary text to show in collapsed state. If omitted, the renderer generates one automatically.
 - expandLabel: string — custom label for the expand button (default: "Show full details")
 - collapseLabel: string — custom label for the collapse button (default: "Show less")
-- relatedSections: string[] — sectionKey references to other sections that are thematically linked. When the buyer clicks a data point in this section, the viewer can scroll to or highlight the related section. Example: a donut chart showing revenue breakdown links to the detailed revenue callout cards further in the document.
+- relatedSections: string[] — sectionKey references (exactly as the document plan lists them) to other sections that are thematically linked. When the buyer clicks a data point in this section, the viewer can scroll to or highlight the related section. Example: a donut chart showing revenue breakdown links to the detailed revenue callout cards further in the document.
 - normalizedRows: (financial_table only) — alternative row data showing normalized/adjusted figures. When present, the viewer shows an "As Reported" / "Normalized" toggle. Adjusted rows should include isAdjusted: true and adjustmentAmount: string.
 - normalizedCaption: (financial_table only) — caption to show when normalized view is active.
 - normalizedFootnotes: (financial_table only) — footnotes specific to the normalized view.

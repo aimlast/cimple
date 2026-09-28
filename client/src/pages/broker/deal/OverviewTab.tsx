@@ -85,6 +85,7 @@ import { PHASES, getPhaseIndex } from "./phases";
 import { FinancialAnalysisCenter } from "@/components/financial/FinancialAnalysisCenter";
 import { CimSummaryCard, useBuilderState } from "@/components/cim-builder/CimSummaryCard";
 import { regenerateBuyerImpact } from "@shared/cim-generation-warnings";
+import { publishReadiness, sectionsAwaitingApproval } from "@shared/cim-approvals";
 import { DiscrepancyPanel } from "@/components/deal/DiscrepancyPanel";
 import { ReadyToBuildCta } from "@/components/deal/ReadyToBuildCta";
 import { DiscrepancyCheckNotice } from "@/components/deal/DiscrepancyCheckNotice";
@@ -1967,6 +1968,21 @@ function Phase4Center() {
     reasonFor,
   } = useDiscrepancyGate(dealId);
 
+  // Approvals cover the CIM as it stands: a section regenerated, rewritten
+  // or edited since needs approving again (shared/cim-approvals.ts — the
+  // server's publish gate uses the same rule).
+  const { data: sections = [], error: sectionsError, refetch: refetchSections } = useQuery<CimSection[]>({
+    queryKey: ["/api/deals", dealId, "cim-sections"],
+    queryFn: async () => {
+      const r = await fetch(`/api/deals/${dealId}/cim-sections`, { credentials: "include" });
+      if (!r.ok) throw new Error("Failed to load CIM sections");
+      return r.json();
+    },
+  });
+  const readiness = publishReadiness(deal, sections);
+  // A failed load can't prove every section is approved: Publish stays off.
+  const publishReady = readiness.ready && !sectionsError;
+
   const publish = useMutation({
     mutationFn: () =>
       apiJson("PATCH", `/api/deals/${dealId}`, { isLive: true }, "Couldn't publish the CIM"),
@@ -1996,6 +2012,7 @@ function Phase4Center() {
         "Couldn't record the approval",
       ),
     onSuccess: () => {
+      // Includes the sections: the broker's approval ticks each one.
       queryClient.invalidateQueries({ queryKey: ["/api/deals", dealId] });
       toast({ title: "Design approved" });
     },
@@ -2046,12 +2063,12 @@ function Phase4Center() {
           },
           {
             label: "Broker approved",
-            done: !!deal.designApprovedByBroker,
+            done: readiness.brokerApproved,
             action: "broker" as const,
           },
           {
             label: "Seller approved",
-            done: !!deal.designApprovedBySeller,
+            done: readiness.sellerApproved,
             action: "seller" as const,
           },
         ].map((item) => (
@@ -2085,8 +2102,17 @@ function Phase4Center() {
           </div>
         ))}
       </div>
-      {deal.designApprovedByBroker &&
-        deal.designApprovedBySeller &&
+      {sectionsError && (
+        <PanelError what="CIM sections" onRetry={() => refetchSections()} />
+      )}
+      {!sectionsError && readiness.awaiting.length > 0 && (
+        <SectionsAwaitingApproval
+          awaiting={readiness.awaiting}
+          live={!!deal.isLive}
+          onOpen={() => navigate(`/deal/${dealId}/design`)}
+        />
+      )}
+      {publishReady &&
         !deal.isLive && (
           <div className="rounded-lg border border-teal/30 bg-teal-muted/40 p-4 flex items-center justify-between">
             <div>
@@ -2120,6 +2146,56 @@ function Phase4Center() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * The sections the approvals don't cover as they stand: changed since the
+ * CIM was approved (an AI regenerate or rewrite, an edit, a new section) or
+ * never approved. Approving the design again approves them.
+ */
+function SectionsAwaitingApproval({
+  awaiting,
+  live,
+  onOpen,
+}: {
+  awaiting: { id: string; title: string; lastChange?: string }[];
+  live: boolean;
+  onOpen: () => void;
+}) {
+  const shown = awaiting.slice(0, 6);
+  const more = awaiting.length - shown.length;
+  const one = awaiting.length === 1;
+  return (
+    <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 p-4" data-testid="sections-awaiting-approval">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className="flex items-start gap-3 min-w-0">
+          <AlertCircle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+          <div className="min-w-0">
+            <p className="text-sm font-medium">
+              {one ? "1 section needs approval" : `${awaiting.length} sections need approval`}
+            </p>
+            <p className="text-xs text-muted-foreground mt-0.5">
+              {live
+                ? `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder.`
+                : `${one ? "It has" : "They have"} changed since the CIM was approved, or ${one ? "hasn't" : "haven't"} been approved yet. Check ${one ? "it" : "them"} in the CIM builder, then approve the design again as broker and for the seller.`}
+            </p>
+            <ul className="mt-2 space-y-1">
+              {shown.map((s) => (
+                <li key={s.id} className="text-xs flex flex-wrap items-baseline gap-x-2">
+                  <span className="font-medium text-foreground/90 break-words">{s.title}</span>
+                  {s.lastChange && <span className="text-muted-foreground">{s.lastChange}</span>}
+                </li>
+              ))}
+              {more > 0 && <li className="text-xs text-muted-foreground">and {more} more</li>}
+            </ul>
+          </div>
+        </div>
+        <Button size="sm" variant="outline" className="h-7 text-xs shrink-0 self-start" onClick={onOpen}>
+          Review in CIM builder
+        </Button>
+      </div>
     </div>
   );
 }
@@ -2319,11 +2395,14 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
   const { data: invites = [], error: invitesError } = useInvites(dealId);
   const currentPhaseIdx = getPhaseIndex(deal.phase);
   // A CIM made only in the builder (sections, no generation stamp) is still
-  // a draft — the checklist counts it like the deal list does. Only fetched
-  // when the deal row alone can't tell.
+  // a draft — the checklist counts it like the deal list does. Fetched when
+  // the deal row alone can't tell, and always in Design: the "Broker
+  // approved" row follows the publish card's rule (sections changed since the
+  // approval, or never approved, keep it unticked).
   const needsSectionCount =
-    (deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
-    !deal.cimContent && !deal.cimLayoutGeneratedAt;
+    ((deal.phase === "phase3_content_creation" || deal.phase === "phase4_design_finalization") &&
+      !deal.cimContent && !deal.cimLayoutGeneratedAt) ||
+    deal.phase === "phase4_design_finalization";
   const { data: checklistSections } = useQuery<CimSection[]>({
     queryKey: ["/api/deals", dealId, "cim-sections"],
     enabled: needsSectionCount,
@@ -2357,6 +2436,7 @@ export function OverviewTab({ phaseFocus }: { phaseFocus?: PhaseFocus | null } =
         const items = phase.items(deal, {
           invited: invitesError ? undefined : invites.length > 0,
           hasCimSections: checklistSections ? checklistSections.length > 0 : undefined,
+          sectionsAwaitingApproval: checklistSections ? sectionsAwaitingApproval(checklistSections, deal).length : undefined,
           cimGenerating: checklistGeneration.isRunning,
         });
         const required = items.filter((i) => !i.optional);

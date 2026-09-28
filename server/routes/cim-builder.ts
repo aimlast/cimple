@@ -78,6 +78,8 @@ async function staleFinancialsBlock(dealId: string): Promise<string | null> {
 import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
+import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
+import { historySnapshots } from "@shared/cim-approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -135,7 +137,8 @@ function ddStatusOf(s: CimSection, ddGenerated: boolean, hasDd: boolean): DdStat
 /** Section row for the builder: task normalised, undo stack summarised. */
 function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: boolean, dd: { generated: boolean; has: boolean } = { generated: false, has: false }) {
   const { contentHistory, ...rest } = s;
-  const history = Array.isArray(contentHistory) ? (contentHistory as Array<{ reason: string; at: string }>) : [];
+  // Marker entries (the approval rule's mark) are not versions to undo to.
+  const history = historySnapshots<{ reason: string; at: string }>(contentHistory);
   const last = history[history.length - 1];
   const excluded = getCimLayout(s.layoutType)?.blind === "exclude";
   return {
@@ -189,7 +192,8 @@ export function registerCimBuilderRoutes(app: Express): void {
     try {
       const deal = res.locals.deal as Deal;
       const [sections, blindOverrides, ddOverrides, buyers] = await Promise.all([
-        storage.getCimSectionsByDeal(deal.id),
+        // A live CIM approved before the per-section rule gets its untouched sections ticked.
+        backfillLegacyLiveApprovals(deal),
         storage.getCimSectionOverrides(deal.id, "blind"),
         storage.getCimSectionOverrides(deal.id, "dd"),
         storage.getBuyerAccessByDeal(deal.id),
@@ -322,6 +326,8 @@ export function registerCimBuilderRoutes(app: Express): void {
         if (err?.message === "not_in_deal") return res.status(400).json({ error: "That position isn't in this CIM" });
         throw err;
       }
+      // A new shown section: the CIM's approvals no longer cover all of it.
+      if (created.isVisible !== false) await withdrawApprovalsAfterChange(deal.id);
 
       if (mode === "ai") {
         const task = await startSectionTask(created, deal, "write", { brief: brief || undefined });
@@ -387,11 +393,15 @@ export function registerCimBuilderRoutes(app: Express): void {
               ? {}
               : { layoutData: defaultLayoutData(layoutType, blankContext(deal, section.sectionTitle)) as any }),
             contentHistory: historyWith(section, "Changed layout"),
+            // A different layout is a change the approvals didn't cover.
+            brokerApproved: false,
             updatedAt: new Date(),
           })
           .where(eq(cimSections.id, section.id))
           .returning();
-        return res.json({ section: withStaleStamps(updated, await invalidateBlind(deal.id, [section.id])) });
+        const at = await invalidateBlind(deal.id, [section.id]);
+        if (updated.isVisible !== false) await withdrawApprovalsAfterChange(deal.id);
+        return res.json({ section: withStaleStamps(updated, at) });
       }
 
       const blocked = await discrepancyBlock(deal.id);

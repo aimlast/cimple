@@ -2547,6 +2547,15 @@ export interface CimSectionSnapshot {
   brokerEditedContent: string | null;
   /** The figure check's flags on this version (restored with it on undo). Absent on older snapshots. */
   figureWarnings?: string[] | null;
+  /**
+   * Written by the per-section approval code (shared/cim-approvals
+   * APPROVAL_RULE_FLAG): the section was changed and un-ticked under the
+   * rule, so it is never counted as a pre-rule live section. Absent on
+   * snapshots from before the rule.
+   */
+  approvalRule?: boolean;
+  /** A marker entry carrying only the flag (no content): skipped by undo and the "latest change" label. */
+  marker?: boolean;
 }
 
 // ── CIM media library (cim-media workstream) ──────────────────────────────

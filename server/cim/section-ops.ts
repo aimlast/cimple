@@ -28,7 +28,9 @@ import { getOwnedDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "./blind-sync";
 import { uniqueSectionKey } from "./section-ops-keys";
 import { isMediaLayout } from "@shared/cim-media";
+import { editNeedsReapproval, isHistoryMarker, withApprovalRuleMark } from "@shared/cim-approvals";
 import { cleanMediaLayoutForDeal } from "./media-store";
+import { withdrawApprovalsAfterChange } from "./approvals";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -108,7 +110,8 @@ export async function insertSectionAt(
     const sectionKey = uniqueSectionKey(fields.sectionKey || fields.sectionTitle, rows.map((r) => r.sectionKey));
     const [created] = await tx
       .insert(cimSections)
-      .values({ ...fields, dealId, sectionKey, order: index } as InsertCimSection)
+      // A new section is under the per-section approval rule from the start.
+      .values({ ...fields, contentHistory: withApprovalRuleMark(fields.contentHistory), dealId, sectionKey, order: index } as InsertCimSection)
       .returning();
     const ids = rows.map((r) => r.id);
     ids.splice(index, 0, created.id);
@@ -148,7 +151,10 @@ export async function duplicateSection(section: CimSection, opts: { hidden: bool
     },
     { afterSectionId: section.id },
   );
-  return withStaleStamps(created, await invalidateBlind(section.dealId, [created.id]));
+  const at = await invalidateBlind(section.dealId, [created.id]);
+  // A shown copy is new content the approvals never covered.
+  if (created.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
+  return withStaleStamps(created, at);
 }
 
 // ── Undo stack ───────────────────────────────────────────────────────────
@@ -165,6 +171,9 @@ export function snapshotOf(section: CimSection, reason: string): CimSectionSnaps
     // Undo brings back this version's flags with it — an undone correction
     // must not bring back an untraced figure unflagged.
     figureWarnings: Array.isArray(section.figureWarnings) && section.figureWarnings.length ? (section.figureWarnings as string[]) : null,
+    // Every snapshot is pushed by a change that un-ticks the section: the
+    // section is under the per-section approval rule from now on.
+    approvalRule: true,
   };
 }
 
@@ -174,11 +183,16 @@ export function historyWith(section: CimSection, reason: string): CimSectionSnap
   return [...prev, snapshotOf(section, reason)].slice(-HISTORY_LIMIT);
 }
 
-/** Restore the most recent snapshot. Null when there is nothing to undo. */
+/** Restore the most recent snapshot (marker entries aren't versions). Null when there is nothing to undo. */
 export async function undoLastChange(section: CimSection): Promise<CimSection | null> {
-  const history = Array.isArray(section.contentHistory) ? [...(section.contentHistory as CimSectionSnapshot[])] : [];
-  const last = history.pop();
-  if (!last) return null;
+  const all = Array.isArray(section.contentHistory) ? [...(section.contentHistory as CimSectionSnapshot[])] : [];
+  let idx = all.length - 1;
+  while (idx >= 0 && isHistoryMarker(all[idx])) idx--;
+  if (idx < 0) return null;
+  const last = all[idx];
+  // The restored version needs approving: the rest of the history keeps
+  // this code's mark (shared/cim-approvals withApprovalRuleMark).
+  const history = withApprovalRuleMark<CimSectionSnapshot>(all.filter((_, i) => i !== idx));
   const restored = {
     sectionTitle: last.sectionTitle,
     layoutType: last.layoutType,
@@ -198,11 +212,14 @@ export async function undoLastChange(section: CimSection): Promise<CimSection | 
       layoutData: last.layoutData as any,
       figureWarnings,
       contentHistory: history,
+      // The restored version is a change the approvals didn't cover.
+      brokerApproved: false,
       updatedAt: new Date(),
     })
     .where(eq(cimSections.id, section.id))
     .returning();
   const at = await invalidateBlind(section.dealId, [section.id]);
+  if (updated && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
   return updated ? withStaleStamps(updated, at) : null;
 }
 
@@ -300,6 +317,17 @@ export async function patchCimSection(req: Request, res: Response) {
 
     const contentChanged = ["sectionTitle", "brokerEditedContent", "layoutData", "layoutType"].some((k) => k in set);
     if (Object.keys(set).length === 0) return res.json(section);
+    // A change to what a section says (or showing a hidden one) needs the
+    // section approved again, unless this same request approves it — the
+    // broker's own edit included: the seller hasn't seen it
+    // (shared/cim-approvals.ts).
+    const reapprove = editNeedsReapproval(section, set);
+    if (reapprove && approved === undefined) set.brokerApproved = false;
+    // Un-ticked under the per-section rule (a change, showing a section, or
+    // the broker's own un-tick): mark it, so it never counts as an untouched
+    // pre-rule section of a live CIM. A content change's snapshot carries
+    // the mark (historyWith, below).
+    if (set.brokerApproved === false && !contentChanged) set.contentHistory = withApprovalRuleMark(section.contentHistory);
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);
@@ -321,7 +349,9 @@ export async function patchCimSection(req: Request, res: Response) {
       .set({ ...set, updatedAt: new Date() })
       .where(eq(cimSections.id, section.id))
       .returning();
-    res.json(contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated);
+    const stamped = contentChanged ? withStaleStamps(updated, await invalidateBlind(section.dealId, [section.id])) : updated;
+    if (reapprove && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
+    res.json(stamped);
   } catch (err) {
     console.error("[cim-sections] update failed:", err);
     res.status(500).json({ error: "Failed to update section" });

@@ -798,6 +798,8 @@ export function sourceRank(kind: unknown): number {
  */
 export const BROKER_SESSION_SOURCE_NOTE = "typed in your AI interview session";
 export const BROKER_SESSION_RANK = SOURCE_RANK.questionnaire;
+/** How the broker sees such a source: their notes, not "Broker edit". */
+export const BROKER_SESSION_LABEL = "Your notes · your AI interview session";
 
 /** A value the broker typed in their own AI interview session (not a broker edit). */
 export function isBrokerSessionSource(src: Partial<FieldSource> | null | undefined): boolean {
@@ -890,6 +892,11 @@ export function describeSource(
       if (src.acceptedByBroker || src.note === WEBSITE_ACCEPTED_SOURCE_NOTE) return `${name ? `${base} · ${name}` : base} · accepted by you`;
       return name ? `${base} · ${name}` : base;
     case "broker": {
+      // The broker's notes from their own AI interview session are not an
+      // edit (see isBrokerSessionSource): typed from memory, unconfirmed.
+      if (isBrokerSessionSource(src)) {
+        return typeof src.turn === "number" ? `${BROKER_SESSION_LABEL} · turn ${src.turn}` : BROKER_SESSION_LABEL;
+      }
       const when = shortDate(src.at);
       return src.note ? `${base} · ${src.note}` : when ? `${base} · ${when}` : base;
     }

@@ -30,7 +30,8 @@ export const KIND_META: Record<FactSourceKind, { label: string; plural: string; 
   website: { label: "Website", plural: "Website", icon: Globe },
   social: { label: "Social media", plural: "Social", icon: AtSign },
   questionnaire: { label: "Questionnaire", plural: "Questionnaire", icon: ClipboardList },
-  broker: { label: "You", plural: "Your edits", icon: PencilLine },
+  // Your edits and the notes from your own AI interview session.
+  broker: { label: "You", plural: "You", icon: PencilLine },
   system: { label: "System", plural: "System", icon: Cpu },
   // Collected before Cimple recorded provenance and not traceable to a source.
   unknown: { label: "Earlier record", plural: "Earlier records", icon: History },
@@ -103,6 +104,8 @@ function baseChipText(src: FactSourceInfo): string {
       return "Questionnaire";
     case "broker": {
       const when = formatShortDate(src.at);
+      // Notes the broker typed in their own AI interview session — not an edit.
+      if (src.brokerSessionNotes) return "You · session notes";
       if (src.note === "Resolved discrepancy") return `You · resolved ${when ?? ""}`.trim();
       // The deal's own details (name, industry, price) entered at creation or in the deal form.
       if (src.note === "Set in Valuation") return "You · valuation";

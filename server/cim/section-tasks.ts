@@ -33,7 +33,10 @@ import {
 } from "./layout-engine";
 import { invalidateBlind } from "./blind-sync";
 import { displayedProse, historyWith, withStaleStamps } from "./section-ops";
+import { withdrawApprovalsAfterChange } from "./approvals";
+import { reconcileRelatedSections } from "./related-sections";
 import { isMediaLayout } from "@shared/cim-media";
+import { withApprovalRuleMark } from "@shared/cim-approvals";
 import { cleanMediaLayoutForDeal } from "./media-store";
 
 type TaskKind = CimSectionAiTask["kind"];
@@ -104,11 +107,13 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
 
     if (task.kind === "rewrite") {
       const req = task.request || {};
-      const proposal = await rewriteSectionContent(params, current, {
+      const written = await rewriteSectionContent(params, current, {
         instructions: req.instructions,
         tones: req.tones,
         length: req.length as RewriteLength | undefined,
       });
+      // "Related" links point at this CIM's real sections.
+      const proposal = { ...written, layoutData: reconcileRelatedSections(written.layoutData, await storage.getCimSectionsByDeal(deal.id), section.sectionKey) };
       if (!(await stillCurrent(section.id, task.id))) return;
       const proposalWarnings = sectionFigureWarnings(params, { ...current, layoutData: proposal.layoutData, tags: section.tags });
       await setTask(section.id, {
@@ -135,6 +140,7 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
     if (task.kind === "convert") {
       layoutType = normalizeLayoutType(task.request?.layoutType);
       result = await convertSectionLayout(params, current, layoutType);
+      result = { ...result, layoutData: reconcileRelatedSections(result.layoutData, await storage.getCimSectionsByDeal(deal.id), section.sectionKey) };
       const settled = settleSectionFigures(params, { sectionKey: section.sectionKey, sectionTitle: section.sectionTitle, layoutType, layoutData: result.layoutData, aiDraftContent: result.aiDraftContent, tags: section.tags });
       result = { layoutData: settled.layoutData, aiDraftContent: settled.aiDraftContent };
       figureWarnings = settled.flags;
@@ -194,8 +200,9 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
         ...(task.kind === "convert" && layoutType !== row.layoutType
           ? { layoutOverride: row.layoutOverride || row.layoutType }
           : {}),
-        // A brand-new section has nothing worth undoing back to.
-        ...(task.kind === "write" ? {} : { contentHistory: historyWith(row, reason) }),
+        // A brand-new section has nothing worth undoing back to (it still
+        // carries the per-section approval mark — shared/cim-approvals).
+        contentHistory: task.kind === "write" ? withApprovalRuleMark(row.contentHistory) : historyWith(row, reason),
         // Written now: no longer a placeholder (placeholders never reach buyers).
         ...(isCimFallbackSection(row) ? { aiLayoutReasoning: "Written by the AI in the CIM builder." } : {}),
         aiTask: null,
@@ -203,6 +210,8 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
       })
       .where(eq(cimSections.id, section.id));
     await invalidateBlind(deal.id, [section.id]);
+    // New content the approvals never covered (shared/cim-approvals.ts).
+    if (!hide && row.isVisible !== false) await withdrawApprovalsAfterChange(deal.id);
     await syncCimContent(deal, section.sectionKey, result.aiDraftContent);
   } catch (err: any) {
     console.error(`[section-tasks] ${task.kind} failed for section ${section.id}:`, err);
@@ -268,6 +277,7 @@ export async function applyRewrite(section: CimSection): Promise<CimSection | nu
     .where(eq(cimSections.id, section.id))
     .returning();
   const at = await invalidateBlind(section.dealId, [section.id]);
+  if (updated && updated.isVisible !== false) await withdrawApprovalsAfterChange(section.dealId);
   return updated ? withStaleStamps(updated, at) : null;
 }
 
