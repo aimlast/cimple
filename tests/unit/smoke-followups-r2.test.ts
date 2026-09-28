@@ -2,8 +2,9 @@
  * Round 2 of the smoke-test follow-ups (the independent check of
  * fix/smoke-followups):
  *   1 — a long source's business facts keep real sentences that merely name a
- *       list and a range ("14 trucks from 2016 to 2023 model years"); only
- *       prose that says which rows of the export a part held is dropped.
+ *       list and a range ("14 trucks from 2016 to 2023 model years"). (Round 3:
+ *       no fact sentence is dropped at all — row-range prose only stays out
+ *       of the combined summary; see smoke-followups-r3.)
  *   2 — "Part 2 of the lease requires…" is a fact, not a part label: only the
  *       reader's own "Part N of M" is stripped.
  *   3 — a live CIM approved before the per-section rule doesn't look
@@ -22,7 +23,6 @@ import {
   combinePartSummaries,
   isRowRangeDescription,
   stripPartLabel,
-  withoutRowRangeProse,
 } from "../../server/documents/extractor";
 import {
   PER_SECTION_APPROVAL_SINCE,
@@ -81,10 +81,15 @@ await test("the checker's sentences are not row-range prose; the recorded S3 one
   for (const s of MUST_DROP) assert.equal(isRowRangeDescription(s), true, s.slice(0, 70));
 });
 
-await test("withoutRowRangeProse keeps every must-keep sentence word for word", () => {
-  for (const s of MUST_KEEP) assert.equal(withoutRowRangeProse(s), s);
-  assert.equal(withoutRowRangeProse(MUST_KEEP.join(" ")), MUST_KEEP.join(" "));
-  assert.equal(withoutRowRangeProse("Member records CC-11264 through CC-11929."), "");
+// Round 3: withoutRowRangeProse (the fact-dropping) was removed — a fact
+// only loses an exact "Part N of M" label. This test used to also assert
+// withoutRowRangeProse("Member records CC-11264 through CC-11929.") === ""
+// (the fact-deletion behaviour); a fact is now kept as written.
+await test("a fact keeps every must-keep sentence word for word (and a row-range sentence too)", () => {
+  for (const s of MUST_KEEP) assert.equal(stripPartLabel(s, { total: 5, lead: false }), s);
+  const joined = combineExtractions([{ summary: PARTS[0], note: MUST_KEEP.join(" ") } as any, { summary: PARTS[3] } as any]);
+  assert.equal(joined.note, MUST_KEEP.join(" "));
+  assert.equal(stripPartLabel("Member records CC-11264 through CC-11929.", { total: 5, lead: false }), "Member records CC-11264 through CC-11929.");
 });
 
 await test("combineExtractions keeps the facts of a multi-part source (a normal part and a row-only part)", () => {
@@ -104,10 +109,13 @@ await test("combineExtractions keeps the facts of a multi-part source (a normal 
   for (const [k, v] of Object.entries(facts)) assert.equal(b[k], v, k);
 });
 
-await test("a part that says what the source is keeps its facts as written; row-range sentences drop only from row-only parts", () => {
+await test("every part keeps its facts as written, a row-only part too (round 3)", () => {
   const sentence = "Customer membership records from February 2023 through November 2023.";
   const rowPart = combineExtractions([{ summary: PARTS[2], customerBase: `${sentence} Major customer book acquired from Pembury Furnace Services on July 1, 2023.` } as any, { summary: PARTS[3] } as any]);
-  assert.equal(rowPart.customerBase, "Major customer book acquired from Pembury Furnace Services on July 1, 2023.");
+  // Round 3: kept word for word. This assertion used to expect the row-range
+  // sentence dropped from a row-only part's fact (the fact-deletion
+  // behaviour the integrator removed).
+  assert.equal(rowPart.customerBase, `${sentence} Major customer book acquired from Pembury Furnace Services on July 1, 2023.`);
   const headlinePart = combineExtractions([
     { summary: "Lakeshore Comfort Club report as at March 31, 2025: 2,900 active members, $75,835 MRR.", customerBase: sentence } as any,
     { summary: PARTS[3] } as any,
@@ -171,8 +179,12 @@ const legacySections = () =>
     updatedAt: BEFORE,
   }));
 
-await test("the cutoff is before any deploy of this rule", () => {
-  assert.ok(Date.parse(PER_SECTION_APPROVAL_SINCE) <= Date.parse("2026-09-28T04:00:00.000Z"));
+// Round 3 (integrator decision C): the cutoff must not PRECEDE the deploy
+// (sections the old code wrote after it would look unapproved), so it moved
+// to 2026-09-29T00:00Z and this code marks every section it un-ticks. This
+// assertion used to require a cutoff at or before 2026-09-28T04:00Z.
+await test("the cutoff can't precede the deploy of this rule", () => {
+  assert.ok(Date.parse(PER_SECTION_APPROVAL_SINCE) >= Date.parse("2026-09-29T00:00:00.000Z"));
 });
 
 await test("untouched sections of a live, fully approved CIM count as approved (nothing looks broken)", () => {
@@ -183,7 +195,7 @@ await test("untouched sections of a live, fully approved CIM count as approved (
   assert.deepEqual(legacyLiveApprovedIds(liveDeal(), legacySections()), ["s0", "s1", "s2", "s3"]);
 });
 
-await test("a change after publishing still needs approval; not live or not both approvals → no treatment", () => {
+await test("a change after publishing still needs approval; not live → no treatment", () => {
   const sections = legacySections();
   sections[2].updatedAt = AFTER;
   sections[2].contentHistory = [{ at: AFTER, reason: "Regenerated with AI" }];
@@ -198,7 +210,10 @@ await test("a change after publishing still needs approval; not live or not both
   const u = legacySections().map(({ updatedAt, ...s }) => s);
   assert.equal(sectionsAwaitingApproval(u, liveDeal()).length, 4);
   assert.equal(sectionsAwaitingApproval(legacySections(), { ...liveDeal(), isLive: false }).length, 4, "not live: the publish gate's rule");
-  assert.equal(sectionsAwaitingApproval(legacySections(), { ...liveDeal(), designApprovedBySeller: false }).length, 4);
+  // Round 3 (integrator decision C): ANY live deal, whatever its design flags
+  // (the demo's TrueNorth went live with neither). This assertion used to
+  // expect 4 sections awaiting when the seller flag was false.
+  assert.equal(sectionsAwaitingApproval(legacySections(), { ...liveDeal(), designApprovedBySeller: false }).length, 0);
   // Hidden sections and placeholders are never ticked by the treatment.
   const p = legacySections();
   p[0].isVisible = false;

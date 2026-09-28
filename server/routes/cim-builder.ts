@@ -79,6 +79,7 @@ import { dealStreetAddress } from "@shared/cim-media";
 import { lastGenerationFacts, openBuyerLinks } from "../cim/generation-jobs";
 import { cimStaleness, writerFactsSnapshot } from "../cim/cim-staleness";
 import { backfillLegacyLiveApprovals, withdrawApprovalsAfterChange } from "../cim/approvals";
+import { historySnapshots } from "@shared/cim-approvals";
 
 const NO_AI_MEDIA = "The AI can't choose photos or videos — add them yourself in the section's editor.";
 
@@ -136,7 +137,8 @@ function ddStatusOf(s: CimSection, ddGenerated: boolean, hasDd: boolean): DdStat
 /** Section row for the builder: task normalised, undo stack summarised. */
 function toBuilderSection(s: CimSection, blindGenerated: boolean, hasOverride: boolean, dd: { generated: boolean; has: boolean } = { generated: false, has: false }) {
   const { contentHistory, ...rest } = s;
-  const history = Array.isArray(contentHistory) ? (contentHistory as Array<{ reason: string; at: string }>) : [];
+  // Marker entries (the approval rule's mark) are not versions to undo to.
+  const history = historySnapshots<{ reason: string; at: string }>(contentHistory);
   const last = history[history.length - 1];
   const excluded = getCimLayout(s.layoutType)?.blind === "exclude";
   return {

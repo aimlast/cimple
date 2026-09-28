@@ -28,9 +28,12 @@
  *  - One rule everywhere: publishReadiness is built on deal-progress
  *    designApprovalState, which the checklist, the deal list and the
  *    dashboard's next step use with the same count of sections awaiting.
- *  - A live CIM approved before this rule (its sections were never ticked)
- *    counts its untouched sections as approved (legacyLiveApprovedIds); a
- *    change after publishing still needs approving.
+ *  - A CIM that was already live before this rule — whatever its design
+ *    flags say (the demo's TrueNorth went live with neither flag) — counts
+ *    its untouched sections as approved (legacyLiveApprovedIds); a change
+ *    after publishing still needs approving. "Untouched" = written before
+ *    PER_SECTION_APPROVAL_SINCE and never changed by this code: every write
+ *    here that un-ticks a section marks its history (approvalRule).
  *
  * Pure — no server or browser dependencies.
  */
@@ -119,11 +122,55 @@ export function editNeedsReapproval(
 }
 
 /**
- * When the per-section rule started (before any deploy of it). A CIM that
- * went live before then was approved as a whole — the broker's design
- * approval didn't tick its sections — so its sections were never ticked.
+ * The per-section rule's cutoff. It must not precede the deploy of this code
+ * (a section of a live CIM written by the old code after the cutoff would
+ * look unapproved), so it is set after the latest expected deploy; the gap
+ * between the deploy and the cutoff is covered by the history mark below —
+ * every write by this code that un-ticks a section marks it, and a marked
+ * section is never "legacy".
  */
-export const PER_SECTION_APPROVAL_SINCE = "2026-09-28T04:00:00.000Z";
+export const PER_SECTION_APPROVAL_SINCE = "2026-09-29T00:00:00.000Z";
+
+/**
+ * The mark this code leaves in a section's history (cim_sections.
+ * content_history) whenever it un-ticks the section: on every undo snapshot
+ * it pushes, and — where a change pushes none (showing a section, the
+ * broker's own un-tick, an undo, a new section) — on the latest entry, or as
+ * a marker entry with no content that the undo stack skips.
+ */
+export const APPROVAL_RULE_FLAG = "approvalRule" as const;
+
+type HistoryEntry = { at?: unknown; reason?: unknown; marker?: unknown; approvalRule?: unknown };
+
+/** A marker entry (no content): never an undo step, never "the latest change". */
+export function isHistoryMarker(entry: unknown): boolean {
+  return !!entry && typeof entry === "object" && (entry as HistoryEntry).marker === true;
+}
+
+/** The history's real versions (undo snapshots), without marker entries. */
+export function historySnapshots<T = unknown>(contentHistory: unknown): T[] {
+  return Array.isArray(contentHistory) ? (contentHistory.filter((e) => !isHistoryMarker(e)) as T[]) : [];
+}
+
+/** Has this code changed (un-ticked) the section? */
+export function markedByApprovalRule(contentHistory: unknown): boolean {
+  return Array.isArray(contentHistory) && contentHistory.some((e) => !!e && typeof e === "object" && (e as HistoryEntry)[APPROVAL_RULE_FLAG] === true);
+}
+
+/**
+ * The history with this code's mark on it (unchanged when already marked):
+ * the latest entry carries the flag, or — with no history — a marker entry.
+ */
+export function withApprovalRuleMark<T>(contentHistory: T[] | unknown, at: Date = new Date()): T[] {
+  const history = Array.isArray(contentHistory) ? [...(contentHistory as T[])] : [];
+  if (markedByApprovalRule(history)) return history;
+  const last = history.length - 1;
+  if (last >= 0 && history[last] && typeof history[last] === "object") {
+    history[last] = { ...(history[last] as object), [APPROVAL_RULE_FLAG]: true } as T;
+    return history;
+  }
+  return [...history, { at: at.toISOString(), reason: "", marker: true, [APPROVAL_RULE_FLAG]: true } as T];
+}
 
 const toMs = (v: unknown): number => {
   if (v instanceof Date) return v.getTime();
@@ -135,24 +182,27 @@ const toMs = (v: unknown): number => {
 };
 
 /**
- * Sections of a live CIM approved before the per-section rule that count as
- * approved: the deal is live with both design approvals, and the section —
- * shown, written, unticked — hasn't been written to (updatedAt) or changed
- * (its latest history entry) since the rule started. A change after
- * publishing is newer than that, so it still needs approving; a section
- * with no write time on record can't be proved untouched and isn't
- * included. The server ticks them on the broker's first read of the
- * sections (server/cim/approvals.ts backfillLegacyLiveApprovals).
+ * Sections of a CIM that was already live before the per-section rule that
+ * count as approved: the deal is live (whatever its design flags — a CIM
+ * published before the rule was approved as a whole, or with no recorded
+ * approval at all), and the section — shown, written, unticked — hasn't been
+ * written to (updatedAt) or changed (a history entry) since the rule's
+ * cutoff, and this code has never un-ticked it (no approvalRule mark). A
+ * change after publishing is marked (or newer than the cutoff), so it still
+ * needs approving; a section with no write time on record can't be proved
+ * untouched and isn't included. The server ticks them on the broker's first
+ * read of the sections (server/cim/approvals.ts backfillLegacyLiveApprovals).
  */
 export function legacyLiveApprovedIds(deal: ApprovalDeal | null | undefined, sections: readonly ApprovalSection[]): string[] {
-  if (!deal?.isLive || !deal.designApprovedByBroker || !deal.designApprovedBySeller) return [];
+  if (!deal?.isLive) return [];
   const since = Date.parse(PER_SECTION_APPROVAL_SINCE);
   return sections
     .filter((s) => {
       if (s.isVisible === false || s.brokerApproved || isCimFallbackSection(s)) return false;
       const written = toMs(s.updatedAt);
       if (!Number.isFinite(written) || written >= since) return false;
-      const history = Array.isArray(s.contentHistory) ? (s.contentHistory as Array<{ at?: unknown }>) : [];
+      if (markedByApprovalRule(s.contentHistory)) return false;
+      const history = Array.isArray(s.contentHistory) ? (s.contentHistory as HistoryEntry[]) : [];
       return !history.some((h) => toMs(h?.at) >= since);
     })
     .map((s) => s.id);
@@ -168,7 +218,7 @@ export function sectionsAwaitingApproval(sections: readonly ApprovalSection[], d
   return sections
     .filter((s) => s.isVisible !== false && !s.brokerApproved && !isCimFallbackSection(s) && !legacy.has(s.id))
     .map((s) => {
-      const history = Array.isArray(s.contentHistory) ? (s.contentHistory as Array<{ reason?: unknown }>) : [];
+      const history = historySnapshots<{ reason?: unknown }>(s.contentHistory);
       const last = history[history.length - 1];
       return {
         id: s.id,

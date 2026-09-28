@@ -28,9 +28,9 @@ import { getOwnedDeal } from "../broker-auth/routes";
 import { invalidateBlind } from "./blind-sync";
 import { uniqueSectionKey } from "./section-ops-keys";
 import { isMediaLayout } from "@shared/cim-media";
+import { editNeedsReapproval, isHistoryMarker, withApprovalRuleMark } from "@shared/cim-approvals";
 import { cleanMediaLayoutForDeal } from "./media-store";
 import { withdrawApprovalsAfterChange } from "./approvals";
-import { editNeedsReapproval } from "@shared/cim-approvals";
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0];
 
@@ -110,7 +110,8 @@ export async function insertSectionAt(
     const sectionKey = uniqueSectionKey(fields.sectionKey || fields.sectionTitle, rows.map((r) => r.sectionKey));
     const [created] = await tx
       .insert(cimSections)
-      .values({ ...fields, dealId, sectionKey, order: index } as InsertCimSection)
+      // A new section is under the per-section approval rule from the start.
+      .values({ ...fields, contentHistory: withApprovalRuleMark(fields.contentHistory), dealId, sectionKey, order: index } as InsertCimSection)
       .returning();
     const ids = rows.map((r) => r.id);
     ids.splice(index, 0, created.id);
@@ -170,6 +171,9 @@ export function snapshotOf(section: CimSection, reason: string): CimSectionSnaps
     // Undo brings back this version's flags with it — an undone correction
     // must not bring back an untraced figure unflagged.
     figureWarnings: Array.isArray(section.figureWarnings) && section.figureWarnings.length ? (section.figureWarnings as string[]) : null,
+    // Every snapshot is pushed by a change that un-ticks the section: the
+    // section is under the per-section approval rule from now on.
+    approvalRule: true,
   };
 }
 
@@ -179,11 +183,16 @@ export function historyWith(section: CimSection, reason: string): CimSectionSnap
   return [...prev, snapshotOf(section, reason)].slice(-HISTORY_LIMIT);
 }
 
-/** Restore the most recent snapshot. Null when there is nothing to undo. */
+/** Restore the most recent snapshot (marker entries aren't versions). Null when there is nothing to undo. */
 export async function undoLastChange(section: CimSection): Promise<CimSection | null> {
-  const history = Array.isArray(section.contentHistory) ? [...(section.contentHistory as CimSectionSnapshot[])] : [];
-  const last = history.pop();
-  if (!last) return null;
+  const all = Array.isArray(section.contentHistory) ? [...(section.contentHistory as CimSectionSnapshot[])] : [];
+  let idx = all.length - 1;
+  while (idx >= 0 && isHistoryMarker(all[idx])) idx--;
+  if (idx < 0) return null;
+  const last = all[idx];
+  // The restored version needs approving: the rest of the history keeps
+  // this code's mark (shared/cim-approvals withApprovalRuleMark).
+  const history = withApprovalRuleMark<CimSectionSnapshot>(all.filter((_, i) => i !== idx));
   const restored = {
     sectionTitle: last.sectionTitle,
     layoutType: last.layoutType,
@@ -314,6 +323,11 @@ export async function patchCimSection(req: Request, res: Response) {
     // (shared/cim-approvals.ts).
     const reapprove = editNeedsReapproval(section, set);
     if (reapprove && approved === undefined) set.brokerApproved = false;
+    // Un-ticked under the per-section rule (a change, showing a section, or
+    // the broker's own un-tick): mark it, so it never counts as an untouched
+    // pre-rule section of a live CIM. A content change's snapshot carries
+    // the mark (historyWith, below).
+    if (set.brokerApproved === false && !contentChanged) set.contentHistory = withApprovalRuleMark(section.contentHistory);
     if (contentChanged) {
       const reason = "layoutType" in set ? "Changed layout" : "sectionTitle" in set && Object.keys(set).length === 1 ? "Renamed" : "Edited";
       set.contentHistory = historyWith(section, reason);

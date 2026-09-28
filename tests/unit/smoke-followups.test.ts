@@ -3,7 +3,7 @@
  * harvest/smoke-results.json → defects), proved on the recorded data:
  *   D1 — the broker's AI-session notes are labelled as their notes, not "Broker edit".
  *   D2 — a section changed after approval withdraws the approvals and holds publishing.
- *   D3 — a long source read in parts keeps its headline summary; row-range prose is dropped.
+ *   D3 — a long source read in parts keeps its headline summary; row-range prose stays out of the summary (facts are kept as written — round 3).
  *   D5 — a regenerated section's relatedSections point at real sections; share slices rank largest first.
  *
  *   DATABASE_URL=postgres://unused/x ANTHROPIC_API_KEY=unused node_modules/.bin/tsx tests/unit/smoke-followups.test.ts
@@ -32,7 +32,6 @@ import {
   combinePartSummaries,
   isRowRangeDescription,
   stripPartLabel,
-  withoutRowRangeProse,
 } from "../../server/documents/extractor";
 import { reconcileRelatedSections, resolveRelatedKey } from "../../server/cim/related-sections";
 import { orderShareSlices } from "../../shared/cim-chart-values";
@@ -268,11 +267,11 @@ await test("replay S3: the combined summary leads with the headline and carries 
   assert.match(summary, /2,900 active members generating \$75,835 monthly recurring revenue \(\$910,020 annualized\)/);
   assert.doesNotMatch(summary, /\bPart \d/);
   assert.doesNotMatch(summary, /CC-10620|through November 2023|from May 2018/);
-  // The business fact keeps what the rows establish, not which rows the part held.
-  assert.equal(
-    combined.customerBase,
-    "Major customer book acquisition from Pembury Furnace Services on July 1, 2023. Geographic concentration in Hamilton area with surrounding municipalities. Customer age distribution across all tenure bands from new (0-5 years) to long-term (16+ years).",
-  );
+  // Round 3 (conservative tidy-up): the business fact is kept word for word.
+  // This assertion used to expect the "Customer membership records from
+  // February 2023 through November 2023." sentence dropped — the fact-deletion
+  // behaviour the integrator removed (a misfire there lost real facts).
+  assert.equal(combined.customerBase, PART4_CUSTOMER_BASE);
   assert.equal(combined.revenue, "$801,000");
 });
 
@@ -289,8 +288,10 @@ await test("row-range prose is recognised; a headline with figures never is", ()
   );
   assert.equal(stripPartLabel("Part 1 of 5: Comfort Club report as at March 31, 2025."), "Comfort Club report as at March 31, 2025.");
   // A business fact's own "part 2 of the lease" is not a label.
-  assert.equal(withoutRowRangeProse("Renewal is set out in part 2 of the lease."), "Renewal is set out in part 2 of the lease.");
-  assert.equal(withoutRowRangeProse("Member records CC-11264 through CC-11929."), "");
+  assert.equal(stripPartLabel("Renewal is set out in part 2 of the lease.", { total: 5, lead: false }), "Renewal is set out in part 2 of the lease.");
+  // Round 3 (conservative tidy-up): a fact is never blanked for its wording —
+  // this assertion used to expect "" (the dropped fact-deletion behaviour).
+  assert.equal(stripPartLabel("Member records CC-11264 through CC-11929.", { total: 5, lead: false }), "Member records CC-11264 through CC-11929.");
 });
 
 await test("no part states a headline: one short description, never a list of part labels", () => {

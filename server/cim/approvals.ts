@@ -15,12 +15,14 @@
  *  - legacySectionInsert: the legacy "create a section" body, through the
  *    same rule as the builder's "Add section".
  */
-import { and, eq, inArray } from "drizzle-orm";
+import { and, eq, inArray, lt, sql } from "drizzle-orm";
 import { db } from "../db";
 import { storage } from "../storage";
 import { cimSections, type CimSection, type Deal, type InsertCimSection } from "@shared/schema";
 import { CIM_ACCESS_TIERS, isCimLayoutKey } from "@shared/cim-layouts";
 import {
+  APPROVAL_RULE_FLAG,
+  PER_SECTION_APPROVAL_SINCE,
   approvalsWithdrawnByChange,
   legacyLiveApprovedIds,
   sectionsApprovedWithDesign,
@@ -56,6 +58,9 @@ export async function approveSectionsWithDesign(dealId: string): Promise<number>
   return toTick.length;
 }
 
+/** jsonb containment test for a history carrying this code's mark (shared/cim-approvals). */
+const APPROVAL_RULE_MARK_JSON = JSON.stringify([{ [APPROVAL_RULE_FLAG]: true }]);
+
 /** Sections that still need the broker's approval before the CIM can go live (empty = none). */
 export async function sectionsBlockingPublish(dealId: string): Promise<SectionAwaitingApproval[]> {
   const [deal, sections] = await Promise.all([storage.getDeal(dealId), storage.getCimSectionsByDeal(dealId)]);
@@ -63,27 +68,37 @@ export async function sectionsBlockingPublish(dealId: string): Promise<SectionAw
 }
 
 /**
- * A live CIM approved before the per-section rule (legacyLiveApprovedIds):
- * tick its untouched sections so the Overview, the builder and the deal list
- * don't show a published CIM as unapproved. One-off per deal in effect —
- * once ticked they no longer qualify, and a change after publishing is newer
- * than the rule so it still needs approving. The write leaves updatedAt
- * alone (it is the deal list's "last activity" and the rule's own test).
- * Returns the sections as they now stand. Never throws: on a failed write
- * the sections come back as read (the shared rule still counts them as
- * approved).
+ * A CIM that was live before the per-section rule (legacyLiveApprovedIds —
+ * whatever its design flags): tick its untouched sections so the Overview,
+ * the builder and the deal list don't show a published CIM as unapproved.
+ * One-off per deal in effect — once ticked they no longer qualify, and a
+ * change after publishing is marked (or newer than the cutoff) so it still
+ * needs approving. The UPDATE re-checks the rule in SQL (still unticked,
+ * written before the cutoff, never marked by this code), so a change that
+ * lands between the read and the write is never ticked. The write leaves
+ * updatedAt alone (it is the deal list's "last activity" and the rule's own
+ * test). Returns the sections as they now stand. Never throws: on a failed
+ * write the sections come back as read (the shared rule still counts them
+ * as approved).
  */
-export async function backfillLegacyLiveApprovals(deal: Pick<Deal, "id" | "isLive" | "designApprovedByBroker" | "designApprovedBySeller">): Promise<CimSection[]> {
+export async function backfillLegacyLiveApprovals(deal: Pick<Deal, "id" | "isLive">): Promise<CimSection[]> {
   const sections = await storage.getCimSectionsByDeal(deal.id);
   const ids = legacyLiveApprovedIds(deal, sections);
   if (ids.length === 0) return sections;
   try {
-    await db
+    const rows = await db
       .update(cimSections)
       .set({ brokerApproved: true })
-      .where(and(eq(cimSections.dealId, deal.id), inArray(cimSections.id, ids)));
-    const ticked = new Set(ids);
-    console.log(`[approvals] live deal ${deal.id}: ${ids.length} section(s) approved before the per-section rule ticked`);
+      .where(and(
+        eq(cimSections.dealId, deal.id),
+        inArray(cimSections.id, ids),
+        sql`${cimSections.brokerApproved} is not true`,
+        lt(cimSections.updatedAt, new Date(PER_SECTION_APPROVAL_SINCE)),
+        sql`not (coalesce(${cimSections.contentHistory}, '[]'::jsonb) @> ${APPROVAL_RULE_MARK_JSON}::jsonb)`,
+      ))
+      .returning({ id: cimSections.id });
+    const ticked = new Set(rows.map((r) => r.id));
+    if (ticked.size > 0) console.log(`[approvals] live deal ${deal.id}: ${ticked.size} section(s) approved before the per-section rule ticked`);
     return sections.map((s) => (ticked.has(s.id) ? { ...s, brokerApproved: true } : s));
   } catch (err) {
     console.error(`[approvals] couldn't tick the pre-rule sections of live deal ${deal.id}:`, err);

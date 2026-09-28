@@ -36,6 +36,7 @@ import { displayedProse, historyWith, withStaleStamps } from "./section-ops";
 import { withdrawApprovalsAfterChange } from "./approvals";
 import { reconcileRelatedSections } from "./related-sections";
 import { isMediaLayout } from "@shared/cim-media";
+import { withApprovalRuleMark } from "@shared/cim-approvals";
 import { cleanMediaLayoutForDeal } from "./media-store";
 
 type TaskKind = CimSectionAiTask["kind"];
@@ -199,8 +200,9 @@ async function run(section: CimSection, deal: Deal, task: CimSectionAiTask) {
         ...(task.kind === "convert" && layoutType !== row.layoutType
           ? { layoutOverride: row.layoutOverride || row.layoutType }
           : {}),
-        // A brand-new section has nothing worth undoing back to.
-        ...(task.kind === "write" ? {} : { contentHistory: historyWith(row, reason) }),
+        // A brand-new section has nothing worth undoing back to (it still
+        // carries the per-section approval mark — shared/cim-approvals).
+        contentHistory: task.kind === "write" ? withApprovalRuleMark(row.contentHistory) : historyWith(row, reason),
         // Written now: no longer a placeholder (placeholders never reach buyers).
         ...(isCimFallbackSection(row) ? { aiLayoutReasoning: "Written by the AI in the CIM builder." } : {}),
         aiTask: null,

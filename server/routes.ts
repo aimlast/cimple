@@ -35,6 +35,7 @@ import { blindLeakTerms, findBlindLeaks } from "@shared/blind-guard";
 import { invalidateBlind, redoLeakedBlind, regenerateAllBlind, regenerateAllBlindInBackground, scheduleBlindRefresh } from "./cim/blind-sync.js";
 import { patchCimSection, reorderDealSections } from "./cim/section-ops.js";
 import { cimModeForAccessLevel, isBuyerAccessLevel, isCimFallbackSection } from "@shared/cim-layouts";
+import { withApprovalRuleMark } from "@shared/cim-approvals";
 import multer from "multer";
 import { registerDealListRoutes, loadDealSideFacts, moneyValue, dealNextStep } from "./routes/deal-list.js";
 import { registerInformationRoutes } from "./routes/information.js";
@@ -5752,6 +5753,8 @@ Return JSON only.`,
           ...(regenerated.isVisible === false ? { isVisible: false } : {}),
           brokerEditedContent: null,
           brokerApproved: false,
+          // Un-ticked under the per-section approval rule (shared/cim-approvals).
+          contentHistory: withApprovalRuleMark(target.contentHistory),
           // Written now: no longer a placeholder (placeholders never reach buyers).
           ...(isCimFallbackSection(target) ? { aiLayoutReasoning: "Regenerated from the deal's information." } : {}),
         });
@@ -5799,6 +5802,8 @@ Return JSON only.`,
           await storage.updateCimSection(String(matchingSection.id), {
             aiDraftContent: content,
             brokerApproved: false,
+            // Un-ticked under the per-section approval rule (shared/cim-approvals).
+            contentHistory: withApprovalRuleMark(matchingSection.contentHistory),
           });
         }
         // Rewritten content the deal's approvals never covered.

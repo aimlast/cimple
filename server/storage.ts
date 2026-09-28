@@ -36,6 +36,7 @@ import { randomUUID } from "crypto";
 import { db } from "./db";
 import { eq, ne, desc, sql, count, avg, sum, inArray, and } from "drizzle-orm";
 import { REVOKED_INVITE_STATUS } from "@shared/seller-invite-revocation";
+import { withApprovalRuleMark } from "@shared/cim-approvals";
 import { resetTokenLookupValues } from "./buyer-auth/reset-token";
 
 // Buyer profile fields that feed calculateBuyerProfileCompletion — an update
@@ -726,7 +727,9 @@ export class DbStorage implements IStorage {
 
   // CIM section operations
   async createCimSection(insertSection: InsertCimSection): Promise<CimSection> {
-    const result = await db.insert(cimSections).values(insertSection).returning();
+    // A new section is under the per-section approval rule from the start
+    // (never counted as an untouched pre-rule section — shared/cim-approvals).
+    const result = await db.insert(cimSections).values({ ...insertSection, contentHistory: withApprovalRuleMark(insertSection.contentHistory) }).returning();
     return result[0];
   }
 
